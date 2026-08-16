@@ -4,6 +4,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Shared with /api/auth/callback and the client-side password sign-in so all
 // three enforce one definition of a safe `?next=` target.
 import { safeNextPath, boundedReturnTo } from '@/lib/auth-redirect';
+// The one list of paths that require a session, kept in step with
+// app/(dashboard) by a filesystem drift guard in its spec.
+import { isProtectedPath } from '@/lib/protected-routes';
 
 /** 24 hours — matches the Supabase project jwt_expiry so the cookie
  *  outlives the access token and the refresh token can be used. */
@@ -38,30 +41,24 @@ export async function middleware(request: NextRequest) {
     });
   }
 
-  // Forward the pathname + search string as a request header so RSC layouts
-  // can read the full URL without accessing the raw Request object.
-  // Used by the dashboard layout to preserve shared URLs (e.g. ?lesson=…)
-  // through the unauthenticated → login → callback → original URL flow.
+  // No URL is forwarded to the RSC tree any more.
   //
-  // BOUNDED, because this turns URL length into HEADER length on every matched
-  // request. The Explorer's filter bar lives in ?filters= by design, and a wide
-  // bar is kilobytes of percent-encoded JSON; copied here and then re-encoded
-  // into ?next= by the layout, it is what takes the round trip past the header
-  // limit and returns a 431 the user cannot act on. Past the budget the header
-  // carries the pathname alone — the return trip loses the bar, never the page.
-  // The address bar itself is untouched: a pasted link must keep working, and
-  // the client that reads it has no header limit.
-  const forwardedTarget = boundedReturnTo(request.nextUrl.pathname, request.nextUrl.search);
-  const forwardedSearch = forwardedTarget.slice(request.nextUrl.pathname.length);
-  let response = NextResponse.next({
-    request: {
-      headers: new Headers({
-        ...Object.fromEntries(request.headers),
-        'x-pathname': request.nextUrl.pathname,
-        'x-search': forwardedSearch,
-      }),
-    },
-  });
+  // This used to copy `x-pathname` + `x-search` into a REQUEST HEADER on every
+  // matched request, because the auth gate lived in `app/(dashboard)/layout.tsx`
+  // and a layout cannot see the query string — the App Router does not pass
+  // `searchParams` to a layout and a layout cannot reach the raw `Request`.
+  // Preserving a shared link through login therefore meant smuggling the URL
+  // downstream as a header, which the layout read back and percent-encoded a
+  // SECOND time into `?next=`.
+  //
+  // That copy turned URL length into header length on every request, and a wide
+  // Lore Explorer filter bar (`?filters=` is kilobytes of encoded JSON by
+  // design) took the round trip past the header limit — a `431` with nothing
+  // the user could act on. It existed only to feed a SECOND gate re-deciding
+  // what this middleware, which already calls `getUser()` to refresh the
+  // session cookie, had just decided. The gate moved here (below); the header
+  // is gone.
+  let response = NextResponse.next({ request: { headers: request.headers } });
 
   const supabase = createServerClient(
     process.env['NEXT_PUBLIC_SUPABASE_URL']!,
@@ -75,15 +72,7 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
-          response = NextResponse.next({
-            request: {
-              headers: new Headers({
-                ...Object.fromEntries(request.headers),
-                'x-pathname': request.nextUrl.pathname,
-                'x-search': forwardedSearch,
-              }),
-            },
-          });
+          response = NextResponse.next({ request: { headers: request.headers } });
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, {
               ...options,
@@ -109,6 +98,33 @@ export async function middleware(request: NextRequest) {
   if (user && request.nextUrl.pathname === '/login') {
     const next = safeNextPath(request.nextUrl.searchParams.get('next'));
     return NextResponse.redirect(new URL(next, request.url));
+  }
+
+  // The auth gate. The inverse of the redirect above, and it belongs here for
+  // the same reason that one does: the session is already resolved, and
+  // `request.nextUrl` carries the pathname AND the search string, so the
+  // return target is built once, in one place, with no header round trip.
+  //
+  // `app/(dashboard)/layout.tsx` keeps a bare `redirect('/login')` as
+  // defence in depth. It should be unreachable — if it ever fires, this gate
+  // and `PROTECTED_SEGMENTS` have fallen out of step with the route tree, and
+  // the user loses the link rather than the page.
+  //
+  // GET only, deliberately. A Next.js Server Action is a POST to the page's own
+  // URL, and answering a fetch that expects an action result with a 302 to an
+  // HTML login page is a worse failure than the one the actions already handle:
+  // every server action here resolves its own token and fails closed (an empty
+  // page for a read), so an expired session degrades the data and the next
+  // navigation — a GET — lands on the login screen with its link intact.
+  if (!user && request.method === 'GET' && isProtectedPath(request.nextUrl.pathname)) {
+    // Bounded: `?next=` percent-encodes the whole target, and a wide filter bar
+    // is kilobytes before encoding. Past the budget the user comes back to the
+    // bare page instead of to a request nobody can serve. The address bar itself
+    // is never truncated — a pasted link has to keep working.
+    const next = boundedReturnTo(request.nextUrl.pathname, request.nextUrl.search);
+    const login = new URL('/login', request.url);
+    login.searchParams.set('next', next);
+    return NextResponse.redirect(login);
   }
 
   return response;
