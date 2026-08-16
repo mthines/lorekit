@@ -164,7 +164,13 @@ export function orgAllowedByKey(
   return false;
 }
 
-/** Is this key restricted at all? Drives the dashboard badge and the OTel attribute. */
+/**
+ * Is this key restricted at all?
+ *
+ * No consumer yet — this PR is the data model and the pure predicates only. The
+ * dashboard badge and the OTel attribute that will read it arrive with the
+ * management surface, so today the only caller is `api-key.spec.ts`.
+ */
 export function isScopedKey(scoping: ApiKeyScoping): boolean {
   return scoping.scopes.length > 0 || scoping.orgAccess !== 'all';
 }
