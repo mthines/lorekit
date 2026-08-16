@@ -119,7 +119,18 @@ interface ExplorerInsightsProps {
   filters: Filter[];
   /** Per-day write counts for the heatmap. */
   heatmapData: { date: string; count: number }[];
-  /** The selection to highlight on the heatmap, as inclusive day strings. */
+  /**
+   * The selection to highlight on the heatmap, as inclusive day strings.
+   *
+   * Derived from the caller's raw `range`, NOT from this panel's
+   * {@link DEFAULT_STATS_RANGE} substitution — so on an untouched `?range=` the
+   * picker reads 24h while the heatmap highlights nothing. That asymmetry is
+   * correct, not an oversight: the highlight says *what the list below is
+   * filtered to*, and on an untouched range the list is unfiltered. Lighting up
+   * today's cell would assert a filter that is not applied, which is the one
+   * thing a highlight must never do. Once a range is actually picked the two
+   * agree again, because picking one narrows both.
+   */
   highlightRange: DateRange | null;
   onSelectDate: (day: string) => void;
   /** One clock for the panel, so the picker and the cards describe one instant. */
