@@ -17,6 +17,7 @@
 import { Info, Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { StatTrend } from '@/lib/aggregations';
 
@@ -115,8 +116,16 @@ export function StatCard({
         )}
       </div>
       <div>
-        <p className="text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
-          {value}
+        {/* The headline is the card's focal point and is sized to say so — the
+            tag, the label and the caption around it are all ≤12px, so the
+            number carries the hierarchy on its own without a second accent.
+            It steps up again on `sm` and above, where the cards are 2- or
+            4-up and each one is narrow enough that the number has to win the
+            column at a glance. It COUNTS to a new value rather than swapping:
+            see AnimatedNumber for why that is a change indicator, not
+            decoration. */}
+        <p className="text-2xl font-bold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-3xl">
+          <AnimatedNumber value={value} />
         </p>
         <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
           {label}

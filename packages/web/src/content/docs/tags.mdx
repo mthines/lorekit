@@ -113,9 +113,13 @@ The Explorer opens with four cards above the memory list, describing **the scope
 | Scopes active | Distinct scopes with at least one memory written in the range, **under your filters** |
 | Memories expired | Records deleted because their TTL ran out |
 
-The panel opens **collapsed**, showing the four numbers on one line. Expand it with the chevron to see the trends behind them and the 26-week heatmap; collapse it again and the numbers stay. Every card with bars is **additive** — summing the bars reproduces the number above them, so the chart and the total can never tell different stories.
+The panel opens **collapsed**, showing the four numbers side by side on one line. Expand it with the chevron to see the trends behind them and the write heatmap — a quarter of activity on a phone, a full year on a desktop, sized to the width it has; collapse it again and the numbers stay. When a number changes because you picked a different scope, range, or filter, it counts to its new value rather than swapping, so you can see which figures moved. Every card with bars is **additive** — summing the bars reproduces the number above them, so the chart and the total can never tell different stories.
 
-The **time range** picker sits in the same header and offers the same presets as the Overview (24h / 7d / 30d) plus **All**. It drives the whole page: the cards, the heatmap highlight, and the list below. The Explorer opens on **All** time, so nothing is hidden by default — but once you narrow the range, an empty list caused by the window says so and offers a one-click way back to all time.
+The **time range** picker sits in the same header and offers the same presets as the Overview (24h / 7d / 30d) plus **All**.
+
+Before you touch it, it describes **the last 24 hours** — recent activity is what an activity panel is for, and an all-time total has no preceding period to compare against. That opening view applies to the panel only: **the list below still shows all time**, so nothing is hidden by default and every `/lore` link you have already shared still opens on everything.
+
+Once you *do* pick a range it drives the whole page — the cards, the heatmap highlight, and the list below — and an empty list caused by the window says so and offers a one-click way back to all time.
 
 **Memories written** and **Scopes active** follow your full selection — scope, time range, and every filter in the bar — so they always agree with the list beneath them. The other two cards can only go part-way, each stated in its own tooltip:
 

@@ -52,7 +52,7 @@ const meta: Meta<typeof DashboardStats> = {
 Shipped examples:
 
 - **`src/app/(dashboard)/lore/LorePage.stories.tsx`** — a *true full-page* story of the
-  `/lore` client page. Its scope tree + 26-week contribution heatmap resolve from the
+  `/lore` client page. Its scope tree + contribution heatmap resolve from the
   MSW-mocked PostgREST reads. Needs `parameters.nextjs.appDirectory: true` (the page uses
   `useRouter`/`useSearchParams` via `useUrlState`).
 - **`src/components/dashboard/DashboardStats.stories.tsx`** — a full-view story of the
