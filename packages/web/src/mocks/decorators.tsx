@@ -54,7 +54,8 @@ export const withQueryClient: Decorator = (Story) => (
  * Freeze `Date` to `fixedIso` for the story's render.
  *
  * The dashboard reads `new Date()` during render (trend windows, freshness
- * labels, the 26-week heatmap grid), so the clock must be pinned before the
+ * labels, the heatmap grid — whose columns are counted back from today), so
+ * the clock must be pinned before the
  * story paints. Only the zero-argument constructor and `Date.now()` are
  * overridden; `new Date(someArg)` still parses normally, so fixture timestamps
  * are unaffected. The override is a subclass assignment on `globalThis.Date`;

@@ -117,6 +117,32 @@ export const AbsoluteRange: Story = {
 };
 
 /**
+ * The collapsed strip at PHONE width.
+ *
+ * The four numbers stay on ONE row of four equal columns here, which is the
+ * whole point of the grid: the wrapping flex row this replaced broke into two
+ * ragged lines below ~500px, so the summary that is meant to be readable at a
+ * glance took two. Worth its own baseline because it is the layout most likely
+ * to regress silently — a desktop screenshot cannot show it.
+ *
+ * The container is narrowed rather than the viewport, so this pins the strip
+ * only. The heatmap's span is chosen from a real media query (`useIsMobile`),
+ * which a narrow container does not move — and the strip is what collapses.
+ */
+export const Narrow: Story = {
+  args: {
+    scope: null,
+    range: { preset: '30d' },
+    scopeLabel: 'All scopes',
+  },
+  render: (args) => (
+    <div style={{ maxWidth: '23rem', padding: '0.75rem' }}>
+      <ExplorerInsights {...args} />
+    </div>
+  ),
+};
+
+/**
  * The EXPANDED state, reached the way a reader reaches it.
  *
  * Worth its own baseline because it is the state the redesign is judged on: the

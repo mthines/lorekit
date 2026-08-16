@@ -105,12 +105,17 @@ const NO_TAGS: string[] = [];
 const NO_FILTERS: Filter[] = [];
 
 /**
- * The Explorer opens on ALL time — a list's job is to show everything, and that
- * is the horizon every existing `/lore` deep link (and `lorekit link` URL) has
- * always meant by an absent `range`. The stat header does NOT need the list
- * narrowed to stay legible: an unbounded selection charts the last 90 days on
- * its own (`effectiveStatsRange`), so the two can share one range param without
- * a 24h default that would silently re-scope every shared link.
+ * The Explorer's LIST opens on ALL time — a list's job is to show everything,
+ * and that is the horizon every existing `/lore` deep link (and `lorekit link`
+ * URL) has always meant by an absent `range`. Narrowing this default would
+ * silently re-scope every shared link.
+ *
+ * The Activity panel above the list does NOT open on all time: it substitutes a
+ * 24h DISPLAY default for exactly this "untouched" value, without writing it
+ * (`DEFAULT_STATS_RANGE` in `ExplorerInsights`). That is why `null` here has to
+ * stay distinguishable from an explicit `All`, and why the picker now writes
+ * `{preset:'all'}` instead of clearing the param — both resolve to an unbounded
+ * window, but only the absent one is a reader who has not chosen yet.
  *
  * Module-level `null` for the reference-stability reason `useUrlState` documents:
  * the default sits in the setter's `useCallback` deps, so a fresh literal each
@@ -490,6 +495,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     }
   }
 
+  // Clearing the calendar means "no date restriction" — which is the EXPLICIT
+  // `all` selection, not the untouched state. The two are different values now
+  // (see RangePicker): clearing back to `null` would re-arm the Activity
+  // panel's 24h display default, so the control row would say "no dates" while
+  // the panel above it started describing yesterday.
+  function handleDatePickerChange(next: DateRange | null) {
+    setRange(next ?? { preset: 'all' });
+  }
+
   const selectedScopeLabel =
     selectedScope === null
       ? 'All scopes'
@@ -570,7 +584,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           // range actually bounds something, regardless of which title branch
           // wins below.
           {...(rangeIsNarrowing
-            ? { action: { label: 'View all time', onClick: () => setRange(null) } }
+            ? { action: { label: 'View all time', onClick: () => setRange({ preset: 'all' }) } }
             : {})}
           title={
             // Within-view narrowing is checked FIRST — a search or filter that
@@ -696,7 +710,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           editingField={isMobile ? null : editingField}
           onEditField={setEditingField}
           range={pickerRange}
-          onRangeChange={setRange}
+          onRangeChange={handleDatePickerChange}
           status={status}
           onStatusChange={handleStatusChange}
         />
@@ -725,7 +739,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           editingField={isMobile ? editingField : null}
           onEditField={setEditingField}
           range={pickerRange}
-          onRangeChange={setRange}
+          onRangeChange={handleDatePickerChange}
           status={status}
           onStatusChange={handleStatusChange}
         />

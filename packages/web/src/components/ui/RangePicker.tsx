@@ -82,7 +82,14 @@ export function RangePicker({
             role="radio"
             aria-checked={isActive}
             aria-label={preset === 'all' ? 'All time' : `Last ${PRESET_LABELS[preset]}`}
-            onClick={() => onChange(preset === 'all' ? null : { preset })}
+            // `all` emits `{preset:'all'}`, NOT `null`. Both resolve to an
+            // unbounded window (`resolveRange`), so nothing downstream can tell
+            // them apart — but a CALLER can, and the Explorer needs to: an
+            // absent `?range=` is "the reader has not chosen yet" (its Activity
+            // panel substitutes a 24h display default), while an explicit `All`
+            // is a choice that must survive as one. Emitting `null` here made
+            // the two states the same value and the choice unexpressible.
+            onClick={() => onChange({ preset })}
             className={[
               'min-h-6 rounded px-2 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',
               isActive
