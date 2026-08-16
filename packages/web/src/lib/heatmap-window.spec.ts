@@ -50,11 +50,23 @@ describe('heatmap window', () => {
     );
   });
 
-  it('asks for more than the server default only because the render needs it', () => {
-    // `GET /memories/activity` falls back to 200 days when `since` is absent.
-    // This test exists to make the coupling visible: if the desktop span ever
-    // drops back under that, the explicit `since` becomes optional again.
+  /**
+   * Deliberately NOT `expect(MAX_HEATMAP_WEEKS * 7).toBeGreaterThan(200)`.
+   *
+   * That was the first version of this test, and it asserted the wrong thing:
+   * it would fail the build if someone shortened the desktop span back under
+   * the endpoint's 200-day default — a change that is entirely benign, since
+   * it only makes the explicit `since` redundant rather than wrong. A test
+   * that forbids a safe change is a liability, not a guard.
+   *
+   * What actually has to hold is one-directional: whatever the span, the
+   * fetch covers it and never leans on a default sized for some other chart.
+   */
+  it('covers the render without depending on the endpoint default', () => {
     const SERVER_DEFAULT_WINDOW_DAYS = 200;
-    expect(MAX_HEATMAP_WEEKS * 7).toBeGreaterThan(SERVER_DEFAULT_WINDOW_DAYS);
+    expect(HEATMAP_FETCH_DAYS).toBeGreaterThanOrEqual(MAX_HEATMAP_WEEKS * 7);
+    // And the bound is a real one rather than an accidental re-derivation of
+    // the default, which is what let the two drift apart before.
+    expect(HEATMAP_FETCH_DAYS).not.toBe(SERVER_DEFAULT_WINDOW_DAYS);
   });
 });
