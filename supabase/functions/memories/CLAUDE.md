@@ -66,7 +66,7 @@ dimension is one field in `MemoryDimensions` and one line in the predicate, not 
 Body shape, versus the query form:
 
 - Every dimension is a real **array** (`{"host": ["reviewer", "aw"], "host_mode": "in"}`),
-  bounded at `DIMENSION_VALUES_MAX` (1000) values of `DIMENSION_VALUE_MAX` (512) characters.
+  bounded at `FILTER_VALUES_MAX` (1000) values of `FILTER_VALUE_MAX_CHARS` (512) characters.
   The bound is explicit so it is a documented limit rather than an emergent one.
 - **A value containing a comma is reachable here** and is not over `GET /` — the splitting is
   a property of the query wire format, and the whole reason the array form exists.
