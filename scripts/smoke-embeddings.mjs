@@ -44,7 +44,7 @@ const {
 } = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
 const {
   createSmokeNamespace, sweepSmokeArtefacts, describeSweepFailures,
-} = await import(path.join(HERE, '..', 'packages', 'mcp-server', 'src', 'smoke-cleanup.ts'));
+} = await import(path.join(HERE, '..', 'supabase', 'tests', 'smoke-cleanup.ts'));
 
 // The label is part of the CLOSED set in `SMOKE_ARTEFACT_PATTERN`. Minting
 // outside it would produce a name the orphan sweeper never recognises, so this
