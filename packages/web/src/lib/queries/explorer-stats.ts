@@ -13,14 +13,17 @@
  *
  * | Card    | Endpoint                        | Follows |
  * |---------|---------------------------------|---------|
- * | Written | `GET /memories/activity`        | range + scope + dimension filters, all SERVER-side (migration 00063) |
+ * | Written | `POST /memories/activity`       | range + scope + dimension filters, all SERVER-side (migration 00063) |
  * | Scopes  | the same response               | the same — it counts the returned `rows`, so a selected scope collapses it to 1 |
  * | Read    | `GET /memories/read-activity`   | range + scope SERVER-side (`?scope=`, migration 00058) — NOT the dimension filters |
  * | Expired | `GET /memories/usage`           | range only — **never scope, never filters** |
  *
- * Written and Scopes carry the FULL predicate the list applies (via
- * `filtersToQueryParams`), so the header agrees with the list beneath it. Two
- * honest limitations remain, both surfaced in the UI rather than hidden here:
+ * Written and Scopes go over the BODY transport (`activityPostRequest`) for the
+ * same reason the list does: a filter bar's dimensions are unbounded and a query
+ * string caps each one at 2048 characters. They carry the FULL predicate the
+ * list applies (via `filtersToActivityBody`), so the header agrees with the list
+ * beneath it. Two honest limitations remain, both surfaced in the UI rather than
+ * hidden here:
  *
  * 1. **Read cannot follow the dimension filters.** `usage_events` records a
  *    read's scope (00058) but not the tags/repo of the memories it returned, so a

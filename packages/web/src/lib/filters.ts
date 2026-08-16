@@ -3,10 +3,10 @@
  *
  * This is `tag-filter.ts` generalised. The Explorer used to filter on exactly
  * one dimension (labels), so a single multi-select popover was the whole
- * story. It now filters on six — label, agent, trigger, repo, branch, pull
- * request — which is a different problem: one control per dimension would put
- * six triggers in a row that is already crowded, and would still not answer
- * "what can I filter by?" for the next dimension after that.
+ * story. It now filters on nine — label, kind, host, owner, agent, trigger,
+ * repo, branch, pull request — which is a different problem: one control per
+ * dimension would put nine triggers in a row that is already crowded, and would
+ * still not answer "what can I filter by?" for the next dimension after that.
  *
  * The model is Linear's, because it is the one that scales: a **filter bar** of
  * committed conditions, each rendered as a three-segment pill, fed by ONE
@@ -20,7 +20,10 @@
  * is unit-testable in the node vitest project, mirroring `tag-filter.ts` and
  * `org-ui.ts`. The impure shells are `components/lore/FilterMenu.tsx` (the
  * menu), `components/lore/FilterPill.tsx` (the pills) and the `useMemories`
- * query that consumes {@link filtersToQueryParams}.
+ * query that consumes {@link filtersToBody} — the BODY transport, because a
+ * filter bar's value sets are unbounded and a query string caps each dimension
+ * at 2048 characters. {@link filtersToQueryParams} is the equivalent GET
+ * encoding, still exported for the query-string callers.
  */
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
