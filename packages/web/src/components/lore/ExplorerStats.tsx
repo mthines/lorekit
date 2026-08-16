@@ -42,6 +42,7 @@ import { useMemo } from 'react';
 import { BookOpen, BookOpenCheck, Hourglass, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
+import { formatCompact } from '@/lib/format-number';
 import {
   effectiveStatsRange,
   statsWindow,
@@ -289,8 +290,12 @@ export function ExplorerStats({
             {/* Sized to match the expanded card's headline, so the number does
                 not visibly grow or shrink through the cross-fade — the answer
                 appears to stay put while only the evidence moves. */}
+            {/* Compact above 10k: four equal columns leave ~58px each on a
+                320px phone, and an ungrouped six-digit figure at this size
+                would overflow into its neighbour. The exact value stays one
+                click away in the expanded card — and is what gets announced. */}
             <dd className="order-1 text-xl font-semibold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-2xl">
-              <AnimatedNumber value={value} />
+              <AnimatedNumber value={value} format={formatCompact} />
             </dd>
           </div>
         ))}

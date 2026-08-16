@@ -29,6 +29,7 @@
 
 import { useContext, useEffect, useRef } from 'react';
 import { animate, MotionConfigContext, useReducedMotion } from 'motion/react';
+import { formatExact } from '@/lib/format-number';
 
 /**
  * Fast enough to read as a recomputation rather than a countdown.
@@ -40,16 +41,19 @@ import { animate, MotionConfigContext, useReducedMotion } from 'motion/react';
  */
 const DEFAULT_DURATION = 0.4;
 
-const formatDefault = (value: number) => value.toLocaleString();
-
 export interface AnimatedNumberProps {
   /** The target value. Every change tweens from whatever is on screen. */
   value: number;
   /** Tween length in seconds. */
   duration?: number;
   /**
-   * Renders the number. Must be stable-ish — it is read through a ref, so a new
-   * function identity each render is harmless (it does not restart the tween).
+   * Renders the VISIBLE digits. Must be stable-ish — it is read through a ref,
+   * so a new function identity each render is harmless (it does not restart the
+   * tween).
+   *
+   * Only the visible half is affected. The announced value is always
+   * {@link formatExact}, so a caller may render a figure compactly in a narrow
+   * slot without a screen reader losing the real number.
    */
   format?: (value: number) => string;
   /**
@@ -66,7 +70,7 @@ export interface AnimatedNumberProps {
 export function AnimatedNumber({
   value,
   duration = DEFAULT_DURATION,
-  format = formatDefault,
+  format = formatExact,
   animateOnMount = false,
   className = '',
 }: AnimatedNumberProps) {
@@ -142,7 +146,10 @@ export function AnimatedNumber({
       <span ref={nodeRef} aria-hidden>
         {initialText}
       </span>
-      <span className="sr-only">{format(value)}</span>
+      {/* Always the exact figure, never the caller's `format` — the point of
+          this half is that the announced number is the real one even when the
+          visible one is abbreviated to fit. */}
+      <span className="sr-only">{formatExact(value)}</span>
     </span>
   );
 }
