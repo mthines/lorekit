@@ -237,12 +237,20 @@ describe('selectionSummary', () => {
     expect(selectionSummary(OPTIONS, ['a', 'b', 'c'], 'scopes')).toBe('3 scopes');
   });
 
-  it('reports null for a single value outside the option set', () => {
+  it('reports null for a SCALAR value outside the option set', () => {
     // NOT the raw value: the Overview's range picker legitimately holds one
     // (an absolute window drilled in from a chart) and documents that the
     // trigger then reads as the control's name unless `triggerLabel` overrides
     // it. Printing the raw value would regress that.
     expect(selectionSummary(OPTIONS, 'zzz')).toBeNull();
+  });
+
+  it('says the value for a ONE-ITEM list outside the option set', () => {
+    // The scalar null has one caller that wants it; a list has none. Reporting
+    // "none" for ['zzz'] while ['a', 'zzz'] reports "2 selected" would make the
+    // trigger contradict itself on the same non-empty selection.
+    expect(selectionSummary(OPTIONS, ['zzz'])).toBe('zzz');
+    expect(selectionSummary(OPTIONS, ['zzz'], 'scopes')).toBe('zzz');
   });
 
   it('still counts unknown values in a multi selection', () => {

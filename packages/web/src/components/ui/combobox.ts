@@ -114,23 +114,36 @@ export function toggleSelection<T extends string>(selection: readonly T[], value
  * accurately.
  *
  * `null` means "there is no text to show", and the caller falls back to the
- * control's own name — this function does not know it. A single value with no
- * matching option is one of those cases, NOT a reason to print the raw value:
- * the Overview's range picker legitimately holds a value outside its option set
- * (an absolute window drilled in from a chart) and documents that the trigger
- * then reads as the control's name unless `triggerLabel` overrides it. Printing
+ * control's own name — this function does not know it.
+ *
+ * An unmatched lone value resolves to `null` in the SCALAR shape only: the
+ * Overview's range picker legitimately holds a value outside its option set (an
+ * absolute window drilled in from a chart) and documents that the trigger then
+ * reads as the control's name unless `triggerLabel` overrides it. Printing
  * `2026-03-01T00:00:00Z/2026-03-08T00:00:00Z` in a 240px trigger would be a
  * regression dressed up as honesty.
+ *
+ * A LIST has no such caller and cannot afford the same answer: `['a', 'zzz']`
+ * already reports "2 selected", so letting `['zzz']` report nothing would make
+ * the trigger — and the `aria-label` built from it — say "none" about a
+ * selection that is not empty. The array shape therefore falls back to the raw
+ * value, which is at least true. A multi-select's values are the short,
+ * meaningful strings the count exists to avoid joining, so one of them fits.
  */
 export function selectionSummary<O extends ComboboxOption>(
   options: readonly O[],
   selection: ComboboxSelection<string>,
   countNoun = 'selected',
 ): string | null {
-  const values = selection == null ? [] : Array.isArray(selection) ? selection : [selection];
+  const isList = Array.isArray(selection);
+  const values = selection == null ? [] : isList ? selection : [selection];
   if (values.length === 0) return null;
   if (values.length === 1) {
-    return options.find((o) => o.value === values[0])?.label ?? null;
+    const only = values[0];
+    const label = options.find((o) => o.value === only)?.label;
+    if (label !== undefined) return label;
+    // Scalar keeps the `null`; a list says the value rather than "none".
+    return isList ? (only ?? null) : null;
   }
   return `${values.length} ${countNoun}`;
 }
