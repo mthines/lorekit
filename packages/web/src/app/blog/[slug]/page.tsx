@@ -12,6 +12,7 @@ import { MobileTableOfContents } from '@/components/blog/MobileTableOfContents';
 import { ReadingProgress } from '@/components/blog/ReadingProgress';
 import { PostLikes } from '@/components/blog/PostLikes';
 import { BlogPostCta } from '@/components/blog/BlogPostCta';
+import { ReadingTelemetry } from '@/components/content/ReadingTelemetry';
 import { formatPostDate, readingLabel } from '@/lib/blog/format';
 
 // Statically generate one page per known post slug; reject anything else (404).
@@ -44,6 +45,13 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
   return (
     <>
       <ReadingProgress />
+      {/* Renders nothing — emits scroll-depth, per-section dwell and an
+          end-of-page-view reading summary. Same heading ids as the TOC. */}
+      <ReadingTelemetry
+        contentType="blog"
+        slug={post.slug}
+        sectionIds={post.toc.map((item) => item.id)}
+      />
 
       <main className="mx-auto max-w-5xl md:flex md:justify-center md:gap-8 lg:gap-12">
         <article className="mx-auto min-w-0 max-w-2xl md:mx-0 md:flex-1">

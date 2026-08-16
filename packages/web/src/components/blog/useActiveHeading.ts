@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TocItem } from '@/lib/blog/toc';
+import { resolveActiveHeadingId } from '@/lib/analytics/reading';
 
 /** The "reading line" (px from viewport top): a heading is the active section
  *  once its top rises above this. Deliberately a hair BELOW `BlogProse`'s
@@ -28,17 +29,18 @@ export function useActiveHeading(items: readonly TocItem[]) {
   const prefersReducedRef = useRef(false);
 
   const resolveActive = useCallback(() => {
-    let current = items[0]?.id ?? '';
-    for (const { id } of items) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      if (el.getBoundingClientRect().top - ACTIVE_OFFSET <= 0) current = id;
-      else break;
-    }
+    // The resolution itself is pure and lives in `lib/analytics/reading.ts`,
+    // shared with `ReadingTelemetry`: the section we highlight and the section
+    // we bill reading time to must be the same section, by construction.
+    const positions = items
+      .map(({ id }) => {
+        const el = document.getElementById(id);
+        return el ? { id, top: el.getBoundingClientRect().top } : null;
+      })
+      .filter((p): p is { id: string; top: number } => p !== null);
     const doc = document.documentElement;
     const atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 2;
-    if (atBottom) current = items[items.length - 1]?.id ?? current;
-    setActiveId(current);
+    setActiveId(resolveActiveHeadingId(positions, { offset: ACTIVE_OFFSET, atBottom }));
   }, [items]);
 
   useEffect(() => {
