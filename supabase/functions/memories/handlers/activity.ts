@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { forbidden, ok } from '../../_shared/api/respond.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
@@ -56,6 +57,22 @@ export async function handleActivity(
     'lorekit.bucket': params.bucket,
     ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
   });
+
+  // Early refusal for a NAMED scope outside the key's allowlist (00067/00068),
+  // identical to `GET /memories`. Without it `p_key_scopes` narrows the series
+  // to empty inside the RPC, which reads as "there is nothing there" rather
+  // than "you may not ask about that scope" — and refusal is what
+  // `docs/api-tokens.md`'s table promises for a NAMED scope. `firstDeniedScope`
+  // returns null for a JWT/service caller and for an unrestricted key, so an
+  // unscoped token is byte-for-byte unaffected.
+  const deniedScope = firstDeniedScope(auth, [params.scope]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
 
   // Parse the caller's active filters — same names/shapes as GET /memories and
   // /facets — so the RPC narrows the written/scopes counts to the list's set.

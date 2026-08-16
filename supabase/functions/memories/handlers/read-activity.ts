@@ -1,6 +1,7 @@
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
-import { badRequest, ok } from '../../_shared/api/respond.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { validateScope } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -66,6 +67,22 @@ export async function handleReadActivity(
     } catch (e) {
       return badRequest((e as Error).message, undefined, cors);
     }
+  }
+
+  // Early refusal for a NAMED scope outside the key's allowlist (00067/00068),
+  // identical to `GET /memories`. Without it `p_key_scopes` narrows the series
+  // to empty inside the RPC, which reads as "you read nothing in that scope"
+  // — a different answer than "you may not ask about that scope", and the one
+  // `docs/api-tokens.md`'s table says this path gives. `firstDeniedScope`
+  // returns null for a JWT/service caller and for an unrestricted key, so an
+  // unscoped token is byte-for-byte unaffected.
+  const deniedScope = firstDeniedScope(auth, [scopeFilter]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
   }
 
   const until = params.until ?? new Date().toISOString();
