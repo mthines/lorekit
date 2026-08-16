@@ -111,8 +111,16 @@ export function toggleSelection<T extends string>(selection: readonly T[], value
  * A count rather than a truncated join once past one: "repo::a/b, repo::c/d, +3"
  * in a 240px trigger degrades to unreadable ellipsis at exactly the point the
  * selection is worth reading, and "5 selected" at least states the fact
- * accurately. `null` means "nothing selected" so the caller can fall back to the
- * control's own name — this function does not know it.
+ * accurately.
+ *
+ * `null` means "there is no text to show", and the caller falls back to the
+ * control's own name — this function does not know it. A single value with no
+ * matching option is one of those cases, NOT a reason to print the raw value:
+ * the Overview's range picker legitimately holds a value outside its option set
+ * (an absolute window drilled in from a chart) and documents that the trigger
+ * then reads as the control's name unless `triggerLabel` overrides it. Printing
+ * `2026-03-01T00:00:00Z/2026-03-08T00:00:00Z` in a 240px trigger would be a
+ * regression dressed up as honesty.
  */
 export function selectionSummary<O extends ComboboxOption>(
   options: readonly O[],
@@ -122,9 +130,7 @@ export function selectionSummary<O extends ComboboxOption>(
   const values = selection == null ? [] : Array.isArray(selection) ? selection : [selection];
   if (values.length === 0) return null;
   if (values.length === 1) {
-    const only = options.find((o) => o.value === values[0]);
-    // An unknown value is still A selection — reporting "none" would be a lie.
-    return only?.label ?? String(values[0]);
+    return options.find((o) => o.value === values[0])?.label ?? null;
   }
   return `${values.length} ${countNoun}`;
 }

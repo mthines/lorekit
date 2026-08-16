@@ -237,9 +237,17 @@ describe('selectionSummary', () => {
     expect(selectionSummary(OPTIONS, ['a', 'b', 'c'], 'scopes')).toBe('3 scopes');
   });
 
-  it('shows an unknown value verbatim rather than reporting none', () => {
-    // A value outside the option set is still A selection — the Overview's
-    // range picker relies on this being honest.
-    expect(selectionSummary(OPTIONS, 'zzz')).toBe('zzz');
+  it('reports null for a single value outside the option set', () => {
+    // NOT the raw value: the Overview's range picker legitimately holds one
+    // (an absolute window drilled in from a chart) and documents that the
+    // trigger then reads as the control's name unless `triggerLabel` overrides
+    // it. Printing the raw value would regress that.
+    expect(selectionSummary(OPTIONS, 'zzz')).toBeNull();
+  });
+
+  it('still counts unknown values in a multi selection', () => {
+    // The count does not need labels, so an unrecognised member is no reason to
+    // under-report how many things are selected.
+    expect(selectionSummary(OPTIONS, ['a', 'zzz'])).toBe('2 selected');
   });
 });

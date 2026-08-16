@@ -11,6 +11,14 @@ import { Combobox, type ComboboxBaseProps, type ComboboxItem } from './Combobox'
  * of option. The popup itself is portaled and interaction-driven, so it is
  * covered by `Combobox.test.stories.tsx`; screenshotting an open popover would
  * pin a position that depends on where the trigger happened to land.
+ *
+ * The multi-select trigger has three resting states of its own (empty → the
+ * control's name, one → that option's label and icon, several → a count) and
+ * they are asserted in `Combobox.test.stories.tsx`'s
+ * `TheMultiTriggerCountsPastOne` rather than screenshotted, because a new
+ * visual story needs a committed `__screenshots__` baseline and the branch that
+ * added multi-select could not generate one. Add the story together with its
+ * baseline in one commit.
  */
 const meta: Meta<typeof Combobox> = {
   title: 'UI/Combobox',
@@ -54,26 +62,6 @@ function Controlled({
   );
 }
 
-function ControlledMulti({
-  options,
-  initial,
-  countNoun,
-  ...rest
-}: { options: ComboboxItem[]; initial: string[]; countNoun?: string } & SharedProps) {
-  const [values, setValues] = useState(initial);
-  return (
-    <Combobox
-      multiple
-      options={options}
-      value={values}
-      onChange={setValues}
-      countNoun={countNoun}
-      label={rest.label ?? 'Scopes'}
-      {...rest}
-    />
-  );
-}
-
 /**
  * The three shapes side by side: labelled, icon-only (the phone toolbar), and a
  * searchable list with a disabled option.
@@ -91,34 +79,6 @@ export const Default: Story = {
         options={BRANCHES}
         initial="main"
         label="Branch"
-        searchable
-        searchPlaceholder="Search branches…"
-      />
-    </div>
-  ),
-};
-
-/**
- * The multi-select trigger at its three resting states: nothing picked (falls
- * back to the control's name), exactly one (the option's own label and icon),
- * and several (a count, because three branch names do not fit a 240px trigger
- * and truncating them is worse than counting them).
- */
-export const Multiple: Story = {
-  render: () => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-      <ControlledMulti options={BRANCHES} initial={[]} label="Branches" countNoun="branches" />
-      <ControlledMulti
-        options={BRANCHES}
-        initial={['main']}
-        label="Branches"
-        countNoun="branches"
-      />
-      <ControlledMulti
-        options={BRANCHES}
-        initial={['main', 'feat/maintenance', 'feat/explorer-filters']}
-        label="Branches"
-        countNoun="branches"
         searchable
         searchPlaceholder="Search branches…"
       />

@@ -205,20 +205,22 @@ export function Combobox<T extends string>(props: ComboboxProps<T>) {
     setOpen(true);
   }, [options, value]);
 
-  const commit = useCallback(
-    (next: T) => {
-      if (props.multiple) {
-        // Toggle and STAY OPEN: building a set of three is one trip to the
-        // trigger, not three. The query survives too — narrowing to "repo::" and
-        // ticking four of them is the whole point of a searchable multi-select.
-        props.onChange(toggleSelection(props.value, next));
-        return;
-      }
-      props.onChange(next);
-      close();
-    },
-    [props, close],
-  );
+  // Deliberately NOT `useCallback`: the only correct dependency is `props`,
+  // which is a fresh object every render, so the memo would rebuild on every
+  // render while reading as though it did not. Nothing downstream memoizes on
+  // this — it is called from two plain event handlers — so a plain function is
+  // both cheaper and honest about its lifetime.
+  function commit(next: T) {
+    if (props.multiple) {
+      // Toggle and STAY OPEN: building a set of three is one trip to the
+      // trigger, not three. The query survives too — narrowing to "repo::" and
+      // ticking four of them is the whole point of a searchable multi-select.
+      props.onChange(toggleSelection(props.value, next));
+      return;
+    }
+    props.onChange(next);
+    close();
+  }
 
   // Typing narrows the list under the highlight, so re-home it or Enter selects
   // nothing and the control reads as broken.
@@ -419,6 +421,19 @@ export function Combobox<T extends string>(props: ComboboxProps<T>) {
               // pointerdown, so a click listener would fire after the menu
               // had already begun closing on some browsers.
               onPointerUp={() => !option.disabled && commit(option.value)}
+              // Keep DOM focus OFF the row. The control's whole keyboard model
+              // is that focus stays on the trigger (or the search box) and the
+              // highlight travels by `aria-activedescendant`; a row that takes
+              // focus on mousedown breaks it, because `onKeyDown` is bound to
+              // those two elements and nothing else. Single-select hid the bug
+              // — the list closed on the pick, so there was no "after a mouse
+              // pick" to press Escape in. Multi-select keeps the list open, and
+              // there Escape and Tab silently stopped dismissing.
+              //
+              // `mousedown` rather than `pointerdown`: focus is a default
+              // action of the compatibility mouse event, and suppressing it
+              // there leaves `pointerup` — which is what commits — untouched.
+              onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => !option.disabled && setHighlight(i)}
               className={[
                 'flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition-colors duration-100',
