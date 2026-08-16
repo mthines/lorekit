@@ -72,9 +72,19 @@ export type ScalarDimension = (typeof SCALAR_DIMENSIONS)[number];
  * than 400ing the request: the filter bar can be built from a hand-editable
  * URL, and one bad entry should narrow the filter, not break the page. A list
  * that reduces to empty applies no filter at all, like every other dimension.
+ *
+ * The digit run is BOUNDED to what int4 can hold, and that bound has to live
+ * HERE rather than only in SQL, because the three readers disagree about what
+ * an over-wide value does. `lorekit_memory_list` (00067) drops it, so the
+ * dimension silently widens to unfiltered; `lorekit_memory_facets` and
+ * `lorekit_memory_activity` still cast under a bare `^[0-9]+$` and raise
+ * `22003`, which surfaces as a 500. Dropping it at the ONE decoder both
+ * transports share means no reader ever sees it and the three cannot disagree.
+ * `0*` keeps the zero-padded form working (`007` → PR 7), and nine significant
+ * digits is the widest run that cannot overflow int4.
  */
 function digitsOnly(values: readonly string[]): string[] {
-  return values.filter((v) => /^\d+$/.test(v));
+  return values.filter((v) => /^0*\d{1,9}$/.test(v));
 }
 
 /** The query-string shape: one comma-joined string per dimension. */

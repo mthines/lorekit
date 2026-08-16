@@ -51,6 +51,20 @@ describe('dimensionsFromQuery / dimensionsFromBody', () => {
     expect(dimensionsFromBody({ origin_pr: ['482', 'oops'] }).origin_pr.values).toEqual(['482']);
   });
 
+  it('drop an all-digit pull request too wide for int4, on both sides', () => {
+    // Not a style rule: `lorekit_memory_facets` / `lorekit_memory_activity`
+    // still cast under a bare digit regex and raise 22003 on this value, so
+    // letting it through here is a 500. Dropping it at the shared decoder is
+    // what keeps all three readers agreeing.
+    expect(dimensionsFromQuery({ origin_pr: '482,99999999999' }).origin_pr.values).toEqual(['482']);
+    expect(dimensionsFromBody({ origin_pr: ['482', '99999999999'] }).origin_pr.values).toEqual(['482']);
+    // 2147483647 fits int4 but is ten digits, so the bound trades it away; no
+    // repository has a PR number anywhere near it.
+    expect(dimensionsFromBody({ origin_pr: ['999999999'] }).origin_pr.values).toEqual(['999999999']);
+    // The zero-padded form still resolves — `007` has always meant PR 7.
+    expect(dimensionsFromBody({ origin_pr: ['0000000007'] }).origin_pr.values).toEqual(['0000000007']);
+  });
+
   it('differ in exactly one thing: only the query form splits on a comma', () => {
     // The body carries the value whole — the reason the transport exists.
     expect(dimensionsFromBody({ origin_branch: ['feat/a,b'] }).origin_branch.values)
