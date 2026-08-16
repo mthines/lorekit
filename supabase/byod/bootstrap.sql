@@ -221,9 +221,13 @@ alter table api_tokens drop constraint if exists api_tokens_org_ids_not_null;
 alter table api_tokens add constraint api_tokens_org_ids_not_null
   check (array_position(org_ids, null) is null);
 
--- The two request-time predicates. Kept byte-identical to 00067 — a BYOD
--- install that answers these differently is a BYOD install with a different
--- authorization boundary.
+-- The two request-time predicates. Kept byte-identical to the CURRENT hosted
+-- definitions — `lorekit_api_token_scope_allowed` as re-issued by 00068 §8,
+-- `lorekit_api_token_org_allowed` as first issued by 00067 — a BYOD install
+-- that answers these differently is a BYOD install with a different
+-- authorization boundary. Mirror the LATEST definition, never the one the
+-- column was introduced with: 00067's looser scope predicate treated any
+-- trailing `*` as a prefix wildcard, so a stored mid-token `*` WIDENED the key.
 --
 -- `lorekit_api_token_set_scoping` is deliberately NOT mirrored: it validates
 -- org ids against `lorekit_member_org_ids`, and this file has no orgs by design
@@ -245,11 +249,23 @@ as $$
     else exists (
       select 1
       from unnest(p_patterns) as pattern
-      where case
-        when right(pattern, 1) = '*'
-          then p_scope like replace(left(pattern, -1), '_', '\_') || '%'
-        else p_scope = pattern
-      end
+      -- SCOPE_PATTERN's shape, verbatim (00068 §8). A `*` is a wildcard only
+      -- directly after `/` or `::`; a pattern that fails this test is DROPPED
+      -- rather than matched, so a stored mid-token wildcard can only ever
+      -- narrow the key. The guard is needed even though `api_tokens_scopes_shape`
+      -- exists, because the column can hold a value the CHECK never saw — a
+      -- BYOD install bootstrapped before this file grew the constraint, or a
+      -- constraint dropped by hand.
+      where pattern ~ '^[a-z0-9._:/-]+((/|::)\*)?$'
+        and case
+          when right(pattern, 1) = '*'
+            -- Escape LIKE's single-character wildcard in the literal prefix so
+            -- `repo::my_org/*` stays owner-exact instead of also matching
+            -- `repo::myXorg/...`. `%` and `\` cannot occur — the shape test's
+            -- charset excludes them.
+            then p_scope like replace(left(pattern, -1), '_', '\_') || '%'
+          else p_scope = pattern
+        end
     )
   end;
 $$;
