@@ -8,7 +8,7 @@ import { withQueryClient, withFrozenClock, withMemorySidebar } from '@/mocks/dec
  * True full-page visual-regression stories for the `/lore` client page.
  *
  * Unlike the server-component pages, `/lore` is `'use client'`: it drives its
- * scope tree and 26-week contribution heatmap from `useScopeTree` / `useLoreData`
+ * scope tree and contribution heatmap from `useScopeTree` / `useLoreData`
  * — TanStack Query hooks that call the Supabase *browser* client (PostgREST over
  * HTTP), which MSW mocks. So the actual page component renders end-to-end here,
  * not a hand-assembled subtree.
