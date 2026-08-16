@@ -5787,6 +5787,27 @@ begin
   assert lorekit_api_token_scope_allowed('{}'::text[], null),
     'scope_allowed AC-2: an unrestricted key still reaches a scopeless operation';
 
+  -- AC-2b (00068): a pattern outside SCOPE_PATTERN's shape is DROPPED, not
+  -- honoured as a prefix. `*` is a wildcard only directly after `/` or `::`, so
+  -- a stored `repo::mthines/lore*` must not reach every repo starting with
+  -- those letters — that would WIDEN the key, the one direction these
+  -- predicates may never move. Pins the shape test itself: without this,
+  -- deleting the `pattern ~ …` line leaves the suite green, while the two TS
+  -- twins are pinned by tenant-scope.spec.ts and api-key.spec.ts.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: a mid-token wildcard must not prefix-match';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lore-other'),
+    'scope_allowed AC-2b: a dropped pattern must not match anything beneath it';
+  -- A key whose patterns ALL fail the shape test matches nothing — fail closed,
+  -- never "no restriction".
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'global'),
+    'scope_allowed AC-2b: an all-malformed allowlist must reach nothing';
+  -- …and the two LEGAL wildcard positions are untouched.
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: an owner wildcard still expands';
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::alpha'),
+    'scope_allowed AC-2b: a prefix wildcard after `::` still expands';
+
   -- ── AC-3: the tenancy predicate ───────────────────────────────────────────
   assert lorekit_api_token_org_allowed('personal', '{}'::uuid[], null),
     'org_allowed AC-3: a personal row is reachable under every tenancy';
@@ -5934,12 +5955,14 @@ begin
 end;
 $$;
 
--- ── 82. api_token scoping ENFORCEMENT — memory_write + memory_scopes (00068) ─
+-- ── 82. api_token scoping ENFORCEMENT — the seven functions 00068 teaches ───
 --
--- §81 proved the predicates answer correctly in isolation. This proves the two
--- functions that CONSUME them actually changed behaviour — the write path's
--- last unbypassable gate, and the scope catalog that would otherwise leak the
--- very names scoping hides.
+-- §81 proved the predicates answer correctly in isolation. This proves the
+-- functions that CONSUME them actually changed behaviour: the two mutation
+-- gates (memory_write, memory_delete), which are the last unbypassable checks
+-- on their paths, and the five per-scope aggregates (lorekit_memory_scopes,
+-- _activity, lorekit_read_activity, _tags, _facets), each of which would
+-- otherwise leak the very names scoping hides.
 do $$
 declare
   v_owner    uuid := gen_random_uuid();
