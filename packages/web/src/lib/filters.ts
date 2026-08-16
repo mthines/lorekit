@@ -25,7 +25,10 @@
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
 import type {
+  ActivityBody,
+  ListFacetsBody,
   ListFacetsQuery,
+  ListMemoriesBody,
   ListMemoriesQuery,
   ScalarFilterMode,
   TagsMode,
@@ -786,4 +789,94 @@ export function filtersToQueryParams(
  */
 export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFacetsQuery> {
   return filtersToQueryParams(filters) as Partial<ListFacetsQuery>;
+}
+
+/**
+ * Translate the bar into a `POST /memories/list` BODY.
+ *
+ * The same seam as {@link filtersToQueryParams}, onto the transport the
+ * dashboard actually uses — and the reason there are two. The query form joins
+ * a dimension's values into one string, which `ValueListSchema` caps at 2048
+ * characters: with production-length host names that is roughly 50-75 values,
+ * a different number for every dimension, and past it the route answers 400 and
+ * the Explorer shows "Failed to load memories". Nothing guards the URL as a
+ * whole either, so eight dimensions individually under the cap still compose a
+ * request a gateway rejects without a LoreKit error envelope.
+ *
+ * Values are NOT joined here, so a value containing a comma survives — which
+ * over the query transport is unreachable by construction. The return type is
+ * `Partial<ListMemoriesBody>`, the schema the handler validates against, so a
+ * contract change is a type error rather than a silent mismatch.
+ */
+export function filtersToBody(filters: readonly Filter[]): Partial<ListMemoriesBody> {
+  const body: Partial<ListMemoriesBody> = {};
+
+  for (const filter of normalizeFilters(filters as unknown[])) {
+    const values = [...filter.values];
+    switch (filter.field) {
+      case 'label':
+        body.tags = values;
+        body.tags_mode = tagsModeFor(filter.operator);
+        break;
+      case 'agent':
+        body.source_agent = values;
+        body.source_agent_mode = scalarModeFor(filter.operator);
+        break;
+      case 'trigger':
+        body.trigger = values;
+        body.trigger_mode = scalarModeFor(filter.operator);
+        break;
+      case 'kind':
+        body.kind = values;
+        body.kind_mode = scalarModeFor(filter.operator);
+        break;
+      case 'host':
+        body.host = values;
+        body.host_mode = scalarModeFor(filter.operator);
+        break;
+      case 'owner':
+        body.owner = values;
+        body.owner_mode = scalarModeFor(filter.operator);
+        break;
+      case 'repo':
+        body.origin_repo = values;
+        body.origin_repo_mode = scalarModeFor(filter.operator);
+        break;
+      case 'branch':
+        body.origin_branch = values;
+        body.origin_branch_mode = scalarModeFor(filter.operator);
+        break;
+      case 'pr': {
+        // Digits only, exactly as the query form does: the column is an integer
+        // and a non-numeric value can only have come from a hand-edited URL, so
+        // the request never carries one the handler would drop anyway.
+        const digits = values.filter((v) => /^\d+$/.test(v));
+        if (digits.length > 0) {
+          body.origin_pr = digits;
+          body.origin_pr_mode = scalarModeFor(filter.operator);
+        }
+        break;
+      }
+    }
+  }
+
+  return body;
+}
+
+/**
+ * The active filters as a `POST /memories/facets` drill-down body.
+ *
+ * The facets route mirrors the list route's dimension fields by name, so this
+ * is exactly {@link filtersToBody} — the drill-down (self-exclusion) is
+ * entirely the endpoint's job. The cast is sound for {@link filtersToFacetParams}'
+ * reason: only dimension keys are ever set, and the two body types differ only
+ * in the non-dimension keys this function never touches.
+ */
+export function filtersToFacetBody(filters: readonly Filter[]): Partial<ListFacetsBody> {
+  return filtersToBody(filters) as Partial<ListFacetsBody>;
+}
+
+/** The active filters as a `POST /memories/activity` body. Same mapping again. */
+export function filtersToActivityBody(filters: readonly Filter[]): Partial<ActivityBody> {
+  return filtersToBody(filters) as Partial<ActivityBody>;
 }

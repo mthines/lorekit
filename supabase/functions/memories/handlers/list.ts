@@ -1,11 +1,19 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
-import { validateQuery } from '../../_shared/api/validate.ts';
+import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
+import type { SortColumn } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
-import { ListMemoriesQuerySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
-import { parseTagsParam, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
+import {
+  ListMemoriesBodySchema,
+  ListMemoriesQuerySchema,
+  MEMORY_SELECT,
+  shapeMemoryRow,
+} from '../../_shared/schemas/memory.ts';
+import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
+import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
+import { pgArrayLiteral } from '../../_shared/schemas/tags.ts';
 import { likeNeedle, ilikeClause, inListLiteral } from '../../_shared/schemas/filter.ts';
 import { expiringWindow } from '../../_shared/expiring-window.ts';
 import type { ScalarFilterMode } from '../../_shared/schemas/memory.ts';
@@ -131,26 +139,48 @@ function applyOwnerFilter(
   return q.or(disjuncts.join(','));
 }
 
-export async function handleList(
-  req: Request, auth: AuthContext, db: DbClient, span: Span,
-  _params: Record<string, string>, cors: Record<string, string>,
-): Promise<Response> {
-  const validated = validateQuery(req, ListMemoriesQuerySchema, cors);
-  if (!validated.ok) return validated.response;
-  const params = validated.data;
 
-  span.setAttributes({
-    'lorekit.operation': 'memories.list',
-    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
-    ...(params.key ? { 'lorekit.key': params.key } : {}),
-    'lorekit.limit': params.limit,
-    'lorekit.archived': params.archived,
-    'lorekit.sort': params.sort,
-  });
+/**
+ * The list read, decoded from EITHER transport.
+ *
+ * `GET /memories` and `POST /memories/list` differ only in how a request is
+ * spelled — a query string, where every value is a string and every dimension
+ * is comma-joined, or a JSON body, where they are real types and real arrays.
+ * Both decode into this shape, and everything below applies predicates from
+ * THIS and nothing else, so the two routes cannot answer differently. That is
+ * the point: the body route exists because a URL cannot carry an unbounded
+ * filter bar, not because the read should behave differently.
+ */
+interface ListParams {
+  scope?: string | undefined;
+  key?: string | undefined;
+  key_prefix?: string | undefined;
+  q?: string | undefined;
+  created_since?: string | undefined;
+  created_until?: string | undefined;
+  sort: SortColumn;
+  archived: boolean;
+  expiring_within_days?: number | undefined;
+  limit: number;
+  cursor?: string | undefined;
+  dimensions: MemoryDimensions;
+}
 
+/**
+ * Build the fully-predicated query for a decoded list request.
+ *
+ * Everything that turns a filter into SQL lives here, once. A dimension added
+ * to one transport and forgotten on the other is not possible: neither handler
+ * touches PostgREST at all.
+ */
+async function buildListQuery(
+  params: ListParams,
+  auth: AuthContext,
+  db: DbClient,
+  span: Span,
+): Promise<TracedQuery<MemoryRow>> {
   const tracedDb = createTracedClient(db, span);
-  const isArchived = params.archived === 'true';
-  const sort = params.sort;
+  const { sort, dimensions } = params;
 
   let q: TracedQuery<MemoryRow> = tracedDb
     .from<MemoryRow>('memories')
@@ -159,7 +189,7 @@ export async function handleList(
     .order('id', { ascending: false })
     .limit(params.limit + 1);
 
-  if (isArchived) q = q.not('archived_at', 'is', null);
+  if (params.archived) q = q.not('archived_at', 'is', null);
   else q = q.is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
 
   if (params.scope) q = q.eq('scope', params.scope);
@@ -174,7 +204,7 @@ export async function handleList(
   const keyPrefixNeedle = likeNeedle(params.key_prefix);
   if (keyPrefixNeedle) q = q.or(ilikeClause('key', keyPrefixNeedle, { prefix: false }));
 
-  const tags = parseTagsParam(params.tags);
+  const tags = dimensions.tags.values;
   if (tags.length) {
     // A STRING array literal, never a string[] — postgrest-js joins an array
     // with a bare `,`, which mis-parses a label containing a comma/brace/quote
@@ -185,33 +215,34 @@ export async function handleList(
     // `none` is the negation of `any`, so it MUST be `not.ov` and not
     // `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries
     // all) would also admit a row carrying all but one of them.
-    if (params.tags_mode === 'all') q = q.contains('tags', literal);
-    else if (params.tags_mode === 'none') q = q.not('tags', 'ov', literal);
+    if (dimensions.tags.mode === 'all') q = q.contains('tags', literal);
+    else if (dimensions.tags.mode === 'none') q = q.not('tags', 'ov', literal);
     else q = q.overlaps('tags', literal);
   }
 
   // Provenance / authorship dimensions. Each is its own conjunct (AND across
   // dimensions) holding a disjunction of values (OR within a dimension) — the
   // only combination a flat filter bar can render without a precedence
-  // grammar. `parseTagsParam` is reused so every list-valued query param splits
-  // by one rule.
-  q = applyScalarFilter(q, 'source_agent', parseTagsParam(params.source_agent), params.source_agent_mode);
-  q = applyScalarFilter(q, 'trigger', parseTagsParam(params.trigger), params.trigger_mode);
-  // Taxonomy dimensions — `?kind=lesson&host=reviewer` reads "reviewer's
+  // grammar. The values arrive already split, trimmed and de-duped by the ONE
+  // shared decoder, so "a comma cannot reach this code as part of a value" is
+  // a property of the query WIRE FORMAT rather than something applied here —
+  // which is exactly why the body form can carry one.
+  q = applyScalarFilter(q, 'source_agent', dimensions.source_agent.values, dimensions.source_agent.mode);
+  q = applyScalarFilter(q, 'trigger', dimensions.trigger.values, dimensions.trigger.mode);
+  // Taxonomy dimensions — `kind=lesson` + `host=reviewer` reads "reviewer's
   // lessons". Same conjunct-of-disjunction shape as the provenance filters.
-  q = applyScalarFilter(q, 'kind', parseTagsParam(params.kind), params.kind_mode);
-  q = applyScalarFilter(q, 'host', parseTagsParam(params.host), params.host_mode);
-  q = applyScalarFilter(q, 'origin_repo', parseTagsParam(params.origin_repo), params.origin_repo_mode);
-  q = applyScalarFilter(q, 'origin_branch', parseTagsParam(params.origin_branch), params.origin_branch_mode);
-  // `origin_pr` is an integer column. A non-numeric entry is dropped rather
-  // than 400ing the request: the list arrives from a hand-editable URL, and one
-  // bad entry should narrow the filter, not break the page. An entry list that
-  // reduces to empty applies no filter at all, matching every other dimension.
+  q = applyScalarFilter(q, 'kind', dimensions.kind.values, dimensions.kind.mode);
+  q = applyScalarFilter(q, 'host', dimensions.host.values, dimensions.host.mode);
+  q = applyScalarFilter(q, 'origin_repo', dimensions.origin_repo.values, dimensions.origin_repo.mode);
+  q = applyScalarFilter(q, 'origin_branch', dimensions.origin_branch.values, dimensions.origin_branch.mode);
+  // `origin_pr` is an integer column; the decoder has already dropped any
+  // non-numeric entry (one bad entry narrows the filter rather than 400ing a
+  // page built from a hand-editable URL), so the values are emitted bare.
   q = applyScalarFilter(
     q,
     'origin_pr',
-    parseTagsParam(params.origin_pr).filter((v) => /^\d+$/.test(v)),
-    params.origin_pr_mode,
+    dimensions.origin_pr.values,
+    dimensions.origin_pr.mode,
     { quote: false },
   );
 
@@ -229,7 +260,7 @@ export async function handleList(
   const memberOrgIds =
     auth.type === 'api_key' && auth.userId ? await getMemberOrgIds(db, auth.userId, span) : null;
 
-  const ownerValues = parseTagsParam(params.owner);
+  const ownerValues = dimensions.owner.values;
   if (ownerValues.length > 0) {
     const wantsPersonal = ownerValues.includes('personal');
     // Resolve EVERY value as a slug — INCLUDING the literal `personal`, which an
@@ -239,7 +270,7 @@ export async function handleList(
     // in agreement; `wantsPersonal` ADDITIONALLY admits the personal (org_id
     // null) partition.
     const orgIds = await resolveOwnerOrgIds(db, memberOrgIds, ownerValues, span);
-    q = applyOwnerFilter(q, params.owner_mode, wantsPersonal, orgIds);
+    q = applyOwnerFilter(q, dimensions.owner.mode, wantsPersonal, orgIds);
   }
 
   // Substring filter over key OR value. `likeNeedle` escapes the LIKE
@@ -292,14 +323,108 @@ export async function handleList(
     }
   }
 
+  return q;
+}
+
+/** Run a decoded list request and shape the keyset page. Shared by both routes. */
+async function respondWithPage(
+  params: ListParams,
+  auth: AuthContext,
+  db: DbClient,
+  span: Span,
+  cors: Record<string, string>,
+): Promise<Response> {
+  span.setAttributes({
+    'lorekit.operation': 'memories.list',
+    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
+    ...(params.key ? { 'lorekit.key': params.key } : {}),
+    'lorekit.limit': params.limit,
+    'lorekit.archived': String(params.archived),
+    'lorekit.sort': params.sort,
+  });
+
+  const q = await buildListQuery(params, auth, db, span);
   const { data, error } = await q;
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const page = buildPage((data ?? []) as MemoryRow[], params.limit, sort);
+  const page = buildPage((data ?? []) as MemoryRow[], params.limit, params.sort);
   span.setAttributes({ 'lorekit.result_count': page.entries.length, 'lorekit.has_more': page.hasMore });
   // Let the router record the RECORD count (not just the call) — see
   // RESULT_COUNT_HEADER in _shared/api/router.ts.
   const res = ok({ ...page, entries: page.entries.map(shapeMemoryRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   return res;
+}
+
+/**
+ * `GET /memories` — the query-string form.
+ *
+ * Fully supported and unchanged: the CLI, the MCP surface and every API-token
+ * caller use it, and a link carrying a handful of filters is genuinely better
+ * as a URL. It is simply not a transport that SCALES — each dimension is one
+ * comma-joined string capped at 2048 characters, and the whole URL has an
+ * unguarded ceiling of its own — so the dashboard, whose filter bar is
+ * unbounded, uses `POST /memories/list` instead.
+ */
+export async function handleList(
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
+  _params: Record<string, string>, cors: Record<string, string>,
+): Promise<Response> {
+  const validated = validateQuery(req, ListMemoriesQuerySchema, cors);
+  if (!validated.ok) return validated.response;
+  const p = validated.data;
+
+  return respondWithPage({
+    scope: p.scope,
+    key: p.key,
+    key_prefix: p.key_prefix,
+    q: p.q,
+    created_since: p.created_since,
+    created_until: p.created_until,
+    sort: p.sort,
+    archived: p.archived === 'true',
+    expiring_within_days: p.expiring_within_days,
+    limit: p.limit,
+    cursor: p.cursor,
+    dimensions: dimensionsFromQuery(p),
+  }, auth, db, span, cors);
+}
+
+/**
+ * `POST /memories/list` — the same read, over a JSON body.
+ *
+ * Exists because the Explorer's filter bar has nine dimensions whose value sets
+ * are unbounded (agents invent hosts), and a query string is not a transport
+ * that carries them: `ValueListSchema` rejects a dimension past 2048 characters
+ * with a `400`, which the UI can only render as "Failed to load memories", and
+ * even under that cap eight dimensions compose a URL past what the gateway
+ * accepts — a failure that arrives with no LoreKit error envelope at all.
+ * Raising the cap only moves the first wall and makes the second arrive first.
+ *
+ * `validateOptionalBody` so a bodiless `POST /memories/list` is the unfiltered
+ * first page rather than a 400 — every field has a default, exactly the case
+ * that helper exists for.
+ */
+export async function handleListPost(
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
+  _params: Record<string, string>, cors: Record<string, string>,
+): Promise<Response> {
+  const validated = await validateOptionalBody(req, ListMemoriesBodySchema, cors);
+  if (!validated.ok) return validated.response;
+  const b = validated.data;
+
+  return respondWithPage({
+    scope: b.scope,
+    key: b.key,
+    key_prefix: b.key_prefix,
+    q: b.q,
+    created_since: b.created_since,
+    created_until: b.created_until,
+    sort: b.sort,
+    archived: b.archived,
+    expiring_within_days: b.expiring_within_days,
+    limit: b.limit,
+    cursor: b.cursor,
+    dimensions: dimensionsFromBody(b),
+  }, auth, db, span, cors);
 }

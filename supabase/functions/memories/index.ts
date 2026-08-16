@@ -4,7 +4,7 @@ import { createRouter } from '../_shared/api/router.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { unauthorized, internalError } from '../_shared/api/respond.ts';
 import { translateDbError, RestError } from '../_shared/api/errors.ts';
-import { handleList } from './handlers/list.ts';
+import { handleList, handleListPost } from './handlers/list.ts';
 import { handleCreate } from './handlers/create.ts';
 import { handleGet } from './handlers/get.ts';
 import { handleUpdate } from './handlers/update.ts';
@@ -15,8 +15,8 @@ import { handlePurge, handlePurgeExpired } from './handlers/purge.ts';
 import { handleScopes } from './handlers/scopes.ts';
 import { handleUsage } from './handlers/usage.ts';
 import { handleTags } from './handlers/tags.ts';
-import { handleFacets } from './handlers/facets.ts';
-import { handleActivity } from './handlers/activity.ts';
+import { handleFacets, handleFacetsPost } from './handlers/facets.ts';
+import { handleActivity, handleActivityPost } from './handlers/activity.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
 import { handleRelevant } from './handlers/relevant.ts';
 
@@ -42,6 +42,15 @@ const router = createRouter([
   // `?force=true` on either DELETE form hard-deletes instead of archiving.
   { method: 'DELETE', path: '/',               handler: handleRemove,       requires: 'write' },
   // ── literal single-segment routes (must precede `/:id`) ────────────────────
+  // The BODY transport for the three filtered reads. Same reads as their GET
+  // siblings, decoded from JSON instead of a query string, because a query
+  // string caps each dimension at 2048 characters and the URL as a whole at
+  // whatever the gateway allows — neither of which an unbounded filter bar
+  // fits. Each pairs with its GET route through ONE predicate function, so the
+  // transports cannot answer differently.
+  { method: 'POST',   path: '/list',           handler: handleListPost,     requires: 'read'  },
+  { method: 'POST',   path: '/facets',         handler: handleFacetsPost,   requires: 'read'  },
+  { method: 'POST',   path: '/activity',       handler: handleActivityPost, requires: 'read'  },
   { method: 'POST',   path: '/search',         handler: handleSearch,       requires: 'read'  },
   { method: 'POST',   path: '/restore',        handler: handleRestore,      requires: 'write' },
   { method: 'POST',   path: '/purge',          handler: handlePurge,        requires: 'write' },
