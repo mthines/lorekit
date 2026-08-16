@@ -1,12 +1,13 @@
 /**
  * Combobox — the pure decisions.
  *
- * A single-select popup list makes three decisions that are worth testing
- * without a browser: which option the keyboard moves to, which options a query
- * leaves visible, and where the highlight sits when the list opens. Extracting
- * them keeps `Combobox.tsx` a thin view and puts the off-by-ones somewhere a
- * node test can reach — the repo's functional-core split, the same one
- * `bottom-sheet.ts` and `filters.ts` follow.
+ * A popup list makes four decisions that are worth testing without a browser:
+ * which option the keyboard moves to, which options a query leaves visible,
+ * where the highlight sits when the list opens, and — in multi-select mode —
+ * what the selection becomes when a row is toggled. Extracting them keeps
+ * `Combobox.tsx` a thin view and puts the off-by-ones somewhere a node test can
+ * reach — the repo's functional-core split, the same one `bottom-sheet.ts` and
+ * `filters.ts` follow.
  */
 
 export interface ComboboxOption<T extends string = string> {
@@ -73,6 +74,81 @@ export function lastEnabledIndex<O extends ComboboxOption>(
 }
 
 /**
+ * What a control's current selection looks like, in either mode.
+ *
+ * Single-select carries one value or `null`; multi-select carries a list, which
+ * is empty rather than `null` when nothing is picked — "no tags" and "the tags
+ * field is absent" are not different states, and collapsing them removes a
+ * nullable every call site would otherwise have to defend against.
+ */
+export type ComboboxSelection<T extends string = string> = T | readonly T[] | null | undefined;
+
+/**
+ * Is `value` part of `selection`? The one place the two modes' shapes are
+ * reconciled, so nothing else has to branch on `Array.isArray`.
+ */
+export function isSelected<T extends string>(selection: ComboboxSelection<T>, value: T): boolean {
+  if (selection == null) return false;
+  return Array.isArray(selection) ? selection.includes(value) : selection === value;
+}
+
+/**
+ * Add or remove `value` from a multi-select selection.
+ *
+ * Appends on add rather than re-sorting into the option order: the list the user
+ * built reads back in the order they built it, and a chip row that silently
+ * reorders itself as you click is disorienting. Always returns a NEW array — the
+ * caller hands this straight to `onChange`, and a mutated input would not
+ * re-render a `useState` holding the same reference.
+ */
+export function toggleSelection<T extends string>(selection: readonly T[], value: T): T[] {
+  return selection.includes(value) ? selection.filter((v) => v !== value) : [...selection, value];
+}
+
+/**
+ * The trigger's text for a selection: nothing, the one label, or a count.
+ *
+ * A count rather than a truncated join once past one: "repo::a/b, repo::c/d, +3"
+ * in a 240px trigger degrades to unreadable ellipsis at exactly the point the
+ * selection is worth reading, and "5 selected" at least states the fact
+ * accurately.
+ *
+ * `null` means "there is no text to show", and the caller falls back to the
+ * control's own name — this function does not know it.
+ *
+ * An unmatched lone value resolves to `null` in the SCALAR shape only: the
+ * Overview's range picker legitimately holds a value outside its option set (an
+ * absolute window drilled in from a chart) and documents that the trigger then
+ * reads as the control's name unless `triggerLabel` overrides it. Printing
+ * `2026-03-01T00:00:00Z/2026-03-08T00:00:00Z` in a 240px trigger would be a
+ * regression dressed up as honesty.
+ *
+ * A LIST has no such caller and cannot afford the same answer: `['a', 'zzz']`
+ * already reports "2 selected", so letting `['zzz']` report nothing would make
+ * the trigger — and the `aria-label` built from it — say "none" about a
+ * selection that is not empty. The array shape therefore falls back to the raw
+ * value, which is at least true. A multi-select's values are the short,
+ * meaningful strings the count exists to avoid joining, so one of them fits.
+ */
+export function selectionSummary<O extends ComboboxOption>(
+  options: readonly O[],
+  selection: ComboboxSelection<string>,
+  countNoun = 'selected',
+): string | null {
+  const isList = Array.isArray(selection);
+  const values = selection == null ? [] : isList ? selection : [selection];
+  if (values.length === 0) return null;
+  if (values.length === 1) {
+    const only = values[0];
+    const label = options.find((o) => o.value === only)?.label;
+    if (label !== undefined) return label;
+    // Scalar keeps the `null`; a list says the value rather than "none".
+    return isList ? (only ?? null) : null;
+  }
+  return `${values.length} ${countNoun}`;
+}
+
+/**
  * Where the highlight goes when the list opens.
  *
  * On the CURRENT value, so the list opens showing you what you have rather than
@@ -80,12 +156,16 @@ export function lastEnabledIndex<O extends ComboboxOption>(
  * what a native select does. Falls back to the first selectable option when the
  * value is absent, unknown, or points at a disabled option (a highlight that
  * cannot be activated by Enter is a dead end).
+ *
+ * With a multi-select list it opens on the FIRST selected option in the option
+ * order (not in click order) — the top of what you already have, which is where
+ * a reader's eye goes anyway.
  */
 export function initialHighlight<O extends ComboboxOption>(
   options: readonly O[],
-  value: string | null | undefined,
+  value: ComboboxSelection<string>,
 ): number {
-  const i = options.findIndex((o) => o.value === value);
+  const i = options.findIndex((o) => isSelected(value, o.value));
   if (i >= 0 && !options[i]?.disabled) return i;
   return firstEnabledIndex(options);
 }

@@ -4,8 +4,11 @@ import {
   filterOptions,
   firstEnabledIndex,
   initialHighlight,
+  isSelected,
   lastEnabledIndex,
   nextEnabledIndex,
+  selectionSummary,
+  toggleSelection,
   type ComboboxOption,
 } from './combobox';
 
@@ -110,6 +113,25 @@ describe('initialHighlight', () => {
     expect(initialHighlight(WITH_DISABLED, 'b')).toBe(0);
   });
 
+  it('opens on the FIRST selected option in OPTION order, not click order', () => {
+    // The docblock's multi-select promise, and the only case that distinguishes
+    // `isSelected(value, o.value)` from a scalar `o.value === value`: with the
+    // list built as ['c', 'a'] the answer is 'a' at index 0, because the option
+    // order decides, not the order the user ticked them in.
+    expect(initialHighlight(OPTIONS, ['c', 'a'])).toBe(0);
+    expect(initialHighlight(OPTIONS, ['c'])).toBe(2);
+  });
+
+  it('falls back to the first option for an EMPTY multi selection', () => {
+    // Empty rather than null is the multi shape's "nothing picked", so it must
+    // reach the same fallback the scalar `null` does.
+    expect(initialHighlight(OPTIONS, [])).toBe(0);
+  });
+
+  it('skips a disabled option a multi selection names', () => {
+    expect(initialHighlight(WITH_DISABLED, ['b'])).toBe(0);
+  });
+
   it('reports -1 when nothing is selectable', () => {
     expect(initialHighlight([], 'a')).toBe(-1);
   });
@@ -161,5 +183,98 @@ describe('clampHighlight', () => {
 
   it('reports -1 when the filter left nothing', () => {
     expect(clampHighlight(filterOptions(OPTIONS, 'zzz'), 0)).toBe(-1);
+  });
+});
+
+describe('isSelected', () => {
+  it('matches a scalar selection by identity', () => {
+    expect(isSelected('a', 'a')).toBe(true);
+    expect(isSelected('a', 'b')).toBe(false);
+  });
+
+  it('matches membership of a list selection', () => {
+    expect(isSelected(['a', 'c'], 'c')).toBe(true);
+    expect(isSelected(['a', 'c'], 'b')).toBe(false);
+  });
+
+  it('treats an empty list and a null the same — nothing is selected', () => {
+    // The two modes spell "nothing" differently; every caller downstream would
+    // otherwise have to know which one it is holding.
+    expect(isSelected([], 'a')).toBe(false);
+    expect(isSelected(null, 'a')).toBe(false);
+    expect(isSelected(undefined, 'a')).toBe(false);
+  });
+});
+
+describe('toggleSelection', () => {
+  it('adds a value that is absent', () => {
+    expect(toggleSelection(['a'], 'b')).toEqual(['a', 'b']);
+  });
+
+  it('removes a value that is present', () => {
+    expect(toggleSelection(['a', 'b', 'c'], 'b')).toEqual(['a', 'c']);
+  });
+
+  it('appends rather than sorting into the option order', () => {
+    // The chip row reads back in the order the user built it. Re-sorting on
+    // every click makes the row jump under the pointer.
+    expect(toggleSelection(['c'], 'a')).toEqual(['c', 'a']);
+  });
+
+  it('always returns a new array', () => {
+    // The result goes straight to `onChange`; a mutated input would not
+    // re-render a `useState` holding the same reference.
+    const before: string[] = ['a'];
+    expect(toggleSelection(before, 'b')).not.toBe(before);
+    expect(toggleSelection(before, 'a')).not.toBe(before);
+    expect(before).toEqual(['a']);
+  });
+
+  it('removes every copy if a duplicate ever got in', () => {
+    // Defensive: the control never writes a duplicate, but a caller's own state
+    // can, and a toggle that only removed the first copy would look like a
+    // click that did nothing.
+    expect(toggleSelection(['a', 'a'], 'a')).toEqual([]);
+  });
+});
+
+describe('selectionSummary', () => {
+  it('reports null when nothing is selected, in either shape', () => {
+    // Null, not '' — the caller falls back to the control's own name, and that
+    // decision is not this function's to make.
+    expect(selectionSummary(OPTIONS, null)).toBeNull();
+    expect(selectionSummary(OPTIONS, [])).toBeNull();
+  });
+
+  it('uses the option label for exactly one selection', () => {
+    expect(selectionSummary(OPTIONS, 'b')).toBe('Archived');
+    expect(selectionSummary(OPTIONS, ['b'])).toBe('Archived');
+  });
+
+  it('counts past one, with the caller noun', () => {
+    expect(selectionSummary(OPTIONS, ['a', 'b'])).toBe('2 selected');
+    expect(selectionSummary(OPTIONS, ['a', 'b', 'c'], 'scopes')).toBe('3 scopes');
+  });
+
+  it('reports null for a SCALAR value outside the option set', () => {
+    // NOT the raw value: the Overview's range picker legitimately holds one
+    // (an absolute window drilled in from a chart) and documents that the
+    // trigger then reads as the control's name unless `triggerLabel` overrides
+    // it. Printing the raw value would regress that.
+    expect(selectionSummary(OPTIONS, 'zzz')).toBeNull();
+  });
+
+  it('says the value for a ONE-ITEM list outside the option set', () => {
+    // The scalar null has one caller that wants it; a list has none. Reporting
+    // "none" for ['zzz'] while ['a', 'zzz'] reports "2 selected" would make the
+    // trigger contradict itself on the same non-empty selection.
+    expect(selectionSummary(OPTIONS, ['zzz'])).toBe('zzz');
+    expect(selectionSummary(OPTIONS, ['zzz'], 'scopes')).toBe('zzz');
+  });
+
+  it('still counts unknown values in a multi selection', () => {
+    // The count does not need labels, so an unrecognised member is no reason to
+    // under-report how many things are selected.
+    expect(selectionSummary(OPTIONS, ['a', 'zzz'])).toBe('2 selected');
   });
 });
