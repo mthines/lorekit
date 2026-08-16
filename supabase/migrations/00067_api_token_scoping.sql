@@ -31,7 +31,11 @@
 --    accepts the same shape rather than inventing a second matcher. The CHECK's
 --    charset is deliberately byte-identical to that function's PostgREST
 --    injection guard (`[a-z0-9._:/-]`) — the values end up in the same kind of
---    predicate, so they get the same gate.
+--    predicate, so they get the same gate — and so is its WILDCARD POSITION: a
+--    trailing `*` counts only after `/` or `::`, exactly as that function
+--    requires. An "any trailing star" rule would have let `repo::mthines/lore*`
+--    allowlist `repo::mthines/lorekit-private` while being REFUSED as a search
+--    filter — two different grammars wearing one syntax.
 --
 -- 4. THE KEY WINS OVER A SCOPE→ORG BINDING. `org_scope_bindings` (00026)
 --    auto-routes a write under a bound scope into that org. A key restricted to
@@ -104,14 +108,20 @@ as $$
   select p_patterns is null or not exists (
     select 1
     from unnest(p_patterns) as t(pattern)
-    where t.pattern !~ '^[a-z0-9._:/-]+\*?$'
-       or length(t.pattern) > 200
+    -- `is not true` rather than `!~`: a NULL ELEMENT makes both the regex and
+    -- the length test NULL, the row is filtered out, and `not exists` reports
+    -- the array valid — the unknown-therefore-fine case this gate exists to
+    -- refuse.
+    where (t.pattern ~ '^[a-z0-9._:/-]+(/|::)\*$' or t.pattern ~ '^[a-z0-9._:/-]+$') is not true
+       or (length(t.pattern) <= 200) is not true
   );
 $$;
 
 comment on function lorekit_api_token_scopes_valid(text[]) is
   'Shape gate for api_tokens.scopes: each element is a canonical scope or an '
-  'owner wildcard, over expandScopeForSearch''s charset, at most 200 chars.';
+  'owner wildcard (a trailing ''*'' only after ''/'' or ''::''), over '
+  'expandScopeForSearch''s charset, at most 200 chars. Total: a NULL element is '
+  'INVALID, never unknown-therefore-fine.';
 
 revoke execute on function lorekit_api_token_scopes_valid(text[]) from public, anon;
 grant execute on function lorekit_api_token_scopes_valid(text[]) to authenticated, service_role;
@@ -231,11 +241,16 @@ grant execute on function lorekit_api_token_org_allowed(text, uuid[], uuid) to a
 -- applied to a table that had no UPDATE path at all).
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- No DEFAULTS on the three scoping arguments, deliberately. With them, a caller
+-- that sent only `p_org_access` would silently reset `scopes` to `{}` — WIDENING
+-- the key to every scope — because "omitted" and "clear this" would be the same
+-- request. Requiring all three makes the full intended state explicit on every
+-- call, so a partial update cannot fail open.
 create or replace function lorekit_api_token_set_scoping(
   p_token_id uuid,
-  p_scopes text[] default '{}',
-  p_org_access text default 'all',
-  p_org_ids uuid[] default '{}'
+  p_scopes text[],
+  p_org_access text,
+  p_org_ids uuid[]
 )
 returns table (
   id uuid,

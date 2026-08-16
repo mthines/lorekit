@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { ApiKeyOrgAccess } from './api-key.ts';
 import {
   API_KEY_MAX_ORGS,
   API_KEY_MAX_SCOPES,
@@ -86,6 +87,13 @@ describe('orgAllowedByKey', () => {
     expect(orgAllowedByKey('selected', [ORG_A], ORG_A)).toBe(true);
     expect(orgAllowedByKey('selected', [ORG_A], ORG_B)).toBe(false);
   });
+
+  it('fails CLOSED on a tenancy it does not recognise', () => {
+    // Reachable only if the DB CHECK is dropped or a BYOD install predates it.
+    // The SQL twin has the same `else false`, and migrations.test.sql §81 AC-3
+    // asserts it — this is the TypeScript half of that pair.
+    expect(orgAllowedByKey('nonsense' as ApiKeyOrgAccess, [ORG_A], ORG_A)).toBe(false);
+  });
 });
 
 describe('ApiKeyScopingSchema', () => {
@@ -112,13 +120,26 @@ describe('ApiKeyScopingSchema', () => {
     // The same charset `expandScopeForSearch` guards, for the same reason: the
     // value ends up in a PostgREST filter where `,` `(` `)` are grammar.
     expect(() => ApiKeyScopingSchema.parse({ scopes: ['a,value.not.is.null'] })).toThrow();
-    expect(() => ApiKeyScopingSchema.parse({ scopes: ['repo::MTHINES/*'] })).not.toThrow();
+    expect(() => ApiKeyScopingSchema.parse({ scopes: ['scope.eq.x)or(y'] })).toThrow();
   });
 
   it('rejects an interior wildcard', () => {
     // Only a TRAILING `*` is a wildcard; anything else would need a second
     // matcher that the SQL twin does not have.
     expect(() => ApiKeyScopingSchema.parse({ scopes: ['repo::*/lorekit'] })).toThrow();
+  });
+
+  it('rejects a trailing wildcard that is not on a segment boundary', () => {
+    // The case that distinguishes this grammar from "any trailing star":
+    // `repo::mthines/lore*` would allowlist `repo::mthines/lorekit-private`
+    // while being refused as a search filter by `expandScopeForSearch`. Only
+    // `/` and `::` may precede the star, exactly as that function requires.
+    expect(() => ApiKeyScopingSchema.parse({ scopes: ['repo::mthines/lore*'] })).toThrow();
+    expect(() => ApiKeyScopingSchema.parse({ scopes: ['globa*'] })).toThrow();
+    expect(ApiKeyScopingSchema.parse({ scopes: ['repo::mthines/*'] }).scopes).toEqual([
+      'repo::mthines/*',
+    ]);
+    expect(ApiKeyScopingSchema.parse({ scopes: ['project::*'] }).scopes).toEqual(['project::*']);
   });
 
   it('bounds both lists', () => {

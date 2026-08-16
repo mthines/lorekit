@@ -189,8 +189,8 @@ as $$
   select p_patterns is null or not exists (
     select 1
     from unnest(p_patterns) as t(pattern)
-    where t.pattern !~ '^[a-z0-9._:/-]+\*?$'
-       or length(t.pattern) > 200
+    where (t.pattern ~ '^[a-z0-9._:/-]+(/|::)\*$' or t.pattern ~ '^[a-z0-9._:/-]+$') is not true
+       or (length(t.pattern) <= 200) is not true
   );
 $$;
 
@@ -264,6 +264,17 @@ as $$
     else false
   end;
 $$;
+
+-- The GRANTS are part of the mirror, not decoration: a `create function` is
+-- PUBLIC-executable by default, so omitting these left a BYOD install with three
+-- authorization predicates any role could call. Byte-for-byte bodies with
+-- different grants is not a mirror.
+revoke execute on function lorekit_api_token_scopes_valid(text[]) from public, anon;
+revoke execute on function lorekit_api_token_scope_allowed(text[], text) from public, anon;
+revoke execute on function lorekit_api_token_org_allowed(text, uuid[], uuid) from public, anon;
+grant execute on function lorekit_api_token_scopes_valid(text[]) to authenticated, service_role;
+grant execute on function lorekit_api_token_scope_allowed(text[], text) to authenticated, service_role;
+grant execute on function lorekit_api_token_org_allowed(text, uuid[], uuid) to authenticated, service_role;
 
 alter table api_tokens enable row level security;
 

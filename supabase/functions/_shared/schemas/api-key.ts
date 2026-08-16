@@ -35,10 +35,14 @@ export const API_KEY_MAX_ORGS = 50;
  *
  * Byte-identical to `expandScopeForSearch`'s PostgREST injection guard, because
  * an allowlisted pattern ends up in the same kind of predicate as a searched
- * one. Shape-only on purpose: `repo::mthines/*` is a legal pattern and is NOT a
- * legal scope, so `ScopeSchema` cannot be reused here.
+ * one — and its wildcard POSITION matches too: a trailing `*` counts only after
+ * `/` or `::`. "Any trailing star" would let `repo::mthines/lore*` allowlist
+ * `repo::mthines/lorekit-private` while being refused as a search filter.
+ *
+ * Shape-only on purpose: `repo::mthines/*` is a legal pattern and is NOT a legal
+ * scope, so `ScopeSchema` cannot be reused here.
  */
-const SCOPE_PATTERN = /^[a-z0-9._:/-]+\*?$/;
+const SCOPE_PATTERN = /^[a-z0-9._:/-]+(?:(?:\/|::)\*)?$/;
 
 /** One entry of a key's scope allowlist: a canonical scope, or an owner wildcard. */
 export const ApiKeyScopePatternSchema = z
@@ -49,7 +53,7 @@ export const ApiKeyScopePatternSchema = z
   .refine((val) => SCOPE_PATTERN.test(val), {
     message:
       'a scope pattern may contain only [a-z0-9._:/-], with an optional trailing "*" ' +
-      '(e.g. "repo::mthines/lorekit" or "repo::mthines/*")',
+      '(e.g. "repo::mthines/lorekit", "repo::mthines/*" or "project::*")',
   });
 
 /**
@@ -155,8 +159,12 @@ export function orgAllowedByKey(
 ): boolean {
   if (orgId === null) return true;
   if (orgAccess === 'all') return true;
-  if (orgAccess === 'personal') return false;
-  return orgIds.includes(orgId);
+  if (orgAccess === 'selected') return orgIds.includes(orgId);
+  // `personal`, and anything else. Written as an explicit fall-through rather
+  // than `orgAccess === 'personal' ? false : orgIds.includes(orgId)` so an
+  // unrecognised value denies instead of being treated as `selected` — the SQL
+  // twin has the same `else false`, and §81 AC-3 asserts it.
+  return false;
 }
 
 /** Is this key restricted at all? Drives the dashboard badge and the OTel attribute. */

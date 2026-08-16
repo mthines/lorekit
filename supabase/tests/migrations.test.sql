@@ -5835,6 +5835,38 @@ begin
   assert v_failed,
     'api_tokens AC-4: org ids under a tenancy that does not use them must be rejected';
 
+  v_failed := false;
+  begin
+    update api_tokens
+       set scopes = (select array_agg('project::p' || i) from generate_series(1, 51) as i)
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-pattern allowlist must be rejected (cardinality cap)';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['project::' || repeat('a', 200)] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a pattern over 200 chars must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::mthines/lore*'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a trailing wildcard off a segment boundary must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array[null]::text[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL element must be INVALID, not unknown-therefore-fine';
+
   -- A valid pair still lands — the CHECKs must not be so tight that the
   -- feature is unusable.
   update api_tokens
@@ -5856,12 +5888,15 @@ begin
   perform set_config('request.jwt.claims',
     format('{"sub":"%s","role":"authenticated"}', v_other), true);
 
+  -- The RPC raises DISTINCT sqlstates, so each refusal is caught by code rather
+  -- than by `when others` — which would also pass on a typo, a missing function
+  -- or a permissions error, i.e. on the test being wrong.
   v_failed := false;
   begin
     perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
-  exception when others then v_failed := true;
+  exception when no_data_found then v_failed := true;
   end;
-  assert v_failed, 'set_scoping AC-5: a non-owner must not be able to re-scope a key';
+  assert v_failed, 'set_scoping AC-5: a non-owner must get the not-found refusal (P0002)';
 
   -- Back as the owner: pointing the key at an org the OWNER is not in must be
   -- refused, or the row would record access that does not exist.
@@ -5871,10 +5906,10 @@ begin
   v_failed := false;
   begin
     perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', array[v_org_b]);
-  exception when others then v_failed := true;
+  exception when insufficient_privilege then v_failed := true;
   end;
   assert v_failed,
-    'set_scoping AC-5: an org the owner is not a member of must be refused';
+    'set_scoping AC-5: a non-member org must get the permission refusal (42501)';
 
   -- And the happy path returns the row it wrote.
   select t.scopes, t.org_access, t.org_ids into v_scopes, v_access, v_ids
