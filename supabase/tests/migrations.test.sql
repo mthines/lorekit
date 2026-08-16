@@ -5844,6 +5844,22 @@ begin
   end;
   assert v_failed, 'api_tokens AC-4: a 51-pattern allowlist must be rejected (cardinality cap)';
 
+  -- The org-list twin of the cap above. `org_access` is set to 'selected' in the
+  -- SAME statement on purpose: with the tenancy left at 'all', a non-empty
+  -- org_ids also violates api_tokens_org_ids_match_access, and BOTH constraints
+  -- raise check_violation — so the assertion would pass while proving the wrong
+  -- one. Under 'selected' the match constraint is satisfied (selected = true,
+  -- cardinality > 0 = true), leaving api_tokens_org_ids_len as the only
+  -- constraint the row can violate.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array_fill(v_org_a, array[51])
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-org list must be rejected (cardinality cap)';
+
   v_failed := false;
   begin
     update api_tokens set scopes = array['project::' || repeat('a', 200)] where id = v_token;
