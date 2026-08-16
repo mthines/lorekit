@@ -118,8 +118,14 @@ describe('tier coverage vs the action gate', () => {
     const acceptedEvents = new Set(ACCEPTED.map(([event]) => event));
     const offRoster = CANDIDATE_PAIRS.filter(([event]) => !acceptedEvents.has(event));
 
-    expect(offRoster.length).toBeGreaterThanOrEqual(4);
-    // And they must currently be rejected — an off-roster pair that the gate
+    // Count distinct EVENT NAMES, not pairs. Pairs would let two actions on one
+    // off-roster event (`pull_request` synchronize + labeled) satisfy a floor
+    // that is meant to be about event-name breadth, which is the only axis a
+    // new-event widening moves along.
+    const offRosterEvents = new Set(offRoster.map(([event]) => event));
+    expect(offRosterEvents.size).toBeGreaterThanOrEqual(4);
+
+    // And every one must currently be rejected — an off-roster pair the gate
     // accepts is the very drift this suite exists to catch.
     for (const [event, action] of offRoster) {
       expect(classifyWebhookAction(event, action)).toBe('SKIP');
@@ -161,12 +167,17 @@ const CANDIDATE_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['issue_comment', 'created'],
   ['issue_comment', 'edited'],
   ['issue_comment', 'deleted'],
+  // A near-miss ACTION on an accepted event — same family as the entries above.
+  ['pull_request_review_thread', 'closed'],
+  // Off-roster EVENT names — none of these event names has ever been accepted.
+  // Each is a webhook GitHub really delivers and a plausible "let's also ingest
+  // these" widening. Keep this block to event names absent from ACCEPTED: an
+  // entry whose EVENT is already accepted is a near-miss action (belongs above)
+  // and is filtered straight out of the off-roster set below, so putting one
+  // here inflates the block's apparent size without adding any coverage.
   ['pull_request', 'synchronize'],
   ['pull_request', 'labeled'],
-  // Off-roster EVENT names — none has ever been accepted. Each is a webhook
-  // GitHub really delivers and a plausible "let's also ingest these" widening.
   ['discussion_comment', 'created'],
   ['commit_comment', 'created'],
   ['issues', 'opened'],
-  ['pull_request_review_thread', 'closed'],
 ];
