@@ -5786,6 +5786,20 @@ begin
   assert not lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::myxorg/lorekit'),
     'scope_allowed AC-2: an underscore must stay LITERAL, not act as a LIKE wildcard';
 
+  -- The scope-side twin of AC-3's NULL-element case, and it gets there by a
+  -- different mechanism: `org_allowed` needed an explicit `coalesce(…, false)`
+  -- because `= any(array[null])` is a scalar NULL, whereas here `right(null,1)`
+  -- makes the CASE yield NULL, the WHERE drops the row, and `exists` is false by
+  -- construction. Correct, but INCIDENTALLY correct — adding an `else` to that
+  -- CASE would flip it to NULL with nothing failing. `is false`, not `not`,
+  -- because `assert not NULL` also fails and would not discriminate.
+  assert lorekit_api_token_scope_allowed(array[null]::text[], 'global') is false,
+    'scope_allowed AC-2: a NULL pattern element must yield FALSE, never NULL';
+  -- And it must not POISON the list: a good pattern alongside a NULL one still
+  -- matches. This is the case a cargo-culted `coalesce` wrapper would break.
+  assert lorekit_api_token_scope_allowed(array['global', null]::text[], 'global'),
+    'scope_allowed AC-2: a NULL element must not suppress a sibling pattern that matches';
+
   -- Fail closed on a scopeless operation, but only for a RESTRICTED key.
   assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], null),
     'scope_allowed AC-2: a restricted key must not reach a scopeless operation';
