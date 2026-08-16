@@ -364,10 +364,11 @@ function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
 
 function listFrom(rows: MemoryRow[], url: URL) {
   const limit = Number(url.searchParams.get('limit') ?? 50);
-  // Honour `sort`, defaulting to the route's `updated_at` — the order the
-  // Explorer reads in. A mock pinned to `created_at` would render one order
-  // while the product renders another, which is the sort of difference a
-  // screenshot baseline then freezes in place.
+  // Honour `sort` rather than pinning one: the route defaults to `updated_at`,
+  // but `listMemories` (lib/lore.ts) always sends `sort: 'created_at'`, so the
+  // Explorer reads in creation order. A mock that pinned EITHER value would
+  // render one order while the caller asked for another, which is the sort of
+  // difference a screenshot baseline then freezes in place.
   const sort = url.searchParams.get('sort') === 'created_at' ? 'created_at' : 'updated_at';
   const matched = filterRows(rows, url).sort((a, b) => String(b[sort]).localeCompare(String(a[sort])));
   // No cursor emulation: every story fits in one page, and a fake cursor would
