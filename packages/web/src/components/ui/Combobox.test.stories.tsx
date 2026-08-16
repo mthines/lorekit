@@ -311,7 +311,7 @@ export const MultiplePicksAccumulateWithoutClosing: Story = {
       // three trips to the trigger.
       await userEvent.click(menu.getByRole('option', { name: /Active/ }));
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('active');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^active$/);
       });
       await expect(menu.getByRole('listbox', { name: /statuses/i })).toBeInTheDocument();
     });
@@ -319,7 +319,7 @@ export const MultiplePicksAccumulateWithoutClosing: Story = {
     await step('a second pick ADDS rather than replaces', async () => {
       await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('active,archived');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^active,archived$/);
       });
     });
 
@@ -335,9 +335,13 @@ export const MultiplePicksAccumulateWithoutClosing: Story = {
     });
 
     await step('clicking a selected row removes it', async () => {
+      // Anchored, not a substring: `toHaveTextContent('archived')` also passes
+      // on `active,archived`, so it could not tell the removal from a no-op —
+      // the one thing this step exists to prove. Every assertion on the
+      // comma-joined multi output is anchored for the same reason.
       await userEvent.click(menu.getByRole('option', { name: /Active/ }));
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('archived');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^archived$/);
       });
     });
 
@@ -355,7 +359,7 @@ export const MultiplePicksAccumulateWithoutClosing: Story = {
       });
       // Escape dismisses the SURFACE, not the picks — they were committed as
       // they were made, so there is nothing to roll back.
-      await expect(canvas.getByTestId('values')).toHaveTextContent('archived');
+      await expect(canvas.getByTestId('values')).toHaveTextContent(/^archived$/);
     });
   },
 };
@@ -445,7 +449,7 @@ export const SpaceTogglesWhenThereIsNoSearchBox: Story = {
     await step('Space ticks it and the list stays open', async () => {
       await userEvent.keyboard(' ');
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('active');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^active$/);
       });
       await expect(
         within(document.body).getByRole('listbox', { name: /statuses/i }),
@@ -458,7 +462,7 @@ export const SpaceTogglesWhenThereIsNoSearchBox: Story = {
       await userEvent.keyboard('{ArrowDown}');
       await userEvent.keyboard('{Enter}');
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('active,archived');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^active,archived$/);
       });
       await expect(
         within(document.body).getByRole('listbox', { name: /statuses/i }),
@@ -494,7 +498,7 @@ export const SearchSurvivesATickSoASetCanBeBuiltFromOneQuery: Story = {
       // between each pick — the exact friction the mode exists to remove.
       await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('archived');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^archived$/);
       });
       await expect(menu.getByRole('combobox', { name: /search statuses/i })).toHaveValue(
         'memories',
@@ -505,7 +509,7 @@ export const SearchSurvivesATickSoASetCanBeBuiltFromOneQuery: Story = {
     await step('so the second pick is one click away', async () => {
       await userEvent.click(menu.getByRole('option', { name: /Active/ }));
       await waitFor(async () => {
-        await expect(canvas.getByTestId('values')).toHaveTextContent('archived,active');
+        await expect(canvas.getByTestId('values')).toHaveTextContent(/^archived,active$/);
       });
     });
   },
