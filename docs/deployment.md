@@ -96,7 +96,11 @@ cover here and `smoke-preview` exercises end-to-end against current PostgREST.
 Booting a local Supabase is expensive, so a `changes` job diffs the PR and the
 `integration` job only runs when API/backend paths change — `packages/mcp-core/`,
 `supabase/functions/`, `supabase/migrations/`, `supabase/tests/`,
-`supabase/config.toml`, `package.json`, `pnpm-lock.yaml`, or `ci.yml` itself. A
+`supabase/config.toml`, `supabase/vitest.config.ts`, `supabase/tsconfig`,
+`scripts/smoke-mcp-stdio.mjs`, `package.json`, `pnpm-lock.yaml`, or `ci.yml`
+itself. (`supabase/vitest.config.ts` and `supabase/tsconfig` are the two entries
+the retarget checklist below tells a human to add to this filter — the prose here
+describes the filter's intended end state, so it lists them.) A
 docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
 this way — `nx affected` already scopes itself to the changed packages. A
 skipped required check is treated as passing by branch protection, so gating
