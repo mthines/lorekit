@@ -149,13 +149,37 @@ export async function generateToken(
       if (isScoped(scoping)) {
         const applied = await applyScoping(supabase, record.id, scoping);
         if ('error' in applied) {
-          await supabase.from('api_tokens').delete().eq('id', record.id).eq('user_id', user.id);
+          // The cleanup's own error is NOT discarded. If the DELETE fails the
+          // very outcome the comment above calls the worst available has
+          // happened anyway — a live UNSCOPED key exists while the caller is
+          // told the operation failed — so the caller is told which of the two
+          // situations they are in, and the prefix is named so they can revoke
+          // it. Swallowing it would leave the credential invisible.
+          const { error: cleanupError } = await supabase
+            .from('api_tokens')
+            .delete()
+            .eq('id', record.id)
+            .eq('user_id', user.id);
           span.setAttribute(ATTR_ERROR_TYPE, 'ScopingRejected');
+          span.setAttribute('lorekit.api_token.cleanup_failed', cleanupError != null);
           span.setStatus({ code: SpanStatusCode.ERROR, message: `ScopingRejected: ${applied.error}` });
           logger.error('lorekit.api_token.generate.failed', {
             'exception.type': 'ScopingRejected',
             'exception.message': applied.error,
+            ...(cleanupError
+              ? {
+                  'lorekit.api_token.cleanup_error': cleanupError.message,
+                  'lorekit.api_token.prefix': record.token_prefix,
+                }
+              : {}),
           });
+          if (cleanupError) {
+            return {
+              error:
+                `${applied.error} An UNSCOPED token (${record.token_prefix}) could not be removed ` +
+                `afterwards (${cleanupError.message}) — revoke it below.`,
+            };
+          }
           return { error: applied.error };
         }
         record.scopes = applied.scoping.scopes;
