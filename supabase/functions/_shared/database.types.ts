@@ -667,9 +667,9 @@ export type Database = {
       lorekit_api_token_scopes_valid: { Args: { p_patterns: string[] }; Returns: boolean }
       lorekit_api_token_set_scoping: {
         Args: {
-          p_org_access?: string
-          p_org_ids?: string[]
-          p_scopes?: string[]
+          p_org_access: string
+          p_org_ids: string[]
+          p_scopes: string[]
           p_token_id: string
         }
         Returns: {
