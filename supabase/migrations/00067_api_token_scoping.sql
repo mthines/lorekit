@@ -266,14 +266,39 @@ set search_path = public
 as $$
 declare
   v_actor    uuid := auth.uid();
-  v_scopes   text[] := coalesce(p_scopes, '{}'::text[]);
-  v_org_ids  uuid[] := coalesce(p_org_ids, '{}'::uuid[]);
+  v_scopes   text[];
+  v_org_ids  uuid[];
   v_owner    uuid;
   v_stray    uuid;
 begin
   if v_actor is null then
     raise exception 'LK001: authentication required' using errcode = '28000';
   end if;
+
+  -- These used to be `coalesce(p_scopes, '{}')` / `coalesce(p_org_ids, '{}')` in
+  -- the declare block, which reopened the hole giving the arguments no DEFAULT
+  -- was meant to close. No DEFAULT stops an OMITTED argument; the coalesce let
+  -- an EXPLICIT null through and turned it into '{}' — and for `scopes`, '{}'
+  -- means UNRESTRICTED (decision 1). So `set_scoping(id, null, 'all', '{}')`
+  -- silently widened the key to every scope, which is exactly the fail-open
+  -- partial update decision 5 refuses.
+  --
+  -- Refused rather than treated as "leave unchanged": that would make this a
+  -- partial-update API that has to read and merge the current row, and decision
+  -- 5 chose "state the full intended state on every call". Same reasoning, and
+  -- now the same treatment, as the NULL `p_org_access` guard below.
+  if p_scopes is null then
+    raise exception 'LK004: scopes must not be null; pass an empty array to un-scope the key'
+      using errcode = '22023';
+  end if;
+
+  if p_org_ids is null then
+    raise exception 'LK004: org_ids must not be null; pass an empty array for a key with no orgs'
+      using errcode = '22023';
+  end if;
+
+  v_scopes  := p_scopes;
+  v_org_ids := p_org_ids;
 
   -- Ownership first, and by SELECT rather than by letting the UPDATE match zero
   -- rows: "you do not own this key" and "no such key" must be the same answer to

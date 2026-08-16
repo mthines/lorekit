@@ -6002,6 +6002,27 @@ begin
   assert v_failed,
     'set_scoping AC-5: a NULL org_access must be refused with LK004, not a raw NOT NULL violation';
 
+  -- A NULL ARGUMENT is not the same as an empty array, and for `scopes` the
+  -- difference is a widening: '{}' means UNRESTRICTED, so a coalesce here would
+  -- turn `null` into "every scope the owner can see". Giving the arguments no
+  -- DEFAULT only stops them being OMITTED; these two cases pin that an explicit
+  -- null is refused as well.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, null, 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL scopes argument must be refused, never coalesced to the unrestricted default';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', null);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_ids argument must be refused, never coalesced';
+
   -- Both directions of the equality, because a one-sided implication would let
   -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
   -- carrying orgs. The second uses v_org_a, an org the actor IS a member of, so
