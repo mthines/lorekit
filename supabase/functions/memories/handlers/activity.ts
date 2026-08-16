@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
@@ -56,6 +57,19 @@ export async function handleActivity(
     'lorekit.bucket': params.bucket,
     ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
   });
+
+  // `?scope=` NAMES a scope, so it gets the refusal every other named-scope
+  // request gets. The RPC-side narrowing below is for the request that names
+  // none; a named scope outside the allowlist must not come back as an empty
+  // series, which reads as "there was no activity".
+  const denied = firstDeniedScope(auth, [params.scope]);
+  if (denied !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${denied}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
 
   // Parse the caller's active filters — same names/shapes as GET /memories and
   // /facets — so the RPC narrows the written/scopes counts to the list's set.

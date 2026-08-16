@@ -1,6 +1,7 @@
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
-import { badRequest, ok } from '../../_shared/api/respond.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { validateScope } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -76,6 +77,18 @@ export async function handleReadActivity(
     'lorekit.bucket': params.bucket,
     ...(scopeFilter ? { 'lorekit.scope': scopeFilter } : {}),
   });
+
+  // `?scope=` NAMES a scope, so it gets the refusal every other named-scope
+  // request gets — checked on the CANONICAL value, after `validateScope`, since
+  // that is what the allowlist is compared against everywhere else.
+  const denied = firstDeniedScope(auth, [scopeFilter]);
+  if (denied !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${denied}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc<RawReadActivityRow>('lorekit_read_activity', {
