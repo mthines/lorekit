@@ -135,6 +135,23 @@ in `packages/web/CLAUDE.md`:
 - **`prefers-reduced-motion`** disables auto-rotation and camera easing; the
   scene is still fully usable by dragging.
 
+### What shipped
+
+- `components/lore/graph/LoreGraphScene.tsx` — the only file that imports Three.js, and the only one loaded lazily (`React.lazy` behind a `Suspense` skeleton).
+- `components/lore/graph/LoreGraphView.tsx` — the lazy boundary, legend, live summary and truncation notice. Imports no `three`, so no future edit can accidentally pull WebGL into the eager bundle.
+- `components/lore/ViewToggle.tsx` + `lib/lore-view.ts` — the List ⇄ Map switch, backed by a `?view=` URL param so a map is a shareable link like every other Explorer view.
+
+The map draws the **same server-filtered memories the list draws**, so scope, search, range, status and every filter-bar dimension apply to it unchanged — switching view never silently widens what you are looking at.
+
+Two rendering notes that are easy to undo by accident:
+
+- **Node matrices are written in `useLayoutEffect`, not `useEffect`.** With `useEffect` the first frame after a rebuild shows every instance stacked at the origin — a visible black hole on every data change.
+- **The `instancedMesh` is keyed on node count.** An `InstancedMesh`'s capacity is fixed at construction, so reusing one across a resize leaves stale instances drawn at the origin.
+
+### Not in the visual-regression suite, on purpose
+
+`packages/web` screenshots every `*.stories.tsx` (see [storybook.md](./storybook.md)). The 3D view is deliberately excluded: a WebGL frame depends on the GPU, the driver and the ANGLE backend, so a committed baseline would compare like-for-unlike and flake for reasons unrelated to the change under test. The parts that *can* be pinned are pinned instead, in Node — the graph model, the layout, the GPU buffer contents, the palette mirror and the summary copy are covered by ~100 specs. What is left unpinned is the draw call itself, which is the piece a screenshot proves least about.
+
 ## Accessibility
 
 A `<canvas>` is opaque to assistive technology, so the 3D view can never be the

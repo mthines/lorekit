@@ -139,3 +139,33 @@ export function framingDistance(radius: number, fov = 50, margin = 1.2): number 
   const halfFov = (fov * Math.PI) / 180 / 2;
   return Math.max((radius * margin) / Math.sin(halfFov), 1);
 }
+
+/**
+ * Per-VERTEX edge colour, with opacity pre-multiplied into it.
+ *
+ * The trick that keeps every edge in ONE draw call. A `LineBasicMaterial` has a
+ * single scalar `opacity`, so per-edge transparency would normally mean either a
+ * material per edge (hundreds of draw calls) or a custom shader (a shader to
+ * maintain, for a fade). Against this app's near-black background, additive
+ * blending makes a pre-multiplied colour indistinguishable from real per-edge
+ * alpha — `colour × opacity` added to `#0d0e11` reads exactly as a fainter line —
+ * so the whole edge set stays one `LineSegments` with `vertexColors: true`.
+ *
+ * The cost of the trick is honest and bounded: it only holds on a dark
+ * background, which this dashboard is (`packages/web/CLAUDE.md`: dark-only). On
+ * a light theme the edges would have to become a real alpha attribute.
+ */
+export function edgeColors(graph: LoreGraph, base: Rgb, into?: Float32Array): Float32Array {
+  const out = buffer(into, graph.edges.length * 6);
+  const opacities = edgeOpacities(graph);
+  graph.edges.forEach((_, index) => {
+    const opacity = opacities[index * 2];
+    for (let vertex = 0; vertex < 2; vertex++) {
+      const at = index * 6 + vertex * 3;
+      out[at] = base[0] * opacity;
+      out[at + 1] = base[1] * opacity;
+      out[at + 2] = base[2] * opacity;
+    }
+  });
+  return out;
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildLoreGraph, type GraphMemoryInput } from './build';
 import {
   ARCHIVED_DIM,
+  edgeColors,
   edgeOpacities,
   edgePositions,
   framingDistance,
@@ -176,5 +177,40 @@ describe('framingDistance', () => {
 
   it('adds the requested margin', () => {
     expect(framingDistance(60, 50, 1.5)).toBeGreaterThan(framingDistance(60, 50, 1));
+  });
+});
+
+describe('edgeColors', () => {
+  it('emits r, g, b for both ends of every edge', () => {
+    const graph = buildLoreGraph([memory({ key: 'a' }), memory({ key: 'b' })]);
+    expect(edgeColors(graph, [1, 1, 1])).toHaveLength(graph.edges.length * 6);
+  });
+
+  it('pre-multiplies the opacity into the colour — the trick that keeps one draw call', () => {
+    const graph = buildLoreGraph([memory({ key: 'a' })]);
+    const colours = edgeColors(graph, [1, 0.5, 0.25]);
+
+    expect(colours[0]).toBeCloseTo(SKELETON_OPACITY, 6);
+    expect(colours[1]).toBeCloseTo(0.5 * SKELETON_OPACITY, 6);
+    expect(colours[2]).toBeCloseTo(0.25 * SKELETON_OPACITY, 6);
+  });
+
+  it('gives both vertices of a segment the same colour, so it reads flat', () => {
+    const graph = buildLoreGraph([memory({ key: 'a' })]);
+    const colours = edgeColors(graph, [1, 1, 1]);
+    expect([colours[3], colours[4], colours[5]]).toEqual([colours[0], colours[1], colours[2]]);
+  });
+
+  it('draws a strong relation brighter than the skeleton', () => {
+    const graph = buildLoreGraph([
+      memory({ key: 'a', tags: ['x'] }),
+      memory({ key: 'b', tags: ['x'] }),
+    ]);
+    const colours = edgeColors(graph, [1, 1, 1]);
+    const brightness = graph.edges.map((_, i) => colours[i * 6]);
+    const relation = graph.edges.findIndex((edge) => edge.kind === 'label');
+    const skeleton = graph.edges.findIndex((edge) => edge.kind === 'scope');
+
+    expect(brightness[relation]).toBeGreaterThan(brightness[skeleton]);
   });
 });

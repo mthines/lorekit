@@ -15,6 +15,7 @@ The LoreKit dashboard keeps its entire view state in the URL. Every scope filter
 | One memory by id (robust) | `/lore?memoryId=…` |
 | One memory's detail sheet (scope + key) | `/lore?lesson=…` |
 | A scope-filtered Explorer | `/lore?scope=…` |
+| The 3D memory map | `/lore?view=%22map%22` |
 
 ## How dashboard URLs are encoded
 
@@ -35,6 +36,7 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
 | `status` | `null` | Explorer Status: `"active"` (default), `"archived"`, or `"expiring"` (live memories whose TTL runs out within 7 days). `null` means the param is absent and the legacy `archived` flag still applies. |
 | `archived` | `false` | Legacy archived toggle. Superseded by `status`, still read so older links keep working. |
+| `view` | `null` | Which view of the results to open — `"map"` for the 3D memory map, absent for the list. The list is never written, so a plain `/lore` link is unchanged. |
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
 
 > The CLI mirrors this exact table in `deeplink-pure.mjs` (`LORE_PARAM_DEFAULTS`), and a cross-package test reads the real `useUrlState` parameters from the web source so the two can never drift.

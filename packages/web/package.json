@@ -17,6 +17,8 @@
     "@lorekit/schemas": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/semantic-conventions": "^1.27.0",
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
     "@scalar/nextjs-api-reference": "^0.11.11",
     "@shikijs/rehype": "^4.4.1",
     "@supabase/ssr": "^0.6.0",
@@ -39,7 +41,8 @@
     "rehype-slug": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.4.1",
-    "sonner": "^2.0.0"
+    "sonner": "^2.0.0",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^15.3.8",
@@ -52,6 +55,7 @@
     "@types/node": "20.19.9",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.185.4",
     "@vitest/browser": "4.0.9",
     "@vitest/browser-playwright": "4.0.9",
     "babel-plugin-react-compiler": "^1.0.0",

@@ -96,6 +96,10 @@ import {
   type FilterOperator,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
+import { ViewToggle } from './ViewToggle';
+import { LoreGraphView } from './graph/LoreGraphView';
+import { memoryNodeId } from '@/lib/lore-graph/build';
+import { resolveView, viewParamValue } from '@/lib/lore-view';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 
@@ -232,6 +236,16 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     () => resolveScopeParam(scopeParam),
     [scopeParam],
   );
+
+  // Which view of the results — the flat card list, or the 3D map of the same
+  // memories. URL-backed for the same reason `scope` and `filters` are: "here
+  // is the map of our CI lessons" has to be a link you can paste. The list
+  // default is never written, so a plain `/lore` stays the canonical URL every
+  // existing bookmark already points at. See `lib/lore-view.ts`.
+  const [viewParam, setViewParam] = useUrlState<string | null>('view', null, {
+    cleanOnPathname: '/lore',
+  });
+  const view = resolveView(viewParam);
 
   // Search is high-frequency input — the returned `search` is instantly
   // responsive (local state) while the URL param is written on a trailing
@@ -589,6 +603,27 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
+    // The map draws the SAME server-filtered `lessons` the list does, so every
+    // filter, scope and range selection applies to it unchanged — switching
+    // view never silently widens what you are looking at. It is placed before
+    // the empty-state branch because it renders its own, map-specific empty
+    // copy: "no memories to map" wants to explain what the map draws, which the
+    // list's "try a different search term" does not.
+    if (view === 'map') {
+      return (
+        <LoreGraphView
+          memories={lessons}
+          selectedId={openLesson ? memoryNodeId(openLesson) : null}
+          onSelect={(selection) => {
+            const lesson = lessons.find(
+              (candidate) => candidate.scope === selection.scope && candidate.key === selection.key,
+            );
+            if (lesson) handleLessonClick(lesson);
+          }}
+        />
+      );
+    }
+
     // Empty state only when nothing is left to show AND nothing more to load.
     // Every filter is server-side now, so an empty page with `hasNextPage` still
     // true genuinely means "keep loading", not "no matches".
@@ -730,6 +765,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           mounted and CSS-toggled (not a JS conditional render) so each keeps a
           live FilterMenu, exactly as before; `variant` carries the only styling
           difference between them. */}
+
+      {/* The view switch sits OUTSIDE the two breakpoint layouts and above
+          both, because it selects between them rather than being part of
+          either — and because it is the one control that changes what the
+          panel below it fundamentally is, which is a decision that belongs
+          above the thing it changes rather than inside its toolbar. */}
+      <div className="flex items-center justify-end">
+        <ViewToggle value={view} onChange={(next) => setViewParam(viewParamValue(next))} />
+      </div>
 
       {/* Desktop */}
       <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
