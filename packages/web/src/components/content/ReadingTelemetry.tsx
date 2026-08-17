@@ -88,6 +88,21 @@ export function ReadingTelemetry({
   const sectionKey = sectionIds.join('|');
 
   useEffect(() => {
+    // A client-side navigation to the next post re-runs this effect with new
+    // deps rather than remounting us, so every accumulator below is still
+    // carrying the PREVIOUS post. React runs the old cleanup (which emits that
+    // post's summary) before this body, so resetting here is safe — and
+    // required: a sticky `summarised` would swallow the next post's
+    // `content.read` entirely, and a sticky `maxDepth` would swallow every one
+    // of its `content.scroll_depth` milestones with it.
+    maxDepth.current = 0;
+    engagedMs.current = 0;
+    sectionsRead.current = new Set();
+    currentSection.current = '';
+    currentSectionMs.current = 0;
+    topSection.current = null;
+    summarised.current = false;
+
     const sections = sectionKey ? sectionKey.split('|') : [];
     const content = document.querySelector(contentSelector);
     if (!(content instanceof HTMLElement)) return;
