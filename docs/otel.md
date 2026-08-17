@@ -617,6 +617,56 @@ committed `.lorekit.json` can never opt the gate out of its own check.
 ### Browser
 Open Chrome DevTools → Network → filter by `v1/traces`. You should see POST requests to the Dash0 OTLP endpoint after page load and on each navigation.
 
+### Browser errors from extensions are dropped, by STACK not by message
+
+A visitor's browser extension raises its uncaught errors and unhandled promise
+rejections on the *page's* `window`, so `@dash0/sdk-web` records them as
+`browser.error` events attributed to `service.name=web`. Measured over a week of
+production RUM, **102 of 105** browser errors came from two visitors'
+extensions — a `chrome-extension://…` script looping
+`Cannot read properties of undefined (reading 'M_ID')` every ~2s, plus a
+MetaMask `inpage.js` connect failure — against 3 genuine first-party errors.
+
+The filter lives in **`packages/web/src/lib/extension-errors.ts`** (pure
+classification) and is installed by `installExtensionErrorFilter()` in
+`lib/dash0-rum.ts`, which subscribes to `error` and `unhandledrejection` in the
+capture phase and calls `stopImmediatePropagation()` on an extension-only error.
+
+Four things not to "simplify":
+
+- **It must run BEFORE `init()`.** The SDK subscribes inside `init()`
+  (`addEventListener('unhandledrejection', …)` plus an override of
+  `window.onerror`); window listeners fire in registration order, so
+  registering first is what lets `stopImmediatePropagation()` preempt it.
+- **Running first is not enough for the `onerror` half.** `window.onerror` is an
+  event-handler IDL attribute: its listener slot is created at the FIRST
+  non-null assignment and never moves, so the SDK's later assignment inherits
+  the slot of anything that set `onerror` before us and runs ahead of the
+  filter. `withOnErrorRegisteredLast()` in `lib/dash0-rum.ts` detaches the
+  incumbent handler, registers our listeners, then re-assigns it — which moves
+  it behind us. Deleting that re-seating makes the uncaught-error half a
+  silent no-op on any page that touches `window.onerror` first.
+- **It cannot be `ignoreErrorMessages`.** sdk-web 0.23.0's only error filter
+  matches its regexes against the error MESSAGE. The extension message above is
+  the commonest shape of a real first-party `TypeError`, so a regex wide enough
+  to catch it would also silence our own bugs.
+- **It drops only when EVERY source-bearing frame is an extension URL.** When an
+  extension breaks our code the stack interleaves their frames with ours, and
+  that error is our bug — it stays. When the stack proves nothing (no stack, or
+  no line naming a source) the event's `filename` is consulted instead, and the
+  error is kept unless that names an extension script.
+
+`preventDefault()` is deliberately not called, so the browser still logs the
+error to the console.
+
+**What the filter does NOT reach.** Uncaught errors from a cross-origin script —
+which every `chrome-extension://` script is — are muted by the browser: the page
+gets `Script error.` with `error: null` and `filename: ""`, so there is nothing
+to attribute and the event is kept (fail-safe). That is acceptable because both
+production fingerprints arrive on the `unhandledrejection` path, where the
+`reason` is a real `Error` carrying a full stack. Judge the filter by the
+rejection path; the `error` path is a bonus for the cases that do report.
+
 ### Quick console check (browser)
 ```js
 // Run in the browser console on the deployed app:
