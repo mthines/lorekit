@@ -1,7 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { validateScope } from '../../_shared/scope.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
@@ -62,13 +62,11 @@ export async function handleActivity(
   // verbs and are explicitly designed to take one set of parameters — so they
   // must also reject the same input the same way, or a caller charting both
   // gets a 400 from one and a silently-empty series from the other.
-  let scopeFilter: string | null = null;
-  if (params.scope !== undefined) {
-    try {
-      scopeFilter = validateScope(params.scope);
-    } catch (e) {
-      return badRequest((e as Error).message, undefined, cors);
-    }
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(params.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
   }
 
   const until = params.until ?? new Date().toISOString();
@@ -96,7 +94,7 @@ export async function handleActivity(
     p_bucket: params.bucket,
     p_since: since,
     p_until: until,
-    p_scope: scopeFilter,
+    p_scope: scopeFilter ?? null,
     p_tags: list(params.tags),
     p_tags_mode: params.tags_mode,
     p_source_agent: list(params.source_agent),

@@ -4,32 +4,31 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 /**
- * Drift guard: every REST handler that FILTERS by a caller-supplied `?scope=`
- * must run it through the canonical `validateScope` first.
+ * Every REST handler that turns a caller-supplied scope into a query predicate
+ * must reject an ungrammatical one with a 400 instead of matching nothing and
+ * calling the result empty.
  *
- * The REST query schemas bind `scope` to `RawScopeSchema` — shape-only — on
- * purpose, and say so:
+ * `supabase/functions/memories/CLAUDE.md` states the rule outright — "filtering
+ * by a scope is the question itself, so a bad value is a `400`" — and
+ * `handleReadActivity` implemented it. The other five scope-filtering handlers
+ * did not: they passed the raw query value into `q.eq('scope', …)` / `p_scope`,
+ * so `?scope=repo` (the bare token the /lore Explorer puts in the URL) produced
+ * HTTP 200 with an empty page. Production saw 36 spans a day carrying
+ * `lorekit.scope.type='invalid'`, none of them errors, because `UserInputError`
+ * is deliberately not marked ERROR.
  *
- *   DeleteMemoryQuerySchema: "`RawScopeSchema` (shape-only) rather than
- *   `ScopeSchema` … normalisation happens downstream."
- *
- *   ReadActivityQuerySchema: "It is `RawScopeSchema` (shape-only) … so the
- *   canonical normalisation happens once, in the handler, which can turn a
- *   rejection into a 400 — the `?correlation_id=` precedent."
- *
- * `handleReadActivity` implements that second half. The other scope-filtering
- * handlers did not, so an ungrammatical scope became a filter matching nothing
- * and the endpoint answered HTTP 200 with an empty page — a different question
- * than the one asked, under the label the caller used. Production saw 36 spans
- * a day with `lorekit.scope.type = 'invalid'` and none of them were errors,
- * because `UserInputError` is deliberately not marked ERROR.
- *
- * Scans the Deno edge sources, which vitest cannot import — the same approach
- * as `tenant-scope-usage.spec.ts` and `mcp-authz-status.spec.ts`.
+ * REJECT-ONLY, NOT NORMALISE. `parseScopeFilter` throws on bad grammar and
+ * returns the caller's string untouched. The REST write path does not normalise
+ * (`CreateMemoryBodySchema` overrides `ScopeSchema` with `RawScopeSchema`;
+ * `handlers/create.ts` passes `body.scope` verbatim; no `lower(scope)` exists in
+ * any migration), so `memories.scope` legitimately holds mixed-case values and
+ * lowercasing a filter would make those rows unmatchable — and undeletable by
+ * natural key. The behavioural tests below pin that.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const handlerDir = path.resolve(here, '../../../supabase/functions/memories/handlers');
+const repoRoot = path.resolve(here, '../../..');
+const handlerDir = path.join(repoRoot, 'supabase/functions/memories/handlers');
 const read = (f: string) => readFileSync(path.join(handlerDir, f), 'utf8');
 
 /** Slice a handler's body by brace-depth so nested braces do not end it early. */
@@ -45,116 +44,179 @@ function handlerBody(src: string, fnName: string): string {
   throw new Error(`could not find end of ${fnName}`);
 }
 
-// Every handler that turns a caller-supplied scope into a QUERY PREDICATE.
-// `facets`, `tags` and `scopes` are deliberately absent: they expose no scope
-// filter at all (their query schemas have no `scope` field), so there is
-// nothing to validate. A future handler that adds one belongs in this list.
-const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string]> = [
-  ['list.ts', 'handleList'],
-  ['activity.ts', 'handleActivity'],
-  ['remove.ts', 'handleRemove'],
-  // The one that was already correct — kept in the list so a regression there
-  // is caught by the same guard that caught the other three.
-  ['read-activity.ts', 'handleReadActivity'],
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Behavioural: the shared helper every handler routes through.
+//
+// `supabase/functions/_shared/scope.ts` is plain TypeScript with no Deno-only
+// imports, so vitest loads it directly — these assert real behaviour, not text.
+// ─────────────────────────────────────────────────────────────────────────────
 
-describe('REST scope filters are validated before they reach a query', () => {
-  it.each(SCOPE_FILTERING_HANDLERS)('%s / %s validates the scope filter', (file, fn) => {
-    const body = handlerBody(read(file), fn);
-    expect(body).toMatch(/validateScope\(/);
+const edgeScope = (await import(
+  path.join(repoRoot, 'supabase/functions/_shared/scope.ts')
+)) as unknown as {
+  parseScopeFilter: (raw: string | undefined) => string | undefined;
+  validateScope: (raw: string) => string;
+  UserInputError: new (m: string) => Error;
+};
+
+describe('parseScopeFilter', () => {
+  const { parseScopeFilter, UserInputError } = edgeScope;
+
+  it('rejects a bare scope TYPE used where a scope belongs', () => {
+    // `repo` is the literal value the /lore Explorer puts in `?scope=` and the
+    // one behind every `lorekit.scope.type='invalid'` span.
+    expect(() => parseScopeFilter('repo')).toThrow(UserInputError);
+    expect(() => parseScopeFilter('branch')).toThrow(UserInputError);
+    expect(() => parseScopeFilter('nope')).toThrow(UserInputError);
   });
 
-  it.each(SCOPE_FILTERING_HANDLERS)('%s / %s turns a rejection into a 400', (file, fn) => {
-    const body = handlerBody(read(file), fn);
-    // The rejection must become a client error, not a 500 and not a silent
-    // empty result. `UserInputError` is caught and answered with badRequest().
-    expect(body).toMatch(/badRequest\(/);
+  it('rejects a single-colon separator', () => {
+    expect(() => parseScopeFilter('repo:mthines/lorekit')).toThrow(
+      /use "::" as the separator/,
+    );
   });
 
-  it.each(SCOPE_FILTERING_HANDLERS)(
-    '%s / %s imports validateScope from the canonical module',
-    (file) => {
-      const src = read(file);
-      expect(src).toMatch(/import \{[^}]*validateScope[^}]*\} from '\.\.\/\.\.\/_shared\/scope\.ts'/);
-    },
-  );
-
-  it('never filters on the raw, unvalidated query value', () => {
-    // The specific regression this guards: `q.eq('scope', params.scope)` and
-    // `p_scope: params.scope` bypass the validator entirely.
-    for (const [file] of SCOPE_FILTERING_HANDLERS) {
-      const src = read(file);
-      expect(src).not.toMatch(/\.eq\('scope',\s*params\.scope\)/);
-      expect(src).not.toMatch(/p_scope:\s*params\.scope\b/);
-    }
-  });
-});
-
-/**
- * The behavioural half: the exact values production sends.
- *
- * The edge validator is a hand-maintained mirror of this package's copy and is
- * deliberately excluded from `edge-parity.spec.ts` (the two bodies differ), so
- * its behaviour on these inputs is asserted directly rather than inferred.
- */
-describe('edge validateScope rejects what the Explorer actually sends', () => {
-  const edgeScope = readFileSync(
-    path.resolve(here, '../../../supabase/functions/_shared/scope.ts'),
-    'utf8',
-  );
-
-  it('rejects a bare scope TYPE used where a scope belongs', async () => {
-    // `repo` is the literal value the /lore Explorer puts in `?scope=`.
-    const { validateScope, UserInputError } = await importEdgeScope();
-    expect(() => validateScope('repo')).toThrow(UserInputError);
-    expect(() => validateScope('branch')).toThrow(UserInputError);
+  it('treats an absent filter as absent, not as an error', () => {
+    expect(parseScopeFilter(undefined)).toBeUndefined();
   });
 
-  it('rejects a single-colon separator', async () => {
-    const { validateScope } = await importEdgeScope();
-    expect(() => validateScope('repo:mthines/lorekit')).toThrow(/use "::" as the separator/);
-  });
-
-  it('normalises case so a filter matches the rows writes actually stored', async () => {
-    // Writes store `validateScope`-normalised scopes, so an unnormalised filter
-    // silently misses real rows. This is the half of the fix that is not about
-    // rejection at all.
-    const { validateScope } = await importEdgeScope();
-    expect(validateScope('Repo::MThines/LoreKit')).toBe('repo::mthines/lorekit');
-    expect(validateScope('  global  ')).toBe('global');
-  });
-
-  it('accepts every canonical form unchanged', async () => {
-    const { validateScope } = await importEdgeScope();
+  it('accepts every canonical form and returns it UNCHANGED', () => {
     for (const scope of [
       'global',
       'project::lorekit-web-daily-report',
       'repo::mthines/lorekit',
       'branch::mthines/lorekit::fix/scope-filter-validation',
     ]) {
-      expect(validateScope(scope)).toBe(scope);
+      expect(parseScopeFilter(scope)).toBe(scope);
     }
   });
 
-  it('is the module the handlers import', () => {
-    expect(edgeScope).toMatch(/export function validateScope\(/);
-    expect(edgeScope).toMatch(/export class UserInputError extends Error/);
+  it('does NOT lowercase — a mixed-case scope survives the filter intact', () => {
+    // The regression this guards against. `validateScope` lowercases; if that
+    // result reached the predicate, a row written as `repo::Owner/Name` (which
+    // the REST write path stores verbatim) would become unmatchable by list and
+    // undeletable by natural key.
+    expect(parseScopeFilter('repo::Owner/Name')).toBe('repo::Owner/Name');
+    expect(parseScopeFilter('Project::MyThing')).toBe('Project::MyThing');
+    // …while the underlying grammar check is genuinely the normalising one:
+    expect(edgeScope.validateScope('repo::Owner/Name')).toBe('repo::owner/name');
+  });
+
+  it('stays reject-only for as long as the write path stays un-normalising', () => {
+    // A tripwire, not a style rule. If someone normalises writes, this comes
+    // down in the SAME change — otherwise existing rows are stranded.
+    const create = readFileSync(path.join(handlerDir, 'create.ts'), 'utf8');
+    expect(create).toMatch(/p_scope:\s*body\.scope\b/);
+    expect(create).not.toMatch(/validateScope\(|parseScopeFilter\(/);
   });
 });
 
-/**
- * The edge tree is plain TypeScript with `.ts` specifiers and no Deno-only
- * imports in `_shared/scope.ts`, so vitest can load it directly through Vite's
- * transform — no mirror copy and no duplicated grammar.
- */
-async function importEdgeScope(): Promise<{
-  validateScope: (raw: string) => string;
-  UserInputError: new (m: string) => Error;
-}> {
-  return (await import(
-    path.resolve(here, '../../../supabase/functions/_shared/scope.ts')
-  )) as unknown as {
-    validateScope: (raw: string) => string;
-    UserInputError: new (m: string) => Error;
-  };
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Structural: every scope-filtering handler routes through that helper.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Every handler that turns a caller-supplied scope into a QUERY PREDICATE.
+//
+// `tags` and `scopes` are absent because they genuinely expose no scope filter
+// (verified: their query schemas have no `scope` field, and neither handler
+// references one).
+//
+// The ARRAY-valued paths are deliberately out of scope for this guard and are
+// NOT fixed here: `handlers/search.ts` (`?scopes=` → `q.in('scope', …)`) and
+// `handlers/relevant.ts` (same shape). They need a per-entry decision this
+// change does not make — whether one bad entry rejects the whole request or is
+// dropped — and the MCP twin (`mcp/tools.ts`, which validates each entry) is the
+// precedent to reconcile against. Tracked separately; naming them here so their
+// absence is a recorded decision rather than an oversight.
+const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string]> = [
+  ['list.ts', 'handleList'],
+  ['activity.ts', 'handleActivity'],
+  ['remove.ts', 'handleRemove'],
+  ['facets.ts', 'handleFacets'],
+  ['restore.ts', 'handleRestore'],
+  // The one that was already correct — kept so a regression there trips the
+  // same guard. It predates `parseScopeFilter` and calls `validateScope`
+  // directly, which is why the assertion below accepts either.
+  ['read-activity.ts', 'handleReadActivity'],
+];
+
+describe('REST scope filters are validated before they reach a query', () => {
+  it.each(SCOPE_FILTERING_HANDLERS)('%s / %s validates the scope filter', (file, fn) => {
+    const body = handlerBody(read(file), fn);
+    expect(body).toMatch(/(parseScopeFilter|validateScope)\(/);
+  });
+
+  it.each(SCOPE_FILTERING_HANDLERS)(
+    '%s / %s turns THAT rejection specifically into a 400',
+    (file, fn) => {
+      const body = handlerBody(read(file), fn);
+      // Not "a badRequest exists somewhere in the handler" — several of these
+      // have unrelated ones, which made the looser form of this assertion pass
+      // on unfixed code. Require the catch that wraps the scope call to be the
+      // thing returning badRequest.
+      const call = body.search(/(parseScopeFilter|validateScope)\(/);
+      expect(call).toBeGreaterThan(-1);
+      const window = body.slice(call, call + 320);
+      expect(window).toMatch(/catch\s*\(\s*e\s*\)\s*\{[\s\S]{0,120}?return badRequest\(/);
+    },
+  );
+
+  it.each(SCOPE_FILTERING_HANDLERS)(
+    '%s / %s imports the validator from the canonical module',
+    (file) => {
+      const src = read(file);
+      expect(src).toMatch(
+        /import \{[^}]*(parseScopeFilter|validateScope)[^}]*\} from '\.\.\/\.\.\/_shared\/scope\.ts'/,
+      );
+    },
+  );
+
+  it.each(SCOPE_FILTERING_HANDLERS)(
+    '%s / %s never reaches a predicate with the unvalidated value',
+    (file, fn) => {
+      const body = handlerBody(read(file), fn);
+      // Name the validated binding, then require every scope predicate in the
+      // handler to use it. This is the assertion that a rename or an alias
+      // could previously slip past.
+      const bound = body.match(
+        /(?:let|const)\s+(\w+)(?:\s*:\s*[^=;]+)?\s*(?:=\s*)?[\s\S]{0,200}?=\s*(?:parseScopeFilter|validateScope)\(/,
+      );
+      expect(bound, `no binding captured from the validator in ${fn}`).not.toBeNull();
+      const name = bound![1];
+
+      // Every `.eq('scope', X)` and `p_scope: X` must use that binding.
+      for (const m of body.matchAll(/\.eq\(\s*'scope'\s*,\s*([^)]+?)\s*\)/g)) {
+        expect(m[1], `${fn}: .eq('scope', ${m[1]}) does not use ${name}`).toContain(name);
+      }
+      for (const m of body.matchAll(/p_scope:\s*([^,\n]+)/g)) {
+        expect(m[1], `${fn}: p_scope: ${m[1]} does not use ${name}`).toContain(name);
+      }
+    },
+  );
+
+  it('covers every handler that filters by a single scope', () => {
+    // Completeness check: scan the whole handler directory for a scope
+    // predicate and assert the list above accounts for it. An earlier revision
+    // of this spec asserted facets.ts had no scope filter — it does — so the
+    // list is now derived from the source rather than from memory.
+    const { readdirSync } = require('node:fs') as typeof import('node:fs');
+    const listed = new Set(SCOPE_FILTERING_HANDLERS.map(([f]) => f));
+    // `create.ts` matches the predicate pattern (`p_scope: body.scope`) but is
+    // the WRITE path, not a filter — it is what STORES the scope, and it is
+    // deliberately un-normalising. Validating it here would be a different
+    // change with a data-migration question attached. It is pinned instead by
+    // the "stays reject-only" tripwire above, which fails if it ever starts
+    // normalising without this guard coming down in the same commit.
+    listed.add('create.ts');
+    // `.in('scope', …)` is the array-valued family, excluded by decision above.
+    const singleScopePredicate = /\.eq\(\s*'scope'\s*,|p_scope:/;
+    const missed: string[] = [];
+    for (const file of readdirSync(handlerDir).filter((f) => f.endsWith('.ts'))) {
+      if (listed.has(file)) continue;
+      if (singleScopePredicate.test(read(file))) missed.push(file);
+    }
+    expect(missed, `handlers filter by scope but are not guarded: ${missed.join(', ')}`).toEqual(
+      [],
+    );
+  });
+});

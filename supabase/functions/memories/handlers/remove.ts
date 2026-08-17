@@ -4,7 +4,7 @@ import { recordAudit } from '../../_shared/audit.ts';
 import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
-import { validateScope } from '../../_shared/scope.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { DeleteMemoryQuerySchema } from '../../_shared/schemas/memory.ts';
@@ -57,12 +57,10 @@ export async function handleRemove(
   // produced a predicate that matched nothing, and the caller was told the
   // memory did not exist rather than that their scope was wrong.
   let scopeParam: string | undefined;
-  if (rawScopeParam !== undefined) {
-    try {
-      scopeParam = validateScope(rawScopeParam);
-    } catch (e) {
-      return badRequest((e as Error).message, undefined, cors);
-    }
+  try {
+    scopeParam = parseScopeFilter(rawScopeParam);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
   }
 
   const tracedDb = createTracedClient(db, span);

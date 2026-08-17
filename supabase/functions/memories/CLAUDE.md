@@ -511,6 +511,26 @@ would answer "reads everywhere" under the label the caller asked for. Same call 
 `?correlation_id=`. Both sides go through the **canonical** `validateScope`; there is no
 second grammar.
 
+**That rule now holds on every scope-filtering route, not just this one.**
+`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `DELETE /?scope=…&key=…`
+and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. They previously
+passed the raw value into the predicate, so a bad scope matched nothing and the route
+answered `200` with an empty page — the same input getting a `400` from one route and a
+cheerful empty result from five others. The shared entry point is
+**`parseScopeFilter`** (`_shared/scope.ts`).
+
+`parseScopeFilter` **rejects without normalising**, and that is deliberate: `validateScope`
+lowercases, but the write path does not (`CreateMemoryBodySchema` binds `RawScopeSchema`,
+`handlers/create.ts` passes `body.scope` verbatim, and no migration lowers it), so
+`memories.scope` legitimately holds mixed-case values. Lowercasing a *filter* would make
+those rows unmatchable by `GET /` and undeletable by natural key. If the write path is ever
+normalised, normalise the filters in the same change — never before.
+
+The array-valued `?scopes=` paths (`POST /search`, `GET /relevant`) are **not** covered:
+they need a per-entry decision — reject the whole request, or drop the bad entry — that has
+not been made yet. The MCP twin (`mcp/tools.ts`) validates each entry, so that is the
+precedent to reconcile against when it is.
+
 `safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope.ts` and
 `supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
 that file is excluded from `MIRRORS` because the two `validateScope` bodies deliberately

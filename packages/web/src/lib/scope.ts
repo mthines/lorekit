@@ -32,13 +32,17 @@ const CANONICAL_CHARSET = /^[\w.:/-]+$/;
  * `scope-parity.spec.ts` executes that agreement against the edge module rather
  * than asserting it in prose, so the two cannot drift into a 400 again.
  *
- * Note the asymmetry this exists to absorb: `GET /memories`, `/activity` and
- * `/facets` treat `?scope=` as an exact-match filter and simply match nothing
- * for an ungrammatical value, while `/read-activity` validates and 400s (a
- * deliberate "a filter is the question itself" decision — see
- * `supabase/functions/memories/CLAUDE.md`). So an ungrammatical scope does not
- * fail the page uniformly; it breaks exactly one card and leaves the rest
- * looking merely empty. The client's job is to never send one.
+ * The asymmetry this originally existed to absorb is GONE as of the
+ * scope-filter-validation change: `GET /memories`, `/activity`, `/facets`,
+ * `/read-activity`, `DELETE /memories` and `POST /memories/restore` now ALL
+ * validate `?scope=` and answer 400 on an ungrammatical value (the deliberate
+ * "a filter is the question itself" rule — see
+ * `supabase/functions/memories/CLAUDE.md`). An ungrammatical scope therefore
+ * fails the page uniformly rather than breaking one card next to four that look
+ * merely empty. This guard matters MORE after that change, not less: it is what
+ * keeps the client from ever sending one, so the uniform failure stays
+ * theoretical. Note the edge validators reject-only — they do not lowercase, so
+ * a mixed-case scope is passed through and matched exactly.
  */
 export function isCanonicalScope(raw: string): boolean {
   if (!raw) return false;

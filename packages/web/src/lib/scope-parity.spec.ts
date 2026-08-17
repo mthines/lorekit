@@ -20,12 +20,13 @@ import { validateScope } from '../../../../supabase/functions/_shared/scope.ts';
  * `isCanonicalScope` (client) must agree with `validateScope` (edge) about
  * which scopes are FILTERABLE.
  *
- * The bug this guards against: `GET /memories/read-activity` is the only
- * Explorer endpoint that validates `?scope=` and 400s on a bad value; its
- * siblings (`GET /memories`, `/activity`, `/facets`) treat the same value as an
- * exact-match filter and quietly match nothing. So a scope the client thinks is
- * fine but the edge rejects does not fail the page — it fails ONE card, next to
- * four that render as merely empty.
+ * The bug this guards against: a scope the client thinks is fine but the edge
+ * rejects. Every Explorer endpoint (`GET /memories`, `/activity`, `/facets`,
+ * `/read-activity`) now validates `?scope=` and 400s on a bad value, so such a
+ * disagreement fails the whole page rather than one card — which makes this
+ * parity check load-bearing rather than cosmetic. (Before the
+ * scope-filter-validation change only `/read-activity` validated, and the
+ * others quietly matched nothing.)
  *
  * The two directions of disagreement are not equally bad, and the tests below
  * are split accordingly:

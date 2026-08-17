@@ -1,7 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { validateScope } from '../../_shared/scope.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
@@ -140,20 +140,17 @@ export async function handleList(
   if (!validated.ok) return validated.response;
   const params = validated.data;
 
-  // `ListMemoriesQuerySchema.scope` is `RawScopeSchema` (shape-only) BY DESIGN —
-  // the canonical grammar runs here, in the handler, so a rejection can become a
-  // 400. That is the same contract `GET /memories/read-activity` states and
-  // implements, and the reason is identical: a scope filter IS the question, so
-  // silently keeping an ungrammatical one would answer "you have nothing" to a
-  // question that was never valid. Normalising also matters on its own — writes
-  // store lowercased scopes, so an unnormalised filter misses real rows.
-  let scopeFilter: string | null = null;
-  if (params.scope !== undefined) {
-    try {
-      scopeFilter = validateScope(params.scope);
-    } catch (e) {
-      return badRequest((e as Error).message, undefined, cors);
-    }
+  // `ListMemoriesQuerySchema.scope` is `RawScopeSchema` (shape-only), so the
+  // canonical grammar runs here, in the handler, where a rejection can become a
+  // 400 — the rule `memories/CLAUDE.md` states and `GET /memories/read-activity`
+  // already follows. A scope filter IS the question; keeping an ungrammatical
+  // one and matching nothing answers a different question and calls it empty.
+  // `parseScopeFilter` rejects without normalising — see its docblock.
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(params.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
   }
 
   span.setAttributes({

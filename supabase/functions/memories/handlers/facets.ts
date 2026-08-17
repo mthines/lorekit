@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
@@ -49,6 +50,18 @@ export async function handleFacets(
   if (!validated.ok) return validated.response;
   const archived = validated.data.archived === 'true';
 
+  // The Explorer sends its selected scope here as well as to GET /memories, so
+  // the filter-menu counts drill down with the list. The two must therefore
+  // agree on what a scope IS: if this one kept an ungrammatical value while the
+  // list rejected it, the menu would quietly answer a different question than
+  // the rows beside it.
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(validated.data.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
+  }
+
   // An unknown name in `?facets=` narrows to nothing rather than 400ing: the
   // param arrives from a hand-editable URL, and the same list is re-read on
   // every keystroke in the menu, so a typo must not take the page down.
@@ -91,7 +104,7 @@ export async function handleFacets(
   const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
-    p_scope: q.scope ?? null,
+    p_scope: scopeFilter ?? null,
     p_tags: list(q.tags),
     p_tags_mode: q.tags_mode,
     p_source_agent: list(q.source_agent),

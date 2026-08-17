@@ -1,12 +1,13 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { ok, notFound, dryRun } from '../../_shared/api/respond.ts';
+import { badRequest, ok, notFound, dryRun } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody, validateUuid } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { RestoreMemoryBodySchema } from '../../_shared/schemas/memory.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 
@@ -54,9 +55,18 @@ export async function handleRestore(
   } else {
     const validated = await validateBody(req, RestoreMemoryBodySchema, cors);
     if (!validated.ok) return validated.response;
-    const { scope, key } = validated.data;
-    span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
-    q = q.eq('scope', scope).eq('key', key);
+    const { scope: rawScope, key } = validated.data;
+    // Natural-key restore addresses a row by scope+key, so the same rule as
+    // DELETE applies: an ungrammatical scope must be named as bad input, not
+    // reported back as "no such memory".
+    let scope: string | undefined;
+    try {
+      scope = parseScopeFilter(rawScope);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+    span.setAttributes({ 'lorekit.scope': scope as string, 'lorekit.key': key });
+    q = q.eq('scope', scope as string).eq('key', key);
   }
 
   // api_key auth uses service-role client — restrict to caller's own rows.
