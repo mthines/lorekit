@@ -60,10 +60,22 @@ describe('mcp entrypoint rejects a non-POST before authenticating', () => {
   it('still runs inside traceRequest, so the probe stays visible in telemetry', () => {
     // Moving the guard must not move it OUT of the span. A 405 that produces no
     // span would trade a measurable cost for an invisible one.
-    const traceIdx = index.indexOf('traceRequest(');
+    //
+    // Match `return traceRequest(` — the CALL — not a bare `traceRequest(`,
+    // which also matches the docblock at the top of the file 60 lines above it
+    // and would make this assertion pass for a guard hoisted outside the span.
+    const traceIdx = index.indexOf('return traceRequest(');
     const guardIdx = index.indexOf("req.method !== 'POST'");
     expect(traceIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(-1);
     expect(traceIdx).toBeLessThan(guardIdx);
+
+    // Stronger still: the guard must sit inside the callback, so the `span`
+    // handed to it is the request span. A guard placed between `traceRequest(`
+    // and its callback body could not reference `span` at all.
+    const callbackStart = index.indexOf('(span) => {', traceIdx);
+    expect(callbackStart).toBeGreaterThan(-1);
+    expect(callbackStart).toBeLessThan(guardIdx);
   });
 
   it('marks the probe as a client error, not a server fault', () => {
