@@ -93,6 +93,10 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // rest-response-outcome.ts is the status→usage_events.outcome
   // classification (was inline in _shared/api/router.ts). Both edge files now
   // import their mirror instead of holding a copy.
+  // The MCP `initialize` version negotiation. Mirrored because the handshake is
+  // decided in the Deno edge handler, which cannot cross-import mcp-core, and a
+  // silent drift here is a whole class of client that connects and then stops.
+  ['mcp-protocol-version.ts', '_shared/mcp-protocol-version.ts'],
   ['rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
   ['rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
   ['dry-run.ts', '_shared/dry-run.ts'],

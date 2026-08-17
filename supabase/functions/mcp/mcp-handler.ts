@@ -6,6 +6,11 @@
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
+import {
+  negotiateProtocolVersion,
+  readRequestedProtocolVersion,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from '../_shared/mcp-protocol-version.ts';
 import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
 import { OrgPermissionError } from './org-permissions.ts';
 import {
@@ -109,15 +114,24 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
 }
 
 export async function handleMcp(req: Request, auth: AuthContext, span: Span, adapter: StorageAdapter): Promise<Response> {
-  // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
-  // support with GET; answer 405 before req.json() to avoid the misleading
-  // "Unexpected end of JSON input" parse error. Client probe — use clientError().
+  // POST-only. Modern mcp-remote clients probe for SSE support with GET;
+  // answer 405 before req.json() to avoid the misleading "Unexpected end of
+  // JSON input" parse error. Client probe — use clientError().
+  //
+  // The body names the versions we actually negotiate rather than a frozen
+  // literal: this response is the FIRST thing a new client sees, and it used to
+  // advertise a single old revision on a server that had since been taught to
+  // speak a newer one.
   if (req.method !== 'POST') {
     span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
       'mcp.method': 'unknown',
     });
     return new Response(
-      JSON.stringify({ error: 'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05). GET/SSE is not supported.' }),
+      JSON.stringify({
+        error:
+          'Method Not Allowed. This MCP server uses Streamable HTTP over POST; GET/SSE is not supported. ' +
+          `Supported protocol versions: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}.`,
+      }),
       {
         status: 405,
         headers: { 'Content-Type': 'application/json', Allow: 'POST' },
@@ -141,9 +155,22 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   span.setAttributes({ 'mcp.method': method ?? 'unknown' });
 
   if (method === 'initialize') {
-    span.setAttributes({ 'mcp.protocol_version': '2024-11-05' });
+    // Negotiate — never assert. Echo the client's version when we speak it,
+    // otherwise offer our preferred one and let the client decide. Answering
+    // every caller with one hard-coded literal is what made a newer client
+    // complete the handshake and then go silent instead of listing tools.
+    const negotiated = negotiateProtocolVersion(params);
+    const requested = readRequestedProtocolVersion(params);
+    span.setAttributes({
+      'mcp.protocol_version': negotiated,
+      // What the CLIENT asked for, kept separate from what we answered. The
+      // attribute above is our own output: reading it as evidence about client
+      // versions is only meaningful once this one exists beside it.
+      'mcp.protocol_version.requested': requested ?? 'unset',
+      'mcp.protocol_version.negotiated': requested !== null && requested !== negotiated,
+    });
     return jsonrpc(id, {
-      protocolVersion: '2024-11-05',
+      protocolVersion: negotiated,
       capabilities: { tools: {} },
       serverInfo: { name: 'lorekit', version: '1.1.0' },
     });
