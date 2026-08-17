@@ -2,7 +2,7 @@
 
 <img width="120" height="120" alt="LoreKit logo" src="https://github.com/user-attachments/assets/d65ac2d4-0a52-483b-9efe-427dfa45c026" />
 
-# LoreKit
+# [LoreKit](https://lorekit.io)
 
 **Shared, persistent memory for your AI coding agents.**
 
