@@ -92,7 +92,9 @@ describe('mcp-handler auth status guard', () => {
 // `resolveAuth` and the plan/rate-limit lookups, stays inside `traceRequest`,
 // uses `clientError`, leaves no second copy in `handleMcp`, and is reached
 // before `handleMcp` so `req.json()` is unreachable for a non-POST — lives in
-// `mcp-method-guard-ordering.spec.ts`.
+// `mcp-method-guard-ordering.spec.ts`. Its 405 body names the protocol version
+// this server negotiates (see mcp-protocol-version.ts) rather than a frozen
+// literal or a transport name — asserted there, not here.
 //
 // It was briefly asserted in both files. Splitting it did not help: every
 // statement about the guard has its subject in `index.ts`, so the assertions

@@ -29,6 +29,7 @@ import { handleWebhook } from './webhook.ts';
 import { handleInstallationSync } from './installation-sync.ts';
 import { checkRateLimit, rateLimitMessage, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { resolveStorageAdapter } from './storage-adapter.ts';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../_shared/mcp-protocol-version.ts';
 
 /**
  * Best-effort read of the JSON-RPC request id from the body, without disturbing
@@ -120,16 +121,21 @@ Deno.serve(async (req: Request) => {
         'auth.type': credentialTier(probeToken),
         'auth.outcome': 'not_attempted',
       });
-      // Name the protocol version this server actually negotiates, not a
-      // transport name. `initialize` answers `protocolVersion: '2024-11-05'`
-      // (mcp-handler.ts), whose transport is HTTP+SSE — so telling a client it
-      // is talking to Streamable HTTP contradicts the handshake the same server
-      // performs one request later. What is true regardless of version, and is
-      // the only thing the probing client needs, is: POST only.
+      // Name the protocol versions this server actually negotiates
+      // (mcp-protocol-version.ts), not a transport name and not a single frozen
+      // literal. `initialize` used to always answer `protocolVersion:
+      // '2024-11-05'`, whose transport is HTTP+SSE — so telling a client it is
+      // talking to Streamable HTTP contradicted the handshake the same server
+      // performed one request later. The server now negotiates against
+      // `SUPPORTED_PROTOCOL_VERSIONS`, so this response — the FIRST thing a new
+      // client sees — lists what is actually on offer instead of going stale
+      // the next time that list changes. What is true regardless of version,
+      // and is the only other thing the probing client needs, is: POST only.
       return new Response(
         JSON.stringify({
           error:
-            'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05); GET/SSE is not supported.',
+            'Method Not Allowed. This MCP server uses Streamable HTTP over POST; GET/SSE is not supported. ' +
+            `Supported protocol versions: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}.`,
         }),
         {
           status: 405,

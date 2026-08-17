@@ -7,6 +7,10 @@ import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction }
 import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
+import {
+  negotiateProtocolVersion,
+  readRequestedProtocolVersion,
+} from '../_shared/mcp-protocol-version.ts';
 import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
 import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
 import { TtlError } from './ttl.ts';
@@ -83,6 +87,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   // wrong. `handleMcp` has exactly one caller, so a second copy here would be
   // dead code and a place for the two 405 responses to drift. The ordering is
   // pinned by `packages/mcp-core/src/mcp-guards/mcp-method-guard-ordering.spec.ts`.
+  // Its body names the versions this server actually negotiates rather than a
+  // frozen literal — see `SUPPORTED_PROTOCOL_VERSIONS` in `index.ts`.
   //
   // The consequence for this function: `req.json()` below is only ever reached
   // on a POST, which is what makes the "Unexpected end of JSON input" parse
@@ -103,9 +109,22 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   span.setAttributes({ 'mcp.method': method ?? 'unknown' });
 
   if (method === 'initialize') {
-    span.setAttributes({ 'mcp.protocol_version': '2024-11-05' });
+    // Negotiate — never assert. Echo the client's version when we speak it,
+    // otherwise offer our preferred one and let the client decide. Answering
+    // every caller with one hard-coded literal is what made a newer client
+    // complete the handshake and then go silent instead of listing tools.
+    const negotiated = negotiateProtocolVersion(params);
+    const requested = readRequestedProtocolVersion(params);
+    span.setAttributes({
+      'mcp.protocol_version': negotiated,
+      // What the CLIENT asked for, kept separate from what we answered. The
+      // attribute above is our own output: reading it as evidence about client
+      // versions is only meaningful once this one exists beside it.
+      'mcp.protocol_version.requested': requested ?? 'unset',
+      'mcp.protocol_version.negotiated': requested !== null && requested !== negotiated,
+    });
     return jsonrpc(id, {
-      protocolVersion: '2024-11-05',
+      protocolVersion: negotiated,
       capabilities: { tools: {} },
       serverInfo: { name: 'lorekit', version: '1.1.0' },
     });
