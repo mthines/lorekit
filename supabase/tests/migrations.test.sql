@@ -5841,7 +5841,7 @@ begin
 
   -- AC-3: THE case the URL transport could not carry. 1000 values, one real.
   select array_agg('filler-host-' || g) into v_wide from generate_series(1, 999) g;
-  v_wide := v_wide || 'reviewer';
+  v_wide := v_wide || 'reviewer'::text;
   assert array_length(v_wide, 1) = 1000, 'list rpc AC-3: fixture must name 1000 values';
   select array_agg(key) into v_keys
     from lorekit_memory_list(
