@@ -109,19 +109,23 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   span.setAttributes({ 'mcp.method': method ?? 'unknown' });
 
   if (method === 'initialize') {
-    // Negotiate — never assert. Echo the client's version when we speak it,
-    // otherwise offer our preferred one and let the client decide. Answering
-    // every caller with one hard-coded literal is what made a newer client
-    // complete the handshake and then go silent instead of listing tools.
+    // Negotiate — never assert. Echo the client's version when we speak it;
+    // otherwise offer the newest version we speak that is not newer than what
+    // it asked for, so an older client is met where it is rather than handed a
+    // revision released after it. Answering every caller with one hard-coded
+    // literal is what made a newer client complete the handshake and then go
+    // silent instead of listing tools.
     const negotiated = negotiateProtocolVersion(params);
     const requested = readRequestedProtocolVersion(params);
     span.setAttributes({
       'mcp.protocol_version': negotiated,
       // What the CLIENT asked for, kept separate from what we answered. The
       // attribute above is our own output: reading it as evidence about client
-      // versions is only meaningful once this one exists beside it.
+      // versions is only meaningful once this one exists beside it. The two
+      // being unequal is the signal that a client was offered something other
+      // than what it wanted — derive it from these, rather than storing a
+      // boolean whose name would have to explain which way round it reads.
       'mcp.protocol_version.requested': requested ?? 'unset',
-      'mcp.protocol_version.negotiated': requested !== null && requested !== negotiated,
     });
     return jsonrpc(id, {
       protocolVersion: negotiated,

@@ -31,17 +31,46 @@ describe('negotiateProtocolVersion', () => {
     }
   });
 
-  it('offers the preferred version when the client asks for one we do not speak', () => {
-    // 2025-03-26 is deliberately unsupported (it mandates JSON-RPC batching,
-    // which the edge handler does not implement). The client gets our best
-    // offer and decides — which is the spec's contract — instead of being told
-    // we speak a version it may have dropped.
-    expect(negotiateProtocolVersion({ protocolVersion: '2025-03-26' })).toBe(
-      PREFERRED_PROTOCOL_VERSION,
-    );
+  it('offers an OLDER supported version, not a newer one, when it can', () => {
+    // The regression this guards against. 2025-03-26 is deliberately
+    // unsupported (it mandates JSON-RPC batching the handler does not
+    // implement). Answering it with our newest version — 2025-06-18, released
+    // AFTER it — would hand that client a revision it does not know and, per
+    // spec, SHOULD disconnect over: the exact failure this module exists to
+    // remove, reproduced for a different client. Offer 2024-11-05 instead,
+    // which it almost certainly still speaks.
+    expect(negotiateProtocolVersion({ protocolVersion: '2025-03-26' })).toBe('2024-11-05');
+    // Any date between our two supported revisions behaves the same way.
+    expect(negotiateProtocolVersion({ protocolVersion: '2025-01-01' })).toBe('2024-11-05');
+  });
+
+  it('falls back to the preferred version only when nothing older is supported', () => {
+    // Older than everything we speak — there is no "not newer" candidate, so
+    // our newest is the only offer we can make.
     expect(negotiateProtocolVersion({ protocolVersion: '1999-01-01' })).toBe(
       PREFERRED_PROTOCOL_VERSION,
     );
+    // Newer than everything we speak: echo is impossible, and the newest we
+    // have is both "not newer than requested" and our preferred version.
+    expect(negotiateProtocolVersion({ protocolVersion: '2099-01-01' })).toBe(
+      PREFERRED_PROTOCOL_VERSION,
+    );
+  });
+
+  it('never offers a version newer than the client asked for', () => {
+    // Property form of the two cases above, over a spread of plausible dates.
+    for (const requested of [
+      '2024-01-01',
+      '2024-11-05',
+      '2025-03-26',
+      '2025-06-18',
+      '2026-01-01',
+    ]) {
+      const answered = negotiateProtocolVersion({ protocolVersion: requested });
+      if (requested >= SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1]) {
+        expect(answered <= requested, `${requested} → ${answered}`).toBe(true);
+      }
+    }
   });
 
   it('offers the preferred version when the client sends no version at all', () => {
@@ -96,5 +125,22 @@ describe('mcp-handler initialize negotiation guard', () => {
     // about client versions for eleven days. Record both sides.
     expect(handler).toMatch(/'mcp\.protocol_version': negotiated/);
     expect(handler).toMatch(/mcp\.protocol_version\.requested/);
+    // …and NOT a third, derived attribute. "Did we have to downgrade" is
+    // `requested !== protocol_version`, computable at query time. A stored
+    // boolean would need its name to explain which direction it reads, which
+    // the first draft of this got backwards.
+    expect(handler).not.toMatch(/mcp\.protocol_version\.negotiated/);
+  });
+
+  it('documents the MUSTs it does not yet meet for the version it claims', () => {
+    // Claiming a revision means claiming its obligations. 2025-03-26 is
+    // rejected here on exactly that basis, so the 2025-06-18 gaps have to be
+    // written down rather than assumed away — otherwise the standard is being
+    // applied in one direction only.
+    const mod = readFileSync(path.resolve(here, './mcp-protocol-version.ts'), 'utf8');
+    expect(mod).toMatch(/KNOWN GAPS/);
+    for (const gap of ['202 Accepted', 'MCP-Protocol-Version', 'Origin']) {
+      expect(mod, `known-gap list should mention ${gap}`).toContain(gap);
+    }
   });
 });
