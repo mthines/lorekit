@@ -18,6 +18,15 @@
 #   files under `__screenshots__/`. Baselines that still match are rewritten
 #   byte-identical and produce no diff, so the commit contains exactly the
 #   baselines that actually moved.
+#
+#   The regeneration step is deliberately `continue-on-error`. It runs the FULL
+#   suite, and this workflow is only ever invoked on a branch whose visual tests
+#   are red — so a single unrelated failing `play` assertion elsewhere in the
+#   suite must not abort the job and discard the baselines `-u` has already
+#   written to disk. Screenshots are written as a side effect of a story
+#   RENDERING, not of the run passing. The failure is deferred, not dropped: the
+#   last step re-raises it, so the run still ends red and the PR comment says
+#   the baselines landed while the suite did not pass.
 name: Update visual baselines
 
 on:
@@ -174,10 +183,24 @@ jobs:
             packages/web/node_modules/.cache/storybook
           key: web-vite-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/web/.storybook/**', 'packages/web/vitest.storybook.config.ts') }}
 
-      # `-u` regenerates baselines and passes. Invoked via `npx` (not
-      # `pnpm exec` / `nx`) for the same reason ci.yml uses it: those wrappers
-      # keep the Playwright child's stdio open and the run never returns.
+      # `-u` writes every screenshot it renders — a missing or moved baseline is
+      # regenerated as a side effect of the story rendering, not of the run
+      # passing. Invoked via `npx` (not `pnpm exec` / `nx`) for the same reason
+      # ci.yml uses it: those wrappers keep the Playwright child's stdio open and
+      # the run never returns.
+      #
+      # `continue-on-error` is what makes this workflow do its job on a red
+      # branch, which is the only kind of branch anyone runs it from. This is the
+      # FULL suite, so ONE unrelated failing interaction test — a `play` assertion
+      # in some other component — used to abort the job here and throw away every
+      # baseline `-u` had just written, including the ones the PR was blocked on.
+      # A `play` failure is a statement about behaviour, not about pixels; the
+      # commit step below stages only `__screenshots__/**`, so it cannot smuggle
+      # anything else in. The failure is not swallowed: the final step re-raises
+      # it, and the PR comment says the baselines landed but the suite was red.
       - name: Regenerate visual baselines (vitest -u)
+        id: regen
+        continue-on-error: true
         working-directory: packages/web
         run: npx vitest run --config vitest.storybook.config.ts -u
 
@@ -228,24 +251,38 @@ jobs:
             const number = ${{ steps.pr.outputs.number || 0 }};
             if (!number) return;
             const changed = '${{ steps.commit.outputs.changed }}' === 'true';
+            // The vitest step is `continue-on-error`, so a red suite leaves
+            // `job.status` green here — the two states have to be read
+            // separately. `ok` = the workflow's own machinery worked;
+            // `redSuite` = the baselines are trustworthy but something in the
+            // suite is failing on behaviour.
             const ok = '${{ job.status }}' === 'success';
+            const redSuite = '${{ steps.regen.outcome }}' === 'failure';
+            const runLog =
+              `[run log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+              `/actions/runs/${context.runId})`;
+            const notRerun =
+              'ℹ️ This commit was pushed with `GITHUB_TOKEN`, so `web-test` will ' +
+              'not re-run automatically — push a follow-up commit if you need CI ' +
+              'to re-verify.';
+            const suiteNote = redSuite
+              ? '\n\n⚠️ The regeneration run also had **failing tests** ' +
+                `(see the ${runLog}). Those are interaction assertions, not ` +
+                'screenshot diffs — the baselines above were still written and ' +
+                'committed, but the suite stays red until they are fixed.'
+              : '';
             let body;
             if (!ok) {
-              body =
-                '❌ **Update visual baselines** failed. See the ' +
-                `[run log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
-                `/actions/runs/${context.runId}).`;
+              body = `❌ **Update visual baselines** failed. See the ${runLog}.`;
             } else if (!changed) {
               body =
                 'ℹ️ **Update visual baselines**: no changes — every screenshot ' +
-                'still matches its committed baseline.';
+                'still matches its committed baseline.' + suiteNote;
             } else {
               body =
                 `✅ **Update visual baselines**: committed ${{ steps.commit.outputs.count || 0 }} ` +
                 `updated baseline(s) as \`${{ steps.commit.outputs.sha }}\`.\n\n` +
-                'ℹ️ This commit was pushed with `GITHUB_TOKEN`, so `web-test` will ' +
-                'not re-run automatically — push a follow-up commit if you need CI ' +
-                'to re-verify.';
+                notRerun + suiteNote;
             }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -256,11 +293,27 @@ jobs:
             // Close the loop on the triggering comment with a terminal reaction
             // (rocket = done, confused = failed), mirroring preview.yml. Only a
             // comment trigger has a reaction target; a dispatch run has none.
+            // A red suite reacts `confused` even though the baselines landed,
+            // because the job itself ends red — the reaction has to agree with
+            // the check mark next to it, and the comment above says which half
+            // succeeded.
             if (context.eventName === 'issue_comment') {
               await github.rest.reactions.createForIssueComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: context.payload.comment.id,
-                content: ok ? 'rocket' : 'confused',
+                content: ok && !redSuite ? 'rocket' : 'confused',
               });
             }
+
+      # Re-raise the failure `continue-on-error` deferred, so a red suite is
+      # never reported as a green run. It runs LAST, after the baselines are
+      # committed and the PR is told what happened — the whole point of the
+      # deferral is that those two things happen first.
+      - name: Surface the deferred test failure
+        if: steps.regen.outcome == 'failure'
+        run: |
+          echo "::error::vitest reported failing tests during the baseline run." \
+               "Any updated screenshots were still committed; see the log above" \
+               "for the failing assertions."
+          exit 1

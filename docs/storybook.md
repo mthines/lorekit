@@ -109,8 +109,14 @@ branch. Two ways to run it against a specific PR:
 
 It runs `vitest -u` over the whole suite, stages only files under `__screenshots__/` (matching
 baselines are rewritten byte-identical and produce no diff), commits, pushes, and comments the
-outcome on the PR. Two limits worth knowing:
+outcome on the PR. Three things worth knowing:
 
+- **A failing test does not cost you the baselines.** `-u` writes a screenshot as a side effect of
+  the story *rendering*, not of the run *passing* — so an unrelated failing `play` assertion
+  somewhere else in the full suite used to abort the job and discard every baseline already on
+  disk. The regeneration step is `continue-on-error`: the baselines are committed either way, the
+  PR comment says the suite was red, and a final step re-raises the failure so the run still ends
+  red. Only `__screenshots__/**` is ever staged, so nothing else can ride along on a red run.
 - **Fork PRs are rejected** — `GITHUB_TOKEN` can't push to a fork branch, so regenerate locally
   and push from the fork instead.
 - The baseline commit is pushed with `GITHUB_TOKEN`, which by design does **not** re-trigger
