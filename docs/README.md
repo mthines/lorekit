@@ -16,6 +16,7 @@
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
 | [telemetry-quality-review.md](./telemetry-quality-review.md) | Developers | Cross-service `traceparent` correlation contract, telemetry-quality review vs OTel semantic conventions, and the tests that guard it |
 | [deployment.md](./deployment.md) | Developers | Step-by-step deployment for all three pieces |
+| [lore-graph.md](./lore-graph.md) | Developers | The 3D memory map: feasibility against the 5,000-memory cap, the relation model and its three bounds, layout, WebGL rendering budget, accessibility, and the fetching constraint |
 | [storybook.md](./storybook.md) | Developers | Web Storybook: MSW-mocked full-page stories, determinism, and deploying Storybook as a second Vercel project |
 | [releasing.md](./releasing.md) | Developers | Automated `@lorekit/cli` npm releases via release-please + conventional commits |
 

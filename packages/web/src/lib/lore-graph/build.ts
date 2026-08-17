@@ -1,0 +1,308 @@
+/**
+ * Derive a {@link LoreGraph} from a page of memories.
+ *
+ * Pure and dependency-free (see the functional-core convention in
+ * `packages/web/CLAUDE.md`), so the whole relationship model — which memories
+ * are neighbours, how strongly, and what gets dropped when there are too many —
+ * is unit-testable without a browser, a canvas, or a GPU.
+ *
+ * ## The cost model this is written against
+ *
+ * A free-plan account is capped at **5,000 active memories** (`docs/limits.md`),
+ * so the node count has a known ceiling and instanced WebGL draws it in one
+ * call. The part with no natural ceiling is the EDGES: "connect every pair that
+ * shares a label" is `O(n²)` in the worst case, and a single label carried by
+ * 3,000 memories would alone produce ~4.5 million lines — enough to blow the
+ * frame budget, the layout budget and the user's ability to read anything.
+ *
+ * Three bounds keep it linear-ish and legible, in this order:
+ *
+ * 1. **Hub suppression.** A label (or key namespace, or repo) carried by more
+ *    than {@link GraphBuildOptions.hubSize} memories is not an edge at all. It
+ *    is a FACET — "everything here is a lesson" tells you nothing about which
+ *    two memories relate — and it is exactly the term whose posting list makes
+ *    the pair count quadratic. Dropping it removes the cost and the noise
+ *    together, which is why it is the first bound rather than a later cap.
+ * 2. **Degree cap.** No memory keeps more than
+ *    {@link GraphBuildOptions.maxDegree} relation edges, taking its strongest
+ *    first. A hairball around one node hides the very clustering the view
+ *    exists to show.
+ * 3. **Edge budget.** A final global cap, applied strongest-first.
+ *
+ * Every bound reports what it dropped in {@link LoreGraph.truncated}, because a
+ * picture of "the shape of your lore" that quietly omits half of it is worse
+ * than no picture.
+ */
+
+import { scopeType } from '@/lib/scope';
+import type { EdgeKind, GraphEdge, GraphNode, GraphTruncation, LoreGraph } from './types';
+import { EMPTY_GRAPH } from './types';
+
+/**
+ * The fields the builder reads off a memory.
+ *
+ * A structural subset rather than `LessonEntry` itself, so this module stays
+ * usable from a test fixture, a Storybook story, and a future server-side
+ * graph projection without any of them constructing a full lesson.
+ */
+export interface GraphMemoryInput {
+  scope: string;
+  key: string;
+  tags?: readonly string[] | null;
+  updated_at: string;
+  archived_at?: string | null;
+  origin_repo?: string | null;
+  /** Recurrence (migration 00059). Absent on a row written before it. */
+  seen_count?: number | null;
+}
+
+export interface GraphBuildOptions {
+  /** Max memory nodes kept, most-recently-updated first. */
+  maxNodes?: number;
+  /** Max memory↔memory edges kept, strongest first. */
+  maxEdges?: number;
+  /** Max relation edges per memory. Scope edges are exempt — they are the skeleton. */
+  maxDegree?: number;
+  /** A term shared by more than this many memories is a facet, not a relation. */
+  hubSize?: number;
+  /** Relation kinds to derive. Order is irrelevant; membership is not. */
+  kinds?: readonly Exclude<EdgeKind, 'scope'>[];
+}
+
+/**
+ * Defaults chosen against the 5,000-memory plan ceiling.
+ *
+ * `maxNodes` is the ceiling itself: below it nothing is dropped, so the common
+ * account sees its whole graph. `maxEdges` is ~3× the node ceiling because a
+ * readable graph is sparse — past roughly three edges per node the screen is a
+ * fog of lines regardless of how fast it renders. `hubSize` of 64 is the point
+ * where a shared term stops discriminating: a label on 65 of your memories is
+ * describing a category, and categories are already drawn as scopes.
+ */
+export const GRAPH_DEFAULTS = {
+  maxNodes: 5_000,
+  maxEdges: 15_000,
+  maxDegree: 12,
+  hubSize: 64,
+  kinds: ['label', 'key', 'repo'] as const,
+} satisfies Required<GraphBuildOptions>;
+
+/** The natural key — the one identity that survives a refetch and a re-sort. */
+export function memoryNodeId(memory: Pick<GraphMemoryInput, 'scope' | 'key'>): string {
+  return `${memory.scope}::${memory.key}`;
+}
+
+/** A scope node's id, namespaced so it can never collide with a memory's. */
+export function scopeNodeId(scope: string): string {
+  return `scope:${scope}`;
+}
+
+/**
+ * The `namespace` of `namespace::slug` keys, or `null` for an un-namespaced key.
+ *
+ * The convention is real and load-bearing in this product — every
+ * self-improvement loop writes `<bucket>-lessons::<slug>` — so two memories
+ * sharing a prefix are siblings in the same bucket, which is a relation worth a
+ * line. A key with no `::` has no siblings by this rule rather than being
+ * grouped with every other un-namespaced key.
+ */
+export function keyNamespace(key: string): string | null {
+  const at = key.indexOf('::');
+  return at > 0 ? key.slice(0, at) : null;
+}
+
+/** `log1p`-scaled into `[0, 1]`, so one 400× outlier cannot flatten the rest. */
+function normalizedWeight(value: number, max: number): number {
+  if (max <= 1) return value > 0 ? 1 : 0;
+  return Math.log1p(Math.max(value, 0)) / Math.log1p(max);
+}
+
+/** Deterministic order: newest first, natural key breaking ties. */
+function byRecencyThenKey(a: GraphMemoryInput, b: GraphMemoryInput): number {
+  const delta = Date.parse(b.updated_at) - Date.parse(a.updated_at);
+  if (delta !== 0 && Number.isFinite(delta)) return delta;
+  return memoryNodeId(a).localeCompare(memoryNodeId(b));
+}
+
+/** `a|b` with the lower index first, so a pair has ONE key regardless of order. */
+function pairKey(a: number, b: number): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/**
+ * Group node indices by a term, dropping terms that only one memory carries
+ * (no pair to draw) and terms carried by more than `hubSize` (a facet).
+ */
+function postingLists(
+  terms: readonly (readonly string[])[],
+  hubSize: number,
+): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  terms.forEach((nodeTerms, node) => {
+    for (const term of nodeTerms) {
+      const list = index.get(term);
+      if (list) list.push(node);
+      else index.set(term, [node]);
+    }
+  });
+  for (const [term, list] of index) {
+    if (list.length < 2 || list.length > hubSize) index.delete(term);
+  }
+  return index;
+}
+
+/**
+ * Pair up every posting list and accumulate a strength per pair.
+ *
+ * Strength is the **Jaccard** overlap of the two term sets — shared over union
+ * — so two memories carrying the same single label score 1, while a memory with
+ * twenty labels sharing one of them scores near zero. Normalising by the
+ * SMALLER set instead (the obvious first attempt) scores both of those 1: any
+ * single-label memory becomes a perfect twin of every memory that happens to
+ * carry that label, which is precisely the false cluster this view must not
+ * draw.
+ */
+function pairsFromPostings(
+  index: Map<string, number[]>,
+  termCount: readonly number[],
+): Map<string, { source: number; target: number; shared: number }> {
+  const pairs = new Map<string, { source: number; target: number; shared: number }>();
+  for (const list of index.values()) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i];
+        const b = list[j];
+        const key = pairKey(a, b);
+        const existing = pairs.get(key);
+        if (existing) existing.shared += 1;
+        else pairs.set(key, { source: Math.min(a, b), target: Math.max(a, b), shared: 1 });
+      }
+    }
+  }
+  for (const pair of pairs.values()) {
+    const union =
+      (termCount[pair.source] || 1) + (termCount[pair.target] || 1) - pair.shared;
+    pair.shared = Math.min(1, pair.shared / Math.max(union, 1));
+  }
+  return pairs;
+}
+
+/** Strongest first; pair order breaks ties so a rebuild draws the same graph. */
+function byStrength(a: GraphEdge, b: GraphEdge): number {
+  if (b.strength !== a.strength) return b.strength - a.strength;
+  if (a.source !== b.source) return a.source - b.source;
+  return a.target - b.target;
+}
+
+/**
+ * Build the graph.
+ *
+ * The returned `nodes` array is memory nodes first, then scope nodes. Callers
+ * rely on nothing about that order beyond its determinism — edges address nodes
+ * by index — but the split keeps the GPU's instance buffer for the (numerous,
+ * uniformly-sized) memory nodes contiguous.
+ */
+export function buildLoreGraph(
+  memories: readonly GraphMemoryInput[],
+  options: GraphBuildOptions = {},
+): LoreGraph {
+  const { maxNodes, maxEdges, maxDegree, hubSize, kinds } = { ...GRAPH_DEFAULTS, ...options };
+  if (memories.length === 0) return EMPTY_GRAPH;
+
+  const truncated: GraphTruncation[] = [];
+
+  // ── Nodes ───────────────────────────────────────────────────────────────
+  const ordered = [...memories].sort(byRecencyThenKey);
+  const kept = ordered.slice(0, Math.max(maxNodes, 0));
+  if (kept.length < ordered.length) {
+    truncated.push({ of: 'nodes', total: ordered.length, kept: kept.length });
+  }
+
+  const maxSeen = kept.reduce((max, m) => Math.max(max, m.seen_count ?? 1), 1);
+  const nodes: GraphNode[] = kept.map((memory) => ({
+    kind: 'memory',
+    id: memoryNodeId(memory),
+    label: memory.key,
+    scope: memory.scope,
+    scopeType: scopeType(memory.scope),
+    weight: normalizedWeight(memory.seen_count ?? 1, maxSeen),
+    tags: memory.tags ?? [],
+    updatedAt: Date.parse(memory.updated_at) || 0,
+    archived: Boolean(memory.archived_at),
+  }));
+
+  // One scope node per scope actually present, in first-appearance order.
+  const scopeMembers = new Map<string, number[]>();
+  nodes.forEach((node, index) => {
+    const members = scopeMembers.get(node.scope);
+    if (members) members.push(index);
+    else scopeMembers.set(node.scope, [index]);
+  });
+
+  const maxMembers = [...scopeMembers.values()].reduce((max, m) => Math.max(max, m.length), 1);
+  const scopeIndexOf = new Map<string, number>();
+  for (const [scope, members] of scopeMembers) {
+    scopeIndexOf.set(scope, nodes.length);
+    nodes.push({
+      kind: 'scope',
+      id: scopeNodeId(scope),
+      label: scope.split('::').pop() ?? scope,
+      scope,
+      scopeType: scopeType(scope),
+      weight: normalizedWeight(members.length, maxMembers),
+      tags: [],
+      // A scope is as fresh as its freshest memory, so an abandoned scope reads
+      // as abandoned rather than borrowing "now" from the render.
+      updatedAt: members.reduce((newest, i) => Math.max(newest, nodes[i].updatedAt), 0),
+      archived: members.every((i) => nodes[i].archived),
+    });
+  }
+
+  // ── Skeleton edges: every memory to its scope ───────────────────────────
+  const edges: GraphEdge[] = [];
+  for (const [scope, members] of scopeMembers) {
+    const scopeIndex = scopeIndexOf.get(scope) ?? 0;
+    for (const member of members) {
+      edges.push({ source: member, target: scopeIndex, kind: 'scope', strength: 1 });
+    }
+  }
+
+  // ── Relation edges ──────────────────────────────────────────────────────
+  const termsFor: Record<Exclude<EdgeKind, 'scope'>, (m: GraphMemoryInput) => string[]> = {
+    label: (m) => [...new Set(m.tags ?? [])],
+    key: (m) => {
+      const namespace = keyNamespace(m.key);
+      return namespace ? [namespace] : [];
+    },
+    repo: (m) => (m.origin_repo ? [m.origin_repo] : []),
+  };
+
+  const candidates: GraphEdge[] = [];
+  for (const kind of kinds) {
+    const terms = kept.map(termsFor[kind]);
+    const pairs = pairsFromPostings(
+      postingLists(terms, hubSize),
+      terms.map((t) => t.length),
+    );
+    for (const pair of pairs.values()) {
+      candidates.push({ source: pair.source, target: pair.target, kind, strength: pair.shared });
+    }
+  }
+
+  candidates.sort(byStrength);
+
+  const degree = new Int32Array(nodes.length);
+  const relations: GraphEdge[] = [];
+  for (const edge of candidates) {
+    if (relations.length >= maxEdges) break;
+    if (degree[edge.source] >= maxDegree || degree[edge.target] >= maxDegree) continue;
+    degree[edge.source] += 1;
+    degree[edge.target] += 1;
+    relations.push(edge);
+  }
+  if (relations.length < candidates.length) {
+    truncated.push({ of: 'edges', total: candidates.length, kept: relations.length });
+  }
+
+  return { nodes, edges: [...edges, ...relations], truncated };
+}
