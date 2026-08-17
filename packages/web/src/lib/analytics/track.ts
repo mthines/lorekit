@@ -22,6 +22,9 @@
  * - `command_palette.opened`           — the palette overlay was shown.
  * - `command_palette.command_selected` — a command was executed (leaf onSelect).
  * - `install_command.copied`           — a visitor copied a shell command to the clipboard.
+ * - `content.scroll_depth`             — a reader crossed 25/50/75/100 % of an article.
+ * - `content.section_read`             — a reader left a section, after dwelling in it.
+ * - `content.read`                     — end-of-page-view reading summary (one per view).
  *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
@@ -31,6 +34,8 @@
  * project's `lorekit.*` namespace, mirroring packages/mcp-core/src/telemetry.ts.
  */
 import { sendEvent } from '@dash0/sdk-web';
+
+import { dwellBucket, type ContentType, type ScrollMilestone } from './reading';
 
 /** How the palette was opened. */
 export type PaletteTrigger = 'shortcut' | 'button';
@@ -70,6 +75,34 @@ export type AnalyticsEvent =
        * what makes that visible; counting only successes would hide it.
        */
       succeeded: boolean;
+    }
+  | {
+      name: 'content.scroll_depth';
+      contentType: ContentType;
+      slug: string;
+      depthPercent: ScrollMilestone;
+    }
+  | {
+      name: 'content.section_read';
+      contentType: ContentType;
+      slug: string;
+      /** The heading id — the same value the TOC links to. */
+      sectionId: string;
+      /** Position in the TOC, so "did anyone reach section 7" needs no join. */
+      sectionIndex: number;
+      dwellMs: number;
+    }
+  | {
+      name: 'content.read';
+      contentType: ContentType;
+      slug: string;
+      maxDepthPercent: number;
+      /** Visible, non-idle time. See `ReadingTelemetry` for what does NOT count. */
+      engagedMs: number;
+      sectionsRead: number;
+      /** The section that held them longest, when any section did. */
+      topSectionId?: string;
+      completed: boolean;
     };
 
 /**
@@ -82,8 +115,16 @@ export function normalizeCommandId(id: string): string {
   return id.startsWith('lore-lesson-') ? 'lore-lesson' : id;
 }
 
+/**
+ * An OTel attribute value we are prepared to send. Numbers are deliberate:
+ * `dwell_ms` and `max_depth_percent` get averaged and percentiled in Dash0, and
+ * a stringified number can only be grouped by. Every value that is a LABEL
+ * stays a string.
+ */
+type AttributeValue = string | number;
+
 /** Map a typed event to its bounded, `lorekit.*`-namespaced OTel attributes. */
-function toAttributes(event: AnalyticsEvent): Record<string, string> {
+function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
   switch (event.name) {
     case 'command_palette.opened':
       return { 'lorekit.command_palette.trigger': event.trigger };
@@ -101,6 +142,40 @@ function toAttributes(event: AnalyticsEvent): Record<string, string> {
         'lorekit.install_command.surface': event.surface,
         'lorekit.install_command.succeeded': String(event.succeeded),
       };
+    case 'content.scroll_depth':
+      return {
+        'lorekit.content.type': event.contentType,
+        'lorekit.content.slug': event.slug,
+        'lorekit.content.depth_percent': event.depthPercent,
+      };
+    case 'content.section_read': {
+      const attrs: Record<string, AttributeValue> = {
+        'lorekit.content.type': event.contentType,
+        'lorekit.content.slug': event.slug,
+        'lorekit.content.section.id': event.sectionId,
+        'lorekit.content.section.dwell_ms': event.dwellMs,
+        'lorekit.content.section.dwell_bucket': dwellBucket(event.dwellMs),
+      };
+      // `indexOf` yields -1 for a heading that is not in the TOC. Omit rather
+      // than ship a sentinel that would sort ahead of section 0 in every panel.
+      if (event.sectionIndex >= 0) attrs['lorekit.content.section.index'] = event.sectionIndex;
+      return attrs;
+    }
+    case 'content.read': {
+      const attrs: Record<string, AttributeValue> = {
+        'lorekit.content.type': event.contentType,
+        'lorekit.content.slug': event.slug,
+        'lorekit.content.max_depth_percent': event.maxDepthPercent,
+        'lorekit.content.engaged_ms': event.engagedMs,
+        'lorekit.content.engaged_bucket': dwellBucket(event.engagedMs),
+        'lorekit.content.sections_read': event.sectionsRead,
+        // A string, like `install_command.succeeded` — and unconditional, so a
+        // `false` is a row rather than an absence.
+        'lorekit.content.completed': String(event.completed),
+      };
+      if (event.topSectionId) attrs['lorekit.content.top_section.id'] = event.topSectionId;
+      return attrs;
+    }
   }
 }
 
