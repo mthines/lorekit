@@ -76,25 +76,37 @@ describe('mcp-handler auth status guard', () => {
   });
 });
 
-describe('mcp-handler GET guard', () => {
-  it('intercepts non-POST requests with 405 before trying to parse JSON, using clientError()', () => {
+describe('mcp GET guard', () => {
+  // The guard MOVED from `mcp-handler.ts` to `index.ts`, above `resolveAuth`,
+  // so an SSE probe no longer pays the authenticated preamble to be told the
+  // method is wrong. This assertion moved with it and got STRICTER rather than
+  // looser: "before resolveAuth" implies "before req.json()", because
+  // `handleMcp` — which owns the only `req.json()` — is called after auth. The
+  // full ordering contract lives in `mcp-method-guard-ordering.spec.ts`.
+  it('intercepts non-POST requests with 405 before authenticating, using clientError()', () => {
     // GET is used by modern mcp-remote clients probing for SSE support (MCP 2025-03-26 spec).
-    // The server implements 2024-11-05 (POST-only). Without this guard, GET hits req.json()
+    // The server is Streamable-HTTP POST-only. Without this guard, GET reaches req.json()
     // which throws "Unexpected end of JSON input" — a misleading 400, not the correct 405.
     // The guard must use clientError() (not error()) so the span is not marked ERROR.
-    expect(handler).toMatch(/req\.method !== 'POST'/);
-    expect(handler).toMatch(/status: 405/);
-    expect(handler).toMatch(/Allow: 'POST'/);
-    // The guard must appear BEFORE req.json() — check it's before the try/catch for body parsing
-    const getGuardIdx = handler.indexOf("req.method !== 'POST'");
-    const jsonParseIdx = handler.indexOf('body = await req.json()');
+    expect(index).toMatch(/req\.method !== 'POST'/);
+    expect(index).toMatch(/status: 405/);
+    expect(index).toMatch(/Allow: 'POST'/);
+
+    const getGuardIdx = index.indexOf("req.method !== 'POST'");
+    const resolveAuthIdx = index.indexOf('resolveAuth(');
     expect(getGuardIdx).toBeGreaterThan(-1);
-    expect(jsonParseIdx).toBeGreaterThan(-1);
-    expect(getGuardIdx).toBeLessThan(jsonParseIdx);
+    expect(resolveAuthIdx).toBeGreaterThan(-1);
+    expect(getGuardIdx).toBeLessThan(resolveAuthIdx);
+
     // Must use clientError() not error() — GET is a client probe, not a server fault
-    const guardBlock = handler.slice(getGuardIdx, jsonParseIdx);
+    const guardBlock = index.slice(getGuardIdx, resolveAuthIdx);
     expect(guardBlock).toMatch(/\.clientError\(/);
     expect(guardBlock).not.toMatch(/\.error\(/);
+
+    // And nothing in handleMcp can reach req.json() on a non-POST any more,
+    // because the request never gets that far.
+    expect(handler).toMatch(/body = await req\.json\(\)/);
+    expect(handler).not.toMatch(/req\.method !== 'POST'/);
   });
 });
 

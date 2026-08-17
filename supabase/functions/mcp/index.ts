@@ -71,6 +71,38 @@ Deno.serve(async (req: Request) => {
   // request produces at least one span. resolveAuth is intentionally inside
   // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
+    // POST-only, checked BEFORE authentication.
+    //
+    // A request's method is knowable from the request line alone — nothing
+    // about "GET is not supported here" depends on who is asking. This guard
+    // used to live at the top of `handleMcp`, which meant every SSE-transport
+    // probe (`GET /mcp` is the first thing such a client sends) paid the full
+    // authenticated preamble — a token lookup, a plan lookup and a rate-limit
+    // RPC, ~319 ms of fixed cost — to receive a constant 405.
+    //
+    // Answering early also means an unauthenticated GET flood costs no database
+    // work at all. It stays inside `traceRequest`, so the probe is still one
+    // span and remains countable.
+    //
+    // `clientError` (not `error`) — a client probing for SSE against a server
+    // that does not offer it is behaving reasonably; OTel marks a server span
+    // ERROR only for 5xx faults.
+    if (req.method !== 'POST') {
+      span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
+        'mcp.method': 'unknown',
+      });
+      return new Response(
+        JSON.stringify({
+          error:
+            'Method Not Allowed. This MCP server uses Streamable HTTP over POST; GET/SSE is not supported.',
+        }),
+        {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+        },
+      );
+    }
+
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     // Pass the root span so auth outcome attributes (auth.type, auth.outcome,
     // auth.user_id) land on the request span — no separate child span needed.
