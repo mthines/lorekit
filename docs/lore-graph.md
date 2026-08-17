@@ -98,6 +98,26 @@ The design is two-stage:
 Positions are `Float32Array`s from end to end — the worker posts a transferable
 buffer straight into the GPU attribute, with no per-node object allocation.
 
+**Measured at the 5,000-memory ceiling** (`layout.spec.ts`): the seed is
+effectively free, and relaxation costs ~11 ms per iteration, so a 30-iteration
+pass is ~330 ms and the 120-iteration default is ~1.3 s. Both are off the main
+thread and both refine an already-correct picture, so the view is interactive
+from the first frame regardless.
+
+Two properties the specs pin, because they are what make the view usable rather
+than merely fast:
+
+- **Scope nodes are pinned.** The relaxation moves memories, never scopes.
+  Scopes are the map's landmarks, and a simulation free to drift them turns
+  every refetch into a re-orientation exercise. It also makes the system
+  trivially stable — every memory is attracted to a fixed anchor, so there is no
+  global rotation or collapse for damping to fight.
+- **No randomness anywhere**, including the nudge that separates two exactly
+  coincident nodes. A layout seeded from `Math.random()` is a different picture
+  every visit, which costs the user the one thing a spatial view is for:
+  recognising where things are. A new memory fixes its bearing from its scope
+  centre for good; only the cluster's radius breathes as it grows.
+
 ## Rendering
 
 Follows `agent-skills`' `animations/rules/three-d.md` and the accessibility floor
