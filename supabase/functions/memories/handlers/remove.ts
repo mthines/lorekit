@@ -4,6 +4,7 @@ import { recordAudit } from '../../_shared/audit.ts';
 import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
+import { validateScope } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { DeleteMemoryQuerySchema } from '../../_shared/schemas/memory.ts';
@@ -46,9 +47,23 @@ export async function handleRemove(
 ): Promise<Response> {
   const validated = validateQuery(req, DeleteMemoryQuerySchema, cors);
   if (!validated.ok) return validated.response;
-  const { scope: scopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
+  const { scope: rawScopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
   const force = forceParam === 'true';
   const idParam = params.id;
+
+  // `DeleteMemoryQuerySchema.scope` is shape-only ("normalisation happens
+  // downstream" — its own docblock); downstream is here. On a DELETE the stakes
+  // are higher than on a read: an ungrammatical or differently-cased scope
+  // produced a predicate that matched nothing, and the caller was told the
+  // memory did not exist rather than that their scope was wrong.
+  let scopeParam: string | undefined;
+  if (rawScopeParam !== undefined) {
+    try {
+      scopeParam = validateScope(rawScopeParam);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
 
   const tracedDb = createTracedClient(db, span);
   const now = new Date().toISOString();

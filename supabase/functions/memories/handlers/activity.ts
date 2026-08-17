@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
+import { validateScope } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
@@ -55,13 +56,28 @@ export async function handleActivity(
   if (!validated.ok) return validated.response;
   const params = validated.data;
 
+  // Same contract as the sibling `GET /memories/read-activity`: the query
+  // schema is shape-only and the canonical grammar runs here so a rejection can
+  // become a 400. The two endpoints answer the same question about opposite
+  // verbs and are explicitly designed to take one set of parameters — so they
+  // must also reject the same input the same way, or a caller charting both
+  // gets a 400 from one and a silently-empty series from the other.
+  let scopeFilter: string | null = null;
+  if (params.scope !== undefined) {
+    try {
+      scopeFilter = validateScope(params.scope);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
+
   const until = params.until ?? new Date().toISOString();
   const since = params.since ?? new Date(Date.parse(until) - DEFAULT_WINDOW_DAYS * DAY_MS).toISOString();
 
   span.setAttributes({
     'lorekit.operation': 'memories.activity',
     'lorekit.bucket': params.bucket,
-    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
+    ...(scopeFilter ? { 'lorekit.scope': scopeFilter } : {}),
   });
 
   // Parse the caller's active filters — same names/shapes as GET /memories and
@@ -80,7 +96,7 @@ export async function handleActivity(
     p_bucket: params.bucket,
     p_since: since,
     p_until: until,
-    p_scope: params.scope ?? null,
+    p_scope: scopeFilter,
     p_tags: list(params.tags),
     p_tags_mode: params.tags_mode,
     p_source_agent: list(params.source_agent),

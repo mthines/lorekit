@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
+import { validateScope } from '../../_shared/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
@@ -139,9 +140,25 @@ export async function handleList(
   if (!validated.ok) return validated.response;
   const params = validated.data;
 
+  // `ListMemoriesQuerySchema.scope` is `RawScopeSchema` (shape-only) BY DESIGN —
+  // the canonical grammar runs here, in the handler, so a rejection can become a
+  // 400. That is the same contract `GET /memories/read-activity` states and
+  // implements, and the reason is identical: a scope filter IS the question, so
+  // silently keeping an ungrammatical one would answer "you have nothing" to a
+  // question that was never valid. Normalising also matters on its own — writes
+  // store lowercased scopes, so an unnormalised filter misses real rows.
+  let scopeFilter: string | null = null;
+  if (params.scope !== undefined) {
+    try {
+      scopeFilter = validateScope(params.scope);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
+
   span.setAttributes({
     'lorekit.operation': 'memories.list',
-    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
+    ...(scopeFilter ? { 'lorekit.scope': scopeFilter } : {}),
     ...(params.key ? { 'lorekit.key': params.key } : {}),
     'lorekit.limit': params.limit,
     'lorekit.archived': params.archived,
@@ -162,7 +179,7 @@ export async function handleList(
   if (isArchived) q = q.not('archived_at', 'is', null);
   else q = q.is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
 
-  if (params.scope) q = q.eq('scope', params.scope);
+  if (scopeFilter) q = q.eq('scope', scopeFilter);
   if (params.key) q = q.eq('key', params.key);
 
   // `key_prefix` is a case-insensitive PREFIX match, distinct from the exact
