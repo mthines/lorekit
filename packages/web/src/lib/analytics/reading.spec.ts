@@ -18,7 +18,16 @@ describe('readPercent', () => {
   });
 
   it('treats an article shorter than the viewport as fully seen', () => {
-    expect(readPercent({ ...base, contentHeight: 0 })).toBe(100);
+    // 300px of article, viewport bottom already 600px past its top.
+    expect(readPercent({ ...base, contentHeight: 300 })).toBe(100);
+  });
+
+  it('reports an UNMEASURABLE height as 0, not as a complete read', () => {
+    // A height of 0 means "not laid out yet", not "all of it was on screen".
+    // The caller keeps a running maximum, so a spurious 100 here would pin
+    // `completed` true for the whole page view and can never be walked back.
+    expect(readPercent({ ...base, contentHeight: 0 })).toBe(0);
+    expect(readPercent({ ...base, contentHeight: -10 })).toBe(0);
   });
 });
 

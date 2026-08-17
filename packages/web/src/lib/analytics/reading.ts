@@ -52,6 +52,14 @@ export interface ReadGeometry {
  * viewport is therefore 100 on arrival, which is correct ("all of it was on
  * screen") but means depth alone can't distinguish it from a real read — that
  * is what `engagedMs` is for.
+ *
+ * A non-positive height is UNMEASURABLE, not fully read, and reports 0. The
+ * caller feeds this into a running maximum, so reporting 100 for an element
+ * that is merely not laid out yet (a pre-hydration frame, a `display: none`
+ * ancestor) fires all four milestones at once and pins `completed` true for a
+ * reader who saw nothing — permanently, since a later correct measurement can
+ * never lower a maximum. Reporting 0 is recoverable: the next scroll or resize
+ * re-measures and the milestones fire when they are actually crossed.
  */
 export function readPercent({
   contentTop,
@@ -59,7 +67,7 @@ export function readPercent({
   scrollY,
   viewportHeight,
 }: ReadGeometry): number {
-  if (contentHeight <= 0) return 100;
+  if (contentHeight <= 0) return 0;
   const seen = scrollY + viewportHeight - contentTop;
   return Math.min(100, Math.max(0, (seen / contentHeight) * 100));
 }
