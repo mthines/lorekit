@@ -6298,11 +6298,44 @@ begin
 
   -- And the tenancy narrows the catalog too — otherwise a personal-only key
   -- still enumerates the org's repo names, which is the leak this closes.
+  --
+  -- The probe needs a name that exists ONLY on an org-owned row.
+  -- `repo::bound/repo` cannot serve: AC-3's fallback wrote a PERSONAL row under
+  -- that same name, and a `personal` key keeps its own rows by design, so the
+  -- name legitimately survives the narrowing (asserted directly below).
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::orgonly/repo', p_key => 'k-orgonly',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner) s
+  where s.scope = 'repo::orgonly/repo';
+  assert v_count = 1,
+    'enforcement AC-4: an unrestricted caller must still enumerate the org-owned scope';
+
   select count(*) into v_count
   from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
-  where s.scope = 'repo::bound/repo';
+  where s.scope = 'repo::orgonly/repo';
   assert v_count = 0,
     'enforcement AC-4: a personal-only key must not enumerate an org-owned scope';
+
+  -- The mixed case, and the reason the probe above needed its own scope: under
+  -- `repo::bound/repo` the account holds two org rows (k-bound-default,
+  -- k-bound-selected) and one personal row (k-bound-personal). A `personal` key
+  -- must lose the org's two and keep its own one — the NAME survives with a
+  -- narrower count rather than disappearing, which is what "narrows, never
+  -- revokes" means for a scope the owner writes on both sides.
+  select s.count into v_count
+  from lorekit_memory_scopes(v_owner) s where s.scope = 'repo::bound/repo';
+  assert v_count = 3,
+    'enforcement AC-4: an unrestricted caller must count both the org rows and the personal one';
+
+  select s.count into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::bound/repo';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must keep its OWN row under a scope it also shares with an org';
 
   -- A personal-only key still sees its OWN scopes: `personal` narrows which
   -- ORGS are reachable, it never revokes the owner's own memories.
@@ -6368,11 +6401,19 @@ begin
   assert v_scopes = array['project::alpha'],
     'enforcement AC-5: an allowlisted key must see ONLY its allowlisted scopes in the activity series';
 
+  -- `repo::orgonly/repo`, not `repo::bound/repo`, for the reason AC-4 gives:
+  -- only the former names a row the owner holds solely through the org.
+  select count(*) into v_count
+  from lorekit_memory_activity(p_user_id => v_owner) a
+  where a.scope = 'repo::orgonly/repo';
+  assert v_count = 1,
+    'enforcement AC-5: an unrestricted caller must still see the org-owned scope in the activity series';
+
   select count(*) into v_count
   from lorekit_memory_activity(
     p_user_id => v_owner, p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
   ) a
-  where a.scope = 'repo::bound/repo';
+  where a.scope = 'repo::orgonly/repo';
   assert v_count = 0,
     'enforcement AC-5: a personal-only key must not see an org-owned scope in the activity series';
 
