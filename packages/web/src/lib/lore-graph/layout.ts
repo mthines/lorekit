@@ -39,7 +39,23 @@
  * and handed to the GPU with no copy and no per-node object.
  */
 
-import type { LoreGraph } from './types';
+import type { GraphEdge, GraphNode } from './types';
+
+/**
+ * Everything the layout reads off a node — and nothing else.
+ *
+ * A `LoreGraph` satisfies this structurally, so callers pass one directly. The
+ * narrower type exists for the worker: labels, tags, weights and timestamps are
+ * the bulk of a graph by bytes and the layout reads none of them, so declaring
+ * the real input lets the worker channel send a fraction of the payload without
+ * anyone having to remember which fields were safe to drop.
+ */
+export type LayoutNode = Pick<GraphNode, 'kind' | 'id' | 'scope'>;
+
+export interface LayoutInput {
+  nodes: readonly LayoutNode[];
+  edges: readonly Pick<GraphEdge, 'source' | 'target' | 'strength'>[];
+}
 
 export interface LayoutOptions {
   /** Radius of the sphere the scope clusters are arranged on. */
@@ -125,7 +141,7 @@ function fibonacciPoint(i: number, count: number, radius: number): [number, numb
  * uniform breath rather than a reshuffle — the constellation a user learned to
  * recognise is still the same constellation, slightly larger.
  */
-export function seedPositions(graph: LoreGraph, options: LayoutOptions = {}): Float32Array {
+export function seedPositions(graph: LayoutInput, options: LayoutOptions = {}): Float32Array {
   const { radius, clusterRadius } = { ...LAYOUT_DEFAULTS, ...options };
   const positions = new Float32Array(graph.nodes.length * 3);
 
@@ -212,7 +228,7 @@ function cellKey(x: number, y: number, z: number): number {
  * traffic for no benefit.
  */
 export function relaxPositions(
-  graph: LoreGraph,
+  graph: LayoutInput,
   positions: Float32Array,
   options: LayoutOptions = {},
 ): Float32Array {
@@ -309,7 +325,7 @@ export function relaxPositions(
 }
 
 /** Seed then relax — the one call a caller normally wants. */
-export function layoutGraph(graph: LoreGraph, options: LayoutOptions = {}): Float32Array {
+export function layoutGraph(graph: LayoutInput, options: LayoutOptions = {}): Float32Array {
   return relaxPositions(graph, seedPositions(graph, options), options);
 }
 
