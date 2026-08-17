@@ -32,6 +32,7 @@
 import { init, identify } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
+import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
 import { supabaseOriginPattern } from './otel-origins';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
@@ -126,6 +127,126 @@ export function buildVcsSignalAttributes(): Record<string, string> {
   return attrs;
 }
 
+/** The `onerror` event-handler IDL attribute, on whatever we subscribe to. */
+type OnErrorHost = { onerror?: unknown };
+
+/**
+ * Run `register` with any pre-existing `onerror` attribute handler temporarily
+ * detached, then put it back — so it ends up registered AFTER `register`'s
+ * listeners.
+ *
+ * `window.onerror` is an event-handler IDL attribute: its listener is added at
+ * the FIRST non-null assignment and keeps that position forever, so a later
+ * assignment (sdk-web 0.23.0 takes the uncaught-error path by ASSIGNING
+ * `window.onerror`, not by adding a listener) reuses the slot the first setter
+ * created. If anything on the page — a dev overlay, an analytics snippet — set
+ * `onerror` before us, the SDK inherits that earlier slot and runs BEFORE our
+ * filter, making the uncaught-error half of the filter a no-op.
+ *
+ * Assigning `null` removes that listener, and re-assigning the same function
+ * registers it fresh at the end of the list. The handler identity is preserved,
+ * so nothing that holds a reference to it notices; only the ordering moves.
+ *
+ * A host with no `onerror` property (a plain `EventTarget`, as in the specs) is
+ * left untouched.
+ */
+function withOnErrorRegisteredLast(host: OnErrorHost, register: () => void): void {
+  const existing = typeof host.onerror === 'function' ? host.onerror : null;
+  if (existing) host.onerror = null;
+  try {
+    register();
+  } finally {
+    if (existing) host.onerror = existing;
+  }
+}
+
+/**
+ * Stop browser-extension errors from reaching the SDK's error instrumentation.
+ *
+ * ## Why this is a listener and not SDK config
+ *
+ * sdk-web 0.23.0 filters errors by MESSAGE only (`ignoreErrorMessages`), and
+ * the extension messages we see are indistinguishable from real first-party
+ * ones — see `extension-errors.ts` for the measurements. The stack is the only
+ * reliable discriminator, and the sole point where we can act on it before the
+ * SDK records the event is the DOM event itself.
+ *
+ * ## Why it must run before `init()`
+ *
+ * The SDK subscribes at `init()`: `window.addEventListener('unhandledrejection', …)`
+ * for rejections, and an override of `window.onerror` for uncaught errors. Both
+ * are listeners on `window`, which fire in registration order, so registering
+ * FIRST is what lets `stopImmediatePropagation()` preempt them. Registering
+ * after `init()` would be a silent no-op — the SDK would already have recorded
+ * the event by the time we ran.
+ *
+ * Running first is necessary but not sufficient for the `onerror` half: that
+ * attribute's slot belongs to whoever assigned it FIRST, so a pre-existing
+ * `window.onerror` would still outrank us. `withOnErrorRegisteredLast` re-seats
+ * it behind our listeners.
+ *
+ * `stopImmediatePropagation()` also hides these events from any other listener
+ * on `window` (a dev overlay, say). That is intended: an error with no frame of
+ * ours in it is not ours to surface. `preventDefault()` is deliberately NOT
+ * called, so the browser still logs it to the console and the extension's own
+ * error handling is untouched.
+ *
+ * @param target the event target to subscribe on; defaults to `window`.
+ * @returns a teardown function removing both listeners, for tests.
+ */
+export function installExtensionErrorFilter(target?: EventTarget): () => void {
+  const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
+  if (!eventTarget) return () => undefined;
+
+  // Best-effort by design, and the SMALLER half of the win. A script served
+  // from another origin — which every `chrome-extension://` script is — has its
+  // uncaught errors MUTED by the browser: the page sees `message: "Script
+  // error."` with `error: null` and `filename: ""`, and no `crossorigin`
+  // attribute we control can un-mute an extension's own script tag. With
+  // neither a stack nor a filename there is nothing to attribute, so those
+  // events fall through to the fail-safe and are kept.
+  //
+  // Both production fingerprints (`M_ID`, MetaMask `inpage.js`) arrive as
+  // unhandled REJECTIONS, whose `reason` is a real `Error` object with a full
+  // stack and is not subject to the muting — that path is what removes the
+  // 102/105. This branch stays for the hosts and cases that do report an
+  // attributable uncaught error; it is never the thing to measure the filter by.
+  const onError = (event: Event) => {
+    const { error, filename } = event as ErrorEvent;
+    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(error), filename })) {
+      event.stopImmediatePropagation();
+    }
+  };
+
+  const onRejection = (event: Event) => {
+    const { reason } = event as PromiseRejectionEvent;
+    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(reason) })) {
+      event.stopImmediatePropagation();
+    }
+  };
+
+  // Capture phase, so the listener is in place for events dispatched at
+  // descendants of `window` as well as at `window` itself. Passed as an options
+  // OBJECT rather than the legacy boolean: node's `EventTarget` — which the
+  // specs run against — ignores a boolean `capture` on `removeEventListener`,
+  // so the boolean form would leak the listener there.
+  const capture = { capture: true } as const;
+
+  // An `onerror` attribute handler that was already set holds a listener slot
+  // ahead of anything we add now, and sdk-web's `init()` will reuse that slot
+  // rather than appending — so re-register it behind us. See
+  // `withOnErrorRegisteredLast`.
+  withOnErrorRegisteredLast(eventTarget as OnErrorHost, () => {
+    eventTarget.addEventListener('error', onError, capture);
+    eventTarget.addEventListener('unhandledrejection', onRejection, capture);
+  });
+
+  return () => {
+    eventTarget.removeEventListener('error', onError, capture);
+    eventTarget.removeEventListener('unhandledrejection', onRejection, capture);
+  };
+}
+
 /**
  * Initialise the Dash0 Web SDK exactly once per page load and identify the
  * visitor anonymously.
@@ -144,6 +265,10 @@ export function initDash0Rum(): boolean {
   if (!isValidOtlpEndpoint(endpoint) || !authToken) return false;
 
   initialized = true;
+
+  // BEFORE init(): the SDK subscribes to `unhandledrejection` and takes over
+  // `window.onerror` inside init(), and listener order is registration order.
+  installExtensionErrorFilter();
 
   init({
     serviceName: SERVICE_NAME,
