@@ -147,11 +147,20 @@ export function ReadingTelemetry({
       });
     };
 
-    const tick = () => {
+    /**
+     * Bank the time since the last tick.
+     *
+     * `visible` is a parameter rather than a live `document.visibilityState`
+     * read because the one caller that matters most — `visibilitychange` — runs
+     * AFTER the browser has already flipped the state to `hidden`, so a live
+     * read there would bank nothing. It defaults to the live read for the
+     * interval and the paths (`pagehide`, unmount) that fire while still shown.
+     */
+    const tick = (visible = document.visibilityState === 'visible') => {
       const at = now();
       const elapsed = at - lastTickAt.current;
       lastTickAt.current = at;
-      if (document.visibilityState !== 'visible') return;
+      if (!visible) return;
       if (at - lastInteractionAt.current > IDLE_AFTER_MS) return;
 
       engagedMs.current += elapsed;
@@ -188,10 +197,10 @@ export function ReadingTelemetry({
     };
 
     /** One summary per page view, at the FIRST of (tab hidden, unmount). */
-    const summarise = () => {
+    const summarise = (wasVisible = document.visibilityState === 'visible') => {
       if (summarised.current) return;
       summarised.current = true;
-      tick(); // bank the partial tick
+      tick(wasVisible); // bank the partial tick
       closeSection(); // and the section in progress
       track({
         name: 'content.read',
@@ -206,8 +215,16 @@ export function ReadingTelemetry({
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') summarise();
+      // We only get here on the transition INTO `hidden`, so the reader was
+      // visible right up to this instant — say so explicitly, or the final
+      // partial second (and the section dwell that rides on it, which can be
+      // what pushes a section over MIN_SECTION_DWELL_MS) is silently dropped.
+      if (document.visibilityState === 'hidden') summarise(true);
     };
+
+    // `summarise` takes an argument, so it can never be an event listener
+    // directly: the handler would receive the Event as `wasVisible`.
+    const onPageHide = () => summarise();
 
     const interval = window.setInterval(tick, TICK_MS);
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -215,7 +232,7 @@ export function ReadingTelemetry({
     window.addEventListener('pointerdown', markInteraction, { passive: true });
     window.addEventListener('keydown', markInteraction);
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('pagehide', summarise);
+    window.addEventListener('pagehide', onPageHide);
 
     onScroll(); // above-the-fold depth, before the reader touches anything
 
@@ -229,7 +246,7 @@ export function ReadingTelemetry({
       window.removeEventListener('pointerdown', markInteraction);
       window.removeEventListener('keydown', markInteraction);
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('pagehide', summarise);
+      window.removeEventListener('pagehide', onPageHide);
       if (frame) cancelAnimationFrame(frame);
     };
   }, [contentType, slug, sectionKey, contentSelector]);
