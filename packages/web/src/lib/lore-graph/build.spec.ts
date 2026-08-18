@@ -432,6 +432,47 @@ describe('buildLoreGraph', () => {
     expect(memories.every((node) => node.weight === 0)).toBe(true);
   });
 
+  it('draws every memory at the base size when the recurrence is uniform', () => {
+    // "No spread" is `min === max`, not `max <= 1`. A uniform `seen_count: 3`
+    // cleared the old guard and came out at `weight: 1` for every memory — the
+    // max-radius rendering the guard existed to remove.
+    const graph = buildLoreGraph([
+      memory({ key: 'a', seen_count: 3 }),
+      memory({ key: 'b', seen_count: 3 }),
+    ]);
+
+    expect(graph.nodes.filter((node) => node.kind === 'memory').every((node) => node.weight === 0)).toBe(
+      true,
+    );
+  });
+
+  it('draws equal-sized scopes at the base size', () => {
+    const graph = buildLoreGraph([
+      memory({ key: 'a', scope: 'repo::mthines/one' }),
+      memory({ key: 'b', scope: 'repo::mthines/two' }),
+    ]);
+
+    expect(graph.nodes.filter((node) => node.kind === 'scope').every((node) => node.weight === 0)).toBe(
+      true,
+    );
+  });
+
+  it('does not inflate rows with no recurrence when one row gains one', () => {
+    // Scaled from zero, a single `seen_count: 2` dragged every no-recurrence row
+    // from 0 to 0.631 — three fifths of the size channel spent on rows carrying
+    // no recurrence at all. Anchored at the observed minimum, they stay at base.
+    const graph = buildLoreGraph([
+      memory({ key: 'absent-a' }),
+      memory({ key: 'absent-b' }),
+      memory({ key: 'present', seen_count: 2 }),
+    ]);
+    const weightOf = (label: string) => graph.nodes.find((node) => node.label === label)?.weight ?? -1;
+
+    expect(weightOf('absent-a')).toBe(0);
+    expect(weightOf('absent-b')).toBe(0);
+    expect(weightOf('present')).toBe(1);
+  });
+
   it('still separates sizes as soon as one row carries a recurrence', () => {
     const graph = buildLoreGraph([memory({ key: 'once' }), memory({ key: 'often', seen_count: 9 })]);
     const weightOf = (label: string) => graph.nodes.find((node) => node.label === label)?.weight ?? -1;

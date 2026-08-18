@@ -186,19 +186,51 @@ export function keyNamespace(key: string): string | null {
 }
 
 /**
- * `log1p`-scaled into `[0, 1]`, so one 400× outlier cannot flatten the rest.
+ * `log1p`-scaled across the OBSERVED RANGE into `[0, 1]`, so one 400× outlier
+ * cannot flatten the rest.
  *
- * **No spread means zero, not one.** When every candidate carries the same value
- * — the common case for `seen_count`, which only arrives with migration 00059,
- * so a whole account can legitimately have none — there is no signal to encode,
- * and the honest rendering is the BASE size. Returning 1 instead (the obvious
- * `max <= 1` guard) drew every node in the graph at maximum radius: the size
- * channel stopped meaning anything while shouting that everything was important,
- * which is worse than it meaning nothing quietly.
+ * **No spread means zero, not one, and "no spread" means `min === max`.** When
+ * every candidate carries the same value there is no signal to encode and the
+ * honest rendering is the BASE size — `weight: 0`. Two guards got this wrong in
+ * turn, and both drew the whole graph at maximum radius:
+ *
+ * - Returning 1 on no spread: the size channel stopped meaning anything while
+ *   shouting that everything was important.
+ * - Guarding on `max <= 1` rather than on the spread: that only catches the
+ *   all-absent case. A uniform `seen_count: 3`, or two scopes of equal size,
+ *   sailed past it and every node came out at `weight: 1` again.
+ *
+ * **Scaling starts at the observed MINIMUM, not at zero**, for the same reason.
+ * An absent `seen_count` reads as 1 (recurrence arrives with migration 00059,
+ * so a whole account can legitimately have none). Scaled from zero, giving a
+ * single row `seen_count: 2` shoved the other 499 from `0` to `0.631` —
+ * three-fifths of the size channel spent on rows that carry no recurrence at
+ * all. Anchored at the minimum, the floor of the observed range is the base
+ * size and the range above it is what gets drawn.
  */
-function normalizedWeight(value: number, max: number): number {
-  if (max <= 1) return 0;
-  return Math.log1p(Math.max(value, 0)) / Math.log1p(max);
+function normalizedWeight(value: number, min: number, max: number): number {
+  const spread = max - min;
+  if (!(spread > 0)) return 0;
+  return Math.log1p(Math.max(value - min, 0)) / Math.log1p(spread);
+}
+
+/**
+ * The `[min, max]` of a set of values, or `[0, 0]` when there are none.
+ *
+ * Folded rather than `Math.min(...values)`: the spread form throws
+ * `RangeError: Maximum call stack size exceeded` once the array is long enough,
+ * and this one is sized by `maxNodes` — a caller may legitimately raise it past
+ * the default 5,000.
+ */
+function range(values: readonly number[]): [number, number] {
+  if (values.length === 0) return [0, 0];
+  let min = values[0];
+  let max = values[0];
+  for (const value of values) {
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return [min, max];
 }
 
 /**
@@ -343,14 +375,14 @@ export function buildLoreGraph(
     truncated.push({ of: 'nodes', total: ordered.length, kept: kept.length });
   }
 
-  const maxSeen = kept.reduce((max, m) => Math.max(max, m.seen_count ?? 1), 1);
+  const [minSeen, maxSeen] = range(kept.map((memory) => memory.seen_count ?? 1));
   const nodes: GraphNode[] = kept.map((memory) => ({
     kind: 'memory',
     id: memoryNodeId(memory),
     label: memory.key,
     scope: memory.scope,
     scopeType: scopeType(memory.scope),
-    weight: normalizedWeight(memory.seen_count ?? 1, maxSeen),
+    weight: normalizedWeight(memory.seen_count ?? 1, minSeen, maxSeen),
     tags: memory.tags ?? [],
     updatedAt: Date.parse(memory.updated_at) || 0,
     archived: Boolean(memory.archived_at),
@@ -364,7 +396,7 @@ export function buildLoreGraph(
     else scopeMembers.set(node.scope, [index]);
   });
 
-  const maxMembers = [...scopeMembers.values()].reduce((max, m) => Math.max(max, m.length), 1);
+  const [minMembers, maxMembers] = range([...scopeMembers.values()].map((m) => m.length));
   const scopeIndexOf = new Map<string, number>();
   for (const [scope, members] of scopeMembers) {
     scopeIndexOf.set(scope, nodes.length);
@@ -374,7 +406,7 @@ export function buildLoreGraph(
       label: scope.split('::').pop() ?? scope,
       scope,
       scopeType: scopeType(scope),
-      weight: normalizedWeight(members.length, maxMembers),
+      weight: normalizedWeight(members.length, minMembers, maxMembers),
       tags: [],
       // A scope is as fresh as its freshest memory, so an abandoned scope reads
       // as abandoned rather than borrowing "now" from the render.

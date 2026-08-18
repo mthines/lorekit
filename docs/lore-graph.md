@@ -44,12 +44,21 @@ Node identity is the natural key (`scope::key`), not the array index, so a
 refetch that re-orders the list does not move the user's selection.
 
 Node **weight** (which drives radius) follows `seen_count` for a memory and
-member count for a scope, `log1p`-scaled so one 400× outlier cannot flatten the
-rest. When there is no spread at all — the common case for `seen_count`, which
-only arrives with migration 00059 — the weight is **0**, i.e. the base size. The
-obvious `max <= 1 ⇒ 1` guard drew the entire graph at maximum radius: the size
-channel shouting while meaning nothing, which is worse than meaning nothing
-quietly.
+member count for a scope, `log1p`-scaled across the **observed range** so one
+400× outlier cannot flatten the rest. When there is no spread — `min === max` —
+the weight is **0**, i.e. the base size, *not* zero radius. That is the common
+case for `seen_count`, which only arrives with migration 00059.
+
+Two earlier guards drew the entire graph at maximum radius instead, and both are
+worth stating because the second looks like a fix for the first: returning `1`
+on no spread made the size channel shout while meaning nothing; guarding on
+`max <= 1` only caught the all-absent case, so a uniform `seen_count: 3` — or
+two scopes of equal size — still came out at `1` everywhere.
+
+Scaling is anchored at the observed **minimum** for the same reason. An absent
+`seen_count` reads as 1, so scaling from zero meant a single row gaining
+`seen_count: 2` shoved every other row from `0` to `0.631` — three fifths of the
+size channel spent on rows that carry no recurrence at all.
 
 ### Edges
 
