@@ -161,11 +161,42 @@ describe('seedPositions', () => {
     expect(spreadOf('repo::big/one')).toBeGreaterThan(spreadOf('repo::small/one'));
   });
 
-  it('keeps every scope cluster inside the configured sphere', () => {
-    const graph = graphOf(['global', 'repo::a/b', 'repo::c/d'], 10);
+  it('keeps each scope cloud smaller than half the gap to the nearest other scope', () => {
+    // `boundingRadius < radius + clusterRadius * cbrt(members)` was the obvious
+    // bound and a tautology: it just restates the spread formula, so it holds
+    // for every radius and every population and would survive the cloud growing
+    // large enough to swallow the sphere.
+    //
+    // Containment is a RELATION between two independently-derived quantities —
+    // the Fibonacci spacing of the scope centres, and the cube-root spread of a
+    // cloud. Pin that. A linear spread (the mistake the docblock warns about)
+    // fails this at these parameters; the cube root passes with room.
+    //
+    // Note the parameters: 10 memories per scope. At the plan ceiling
+    // (~200 per scope) the clouds DO interpenetrate — see the `clusterRadius`
+    // docblock. This pins the shape of the growth curve, not a claim that the
+    // clouds stay disjoint at every population.
+    const scopes = ['global', 'repo::a/b', 'repo::c/d'];
+    const graph = graphOf(scopes, 10);
     const positions = seedPositions(graph, { radius: 50, clusterRadius: 4 });
-    // The sphere radius plus a cluster's own reach, generously bounded.
-    expect(boundingRadius(positions)).toBeLessThan(50 + 4 * Math.cbrt(10) + 1);
+    const centres = scopes.map((scope) => positionOf(graph, positions, scopeNodeId(scope)));
+
+    let minCentreGap = Infinity;
+    for (let a = 0; a < centres.length; a++) {
+      for (let b = a + 1; b < centres.length; b++) {
+        minCentreGap = Math.min(minCentreGap, distance(centres[a], centres[b]));
+      }
+    }
+
+    const widestCloud = Math.max(
+      ...graph.nodes
+        .filter((node) => node.kind === 'memory')
+        .map((node) =>
+          distance(positionOf(graph, positions, node.id), centres[scopes.indexOf(node.scope)]),
+        ),
+    );
+
+    expect(widestCloud).toBeLessThan(minCentreGap / 2);
   });
 });
 
