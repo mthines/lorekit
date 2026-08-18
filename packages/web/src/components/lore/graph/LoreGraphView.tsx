@@ -55,7 +55,16 @@ export interface LoreGraphViewProps {
   /** `scope::key` of the open memory, so the map and the list agree on selection. */
   selectedId: string | null;
   /** Called with a memory's `scope` and `key` when a node is chosen. */
-  onSelect: (selection: { scope: string; key: string }) => void;
+  /**
+   * Called with the chosen memory's node id — the canonical `scope::key` from
+   * `memoryNodeId`, not the display label.
+   *
+   * `label` is typed as the SHORT label (a scope node's is its last segment),
+   * and it only happens to equal a memory's key today; round-tripping selection
+   * through it would turn any future shortening of the label into node clicks
+   * that silently no-op.
+   */
+  onSelect: (nodeId: string) => void;
 }
 
 /** Scope types in the order the legend reads them — broadest first. */
@@ -134,7 +143,7 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
               // Scope nodes are landmarks, not memories — clicking one selects
               // nothing rather than opening a detail sheet for a thing that has
               // no detail.
-              if (node?.kind === 'memory') onSelect({ scope: node.scope, key: node.label });
+              if (node?.kind === 'memory') onSelect(node.id);
             }}
             onHover={setHoveredId}
           />

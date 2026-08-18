@@ -642,11 +642,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               memories={lessons}
               hasMore={hasNextPage}
               selectedId={openLesson ? memoryNodeId(openLesson) : null}
-              onSelect={(selection) => {
-                const lesson = lessons.find(
-                  (candidate) =>
-                    candidate.scope === selection.scope && candidate.key === selection.key,
-                );
+              onSelect={(nodeId) => {
+                // Matched on the same `memoryNodeId` that built the node, so
+                // selection round-trips through the canonical identity rather
+                // than through a display label.
+                const lesson = lessons.find((candidate) => memoryNodeId(candidate) === nodeId);
                 if (lesson) handleLessonClick(lesson);
               }}
             />
