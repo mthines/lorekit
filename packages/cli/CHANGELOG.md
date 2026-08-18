@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.52.3](https://github.com/mthines/lorekit/compare/cli-v1.52.2...cli-v1.52.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* **api:** validate the ?scope= filter across the six single-scope routes ([9b463b6](https://github.com/mthines/lorekit/commit/9b463b6da9a0bfbb5f6888e6b58720e982f03f66))
+
+
+### Documentation
+
+* stop asserting every scope is lowercased on ingest ([1c4ebaf](https://github.com/mthines/lorekit/commit/1c4ebafb713a592f38fe8cd80bcf70c18b526f9c))
+
 ## [1.52.2](https://github.com/mthines/lorekit/compare/cli-v1.52.1...cli-v1.52.2) (2026-08-16)
 
 
