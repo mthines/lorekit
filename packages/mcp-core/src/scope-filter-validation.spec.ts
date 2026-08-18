@@ -227,6 +227,39 @@ describe('REST scope filters are validated before they reach a query', () => {
     },
   );
 
+  // A handler may hand part of its work to a module-private delegate that owns
+  // its own scope predicate. `handleRemove` does: the `?org=` form is served by
+  // `removeOrgOwned`, whose `p_scope` sits outside the `handleRemove` slice the
+  // assertions above read — and the completeness scan below skips `remove.ts`
+  // because the FILE is already listed. Guard the delegate explicitly: the call
+  // site must feed it the validated binding, and inside it every scope
+  // predicate must use its own parameter.
+  const DELEGATED_SCOPE_PREDICATES: ReadonlyArray<
+    readonly [string, string, string, string, string]
+  > = [['remove.ts', 'handleRemove', 'removeOrgOwned', 'scopeParam', 'scope']];
+
+  it.each(DELEGATED_SCOPE_PREDICATES)(
+    '%s: %s only reaches %s with the validated scope',
+    (file, caller, delegate, bound, param) => {
+      const src = read(file);
+      const callSite = handlerBody(src, caller).match(
+        new RegExp(`${delegate}\\(([\\s\\S]*?)\\);`),
+      );
+      expect(callSite, `${caller} does not call ${delegate}`).not.toBeNull();
+      expect(callSite![1]).toMatch(new RegExp(`${param}:\\s*${bound}\\b`));
+
+      const delegateBody = handlerBody(src, delegate);
+      const predicates = [
+        ...delegateBody.matchAll(/p_scope:\s*([^,\n]+)/g),
+        ...delegateBody.matchAll(/\.eq\(\s*'scope'\s*,\s*([^)]+?)\s*\)/g),
+      ];
+      expect(predicates.length, `${delegate} has no scope predicate to guard`).toBeGreaterThan(0);
+      for (const m of predicates) {
+        expect(m[1], `${delegate}: scope predicate ${m[1]} does not use ${param}`).toContain(param);
+      }
+    },
+  );
+
   it('remove.ts validates the scope filter only on the natural-key form', () => {
     // `DELETE /memories/:id` addresses the row by id and never reads `?scope=`,
     // so validating it there would answer 400 for a value the route ignores —
