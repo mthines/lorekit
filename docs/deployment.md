@@ -257,7 +257,7 @@ repo-level variable, defaulting to `https://lorekit.io`).
 > **Status: not wired yet.** `scripts/resolve-deploy-scope.mjs` is on `main`, but
 > `deploy.yml` does not call it — the GitHub App that opens automated PRs has no
 > `workflows` permission, the same constraint as "Wiring the sweep into CI". Until a
-> human applies [Wiring the deployed-SHA baseline into `deploy.yml`](#wiring-the-deployed-sha-baseline-into-deployyml)
+> human applies [Wiring the deployed-SHA baseline into `deploy.yml`](#wiring-the-deployed-sha-baseline-into-deployyml-one-time-must-be-committed-by-a-human)
 > below, the pipeline still diffs a single push and everything in this subsection
 > describes the intended behaviour, not the current one. That includes the tests:
 > `scripts/resolve-deploy-scope.test.mjs` runs only in the `deploy-scope` job that
