@@ -156,21 +156,37 @@ describe('parseScopeFilter', () => {
 // structural — and `.in('scope', …)` is exactly that shape. So whichever
 // per-entry outcome is chosen, every entry still has to pass the grammar; the
 // open question is what to do with the request, not whether to check.
-const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string]> = [
+// The third element PINS WHICH validator the handler must use, so the guard
+// covers case handling and not only grammar. The two are not interchangeable:
+// `parseScopeFilter` rejects without normalising and `validateScope` lowercases,
+// and which one is correct follows the column the route filters.
+//
+//   - `memories.scope` is written VERBATIM over REST (`CreateMemoryBodySchema`
+//     binds `RawScopeSchema`; `handlers/create.ts` passes `body.scope` through;
+//     no migration lowers it), so its filters must be reject-only or a
+//     mixed-case row becomes unmatchable and undeletable by natural key.
+//   - `usage_events.scope` is written through the NORMALISING
+//     `safeValidateScope` at the recording site (`_shared/api/router.ts`), so
+//     `read-activity` must lowercase its filter or a mixed-case request misses
+//     rows that are all stored lowercased.
+//
+// The divergence is therefore intended and load-bearing, and swapping either
+// one strands rows — which is why this is pinned per handler rather than left
+// as "calls one of the two".
+const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]> = [
   // The three dual-transport routes name their shared reader, not the exported
   // `GET`/`POST` entry point: both transports decode into one shape and only the
   // reader touches the scope, so validating there is what stops `GET /memories`
   // and `POST /memories/list` disagreeing about which scopes are legal. The
   // entry points are pinned to route through it by DUAL_TRANSPORT_ROUTES below.
-  ['list.ts', 'respondWithPage'],
-  ['activity.ts', 'runActivity'],
-  ['facets.ts', 'runFacets'],
-  ['remove.ts', 'handleRemove'],
-  ['restore.ts', 'handleRestore'],
-  // The one that was already correct — kept so a regression there trips the
-  // same guard. It predates `parseScopeFilter` and calls `validateScope`
-  // directly, which is why the assertion below accepts either.
-  ['read-activity.ts', 'handleReadActivity'],
+  ['list.ts', 'respondWithPage', 'parseScopeFilter'],
+  ['activity.ts', 'runActivity', 'parseScopeFilter'],
+  ['facets.ts', 'runFacets', 'parseScopeFilter'],
+  ['remove.ts', 'handleRemove', 'parseScopeFilter'],
+  ['restore.ts', 'handleRestore', 'parseScopeFilter'],
+  // The one that was already correct, and the one that must NOT move to
+  // `parseScopeFilter`: it reads the normalised `usage_events.scope`.
+  ['read-activity.ts', 'handleReadActivity', 'validateScope'],
 ];
 
 describe('REST scope filters are validated before they reach a query', () => {
@@ -178,6 +194,21 @@ describe('REST scope filters are validated before they reach a query', () => {
     const body = handlerBody(read(file), fn);
     expect(body).toMatch(/(parseScopeFilter|validateScope)\(/);
   });
+
+  it.each(SCOPE_FILTERING_HANDLERS)(
+    '%s / %s uses %s specifically, so case handling follows its column',
+    (file, fn, validator) => {
+      const other = validator === 'parseScopeFilter' ? 'validateScope' : 'parseScopeFilter';
+      const body = handlerBody(read(file), fn);
+      expect(body, `${fn} must validate its scope filter with ${validator}`).toMatch(
+        new RegExp(`\\b${validator}\\(`),
+      );
+      // `parseScopeFilter` delegates to `validateScope` internally, but the
+      // handler must not call the normalising one itself (or the raw one where
+      // normalisation is required) — that is the swap that strands rows.
+      expect(body, `${fn} must not reach for ${other}`).not.toMatch(new RegExp(`\\b${other}\\(`));
+    },
+  );
 
   it.each(SCOPE_FILTERING_HANDLERS)(
     '%s / %s turns THAT rejection specifically into a 400',
