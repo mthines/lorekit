@@ -119,6 +119,10 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 
 Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400; a segment containing a further `::` → 400 (`::` is reserved as the separator).
 
+The same grammar applies when a scope is used as a FILTER, not just when it is written. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all answer **400** for an ungrammatical `?scope=`. They previously passed the raw value through, so a bad scope matched nothing and the route answered `200` with an empty page (or, on delete/restore, `404`) — the same input getting a 400 from one route and a cheerful empty result from the others. A scope filter is the question being asked, so a malformed one is rejected rather than answered with a different question's result.
+
+Filters are validated but **not** normalised: the write path stores `scope` verbatim over REST, so a filter matches exactly the string that was written. Lowercasing a filter would make a mixed-case row unmatchable by `GET /memories` and undeletable by its natural key. The array-valued `scopes` of `POST /memories/search` and `GET /memories/relevant` are not covered by this yet.
+
 ### Scope resolution (read order)
 
 Query narrow → broad and merge. More-specific scope wins when the same key exists at multiple levels:

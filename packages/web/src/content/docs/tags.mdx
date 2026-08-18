@@ -16,6 +16,8 @@ keywords: ["tags", "scopes", "global", "project", "repo", "branch", "namespace",
 
 `::` is the only valid separator. Single `:` or `/` returns a 400 error. All segments are lowercased on ingest.
 
+The same grammar applies when you *filter* by a scope, not only when you write one. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all return a **400** for an ungrammatical `?scope=`. They used to pass the value straight into the query, so a typo matched nothing and came back as an empty page — or, on delete and restore, as "no such memory". A scope filter is the question you are asking, so a malformed one is rejected instead of quietly answering a different question. Filters are validated but not lowercased, so a filter matches exactly the scope string that was stored.
+
 <TutorialStep number={1} title="Choose the right scope">
 
 Use the narrowest scope that correctly describes where the memory applies:
