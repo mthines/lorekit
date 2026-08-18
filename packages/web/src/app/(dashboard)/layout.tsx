@@ -1,7 +1,5 @@
 import { Suspense } from 'react';
-import { boundedReturnTo } from '@/lib/auth-redirect';
 import { redirect } from 'next/navigation';
-import { headers } from 'next/headers';
 import { createServerClient } from '@/lib/supabase/server';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
@@ -39,20 +37,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   });
 
   if (!bootstrap) {
-    // Preserve the full requested URL (path + search params like ?lesson=…) so
-    // that after login, /api/auth/callback redirects back to the exact shared URL.
-    // The middleware forwards x-pathname and x-search from request.nextUrl so we
-    // don't need to parse the raw request here.
-    const headersList = await headers();
-    const pathname = headersList.get('x-pathname') ?? '/overview';
-    const search = headersList.get('x-search') ?? '';
-    // Bounded: this value is about to be percent-encoded a SECOND time (the
-    // search string already is), so a wide Explorer filter bar would roughly
-    // double on its way into ?next= and take the login redirect past the
-    // header limit. Over budget, the user comes back to the bare page instead
-    // of to a 431.
-    const next = encodeURIComponent(boundedReturnTo(pathname, search));
-    redirect(`/login?next=${next}`);
+    // Defence in depth, and it should be unreachable: middleware gates every
+    // path in PROTECTED_SEGMENTS and redirects with the full URL preserved in
+    // ?next= long before a request gets here.
+    //
+    // BARE on purpose. This gate cannot see the query string — the App Router
+    // does not pass `searchParams` to a layout and a layout cannot reach the
+    // raw `Request` — and the previous workaround (middleware copying the URL
+    // into an `x-search` request header for this line to read back and encode
+    // a second time) is exactly what a wide filter bar turned into a 431. Losing
+    // the link on a path that should never execute is the right trade for
+    // deleting that copy; if this ever fires, the fix is to bring
+    // PROTECTED_SEGMENTS back in step with the route tree, not to reinstate the
+    // header.
+    redirect('/login');
   }
 
   // Onboarding completion feeds both the sidebar's "Getting started" progress

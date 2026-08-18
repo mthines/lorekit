@@ -35,23 +35,13 @@ export function safeNextPath(
  * design — "a filtered view is a link" — and `?filters=` holds a
  * JSON-serialised array whose length grows with the bar, roughly 36 characters
  * per selected value once `URLSearchParams` percent-encodes the quotes and
- * braces. At 200 selected values that param alone is ~7.5 KB, and it does not
- * stay in the address bar:
+ * braces. At 200 selected values that param alone is ~7.5 KB, and `?next=`
+ * percent-encodes the whole target a second time on top of that.
  *
- *   * `middleware.ts` copies the whole search string into an `x-search`
- *     REQUEST header on every matched request, so the URL becomes header
- *     weight on the forwarded RSC request;
- *   * the dashboard layout reads that header back and `encodeURIComponent`s it
- *     into `?next=`, which encodes the already-encoded form a SECOND time and
- *     roughly doubles it;
- *   * a Server Action is a POST to the current page URL, so the bar rides the
- *     request line of every list fetch.
- *
- * Together those turn a large filter bar into a `431 Request Header Fields Too
- * Large` — a blank page with no error the user can act on. 2 KB leaves ample
- * room for every other header while covering any bar a person assembles by
- * hand; past it, the round trip drops the query string and returns the user to
- * the bare page rather than failing the request.
+ * Past the budget, the round trip drops the query string and returns the user
+ * to the bare page rather than to a request line nobody can serve. 2 KB leaves
+ * ample room for every other header while covering any bar a person assembles
+ * by hand.
  *
  * This bounds the RETURN TRIP only. It deliberately does not truncate the
  * address bar itself: a link someone pasted must keep working, and the read
