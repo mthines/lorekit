@@ -25,7 +25,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BookOpen, LayoutDashboard, Settings, Newspaper } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings } from 'lucide-react';
 import { useCommand } from '@/components/command/useCommand';
 import { createClient } from '@/lib/supabase/client';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
@@ -69,19 +69,6 @@ function GoToSettingsCommand() {
   return null;
 }
 
-function GoToBlogCommand() {
-  const router = useRouter();
-  useCommand({
-    id: 'docs-nav-blog',
-    label: 'Go to Blog',
-    icon: <Newspaper className="size-4" />,
-    group: 'Navigate',
-    shortcut: { keys: ['g', 'b'] },
-    onSelect: () => router.push('/blog'),
-  });
-  return null;
-}
-
 export function DocsSessionCommands() {
   const [signedIn, setSignedIn] = useState(false);
 
@@ -107,7 +94,6 @@ export function DocsSessionCommands() {
       <GoToDashboardCommand />
       <GoToExplorerCommand />
       <GoToSettingsCommand />
-      <GoToBlogCommand />
     </>
   );
 }

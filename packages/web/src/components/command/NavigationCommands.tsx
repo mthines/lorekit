@@ -36,7 +36,6 @@ import {
   LayoutDashboard,
   Settings,
   GraduationCap,
-  Newspaper,
   Key,
   Blocks,
   Users,
@@ -171,14 +170,10 @@ export function NavigationCommands() {
     onSelect: () => router.push('/docs'),
   });
 
-  useCommand({
-    id: 'nav-blog',
-    label: 'Go to Blog',
-    icon: <Newspaper className="size-4" />,
-    group: 'Navigate',
-    shortcut: { keys: ['g', 'b'] },
-    onSelect: () => router.push('/blog'),
-  });
+  // NOTE: no "Go to Blog" command here on purpose — the blog is not a released
+  // surface yet, so the app palette must not advertise it. Re-add (with `g b`)
+  // when the blog ships. ⌘K still works ON the blog page itself; it just isn't
+  // discoverable from the rest of the app.
 
   // ── Settings ──────────────────────────────────────────────────────────────
 

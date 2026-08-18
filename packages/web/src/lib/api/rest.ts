@@ -22,6 +22,8 @@
  * session). Nothing here imports `next/*` or a Supabase client.
  */
 
+import { supabaseUrl } from '@/lib/supabase/config';
+
 /**
  * The `X-LoreKit-Client` request header and this dashboard's value for it.
  *
@@ -73,13 +75,13 @@ export class RestConfigError extends Error {
  * `https://<ref>.supabase.co/functions/v1` — the edge-function root the REST
  * API is served from.
  *
- * Read as a literal `process.env['…']` member expression so Next.js inlines it
- * into the browser bundle at build time (the same requirement `otel-origins.ts`
- * documents), and resolved per call rather than at module load so a test can
- * set it after import.
+ * Resolved through `supabaseUrl()` (the single Supabase-target resolver, which
+ * honours the `NEXT_PUBLIC_USE_LOCAL_SUPABASE` flag and keeps the literal
+ * `process.env['…']` read Next.js inlines into the browser bundle), per call
+ * rather than at module load so a test can set the env after import.
  */
 export function restBaseUrl(): string {
-  const url = process.env['NEXT_PUBLIC_SUPABASE_URL'];
+  const url = supabaseUrl();
   if (!url) throw new RestConfigError();
   return `${url.replace(/\/+$/, '')}/functions/v1`;
 }

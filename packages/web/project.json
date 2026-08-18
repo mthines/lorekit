@@ -26,6 +26,14 @@
         "production": { "buildTarget": "web:build:production", "dev": false }
       }
     },
+    "serve-local": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "packages/web",
+        "command": "next dev",
+        "env": { "NEXT_PUBLIC_USE_LOCAL_SUPABASE": "true" }
+      }
+    },
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
