@@ -117,17 +117,13 @@ Emit one coverage matrix, then the recommendations. Group by surface scope.
 ```text
 ## Coverage — dashboard
 
-| Target / action        | Route / trigger          | Palette | Shortcut | Gap        |
-| ---------------------- | ------------------------ | ------- | -------- | ---------- |
-| Overview               | /overview                | ✅ nav-overview | ✅ g o | —          |
-| Lore Explorer          | /lore                    | ✅ nav-explorer | ✅ g e | —          |
-| Filter (Explorer)      | FilterMenu open          | ❌      | ❌       | both       |
-| Focus search (Explorer)| search input             | ❌      | ❌       | both       |
-
-Recommendations (Linear conventions):
-- Filter (Explorer)  → palette "Filter lore…" (group: Lore) + shortcut `f`
-- Focus search       → shortcut `/` (focus the search field)
-- Keyboard help      → shortcut `?` (open a shortcuts overlay — not present)
+| Target / action        | Route / trigger  | Palette | Shortcut | Gap  | Proposed shortcut | Proposed palette      | Prio |
+| ---------------------- | ---------------- | ------- | -------- | ---- | ----------------- | --------------------- | ---- |
+| Overview               | /overview        | ✅ nav-overview | ✅ g o | —    | —                 | —                     | —    |
+| Lore Explorer          | /lore            | ✅ nav-explorer | ✅ g e | —    | —                 | —                     | —    |
+| Filter (Explorer)      | FilterMenu open  | ❌      | ❌       | both | `f`               | "Filter lore…" (Lore) | P1   |
+| Focus search (Explorer)| search input     | ❌      | ❌       | both | `/`               | "Search lore…" (Lore) | P1   |
+| Keyboard help          | (none)           | ❌      | ❌       | both | `?`               | "Keyboard shortcuts…" | P3   |
 ```
 
 Rules for the matrix:
@@ -135,17 +131,42 @@ Rules for the matrix:
 - One row per navigation target AND per page-level action.
 - `Palette` cites the registering command `id` when present, `❌` when absent.
 - `Shortcut` cites the key sequence when present, `❌` when absent.
-- `Gap` is one of `—` (covered), `palette`, `shortcut`, or `both`.
+- `Gap` is frequency-aware, one of:
+  - `—` covered — has a palette entry, and either has a shortcut or does not
+    warrant one (occasional/destructive/deep). A palette-only settings page is
+    `—`, NOT a shortcut gap.
+  - `palette` — missing its palette entry (always a real gap; the floor).
+  - `shortcut` — passes the shortcut test but has no shortcut.
+  - `both` — missing the palette entry AND warrants a shortcut.
+- Include a `Warrants shortcut?` judgment per row (`yes` / `no — occasional` /
+  `no — destructive` / `contextual`) so a palette-only row reads as a decision,
+  not an oversight.
+- `Proposed shortcut` / `Proposed palette` — the suggested binding for a gap
+  row (from [`rules/linear-shortcuts.md`](./rules/linear-shortcuts.md)), or `—`
+  for a covered row. Every gap row MUST carry a proposal so the user can
+  challenge each one individually. When a proposal is blocked (e.g. a handler
+  must be lifted first, or a token collides), append the blocker inline —
+  e.g. `` `f` ⚠ lift FilterMenu handler `` or `` `g o` ✗ taken → `g m` ``.
+- `Prio` is `P1`–`P4` (P1 = high-frequency, both surfaces missing).
 - Never invent coverage: a target counts as covered only if a real
   `useCommand` registration is found in the crawl (Phase 1).
+- The separate prose "Recommendations" list is now redundant with the
+  `Proposed*` columns — keep only cross-cutting notes (new features, ordering)
+  below the table, not per-row repeats.
 
 ---
 
 ## Core Principles
 
-1. **Two surfaces, one source.** A user action is only "done" when it is in
-   the palette AND on a shortcut. The palette is discoverability; the
-   shortcut is speed. Ship both or neither is complete.
+1. **Palette is the floor; a shortcut is earned.** EVERY navigable target and
+   real action gets a command-palette entry — that is the discoverability
+   baseline and its absence is always a gap. A keyboard shortcut is the
+   accelerator layer, added ONLY when the target passes the shortcut test
+   (frequent + global + flow-critical — see
+   [`rules/linear-shortcuts.md`](./rules/linear-shortcuts.md)). A low-frequency
+   destination with a palette entry and no shortcut is correctly covered, not
+   a gap. Shortcuts are a scarce, memorable resource — spending one on a rarely
+   used page devalues the whole keymap.
 2. **Follow Linear, do not invent.** `g` prefix is reserved for navigation;
    single letters (F, L, C, …) are context actions; ⌘K opens the palette.
    Reuse the repo's existing bindings before adding new ones.

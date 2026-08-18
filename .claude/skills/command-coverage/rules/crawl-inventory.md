@@ -25,18 +25,45 @@ registry shape.
 - [Step 4 — Build the coverage matrix](#step-4--build-the-coverage-matrix)
 - [Step 5 — Flag drift](#step-5--flag-drift-stronger-than-a-gap)
 
+## Step 0 — Map where the palette even EXISTS (do this first)
+
+The palette can only cover a route whose layout mounts the provider. Find the
+palette-bearing layouts before anything else:
+
+```bash
+grep -rln "CommandPaletteProvider" packages/web/src/app
+```
+
+Today that is `(dashboard)/layout.tsx`, `docs/layout.tsx`, and `blog/layout.tsx`. Any
+navigable route NOT under one of these layouts has **no palette context** —
+there is no ⌘K and no shortcut engine there at all. That is a distinct, and
+usually more serious, finding than a missing command: the surface is
+unreachable by the palette by construction. Record it as
+`no-palette-context`, and note the fix is to mount the provider in that
+layout (as `docs/layout.tsx` already does), not to add one command.
+
 ## Step 1 — Enumerate navigation targets
 
 | Source            | Command                                                                 |
 | ----------------- | ---------------------------------------------------------------------- |
-| App routes        | `find packages/web/src/app -name page.tsx \| sort`                    |
+| App routes (ALL)  | `find packages/web/src/app -name page.tsx \| sort`                    |
 | Settings sections | read `SETTINGS_SECTIONS` in `components/settings/sections.ts`         |
 | Docs sections     | read `DOCS_SECTIONS` in `lib/docs/sections.ts`                        |
+| Blog posts        | read `BLOG_SLUGS` in `lib/blog/sections.ts` (table-driven, like docs)  |
 
-Filter to **user-navigable** routes: drop `(auth)/*`, dynamic-only segments
-you cannot deep-link generically (`[slug]`, `[[...slug]]`) unless the audit
-scope calls for them, and pure layouts. Keep every stable destination a user
-would reasonably want a shortcut to.
+Crawl **every** `app/**/page.tsx`, not just the authenticated `(dashboard)`
+subtree — the public content surfaces (`/blog`, `/blog/[slug]`, `/learn`,
+the landing `/`) are navigable too and are the easiest to forget. Then filter
+to **user-navigable** routes: drop `(auth)/*` and pure layouts; a
+`[slug]`/`[[...slug]]` segment is covered collectively by its table (docs and
+blog both drive per-item commands from a slug table), so treat the table, not
+the dynamic route file, as the unit. Keep every stable destination.
+
+Cross-check each surface against Step 0: a public content route (blog, learn,
+landing) whose layout is not in the palette-bearing set is a
+`no-palette-context` finding, and a content type that IS table-driven but has
+no derived commands (blog vs. docs) is an **inconsistency** — call it out
+explicitly against its precedent.
 
 ## Step 2 — Enumerate user actions
 

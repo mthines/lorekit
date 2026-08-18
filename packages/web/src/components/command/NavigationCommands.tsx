@@ -36,6 +36,7 @@ import {
   LayoutDashboard,
   Settings,
   GraduationCap,
+  Newspaper,
   Key,
   Blocks,
   Users,
@@ -168,6 +169,15 @@ export function NavigationCommands() {
     group: 'Navigate',
     shortcut: { keys: ['g', 'g'] },
     onSelect: () => router.push('/docs'),
+  });
+
+  useCommand({
+    id: 'nav-blog',
+    label: 'Go to Blog',
+    icon: <Newspaper className="size-4" />,
+    group: 'Navigate',
+    shortcut: { keys: ['g', 'b'] },
+    onSelect: () => router.push('/blog'),
   });
 
   // ── Settings ──────────────────────────────────────────────────────────────

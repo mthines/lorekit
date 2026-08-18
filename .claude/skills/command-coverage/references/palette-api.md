@@ -34,12 +34,13 @@ and never drift. All paths are under `packages/web/src`.
 | `components/command/useCommand.tsx`             | The hook every registration uses                               |
 | `components/command/NavigationCommands.tsx`     | Dashboard registrations (mounted in the dashboard layout)      |
 | `components/docs/DocsCommands.tsx`              | Public `/docs` page registrations                              |
-| `components/docs/DocsSessionCommands.tsx`       | `/docs` "Navigate" group, shown only when signed in            |
+| `components/docs/DocsSessionCommands.tsx`       | `/docs` + `/blog` "Navigate" group, shown only when signed in  |
+| `components/blog/BlogCommands.tsx`             | Public `/blog` post registrations (driven by `BLOG_SECTIONS`)   |
 | `components/command/CommandPaletteButton.tsx`   | The ⌘K trigger in the TopBar                                   |
 
 The registration call sites — the crawl's "what is registered" set — are
 **every `useCommand({...})` call**. Today that is `NavigationCommands.tsx`,
-`DocsCommands.tsx`, and `DocsSessionCommands.tsx`. Find them with:
+`DocsCommands.tsx`, `DocsSessionCommands.tsx`, and `BlogCommands.tsx`. Find them with:
 
 ```bash
 grep -rn "useCommand(" packages/web/src --include='*.tsx' \
