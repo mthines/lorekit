@@ -196,9 +196,14 @@ function buildGrid(positions: Float32Array, cell: number): Map<number, number[]>
  *
  * A string key (`` `${x},${y},${z}` ``) allocates a string per node per
  * iteration — 600,000 short-lived strings for a 5,000-node, 120-iteration run,
- * which is enough garbage to show up as GC pauses mid-layout. The offset keeps
- * negative coordinates in range; the multipliers are prime-ish and far apart so
- * distinct cells within ±2048 cannot collide.
+ * which is enough garbage to show up as GC pauses mid-layout.
+ *
+ * The packing is exact rather than merely collision-unlikely: the offset lifts
+ * each coordinate into `[0, 4096)`, and the multipliers are `2^24` and `2^12`,
+ * so the key is the three coordinates written as base-4096 digits. Distinct
+ * cells within ±2048 therefore CANNOT collide — that bound is the digit width,
+ * not a probabilistic estimate. The largest key is `4095 * 2^24 + 4095 * 2^12 +
+ * 4095`, comfortably inside the exact-integer range of a double.
  */
 function cellKey(x: number, y: number, z: number): number {
   return (x + 2048) * 16_777_216 + (y + 2048) * 4096 + (z + 2048);
