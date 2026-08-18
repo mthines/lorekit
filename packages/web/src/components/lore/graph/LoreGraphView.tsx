@@ -48,7 +48,9 @@ export interface LoreGraphViewProps {
    * Whether the Explorer's infinite query still has pages to fetch.
    *
    * `memories` is the pages loaded SO FAR, so without this the map would draw a
-   * complete-looking picture of a subset, so it gates the coverage notice.
+   * complete-looking picture of a subset. It gates the coverage notice, and the
+   * empty state below — an empty first page with more pending is "still
+   * loading", not "nothing to map".
    */
   hasMore: boolean;
   /** `scope::key` of the open memory, so the map and the list agree on selection. */
@@ -72,6 +74,22 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
   const selectedLabel = selectedId ? (nodeById.get(selectedId)?.label ?? null) : null;
   const hovered = hoveredId ? nodeById.get(hoveredId) : undefined;
   const notice = coverageNotice(graph, { hasMore });
+
+  // Still paging: the frame belongs to the loading placeholder, not to an empty
+  // state that tells the reader there is nothing here. Same reasoning as the
+  // list's `lessons.length === 0 && !hasNextPage` guard, which the map branch in
+  // `LoreExplorer` sits above and so never reaches.
+  if (memories.length === 0 && hasMore) {
+    return (
+      <div
+        className="h-[60vh] min-h-[380px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+        role="status"
+        aria-label="Loading the memory map"
+      >
+        <SceneSkeleton />
+      </div>
+    );
+  }
 
   if (memories.length === 0) {
     return (
@@ -148,7 +166,8 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
 }
 
 /**
- * What fills the frame while the Three.js chunk downloads.
+ * What fills the frame while the Three.js chunk downloads, or while the first
+ * page of memories is still in flight.
  *
  * A shaped placeholder rather than a spinner: the wait is a code-split fetch,
  * which is usually a few hundred milliseconds, and a spinner in that band reads
