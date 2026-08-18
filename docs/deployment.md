@@ -302,7 +302,8 @@ Three things to know when reading a run:
   object store) the resolver catches it, reports `api=true web=true`, and still
   **exits 0** — it classifies, it does not gate, so a red exit here would stop the
   deploy rather than fail open.
-- **Both rollback jobs must DELETE their half's tag.** The markers are moved by
+- **Both rollback jobs must REPOINT their half's tag at what production went
+  back to.** The markers are moved by
   the *flip* jobs, which run **before** `smoke-production` — so a marker is
   already on this run's SHA by the time the smoke gate fails, and neither
   rollback undoes that by itself. `rollback-production` reverts the edge
@@ -314,11 +315,24 @@ Three things to know when reading a run:
   *ancestor* of every later `HEAD` no matter what production is actually serving.
   The next merge would then diff that half against something production never
   kept and could resolve it `false`, skipping the half production is not serving
-  — the incident above, once per half. Deleting is the only fail-open answer
-  available to a rollback job: with no marker, `pickBaseline` falls back to the
-  push baseline. Each delete is best-effort (`|| true`, `if: always()`) — a failed
-  delete must not mask the deploy failure that triggered the rollback, and a stale
-  tag is repaired by the next successful flip.
+  — the incident above, once per half.
+
+  **Deleting the marker is not enough**, either: with no marker `pickBaseline`
+  falls back to the push baseline, which on the next merge is
+  `github.event.before` — the rolled-back commit itself — so the diff starts
+  *after* the work production is not serving and can skip the half a second time.
+  Each rollback job therefore sets its marker to the commit production went back
+  to. `rollback-production` uses `HEAD~1`, which is exactly the function code it
+  just redeployed. `rollback-web-production` cannot use `HEAD~1` — the web half is
+  skipped on merges that do not touch it, so the previously promoted deployment
+  can be many commits back — so `promote-web-production` captures the marker's old
+  value before overwriting it and exposes it as a job output for the rollback to
+  restore. If there was no previous promotion to restore, the marker is dropped
+  and the job emits a `::warning::` to force the next deploy manually
+  (`workflow_dispatch`, `deploy_target: web`), because detection genuinely cannot
+  cover that case. Every one of these writes is best-effort (`|| true`,
+  `if: always()`) — a failed marker write must not mask the deploy failure that
+  triggered the rollback.
 - **The decision is a tested module, not a shell block.**
   `scripts/resolve-deploy-scope.mjs` with `scripts/resolve-deploy-scope.test.mjs`
   (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — added by the
@@ -406,23 +420,64 @@ unguarded-last-step placement exists to prevent.)
 ```
 
 **4. `deploy.yml` → BOTH rollback jobs.** Add `permissions: contents: write` to
-`rollback-production` and `rollback-web-production`, and give each this step,
-using `API_DEPLOYED_TAG` in the former and `WEB_DEPLOYED_TAG` in the latter. The
-reason is the bullet above: the flip jobs move their marker *before*
-`smoke-production` runs, so by the time a rollback fires the tag already names a
-SHA production is no longer serving — and it is still an ancestor of `HEAD`, so
-the non-ancestor rule will not save the next run. In `rollback-production` the
-step must come **before** `Report rollback`, which ends in `exit 1`.
+`rollback-production` and `rollback-web-production`, and have each repoint its
+marker at what production went back to — the bullet above explains why deleting
+is not enough. In `rollback-production` the step must come **before** `Report
+rollback`, which ends in `exit 1`.
+
+`rollback-production` knows the answer directly (it just redeployed `HEAD~1`):
 
 ```yaml
-      - name: Drop the deployed marker (production no longer serves it)
+      - name: Point the API marker at the commit just rolled back to
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.API_DEPLOYED_TAG }}
         run: |
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
-          echo "- Dropped marker \`${TAG}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
+          PREV="$(git rev-parse HEAD~1)"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+            -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
+          echo "- API marker \`${TAG}\` → \`${PREV}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
+```
+
+The web half does not: `vercel rollback` returns to the previously promoted
+*deployment*, which can be many commits back. So `promote-web-production` records
+the marker's old value before overwriting it —
+
+```yaml
+    outputs:
+      previous_marker: ${{ steps.prev_marker.outputs.sha }}
+    # …
+      - name: Capture the previously promoted marker
+        id: prev_marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: |
+          PREV="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null || true)"
+          echo "sha=${PREV}" >> "$GITHUB_OUTPUT"
+```
+
+— and `rollback-web-production` restores it, warning loudly in the one case that
+has no answer (nothing was ever promoted before):
+
+```yaml
+      - name: Restore the promoted-web marker to what the domain serves again
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+          PREV: ${{ needs.promote-web-production.outputs.previous_marker }}
+        run: |
+          if [ -n "$PREV" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+              -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
+            echo "- Restored web marker \`${TAG}\` → \`${PREV}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
+            echo "::warning::no previous web marker to restore — run deploy.yml manually with deploy_target: web before trusting the next automatic scope."
+            echo "- Dropped web marker \`${TAG}\` (no previous promotion recorded)" >> "$GITHUB_STEP_SUMMARY"
+          fi
 ```
 
 **5. `ci.yml`.** Add a `deploy` path-filter output over
