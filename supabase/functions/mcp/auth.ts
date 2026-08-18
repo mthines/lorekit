@@ -98,8 +98,8 @@ export async function resolveAuth(
  *
  * `auth.type` is written TWICE on a successful request. This module writes the
  * tier, and then `mcp/index.ts` OVERWRITES it from the resolved
- * `AuthContext.type` once auth succeeds. Those agree on four of the five
- * outcomes:
+ * `AuthContext.type` once auth succeeds. Of the six outcomes below, five agree
+ * and one does not:
  *
  * | presented              | this function | final `auth.type` on the span |
  * |------------------------|---------------|-------------------------------|

@@ -110,8 +110,10 @@ Deno.serve(async (req: Request) => {
       // leaving the attribute absent and ambiguous — a probe is therefore
       // attributable to a credential SHAPE and a source, not to an account.
       // `url` is the one already parsed at the top of the handler and reused by
-      // `resolveAuth` below. A second `new URL(req.url)` would put a parse back
-      // onto the exact path this change exists to make free.
+      // `resolveAuth` below. Parsing the request URL a second time here would
+      // put that cost back onto the exact path this change exists to make free.
+      // (Named in prose, not as a code literal, so the ordering spec can simply
+      // count occurrences of the constructor and require exactly one.)
       const probeToken = extractToken(req.headers.get('Authorization'), url.searchParams.get('token'));
       span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
         'mcp.method': 'unknown',

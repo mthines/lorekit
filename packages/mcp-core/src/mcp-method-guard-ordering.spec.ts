@@ -136,8 +136,14 @@ describe('mcp entrypoint rejects a non-POST before authenticating', () => {
     // `resolveAuth`. A second parse on the path this change exists to make free
     // is the cost the change is arguing against.
     expect(block).toMatch(/url\.searchParams\.get\('token'\)/);
-    // The STATEMENT form, so the explanatory comments may name the expression.
-    expect((index.match(/new URL\(req\.url\);/g) ?? []).length).toBe(1);
+    // Count the CONSTRUCTOR itself, with no trailing anchor. An earlier version
+    // of this assertion required `new URL(req.url);` — the statement form —
+    // only so it would not also match the explanatory comment beside the guard.
+    // That made it miss the expression form it exists to prevent
+    // (`new URL(req.url).searchParams…`, which is literally what this replaced),
+    // so a reintroduced second parse still counted one. The comment was reworded
+    // instead; the anchor is now chosen against the mutant, not against the prose.
+    expect((index.match(/new URL\(req\.url/g) ?? []).length).toBe(1);
   });
 
   it('derives the guard tier from the same mapping resolveAuthTiers uses', () => {
