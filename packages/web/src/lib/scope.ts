@@ -21,9 +21,9 @@ const CANONICAL_CHARSET = /^[\w.:/-]+$/;
 /**
  * Is `raw` a scope the API will ACCEPT as a filter?
  *
- * This mirrors `validateScope` in `supabase/functions/_shared/scope.ts` — the
- * validator that decides whether `GET /memories/read-activity?scope=` is a 200
- * or a 400 — and deliberately NOT the stricter per-prefix grammar in
+ * This mirrors `parseScopeFilter` in `supabase/functions/_shared/scope.ts` —
+ * the entry point five of the six scope-filtering routes now call — and
+ * deliberately NOT the stricter per-prefix grammar in
  * `packages/mcp-core/src/scope.ts`. Mirroring the stricter one would have the
  * dashboard refuse a scope the server happily serves (`global::something` is
  * the live example), which is a worse failure than the one this guards against:
@@ -41,21 +41,40 @@ const CANONICAL_CHARSET = /^[\w.:/-]+$/;
  * fails the page uniformly rather than breaking one card next to four that look
  * merely empty. This guard matters MORE after that change, not less: it is what
  * keeps the client from ever sending one, so the uniform failure stays
- * theoretical. Note the edge validators reject-only — they do not lowercase, so
- * a mixed-case scope is passed through and matched exactly.
+ * theoretical.
+ *
+ * MIXED CASE IS CANONICAL HERE, and that inverted with the reject-only change.
+ * This guard used to refuse anything not already lowercased, on the ground that
+ * the edge normalised and so only the normalised form described what the server
+ * would filter on. `parseScopeFilter` does not normalise — it returns the
+ * caller's own string, which is what reaches `.eq('scope', …)` — so the raw
+ * value IS what the server filters on, and refusing it was the one thing
+ * stopping the Explorer from reaching the mixed-case rows the REST write path
+ * stores verbatim. Refusing it hid real data behind a filter the UI offers,
+ * which is the quieter and worse of the two failure directions.
+ *
+ * PADDING IS NOT canonical, and that also follows the edge: `parseScopeFilter`
+ * rejects surrounding whitespace outright, because the grammar check trims it
+ * away while the predicate does not.
+ *
+ * One card reads differently, by design: `GET /memories/read-activity` filters
+ * `usage_events.scope`, which is lowercased when the event is recorded, so it
+ * normalises the filter. A mixed-case scope therefore charts reads for its
+ * lowercased form while the list shows the exact rows. Each side matches how
+ * its own column is written; see `supabase/functions/memories/CLAUDE.md`.
  */
 export function isCanonicalScope(raw: string): boolean {
   if (!raw) return false;
-  // The edge validator lowercases and trims before testing, so a value that
-  // only differs by case or padding IS accepted — but it is accepted as its
-  // normalised form. Treat the raw value as canonical only when it already IS
-  // that form, so what the URL says and what the server filters on agree.
-  if (raw !== raw.toLowerCase().trim()) return false;
-  if (/^(project|repo|branch):[^:]/.test(raw)) return false;
-  if (raw === 'global') return true;
-  const sepIdx = raw.indexOf('::');
+  // Padding is rejected by the edge filter, so it is not canonical here either.
+  if (raw !== raw.trim()) return false;
+  if (/^(project|repo|branch):[^:]/i.test(raw)) return false;
+  // Case is carried through to the predicate, so the GRAMMAR is checked against
+  // the lowercased form (as the edge does) while the VALUE stays the caller's.
+  const lower = raw.toLowerCase();
+  if (lower === 'global') return true;
+  const sepIdx = lower.indexOf('::');
   if (sepIdx === -1) return false;
-  if (!VALID_PREFIXES.includes(raw.slice(0, sepIdx))) return false;
+  if (!VALID_PREFIXES.includes(lower.slice(0, sepIdx))) return false;
   return CANONICAL_CHARSET.test(raw);
 }
 

@@ -14,11 +14,18 @@ import { isCanonicalScope } from './scope';
 // against. `packages/mcp-core/src/edge-parity.spec.ts` reaches across the same
 // boundary for the same reason, via `readFileSync`.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { validateScope } from '../../../../supabase/functions/_shared/scope.ts';
+import { parseScopeFilter } from '../../../../supabase/functions/_shared/scope.ts';
 
 /**
- * `isCanonicalScope` (client) must agree with `validateScope` (edge) about
+ * `isCanonicalScope` (client) must agree with `parseScopeFilter` (edge) about
  * which scopes are FILTERABLE.
+ *
+ * The reference is `parseScopeFilter`, not the `validateScope` it delegates to,
+ * because they no longer accept the same set: the filter entry point rejects
+ * surrounding whitespace that the grammar check would silently trim away, and
+ * it returns the caller's own string rather than a normalised one. Comparing
+ * against `validateScope` measured the client against a validator no filtering
+ * route calls directly except `read-activity`.
  *
  * The bug this guards against: a scope the client thinks is fine but the edge
  * rejects. Every Explorer endpoint (`GET /memories`, `/activity`, `/facets`,
@@ -35,16 +42,18 @@ import { validateScope } from '../../../../supabase/functions/_shared/scope.ts';
  * - Client rejects, edge accepts → real data hidden behind a filter the UI
  *   still offers. Quieter, and worse to debug.
  *
- * The one deliberate divergence is normalisation: the edge lowercases and trims
- * before validating, so it accepts `Repo::Owner/Name` and serves it as
- * `repo::owner/name`. The client refuses a value that is not already its own
- * normalised form, so the chip strip and the filter can never describe
- * different scopes. Those cases are asserted separately.
+ * There is no longer a deliberate divergence on case. The edge filter is
+ * reject-only, so `Repo::Owner/Name` is accepted AND matched exactly — and the
+ * REST write path stores `scope` verbatim, so those rows exist. A client that
+ * refused the value would hide them behind a filter the UI still offers, which
+ * is the quieter and worse of the two disagreement directions. Padding is the
+ * one thing both sides refuse, for the same reason: the grammar check trims it
+ * and the predicate does not, so it could only ever match nothing.
  */
 
 function edgeAccepts(raw: string): boolean {
   try {
-    validateScope(raw);
+    parseScopeFilter(raw);
     return true;
   } catch {
     return false;
@@ -98,9 +107,18 @@ describe('isCanonicalScope ↔ edge validateScope', () => {
     expect(wouldHide).toEqual([]);
   });
 
-  it('refuses an un-normalised value the edge would silently rewrite', () => {
-    for (const raw of ['Repo::Mthines/LoreKit', ' global', 'GLOBAL']) {
+  it('accepts a mixed-case scope, because the edge filters on it exactly', () => {
+    // The rows exist: the REST write path stores `scope` verbatim. Refusing the
+    // filter here is what made them unreachable from the Explorer.
+    for (const raw of ['Repo::Mthines/LoreKit', 'GLOBAL', 'Project::MyThing']) {
       expect(edgeAccepts(raw)).toBe(true);
+      expect(isCanonicalScope(raw)).toBe(true);
+    }
+  });
+
+  it('refuses a padded value, exactly as the edge filter does', () => {
+    for (const raw of [' global', 'global ', '\trepo::mthines/lorekit']) {
+      expect(edgeAccepts(raw)).toBe(false);
       expect(isCanonicalScope(raw)).toBe(false);
     }
   });
