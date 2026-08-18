@@ -126,8 +126,14 @@ export function readRequestedProtocolVersion(params: unknown): string | null {
 // exists to catch, and it would read identically to a client sending nothing.
 //
 // Return the plausible value verbatim, and one distinct sentinel per failure
-// otherwise. The sentinel set is closed, so cardinality stays bounded, and no
-// sentinel is date-shaped, so none can be mistaken for a real revision.
+// otherwise. Be precise about what that bounds and what it does not: the
+// SENTINEL set is closed and no sentinel is date-shaped, so a sentinel can
+// never be mistaken for a real revision — but the attribute DOMAIN is not a
+// closed set. Any string of at most MAX_PROTOCOL_VERSION_LENGTH characters is
+// echoed as-is, including a nonsense one like `latest`, so cardinality is
+// bounded by LENGTH, not by membership. That is deliberate: an unexpected value
+// is the signal this attribute was added to carry, and narrowing the domain to
+// date-shaped strings would throw it away to make a tidier claim true.
 export function requestedProtocolVersionAttribute(params: unknown): string {
   if (typeof params !== 'object' || params === null) return 'unset';
   const raw = (params as { protocolVersion?: unknown }).protocolVersion;

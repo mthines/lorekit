@@ -119,6 +119,23 @@ describe('negotiateProtocolVersion', () => {
 });
 
 describe('requestedProtocolVersionAttribute', () => {
+  it('is bounded by LENGTH, not by membership — a plausible nonsense value is echoed', () => {
+    // The attribute domain is deliberately open: any string of <= 32 chars
+    // comes through as-is, because an unexpected value is the signal this
+    // attribute exists to carry. Only the sentinels below are a closed set, and
+    // conflating the two is how the first draft of this comment overclaimed.
+    expect(requestedProtocolVersionAttribute({ protocolVersion: 'latest' })).toBe('latest');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: 'v1' })).toBe('v1');
+    // The 32-char ceiling is the only cardinality guard: it keeps a large blob
+    // off the span, it does not make the value set enumerable.
+    expect(requestedProtocolVersionAttribute({ protocolVersion: 'z'.repeat(32) })).toBe(
+      'z'.repeat(32),
+    );
+    expect(requestedProtocolVersionAttribute({ protocolVersion: 'z'.repeat(33) })).toBe(
+      'too-long',
+    );
+  });
+
   it('records a plausible client version verbatim', () => {
     expect(requestedProtocolVersionAttribute({ protocolVersion: '2025-06-18' })).toBe(
       '2025-06-18',
@@ -145,9 +162,9 @@ describe('requestedProtocolVersionAttribute', () => {
     );
   });
 
-  it('keeps the sentinel set closed, bounded, and not date-shaped', () => {
-    // Bounded: an arbitrary caller-supplied blob must never become a span
-    // attribute value, so every rejection maps into this fixed set.
+  it('keeps the SENTINEL set closed and not date-shaped', () => {
+    // Every rejection maps into this fixed set — that is what "closed" means
+    // here, and it is the only closed part.
     const sentinels = ['unset', 'not-a-string', 'empty', 'too-long'];
     for (const junk of [undefined, null, 42, {}, [], true, '', 'y'.repeat(64)]) {
       const value = requestedProtocolVersionAttribute({ protocolVersion: junk });

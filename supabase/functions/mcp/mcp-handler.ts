@@ -175,8 +175,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       // things (absent, not a string, empty, over-long), and collapsing them
       // would make a client sending something unexpected — the signal this
       // attribute exists for — indistinguishable from one sending nothing.
-      // `requestedProtocolVersionAttribute` keeps them apart on a closed,
-      // bounded sentinel set.
+      // `requestedProtocolVersionAttribute` keeps them apart on a closed
+      // sentinel set. Note that only the SENTINELS are a closed set — a
+      // plausible value is echoed verbatim, so the attribute is bounded by
+      // string length, not by membership.
       'mcp.protocol_version.requested': requestedProtocolVersionAttribute(params),
     });
     return jsonrpc(id, {
