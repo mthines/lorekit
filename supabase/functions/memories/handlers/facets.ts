@@ -1,8 +1,9 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { firstDeniedScope } from '../../_shared/api/tenant.ts';
-import { forbidden, ok } from '../../_shared/api/respond.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
@@ -72,8 +73,12 @@ async function runFacets(
   span: Span,
   cors: Record<string, string>,
 ): Promise<Response> {
-  const { archived, named, requested, narrowed, scope, dimensions: d } = input;
+  const { archived, named, requested, narrowed, dimensions: d } = input;
 
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
+  //
   // The attribute reports what the CALLER asked for (`named`), not the
   // recognised subset (`requested`): with every named dimension unknown the
   // subset is empty, so a `?facets=nope` trace would be indistinguishable from
@@ -84,10 +89,28 @@ async function runFacets(
     ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
   });
 
+  // The Explorer sends its selected scope here as well as to GET /memories, so
+  // the filter-menu counts drill down with the list. The two must therefore
+  // agree on what a scope IS: if this one kept an ungrammatical value while the
+  // list rejected it, the menu would quietly answer a different question than
+  // the rows beside it.
+  //
+  // It runs on the decoded input rather than in either entry point, so the
+  // query and body transports cannot diverge on which scopes they accept.
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(input.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
+  }
+
   // Early refusal for a NAMED scope outside the key's allowlist (00068/00069).
   // Without it `p_key_scopes` narrows the counts to empty inside the RPC,
   // which reads as "there is nothing there" rather than "you may not ask".
-  const deniedScope = firstDeniedScope(auth, [scope]);
+  //
+  // It runs AFTER the grammar check, as it does in `list.ts` — the two routes
+  // drill down together, so they must also refuse together, in the same order.
+  const deniedScope = firstDeniedScope(auth, [scopeFilter]);
   if (deniedScope !== null) {
     span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
     return forbidden(
@@ -105,7 +128,7 @@ async function runFacets(
   const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
-    p_scope: scope ?? null,
+    p_scope: scopeFilter ?? null,
     p_tags: list(d.tags.values),
     p_tags_mode: d.tags.mode,
     p_source_agent: list(d.source_agent.values),

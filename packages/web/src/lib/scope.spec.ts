@@ -152,12 +152,19 @@ describe('isCanonicalScope', () => {
     expect(isCanonicalScope('repo::a(b)')).toBe(false);
   });
 
-  it('rejects a value that is not already in its normalised form', () => {
-    // The edge validator lowercases and trims, so it would ACCEPT these — but
-    // as a different string than the URL shows. Treating them as canonical
-    // would leave the chip strip and the filter disagreeing.
-    expect(isCanonicalScope('Repo::Mthines/LoreKit')).toBe(false);
+  it('accepts a mixed-case value, which the edge filters on exactly', () => {
+    // `parseScopeFilter` is reject-only, so the caller's own string is what
+    // reaches the predicate — and the REST write path stores `scope` verbatim,
+    // so mixed-case rows exist. Refusing the filter would hide them.
+    expect(isCanonicalScope('Repo::Mthines/LoreKit')).toBe(true);
+    expect(isCanonicalScope('GLOBAL')).toBe(true);
+  });
+
+  it('rejects a padded value, which could only ever match nothing', () => {
+    // The grammar check trims before it looks; the predicate does not. The edge
+    // filter rejects the padded form outright, so this mirrors it.
     expect(isCanonicalScope(' global')).toBe(false);
+    expect(isCanonicalScope('repo::mthines/lorekit ')).toBe(false);
   });
 
   it('rejects the empty string', () => {

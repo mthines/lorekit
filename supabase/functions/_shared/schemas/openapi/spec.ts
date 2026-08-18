@@ -176,12 +176,17 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '"still live" means everywhere else in the API (an already-expired memory is never returned); ' +
       'the upper bound is inclusive, so "within 7 days" includes one expiring exactly 7 days out. ' +
       'Memories with no TTL are never in the result. It is a RELATIVE horizon rather than an ' +
-      'absolute timestamp so a saved or shared link keeps answering the same question tomorrow.',
+      'absolute timestamp so a saved or shared link keeps answering the same question tomorrow.\n\n' +
+      'An invalid `scope` is a `400`, not a silently ignored filter — a scope filter is the ' +
+      'question being asked, so an ungrammatical one is rejected rather than matched against ' +
+      'nothing and reported as an empty page. The value is validated, never normalised: the ' +
+      'write path stores `scope` verbatim, so the filter matches exactly what was written.',
     security, request: { query: ListMemoriesQuerySchema },
     responses: {
       200: memoryPageResponse('Paginated memories'),
-      // Reachable for any out-of-range query param (`limit`, `expiring_within_days`).
-      // It always was — the spec simply never said so.
+      // Reachable for any out-of-range query param (`limit`, `expiring_within_days`)
+      // and for an ungrammatical `scope`. It always was for the former — the spec
+      // simply never said so; the latter arrived with the scope-filter validation.
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });
@@ -224,11 +229,13 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'delete', path: '/memories',
     summary: 'Archive (or, with force=true, hard-delete) a memory by scope+key; ?org=<slug> targets org-owned lore', tags: ['Memories'],
+    description: 'An invalid `scope` is a `400`, not a `404` — a bad scope is bad input, not a missing memory.',
     security, request: { query: DeleteMemoryQuerySchema },
     responses: { 204: { description: 'Archived or deleted' }, 400: errorResponse, 401: errorResponse, 403: errorResponse, 404: errorResponse },
   });
   registry.registerPath({
     method: 'post', path: '/memories/restore', summary: 'Restore an archived memory by scope+key', tags: ['Memories'],
+    description: 'An invalid `scope` is a `400`, not a `404` — a bad scope is bad input, not a missing memory.',
     security, request: { body: { content: { 'application/json': { schema: RestoreMemoryBodySchema } } } },
     responses: { 200: restoreResponse, 400: errorResponse, 401: errorResponse, 404: errorResponse },
   });
@@ -265,6 +272,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     method: 'get', path: '/memories/facets',
     summary: 'List every filterable value (label, agent, trigger, repo, branch, pull request) with its memory count',
     tags: ['Memories'],
+    description: 'An invalid `scope` is a `400`, not a silently ignored filter — the menu counts and the list they drill into agree on what a scope is.',
     security, request: { query: ListFacetsQuerySchema },
     responses: {
       200: { description: 'Facet values', content: { 'application/json': { schema: FacetsResponseSchema } } },
@@ -288,6 +296,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'get', path: '/memories/activity',
     summary: 'Memories created per UTC hour/day per scope over a window', tags: ['Memories'],
+    description: 'An invalid `scope` is a `400`, not a silently ignored filter — the same rule the read counterpart `GET /memories/read-activity` follows.',
     security, request: { query: ActivityQuerySchema },
     responses: {
       200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },

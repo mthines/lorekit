@@ -1,8 +1,9 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { firstDeniedScope } from '../../_shared/api/tenant.ts';
-import { forbidden, ok } from '../../_shared/api/respond.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
@@ -66,20 +67,53 @@ async function runActivity(
   span: Span,
   cors: Record<string, string>,
 ): Promise<Response> {
-  const { bucket, scope, dimensions: d } = input;
-  const until = input.until ?? new Date().toISOString();
-  const since = input.since ?? new Date(Date.parse(until) - DEFAULT_WINDOW_DAYS * DAY_MS).toISOString();
+  const { bucket, dimensions: d } = input;
 
+  // Name the operation BEFORE the first early return, so a rejected request is
+  // still attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
   span.setAttributes({
     'lorekit.operation': 'memories.activity',
     'lorekit.bucket': bucket,
-    ...(scope ? { 'lorekit.scope': scope } : {}),
   });
+
+  // Same GRAMMAR contract as the sibling `GET /memories/read-activity`: the
+  // query schema is shape-only and the canonical grammar runs here so a
+  // rejection can become a 400. The two endpoints answer the same question
+  // about opposite verbs and take one set of parameters, so the same
+  // ungrammatical input must be rejected by both rather than 400ing on one and
+  // coming back as a silently-empty series from the other.
+  //
+  // CASE handling is where they diverge, and that is not an oversight: each
+  // filter matches how its OWN table stores the value. This one filters
+  // `memories.scope`, which the REST write path stores verbatim, so the filter
+  // is reject-only. `read-activity` filters `usage_events.scope`, which is
+  // written through the normalising `safeValidateScope` at the recording site
+  // (`_shared/api/router.ts`), so it filters on `validateScope`'s lowercased
+  // value. Lowercasing here — or keeping the caller's case there — would make
+  // legitimately-stored rows unmatchable on one side or the other.
+  //
+  // It runs on the decoded input rather than in either entry point, so the
+  // query and body transports cannot diverge on which scopes they accept.
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(input.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
+  }
+
+  const until = input.until ?? new Date().toISOString();
+  const since = input.since ?? new Date(Date.parse(until) - DEFAULT_WINDOW_DAYS * DAY_MS).toISOString();
+
+  if (scopeFilter) span.setAttributes({ 'lorekit.scope': scopeFilter });
 
   // Early refusal for a NAMED scope outside the key's allowlist (00068/00069).
   // Without it `p_key_scopes` narrows the series to empty inside the RPC,
   // which reads as "there was no activity" rather than "you may not ask".
-  const deniedScope = firstDeniedScope(auth, [scope]);
+  //
+  // It runs AFTER the grammar check, as it does in `list.ts` and `facets.ts` —
+  // the refusal order is one contract across the scope-filtering routes.
+  const deniedScope = firstDeniedScope(auth, [scopeFilter]);
   if (deniedScope !== null) {
     span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
     return forbidden(
@@ -97,7 +131,7 @@ async function runActivity(
     p_bucket: bucket,
     p_since: since,
     p_until: until,
-    p_scope: scope ?? null,
+    p_scope: scopeFilter ?? null,
     p_tags: list(d.tags.values),
     p_tags_mode: d.tags.mode,
     p_source_agent: list(d.source_agent.values),

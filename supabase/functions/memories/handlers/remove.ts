@@ -5,6 +5,7 @@ import { recordAudit } from '../../_shared/audit.ts';
 import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { DeleteMemoryQuerySchema } from '../../_shared/schemas/memory.ts';
@@ -47,17 +48,38 @@ export async function handleRemove(
 ): Promise<Response> {
   const validated = validateQuery(req, DeleteMemoryQuerySchema, cors);
   if (!validated.ok) return validated.response;
-  const { scope: scopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
+  const { scope: rawScopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
   const force = forceParam === 'true';
   const idParam = params.id;
 
-  const tracedDb = createTracedClient(db, span);
-  const now = new Date().toISOString();
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
   span.setAttributes({
     'lorekit.operation': 'memories.remove',
     'lorekit.delete.force': force,
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
+
+  // `DeleteMemoryQuerySchema.scope` is shape-only ("normalisation happens
+  // downstream" — its own docblock); downstream is here. On a DELETE the stakes
+  // are higher than on a read: an ungrammatical or differently-cased scope
+  // produced a predicate that matched nothing, and the caller was told the
+  // memory did not exist rather than that their scope was wrong.
+  //
+  // Scoped to the natural-key forms, which are the ones that turn `scope` into
+  // a predicate. `DELETE /:id` addresses the row by id and ignores `?scope=`
+  // entirely, so validating it there would 400 on a value the route never
+  // reads — a new rejection this change does not intend and the behaviour-change
+  // list does not claim.
+  let scopeParam: string | undefined;
+  if (!idParam) {
+    try {
+      scopeParam = parseScopeFilter(rawScopeParam);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
 
   // Early refusal for a NAMED scope outside the key's allowlist (00068), hoisted
   // ABOVE the `?org=` dispatch on purpose. `applyKeyScopeFilter` below is a query
@@ -70,6 +92,11 @@ export async function handleRemove(
   // to the plain 403 `handleCreate` already returns for the same situation: when
   // the request NAMES a scope, "your token may not use it" is the honest answer,
   // where "not found" sends the caller hunting a data bug.
+  //
+  // It reads `scopeParam`, so it is deliberately BELOW the grammar check and
+  // inherits its `/:id` exemption: that form addresses the row by id and never
+  // turns `?scope=` into a predicate, so there is no named scope to refuse. The
+  // id form's allowlist half stays with `applyKeyScopeFilter` on the query.
   const deniedScope = firstDeniedScope(auth, [scopeParam]);
   if (deniedScope !== null) {
     span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
@@ -78,6 +105,9 @@ export async function handleRemove(
       cors,
     );
   }
+
+  const tracedDb = createTracedClient(db, span);
+  const now = new Date().toISOString();
 
   if (orgParam) {
     return await removeOrgOwned(

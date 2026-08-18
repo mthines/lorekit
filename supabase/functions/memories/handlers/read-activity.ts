@@ -54,6 +54,15 @@ export async function handleReadActivity(
   // The optional per-scope filter, normalised by the CANONICAL validator — the
   // same one every scope-bearing route uses, never a second grammar.
   //
+  // This route NORMALISES where the five `parseScopeFilter` routes reject-only,
+  // because it filters a different column: `usage_events.scope` is written
+  // through `safeValidateScope` at the recording site (`_shared/api/router.ts`),
+  // so every value in it is already lowercased and a raw filter would miss a
+  // mixed-case request. `memories.scope` is written verbatim over REST, which is
+  // why filtering IT must not lowercase. Grammar is shared; case follows the
+  // writer. Keep this call `validateScope` for as long as the recording side
+  // normalises.
+  //
   // This fails LOUD where the recording side (`safeValidateScope`, 00058) fails
   // SAFE, and the asymmetry is the point: recording a scope is a measurement
   // taken alongside an operation the caller asked for, so a bad value must not
