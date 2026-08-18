@@ -22,7 +22,8 @@
  */
 
 import { traceRequest } from '../_shared/otel.ts';
-import { resolveAuth, getDb } from './auth.ts';
+import { resolveAuth, getDb, credentialTier } from './auth.ts';
+import { extractToken } from './auth-token.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
 import { handleInstallationSync } from './installation-sync.ts';
@@ -71,6 +72,72 @@ Deno.serve(async (req: Request) => {
   // request produces at least one span. resolveAuth is intentionally inside
   // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
+    // POST-only, checked BEFORE authentication.
+    //
+    // A request's method is knowable from the request line alone — nothing
+    // about "GET is not supported here" depends on who is asking. This guard
+    // used to live at the top of `handleMcp`, which meant every SSE-transport
+    // probe (`GET /mcp` is the first thing such a client sends) paid the full
+    // authenticated preamble — a token lookup, a plan lookup and a rate-limit
+    // RPC, ~319 ms of fixed cost — to receive a constant 405.
+    //
+    // Answering early also means an unauthenticated GET flood costs no database
+    // work at all. It stays inside `traceRequest`, so the probe is still one
+    // span and remains countable.
+    //
+    // `clientError` (not `error`) — a client probing for SSE against a server
+    // that does not offer it is behaving reasonably; OTel marks a server span
+    // ERROR only for 5xx faults.
+    if (req.method !== 'POST') {
+      // Identify the probe as far as is possible for free. Returning here skips
+      // `resolveAuth`, which is what normally puts `auth.*` on the request span
+      // — so without this a probe span would carry no caller signal at all and
+      // a future SSE-probing customer could not be picked out of the traffic
+      // the way this change's own evidence picked out the one real caller.
+      //
+      // `credentialTier` is the classification `resolveAuthTiers` performs
+      // BEFORE its first query, so one mapping serves both and it costs a
+      // string comparison. It reports the credential SHAPE presented, which
+      // matches the final `auth.type` of a completed request in every case but
+      // one: a VALID JWT ends at `user`, because the `span.setAttributes` below
+      // overwrites the tier with `AuthContext.type` once auth succeeds. That
+      // gap is inherent — knowing the JWT is valid costs the GoTrue call this
+      // guard exists to skip — and `credentialTier`'s docblock tabulates it.
+      //
+      // `auth.user_id` is deliberately NOT recovered: it exists only in the
+      // `api_tokens` row, and reading it is the 149 ms this guard exists to
+      // skip. `auth.outcome: 'not_attempted'` says so explicitly rather than
+      // leaving the attribute absent and ambiguous — a probe is therefore
+      // attributable to a credential SHAPE and a source, not to an account.
+      // `url` is the one already parsed at the top of the handler and reused by
+      // `resolveAuth` below. Parsing the request URL a second time here would
+      // put that cost back onto the exact path this change exists to make free.
+      // (Named in prose, not as a code literal, so the ordering spec can simply
+      // count occurrences of the constructor and require exactly one.)
+      const probeToken = extractToken(req.headers.get('Authorization'), url.searchParams.get('token'));
+      span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
+        'mcp.method': 'unknown',
+        'auth.type': credentialTier(probeToken),
+        'auth.outcome': 'not_attempted',
+      });
+      // Name the protocol version this server actually negotiates, not a
+      // transport name. `initialize` answers `protocolVersion: '2024-11-05'`
+      // (mcp-handler.ts), whose transport is HTTP+SSE — so telling a client it
+      // is talking to Streamable HTTP contradicts the handshake the same server
+      // performs one request later. What is true regardless of version, and is
+      // the only thing the probing client needs, is: POST only.
+      return new Response(
+        JSON.stringify({
+          error:
+            'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05); GET/SSE is not supported.',
+        }),
+        {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+        },
+      );
+    }
+
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     // Pass the root span so auth outcome attributes (auth.type, auth.outcome,
     // auth.user_id) land on the request span — no separate child span needed.

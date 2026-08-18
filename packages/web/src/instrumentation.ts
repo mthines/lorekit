@@ -17,11 +17,19 @@
  * deployment.environment.name values:
  *   'production'  — Vercel production (VERCEL_ENV=production)
  *   'preview'     — Vercel preview PR/branch (VERCEL_ENV=preview)
- *   'development' — `vercel dev` (VERCEL_ENV=development)
- *   'local'       — pure local dev (VERCEL_ENV absent)
+ *   'development' — VERCEL_ENV=development: `vercel dev`, and equally a plain
+ *                   `next dev` that loaded a pulled VERCEL_ENV (the default
+ *                   `vercel env pull` writes). Not clamped, not warned.
+ *   'local'       — VERCEL_ENV absent or unrecognised, or a claimed
+ *                   production/preview clamped because NODE_ENV proves this
+ *                   is a dev server — see lib/otel-deployment-env.ts
  */
 import { registerOTel } from '@vercel/otel';
 
+import {
+  deploymentEnvironmentClampMessage,
+  resolveDeploymentEnvironment,
+} from './lib/otel-deployment-env';
 import { supabaseOriginPattern } from './lib/otel-origins';
 import { resolveServiceName, serviceNameConflictMessage } from './lib/otel-service-name';
 
@@ -31,14 +39,6 @@ import { resolveServiceName, serviceNameConflictMessage } from './lib/otel-servi
  * one service, told apart by `telemetry.sdk.language`, not by name.
  */
 const SERVICE_NAME = 'web';
-
-function resolveDeploymentEnv(): string {
-  const vercelEnv = process.env['VERCEL_ENV'];
-  if (vercelEnv === 'production') return 'production';
-  if (vercelEnv === 'preview') return 'preview';
-  if (vercelEnv === 'development') return 'development';
-  return 'local';
-}
 
 /**
  * Build vcs.* OTel resource attributes from Vercel-injected environment
@@ -95,6 +95,16 @@ export async function register() {
   if (serviceName.overridden) console.warn(serviceNameConflictMessage(serviceName));
   process.env['OTEL_SERVICE_NAME'] = serviceName.name;
 
+  // `VERCEL_ENV` alone cannot be trusted: `vercel env pull` writes it into a
+  // local `.env.local`, which `next dev` then loads — so a laptop reports
+  // itself as `production` and its dev-server errors fire production alerts.
+  // Cross-check against NODE_ENV. See lib/otel-deployment-env.ts.
+  const deploymentEnv = resolveDeploymentEnvironment(
+    process.env['VERCEL_ENV'],
+    process.env['NODE_ENV'],
+  );
+  if (deploymentEnv.clamped) console.warn(deploymentEnvironmentClampMessage(deploymentEnv));
+
   registerOTel({
     serviceName: serviceName.name,
     attributes: {
@@ -103,7 +113,7 @@ export async function register() {
         process.env['VERCEL_GIT_COMMIT_SHA'] ??
         process.env['OTEL_SERVICE_VERSION'] ??
         'unknown',
-      'deployment.environment.name': resolveDeploymentEnv(),
+      'deployment.environment.name': deploymentEnv.name,
       ...buildVcsResourceAttributes(),
     },
     // @vercel/otel's fetch instrumentation propagates trace context ONLY to
