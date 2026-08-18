@@ -598,10 +598,17 @@ describe('buildLoreGraph', () => {
 
     // Every node keeps at most `maxDegree` distinct relation neighbours.
     const distinct = new Map<number, Set<number>>();
+    const neighboursOf = (node: number): Set<number> => {
+      const existing = distinct.get(node);
+      if (existing) return existing;
+      const created = new Set<number>();
+      distinct.set(node, created);
+      return created;
+    };
     for (const edge of graph.edges) {
       if (edge.kind === 'scope') continue;
-      (distinct.get(edge.source) ?? distinct.set(edge.source, new Set()).get(edge.source))?.add(edge.target);
-      (distinct.get(edge.target) ?? distinct.set(edge.target, new Set()).get(edge.target))?.add(edge.source);
+      neighboursOf(edge.source).add(edge.target);
+      neighboursOf(edge.target).add(edge.source);
     }
     // Folded, not `Math.max(...sizes)`: the spread passes one argument per node
     // and this is the plan-ceiling test, which is the exact shape `range()` in
