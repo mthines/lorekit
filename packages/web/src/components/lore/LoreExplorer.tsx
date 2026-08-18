@@ -614,17 +614,23 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     // list's "try a different search term" does not.
     if (view === 'map') {
       return (
-        <LoreGraphView
-          memories={lessons}
-          hasMore={hasNextPage}
-          selectedId={openLesson ? memoryNodeId(openLesson) : null}
-          onSelect={(selection) => {
-            const lesson = lessons.find(
-              (candidate) => candidate.scope === selection.scope && candidate.key === selection.key,
-            );
-            if (lesson) handleLessonClick(lesson);
-          }}
-        />
+        <div className="flex flex-col gap-2">
+          <LoreGraphView
+            memories={lessons}
+            hasMore={hasNextPage}
+            selectedId={openLesson ? memoryNodeId(openLesson) : null}
+            onSelect={(selection) => {
+              const lesson = lessons.find(
+                (candidate) => candidate.scope === selection.scope && candidate.key === selection.key,
+              );
+              if (lesson) handleLessonClick(lesson);
+            }}
+          />
+          {/* The SAME control the list gets. A map that admits it is drawing a
+              prefix has to offer the way to extend it, or the notice names a
+              remedy the reader has to leave the view to reach. */}
+          {loadMore}
+        </div>
       );
     }
 
