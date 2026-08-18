@@ -580,7 +580,13 @@ second grammar.
 
 **That rule now holds on every scope-filtering route, not just this one.**
 `GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `DELETE /?scope=…&key=…`
-and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. They previously
+and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. **So do the body
+transports** `POST /list`, `POST /activity` and `POST /facets`: each decodes into the same
+module-private reader as its `GET` twin (`respondWithPage` / `runActivity` / `runFacets`),
+which is where the filter is validated — that is what stops the two transports disagreeing
+about which scopes are legal, and it means the rule covers a `scope` in the JSON body
+exactly as it covers one in the query string. (`POST /` — the write path — is untouched: it
+stores `scope`, it does not filter by it.) They previously
 passed the raw value into the predicate, so a bad scope matched nothing and the route
 answered `200` with an empty page — the same input getting a `400` from one route and a
 cheerful empty result from five others. The shared entry point is
