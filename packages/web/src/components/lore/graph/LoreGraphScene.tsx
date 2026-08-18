@@ -230,8 +230,11 @@ function Framing({ positions }: { positions: Float32Array }) {
     if (framed.current || positions.length === 0) return;
     framed.current = true;
     camera.position.set(0, 0, framingDistance(boundingRadius(positions)));
+    // No `updateProjectionMatrix()`: the projection is derived from `fov`,
+    // `aspect`, `near`, `far` and `zoom`, and framing changes none of them —
+    // only the camera's position and orientation, which live in its world
+    // matrix. R3F recomputes the projection itself when the canvas resizes.
     camera.lookAt(0, 0, 0);
-    camera.updateProjectionMatrix();
     invalidate();
   }, [positions, camera, invalidate]);
 
