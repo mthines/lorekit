@@ -193,7 +193,14 @@ export function StatCard({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
+    // `data-stat-card` is the stable hook a test uses to find the card that owns
+    // a label. Reaching for the rounded/border utilities instead couples the
+    // assertion to styling AND to the panel `<section>`, which carries the same
+    // radius — change the radius and every card resolves to the panel.
+    <div
+      data-stat-card
+      className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           {iconBox}
@@ -263,7 +270,11 @@ function CollapsibleStatCard({
   );
 
   return (
-    <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+    // `data-stat-card`: the same stable test hook the plain card carries.
+    <div
+      data-stat-card
+      className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
+    >
       {/* Icon left of the number; number + label stacked to its right. */}
       <div className="flex items-start gap-3">
         {iconBox}

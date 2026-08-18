@@ -112,9 +112,20 @@ async function headline(canvas: ReturnType<typeof within>, label: string): Promi
   return exactValue(labelEl.parentElement?.querySelector('p'));
 }
 
-/** The bordered card that owns a given label. */
-function cardOf(canvas: ReturnType<typeof within>, label: string): Element | null | undefined {
-  return canvas.getByText(label).closest('.rounded-xl');
+/**
+ * The stat card that owns a given label.
+ *
+ * Anchored on `data-stat-card`, the hook `StatCard` exists to expose — NOT on
+ * `.rounded-xl`, which the insights panel `<section>` also carries: with that
+ * selector, restyling the card's radius silently resolves all four lookups to
+ * the one panel, and every geometry assertion below would then be comparing a
+ * box against itself. Throws rather than returning null so a renamed hook fails
+ * loudly instead of degrading into a vacuous pass.
+ */
+function cardOf(canvas: ReturnType<typeof within>, label: string): HTMLElement {
+  const card = canvas.getByText(label).closest('[data-stat-card]');
+  if (!card) throw new Error(`No [data-stat-card] ancestor for the "${label}" card`);
+  return card as HTMLElement;
 }
 
 export const CardsReflectTheActiveSelection: Story = {
@@ -236,7 +247,7 @@ export const ArchivedTileShowsTheUsageLedger: Story = {
         await expect(canvas.getAllByRole('img').length).toBeGreaterThan(0);
       });
       const card = cardOf(canvas, 'Memories archived');
-      await expect((card as HTMLElement).querySelector('[role="img"]')).toBeNull();
+      await expect(card.querySelector('[role="img"]')).toBeNull();
     });
   },
 };
@@ -427,7 +438,12 @@ export const CardsAreOneRowOfFourEqualColumnsWhenWide: Story = {
     });
 
     const labels = ['Memories written', 'Memories read', 'Scopes active', 'Memories archived'];
-    const items = labels.map((label) => (cardOf(canvas, label) as HTMLElement).getBoundingClientRect());
+    const cards = labels.map((label) => cardOf(canvas, label));
+    // Anti-vacuity: four labels must resolve to four DISTINCT cards. If they
+    // ever collapsed onto one shared ancestor, the geometry steps below would be
+    // comparing a box with itself.
+    await expect(new Set(cards).size).toBe(labels.length);
+    const items = cards.map((card) => card.getBoundingClientRect());
 
     await step('all four sit on a single row', async () => {
       for (const box of items) {
