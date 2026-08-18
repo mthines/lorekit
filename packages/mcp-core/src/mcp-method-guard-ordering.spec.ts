@@ -81,8 +81,16 @@ describe('mcp entrypoint rejects a non-POST before authenticating', () => {
   it('marks the probe as a client error, not a server fault', () => {
     // OTel: a server span is ERROR only for 5xx. A client probing for SSE is
     // behaving reasonably against a server that does not offer it.
+    // Bound the window at `resolveAuth(` — the guard's own end — rather than a
+    // fixed char count. The guard block is 766 chars, so a 900-char window ran
+    // 134 chars past `resolveAuth(` and both assertions below could have been
+    // satisfied by code outside the guard. `mcp-authz-status.spec.ts` slices the
+    // same way.
     const guardIdx = index.indexOf("req.method !== 'POST'");
-    const block = index.slice(guardIdx, guardIdx + 900);
+    const authIdx = index.indexOf('resolveAuth(');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(authIdx).toBeGreaterThan(guardIdx);
+    const block = index.slice(guardIdx, authIdx);
     expect(block).toMatch(/clientError\(/);
     expect(block).toMatch(/'mcp\.method': 'unknown'/);
   });
