@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~30–130 ms, median ~50 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
+| **Graph build** | ~260–550 ms, median ~420 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
@@ -101,6 +101,10 @@ Applied in this order, each reporting what it dropped in `graph.truncated`:
    a pair sharing one of two ordinary labels. Single-occurrence terms **do**
    stay in the denominator — they are real, discriminating vocabulary that
    simply has no partner in this dataset.
+
+   Suppression is reported as `{of: 'terms', …}`. Without it a reader cannot
+   tell a genuinely sparse graph from a heavily suppressed one, which is the
+   same information gap the node and edge budgets report to close.
 2. **Degree cap** (`maxDegree`, default 12) — counted in **distinct neighbours,
    not edges**. Strongest first. A pair that shares a label *and* a key
    namespace *and* a repo produces three edges between the same two nodes;
@@ -108,7 +112,17 @@ Applied in this order, each reporting what it dropped in `graph.truncated`:
    neighbour. What the cap protects is legibility, and a hairball is twelve
    *different* nodes — three parallel lines to one node is a single, slightly
    bolder relationship. So an edge to an already-connected neighbour is free.
-3. **Edge budget** (`maxEdges`, default 15,000), strongest first.
+3. **Edge budget** (`maxEdges`, default 15,000), strongest first — also counted
+   in **relationships, not edges**, for consistency with the degree cap. Charging
+   this budget per edge while the degree cap charged per neighbour let a
+   duplicate take the last slot from a genuinely new relationship. The drawn line
+   count is therefore up to `kinds.length ×` the budget (three today); those
+   parallel lines overlay exactly, so they cost GPU vertices rather than
+   legibility, which is the resource the budget protects.
+
+All three report in the same units the reader thinks in: `{of: 'edges', total:
+1, kept: 0}` for a pair that shares three dimensions, never `total: 3` — that
+would read as three dropped relationships when only one ever existed.
 
 `truncated` is not optional decoration: a picture of "the shape of your lore"
 that quietly omits half of it is worse than no picture, so the UI must say when
@@ -123,17 +137,33 @@ node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bench-lore-graph.mjs
 ```
 
 ```text
-buildLoreGraph — 5,000 memories, 9 runs
+buildLoreGraph — 5,000 memories, 7 runs
   node       v24.19.0
-  min/med/max 30.3 ms / 51.2 ms / 145.4 ms
-  nodes      5,025
-  edges      20,000
-  truncated  [{"of":"edges","total":26008,"kept":15000}]
+  min/med/max 263.5 ms / 418.0 ms / 555.1 ms
+  nodes      5,100
+  edges      50,000
+  truncated  [{"of":"terms","total":500,"kept":403},{"of":"edges","total":122500,"kept":15000}]
 ```
 
+**The fixture shape dominates this number, and getting it wrong made the first
+version of this figure eight times too optimistic.** The original synthetic
+account used 40 key namespaces and 25 repos across 5,000 memories — 125 and 200
+members each, both over `hubSize: 64` — so both kinds were suppressed entirely
+and the benchmark was timing the label path alone. The fixture now uses 100 of
+each (50 members apiece), which keeps all three relation kinds live and is the
+worst case the model can actually be handed.
+
 The spread is wide because the harness this was captured on is a shared cloud
-container; the shape of the number is what matters — tens of milliseconds, not
-seconds, and flat in the node count rather than quadratic.
+container. What matters is the shape: hundreds of milliseconds, not seconds, and
+driven by the candidate-pair count (122k here) rather than by `n²` — an
+unsuppressed all-pairs build of the same data would consider ~12.5 M.
+
+It is also worth being plain that ~420 ms is not free. It is paid once per
+dataset change, in the worker, alongside the layout — and the analytic seed
+means the user sees a correct picture before the relaxation finishes, so the
+cost lands on "the graph settles a moment later", not on a frozen tab. If the
+figure grows, the server-side projection under [Fetching](#fetching) is the
+place to move this work, not a micro-optimisation here.
 
 The benchmark imports the real `build.ts` (Node strips the types; a small
 `registerHooks` resolver supplies the `@/` alias), so it can never drift into

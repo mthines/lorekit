@@ -65,10 +65,10 @@ const RUNS = flag('runs', 5);
 const { buildLoreGraph } = await import(new URL('lib/lore-graph/build.ts', WEB_SRC).href);
 
 const memories = Array.from({ length: NODES }, (_, i) => ({
-  key: `bucket-${i % 40}::lesson-${i}`,
-  scope: `repo::owner/repo-${i % 25}`,
+  key: `bucket-${i % 100}::lesson-${i}`,
+  scope: `repo::owner/repo-${i % 100}`,
   tags: [`t${i % 300}`, `t${i % 97}`],
-  origin_repo: `owner/repo-${i % 25}`,
+  origin_repo: `owner/repo-${i % 100}`,
   updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i % 3600)).toISOString(),
 }));
 

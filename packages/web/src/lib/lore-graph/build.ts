@@ -59,7 +59,19 @@ export interface GraphMemoryInput {
 export interface GraphBuildOptions {
   /** Max memory nodes kept, most-recently-updated first. */
   maxNodes?: number;
-  /** Max memory↔memory edges kept, strongest first. */
+  /**
+   * Max memory↔memory RELATIONSHIPS kept, strongest first.
+   *
+   * Counted in distinct pairs, exactly like {@link maxDegree}, and for the same
+   * reason: a pair that shares a label, a key namespace and a repo is one
+   * relationship drawn three times over the same path, not three. Charging the
+   * global budget per edge while the degree budget charges per neighbour let a
+   * duplicate take the last slot from a genuinely new relationship.
+   *
+   * The drawn line count is therefore up to `kinds.length ×` this number in the
+   * worst case. That is bounded (three, today) and costs GPU vertices rather
+   * than legibility, which is the resource this budget is protecting.
+   */
   maxEdges?: number;
   /**
    * Max distinct relation NEIGHBOURS per memory — not edges.
@@ -189,11 +201,23 @@ function normalizedWeight(value: number, max: number): number {
   return Math.log1p(Math.max(value, 0)) / Math.log1p(max);
 }
 
-/** Deterministic order: newest first, natural key breaking ties. */
+/**
+ * Deterministic order: newest first, natural key breaking ties.
+ *
+ * The tie-break is a plain code-unit comparison, NOT `localeCompare`.
+ * `localeCompare` sorts by the runtime's default locale, so the same account
+ * could order two same-timestamp memories differently in two browsers — and
+ * since every entry in `edges` addresses nodes by INDEX, a different order is a
+ * different graph. A code-unit compare is the same everywhere, which is what
+ * the determinism claim requires.
+ */
 function byRecencyThenKey(a: GraphMemoryInput, b: GraphMemoryInput): number {
   const delta = Date.parse(b.updated_at) - Date.parse(a.updated_at);
   if (delta !== 0 && Number.isFinite(delta)) return delta;
-  return memoryNodeId(a).localeCompare(memoryNodeId(b));
+  const left = memoryNodeId(a);
+  const right = memoryNodeId(b);
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 /** `a|b` with the lower index first, so a pair has ONE key regardless of order. */
@@ -379,9 +403,16 @@ export function buildLoreGraph(
   };
 
   const candidates: GraphEdge[] = [];
+  // Hub suppression across all kinds, so it can be reported as one bound rather
+  // than three the reader has to add up.
+  const sharedTerms = new Set<string>();
+  const suppressedTerms = new Set<string>();
+
   for (const kind of kinds) {
     const terms = kept.map(termsFor[kind]);
     const { index, hubs } = postingLists(terms, hubSize);
+    for (const term of index.keys()) sharedTerms.add(`${kind}:${term}`);
+    for (const term of hubs) suppressedTerms.add(`${kind}:${term}`);
     const pairs = pairsFromPostings(
       index,
       // The union counts only terms that were allowed to be evidence.
@@ -396,6 +427,14 @@ export function buildLoreGraph(
         strength: pair.shared * KIND_WEIGHT[kind],
       });
     }
+  }
+
+  if (suppressedTerms.size > 0) {
+    truncated.push({
+      of: 'terms',
+      total: sharedTerms.size + suppressedTerms.size,
+      kept: sharedTerms.size,
+    });
   }
 
   candidates.sort(byStrength);
@@ -413,26 +452,33 @@ export function buildLoreGraph(
   };
 
   const relations: GraphEdge[] = [];
+  const drawnPairs = new Set<string>();
   for (const edge of candidates) {
-    if (relations.length >= maxEdges) break;
-
     const sourceNeighbours = neighboursOf(edge.source);
     const targetNeighbours = neighboursOf(edge.target);
     const alreadyConnected = sourceNeighbours.has(edge.target);
 
-    if (
-      !alreadyConnected &&
-      (sourceNeighbours.size >= maxDegree || targetNeighbours.size >= maxDegree)
-    ) {
-      continue;
+    // Both budgets count RELATIONSHIPS. A parallel edge over an already-drawn
+    // pair is the same relationship expressed by a second kind, so it is free in
+    // both — otherwise the global budget would spend its last slot on a
+    // duplicate while a genuinely new pair went undrawn.
+    if (!alreadyConnected) {
+      if (drawnPairs.size >= maxEdges) continue;
+      if (sourceNeighbours.size >= maxDegree || targetNeighbours.size >= maxDegree) continue;
     }
 
     sourceNeighbours.add(edge.target);
     targetNeighbours.add(edge.source);
+    drawnPairs.add(pairKey(edge.source, edge.target));
     relations.push(edge);
   }
-  if (relations.length < candidates.length) {
-    truncated.push({ of: 'edges', total: candidates.length, kept: relations.length });
+
+  // Reported in relationships too, for the same reason: `{total: 3, kept: 1}`
+  // for a single pair that happens to share three dimensions reads as three
+  // dropped relationships when only one ever existed.
+  const candidatePairs = new Set(candidates.map((edge) => pairKey(edge.source, edge.target)));
+  if (drawnPairs.size < candidatePairs.size) {
+    truncated.push({ of: 'edges', total: candidatePairs.size, kept: drawnPairs.size });
   }
 
   return { nodes, edges: [...edges, ...relations], truncated };

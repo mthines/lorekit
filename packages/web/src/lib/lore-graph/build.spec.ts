@@ -320,6 +320,75 @@ describe('buildLoreGraph', () => {
     expect(graph.truncated).toContainEqual({ of: 'nodes', total: 2, kept: 1 });
   });
 
+  it('spends the edge budget on relationships, not on parallel edges', () => {
+    // `a`/`b` share a label, a key namespace AND a repo — one relationship, three
+    // edges. With room for two relationships, the duplicates must not eat the
+    // slot the `c` pair needs.
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'ns::a', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'ns::b', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'other::c', tags: ['y'] }),
+        memory({ key: 'other::d', tags: ['y'] }),
+      ],
+      { maxEdges: 2 },
+    );
+
+    const relationships = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope')
+        .map((edge) => `${edge.source}|${edge.target}`),
+    );
+    expect(relationships.size).toBe(2);
+  });
+
+  it('counts a multi-dimension pair as one dropped relationship, not three', () => {
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'ns::a', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'ns::b', tags: ['x'], origin_repo: 'o/r' }),
+      ],
+      { maxEdges: 0 },
+    );
+
+    expect(graph.truncated).toContainEqual({ of: 'edges', total: 1, kept: 0 });
+  });
+
+  it('reports the terms hub suppression removed, so a sparse graph is distinguishable from a suppressed one', () => {
+    const graph = buildLoreGraph(
+      [
+        ...Array.from({ length: 6 }, (_, i) => memory({ key: `m${i}`, tags: ['everywhere', 'niche'] })),
+      ],
+      { hubSize: 3, kinds: ['label'] },
+    );
+
+    // `everywhere` and `niche` are both on all six, so both are hubs: nothing
+    // survives, and the report says exactly that rather than staying silent.
+    expect(graph.truncated).toContainEqual({ of: 'terms', total: 2, kept: 0 });
+  });
+
+  it('says nothing about terms when no term was suppressed', () => {
+    const graph = buildLoreGraph([memory({ key: 'a', tags: ['x'] }), memory({ key: 'b', tags: ['x'] })]);
+    expect(graph.truncated.some((entry) => entry.of === 'terms')).toBe(false);
+  });
+
+  it('orders same-timestamp memories by code unit, not by the runtime locale', () => {
+    // Every entry in `edges` addresses nodes by INDEX, so a locale-dependent
+    // tie-break would make the same account a different graph in two browsers.
+    // These keys sort differently under `localeCompare` in most locales
+    // (which ignores punctuation) than by code unit.
+    const sameInstant = '2026-01-01T00:00:00.000Z';
+    const graph = buildLoreGraph([
+      memory({ key: 'a-b', scope: 'global', updated_at: sameInstant }),
+      memory({ key: 'ab', scope: 'global', updated_at: sameInstant }),
+      memory({ key: 'a_b', scope: 'global', updated_at: sameInstant }),
+    ]);
+
+    const order = graph.nodes.filter((node) => node.kind === 'memory').map((node) => node.label);
+    const byCodeUnit = ['a-b', 'a_b', 'ab'].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+    expect(order).toEqual(byCodeUnit);
+  });
+
   it('reports what an edge budget dropped', () => {
     const graph = buildLoreGraph(
       [
@@ -417,17 +486,30 @@ describe('buildLoreGraph', () => {
     // what this asserts.
     const many = Array.from({ length: 5_000 }, (_, i) =>
       memory({
-        key: `bucket-${i % 40}::lesson-${i}`,
-        scope: `repo::owner/repo-${i % 25}`,
+        key: `bucket-${i % 100}::lesson-${i}`,
+        scope: `repo::owner/repo-${i % 100}`,
         tags: [`t${i % 300}`, `t${i % 97}`],
+        origin_repo: `owner/repo-${i % 100}`,
         updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i % 3600)).toISOString(),
       }),
     );
 
     const graph = buildLoreGraph(many);
 
-    expect(graph.nodes).toHaveLength(5_000 + 25);
-    expect(graph.edges.length).toBeLessThanOrEqual(5_000 + 15_000);
+    expect(graph.nodes).toHaveLength(5_000 + 100);
+
+    // Skeleton (one per memory) plus at most `maxEdges` RELATIONSHIPS, each of
+    // which may be drawn once per kind. The parallel lines overlay exactly, so
+    // they cost GPU vertices rather than legibility — which is the trade
+    // `maxEdges` counting pairs deliberately makes.
+    expect(graph.edges.length).toBeLessThanOrEqual(5_000 + 15_000 * 3);
+
+    const relationships = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope')
+        .map((edge) => `${edge.source}|${edge.target}`),
+    );
+    expect(relationships.size).toBeLessThanOrEqual(15_000);
 
     // The work bound. Without hub suppression this dataset generates millions of
     // candidate pairs; with it, tens of thousands. The ceiling is generous

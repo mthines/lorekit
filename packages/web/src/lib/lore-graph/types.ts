@@ -94,8 +94,16 @@ export interface GraphEdge {
 
 /** One entry of the "what got left out" report. */
 export interface GraphTruncation {
-  /** What was capped. */
-  of: 'nodes' | 'edges';
+  /**
+   * What was capped.
+   *
+   * `terms` is hub suppression — the shared labels, key namespaces and repos
+   * that were too common to be evidence of anything. It is reported for the
+   * same reason the other two are: it is a bound that changes the picture, and
+   * a reader who cannot see that "we ignored 12 labels because everything
+   * carries them" cannot tell a sparse graph from a suppressed one.
+   */
+  of: 'nodes' | 'edges' | 'terms';
   /** How many candidates existed. */
   total: number;
   /** How many survived the cap. */
