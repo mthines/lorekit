@@ -90,7 +90,14 @@ export function isSupportedProtocolVersion(raw: unknown): raw is SupportedProtoc
 // asked for, and therefore something it almost certainly still speaks — is
 // equally legal ("a version the server supports") and actually connects.
 // Dates sort lexicographically in YYYY-MM-DD, so the comparison is a plain
-// string compare.
+// string compare. Note that `requested` is validated for type and length only,
+// never for date SHAPE, so this compare also runs on strings that are not dates
+// — `latest` sorts after every revision we speak and gets our newest, `2025`
+// lands between the two and gets 2024-11-05, `1` sorts below both and hits the
+// floor. That is intentional: a handshake should answer a malformed field with
+// an offer rather than an error, and the result is always a version we actually
+// speak. `mcp-protocol-version.spec.ts` pins these cases so the codepoint
+// ordering they depend on is not incidental.
 //
 // Total by construction: `params` is caller-controlled JSON, so a missing,
 // null, numeric, or structurally wrong value degrades to the preferred version

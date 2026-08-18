@@ -89,6 +89,29 @@ describe('negotiateProtocolVersion', () => {
     }
   });
 
+  it('degrades sanely when the requested version is not date-shaped', () => {
+    // `readRequestedProtocolVersion` validates type and length only, so the
+    // `v <= requested` comparison in the negotiator also runs on strings that
+    // are not dates. That is deliberate — a handshake must answer a malformed
+    // field with an offer rather than an error — but the answers are then
+    // decided by codepoint order, so pin them rather than leave them incidental.
+    //
+    // 'latest' sorts after every date we speak, so every supported version is
+    // "not newer than" it and the newest one wins.
+    expect(negotiateProtocolVersion({ protocolVersion: 'latest' })).toBe('2025-06-18');
+    // A truncated date sorts between our two revisions.
+    expect(negotiateProtocolVersion({ protocolVersion: '2025' })).toBe('2024-11-05');
+    // A string sorting before every date we speak hits the floor.
+    expect(negotiateProtocolVersion({ protocolVersion: '1' })).toBe(OLDEST_PROTOCOL_VERSION);
+
+    // The invariant that actually matters, whatever the junk: we only ever
+    // answer with a version we genuinely speak.
+    for (const junk of ['latest', '2025', 'v1', '1', 'zzz', '####', ' ']) {
+      const answered = negotiateProtocolVersion({ protocolVersion: junk });
+      expect(SUPPORTED_PROTOCOL_VERSIONS, `${junk} → ${answered}`).toContain(answered);
+    }
+  });
+
   it('offers the preferred version when the client sends no version at all', () => {
     expect(negotiateProtocolVersion({})).toBe(PREFERRED_PROTOCOL_VERSION);
     expect(negotiateProtocolVersion(undefined)).toBe(PREFERRED_PROTOCOL_VERSION);
