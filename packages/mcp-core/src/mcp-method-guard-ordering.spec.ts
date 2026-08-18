@@ -113,6 +113,40 @@ describe('mcp entrypoint rejects a non-POST before authenticating', () => {
     expect(handler).toMatch(/body = await req\.json\(\)/);
   });
 
+  it('still attributes the probe span, without buying the attribution from the database', () => {
+    // Skipping `resolveAuth` skips what normally writes `auth.*` onto the
+    // request span, which would leave a probe unattributable — the opposite of
+    // the visibility this change's own evidence depended on. The guard restores
+    // the free half: the credential TIER, decidable from the token string.
+    const guardIdx = index.indexOf("req.method !== 'POST'");
+    const authIdx = index.indexOf('resolveAuth(');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(authIdx).toBeGreaterThan(guardIdx);
+    const block = index.slice(guardIdx, authIdx);
+    expect(block).toMatch(/'auth\.type': credentialTier\(/);
+    // Explicitly 'not_attempted' — an absent attribute is indistinguishable
+    // from an auth that ran and found nothing.
+    expect(block).toMatch(/'auth\.outcome': 'not_attempted'/);
+    // The paid half must stay unbought: no user id, because it lives only in
+    // the `api_tokens` row this guard exists to avoid reading. Matched as the
+    // quoted ATTRIBUTE KEY, so the surrounding comment may name it in prose.
+    expect(block).not.toMatch(/'auth\.user_id'/);
+  });
+
+  it('derives the guard tier from the same mapping resolveAuthTiers uses', () => {
+    // Two independent tier mappings would drift, and the guard's `auth.type`
+    // would then disagree with what a POST to the same endpoint reports.
+    // `credentialTier` is the single owner: `resolveAuthTiers` branches on it
+    // rather than re-testing the token shape itself.
+    const auth = edge('auth.ts');
+    expect(auth).toMatch(/export function credentialTier\(/);
+    expect(auth).toMatch(/const tier = credentialTier\(token\)/);
+    expect(auth).toMatch(/if \(tier === 'service'\)/);
+    expect(auth).toMatch(/if \(tier === 'api_key'\)/);
+    // Exactly one place decides that an `lk_` prefix means the api_key tier.
+    expect((auth.match(/startsWith\('lk_'\)/g) ?? []).length).toBe(1);
+  });
+
   it('does not leave a second copy of the guard behind in handleMcp', () => {
     // `handleMcp` has exactly one caller. A duplicate guard would be dead code
     // and a place for the two responses to drift.

@@ -75,6 +75,32 @@ export async function resolveAuth(
   }
 }
 
+/**
+ * Which auth tier a token belongs to, decided from the token STRING ALONE —
+ * no database read, no GoTrue call.
+ *
+ * This is the classification `resolveAuthTiers` performs before it does any
+ * I/O, lifted out so a caller that deliberately does not authenticate can still
+ * report `auth.type`. `mcp/index.ts`'s pre-auth method guard is that caller: it
+ * answers a non-POST before `resolveAuth` runs, and without this the probe span
+ * carried no `auth.*` attribute at all.
+ *
+ * It is exported so there is exactly ONE mapping — `resolveAuthTiers` below
+ * branches on this same function, so the guard's `auth.type` can never disagree
+ * with the one a POST to the same endpoint would get.
+ *
+ * The tier is NOT a verification result: `api_key` means "presented a token
+ * shaped like `lk_*`", not "presented a valid one". `resolveAuthTiers` reports
+ * it the same way — it sets `auth.type: 'api_key'` on `api_key_invalid` too —
+ * so pair it with `auth.outcome` to tell presented from accepted.
+ */
+export function credentialTier(token: string | null): 'none' | 'service' | 'api_key' | 'jwt' {
+  if (!token) return 'none';
+  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return 'service';
+  if (token.startsWith('lk_')) return 'api_key';
+  return 'jwt';
+}
+
 async function resolveAuthTiers(
   authHeader: string | null,
   queryToken: string | null,
@@ -85,19 +111,22 @@ async function resolveAuthTiers(
   // out of server logs) or ?token= query param (legacy fallback for MCP clients
   // that cannot inject custom headers). extractToken() implements the precedence.
   const token = extractToken(authHeader, queryToken);
+  const tier = credentialTier(token);
+  // `!token` rather than `tier === 'none'` only so TypeScript narrows `token` to
+  // `string` for the tiers below; the two conditions are the same by definition.
   if (!token) {
     span?.setAttributes({ 'auth.outcome': 'missing_token', 'auth.type': 'none' });
     return null;
   }
 
   // 1. Service-role key — CI / internal use only
-  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) {
+  if (tier === 'service') {
     span?.setAttributes({ 'auth.outcome': 'service_role', 'auth.type': 'service' });
     return { type: 'service' };
   }
 
   // 2. LoreKit API token (lk_rw_..., lk_ro_..., or lk_wo_...)
-  if (token.startsWith('lk_')) {
+  if (tier === 'api_key') {
     const hash = await sha256hex(token);
     const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },

@@ -22,7 +22,8 @@
  */
 
 import { traceRequest } from '../_shared/otel.ts';
-import { resolveAuth, getDb } from './auth.ts';
+import { resolveAuth, getDb, credentialTier } from './auth.ts';
+import { extractToken } from './auth-token.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
 import { handleInstallationSync } from './installation-sync.ts';
@@ -88,8 +89,29 @@ Deno.serve(async (req: Request) => {
     // that does not offer it is behaving reasonably; OTel marks a server span
     // ERROR only for 5xx faults.
     if (req.method !== 'POST') {
+      // Identify the probe as far as is possible for free. Returning here skips
+      // `resolveAuth`, which is what normally puts `auth.*` on the request span
+      // — so without this a probe span would carry no caller signal at all and
+      // a future SSE-probing customer could not be picked out of the traffic
+      // the way this change's own evidence picked out the one real caller.
+      //
+      // `credentialTier` is the classification `resolveAuthTiers` performs
+      // BEFORE its first query, so this agrees with what a POST to the same
+      // endpoint would report, and it costs one string comparison.
+      //
+      // `auth.user_id` is deliberately NOT recovered: it exists only in the
+      // `api_tokens` row, and reading it is the 149 ms this guard exists to
+      // skip. `auth.outcome: 'not_attempted'` says so explicitly rather than
+      // leaving the attribute absent and ambiguous — a probe is therefore
+      // attributable to a credential SHAPE and a source, not to an account.
+      const probeToken = extractToken(
+        req.headers.get('Authorization'),
+        new URL(req.url).searchParams.get('token'),
+      );
       span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
         'mcp.method': 'unknown',
+        'auth.type': credentialTier(probeToken),
+        'auth.outcome': 'not_attempted',
       });
       // Name the protocol version this server actually negotiates, not a
       // transport name. `initialize` answers `protocolVersion: '2024-11-05'`
