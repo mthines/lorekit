@@ -36,7 +36,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useLoreGraphLayout } from '@/lib/hooks/useLoreGraphLayout';
 import { buildLoreGraph, type GraphMemoryInput } from '@/lib/lore-graph/build';
 import { graphSummary, coverageNotice } from '@/lib/lore-graph/summary';
-import { SCOPE_HEX } from '@/lib/lore-graph/palette';
 import type { ScopePrefix } from '@/lib/scope';
 
 const LoreGraphScene = lazy(() => import('./LoreGraphScene'));
@@ -154,7 +153,10 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
             <span
               aria-hidden="true"
               className="size-2.5 rounded-full"
-              style={{ backgroundColor: SCOPE_HEX[type] }}
+              // The token, not `SCOPE_HEX`. That mirror exists because a WebGL
+              // instance-colour attribute cannot resolve a CSS variable; this
+              // swatch is DOM, where the package rule is tokens only.
+              style={{ backgroundColor: `var(--color-scope-${type})` }}
             />
             {type}
           </span>
