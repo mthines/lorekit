@@ -75,12 +75,21 @@ async function runActivity(
     'lorekit.bucket': bucket,
   });
 
-  // Same contract as the sibling `GET /memories/read-activity`: the query
-  // schema is shape-only and the canonical grammar runs here so a rejection can
-  // become a 400. The two endpoints answer the same question about opposite
-  // verbs and are explicitly designed to take one set of parameters — so they
-  // must also reject the same input the same way, or a caller charting both
-  // gets a 400 from one and a silently-empty series from the other.
+  // Same GRAMMAR contract as the sibling `GET /memories/read-activity`: the
+  // query schema is shape-only and the canonical grammar runs here so a
+  // rejection can become a 400. The two endpoints answer the same question
+  // about opposite verbs and take one set of parameters, so the same
+  // ungrammatical input must be rejected by both rather than 400ing on one and
+  // coming back as a silently-empty series from the other.
+  //
+  // CASE handling is where they diverge, and that is not an oversight: each
+  // filter matches how its OWN table stores the value. This one filters
+  // `memories.scope`, which the REST write path stores verbatim, so the filter
+  // is reject-only. `read-activity` filters `usage_events.scope`, which is
+  // written through the normalising `safeValidateScope` at the recording site
+  // (`_shared/api/router.ts`), so it filters on `validateScope`'s lowercased
+  // value. Lowercasing here — or keeping the caller's case there — would make
+  // legitimately-stored rows unmatchable on one side or the other.
   //
   // It runs on the decoded input rather than in either entry point, so the
   // query and body transports cannot diverge on which scopes they accept.
