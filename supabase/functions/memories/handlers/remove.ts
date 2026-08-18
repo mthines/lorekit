@@ -65,11 +65,19 @@ export async function handleRemove(
   // are higher than on a read: an ungrammatical or differently-cased scope
   // produced a predicate that matched nothing, and the caller was told the
   // memory did not exist rather than that their scope was wrong.
+  //
+  // Scoped to the natural-key forms, which are the ones that turn `scope` into
+  // a predicate. `DELETE /:id` addresses the row by id and ignores `?scope=`
+  // entirely, so validating it there would 400 on a value the route never
+  // reads — a new rejection this change does not intend and the behaviour-change
+  // list does not claim.
   let scopeParam: string | undefined;
-  try {
-    scopeParam = parseScopeFilter(rawScopeParam);
-  } catch (e) {
-    return badRequest((e as Error).message, undefined, cors);
+  if (!idParam) {
+    try {
+      scopeParam = parseScopeFilter(rawScopeParam);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
   }
 
   const tracedDb = createTracedClient(db, span);

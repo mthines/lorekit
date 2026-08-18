@@ -227,6 +227,15 @@ describe('REST scope filters are validated before they reach a query', () => {
     },
   );
 
+  it('remove.ts validates the scope filter only on the natural-key form', () => {
+    // `DELETE /memories/:id` addresses the row by id and never reads `?scope=`,
+    // so validating it there would answer 400 for a value the route ignores —
+    // a rejection this change does not intend. The guard is gated on the id
+    // branch; the scope+key and `?org=` forms still go through it.
+    const body = handlerBody(read('remove.ts'), 'handleRemove');
+    expect(body).toMatch(/if\s*\(\s*!idParam\s*\)\s*\{[\s\S]{0,240}?parseScopeFilter\(/);
+  });
+
   // A route whose scope filter lives in a shared reader is only guarded if BOTH
   // its transports actually go through that reader. Without this, moving one
   // entry point back to its own query would pass every assertion above.
