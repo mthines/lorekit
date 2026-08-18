@@ -95,6 +95,24 @@ describe('mcp entrypoint rejects a non-POST before authenticating', () => {
     expect(block).toMatch(/'mcp\.method': 'unknown'/);
   });
 
+  it('answers a non-POST before handleMcp, so req.json() is unreachable for one', () => {
+    // The reachability consequence of the ordering above, and the original
+    // reason the guard exists: `handleMcp` owns the only `req.json()`, whose
+    // "Unexpected end of JSON input" surfaces as a misleading 400 instead of a
+    // 405. Dispatching it after the guard is what makes that unreachable.
+    //
+    // Asserted here rather than in `mcp-authz-status.spec.ts`, which used to
+    // state it while reading only `mcp-handler.ts` — and therefore still passed
+    // with the guard deleted from `index.ts` entirely. The claim needs both
+    // sources in scope.
+    const guardIdx = index.indexOf("req.method !== 'POST'");
+    const dispatchIdx = index.indexOf('handleMcp(req');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(dispatchIdx, 'handleMcp call site not found').toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(dispatchIdx);
+    expect(handler).toMatch(/body = await req\.json\(\)/);
+  });
+
   it('does not leave a second copy of the guard behind in handleMcp', () => {
     // `handleMcp` has exactly one caller. A duplicate guard would be dead code
     // and a place for the two responses to drift.

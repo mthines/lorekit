@@ -76,30 +76,19 @@ describe('mcp-handler auth status guard', () => {
   });
 });
 
-describe('mcp GET guard — the no-hang consequence only', () => {
-  // SCOPE. The method guard's placement contract — guard lives in `index.ts`,
-  // 405 + `Allow: POST`, ahead of `resolveAuth` and the plan/rate-limit
-  // lookups, inside `traceRequest`, `clientError` not `error`, no second copy
-  // in `handleMcp` — is owned by `mcp-method-guard-ordering.spec.ts`. It was
-  // duplicated here and two files pinning one contract drift, so the copy is
-  // gone.
-  //
-  // What stays is the half that belongs to THIS file's subject (auth-family
-  // responses must never hang a streamable-HTTP client): a non-POST must never
-  // reach `req.json()`, whose "Unexpected end of JSON input" surfaces as a
-  // misleading 400 instead of a 405. That is a consequence of the ordering
-  // contract, not a restatement of it — it asserts on `mcp-handler.ts`, which
-  // the ordering spec's placement assertions do not.
-  it('leaves req.json() unreachable for a non-POST, so no bare GET can produce a parse-error 400', () => {
-    // `handleMcp` owns the only `req.json()` and runs after auth, which runs
-    // after the guard — so a non-POST is answered before it ever gets here.
-    expect(handler).toMatch(/body = await req\.json\(\)/);
-    // Not re-asserted as a placement check: if the guard were still in the
-    // handler, the request would reach the handler and this file's premise
-    // (the request is answered before auth) would be false.
-    expect(handler).not.toMatch(/req\.method !== 'POST'/);
-  });
-});
+// The MCP method guard is NOT asserted in this file. Its whole contract —
+// the guard lives in `index.ts`, answers 405 + `Allow: POST`, sits ahead of
+// `resolveAuth` and the plan/rate-limit lookups, stays inside `traceRequest`,
+// uses `clientError`, leaves no second copy in `handleMcp`, and is reached
+// before `handleMcp` so `req.json()` is unreachable for a non-POST — lives in
+// `mcp-method-guard-ordering.spec.ts`.
+//
+// It was briefly asserted in both files. Splitting it did not help: every
+// statement about the guard has its subject in `index.ts`, so the assertions
+// left behind here read only `mcp-handler.ts` and passed with the guard
+// deleted outright. A claim of the form "X is unreachable because of a guard
+// in Y" cannot be pinned without reading Y, so it belongs in the one spec that
+// reads both.
 
 describe('index.ts auth-failure guard', () => {
   it('answers a bad/missing token in-band with a real id and HTTP 200, not 401', () => {
