@@ -129,11 +129,16 @@ describe('negotiateProtocolVersion', () => {
 
   it('prefers the newest supported version and never claims 2025-03-26', () => {
     expect(PREFERRED_PROTOCOL_VERSION).toBe(SUPPORTED_PROTOCOL_VERSIONS[0]);
-    // The floor is a distinct constant from the preferred version — if these
-    // ever collapse to the same value the too-old fallback stops being a
-    // different answer and the assertion above it goes vacuous.
-    expect(OLDEST_PROTOCOL_VERSION).toBe(
-      SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1],
+    // Newest-first ordering is the load-bearing invariant, so assert the
+    // ORDERING rather than restating how the two constants are defined.
+    // `expect(OLDEST).toBe(SUPPORTED[length - 1])` is how OLDEST is written, so
+    // it holds for any array and catches nothing. What can actually go wrong is
+    // a mis-ordered insert — re-adding `2025-03-26`, which this module
+    // explicitly invites once the handler parses batches — which would silently
+    // make `PREFERRED` not the newest and break `.find(v => v <= requested)`,
+    // whose "newest match wins" behaviour depends entirely on this order.
+    expect([...SUPPORTED_PROTOCOL_VERSIONS]).toEqual(
+      [...SUPPORTED_PROTOCOL_VERSIONS].sort().reverse(),
     );
     expect(OLDEST_PROTOCOL_VERSION).not.toBe(PREFERRED_PROTOCOL_VERSION);
     expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2024-11-05');
