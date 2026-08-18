@@ -37,7 +37,10 @@ const CANONICAL_CHARSET = /^[\w.:/-]+$/;
  * `/read-activity`, `DELETE /memories` and `POST /memories/restore` now ALL
  * validate `?scope=` and answer 400 on an ungrammatical value (the deliberate
  * "a filter is the question itself" rule — see
- * `supabase/functions/memories/CLAUDE.md`). An ungrammatical scope therefore
+ * `supabase/functions/memories/CLAUDE.md`). They share the GRAMMAR only:
+ * `/read-activity` reaches it through the normalising `validateScope`, the
+ * other five through `parseScopeFilter`, so the six agree on what is legal and
+ * differ on what is done with a legal value. An ungrammatical scope therefore
  * fails the page uniformly rather than breaking one card next to four that look
  * merely empty. This guard matters MORE after that change, not less: it is what
  * keeps the client from ever sending one, so the uniform failure stays
