@@ -570,8 +570,14 @@ describe('buildLoreGraph', () => {
     // The work bound. Without hub suppression this dataset generates millions of
     // candidate pairs; with it, tens of thousands. The ceiling is generous
     // enough not to be brittle and orders of magnitude below the regression.
+    //
+    // Assert the entry EXISTS first. `?? 0` made the bound vacuous: raise
+    // `hubSize`/`maxEdges` far enough that nothing is dropped, the entry
+    // disappears, and the assertion degrades to `0 < 200_000` — passing loudest
+    // in exactly the configuration it is meant to catch.
     const consideredEdges = graph.truncated.find((entry) => entry.of === 'edges');
-    expect(consideredEdges?.total ?? 0).toBeLessThan(200_000);
+    expect(consideredEdges).toBeDefined();
+    expect(consideredEdges?.total).toBeLessThan(200_000);
 
     // Every node keeps at most `maxDegree` distinct relation neighbours.
     const distinct = new Map<number, Set<number>>();
