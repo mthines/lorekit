@@ -27,9 +27,11 @@
  *
  * So the baseline is not "the previous commit", it is "the commit this half is
  * actually serving". Each half is diffed against its own deployed-SHA marker
- * (`deployed/api-production` / `deployed/web-production`), which only the job
- * that performed that half's production flip moves, and only on success.
- * Undeployed work therefore stays in the diff until it deploys.
+ * (`deployed/api-production` / `deployed/web-production`). Only the job that
+ * performed that half's production flip ADVANCES the marker, and only on
+ * success; only that half's rollback job moves it BACK, to whatever production
+ * returned to. Undeployed work therefore stays in the diff until it deploys, and
+ * rolled-back work re-enters it.
  *
  * The markers are ADVISORY. Any doubt about one resolves to the push baseline —
  * the previous behaviour — never to "this half has no changes", because the

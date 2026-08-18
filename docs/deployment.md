@@ -276,12 +276,13 @@ what broke production once already:
 | **Result** | That client POSTs `/functions/v1/memories/list`, a route the production edge functions had never been given. **100% of production Lore Explorer list reads answered `405`** until the web was rolled back by hand. |
 
 So each half is now diffed against **the commit that half is actually serving**,
-recorded by two advisory tags that only the successful production flip moves:
+recorded by two advisory tags. Only a **successful** production flip advances a
+tag — and, symmetrically, only that half's **rollback** moves it back:
 
-| Tag | Moved by | Means |
-|-----|----------|-------|
-| `deployed/api-production` | `deploy-production`, last step | Migrations pushed **and** edge functions deployed at this SHA |
-| `deployed/web-production` | `promote-web-production`, last step | The production domain points at a bundle built from this SHA |
+| Tag | Advanced by | Moved back by | Means |
+|-----|-------------|---------------|-------|
+| `deployed/api-production` | `deploy-production`, last step | `rollback-production` → `HEAD~1` | Migrations pushed **and** edge functions deployed at this SHA |
+| `deployed/web-production` | `promote-web-production`, last step | `rollback-web-production` → the previously promoted commit | The production domain points at a bundle built from this SHA |
 
 `changes` resolves each baseline, diffs it against `HEAD`, and applies the same
 path globs as before. Undeployed work therefore stays in the diff until it
