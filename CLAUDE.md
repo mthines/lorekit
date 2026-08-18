@@ -443,6 +443,8 @@ All `lorekit.*` spans carry:
 
 Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + `lorekit.scope.type`.
 
+The MCP wire protocol has its own `mcp.*` namespace on the root `lorekit.mcp` span — `mcp.method`, `mcp.tool.name`, and the `initialize` pair `mcp.protocol_version` (what we answered) + `mcp.protocol_version.requested` (what the client asked for, bounded to a plausible value or one of four sentinels). The two are separate on purpose: "did we substitute a version" is `requested != protocol_version`, derived at query time, never a stored boolean — see [docs/otel.md](./docs/otel.md) → "`mcp.*` — JSON-RPC protocol attributes".
+
 Trace-context propagation (W3C `traceparent` — who sends/receives, the origin allow-list, the parser, span kinds, and the recorded-not-acted-on sampled flag) and the `service.name` inventory (edge = one `api` service told apart by `faas.name`; `mcp`/`web`/`cli`; never a per-function `SERVICE_NAME` secret) live in [`docs/otel.md`](./docs/otel.md) → "Custom span attributes — propagation & service.name".
 
 ---
