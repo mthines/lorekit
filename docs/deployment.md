@@ -344,7 +344,8 @@ env:
 
 **2. `deploy.yml` → `changes` job.** Replace the `Compare changed paths against
 the deploy globs` shell step with the resolver. The checkout already uses
-`fetch-depth: 0`; add `fetch-tags: true` so the markers are present.
+`fetch-depth: 0`, whose full fetch brings the markers with it — a shallow one
+would need `fetch-tags: true`, and a marker that never arrives just falls back.
 
 ```yaml
       - name: Set up Node.js (for the deploy-scope resolver)
