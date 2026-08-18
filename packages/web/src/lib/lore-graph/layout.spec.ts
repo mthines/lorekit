@@ -30,6 +30,25 @@ function distance(a: readonly number[], b: readonly number[]): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
+/** The smallest distance between any two MEMORY nodes — the layout's crowding. */
+function closestMemoryPair(graph: LoreGraph, positions: Float32Array): number {
+  let min = Infinity;
+  for (let a = 0; a < graph.nodes.length; a++) {
+    if (graph.nodes[a].kind !== 'memory') continue;
+    for (let b = a + 1; b < graph.nodes.length; b++) {
+      if (graph.nodes[b].kind !== 'memory') continue;
+      min = Math.min(
+        min,
+        distance(
+          [positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]],
+          [positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]],
+        ),
+      );
+    }
+  }
+  return min;
+}
+
 /** Mean distance between the two ends of every edge — the layout's tightness. */
 function meanEdgeLength(graph: LoreGraph, positions: Float32Array): number {
   if (graph.edges.length === 0) return 0;
@@ -165,25 +184,7 @@ describe('relaxPositions', () => {
     const seeded = seedPositions(graph, { clusterRadius: 0.001 });
     const relaxed = relaxPositions(graph, Float32Array.from(seeded), { iterations: 40 });
 
-    const closestPair = (positions: Float32Array) => {
-      let min = Infinity;
-      for (let a = 0; a < graph.nodes.length; a++) {
-        if (graph.nodes[a].kind !== 'memory') continue;
-        for (let b = a + 1; b < graph.nodes.length; b++) {
-          if (graph.nodes[b].kind !== 'memory') continue;
-          min = Math.min(
-            min,
-            distance(
-              [positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]],
-              [positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]],
-            ),
-          );
-        }
-      }
-      return min;
-    };
-
-    expect(closestPair(relaxed)).toBeGreaterThan(closestPair(seeded));
+    expect(closestMemoryPair(graph, relaxed)).toBeGreaterThan(closestMemoryPair(graph, seeded));
   });
 
   it('keeps related memories closer than unrelated ones', () => {
@@ -226,7 +227,37 @@ describe('relaxPositions', () => {
     const second = relaxPositions(graph, Float32Array.from(stacked), { iterations: 10 });
 
     expect([...first]).toEqual([...second]);
-    expect(boundingRadius(first)).toBeGreaterThan(0);
+    // `boundingRadius > 0` alone would pass on a pair that stayed coincident and
+    // merely drifted together, which is the exact failure the nudge exists to
+    // prevent — so assert the pair actually came APART.
+    expect(closestMemoryPair(graph, first)).toBeGreaterThan(1);
+  });
+
+  it('separates a coincident pair whose indices agree modulo the nudge periods', () => {
+    // The nudge components have periods 7, 5, and 3. Keyed on each end
+    // independently, a pair 105 apart (their lcm) received one IDENTICAL push
+    // and translated together forever. 120 memories guarantee such a pair.
+    const graph = graphOf(['global'], 120);
+    const stacked = new Float32Array(graph.nodes.length * 3);
+
+    expect(closestMemoryPair(graph, relaxPositions(graph, stacked, { iterations: 10 }))).toBeGreaterThan(1);
+  });
+
+  it('does not launch a coincident pair out of the sphere, at any point in the run', () => {
+    // The per-iteration clamp bounds the step, not the velocity: before the
+    // repulsion divisor was floored, a coincident pair banked an impulse ~1e3×
+    // the clamp and paid it out at the clamp for dozens of iterations, peaking
+    // ~238 units out of a radius-60 sphere before damping reeled it back in.
+    //
+    // Sampling only the FINISHED layout misses that entirely — it had settled
+    // to ~16 by iteration 120 — so sample the excursion, not just the endpoint.
+    const graph = graphOf(['global'], 6);
+    const stacked = new Float32Array(graph.nodes.length * 3);
+
+    for (const iterations of [5, 10, 20, 40, LAYOUT_DEFAULTS.iterations]) {
+      const relaxed = relaxPositions(graph, Float32Array.from(stacked), { iterations });
+      expect(boundingRadius(relaxed)).toBeLessThan(LAYOUT_DEFAULTS.radius);
+    }
   });
 
   it('tightens the graph rather than loosening it', () => {
