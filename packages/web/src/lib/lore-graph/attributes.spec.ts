@@ -201,6 +201,23 @@ describe('edgeColors', () => {
     expect([colours[3], colours[4], colours[5]]).toEqual([colours[0], colours[1], colours[2]]);
   });
 
+  it('reads the opacity PER VERTEX, so the per-end fade seam is live', () => {
+    const graph = buildLoreGraph([memory({ key: 'a' })]);
+    // The one case that can tell a per-vertex read from a per-edge one:
+    // `edgeOpacities` writes an equal pair, so the seam is only observable when
+    // an unequal pair is injected.
+    const unequal = new Float32Array(graph.edges.length * 2);
+    graph.edges.forEach((_, index) => {
+      unequal[index * 2] = 1;
+      unequal[index * 2 + 1] = 0.25;
+    });
+
+    const colours = edgeColors(graph, [1, 1, 1], undefined, unequal);
+
+    expect(colours[0]).toBeCloseTo(1, 6);
+    expect(colours[3]).toBeCloseTo(0.25, 6);
+  });
+
   it('draws a strong relation brighter than the skeleton', () => {
     const graph = buildLoreGraph([
       memory({ key: 'a', tags: ['x'] }),

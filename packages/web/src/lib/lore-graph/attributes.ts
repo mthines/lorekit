@@ -155,16 +155,26 @@ export function framingDistance(radius: number, fov = 50, margin = 1.2): number 
  * background, which this dashboard is (`packages/web/CLAUDE.md`: dark-only). On
  * a light theme the edges would have to become a real alpha attribute.
  */
-export function edgeColors(graph: LoreGraph, base: Rgb, into?: Float32Array): Float32Array {
+export function edgeColors(
+  graph: LoreGraph,
+  base: Rgb,
+  into?: Float32Array,
+  /**
+   * The per-VERTEX opacity pair, injectable so the per-end seam below is
+   * testable. Derived by default, which is every production call; a spec passes
+   * a deliberately unequal pair, which is the only way anything can tell this
+   * function's per-vertex read from a per-edge one — `edgeOpacities` writes an
+   * equal pair today, so a derived-only version made the seam unobservable.
+   */
+  opacities: Float32Array = edgeOpacities(graph),
+): Float32Array {
   const out = buffer(into, graph.edges.length * 6);
-  const opacities = edgeOpacities(graph);
   graph.edges.forEach((_, index) => {
     for (let vertex = 0; vertex < 2; vertex++) {
       // Per VERTEX, not per edge. `edgeOpacities` writes an explicit pair
       // precisely so "fade an edge toward its weaker end" is a one-line change
       // there; reading only the first entry would have made that seam dead the
-      // moment it was used. The two entries are equal today, so this is
-      // identical output and a live seam instead of a documented one.
+      // moment it was used.
       const opacity = opacities[index * 2 + vertex];
       const at = index * 6 + vertex * 3;
       out[at] = base[0] * opacity;
