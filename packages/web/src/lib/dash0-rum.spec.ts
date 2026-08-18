@@ -144,12 +144,18 @@ describe('resolveDeploymentEnv', () => {
     expect(resolveDeploymentEnv()).toBe(expected);
   });
 
-  it('falls back to local when unset', () => {
+  // These two also stub a production build. On a dev build the clamp returns
+  // `local` for every input, so the assertion would hold whatever the
+  // VERCEL_ENV mapping did — it has to run on the branch that maps the value
+  // through to prove the fallback, rather than the clamp, is what produced it.
+  it('falls back to local when unset, on a production build', () => {
+    vi.stubEnv('NODE_ENV', 'production');
     delete process.env['NEXT_PUBLIC_VERCEL_ENV'];
     expect(resolveDeploymentEnv()).toBe('local');
   });
 
-  it('falls back to local for an unrecognised value rather than passing it through', () => {
+  it('falls back to local for an unrecognised value rather than passing it through, on a production build', () => {
+    vi.stubEnv('NODE_ENV', 'production');
     process.env['NEXT_PUBLIC_VERCEL_ENV'] = 'staging';
     expect(resolveDeploymentEnv()).toBe('local');
   });
