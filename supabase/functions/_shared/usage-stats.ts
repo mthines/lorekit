@@ -162,13 +162,14 @@ export const EXPIRED_TOOL_NAME = 'memory.expired';
  * The tool_name a caller's archive action records (`memory.archive`).
  *
  * Counted by EVENT, not record: one `memory.archive` call archives exactly one
- * memory, and — unlike a read — the archive handler sets no
- * `X-LoreKit-Result-Count` header, so its `record_count` is NULL. Summing
- * `record_count` here would therefore always yield 0; summing `event_count`
- * gives the true "N memories archived" and needs no per-handler plumbing or
- * backfill. This is why `archived` reads `event_count` while `expired` (one
- * purge event carrying the deleted count) reads `record_count` — the two events
- * have genuinely different shapes.
+ * memory, so `event_count` is already the true "N memories archived" and needs
+ * no backfill. The DELETE handler does now set `X-LoreKit-Result-Count` (both
+ * the personal and the `?org=` branch), but only for rows written from that
+ * point on — every historical `memory.archive` row still carries a NULL
+ * `record_count`, so summing it would under-report the window. This is why
+ * `archived` reads `event_count` while `expired` (one purge event carrying the
+ * deleted count) reads `record_count` — the two events have genuinely
+ * different shapes.
  */
 export const ARCHIVED_TOOL_NAME = 'memory.archive';
 

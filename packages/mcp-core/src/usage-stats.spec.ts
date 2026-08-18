@@ -83,8 +83,9 @@ const ROWS: UsageStatRow[] = [
   { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 0, total_duration_ms: 5000 },
   { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, record_count: 0, total_duration_ms: 40 },
   { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, record_count: 0, total_duration_ms: 90 },
-  // record_count 0 on purpose: a real archive (a write) sets no result-count
-  // header, so `archived` MUST come from event_count, not record_count.
+  // record_count 0 on purpose: historical archive rows predate the DELETE
+  // handler setting the result-count header, so `archived` MUST come from
+  // event_count, not record_count, or the window under-reports them.
   { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 0, total_duration_ms: 120 },
   { tool_name: 'memory.expired', outcome: 'ok', scope_type: null, event_count: 1, record_count: 6, total_duration_ms: null },
 ];

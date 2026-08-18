@@ -621,11 +621,15 @@ per-handler concern:
   ref / session id) tags every subsequent CLI call. Wiring a specific hook to
   export it is the remaining client-side step.
 - **`X-LoreKit-Result-Count`** (response) — the collection read handlers
-  (`list`/`search`/`get`) set it to the number of records they returned; the
-  router reads it once (`RESULT_COUNT_HEADER`) and records it as the event's
-  `result_count`. Fail-safe: an absent/garbage value records no count, never
-  breaks the request. The MCP handler computes the same figure from the tool
-  result via `countRecords`.
+  (`list`/`search`/`get`) set it to the number of records they returned, and the
+  DELETE handler sets it on **both** branches (the personal one from the
+  mutation's affected-row count, the `?org=` one to `1` — `memory_delete` is
+  keyed on a unique natural key and a miss 404s). The router reads it once
+  (`RESULT_COUNT_HEADER`) and records it as the event's `result_count`.
+  Fail-safe: an absent/garbage value records no count, never breaks the request.
+  The MCP handler computes the same figure from the tool result via
+  `countRecords`. Note the usage summary still counts `archived` by EVENT — rows
+  written before the DELETE handler set this header carry a NULL count.
 
 ## Audit events
 
