@@ -537,14 +537,25 @@ describe('buildLoreGraph', () => {
     // disable hub suppression and the node, edge and degree caps still clamp
     // everything to the same numbers; only the runtime explodes. What actually
     // separates the two worlds is the CANDIDATE count before capping, which
-    // `truncated` reports: ~26k with hub suppression, millions without. That is
-    // a deterministic, machine-independent proxy for the work done, so it is
-    // what this asserts.
+    // `truncated` reports: 248,878 on this fixture with hub suppression,
+    // 4,333,368 without (and ~0.4 s against ~8 s). That is a deterministic,
+    // machine-independent proxy for the work done, so it is what this asserts.
+    //
+    // The three label families deliberately straddle `hubSize: 64`, and this is
+    // the same fixture `scripts/bench-lore-graph.mjs` uses — keep them in step.
+    // They used to share one `t*` prefix and collided: `t0`–`t96` drew members
+    // from both cycles, reached 68–69, and were suppressed to a term, so only
+    // the ≤17-member tail was ever exercised and the near-cap posting list this
+    // is supposed to bound never existed.
+    //
+    //   topic-*  300 terms ×  ~17 members — the long tail
+    //   theme-*   97 terms ×  ~52 members — just UNDER the cap
+    //   facet-*    3 terms × ~1667 members — well OVER it, so suppression fires
     const many = Array.from({ length: 5_000 }, (_, i) =>
       memory({
         key: `bucket-${i % 100}::lesson-${i}`,
         scope: `repo::owner/repo-${i % 100}`,
-        tags: [`t${i % 300}`, `t${i % 97}`],
+        tags: [`topic-${i % 300}`, `theme-${i % 97}`, `facet-${i % 3}`],
         origin_repo: `owner/repo-${i % 100}`,
         updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i % 3600)).toISOString(),
       }),
@@ -567,17 +578,23 @@ describe('buildLoreGraph', () => {
     );
     expect(relationships.size).toBeLessThanOrEqual(15_000);
 
-    // The work bound. Without hub suppression this dataset generates millions of
-    // candidate pairs; with it, tens of thousands. The ceiling is generous
-    // enough not to be brittle and orders of magnitude below the regression.
+    // The work bound. Measured on this fixture: 248,878 candidate pairs with hub
+    // suppression, 4,333,368 without. The ceiling sits at 2× the former and 8×
+    // below the latter — loose enough not to be brittle, tight enough that an
+    // accidental all-pairs path cannot slip under it.
+    //
+    // Hub suppression must also be observable, or the fixture is only measuring
+    // the tail it protects.
     //
     // Assert the entry EXISTS first. `?? 0` made the bound vacuous: raise
     // `hubSize`/`maxEdges` far enough that nothing is dropped, the entry
     // disappears, and the assertion degrades to `0 < 200_000` — passing loudest
     // in exactly the configuration it is meant to catch.
+    expect(graph.truncated.find((entry) => entry.of === 'terms')).toBeDefined();
+
     const consideredEdges = graph.truncated.find((entry) => entry.of === 'edges');
     expect(consideredEdges).toBeDefined();
-    expect(consideredEdges?.total).toBeLessThan(200_000);
+    expect(consideredEdges?.total).toBeLessThan(500_000);
 
     // Every node keeps at most `maxDegree` distinct relation neighbours.
     const distinct = new Map<number, Set<number>>();

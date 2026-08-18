@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~260–550 ms, median ~420 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
+| **Graph build** | ~320–710 ms, median ~415 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
@@ -146,28 +146,42 @@ node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bench-lore-graph.mjs
 ```
 
 ```text
-buildLoreGraph — 5,000 memories, 7 runs
+buildLoreGraph — 5,000 memories, 9 runs
   node       v24.19.0
-  min/med/max 263.5 ms / 418.0 ms / 555.1 ms
+  min/med/max 317.3 ms / 415.2 ms / 705.3 ms
   nodes      5,100
-  edges      50,000
-  truncated  [{"of":"terms","total":500,"kept":403},{"of":"edges","total":122500,"kept":15000}]
+  edges      39,300
+  truncated  [{"of":"terms","total":600,"kept":597},{"of":"edges","total":248878,"kept":15000}]
 ```
 
-**The fixture shape dominates this number, and getting it wrong made the first
-version of this figure eight times too optimistic.** The original synthetic
-account used 40 key namespaces and 25 repos across 5,000 memories — 125 and 200
-members each, both over `hubSize: 64` — so both kinds were suppressed entirely
-and the benchmark was timing the label path alone. The fixture now uses 100 of
-each (50 members apiece), which keeps all three relation kinds live and is the
-worst case the model can actually be handed.
+**The fixture shape dominates this number, and it has been wrong twice — in
+opposite directions — so it is worth spelling out what it now is.** The first
+synthetic account used 40 key namespaces and 25 repos across 5,000 memories (125
+and 200 members each, both over `hubSize: 64`), so both of those kinds were
+suppressed entirely and the run timed the label path alone: eight times too
+optimistic. Raising them to 100 each (50 members apiece) fixed those two kinds
+but left the *labels* mis-shaped — both label families were emitted under one
+`t*` prefix, so `t0`–`t96` drew members from both cycles, reached 68–69 and were
+themselves suppressed, leaving only a ≤17-member tail live.
+
+The fixture now puts each family in its own namespace and straddles the cap
+deliberately, so every branch of the algorithm is on the clock:
+
+| Family | Terms | Members each | Role |
+|--------|-------|--------------|------|
+| `topic-*` | 300 | ~17 | the long tail |
+| `theme-*` | 97 | ~52 | just **under** `hubSize`, so this is the longest posting list the label path must walk |
+| `facet-*` | 3 | ~1667 | well **over** it, so suppression actually fires |
+| `bucket-*::` (key) | 100 | 50 | live |
+| `owner/repo-*` (repo) | 100 | 50 | live |
 
 The spread is wide because the harness this was captured on is a shared cloud
 container. What matters is the shape: hundreds of milliseconds, not seconds, and
-driven by the candidate-pair count (122k here) rather than by `n²` — an
-unsuppressed all-pairs build of the same data would consider ~12.5 M.
+driven by the candidate-pair count (248,878 here) rather than by `n²` — the same
+build with hub suppression switched off considers **4,333,368** pairs and takes
+~8 s.
 
-It is also worth being plain that ~420 ms is not free. It is paid once per
+It is also worth being plain that ~415 ms is not free. It is paid once per
 dataset change, in the worker, alongside the layout — and the analytic seed
 means the user sees a correct picture before the relaxation finishes, so the
 cost lands on "the graph settles a moment later", not on a frozen tab. If the
