@@ -133,7 +133,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 
 ## Scope format
 
-`::` is the only valid separator. Segments are lowercased on ingest.
+`::` is the only valid separator. The MCP tools lowercase every segment on ingest; the REST write path (`POST /memories`) stores the scope verbatim, so `memories.scope` can hold mixed case and a filter matches it exactly.
 
 | Type | Format | Example |
 |------|--------|---------|
