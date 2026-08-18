@@ -117,7 +117,16 @@ export async function handleRemove(
       actor,
     );
   }
-  return noContent(cors);
+  // Record how many rows this archive/delete touched, so the usage ledger's
+  // `memory_count` is populated for a WRITE the same way a read's is. Without
+  // this the router records `null` (only read handlers set the header), which is
+  // why `memory.archive` events carried no count — the reason the usage summary
+  // counts archives by EVENT rather than by record. Setting it keeps the raw
+  // ledger honest going forward; the event-count read path stays correct for the
+  // historical rows this cannot backfill.
+  const res = noContent(cors);
+  res.headers.set('X-LoreKit-Result-Count', String(count));
+  return res;
 }
 
 interface OrgRemoveCtx {
