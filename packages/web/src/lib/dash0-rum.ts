@@ -50,8 +50,14 @@ const SERVICE_NAME = 'web';
 let initialized = false;
 
 /**
- * Resolve `deployment.environment.name` from Vercel's env, defaulting to
- * `local` for a plain `next dev`.
+ * Resolve `deployment.environment.name` from Vercel's env, cross-checked
+ * against `NODE_ENV`.
+ *
+ * A plain `next dev` reports `local` only when no `VERCEL_ENV` reaches it. If
+ * one does — `vercel env pull` writes `VERCEL_ENV=development` by default —
+ * the dev server reports `development`, unclamped and unwarned, exactly as
+ * `vercel dev` does; a pulled `production` / `preview` is the case that gets
+ * clamped to `local` and warned about.
  *
  * Both env vars are read as literal member expressions because Next.js inlines
  * `NEXT_PUBLIC_*` and `NODE_ENV` reads at build time for the browser bundle — a

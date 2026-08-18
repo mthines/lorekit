@@ -17,10 +17,12 @@
  * deployment.environment.name values:
  *   'production'  — Vercel production (VERCEL_ENV=production)
  *   'preview'     — Vercel preview PR/branch (VERCEL_ENV=preview)
- *   'development' — `vercel dev` (VERCEL_ENV=development)
- *   'local'       — pure local dev (VERCEL_ENV absent, or clamped because
- *                   NODE_ENV proves this is a dev server — see
- *                   lib/otel-deployment-env.ts)
+ *   'development' — VERCEL_ENV=development: `vercel dev`, and equally a plain
+ *                   `next dev` that loaded a pulled VERCEL_ENV (the default
+ *                   `vercel env pull` writes). Not clamped, not warned.
+ *   'local'       — VERCEL_ENV absent or unrecognised, or a claimed
+ *                   production/preview clamped because NODE_ENV proves this
+ *                   is a dev server — see lib/otel-deployment-env.ts
  */
 import { registerOTel } from '@vercel/otel';
 
