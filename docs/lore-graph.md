@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~80–100 ms (measured, `buildLoreGraph`) | Runs once per dataset change, not per frame. Pure and `Float32Array`-shaped, so it moves to the worker with the layout — see [Layout](#layout). |
+| **Graph build** | ~80–100 ms (measured, `buildLoreGraph`) | Runs once per dataset change, not per frame. It returns `GraphNode[]`/`GraphEdge[]`, so moving it to a worker costs a structured clone of that object graph — unlike the layout, whose `Float32Array` transfers for free. Worth measuring before assuming the move pays. |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
