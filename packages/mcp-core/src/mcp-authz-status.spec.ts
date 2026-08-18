@@ -55,7 +55,7 @@ describe('mcp-handler auth status guard', () => {
     const block = blockAfter(handler, "method === 'tools/call'", 'tools/call block');
     const forbidden = block.match(/jsonrpcError\(\s*id,\s*JSONRPC_FORBIDDEN/g) ?? [];
     // org.* JWT, write-missing, read-missing, key-scope-denied and
-    // account-wide-sweep-on-a-scoped-key (00067).
+    // account-wide-sweep-on-a-scoped-key (00068).
     // Pinned deliberately: a new denial must be a conscious edit here, because
     // the failure mode this guard exists for is a denial added as -32001, which
     // hangs the client instead of surfacing.

@@ -54,6 +54,7 @@ export const MIRRORED_SCHEMA_FILES = [
   'common.ts',
   'filter.ts',
   'tags.ts',
+  'dimensions.ts',
   'scope.ts',
   'tool-catalog.ts',
   'blog.ts',

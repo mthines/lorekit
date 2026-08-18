@@ -86,7 +86,7 @@ export async function handleCreate(
   }
 
   // Dry-run: validated + rate-limited above; stop before any write.
-  // Early refusal for a NAMED scope outside the key's allowlist (00067): a
+  // Early refusal for a NAMED scope outside the key's allowlist (00068): a
   // plain 403 beats an empty page, which reads as "there is nothing there".
   const deniedScope = firstDeniedScope(auth, [body.scope]);
   if (deniedScope !== null) {
@@ -131,7 +131,7 @@ export async function handleCreate(
     p_origin_pr: origin.pr,
     p_kind: kind,
     p_host: host,
-    // The calling key's restriction, BOTH axes (00067/00068). The RPC is the
+    // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
     // last gate the edge cannot bypass — it runs on the service-role client, so
     // the `firstDeniedScope` refusal above is advisory — and the only place that
     // can see the scope→org binding a restricted key must not be auto-routed

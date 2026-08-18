@@ -826,6 +826,167 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     });
   });
 
+  // ── The body transport (POST /list, /facets, /activity) ─────────────────────
+  // The scalability half of the filter bar, against a live stack. The unit specs
+  // prove the SERIALISER and the SCHEMA disagree with the query string past
+  // ~50-75 values in one dimension; only this suite can prove the deployed
+  // handler answers 400 there and 200 over the body — and, crucially, that the
+  // two transports return the SAME rows, which is the whole point of routing
+  // both through one predicate function.
+  describe('the body transport scales where the query string does not', () => {
+    const AGENT = `${KEY_PREFIX}-body-agent`;
+    const KEY_BODY = NS.name('body-a');
+    const KEY_BODY_COMMA = NS.name('body-comma');
+    // Reachable ONLY over the body: `?origin_branch=` splits on the comma
+    // before the value is ever quoted, so this arrives as two values there.
+    const BRANCH_COMMA = `${KEY_PREFIX}/br,anch`;
+
+    /** A dimension wide enough that the query form cannot carry it. */
+    const WIDE = Array.from({ length: 200 }, (_, i) => `${KEY_PREFIX}-filler-host-${i}`);
+    /**
+     * KEY_BODY's own host, deliberately OUTSIDE `WIDE`. It has to be set rather
+     * than left null: `lorekit_match_text`'s `nin` EXCLUDES a null column — the
+     * rule `migrations.test.sql` AC-4b pins — so a hostless row is filtered out
+     * by any `host_mode: 'nin'`, and "a `nin` over 200 unrelated hosts excludes
+     * nothing" would be asserting the opposite of the documented semantics.
+     */
+    const HOST_BODY = `${KEY_PREFIX}-body-host`;
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      const { status } = await api('POST', '/', {
+        scope: SCOPE, key: KEY_BODY, value: 'body transport', source_agent: AGENT, host: HOST_BODY,
+      });
+      expect(status).toBe(201);
+      const created = await api('POST', '/', {
+        scope: SCOPE, key: KEY_BODY_COMMA, value: 'comma branch', origin_branch: BRANCH_COMMA,
+      });
+      expect(created.status).toBe(201);
+    }, REMOTE_TEST_TIMEOUT);
+
+    // TWO walls stand between a wide dimension and the query form, and which one
+    // fires first is a property of the DEPLOYMENT, not of this repo: at 200
+    // ~28-character hosts the composed URL is ~5.6 KB, so the gateway's URI limit
+    // (`414 URI too long`, no LoreKit error envelope at all) answers before
+    // `ValueListSchema`'s 2048-character cap ever runs and returns `400`. Pinning
+    // either number alone pins the wrong wall on the other deployment; what the
+    // body transport actually fixes is that the query form REFUSES the request,
+    // so that is what this asserts.
+    it('GET /memories cannot carry a dimension this wide — 400 (schema cap) or 414 (URI limit)', async () => {
+      const { status, data } = await api(
+        'GET', `/?scope=${SCOPE}&limit=100&host=${encodeURIComponent(WIDE.join(','))}`,
+      );
+      expect([400, 414], `expected the query form to refuse; got ${status}: ${JSON.stringify(data)}`)
+        .toContain(status);
+    });
+
+    // The schema cap on its own, WELL below the URI wall so it is the bound that
+    // fires: 5 values of 512 characters is 2564 characters of dimension — past
+    // `ValueListSchema`'s 2048 — in a URL an order of magnitude smaller than the
+    // ~9 KB one above. Without this case the assertion above would pass on a
+    // deployment where the schema cap never gets a chance to run.
+    it('GET /memories rejects a dimension past the 2048-character cap with a 400', async () => {
+      const long = Array.from({ length: 5 }, (_, i) => `${String(i)}${'x'.repeat(511)}`);
+      const { status, data } = await api(
+        'GET', `/?scope=${SCOPE}&limit=100&host=${encodeURIComponent(long.join(','))}`,
+      );
+      expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    });
+
+    it('POST /memories/list accepts the same dimension and answers 200', async () => {
+      const { status, data } = await api('POST', '/list', {
+        scope: SCOPE, limit: 100, source_agent: [AGENT], host: WIDE, host_mode: 'nin',
+      });
+      expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      expect(keys, 'a `nin` over 200 unrelated hosts must not exclude a row whose host is none of them')
+        .toContain(KEY_BODY);
+    });
+
+    it('POST /memories/list returns exactly what the equivalent GET returns', async () => {
+      const query = await api('GET', `/?scope=${SCOPE}&limit=100&source_agent=${encodeURIComponent(AGENT)}`);
+      const body = await api('POST', '/list', { scope: SCOPE, limit: 100, source_agent: [AGENT] });
+      expect(query.status).toBe(200);
+      expect(body.status).toBe(200);
+      const keysOf = (r: { data: unknown }) =>
+        ((r.data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      // ONE predicate function behind both decoders — so this is an identity,
+      // not a coincidence worth tolerating a small difference in.
+      expect(keysOf(body)).toEqual(keysOf(query));
+    });
+
+    it('POST /memories/list matches a value containing a comma, which the query form cannot', async () => {
+      const { status, data } = await api('POST', '/list', {
+        scope: SCOPE, limit: 100, origin_branch: [BRANCH_COMMA],
+      });
+      expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      expect(keys).toContain(KEY_BODY_COMMA);
+      expect(keys).not.toContain(KEY_BODY);
+    });
+
+    it('POST /memories/list rejects a dimension past the documented value bound', async () => {
+      const { status } = await api('POST', '/list', {
+        scope: SCOPE, host: Array.from({ length: 1001 }, (_, i) => `h${i}`),
+      });
+      expect(status, 'the bound is a safety limit, and it is enforced').toBe(400);
+    });
+
+    // The ACCEPTED maximum, end to end — the number the schema advertises,
+    // executed rather than asserted. The rejection case above only proves the
+    // bound is enforced; without this one, nothing showed that the largest
+    // ALLOWED filter actually survives the whole path. It did not, before
+    // migration 00067: the edge composed the dimension into a PostgREST
+    // `or=` QUERY PARAM, so 200 values already built an internal URL the
+    // gateway refused and the caller saw a 500. Reading through
+    // `lorekit_memory_list` passes the values as a `text[]` over a POST body,
+    // so no URL is involved on either hop.
+    //
+    // The one real value is buried in the middle so a truncating regression
+    // fails here instead of passing by luck.
+    it('POST /memories/list carries the documented MAXIMUM dimension and still finds the row', async () => {
+      const filler = Array.from({ length: 999 }, (_, i) => `${KEY_PREFIX}-max-filler-${i}`);
+      const source_agent = [...filler.slice(0, 500), AGENT, ...filler.slice(500)];
+      expect(source_agent).toHaveLength(1000);
+
+      const { status, data } = await api('POST', '/list', {
+        scope: SCOPE, limit: 100, source_agent, source_agent_mode: 'in',
+      });
+      expect(status, `the advertised maximum must be usable; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      expect(keys).toContain(KEY_BODY);
+    });
+
+    it('POST /memories/facets and /activity take the same wide filter', async () => {
+      const facets = await api('POST', '/facets', { scope: SCOPE, host: WIDE, host_mode: 'nin' });
+      expect(facets.status, `facets: ${JSON.stringify(facets.data)}`).toBe(200);
+      expect(Array.isArray((facets.data as JsonObj).facets)).toBe(true);
+
+      const activity = await api('POST', '/activity', {
+        scope: SCOPE, bucket: 'day', host: WIDE, host_mode: 'nin',
+      });
+      expect(activity.status, `activity: ${JSON.stringify(activity.data)}`).toBe(200);
+      expect(Array.isArray((activity.data as JsonObj).buckets)).toBe(true);
+    });
+
+    it('POST /memories/list paginates with the same cursor contract as the GET form', async () => {
+      const first = await api('POST', '/list', { scope: SCOPE, limit: 1 });
+      expect(first.status).toBe(200);
+      const page = first.data as JsonObj;
+      if (!page.hasMore) return;
+      const next = await api('POST', '/list', { scope: SCOPE, limit: 1, cursor: page.nextCursor });
+      expect(next.status, `expected 200; got ${JSON.stringify(next.data)}`).toBe(200);
+      const firstKey = ((page.entries as JsonObj[])[0] as JsonObj).key;
+      const nextEntries = (next.data as JsonObj).entries as JsonObj[];
+      // `hasMore` promised a row, so an EMPTY second page is a pagination bug —
+      // assert it before reading [0], otherwise `undefined !== firstKey` passes
+      // and the broken case reads as the contract being honoured.
+      expect(nextEntries.length, 'hasMore promised a second page, so it must carry a row').toBeGreaterThan(0);
+      const nextKey = (nextEntries[0] as JsonObj).key;
+      expect(nextKey, 'the second page must not repeat the first row').not.toBe(firstKey);
+    });
+  });
+
   // ── "Expiring soon" (?expiring_within_days=) ────────────────────────────────
   // The half of the feature `migrations.test.sql` §75 cannot reach. That section
   // asserts the PREDICATE over seeded rows (including boundary rows a live suite

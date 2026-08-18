@@ -194,7 +194,7 @@ export async function toolWrite(
       p_origin_pr: origin.pr,
       p_kind: resolvedKind,
       p_host: resolvedHost,
-      // The calling key's restriction, BOTH axes (00067/00068). The RPC is the
+      // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
       // LAST gate on the write path — the edge runs on the service-role client,
       // so the dispatcher's check above it is advisory — and it is also the only
       // place that can see the scope→org BINDING, which must not route a
@@ -467,7 +467,7 @@ export async function toolDelete(
         p_scope: scope,
         p_key: key,
         p_force: force,
-        // The calling key's restriction (00067/00068). This RPC picks its own
+        // The calling key's restriction (00068/00069). This RPC picks its own
         // rows, so there is no query for the transport to filter, and the
         // dispatcher's refusal runs on the service-role client and is advisory
         // — without these the org branch enforced the owner's ROLE and nothing

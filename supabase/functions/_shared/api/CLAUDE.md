@@ -201,7 +201,7 @@ not special-case it into a filter).
 - `needsExplicitTenantFilter(auth)` — the one place the "is this the api_key tier?" test lives.
 - `applyRestTenantScope(query, userId, orgIds, key?)` — the widened tenant-visibility predicate for
   `memories` reads. Never inline `.eq('user_id', …)` instead. The optional `key` is the calling API
-  key's own restriction (00067/00068); the narrowing arithmetic is imported from the mirrored
+  key's own restriction (00068/00069); the narrowing arithmetic is imported from the mirrored
   `_shared/tenant-scope.ts`, never re-implemented here, so the MCP and REST surfaces cannot disagree
   about what a key reaches.
 - `applyKeyScopeFilter(query, auth)` — the allowlist half ALONE, for the personal-only write family

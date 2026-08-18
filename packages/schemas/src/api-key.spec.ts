@@ -26,7 +26,7 @@ describe('scopeAllowedByKey', () => {
   });
 
   it('allows everything when the allowlist is empty', () => {
-    // Migration 00067 decision 1: empty = unrestricted, so every key that
+    // Migration 00068 decision 1: empty = unrestricted, so every key that
     // existed before scoping keeps working untouched.
     expect(scopeAllowedByKey([], 'repo::mthines/lorekit')).toBe(true);
     expect(scopeAllowedByKey([], 'global')).toBe(true);

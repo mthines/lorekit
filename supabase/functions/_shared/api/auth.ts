@@ -8,7 +8,7 @@ export interface AuthContext {
   jwt?: string;
   permissions?: string[];
   /**
-   * api_key only: the scope/org restriction on the calling key (00067). Absent
+   * api_key only: the scope/org restriction on the calling key (00068). Absent
    * for every other tier — a JWT or service-role caller has no key to restrict,
    * and absent is NOT "restricted to nothing". Read it through
    * `keyRestriction()` so no call site has to remember that.

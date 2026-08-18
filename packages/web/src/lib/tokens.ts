@@ -20,7 +20,7 @@ export interface ApiToken {
   name: string;
   token_prefix: string;
   permissions: TokenPermission[];
-  /** Scope allowlist (migration 00067). EMPTY = unrestricted. */
+  /** Scope allowlist (migration 00068). EMPTY = unrestricted. */
   scopes: string[];
   org_access: OrgAccess;
   /** Meaningful only under `org_access: 'selected'`. */
@@ -295,7 +295,7 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
  * Point an existing key at a set of scopes and a tenancy.
  *
  * Everything about WHO may do this lives in `lorekit_api_token_set_scoping`
- * (migration 00067): ownership, the org-membership check, and the cross-field
+ * (migration 00068): ownership, the org-membership check, and the cross-field
  * rule between `org_access` and `org_ids`. This action does not re-derive any
  * of it — it calls the one gate and translates the refusal.
  *

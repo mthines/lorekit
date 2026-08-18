@@ -8,5 +8,6 @@ export * from './member.ts';
 export * from './invite.ts';
 export * from './filter.ts';
 export * from './tags.ts';
+export * from './dimensions.ts';
 export * from './usage.ts';
 export * from './relevant.ts';

@@ -42,7 +42,7 @@ export async function handleSearch(
     q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
   if (body.q) q = q.textSearch('fts', body.q, { type: 'websearch', config: 'english' });
-  // Early refusal for a NAMED scope outside the key's allowlist (00067): a
+  // Early refusal for a NAMED scope outside the key's allowlist (00068): a
   // plain 403 beats an empty page, which reads as "there is nothing there".
   const deniedScope = firstDeniedScope(auth, body.scopes ?? []);
   if (deniedScope !== null) {

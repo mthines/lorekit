@@ -1,7 +1,7 @@
 /**
  * The dashboard's model of API-key scoping — the pure half.
  *
- * A key can be narrowed along two axes (migration 00067): an allowlist of scope
+ * A key can be narrowed along two axes (migration 00068): an allowlist of scope
  * patterns, and a tenancy (`all` / `personal` / `selected` orgs). This module
  * owns the decisions the UI needs and the DB does not care about: what the
  * picker offers, what the row badge says, and how the whole thing reads as a
@@ -28,7 +28,7 @@ export interface TokenScoping {
   org_ids: string[];
 }
 
-/** The unrestricted default — what a key created before 00067 carries. */
+/** The unrestricted default — what a key created before 00068 carries. */
 export const UNSCOPED: TokenScoping = { scopes: [], org_access: 'all', org_ids: [] };
 
 export interface OrgAccessTier {

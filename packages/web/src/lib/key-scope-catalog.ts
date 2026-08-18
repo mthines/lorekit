@@ -20,7 +20,7 @@ import { logger } from '@/lib/telemetry';
  * direct PostgREST query — the package's hard rule, and here it earns itself
  * twice over: the endpoint aggregates in Postgres, so the catalog is complete
  * rather than truncated at PostgREST's row cap, and it is the same
- * `lorekit_memory_scopes` the *enforcement* side narrows (00068), so the picker
+ * `lorekit_memory_scopes` the *enforcement* side narrows (00069), so the picker
  * cannot offer a scope the key would then be refused.
  *
  * Both halves fail SOFT, independently. This populates a picker; it does not

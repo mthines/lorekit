@@ -25,6 +25,7 @@ describe('generateSpec', () => {
       '/memories',
       '/memories/activity',
       '/memories/facets',
+      '/memories/list',
       '/memories/purge',
       '/memories/purge-expired',
       '/memories/read-activity',
@@ -52,6 +53,10 @@ describe('generateSpec', () => {
       'CreateMemoryBody',
       'UpdateMemoryBody',
       'SearchMemoriesBody',
+      // The body transport: the three POST reads the dashboard's filter bar uses.
+      'ListMemoriesBody',
+      'ListFacetsBody',
+      'ActivityBody',
       'RestoreMemoryBody',
       'PurgeMemoriesBody',
       'RestoreResponse',

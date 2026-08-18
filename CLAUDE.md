@@ -422,7 +422,7 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory-cap trigger (`enforce_memory_cap`) + rate-limit RPC (`lorekit_check_rate_limit`) + `user_limits`/`lorekit_get_limit` config source |
 | `packages/web/src/lib/api/` | The dashboard's client for LoreKit's OWN REST API (`restFetch`, typed wrappers from `@lorekit/schemas`) |
-| `packages/web/src/lib/filters.ts` | Pure model for the Lore Explorer filter bar (OR within a dimension, AND across; `filtersToQueryParams` is the ONE wire seam) |
+| `packages/web/src/lib/filters.ts` | Pure model for the Lore Explorer filter bar (OR within a dimension, AND across; `filtersToBody` is the wire seam the Explorer uses, `filtersToQueryParams` the GET encoding kept for query-string callers) |
 | `packages/web/src/lib/dash0-rum.ts` | The SINGLE browser RUM init path for `@dash0/sdk-web` (init guard, endpoint validator, identity) |
 
 See [`docs/key-files.md`](./docs/key-files.md) for the remaining ~111 files:
@@ -478,7 +478,7 @@ their rationale inline. **Do not relitigate these.**
 - `lk_rw_` prefix encodes permission visibly in config files
 - **Write-only tokens (`lk_wo_*`)** store `permissions: ['write']` in the existing `text[]` column (zero migration); gating logic in the shared pure `permissions.ts`. [rationale](./docs/decisions.md#write-only-tokens-lk_wo_)
 - Token SHA-256 hash in DB — shown once, never stored in plain text
-- **API token scoping (scopes + orgs)** — `api_tokens.scopes` (empty = unrestricted, owner wildcards reuse `expandScopeForSearch`'s grammar, with the trailing `*` legal only after a `/` or a `::`) + a tri-state `org_access`/`org_ids`; the key restriction is authoritative over `org_scope_bindings` auto-routing; scoping is set through an owner-only SECURITY DEFINER RPC, never an UPDATE policy. **Live end to end — 00067 ships the columns and the two predicates, 00068 makes them binding in three layers (transport refusal, query narrowing, and the SQL functions the transports cannot stand in front of), `TokenManager.tsx` sets them, and 00069 audits every change.** [rationale](./docs/decisions.md#api-token-scoping-scopes--orgs)
+- **API token scoping (scopes + orgs)** — `api_tokens.scopes` (empty = unrestricted, owner wildcards reuse `expandScopeForSearch`'s grammar, with the trailing `*` legal only after a `/` or a `::`) + a tri-state `org_access`/`org_ids`; the key restriction is authoritative over `org_scope_bindings` auto-routing; scoping is set through an owner-only SECURITY DEFINER RPC, never an UPDATE policy. **Live end to end — 00068 ships the columns and the two predicates, 00069 makes them binding in three layers (transport refusal, query narrowing, and the SQL functions the transports cannot stand in front of), `TokenManager.tsx` sets them, and 00070 audits every change.** [rationale](./docs/decisions.md#api-token-scoping-scopes--orgs)
 - `AlwaysOn` OTel sampler — sampling deferred to Dash0 pipeline, never SDK-side
 - `instrumentation.ts` must be `async function register()` with `NEXT_RUNTIME === 'nodejs'` guard
 - **Browser RUM initialises in `lib/dash0-rum.ts`, identity set at INIT** — every event carries a `user.id` (`anon:<uuid>` until login); never simplify back to a login-only `identify()`. [rationale](./docs/decisions.md#browser-rum-init--identity-at-init)

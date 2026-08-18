@@ -69,7 +69,7 @@ export async function handleReadActivity(
     }
   }
 
-  // Early refusal for a NAMED scope outside the key's allowlist (00067/00068),
+  // Early refusal for a NAMED scope outside the key's allowlist (00068/00069),
   // identical to `GET /memories`. Without it `p_key_scopes` narrows the series
   // to empty inside the RPC, which reads as "you read nothing in that scope"
   // — a different answer than "you may not ask about that scope", and the one
@@ -101,7 +101,7 @@ export async function handleReadActivity(
     p_since: since,
     p_until: until,
     p_scope: scopeFilter,
-    // The calling key's scope allowlist (00067/00068), narrowed inside the RPC
+    // The calling key's scope allowlist (00068/00069), narrowed inside the RPC
     // exactly as `GET /memories/activity` and `/scopes` are: this series also
     // returns one row per scope NAME. No org parameters — `usage_events` is a
     // per-user ledger with no org axis to narrow.

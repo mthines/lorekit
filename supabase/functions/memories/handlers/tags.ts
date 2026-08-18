@@ -49,7 +49,7 @@ export async function handleTags(
   const { data, error } = await tracedDb.rpc<TagRow>('lorekit_memory_tags', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
-    // The calling key's restriction (00067/00068). Narrowed inside the RPC for
+    // The calling key's restriction (00068/00069). Narrowed inside the RPC for
     // the same reason `/scopes` and the activity series are: this is an
     // aggregate over rows, so there is nothing out here to post-filter.
     p_key_scopes: keyRestriction(auth)?.scopes ?? [],

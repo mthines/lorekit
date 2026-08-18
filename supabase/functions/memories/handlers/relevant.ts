@@ -97,7 +97,7 @@ export async function handleRelevant(
     'lorekit.scope_count': scopes.length,
   });
 
-  // Early refusal for a NAMED scope outside the key's allowlist (00067/00068),
+  // Early refusal for a NAMED scope outside the key's allowlist (00068/00069),
   // identical to `POST /memories/search`, which takes the same list shape.
   // Without it `applyRestTenantScope` narrows the candidate set to empty, which
   // reads as "there is nothing relevant there" rather than "you may not ask

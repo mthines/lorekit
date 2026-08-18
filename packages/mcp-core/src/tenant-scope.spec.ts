@@ -62,7 +62,7 @@ describe('normalizeKeyRestriction', () => {
   });
 
   it('treats an ABSENT org_access as unrestricted', () => {
-    // That is the pre-00067 row shape — the column did not exist — and every
+    // That is the pre-00068 row shape — the column did not exist — and every
     // key created before scoping is unrestricted by definition.
     expect(normalizeKeyRestriction({}).orgAccess).toBe('all');
     expect(normalizeKeyRestriction({ org_access: null }).orgAccess).toBe('all');
@@ -266,7 +266,7 @@ describe('SCOPE_PATTERN parity across every copy', () => {
   });
 
   it.each([
-    ['supabase/migrations/00068_api_token_scoping_enforcement.sql', AUTHORITY_SQL],
+    ['supabase/migrations/00069_api_token_scoping_enforcement.sql', AUTHORITY_SQL],
     ['supabase/byod/bootstrap.sql', AUTHORITY_SQL],
   ])('%s carries the POSIX spelling of the same shape', (file, expected) => {
     expect(read(file)).toContain(expected);

@@ -88,7 +88,7 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
 
   it.each(READ_HANDLERS)('%s passes the calling key restriction to applyTenantScope', (fnName) => {
     // The tenant predicate is also where the KEY's scope allowlist and tenancy
-    // are applied (00067), because a scoped key must not see an out-of-allowlist
+    // are applied (00068), because a scoped key must not see an out-of-allowlist
     // row on a read that names no scope at all. A handler that keeps calling the
     // 3-argument form silently opts out of that half of the boundary.
     const body = extractFunctionBody(source, fnName);
@@ -112,8 +112,16 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
  * list. The RPC-BACKED reads have no query to scope and so cannot appear here —
  * they get their own guard immediately below, because "the RPC narrows it" is
  * not on its own a safety property.
+ *
+ * `list` USED to be in this list and is not any more. Migration 00067 moved the
+ * list read into `lorekit_memory_list`, so there is no longer a query out here
+ * to narrow — it is pinned by `RPC_BACKED_ROW_READS` below instead. That move
+ * is exactly the failure mode these guards exist for: the handler kept working,
+ * kept its tests, and quietly stopped being covered by the predicate that made
+ * it safe. Removing a name from this list is only ever correct alongside adding
+ * it to another one.
  */
-const REST_READ_HANDLERS = ['get', 'list', 'relevant', 'search'] as const;
+const REST_READ_HANDLERS = ['get', 'relevant', 'search'] as const;
 
 const readHandlerSource = (name: string) =>
   readFileSync(path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`), 'utf8');
@@ -137,7 +145,7 @@ describe('key-scope usage guard (REST read family)', () => {
  * build no `memories` query, so there is nothing for `applyRestTenantScope` to
  * narrow and a second app-layer predicate would only be somewhere for the two
  * to drift. But "the RPC narrows it one layer down" is a claim about the RPC's
- * parameters, and 00068 defaults `p_key_scopes` to `'{}'` — the UNRESTRICTED
+ * parameters, and 00069 defaults `p_key_scopes` to `'{}'` — the UNRESTRICTED
  * value — so the narrowing only happens if the handler actually sends it. A
  * handler that simply omits the parameter compiles, runs, and hands a scoped
  * key the whole account's catalog: precisely the fail-open shape the optional
@@ -149,6 +157,28 @@ describe('key-scope usage guard (REST read family)', () => {
  * name-bearing dimension to it puts it in this list.
  */
 const RPC_BACKED_SCOPE_READS = ['scopes', 'tags', 'activity', 'read-activity', 'facets'] as const;
+
+/**
+ * The RPC-backed ROW read. Separate from the aggregates above because the
+ * reason it must narrow is different: an aggregate would leak scope NAMES,
+ * whereas `lorekit_memory_list` would hand over the memories themselves. Same
+ * fail-open default (`'{}'`), same consequence if the handler omits it, so the
+ * same pin — but the two are not one list, because a future aggregate and a
+ * future row read are added for different reasons.
+ */
+const RPC_BACKED_ROW_READS = ['list'] as const;
+
+describe('key-scope usage guard (RPC-backed row reads)', () => {
+  it.each(RPC_BACKED_ROW_READS)('%s passes p_key_scopes to its RPC', (name) => {
+    expect(readHandlerSource(name)).toMatch(/p_key_scopes:\s*keyRestriction\(auth\)\?\.scopes\s*\?\?\s*\[\]/);
+  });
+
+  it.each(RPC_BACKED_ROW_READS)('%s still refuses a NAMED out-of-allowlist scope', (name) => {
+    // The RPC narrows; the handler refuses. Both, for the same reason every
+    // other named-scope path does both: an empty page is not a denial.
+    expect(readHandlerSource(name)).toContain('firstDeniedScope(auth,');
+  });
+});
 
 describe('key-scope usage guard (RPC-backed per-scope reads)', () => {
   it.each(RPC_BACKED_SCOPE_READS)('%s passes p_key_scopes to its RPC', (name) => {
@@ -171,7 +201,7 @@ describe('key-scope usage guard (RPC-backed per-scope reads)', () => {
  * Drift guard: the RPC-backed WRITES, and the MCP surface's own RPC calls.
  *
  * `p_key_scopes` fails open wherever it appears, not only on the reads the guard
- * above covers — 00068 defaults it to `'{}'` on `memory_write` and
+ * above covers — 00069 defaults it to `'{}'` on `memory_write` and
  * `memory_delete` too, and those are the two gates that cannot be stood in front
  * of, because the edge holds the service-role key. So this pins the WHOLE
  * `p_key_scopes` surface rather than the half that happened to be flagged: both
@@ -207,6 +237,7 @@ describe('key-scope usage guard (RPC-backed writes + MCP surface)', () => {
     // handler cannot ship with the fail-open default unnoticed.
     const pinned = new Set<string>([
       ...RPC_BACKED_SCOPE_READS.map((n) => `memories/handlers/${n}.ts`),
+      ...RPC_BACKED_ROW_READS.map((n) => `memories/handlers/${n}.ts`),
       ...REST_RPC_WRITES.map((n) => `memories/handlers/${n}.ts`),
       'mcp/tools.ts',
     ]);

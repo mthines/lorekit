@@ -220,7 +220,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
       }
 
-      // Scope allowlist (migration 00067). Same class of denial as the two
+      // Scope allowlist (migration 00068). Same class of denial as the two
       // above — authenticated, insufficient scope — so the same
       // JSONRPC_FORBIDDEN (HTTP 200), never -32001.
       //

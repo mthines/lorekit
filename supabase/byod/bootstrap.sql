@@ -160,7 +160,7 @@ create table if not exists api_tokens (
   token_hash   text not null unique,
   -- Array of granted permissions: 'read' | 'write'.
   permissions  text[] not null default '{"read","write"}',
-  -- Scoping (migration 00067). EMPTY scopes = unrestricted; org_access is a
+  -- Scoping (migration 00068). EMPTY scopes = unrestricted; org_access is a
   -- tri-state and org_ids is non-empty iff org_access = 'selected'.
   scopes       text[] not null default '{}',
   org_access   text   not null default 'all',
@@ -170,7 +170,7 @@ create table if not exists api_tokens (
 );
 
 -- `create table if not exists` above is a no-op on an install that predates
--- 00067, so the columns are added separately for that case.
+-- 00068, so the columns are added separately for that case.
 alter table api_tokens
   add column if not exists scopes     text[] not null default '{}',
   add column if not exists org_access text   not null default 'all',
@@ -216,17 +216,17 @@ alter table api_tokens add constraint api_tokens_org_ids_len
 
 -- `{null}` has cardinality 1, so neither CHECK above catches a NULL element,
 -- and a NULL org id on an authorization column is "unknown", not "none".
--- Mirrored from 00067.
+-- Mirrored from 00068.
 alter table api_tokens drop constraint if exists api_tokens_org_ids_not_null;
 alter table api_tokens add constraint api_tokens_org_ids_not_null
   check (array_position(org_ids, null) is null);
 
 -- The two request-time predicates. Kept byte-identical to the CURRENT hosted
--- definitions — `lorekit_api_token_scope_allowed` as re-issued by 00068 §8,
--- `lorekit_api_token_org_allowed` as first issued by 00067 — a BYOD install
+-- definitions — `lorekit_api_token_scope_allowed` as re-issued by 00069 §8,
+-- `lorekit_api_token_org_allowed` as first issued by 00068 — a BYOD install
 -- that answers these differently is a BYOD install with a different
 -- authorization boundary. Mirror the LATEST definition, never the one the
--- column was introduced with: 00067's looser scope predicate treated any
+-- column was introduced with: 00068's looser scope predicate treated any
 -- trailing `*` as a prefix wildcard, so a stored mid-token `*` WIDENED the key.
 --
 -- `lorekit_api_token_set_scoping` is deliberately NOT mirrored: it validates
@@ -249,7 +249,7 @@ as $$
     else exists (
       select 1
       from unnest(p_patterns) as pattern
-      -- SCOPE_PATTERN's shape, verbatim (00068 §8). A `*` is a wildcard only
+      -- SCOPE_PATTERN's shape, verbatim (00069 §8). A `*` is a wildcard only
       -- directly after `/` or `::`; a pattern that fails this test is DROPPED
       -- rather than matched, so a stored mid-token wildcard can only ever
       -- narrow the key. The guard is needed even though `api_tokens_scopes_shape`
@@ -285,7 +285,7 @@ as $$
     when p_org_access = 'personal' then false
     -- `coalesce(…, false)`: a NULL element in p_org_ids makes `= any(…)` NULL,
     -- and an authorization predicate must never return NULL. Kept identical to
-    -- 00067 — see the rationale there.
+    -- 00068 — see the rationale there.
     when p_org_access = 'selected'
       then coalesce(p_org_id = any(coalesce(p_org_ids, '{}'::uuid[])), false)
     else false
@@ -603,7 +603,7 @@ $$;
 --    (user-scoped) partition. A comment in the return is added for callers that
 --    inspect org_routed.
 --
---    The three key-restriction parameters (00067/00068) are NOT optional
+--    The three key-restriction parameters (00068/00069) are NOT optional
 --    cosmetics. PostgREST resolves an RPC by argument NAME, so `create.ts`
 --    sending p_key_scopes / p_key_org_access / p_key_org_ids at a BYOD install
 --    whose function lacks them misses the function entirely (PGRST202) and
@@ -611,7 +611,7 @@ $$;
 --    write path a caller cannot route around — the edge holds the service-role
 --    key, so the dispatcher's refusal is advisory by construction. Without it a
 --    BYOD install got the columns and the CHECKs with no SQL-layer enforcement
---    at all. Guard kept byte-identical to 00068 §1.
+--    at all. Guard kept byte-identical to 00069 §1.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Every earlier signature is dropped, newest first: `create or replace` keys on
@@ -635,7 +635,7 @@ create or replace function memory_write(
   p_org_slug     text        default null,  -- accepted but ignored in BYOD (no orgs table)
   p_ttl_days     integer     default null,
   p_clear_ttl    boolean     default false,
-  -- The CALLING KEY's restriction (00067/00068), defaulted to unrestricted so
+  -- The CALLING KEY's restriction (00068/00069), defaulted to unrestricted so
   -- every existing BYOD caller keeps its behaviour with no call-site change.
   p_key_scopes     text[] default '{}',
   -- The tenancy pair is accepted for signature compatibility and is INERT here:
@@ -668,7 +668,7 @@ begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-owned writes require the hosted LoreKit product.
 
-  -- The scope allowlist, checked FIRST and for every branch — 00068 §1
+  -- The scope allowlist, checked FIRST and for every branch — 00069 §1
   -- verbatim. LK002 is the code `translateDbError` already maps to a 403 on
   -- REST and a forbidden error on MCP, so no second mapping is needed.
   if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
@@ -757,7 +757,7 @@ grant execute on function memory_write(uuid, text, text, text, text[], text, tex
 --    p_org_slug is accepted for signature compatibility but ignored.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- The pre-00068 signature is DROPPED rather than replaced: `create or replace`
+-- The pre-00069 signature is DROPPED rather than replaced: `create or replace`
 -- keys on the argument list, so adding parameters would leave two overloads and
 -- PostgREST would resolve the old one for a caller that omits them.
 drop function if exists memory_delete(uuid, text, text, text, boolean);
@@ -787,7 +787,7 @@ begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-gated deletes require the hosted LoreKit product.
 
-  -- 00068 §7 verbatim: the allowlist, before either branch.
+  -- 00069 §7 verbatim: the allowlist, before either branch.
   if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
     raise exception using errcode = 'LK002',
       message = format('key_scope_denied: scope=%s', p_scope);

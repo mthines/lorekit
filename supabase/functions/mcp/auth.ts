@@ -28,7 +28,7 @@ export interface AuthContext {
   /** api_key only: ['read'], ['write'], or ['read', 'write'] */
   permissions?: string[];
   /**
-   * api_key only: the key's scope/org restriction (migration 00067).
+   * api_key only: the key's scope/org restriction (migration 00068).
    *
    * Absent for every other tier, and absent is NOT "restricted to nothing" — a
    * JWT or service-role caller has no key to restrict. `keyRestriction(auth)`

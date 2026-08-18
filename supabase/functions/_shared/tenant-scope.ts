@@ -19,13 +19,13 @@
  */
 
 /**
- * The calling API key's own restriction (migration 00067), as the transports
+ * The calling API key's own restriction (migration 00068), as the transports
  * read it off `api_tokens`.
  *
  * Declared here rather than imported so this module stays import-free and can
  * be mirrored verbatim into the edge function. A JWT or service-role caller has
  * no key and passes `undefined` — which is why every parameter below is
- * optional and the unrestricted case is byte-for-byte the pre-00067 behaviour.
+ * optional and the unrestricted case is byte-for-byte the pre-00068 behaviour.
  */
 export interface KeyRestriction {
   /** Allowlist of scope patterns. EMPTY = unrestricted. */
@@ -65,7 +65,7 @@ export function normalizeKeyRestriction(row: {
   const orgAccess: KeyRestriction['orgAccess'] =
     raw === 'all' || raw === 'personal' || raw === 'selected'
       ? raw
-      // Absent is the pre-00067 shape (the column did not exist), which IS
+      // Absent is the pre-00068 shape (the column did not exist), which IS
       // unrestricted. Present-but-unrecognised is corruption, and denies.
       : raw == null
         ? 'all'
@@ -139,7 +139,7 @@ export function keyScopeFilter(key?: KeyRestriction): string | null {
  * emits an `org_id.in.()` fragment — an empty PostgREST `in.()` list is a
  * match-all/error footgun, not "caller is in no org" (Requirement R3).
  *
- * The optional `key` is the calling API key's restriction (00067). It is
+ * The optional `key` is the calling API key's restriction (00068). It is
  * applied HERE, in the one place every read already funnels through, rather
  * than at each call site: a scoped key must not see an out-of-allowlist row
  * even on a read that names no scope at all (`memory.list` unfiltered,

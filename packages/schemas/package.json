@@ -11,6 +11,7 @@
     "./common": "./src/common.ts",
     "./filter": "./src/filter.ts",
     "./tags": "./src/tags.ts",
+    "./dimensions": "./src/dimensions.ts",
     "./blog": "./src/blog.ts",
     "./memory": "./src/memory.ts",
     "./org": "./src/org.ts",

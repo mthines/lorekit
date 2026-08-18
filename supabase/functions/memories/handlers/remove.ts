@@ -59,7 +59,7 @@ export async function handleRemove(
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
 
-  // Early refusal for a NAMED scope outside the key's allowlist (00067), hoisted
+  // Early refusal for a NAMED scope outside the key's allowlist (00068), hoisted
   // ABOVE the `?org=` dispatch on purpose. `applyKeyScopeFilter` below is a query
   // filter, and the org branch has no query to filter — it returns through
   // `removeOrgOwned`, whose `memory_delete` RPC chooses the rows itself — so a
@@ -193,7 +193,7 @@ async function removeOrgOwned(
       p_scope: scope,
       p_key: key,
       p_force: force,
-      // The calling key's restriction (00067/00068). The scope refusal above
+      // The calling key's restriction (00068/00069). The scope refusal above
       // this dispatch is advisory — the edge holds the service-role key — and
       // the TENANCY half has nowhere else to live at all: this RPC chooses its
       // rows, so `applyKeyScopeFilter` never sees them.

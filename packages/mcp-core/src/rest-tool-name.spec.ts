@@ -68,12 +68,27 @@ describe('restToolName', () => {
 
   it('never reuses one name for two different memory operations that must be distinguishable', () => {
     // memory.write is deliberately shared by POST / and PATCH /:id (both are
-    // upserts of a memory, as memory.write is on MCP). Everything else is 1:1.
+    // upserts of a memory, as memory.write is on MCP).
+    //
+    // memory.list / memory.facets / memory.activity are shared by their GET and
+    // POST forms for a different reason: those are ONE read over two transports
+    // (the body form exists only because a query string cannot carry an
+    // unbounded filter bar), so splitting the name would break the usage series
+    // at the moment the dashboard switched.
+    //
+    // Everything else is 1:1 — a new duplicate here needs a reason written down
+    // above, not just an updated expectation.
     const names = Object.entries(REST_TOOL_NAMES)
       .filter(([k]) => k.startsWith('memories '))
       .map(([, v]) => v);
     const duplicated = names.filter((n, i) => names.indexOf(n) !== i);
-    expect([...new Set(duplicated)].sort()).toEqual(['memory.restore', 'memory.write']);
+    expect([...new Set(duplicated)].sort()).toEqual([
+      'memory.activity',
+      'memory.facets',
+      'memory.list',
+      'memory.restore',
+      'memory.write',
+    ]);
   });
 
   // Drift guard: a route added to an index.ts without a mapping here would

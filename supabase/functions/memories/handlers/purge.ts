@@ -39,7 +39,7 @@ function requireUserId(auth: AuthContext, cors: Record<string, string>): string 
 }
 
 /**
- * The REST half of the account-wide-sweep refusal (00067).
+ * The REST half of the account-wide-sweep refusal (00068).
  *
  * `docs/api-tokens.md` says a scoped token is refused an account-wide sweep on
  * BOTH surfaces; only the MCP dispatcher enforced it, so these two endpoints

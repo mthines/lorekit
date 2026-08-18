@@ -44,7 +44,7 @@ export async function getMemberOrgIds(db: DbClient, userId: string, parentSpan: 
  *
  * Returns the query unchanged when auth.type === 'service' (CI — full access).
  *
- * The optional `key` is the calling API key's restriction (00067), and it is
+ * The optional `key` is the calling API key's restriction (00068), and it is
  * applied HERE for the same reason the MCP side applies it inside
  * `applyTenantScope`: a scoped key must not see an out-of-allowlist row on a
  * read that names no scope at all (`GET /memories` unfiltered, `/search` across

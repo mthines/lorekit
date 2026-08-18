@@ -16,7 +16,7 @@ import { z } from 'zod';
  * surface exists, written over REST — one definition, mirrored into
  * `supabase/functions/_shared/schemas/` like every other domain file.
  *
- * The authority is the DB (migration 00067): these schemas mirror its CHECKs so
+ * The authority is the DB (migration 00068): these schemas mirror its CHECKs so
  * a bad value is rejected at the edge with a readable message instead of coming
  * back as a constraint-violation string, but they never replace the constraint.
  */
@@ -55,7 +55,7 @@ export const ApiKeyScopePatternSchema = z
 
 /**
  * The allowlist itself. An empty array is the DEFAULT and means unrestricted —
- * see migration 00067 decision 1. It is not a validation failure, and a caller
+ * see migration 00068 decision 1. It is not a validation failure, and a caller
  * clearing the list is deliberately how a key is un-scoped again.
  */
 export const ApiKeyScopesSchema = z
@@ -113,7 +113,7 @@ export const ApiKeyScopingSchema = z
 
 export type ApiKeyScoping = z.infer<typeof ApiKeyScopingSchema>;
 
-/** The unrestricted default — what every key created before 00067 has. */
+/** The unrestricted default — what every key created before 00068 has. */
 export const UNSCOPED_API_KEY: ApiKeyScoping = {
   scopes: [],
   orgAccess: 'all',
@@ -123,7 +123,7 @@ export const UNSCOPED_API_KEY: ApiKeyScoping = {
 /**
  * Does a key with this allowlist reach `scope`?
  *
- * The TypeScript twin of `lorekit_api_token_scope_allowed` (00067). Both exist
+ * The TypeScript twin of `lorekit_api_token_scope_allowed` (00068). Both exist
  * because the write path's last unbypassable gate is inside `memory_write`,
  * which cannot call TypeScript, while the transports want to refuse early
  * without a round trip. They must agree — the SQL is the authority, and
@@ -154,7 +154,7 @@ export function scopeAllowedByKey(patterns: readonly string[], scope: string | n
 /**
  * Does a key with this tenancy reach a row owned by `orgId` (`null` = personal)?
  *
- * The TypeScript twin of `lorekit_api_token_org_allowed` (00067). A personal row
+ * The TypeScript twin of `lorekit_api_token_org_allowed` (00068). A personal row
  * is reachable under every tenancy: `personal` narrows which ORGS are reachable,
  * it never revokes the owner's own memories.
  */
