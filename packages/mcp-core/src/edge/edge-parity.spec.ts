@@ -91,6 +91,10 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // The pure half of the embedding pipeline. The impure half (`fetch`, the API
   // key) is `_shared/embedding-client.ts`, which is Deno-only and not mirrored.
   ['../provenance/embedding.ts', '_shared/embedding.ts'],
+  // The MCP `initialize` version negotiation. Mirrored because the handshake is
+  // decided in the Deno edge handler, which cannot cross-import mcp-core, and a
+  // silent drift here is a whole class of client that connects and then stops.
+  ['../mcp-guards/mcp-protocol-version.ts', '_shared/mcp-protocol-version.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome
@@ -99,10 +103,6 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['../audit/rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
   ['../rest/rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
   ['../limits/dry-run.ts', '_shared/dry-run.ts'],
-  // The MCP `initialize` version negotiation. Mirrored because the handshake is
-  // decided in the Deno edge handler, which cannot cross-import mcp-core, and a
-  // silent drift here is a whole class of client that connects and then stops.
-  ['../mcp-guards/mcp-protocol-version.ts', '_shared/mcp-protocol-version.ts'],
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
   ['../telemetry/usage-stats.ts', '_shared/usage-stats.ts'],
