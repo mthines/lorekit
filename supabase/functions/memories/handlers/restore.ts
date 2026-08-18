@@ -59,14 +59,17 @@ export async function handleRestore(
     // Natural-key restore addresses a row by scope+key, so the same rule as
     // DELETE applies: an ungrammatical scope must be named as bad input, not
     // reported back as "no such memory".
-    let scope: string | undefined;
+    // `RestoreMemoryBodySchema.scope` is required, so `parseScopeFilter` — whose
+    // signature is `undefined` in, `undefined` out — cannot return undefined
+    // here. Narrow once at the assignment rather than asserting at each use.
+    let scope: string;
     try {
-      scope = parseScopeFilter(rawScope);
+      scope = parseScopeFilter(rawScope) as string;
     } catch (e) {
       return badRequest((e as Error).message, undefined, cors);
     }
-    span.setAttributes({ 'lorekit.scope': scope as string, 'lorekit.key': key });
-    q = q.eq('scope', scope as string).eq('key', key);
+    span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+    q = q.eq('scope', scope).eq('key', key);
   }
 
   // api_key auth uses service-role client — restrict to caller's own rows.
