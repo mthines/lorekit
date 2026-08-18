@@ -305,8 +305,16 @@ export function initDash0Rum(): boolean {
 
   // Warn once — `initialized` above makes this path run at most once per page —
   // when a pulled `VERCEL_ENV` claimed a deployment environment this dev build
-  // is not in. The server half does the same in `instrumentation.ts`, so a
-  // developer sees it whichever runtime boots first.
+  // is not in.
+  //
+  // This is the SECONDARY warning, not the one a developer will normally see:
+  // the endpoint/token guard above returns early when RUM is unconfigured,
+  // which is the local-dev default, so on the very machines a pulled
+  // `VERCEL_ENV` misconfigures this line is usually unreachable. The server
+  // half in `instrumentation.ts` has no such guard and is what actually warns
+  // there. Kept anyway for the case that is not covered otherwise: a browser
+  // bundle built with RUM configured but a clamped environment — a preview or
+  // a local production build carrying pulled env.
   const deploymentEnv = resolveDeploymentEnvResolution();
   if (deploymentEnv.clamped) console.warn(deploymentEnvironmentClampMessage(deploymentEnv));
 
