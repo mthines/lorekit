@@ -27,7 +27,7 @@
  *   difference between a control and a drifting scene.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -246,11 +246,13 @@ export default function LoreGraphScene({
   onHover,
 }: LoreGraphSceneProps) {
   const reduceMotion = useReducedMotion();
-  const [ready, setReady] = useState(false);
 
   // Positions arrive from the worker; until the first report there is nothing
   // to place, and drawing an empty instanced mesh at the origin looks broken.
-  useEffect(() => setReady(positions.length === graph.nodes.length * 3), [positions, graph]);
+  // Derived during render rather than mirrored into state by an effect: it is a
+  // pure function of the two props, so state would only lag a commit behind its
+  // own inputs and cost an extra render pass on every rebuild.
+  const ready = positions.length === graph.nodes.length * 3;
 
   return (
     <Canvas
