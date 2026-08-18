@@ -125,11 +125,21 @@ describe('isValidOtlpEndpoint', () => {
 });
 
 describe('resolveDeploymentEnv', () => {
+  // `NODE_ENV` is part of the input now — a non-production build is a dev
+  // server whatever `NEXT_PUBLIC_VERCEL_ENV` claims. Vitest runs with
+  // `NODE_ENV=test`, so a production build has to be simulated explicitly.
+  // `vi.stubEnv` is required here: `NODE_ENV` is typed read-only by Next's
+  // ambient env declarations, so a plain assignment does not typecheck.
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.each([
     ['production', 'production'],
     ['preview', 'preview'],
     ['development', 'development'],
-  ])('maps NEXT_PUBLIC_VERCEL_ENV=%s to %s', (input, expected) => {
+  ])('maps NEXT_PUBLIC_VERCEL_ENV=%s to %s on a production build', (input, expected) => {
+    vi.stubEnv('NODE_ENV', 'production');
     process.env['NEXT_PUBLIC_VERCEL_ENV'] = input;
     expect(resolveDeploymentEnv()).toBe(expected);
   });
@@ -141,6 +151,12 @@ describe('resolveDeploymentEnv', () => {
 
   it('falls back to local for an unrecognised value rather than passing it through', () => {
     process.env['NEXT_PUBLIC_VERCEL_ENV'] = 'staging';
+    expect(resolveDeploymentEnv()).toBe('local');
+  });
+
+  it('reports local on a dev build even when the env claims production', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    process.env['NEXT_PUBLIC_VERCEL_ENV'] = 'production';
     expect(resolveDeploymentEnv()).toBe('local');
   });
 });

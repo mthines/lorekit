@@ -33,6 +33,7 @@ import { init, identify } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
 import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
+import { resolveDeploymentEnvironment } from './otel-deployment-env';
 import { supabaseOriginPattern } from './otel-origins';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
@@ -49,16 +50,23 @@ let initialized = false;
  * Resolve `deployment.environment.name` from Vercel's env, defaulting to
  * `local` for a plain `next dev`.
  *
- * The env var is read as a literal member expression because Next.js inlines
- * `NEXT_PUBLIC_*` reads at build time for the browser bundle — a computed key
- * would not be substituted.
+ * Both env vars are read as literal member expressions because Next.js inlines
+ * `NEXT_PUBLIC_*` and `NODE_ENV` reads at build time for the browser bundle — a
+ * computed key would not be substituted.
+ *
+ * `NEXT_PUBLIC_VERCEL_ENV` is inlined from `VERCEL_ENV` (see `next.config.ts`),
+ * which `vercel env pull` happily writes into a local `.env.local` — so it is
+ * cross-checked against `NODE_ENV` to keep a dev build out of the production
+ * environment. The decision itself lives in the shared pure module so the
+ * browser and server halves cannot drift.
+ *
+ * @see ./otel-deployment-env.ts
  */
 export function resolveDeploymentEnv(): string {
-  const env = process.env['NEXT_PUBLIC_VERCEL_ENV'];
-  if (env === 'production') return 'production';
-  if (env === 'preview') return 'preview';
-  if (env === 'development') return 'development';
-  return 'local';
+  return resolveDeploymentEnvironment(
+    process.env['NEXT_PUBLIC_VERCEL_ENV'],
+    process.env['NODE_ENV'],
+  ).name;
 }
 
 /**

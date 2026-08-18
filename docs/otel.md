@@ -446,7 +446,34 @@ All signals carry these resource attributes:
 | `service.namespace` | `lorekit` |
 | `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below). |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below). On `web` the ambient value is `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. |
+
+### `web` never reports `production` from a dev server
+
+`VERCEL_ENV` is a value, not a proof of where the process runs: `vercel env pull`
+writes it — `VERCEL_ENV=production` included — into a local `.env.local`, which
+`next dev` then loads like any other env file. Left unchecked, a laptop stamps
+every span and RUM event `deployment.environment.name=production`.
+
+That is not hypothetical. A local Turbopack dev server's `ENOENT … .next/server/
+app/(auth)/login/page/app-build-manifest.json` failures once pushed the
+production `web` SERVER error ratio to 12 % and fired the "Web — high backend
+error rate" check rule, while the deployed site was healthy.
+
+So both emitters resolve the tag through one shared pure module,
+[`packages/web/src/lib/otel-deployment-env.ts`](../packages/web/src/lib/otel-deployment-env.ts)
+(server: `src/instrumentation.ts`; browser: `src/lib/dash0-rum.ts`):
+
+- `NODE_ENV === 'production'` — a real `next build` output, as served by every
+  Vercel production and preview deployment. `VERCEL_ENV` is mapped straight
+  through.
+- anything else — a dev server. The result is narrowed to `development` (what
+  `vercel dev` genuinely is) or `local`, **never** `production` / `preview`, and
+  a one-time `console.warn` names the clamped value so the developer can drop
+  `VERCEL_ENV` from their local env files.
+
+An unrecognised `VERCEL_ENV` (a typo, `staging`, …) falls back to `local` rather
+than being passed through, so it can never invent a new environment in Dash0.
 
 ### Smoke / test runs are tagged `deployment.environment.name=test`
 
