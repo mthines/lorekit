@@ -110,3 +110,37 @@ describe('coverageNotice', () => {
     expect(coverageNotice(graph)).toBe(truncationNotice(graph));
   });
 });
+
+describe('truncationNotice — hub suppression', () => {
+  it('says how many terms were too common, in words a reader can act on', () => {
+    const graph = buildLoreGraph(
+      Array.from({ length: 6 }, (_, i) => memory(`m${i}`, 'global', ['everywhere', 'also-everywhere'])),
+      { hubSize: 3, kinds: ['label'] },
+    );
+
+    expect(truncationNotice(graph)).toBe(
+      'This map is capped for legibility — 2 labels and namespaces were too common to be a relationship.',
+    );
+  });
+
+  it('uses the singular for one suppressed term', () => {
+    const graph = buildLoreGraph(
+      Array.from({ length: 6 }, (_, i) => memory(`m${i}`, 'global', ['everywhere'])),
+      { hubSize: 3, kinds: ['label'] },
+    );
+
+    expect(truncationNotice(graph)).toContain('1 label or namespace was too common');
+  });
+
+  it('joins hub suppression with the other caps in one sentence', () => {
+    const graph = buildLoreGraph(
+      Array.from({ length: 6 }, (_, i) => memory(`m${i}`, 'global', ['everywhere', 'pairable'])),
+      { hubSize: 3, kinds: ['label'], maxNodes: 4 },
+    );
+    const notice = truncationNotice(graph) ?? '';
+
+    expect(notice).toContain('most recently updated');
+    expect(notice).toContain('too common');
+    expect(notice.split('.').filter(Boolean)).toHaveLength(1);
+  });
+});

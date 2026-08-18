@@ -79,13 +79,18 @@ export function useLoreGraphLayout(graph: LoreGraph, options?: LayoutOptions): L
     const id = ++runId.current;
     let worker: Worker | null = null;
 
-    try {
-      worker = new Worker(new URL('../lore-graph/layout.worker.ts', import.meta.url), {
-        type: 'module',
-      });
-    } catch {
-      // No worker available. Run a short pass inline rather than nothing — see
-      // the module docblock.
+    /**
+     * Lay out on this thread instead.
+     *
+     * Reached two ways, and the SECOND one is why this is a named function
+     * rather than an inline catch block: `new Worker` throwing is the obvious
+     * failure, but a worker that constructs fine and then fails to load its
+     * module never throws anywhere — it fires an `error` event and simply
+     * never posts. With no handler for that, the map sits on "Arranging the
+     * memory map" forever, which is the worst of the three outcomes because
+     * it looks like it is still working.
+     */
+    const layoutInline = () => {
       setState({
         positions: layoutGraph({ nodes: request.nodes, edges: request.edges }, {
           ...options,
@@ -94,8 +99,26 @@ export function useLoreGraphLayout(graph: LoreGraph, options?: LayoutOptions): L
         progress: 1,
         settling: false,
       });
+    };
+
+    try {
+      worker = new Worker(new URL('../lore-graph/layout.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+    } catch {
+      layoutInline();
       return;
     }
+
+    worker.addEventListener('error', (event) => {
+      // Reported, not swallowed: a worker failing to boot is a bundling
+      // problem, and a silent inline fallback would hide it behind "the map
+      // feels slow on some machines".
+      console.error('[lore-graph] layout worker failed, falling back inline', event.message);
+      worker?.terminate();
+      worker = null;
+      layoutInline();
+    });
 
     worker.addEventListener('message', (event: MessageEvent<LayoutProgress>) => {
       const message = event.data;

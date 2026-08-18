@@ -33,6 +33,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { Boxes } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SceneBoundary } from './SceneBoundary';
 import { useLoreGraphLayout } from '@/lib/hooks/useLoreGraphLayout';
 import { buildLoreGraph, type GraphMemoryInput } from '@/lib/lore-graph/build';
 import { graphSummary, coverageNotice } from '@/lib/lore-graph/summary';
@@ -133,7 +134,11 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
       </p>
 
       <div className="relative h-[60vh] min-h-[380px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-        <Suspense fallback={<SceneSkeleton />}>
+        {/* The boundary is OUTSIDE Suspense: a scene that throws on its first
+            render must not be retried into the same throw by the lazy boundary,
+            and the fallback has to survive the chunk having loaded fine. */}
+        <SceneBoundary>
+          <Suspense fallback={<SceneSkeleton />}>
           <LoreGraphScene
             graph={graph}
             positions={positions}
@@ -147,7 +152,8 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
             }}
             onHover={setHoveredId}
           />
-        </Suspense>
+          </Suspense>
+        </SceneBoundary>
 
         {/* The hover read-out lives in the DOM beside the canvas rather than as
             a floating 3D label: no per-frame DOM/scene sync, it stays legible

@@ -19,6 +19,25 @@ Per component/page, two files:
   (`tags: ['test']`, `chromatic.disableSnapshot`). Their `play` functions run in
   the browser; they are **not** screenshotted.
 
+### The one documented exception: WebGL
+
+`Lore/LoreGraphView` (the 3D memory map) sets `chromatic.disableSnapshot` on its
+**visual** stories too, so they render in Storybook but produce no baseline. A
+WebGL frame depends on the GPU, the driver and the ANGLE backend, so a committed
+screenshot would compare like-for-unlike and flake for reasons unrelated to the
+change under test.
+
+It also deliberately breaks the "group variants into one `Default`" rule and
+ships one story per scenario. That rule exists to take a single snapshot per
+file; with no snapshot it buys nothing, and it would cost something real —
+each `<Canvas>` acquires a WebGL context, browsers cap live contexts at roughly
+8–16 and evict the oldest past the cap, so grouping the scenarios would render a
+page of blank canvases.
+
+If you add another canvas-backed component, follow the same two rules and record
+why. Do **not** loosen the screenshot `afterEach` — the opt-out is per story on
+purpose. Full rationale: [lore-graph.md](./lore-graph.md#stories-yes-pixel-baselines-no).
+
 ## MSW-mocked full-page / full-view stories
 
 The dashboard standardises on `@tanstack/react-query` v5. Query hooks fetch through

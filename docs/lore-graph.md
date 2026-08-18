@@ -301,9 +301,45 @@ Two rendering notes that are easy to undo by accident:
 - **Node matrices are written in `useLayoutEffect`, not `useEffect`.** With `useEffect` the first frame after a rebuild shows every instance stacked at the origin — a visible black hole on every data change.
 - **The `instancedMesh` is keyed on node count.** An `InstancedMesh`'s capacity is fixed at construction, so reusing one across a resize leaves stale instances drawn at the origin.
 
-### Not in the visual-regression suite, on purpose
+### Stories: yes. Pixel baselines: no.
 
-`packages/web` screenshots every `*.stories.tsx` (see [storybook.md](./storybook.md)). The 3D view is deliberately excluded: a WebGL frame depends on the GPU, the driver and the ANGLE backend, so a committed baseline would compare like-for-unlike and flake for reasons unrelated to the change under test. The parts that *can* be pinned are pinned instead, in Node — the graph model, the layout, the GPU buffer contents, the palette mirror and the summary copy are covered by ~100 specs. What is left unpinned is the draw call itself, which is the piece a screenshot proves least about.
+`LoreGraphView.stories.tsx` covers eleven data shapes, and
+`LoreGraphView.test.stories.tsx` covers the DOM contract around the canvas.
+Every one of them sets `chromatic.disableSnapshot`, which is the opt-out
+`.storybook/vitest.setup.ts` honours (see [storybook.md](./storybook.md)).
+
+**Why no baseline.** A WebGL frame depends on the GPU, the driver and the ANGLE
+backend, so a committed screenshot would compare like-for-unlike and flake for
+reasons unrelated to the change under test. Everything that *can* be pinned is
+pinned in Node instead — the graph model, the layout, the GPU buffer contents,
+the palette mirror and the notice copy, ~120 specs. What stays unpinned is the
+draw call, which is the thing a screenshot proves least about.
+
+**Why one story per scenario**, against the house pattern of grouping variants
+into a single `Default`: that pattern exists to take one snapshot per file, and
+there is no snapshot here. Following it anyway would be actively harmful —
+each `<Canvas>` acquires its own WebGL context, browsers cap live contexts at
+roughly 8–16 and silently evict the oldest past the cap, so eight scenarios in
+one render tree is a page of blank canvases.
+
+**What the interaction tests assert.** The DOM around the canvas, never pixels
+inside it — the live-region summary, the coverage notice, the legend, the empty
+state. That is not a compromise: it is the map's actual promise, that everything
+shown visually is also stated in text. If those tests pass, a screen-reader user
+can use the feature; a pixel test could not tell you that.
+
+The scenarios worth opening first:
+
+| Story | What it is for |
+|-------|----------------|
+| `Default` | A working agent fleet — 240 memories over six scopes. |
+| `Plan ceiling (5,000 memories)` | The most the free tier can hold; where you feel the build cost before a customer does. |
+| `Hub-suppressed labels` | Every memory carrying the same labels. Looks identical to `NoRelationships` and means the opposite — the notice is the only thing that tells them apart. |
+| `NoRelationships` | Nothing shared at all. A legitimate picture that must not read as a bug. |
+| `AllArchived` | The whole graph dimmed; checks the scope hue survived dimming. |
+| `AwkwardLabels` | A 100-character key, CJK, an emoji, RTL, a one-character key. |
+| `PartiallyLoaded` | The Explorer has unfetched pages and the map admits it. |
+| `Playground` | Knobs over the fixture (count, scopes, archived share, hub label) rather than over dead props. |
 
 ## Accessibility
 

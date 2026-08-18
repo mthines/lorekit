@@ -55,7 +55,8 @@ export function graphSummary(graph: LoreGraph, selectedLabel?: string | null): s
 export function truncationNotice(graph: LoreGraph): string | null {
   const nodes = graph.truncated.find((entry) => entry.of === 'nodes');
   const edges = graph.truncated.find((entry) => entry.of === 'edges');
-  if (!nodes && !edges) return null;
+  const terms = graph.truncated.find((entry) => entry.of === 'terms');
+  if (!nodes && !edges && !terms) return null;
 
   const clauses: string[] = [];
   if (nodes) {
@@ -66,6 +67,16 @@ export function truncationNotice(graph: LoreGraph): string | null {
   if (edges) {
     clauses.push(
       `the ${edges.kept.toLocaleString()} strongest of ${edges.total.toLocaleString()} relationships`,
+    );
+  }
+  if (terms) {
+    // Phrased as what it means rather than what it is. "97 of 500 terms kept"
+    // is accurate and unreadable; a reader wants to know that some labels were
+    // too common to say anything, because that is the difference between "we
+    // have no shared labels" and "our labels are all on everything".
+    const dropped = terms.total - terms.kept;
+    clauses.push(
+      `${dropped.toLocaleString()} ${dropped === 1 ? 'label or namespace was' : 'labels and namespaces were'} too common to be a relationship`,
     );
   }
   return `This map is capped for legibility — ${clauses.join(', and ')}.`;
