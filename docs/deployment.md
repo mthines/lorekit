@@ -259,7 +259,11 @@ repo-level variable, defaulting to `https://lorekit.io`).
 > `workflows` permission, the same constraint as "Wiring the sweep into CI". Until a
 > human applies [Wiring the deployed-SHA baseline into `deploy.yml`](#wiring-the-deployed-sha-baseline-into-deployyml)
 > below, the pipeline still diffs a single push and everything in this subsection
-> describes the intended behaviour, not the current one.
+> describes the intended behaviour, not the current one. That includes the tests:
+> `scripts/resolve-deploy-scope.test.mjs` runs only in the `deploy-scope` job that
+> step 5 adds — `scripts/**` is outside `nx affected`, so no committed check
+> executes it today. Run it by hand (`node --test
+> scripts/resolve-deploy-scope.test.mjs`) when touching the resolver until then.
 
 Lockstep above only binds the two halves **within one run**. It says nothing
 about a half that never reached production in an *earlier* run — and that gap is
