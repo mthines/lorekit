@@ -33,7 +33,10 @@ import { init, identify } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
 import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
-import { resolveDeploymentEnvironment } from './otel-deployment-env';
+import {
+  deploymentEnvironmentClampMessage,
+  resolveDeploymentEnvironment,
+} from './otel-deployment-env';
 import { supabaseOriginPattern } from './otel-origins';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
@@ -60,13 +63,29 @@ let initialized = false;
  * environment. The decision itself lives in the shared pure module so the
  * browser and server halves cannot drift.
  *
+ * Returns only the name. {@link resolveDeploymentEnvResolution} is the form
+ * `initDash0Rum` uses, because it also needs to know whether a claimed
+ * environment was clamped so it can warn about it exactly once, the way
+ * `instrumentation.ts` does on the server side.
+ *
  * @see ./otel-deployment-env.ts
  */
 export function resolveDeploymentEnv(): string {
+  return resolveDeploymentEnvResolution().name;
+}
+
+/**
+ * The full {@link resolveDeploymentEnvironment} result for the browser bundle —
+ * the resolved name plus the `VERCEL_ENV` value that was clamped away, if any.
+ *
+ * Kept side-effect free (the warning is the caller's job) so it stays a pure
+ * read of the inlined env, and so importing this module never logs.
+ */
+export function resolveDeploymentEnvResolution() {
   return resolveDeploymentEnvironment(
     process.env['NEXT_PUBLIC_VERCEL_ENV'],
     process.env['NODE_ENV'],
-  ).name;
+  );
 }
 
 /**
@@ -278,13 +297,20 @@ export function initDash0Rum(): boolean {
   // `window.onerror` inside init(), and listener order is registration order.
   installExtensionErrorFilter();
 
+  // Warn once — `initialized` above makes this path run at most once per page —
+  // when a pulled `VERCEL_ENV` claimed a deployment environment this dev build
+  // is not in. The server half does the same in `instrumentation.ts`, so a
+  // developer sees it whichever runtime boots first.
+  const deploymentEnv = resolveDeploymentEnvResolution();
+  if (deploymentEnv.clamped) console.warn(deploymentEnvironmentClampMessage(deploymentEnv));
+
   init({
     serviceName: SERVICE_NAME,
     endpoint: { url: endpoint, authToken },
     additionalSignalAttributes: {
       'service.namespace': 'lorekit',
       'service.version': process.env['NEXT_PUBLIC_OTEL_SERVICE_VERSION'] ?? 'unknown',
-      'deployment.environment.name': resolveDeploymentEnv(),
+      'deployment.environment.name': deploymentEnv.name,
       ...buildVcsSignalAttributes(),
     },
     // Propagate W3C trace context to Supabase — links browser spans to the
