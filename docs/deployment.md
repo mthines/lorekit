@@ -439,10 +439,18 @@ rollback`, which ends in `exit 1`.
           TAG: ${{ env.API_DEPLOYED_TAG }}
         run: |
           PREV="$(git rev-parse HEAD~1)"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
           gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
             -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
           echo "- API marker \`${TAG}\` → \`${PREV}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
 ```
+
+Note the **create-or-update** shape (`POST`, falling back to `PATCH`), the same
+as the record steps. A `PATCH` alone 404s when the marker does not exist yet — a
+first failed deploy, or after a web rollback that had nothing to restore dropped
+it — and that 404 would land in `|| true`, leaving the next merge to fall back to
+the rolled-back commit.
 
 The web half does not: `vercel rollback` returns to the previously promoted
 *deployment*, which can be many commits back. So `promote-web-production` records
@@ -474,6 +482,8 @@ has no answer (nothing was ever promoted before):
           PREV: ${{ needs.promote-web-production.outputs.previous_marker }}
         run: |
           if [ -n "$PREV" ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
               -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
             echo "- Restored web marker \`${TAG}\` → \`${PREV}\`" >> "$GITHUB_STEP_SUMMARY"
