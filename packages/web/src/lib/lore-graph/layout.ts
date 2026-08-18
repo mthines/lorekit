@@ -259,6 +259,45 @@ function coincidentNudge(a: number, b: number): [number, number, number] {
 }
 
 /**
+ * The 27 cells of a node's 3×3×3 neighbourhood, in the order they are scanned.
+ *
+ * The order matters because `maxNeighbours` truncates the scan, and a truncated
+ * scan is a BIASED scan unless the order is symmetric. Iterating
+ * `dx,dy,dz = -1..1` and stopping at the cap means a saturated node only ever
+ * repels from its lowest-coordinate cells, so the term that is supposed to
+ * separate it instead drifts it steadily toward `+x+y+z`.
+ *
+ * So: the node's own cell first (the neighbours most likely to be overlapping
+ * it), then every offset immediately followed by its negation, nearest shell
+ * outward. Truncation now cuts between opposite pairs, leaving at most one
+ * unbalanced direction instead of thirteen.
+ *
+ * Built once at module load, and FLAT (`x, y, z` triples in one `Int8Array`)
+ * rather than an array of tuples, so the innermost loop of the whole layout
+ * indexes numbers instead of destructuring a fresh pair of array elements
+ * 27 times per node per iteration.
+ */
+const NEIGHBOUR_CELLS: Int8Array = (() => {
+  const ordered: number[] = [0, 0, 0];
+  const taken = new Set<string>(['0,0,0']);
+  // Squared distance 1 = faces, 2 = edges, 3 = corners.
+  for (const shell of [1, 2, 3]) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          if (dx * dx + dy * dy + dz * dz !== shell) continue;
+          if (taken.has(`${dx},${dy},${dz}`)) continue;
+          taken.add(`${dx},${dy},${dz}`);
+          taken.add(`${-dx},${-dy},${-dz}`);
+          ordered.push(dx, dy, dz, -dx, -dy, -dz);
+        }
+      }
+    }
+  }
+  return Int8Array.from(ordered);
+})();
+
+/**
  * Refine a seeded layout in place, and return the same array.
  *
  * In place because the caller owns a buffer it intends to transfer to the GPU
@@ -293,32 +332,34 @@ export function relaxPositions(
       const cz = Math.floor(positions[node * 3 + 2] / cell);
       let considered = 0;
 
-      for (let dx = -1; dx <= 1 && considered < maxNeighbours; dx++) {
-        for (let dy = -1; dy <= 1 && considered < maxNeighbours; dy++) {
-          for (let dz = -1; dz <= 1 && considered < maxNeighbours; dz++) {
-            const bucket = grid.get(cellKey(cx + dx, cy + dy, cz + dz));
-            if (!bucket) continue;
-            for (const other of bucket) {
-              if (other === node) continue;
-              if (considered++ >= maxNeighbours) break;
+      for (let offset = 0; offset < NEIGHBOUR_CELLS.length && considered < maxNeighbours; offset += 3) {
+        const bucket = grid.get(
+          cellKey(
+            cx + NEIGHBOUR_CELLS[offset],
+            cy + NEIGHBOUR_CELLS[offset + 1],
+            cz + NEIGHBOUR_CELLS[offset + 2],
+          ),
+        );
+        if (!bucket) continue;
+        for (const other of bucket) {
+          if (other === node) continue;
+          if (considered++ >= maxNeighbours) break;
 
-              let ox = positions[node * 3] - positions[other * 3];
-              let oy = positions[node * 3 + 1] - positions[other * 3 + 1];
-              let oz = positions[node * 3 + 2] - positions[other * 3 + 2];
-              let distanceSquared = ox * ox + oy * oy + oz * oz;
+          let ox = positions[node * 3] - positions[other * 3];
+          let oy = positions[node * 3 + 1] - positions[other * 3 + 1];
+          let oz = positions[node * 3 + 2] - positions[other * 3 + 2];
+          let distanceSquared = ox * ox + oy * oy + oz * oz;
 
-              if (distanceSquared < 1e-6) {
-                [ox, oy, oz] = coincidentNudge(node, other);
-                distanceSquared = ox * ox + oy * oy + oz * oz;
-              }
-
-              const distance = Math.sqrt(distanceSquared);
-              const push = repulsion / Math.max(distanceSquared, MIN_SEPARATION * MIN_SEPARATION);
-              velocity[node * 3] += (ox / distance) * push;
-              velocity[node * 3 + 1] += (oy / distance) * push;
-              velocity[node * 3 + 2] += (oz / distance) * push;
-            }
+          if (distanceSquared < 1e-6) {
+            [ox, oy, oz] = coincidentNudge(node, other);
+            distanceSquared = ox * ox + oy * oy + oz * oz;
           }
+
+          const distance = Math.sqrt(distanceSquared);
+          const push = repulsion / Math.max(distanceSquared, MIN_SEPARATION * MIN_SEPARATION);
+          velocity[node * 3] += (ox / distance) * push;
+          velocity[node * 3 + 1] += (oy / distance) * push;
+          velocity[node * 3 + 2] += (oz / distance) * push;
         }
       }
     }

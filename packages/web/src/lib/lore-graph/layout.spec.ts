@@ -291,6 +291,33 @@ describe('relaxPositions', () => {
     }
   });
 
+  it('does not drift a saturated cluster along the neighbour-scan direction', () => {
+    // `maxNeighbours` truncates the 27-cell scan, so the scan ORDER decides
+    // which neighbours a crowded node is allowed to feel. Scanning
+    // `dx,dy,dz = -1..1` and stopping at the cap let a saturated node repel
+    // only from its lowest cells, turning a separation term into a steady push
+    // toward +x+y+z: this cluster's centroid walked 3.2 units off its anchor.
+    //
+    // Repulsion is internal, so with a symmetric scan the centroid should
+    // barely move at all — the scope node is pinned at the cloud's own centre,
+    // so attraction has nothing to pull it toward either.
+    const graph = graphOf(['global'], 60);
+    const seeded = seedPositions(graph, { clusterRadius: 0.5 });
+    const centre = positionOf(graph, seeded, scopeNodeId('global'));
+    const relaxed = relaxPositions(graph, Float32Array.from(seeded), { iterations: 30 });
+
+    const memories = graph.nodes.filter((node) => node.kind === 'memory');
+    const centroid = memories
+      .map((node) => positionOf(graph, relaxed, node.id))
+      .reduce(
+        (sum, at) => [sum[0] + at[0], sum[1] + at[1], sum[2] + at[2]],
+        [0, 0, 0] as [number, number, number],
+      )
+      .map((total) => total / memories.length);
+
+    expect(distance(centroid, centre)).toBeLessThan(1);
+  });
+
   it('tightens the graph rather than loosening it', () => {
     const graph = graphOf(['global', 'repo::a/b'], 25);
     const seeded = seedPositions(graph, { clusterRadius: 14 });
