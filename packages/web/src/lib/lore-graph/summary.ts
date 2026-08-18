@@ -88,7 +88,10 @@ export function truncationNotice(graph: LoreGraph): string | null {
 export function coverageNotice(graph: LoreGraph, { hasMore = false } = {}): string | null {
   const sentences: string[] = [];
   if (hasMore) {
-    sentences.push('This map draws only the memories loaded so far — scroll the list to load the rest.');
+    // Names the control the reader can actually reach from the map: paging is a
+    // "Load more" button, rendered under the canvas in map view too, not a
+    // scroll and not something they have to switch views for.
+    sentences.push('This map draws only the memories loaded so far — use Load more to add the rest.');
   }
   const truncation = truncationNotice(graph);
   if (truncation) sentences.push(truncation);

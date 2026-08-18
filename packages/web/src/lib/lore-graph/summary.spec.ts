@@ -94,7 +94,7 @@ describe('coverageNotice', () => {
 
   it('says the map is a prefix when more pages are pending', () => {
     expect(coverageNotice(buildLoreGraph([memory('a')]), { hasMore: true })).toBe(
-      'This map draws only the memories loaded so far — scroll the list to load the rest.',
+      'This map draws only the memories loaded so far — use Load more to add the rest.',
     );
   });
 
