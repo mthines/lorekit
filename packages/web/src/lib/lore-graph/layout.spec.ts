@@ -295,10 +295,12 @@ describe('relaxPositions', () => {
 
     expect(positions).toHaveLength(graph.nodes.length * 3);
     expect([...positions].every(Number.isFinite)).toBe(true);
-    // Generous: this runs off the main thread, and CI machines are slow. The
-    // assertion that matters is that it is seconds, not minutes — i.e. that no
-    // accidental all-pairs path crept back in.
-    expect(elapsed).toBeLessThan(20_000);
+    // ~10-15 ms per iteration on a developer machine, so ~300-450 ms for this
+    // 30-iteration pass. The budget is 100 ms per iteration: roughly 7× that
+    // headroom for a slow shared CI runner, and still tight enough that an
+    // accidental all-pairs path — which is ~1000× the work at this size, not
+    // 7× — cannot slip through. This is the number `docs/lore-graph.md` cites.
+    expect(elapsed).toBeLessThan(30 * 100);
   });
 });
 

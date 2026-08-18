@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~80–100 ms (measured, `buildLoreGraph`) | Runs once per dataset change, not per frame, and off the main thread. |
+| **Graph build** | ~80–100 ms (measured, `buildLoreGraph`) | Runs once per dataset change, not per frame. Pure and `Float32Array`-shaped, so it moves to the worker with the layout — see [Layout](#layout). |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
@@ -98,11 +98,22 @@ The design is two-stage:
 Positions are `Float32Array`s from end to end — the worker posts a transferable
 buffer straight into the GPU attribute, with no per-node object allocation.
 
-**Measured at the 5,000-memory ceiling** (`layout.spec.ts`): the seed is
-effectively free, and relaxation costs ~11 ms per iteration, so a 30-iteration
-pass is ~330 ms and the 120-iteration default is ~1.3 s. Both are off the main
-thread and both refine an already-correct picture, so the view is interactive
-from the first frame regardless.
+**At the 5,000-memory ceiling**, the seed is effectively free and relaxation
+costs ~10-15 ms per iteration on a developer machine — so a 30-iteration pass is
+~300-450 ms and the 120-iteration default is a second or two.
+
+Those are observations, not a contract. What `layout.spec.ts` actually *asserts*
+is a ceiling of **100 ms per iteration** (a 30-iteration pass under 3 s), which
+is ~7× the observed cost so a slow shared CI runner does not go red on load
+alone. That gap is deliberate and the guarantee still holds: the regression the
+budget exists to catch is an accidental all-pairs path, which at 5,000 nodes is
+~1000× the work, not 7×.
+
+Both stages are intended to run in a Web Worker off the main thread — the
+`Float32Array` shape above is what makes that transfer free — but the worker
+itself is not part of this module; it lands with the R3F scene. Either way both
+stages refine an already-correct picture, so the view is interactive from the
+first frame.
 
 Two properties the specs pin, because they are what make the view usable rather
 than merely fast:
