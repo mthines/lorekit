@@ -98,10 +98,13 @@ async function respondWithPage(
   span: Span,
   cors: Record<string, string>,
 ): Promise<Response> {
-  // Name the operation BEFORE the first early return, so a rejected request is
-  // still attributable: a 400 that returns above this carries no
-  // `lorekit.operation`, and the `memories.list` metric cited as the evidence
-  // for this change would never show the rejections it is meant to count.
+  // Name the operation as early as the decoded shape allows — here, at the top
+  // of the reader both transports share — so the scope-filter 400 below is
+  // attributable and the `memories.list` metric cited as the evidence for this
+  // change actually shows the rejections it is meant to count. The schema
+  // rejection in each entry point still returns above this; that one is
+  // identifiable from the router child span (`lorekit.memories.{method}.{path}`)
+  // rather than from this attribute.
   span.setAttributes({
     'lorekit.operation': 'memories.list',
     ...(params.key ? { 'lorekit.key': params.key } : {}),

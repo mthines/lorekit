@@ -73,9 +73,10 @@ async function runFacets(
 ): Promise<Response> {
   const { archived, named, requested, narrowed, dimensions: d } = input;
 
-  // Named BEFORE the first early return, so a rejected request is still
-  // attributable — a 400 returning above this would carry no
-  // `lorekit.operation` and be invisible to the per-operation metrics.
+  // Named as early as the decoded shape allows — here, at the top of the reader
+  // both transports share — so the scope-filter 400 below is attributable in the
+  // per-operation metrics. The entry points schema rejection returns above this
+  // and is identifiable from the router child span instead.
   //
   // The attribute reports what the CALLER asked for (`named`), not the
   // recognised subset (`requested`): with every named dimension unknown the

@@ -67,9 +67,11 @@ async function runActivity(
 ): Promise<Response> {
   const { bucket, dimensions: d } = input;
 
-  // Name the operation BEFORE the first early return, so a rejected request is
-  // still attributable — a 400 returning above this would carry no
-  // `lorekit.operation` and be invisible to the per-operation metrics.
+  // Name the operation as early as the decoded shape allows — here, at the top
+  // of the reader both transports share — so the scope-filter 400 below is
+  // attributable in the per-operation metrics. The entry points schema
+  // rejection returns above this and is identifiable from the router child span
+  // instead.
   span.setAttributes({
     'lorekit.operation': 'memories.activity',
     'lorekit.bucket': bucket,

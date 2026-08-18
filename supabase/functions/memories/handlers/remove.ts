@@ -45,17 +45,20 @@ export async function handleRemove(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
   params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
+  // Named before ANY early return in this handler — including the schema
+  // rejection immediately below — so every 400 it can answer is still
+  // attributable to `memories.remove` in the per-operation metrics. The
+  // request-shaped attributes have to wait for the decode; the operation does
+  // not, and it is the one the metrics group by.
+  span.setAttributes({ 'lorekit.operation': 'memories.remove' });
+
   const validated = validateQuery(req, DeleteMemoryQuerySchema, cors);
   if (!validated.ok) return validated.response;
   const { scope: rawScopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
   const force = forceParam === 'true';
   const idParam = params.id;
 
-  // Named BEFORE the first early return, so a rejected request is still
-  // attributable — a 400 returning above this would carry no
-  // `lorekit.operation` and be invisible to the per-operation metrics.
   span.setAttributes({
-    'lorekit.operation': 'memories.remove',
     'lorekit.delete.force': force,
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
