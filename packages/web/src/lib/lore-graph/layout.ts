@@ -204,6 +204,37 @@ function cellKey(x: number, y: number, z: number): number {
   return (x + 2048) * 16_777_216 + (y + 2048) * 4096 + (z + 2048);
 }
 
+/** Length of the synthetic separation given to two exactly coincident nodes. */
+const NUDGE = 0.02;
+
+/**
+ * A deterministic separation direction for two nodes sitting exactly on top of
+ * each other, where the real offset carries no direction at all.
+ *
+ * Deterministic — never `Math.random()`, or the layout stops being reproducible
+ * and the view stops being navigable.
+ *
+ * ANTISYMMETRIC, which is the property that actually separates the pair:
+ * `coincidentNudge(a, b) === -coincidentNudge(b, a)`. Both ends derive the same
+ * vector from the UNORDERED pair and then take opposite signs from their index
+ * order, so the two nodes always move apart. Keying the components on each end
+ * INDEPENDENTLY (`a % 7` here, `b % 3` there) is what fails: a pair whose
+ * indices agree modulo the component periods — 105 for 7, 5, and 3 — receives
+ * one identical push and translates together forever, still coincident.
+ */
+function coincidentNudge(a: number, b: number): [number, number, number] {
+  const pair = a < b ? a * 31 + b : b * 31 + a;
+  const sign = a < b ? 1 : -1;
+  const x = (pair % 7) - 3;
+  const y = (pair % 5) - 2;
+  const z = (pair % 3) - 1;
+  // All three components can vanish together (pair ≡ 52 mod 105), which would
+  // leave a zero-length "separation". Fall back to a single axis.
+  if (x === 0 && y === 0 && z === 0) return [sign * NUDGE, 0, 0];
+  const scale = (sign * NUDGE) / Math.hypot(x, y, z);
+  return [x * scale, y * scale, z * scale];
+}
+
 /**
  * Refine a seeded layout in place, and return the same array.
  *
@@ -254,13 +285,8 @@ export function relaxPositions(
               let distanceSquared = ox * ox + oy * oy + oz * oz;
 
               if (distanceSquared < 1e-6) {
-                // Two nodes exactly on top of each other have no direction to
-                // separate along. Nudge deterministically (never randomly, or
-                // the layout stops being reproducible) using the index delta.
-                ox = ((node % 7) - 3) * 0.01;
-                oy = ((node % 5) - 2) * 0.01;
-                oz = ((other % 3) - 1) * 0.01;
-                distanceSquared = Math.max(ox * ox + oy * oy + oz * oz, 1e-6);
+                [ox, oy, oz] = coincidentNudge(node, other);
+                distanceSquared = ox * ox + oy * oy + oz * oz;
               }
 
               const push = repulsion / distanceSquared;
