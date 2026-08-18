@@ -61,8 +61,15 @@ describe('negotiateProtocolVersion', () => {
     );
   });
 
-  it('never offers a version newer than the client asked for', () => {
+  it('never offers a version newer than the client asked for, except below our floor', () => {
     // Property form of the two cases above, over a spread of plausible dates.
+    //
+    // The property is universal only AT OR ABOVE the oldest revision we speak.
+    // Below that floor it cannot hold — there is no older version left to
+    // offer — so that input is asserted explicitly rather than skipped by a
+    // guard the test name does not mention. `2024-01-01` is exactly that case,
+    // and an earlier draft of this test quietly exempted it while the name
+    // still promised a universal guarantee.
     for (const requested of [
       '2024-01-01',
       '2024-11-05',
@@ -71,8 +78,12 @@ describe('negotiateProtocolVersion', () => {
       '2026-01-01',
     ]) {
       const answered = negotiateProtocolVersion({ protocolVersion: requested });
-      if (requested >= SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1]) {
+      if (requested >= OLDEST_PROTOCOL_VERSION) {
         expect(answered <= requested, `${requested} → ${answered}`).toBe(true);
+      } else {
+        // The one documented exemption: below the floor we answer with the
+        // floor, which is necessarily newer than what was asked for.
+        expect(answered, `${requested} → ${answered}`).toBe(OLDEST_PROTOCOL_VERSION);
       }
     }
   });
