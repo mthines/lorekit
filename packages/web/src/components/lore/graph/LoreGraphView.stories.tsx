@@ -99,6 +99,12 @@ export const Default: Story = {
  */
 export const PlanCeiling: Story = {
   name: 'Plan ceiling (5,000 memories)',
+  // Excluded from the automated browser run by `tags.exclude` in
+  // `vitest.storybook.config.ts`. Mounting it costs a ~400 ms graph build plus
+  // 5,100 instanced nodes and 50,000 line vertices rasterised by SwiftShader on
+  // a GPU-less CI runner — a slow test that proves nothing `Default` does not.
+  // It stays fully browsable; it just is not a gate.
+  tags: ['stress'],
   render: () => <SelectableMap memories={planCeilingMemories()} />,
 };
 

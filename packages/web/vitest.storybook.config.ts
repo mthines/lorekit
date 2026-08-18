@@ -31,7 +31,14 @@ const storybookDir = path.join(dirname, '.storybook');
 export default defineConfig({
   // `storybookTest` is async (returns Promise<Plugin[]>); Vite resolves a plugin
   // promise natively, so no top-level await / async factory is needed.
-  plugins: [storybookTest({ configDir: storybookDir })],
+  // `tags.exclude` keeps the deliberate stress story out of the automated run.
+  // `Lore/LoreGraphView` → `Plan ceiling (5,000 memories)` exists so a human can
+  // feel the cost of the worst case the free plan allows; mounting it means a
+  // ~400 ms graph build plus 5,100 instanced nodes and 50,000 line vertices
+  // rasterised by SwiftShader (CI has no GPU), which is a slow test that proves
+  // nothing the 240-memory `Default` story does not already prove. Every other
+  // scenario still runs, so the scene is smoke-tested on every PR.
+  plugins: [storybookTest({ configDir: storybookDir, tags: { exclude: ['stress'] } })],
   resolve: {
     alias: { '@': path.resolve(dirname, 'src') },
   },
@@ -77,6 +84,20 @@ export default defineConfig({
       'react-markdown',
       'remark-gfm',
       'rehype-sanitize',
+      // `three` and the React Three Fiber stack — the memory map's scene. Third
+      // instance of the same failure, and the worst-hidden one: `LoreGraphScene`
+      // is deliberately `React.lazy`, so Vite's initial scan cannot see this
+      // graph at all — it is only reached when a story actually opens the map at
+      // RUN time. That is precisely when a mid-run re-optimize re-hashes the
+      // react shim out from under in-flight imports and fails unrelated test
+      // files. `three` is also by far the largest graph in this list (~900 KB of
+      // chunk), so discovering it late is the most expensive possible moment.
+      // The lazy boundary is a production requirement (it keeps ~150 KB gzipped
+      // out of the dashboard bundle) and must not be removed to satisfy the
+      // scanner — pre-bundling here is the fix.
+      'three',
+      '@react-three/fiber',
+      '@react-three/drei',
     ],
   },
   test: {
