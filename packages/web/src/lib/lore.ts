@@ -24,13 +24,14 @@ import { clampPageSize } from '@/lib/pagination/keyset';
 import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { normalizeTags } from '@/lib/tag-filter';
-import { filtersToQueryParams, normalizeFilters, type Filter } from '@/lib/filters';
+import { filtersToBody, normalizeFilters, type Filter } from '@/lib/filters';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { serverAccessToken } from '@/lib/api/session-server';
 import { RestApiError } from '@/lib/api/rest';
 import {
   archiveMemoryRequest,
   listMemoriesRequest,
+  listMemoriesPostRequest,
   purgeMemoriesRequest,
   restoreMemoryRequest,
   updateMemoryRequest,
@@ -178,8 +179,8 @@ export interface MemoryFilters {
   /**
    * The Explorer's filter bar: one condition per dimension (label / agent /
    * trigger / repo / branch / pull request), OR within a dimension and AND
-   * across them. Translated by the pure `filtersToQueryParams`, which is the
-   * single place the UI vocabulary meets the query-param vocabulary.
+   * across them. Translated by the pure `filtersToBody`, which is the
+   * single place the UI vocabulary meets the wire vocabulary.
    */
   filters?: Filter[];
   /** Page size, default 50, hard max 100. */
@@ -212,10 +213,16 @@ const EMPTY_PAGE: MemoryPage = { rows: [], nextCursor: null, hasMore: false };
  * List a keyset page of the memories the caller can see, newest first, with
  * optional combinable filters (scope / substring / date interval / labels).
  *
- * Ordering is `created_at desc` — `?sort=created_at` — not the route's
+ * Ordering is `created_at desc` — `sort: 'created_at'` — not the route's
  * `updated_at` default: a memory migrated with a backdated `created_at` belongs
  * at its original position in the Explorer, which is the order the list has
  * always been in.
+ *
+ * Sent over `POST /memories/list` rather than `GET /memories`: the filter bar's
+ * dimensions are unbounded, and the query transport caps each one at 2048
+ * characters — the ceiling that made the Explorer stop loading past ~50-75
+ * selected values in a dimension. The BODY carries the filters; the ordering,
+ * the page size and the cursor are unchanged.
  *
  * Fails closed to an empty page on auth failure or API error — read-only, so
  * failing closed is safe.
@@ -238,10 +245,10 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       : normalizeFilters([...explicit, { field: 'label', operator: 'all', values: legacyTags }]);
 
   try {
-    const page = await listMemoriesRequest(token, {
+    const page = await listMemoriesPostRequest(token, {
       limit: pageSize,
       sort: 'created_at',
-      archived: filters.showArchived ? 'true' : 'false',
+      archived: filters.showArchived ?? false,
       ...(filters.expiringWithinDays !== undefined
         ? { expiring_within_days: filters.expiringWithinDays }
         : {}),
@@ -249,8 +256,8 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       ...(filters.search ? { q: filters.search } : {}),
       ...(bounds.gte ? { created_since: bounds.gte } : {}),
       ...(bounds.lt ? { created_until: bounds.lt } : {}),
-      // OR within a dimension, AND across dimensions — see `filtersToQueryParams`.
-      ...filtersToQueryParams(bar),
+      // OR within a dimension, AND across dimensions — see `filtersToBody`.
+      ...filtersToBody(bar),
       ...(filters.cursor ? { cursor: filters.cursor } : {}),
     });
 

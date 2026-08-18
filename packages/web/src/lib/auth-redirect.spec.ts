@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { safeNextPath, DEFAULT_POST_LOGIN_PATH } from './auth-redirect';
+import {
+  safeNextPath,
+  boundedReturnTo,
+  DEFAULT_POST_LOGIN_PATH,
+  MAX_RETURN_TO_CHARS,
+} from './auth-redirect';
 
 describe('safeNextPath', () => {
   it('returns the fallback for null / undefined / empty input', () => {
@@ -32,5 +37,30 @@ describe('safeNextPath', () => {
   it('honours a caller-supplied fallback', () => {
     expect(safeNextPath(null, '/update-password')).toBe('/update-password');
     expect(safeNextPath('//evil.com', '/update-password')).toBe('/update-password');
+  });
+});
+
+describe('boundedReturnTo', () => {
+  it('keeps the query string when it fits the header budget', () => {
+    expect(boundedReturnTo('/lore', '?filters=%5B%5D')).toBe('/lore?filters=%5B%5D');
+  });
+
+  it('keeps a bare pathname unchanged', () => {
+    expect(boundedReturnTo('/overview', '')).toBe('/overview');
+  });
+
+  it('keeps a return trip of exactly the budget', () => {
+    const search = `?f=${'x'.repeat(MAX_RETURN_TO_CHARS - '/lore?f='.length)}`;
+    expect(boundedReturnTo('/lore', search)).toHaveLength(MAX_RETURN_TO_CHARS);
+  });
+
+  /**
+   * The case this exists for: a filter bar wide enough that carrying it through
+   * login would be a `431` rather than a redirect. The user loses the bar and
+   * lands on the page; they do not lose the page.
+   */
+  it('drops an oversized query string rather than carrying it into a header', () => {
+    const search = `?filters=${'x'.repeat(MAX_RETURN_TO_CHARS)}`;
+    expect(boundedReturnTo('/lore', search)).toBe('/lore');
   });
 });

@@ -209,7 +209,18 @@ describe('REST audit coverage', () => {
     // excluding everything.
     const unsafe = allRoutes.filter((r) => UNSAFE_METHODS.has(r.method));
     const readOnlyUnsafe = unsafe.filter((r) => r.requires === 'read');
-    expect(readOnlyUnsafe.map(routeKey)).toEqual(['memories POST /search']);
+    // POST-but-read is a small, deliberate set: a POST here means "the filter
+    // does not fit in a URL", never "this writes". `/list`, `/facets` and
+    // `/activity` are the body transports of the identically-named GET reads
+    // and `/search` has always been one, so none of them audits — an audit
+    // entry per page render would drown the trail that exists to record change.
+    // A new entry in this list needs the same justification.
+    expect(readOnlyUnsafe.map(routeKey)).toEqual([
+      'memories POST /list',
+      'memories POST /facets',
+      'memories POST /activity',
+      'memories POST /search',
+    ]);
     expect(mutatingRoutes.length).toBe(unsafe.length - readOnlyUnsafe.length - AUDIT_EXEMPT.length);
   });
 

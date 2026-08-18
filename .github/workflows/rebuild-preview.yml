@@ -130,13 +130,12 @@ jobs:
 
       # The ONE step that clears drifted history rows AND orphan schema objects:
       # re-provision the remote DB from the migration files on this ref.
-      # NOTE: depending on the pinned CLI version, `db reset --linked` may prompt
-      # for confirmation. Verify on the FIRST manual `workflow_dispatch` run
-      # (before the cron ever fires); if it hangs on a prompt, drive it
-      # non-interactively with whatever confirmation flag the installed CLI
-      # exposes (or pipe `y`).
+      # `db reset --linked` prompts `[y/N]` to confirm wiping the remote DB, which
+      # a CI runner has no TTY to answer (it aborts with `context canceled`). The
+      # global `--yes` flag answers the prompt so the flush runs unattended on the
+      # weekly cron, a `/reset-preview` comment, or a manual dispatch.
       - name: Reset preview database from migrations
-        run: supabase db reset --linked
+        run: supabase db reset --linked --yes
 
       # `db reset` wipes the seeded orgs-smoke user along with everything else,
       # so the orgs REST smoke self-skips (announced, non-fatal) until it is

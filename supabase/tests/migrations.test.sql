@@ -5700,6 +5700,344 @@ begin
 end;
 $$;
 
+-- ── 81. lorekit_memory_list — the keyset page as a SQL function (00067) ──────
+-- The list read moved into Postgres so a wide filter never becomes a URL. The
+-- edge previously composed `or=(host.in.("a","b",…))` as a PostgREST QUERY
+-- PARAM, so a dimension carrying a few hundred values built an internal request
+-- the gateway refused — the same wall the JSON body removed on the client hop,
+-- relocated one hop downstream where it surfaced as an unattributable 500.
+--
+-- AC-1: the page is ordered by the requested sort desc, then id desc.
+-- AC-2: the keyset cursor resumes strictly after the named row, and the id
+--       tie-break splits rows sharing a timestamp — the whole reason the
+--       cursor carries both halves.
+-- AC-3: WIDE dimensions are the point. A filter naming 1000 values, of which
+--       exactly one is real, returns the one matching row. This is the case
+--       that could not survive the URL transport at any layer.
+-- AC-4: dimensions AND together while values within one OR together, and the
+--       predicates are 00066's, so a `nin` over a NULL column behaves as
+--       lorekit_memory_facets does.
+-- AC-5: a value carrying a COMMA is reachable — unreachable over the query
+--       transport by construction, and the reason the array form exists.
+-- AC-6: the tenant boundary holds: another user's rows are never returned,
+--       and the function is the ONLY predicate (no applyRestTenantScope).
+--       BOTH actor branches are covered: service_role (v_actor = p_user_id)
+--       and the `authenticated` JWT branch (v_actor = auth.uid()), where a
+--       caller-supplied p_user_id must be ignored — that is the branch this
+--       read has instead of RLS.
+-- AC-7: `p_q` and `p_key_prefix` arrive already LIKE-escaped, so a literal `%`
+--       stays data instead of widening to a wildcard.
+-- AC-8: the archived / expired partition rule matches GET /memories'.
+-- AC-9: an `origin_pr` entry that is all digits but too wide for int4 is
+--       DROPPED like any other unusable entry — never a 22003 raised out of a
+--       hand-editable filter value — while the zero-padded form still resolves.
+--       A list whose every entry drops degrades to UNFILTERED, the same way an
+--       all-non-numeric list already does on the facet catalog.
+-- AC-10: `owner`, the one dimension restated inline rather than delegated to
+--       00066's helpers, so it is the only one that can drift from
+--       lorekit_memory_facets unnoticed — AC-10d asserts the two agree.
+-- AC-9 needs one row carrying a real `origin_pr`, so the zero-padded half of a
+-- mixed filter has something to match; every other row leaves it null.
+insert into memories (user_id, scope, key, value, tags, source_agent, host, kind, origin_pr, created_at, updated_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-1', 'alpha',   array['x'], 'aw',    'reviewer', 'lesson', 7,    '2026-01-09T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-2', 'beta',    array['y'], 'aw',    'aw',       'lesson', null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+  -- Same updated_at as lr-2 on purpose: AC-2's id tie-break needs a real tie.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-3', 'gamma',   array['y'], 'other', null,       null,     null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+  -- A comma-bearing host: AC-5.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-4', 'delta',   array['z'], 'aw',    'a,b',      'bus',    null, '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z'),
+  -- A literal percent in the value: AC-7.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-5', '100%pure',array['z'], 'aw',    'reviewer', 'bus',    null, '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z');
+insert into memories (user_id, scope, key, value, source_agent, archived_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-archived', 'v', 'aw', now());
+insert into memories (user_id, scope, key, value, source_agent) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::list-rpc-b', 'lr-b-1', 'v', 'aw');
+
+do $$
+declare
+  v_keys   text[];
+  v_rows   int;
+  v_rows2  int;
+  v_facet  bigint;
+  v_wide   text[];
+  v_ts     timestamptz;
+  v_id     uuid;
+  v_key    text;
+  v_ts2    timestamptz;
+  v_id2    uuid;
+  v_i      int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: updated_at desc, id desc.
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at', p_limit => 100)
+  ) t;
+  assert v_keys[1] = 'lr-5',
+    format('list rpc AC-1: newest updated_at must lead, got %s', v_keys);
+  assert v_keys[2] = 'lr-4',
+    format('list rpc AC-1b: second must be lr-4, got %s', v_keys);
+  assert array_length(v_keys, 1) = 5,
+    format('list rpc AC-1c: the archived row must be excluded, got %s', v_keys);
+
+  -- AC-2: resume after lr-4. The next page must start at the tie pair and must
+  -- not repeat lr-4 or lr-5.
+  select updated_at, id into v_ts, v_id
+    from memories where scope = 'project::list-rpc' and key = 'lr-4';
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at',
+        p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 100)
+  ) t;
+  assert not ('lr-4' = any(v_keys)) and not ('lr-5' = any(v_keys)),
+    format('list rpc AC-2: the cursor must exclude its own row and everything above it, got %s', v_keys);
+  assert array_length(v_keys, 1) = 3,
+    format('list rpc AC-2b: three rows must remain, got %s', v_keys);
+
+  -- AC-2c: the id tie-break. lr-2 and lr-3 share updated_at, so paginating
+  -- with a limit of 1 from the tie must yield the other one and not loop.
+  select updated_at, id into v_ts, v_id
+    from memories where scope = 'project::list-rpc' and key = 'lr-2';
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_sort => 'updated_at',
+      p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 1);
+  assert v_keys is null or not ('lr-2' = any(v_keys)),
+    format('list rpc AC-2c: a cursor must never return its own row again, got %s', v_keys);
+
+  -- AC-2d: AC-2c on its own does not pin the tie-break. Delete `m.id < $30` and
+  -- the keyset degrades to `m.updated_at < $29`, which from lr-2's cursor lands
+  -- on lr-1 — still "not lr-2", so AC-2c stays green while the sibling sharing
+  -- lr-2's timestamp has been SKIPPED. Walking every page one row at a time is
+  -- what sees that: with the tie-break the walk visits all five rows exactly
+  -- once; without it lr-3 never appears and the walk returns four.
+  v_keys := '{}'::text[];
+  v_ts   := null;
+  v_id   := null;
+  for v_i in 1..10 loop
+    v_key := null;
+    select r.key, r.updated_at, r.id into v_key, v_ts2, v_id2
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at',
+        p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 1) r;
+    exit when v_key is null;
+    v_keys := v_keys || v_key;
+    v_ts := v_ts2;
+    v_id := v_id2;
+  end loop;
+  assert array_length(v_keys, 1) = 5,
+    format('list rpc AC-2d: a one-row-at-a-time walk must visit all five active rows, got %s', v_keys);
+  assert (select count(distinct k) from unnest(v_keys) k) = 5,
+    format('list rpc AC-2d2: the walk must not repeat a row, got %s', v_keys);
+  assert v_keys @> array['lr-2','lr-3'],
+    format('list rpc AC-2d3: BOTH rows sharing an updated_at must be paged, which is what the id tie-break buys, got %s', v_keys);
+
+  -- AC-3: THE case the URL transport could not carry. 1000 values, one real.
+  select array_agg('filler-host-' || g) into v_wide from generate_series(1, 999) g;
+  v_wide := v_wide || 'reviewer'::text;
+  assert array_length(v_wide, 1) = 1000, 'list rpc AC-3: fixture must name 1000 values';
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_host => v_wide, p_host_mode => 'in', p_limit => 100);
+  assert v_keys @> array['lr-1','lr-5'] and array_length(v_keys, 1) = 2,
+    format('list rpc AC-3: a 1000-value dimension must return exactly its matches, got %s', v_keys);
+
+  -- AC-4: AND across dimensions, OR within one.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_source_agent => array['aw'], p_kind => array['bus'], p_limit => 100);
+  assert v_keys @> array['lr-4','lr-5'] and array_length(v_keys, 1) = 2,
+    format('list rpc AC-4: agent AND kind must intersect, got %s', v_keys);
+
+  -- AC-4b: `nin` over a NULLABLE column keeps the 00066 semantics — a row whose
+  -- column is NULL is NOT admitted by the negation, exactly as the facet
+  -- catalog counts it.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_host => array['reviewer'], p_host_mode => 'nin', p_limit => 100);
+  assert not ('lr-3' = any(coalesce(v_keys, '{}'::text[]))),
+    format('list rpc AC-4b: a NULL host must not satisfy `nin`, got %s', v_keys);
+
+  -- AC-5: a comma-bearing value round-trips. Unreachable over `?host=a,b`,
+  -- which splits it into two values that match nothing.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_host => array['a,b'], p_limit => 100);
+  assert v_keys = array['lr-4'],
+    format('list rpc AC-5: a comma-bearing value must match as ONE value, got %s', v_keys);
+
+  -- AC-6: the tenant boundary. B's row is invisible to A even though the
+  -- function is SECURITY DEFINER and the caller is service_role.
+  select count(*) into v_rows
+    from lorekit_memory_list('00000000-0000-0000-0000-0000000000a1'::uuid, p_limit => 1000)
+   where key = 'lr-b-1';
+  assert v_rows = 0, 'list rpc AC-6: another user''s row must never be returned';
+
+  -- AC-6b: the OTHER actor branch. AC-6 runs as service_role, where v_actor
+  -- comes from p_user_id; a JWT caller takes `v_actor := auth.uid()` instead,
+  -- and that branch is what replaced RLS on this read — the function is
+  -- SECURITY DEFINER, so nothing else narrows it. Adopt B's identity and pass
+  -- A's id: the p_user_id must be IGNORED, so A's rows stay invisible and B
+  -- sees only its own.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated","email":"lk-list-b@test.local"}', true);
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_limit => 100);
+  assert v_rows = 0,
+    format('list rpc AC-6b: a JWT caller must act as auth.uid(), never the p_user_id it passes, got %s rows', v_rows);
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc-b', p_limit => 100);
+  assert v_keys = array['lr-b-1'],
+    format('list rpc AC-6b: the JWT branch must still return the caller''s OWN rows, got %s', v_keys);
+
+  -- Back to service_role for the remaining assertions, which act as A.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-7: a literal `%` in the needle is DATA. The escaped form matches only
+  -- the row that really contains it; an unescaped `%` would match everything.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_q => '100\%pure', p_limit => 100);
+  assert v_keys = array['lr-5'],
+    format('list rpc AC-7: an escaped %% must stay literal, got %s', v_keys);
+
+  -- AC-7b: key_prefix appends the one active wildcard.
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_key_prefix => 'lr-', p_limit => 100);
+  assert v_rows = 5, format('list rpc AC-7b: the prefix must match the five active rows, got %s', v_rows);
+
+  -- AC-8: the archived partition, GET /memories' rule verbatim.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_archived => true, p_scope => 'project::list-rpc', p_limit => 100);
+  assert v_keys = array['lr-archived'],
+    format('list rpc AC-8: the archived partition must hold exactly the archived row, got %s', v_keys);
+
+  -- AC-8b: created_at is a real second sort order, not an alias of the first.
+  -- lr-1 is the OLDEST by updated_at and the NEWEST by created_at, so the two
+  -- orders disagree at the head — a regression collapsing v_sort back to
+  -- updated_at leads with lr-5 and fails here. Without that skew in the fixture
+  -- this assertion holds for both columns and proves nothing.
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'created_at', p_limit => 2)
+  ) t;
+  assert v_keys[1] = 'lr-1',
+    format('list rpc AC-8b: created_at desc must lead with lr-1, not the updated_at leader, got %s', v_keys);
+  assert v_keys[2] = 'lr-5',
+    format('list rpc AC-8b2: created_at desc must continue with lr-5, got %s', v_keys);
+  assert array_length(v_keys, 1) = 2,
+    format('list rpc AC-8c: p_limit must bound the page, got %s', v_keys);
+
+  -- AC-9: an origin_pr entry that is all digits but wider than int4 is DROPPED
+  -- like any other unusable entry, never raised. `^[0-9]+$` alone admits it and
+  -- `x::integer` then raises 22003 — a 500 out of a hand-editable filter value.
+  --
+  -- When EVERY entry drops, `array_agg` over the empty set yields NULL, and a
+  -- null filter is "not filtered" in lorekit_match_int — so the dimension
+  -- degrades to unfiltered, exactly as an all-non-numeric list already does on
+  -- lorekit_memory_facets. That degradation is the contract; what this pins is
+  -- that reaching it does not RAISE.
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['99999999999'], p_limit => 100);
+  assert v_rows = 5,
+    format('list rpc AC-9: an out-of-int4 origin_pr must drop without raising, leaving the dimension unfiltered, got %s rows', v_rows);
+  -- The same degradation an all-non-numeric list produces, asserted side by
+  -- side so the two cannot drift apart.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['not-a-number'], p_limit => 100);
+  assert v_rows2 = v_rows,
+    format('list rpc AC-9a: an over-wide entry must degrade exactly like a non-numeric one, got %s vs %s', v_rows2, v_rows);
+
+  -- AC-9b: the drop is per ENTRY, and the bound keeps the zero-padded form
+  -- resolving numerically, so a list mixing the two still filters on its
+  -- usable half rather than erroring or matching nothing.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['99999999999', '0000000007'], p_limit => 100);
+  assert v_keys = array['lr-1'],
+    format('list rpc AC-9b: the over-wide entry must drop while `0000000007` still matches PR 7, got %s', v_keys);
+
+  -- AC-10: `owner`. It is the ONE dimension 00067 restates inline instead of
+  -- delegating to 00066's lorekit_match_* helpers — it is a LEFT JOIN-computed
+  -- identity (`personal` / org slug), not a scalar column — so it is the only
+  -- one that can drift from lorekit_memory_facets without a shared helper
+  -- catching it. Every fixture row here is personal (org_id null).
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_owner => array['personal'], p_limit => 100);
+  assert v_rows = 5,
+    format('list rpc AC-10: `personal` must admit every org-less row, got %s', v_rows);
+
+  -- The negation is the half that disagrees if the inline expression is
+  -- rewritten as a plain `<> all(...)` over a nullable identity.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_owner => array['personal'], p_owner_mode => 'nin', p_limit => 100);
+  assert v_rows2 = 0,
+    format('list rpc AC-10b: `nin personal` must exclude every org-less row, got %s', v_rows2);
+
+  -- A slug the caller cannot see resolves to nothing rather than widening the
+  -- page: slugs are matched against the LEFT JOIN of VISIBLE orgs only.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_owner => array['no-such-org'], p_limit => 100);
+  assert v_rows2 = 0,
+    format('list rpc AC-10c: an unknown owner slug must match nothing, got %s', v_rows2);
+
+  -- AC-10d: the anti-drift assertion the inline restatement actually needs —
+  -- the list's `personal` count must equal the facet catalog's `owner`/`personal`
+  -- cell for the same caller and scope. If the two implementations of the owner
+  -- identity ever disagree, this fails rather than the menu quietly showing a
+  -- count the list does not honour.
+  select f.count into v_facet
+    from lorekit_memory_facets(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc') f
+   where f.facet = 'owner' and f.value = 'personal';
+  assert v_facet = v_rows,
+    format('list rpc AC-10d: the owner count must agree with lorekit_memory_facets, list=%s facets=%s', v_rows, v_facet);
+
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

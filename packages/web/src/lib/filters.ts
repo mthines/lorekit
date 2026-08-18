@@ -3,10 +3,10 @@
  *
  * This is `tag-filter.ts` generalised. The Explorer used to filter on exactly
  * one dimension (labels), so a single multi-select popover was the whole
- * story. It now filters on six — label, agent, trigger, repo, branch, pull
- * request — which is a different problem: one control per dimension would put
- * six triggers in a row that is already crowded, and would still not answer
- * "what can I filter by?" for the next dimension after that.
+ * story. It now filters on nine — label, kind, host, owner, agent, trigger,
+ * repo, branch, pull request — which is a different problem: one control per
+ * dimension would put nine triggers in a row that is already crowded, and would
+ * still not answer "what can I filter by?" for the next dimension after that.
  *
  * The model is Linear's, because it is the one that scales: a **filter bar** of
  * committed conditions, each rendered as a three-segment pill, fed by ONE
@@ -20,12 +20,29 @@
  * is unit-testable in the node vitest project, mirroring `tag-filter.ts` and
  * `org-ui.ts`. The impure shells are `components/lore/FilterMenu.tsx` (the
  * menu), `components/lore/FilterPill.tsx` (the pills) and the `useMemories`
- * query that consumes {@link filtersToQueryParams}.
+ * query that consumes {@link filtersToBody} — the BODY transport, because a
+ * filter bar's value sets are unbounded and a query string caps each dimension
+ * at 2048 characters.
+ *
+ * {@link filtersToQueryParams} and {@link filtersToFacetParams} are the
+ * equivalent GET encodings. **No caller in this package reaches them any more**
+ * — the Explorer is body-only since the transport move, so their only consumers
+ * are `filters.spec.ts` and `filters-transport.spec.ts`. They are kept, not
+ * dead: `GET /memories` and `GET /memories/facets` remain fully supported for
+ * the CLI, MCP and API-token callers, a link carrying a few filters is still
+ * better as a URL, and these functions are where the UI vocabulary → query
+ * mapping is pinned against `ListMemoriesQuerySchema` / `ListFacetsQuerySchema`
+ * (the `as`-cast in `filtersToFacetParams` is sound only because a spec asserts
+ * every key it emits exists in the facets schema). Delete them and that
+ * contract check goes with them.
  */
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
 import type {
+  ActivityBody,
+  ListFacetsBody,
   ListFacetsQuery,
+  ListMemoriesBody,
   ListMemoriesQuery,
   ScalarFilterMode,
   TagsMode,
@@ -786,4 +803,94 @@ export function filtersToQueryParams(
  */
 export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFacetsQuery> {
   return filtersToQueryParams(filters) as Partial<ListFacetsQuery>;
+}
+
+/**
+ * Translate the bar into a `POST /memories/list` BODY.
+ *
+ * The same seam as {@link filtersToQueryParams}, onto the transport the
+ * dashboard actually uses — and the reason there are two. The query form joins
+ * a dimension's values into one string, which `ValueListSchema` caps at 2048
+ * characters: with production-length host names that is roughly 50-75 values,
+ * a different number for every dimension, and past it the route answers 400 and
+ * the Explorer shows "Failed to load memories". Nothing guards the URL as a
+ * whole either, so eight dimensions individually under the cap still compose a
+ * request a gateway rejects without a LoreKit error envelope.
+ *
+ * Values are NOT joined here, so a value containing a comma survives — which
+ * over the query transport is unreachable by construction. The return type is
+ * `Partial<ListMemoriesBody>`, the schema the handler validates against, so a
+ * contract change is a type error rather than a silent mismatch.
+ */
+export function filtersToBody(filters: readonly Filter[]): Partial<ListMemoriesBody> {
+  const body: Partial<ListMemoriesBody> = {};
+
+  for (const filter of normalizeFilters(filters as unknown[])) {
+    const values = [...filter.values];
+    switch (filter.field) {
+      case 'label':
+        body.tags = values;
+        body.tags_mode = tagsModeFor(filter.operator);
+        break;
+      case 'agent':
+        body.source_agent = values;
+        body.source_agent_mode = scalarModeFor(filter.operator);
+        break;
+      case 'trigger':
+        body.trigger = values;
+        body.trigger_mode = scalarModeFor(filter.operator);
+        break;
+      case 'kind':
+        body.kind = values;
+        body.kind_mode = scalarModeFor(filter.operator);
+        break;
+      case 'host':
+        body.host = values;
+        body.host_mode = scalarModeFor(filter.operator);
+        break;
+      case 'owner':
+        body.owner = values;
+        body.owner_mode = scalarModeFor(filter.operator);
+        break;
+      case 'repo':
+        body.origin_repo = values;
+        body.origin_repo_mode = scalarModeFor(filter.operator);
+        break;
+      case 'branch':
+        body.origin_branch = values;
+        body.origin_branch_mode = scalarModeFor(filter.operator);
+        break;
+      case 'pr': {
+        // Digits only, exactly as the query form does: the column is an integer
+        // and a non-numeric value can only have come from a hand-edited URL, so
+        // the request never carries one the handler would drop anyway.
+        const digits = values.filter((v) => /^\d+$/.test(v));
+        if (digits.length > 0) {
+          body.origin_pr = digits;
+          body.origin_pr_mode = scalarModeFor(filter.operator);
+        }
+        break;
+      }
+    }
+  }
+
+  return body;
+}
+
+/**
+ * The active filters as a `POST /memories/facets` drill-down body.
+ *
+ * The facets route mirrors the list route's dimension fields by name, so this
+ * is exactly {@link filtersToBody} — the drill-down (self-exclusion) is
+ * entirely the endpoint's job. The cast is sound for {@link filtersToFacetParams}'
+ * reason: only dimension keys are ever set, and the two body types differ only
+ * in the non-dimension keys this function never touches.
+ */
+export function filtersToFacetBody(filters: readonly Filter[]): Partial<ListFacetsBody> {
+  return filtersToBody(filters) as Partial<ListFacetsBody>;
+}
+
+/** The active filters as a `POST /memories/activity` body. Same mapping again. */
+export function filtersToActivityBody(filters: readonly Filter[]): Partial<ActivityBody> {
+  return filtersToBody(filters) as Partial<ActivityBody>;
 }

@@ -722,3 +722,128 @@ export const MemoryPageResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 export type MemoryPageResponse = z.infer<typeof MemoryPageResponseSchema>;
+
+// ── The body transport: POST /memories/list, /facets, /activity ──────────────
+
+/**
+ * How many values ONE dimension may carry in a body request.
+ *
+ * A safety limit, not a product limit: it is ~50x the widest filter bar the
+ * Explorer has produced, and roughly 20x what the query transport could carry
+ * before `ValueListSchema`'s 2048-character cap rejected the request. It exists
+ * so an unbounded array cannot be used to make the server build an unbounded
+ * PostgREST `in.()` operand — the reason the bound is a COUNT and not another
+ * character budget is that a count is the thing a caller can reason about,
+ * where "2048 characters" silently means a different number of hosts than of
+ * branches.
+ */
+export const FILTER_VALUES_MAX = 1000;
+
+/** How long ONE filter value may be — the `key` bound, applied to a filter. */
+export const FILTER_VALUE_MAX_CHARS = 512;
+
+/**
+ * One dimension's values, as a real array.
+ *
+ * This is the whole point of the body transport. The query form joins the
+ * values with commas into a single `ValueListSchema` string, which caps the
+ * DIMENSION at 2048 characters and makes a value containing a comma
+ * unreachable (`parseTagsParam` splits before anything is quoted). An array has
+ * neither property: each value is bounded on its own, the dimension is bounded
+ * by a count, and a comma is just a character.
+ */
+const DimensionValuesSchema = z
+  .array(z.string().min(1).max(FILTER_VALUE_MAX_CHARS))
+  .max(FILTER_VALUES_MAX);
+
+/**
+ * The dimension filters, shared verbatim by all three body routes.
+ *
+ * Named identically to the query params they replace — `tags`, `host`,
+ * `origin_pr`, each with its `*_mode` — so the two transports are the same
+ * contract in two encodings, and `handleList` / `handleListPost` can hand the
+ * SAME normalised shape to the SAME predicate function (`dimensionsFromQuery` /
+ * `dimensionsFromBody`). A field that existed on only one of them would be a
+ * place for the two to disagree about what a filter means.
+ */
+const dimensionBodyFields = {
+  tags: DimensionValuesSchema.optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: DimensionValuesSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: DimensionValuesSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: DimensionValuesSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: DimensionValuesSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: DimensionValuesSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: DimensionValuesSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Pull-request numbers. Still tolerant of a non-numeric entry for the query
+   * form's reason — the bar can be built from a hand-editable URL — so the
+   * handler drops those rather than 400ing the page.
+   */
+  origin_pr: DimensionValuesSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: DimensionValuesSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
+} as const;
+
+/**
+ * `POST /memories/list` — the same read as `GET /memories`, over a body.
+ *
+ * The dashboard's Explorer sends this one. The query form remains supported and
+ * unchanged for the CLI, the MCP surface and any API-token caller; it is simply
+ * not a transport that scales, because a filter bar's value sets are unbounded
+ * (agents invent hosts) while a URL is not.
+ *
+ * The non-dimension fields take their REAL JSON types — `archived` is a
+ * boolean, `limit` a number — instead of the coerced strings a query string
+ * forces. That is deliberate: over JSON, `"true"` is a string, and silently
+ * accepting it would make the two transports disagree about what a caller sent.
+ */
+export const ListMemoriesBodySchema = z.object({
+  scope: RawScopeSchema.optional(),
+  key: z.string().min(1).max(512).optional(),
+  key_prefix: z.string().min(1).max(512).optional(),
+  q: z.string().min(1).max(512).optional(),
+  created_since: TimestampFilterSchema.optional(),
+  created_until: TimestampFilterSchema.optional(),
+  ...dimensionBodyFields,
+  sort: MemorySortSchema.optional().default('updated_at'),
+  archived: z.boolean().optional().default(false),
+  expiring_within_days: z.number().int().min(1).max(365).optional(),
+  limit: z.number().int().min(1).max(100).optional().default(50),
+  cursor: z.string().optional(),
+});
+export type ListMemoriesBody = z.infer<typeof ListMemoriesBodySchema>;
+
+/**
+ * `POST /memories/facets` — the drill-down catalog, over a body.
+ *
+ * Mirrors `ListFacetsQuerySchema` field for field, with `facets` as an array of
+ * the closed facet vocabulary rather than a comma list. An unknown NAME cannot
+ * arrive here at all (the enum rejects it), where the query form tolerated one
+ * and narrowed to nothing — a JSON client builds this from `MemoryFacet`, so a
+ * typo is a bug worth surfacing rather than a keystroke to survive.
+ */
+export const ListFacetsBodySchema = z.object({
+  archived: z.boolean().optional().default(false),
+  facets: z.array(MemoryFacetSchema).optional(),
+  scope: RawScopeSchema.optional(),
+  ...dimensionBodyFields,
+});
+export type ListFacetsBody = z.infer<typeof ListFacetsBodySchema>;
+
+/** `POST /memories/activity` — the written-volume series, over a body. */
+export const ActivityBodySchema = z.object({
+  bucket: ActivityBucketUnitSchema.optional().default('day'),
+  since: TimestampFilterSchema.optional(),
+  until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
+  ...dimensionBodyFields,
+});
+export type ActivityBody = z.infer<typeof ActivityBodySchema>;
