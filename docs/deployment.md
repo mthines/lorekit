@@ -252,6 +252,57 @@ The web jobs authenticate to Vercel with the same three repo-level secrets
 — and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
 repo-level variable, defaulting to `https://lorekit.io`).
 
+#### The deploy scope is measured against what is DEPLOYED, not the last commit
+
+Lockstep above only binds the two halves **within one run**. It says nothing
+about a half that never reached production in an *earlier* run — and that gap is
+what broke production once already:
+
+| | |
+|---|---|
+| **#492** | Changed both halves (`packages/web/**` + `supabase/functions/**` + migration 00067). `smoke-preview` failed, so `deploy-production` and `promote-web-production` were both skipped. Correct — nothing shipped. |
+| **#504** | Changed only `packages/web/**`. The scope filter diffed **that push** and reported `api=false`, so `promote-web-production` took its `changes.outputs.api == 'false'` branch and assigned the production domain to a bundle built from `HEAD` — carrying #492's client. |
+| **Result** | That client POSTs `/functions/v1/memories/list`, a route the production edge functions had never been given. **100% of production Lore Explorer list reads answered `405`** until the web was rolled back by hand. |
+
+So each half is now diffed against **the commit that half is actually serving**,
+recorded by two advisory tags that only the successful production flip moves:
+
+| Tag | Moved by | Means |
+|-----|----------|-------|
+| `deployed/api-production` | `deploy-production`, last step | Migrations pushed **and** edge functions deployed at this SHA |
+| `deployed/web-production` | `promote-web-production`, last step | The production domain points at a bundle built from this SHA |
+
+`changes` resolves each baseline, diffs it against `HEAD`, and applies the same
+path globs as before. Undeployed work therefore stays in the diff until it
+deploys: replay #504 with the API tag still on the pre-#492 commit and it
+resolves `api=true`, so `promote-web-production` must wait for
+`deploy-production` instead of running ahead of it. The same protection holds in
+the other direction (an API change whose web half never promoted).
+
+Three things to know when reading a run:
+
+- **The tags are advisory and fail open.** A missing, unfetched or
+  garbage-collected tag falls back to the push baseline — the previous
+  behaviour. So does a tag that is not an ancestor of `HEAD` (after a revert, or
+  a re-run of an older ref), because diffing against a marker *ahead* of `HEAD`
+  reports the marker-only files as changed here. Doubt never resolves to "this
+  half has no changes": a wrong `false` is the incident above, a wrong `true` is
+  one redundant deploy.
+- **`rollback-web-production` deliberately does not move the web tag.** It
+  reverts the *domain* to the previously promoted deployment, whose commit the
+  tag no longer names — and leaving the tag ahead is the safe error, because the
+  non-ancestor rule then makes the next run fall back rather than skip.
+- **The decision is a tested module, not a shell block.**
+  `scripts/resolve-deploy-scope.mjs` with `scripts/resolve-deploy-scope.test.mjs`
+  (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — the same
+  extract-and-test treatment `check-remote-migration-drift.mjs` got, for the same
+  reason. The test pins both the fixed behaviour and the old one that caused the
+  incident. The step summary prints both baselines and where each came from.
+
+The first `deploy.yml` run after this landed has no tags yet, so both halves fall
+back to the push baseline — and since the change touches `deploy.yml` itself
+(which forces both halves), that run deploys both and mints both tags.
+
 ### Skew Protection (already-open tabs and Server Actions)
 
 The lockstep flip above keeps the FE and API on the same version **for new page
