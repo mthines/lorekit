@@ -76,36 +76,27 @@ describe('mcp-handler auth status guard', () => {
   });
 });
 
-describe('mcp GET guard', () => {
-  // The guard MOVED from `mcp-handler.ts` to `index.ts`, above `resolveAuth`,
-  // so an SSE probe no longer pays the authenticated preamble to be told the
-  // method is wrong. This assertion moved with it and got STRICTER rather than
-  // looser: "before resolveAuth" implies "before req.json()", because
-  // `handleMcp` — which owns the only `req.json()` — is called after auth. The
-  // full ordering contract lives in `mcp-method-guard-ordering.spec.ts`.
-  it('intercepts non-POST requests with 405 before authenticating, using clientError()', () => {
-    // GET is used by modern mcp-remote clients probing for SSE support (MCP 2025-03-26 spec).
-    // The server is Streamable-HTTP POST-only. Without this guard, GET reaches req.json()
-    // which throws "Unexpected end of JSON input" — a misleading 400, not the correct 405.
-    // The guard must use clientError() (not error()) so the span is not marked ERROR.
-    expect(index).toMatch(/req\.method !== 'POST'/);
-    expect(index).toMatch(/status: 405/);
-    expect(index).toMatch(/Allow: 'POST'/);
-
-    const getGuardIdx = index.indexOf("req.method !== 'POST'");
-    const resolveAuthIdx = index.indexOf('resolveAuth(');
-    expect(getGuardIdx).toBeGreaterThan(-1);
-    expect(resolveAuthIdx).toBeGreaterThan(-1);
-    expect(getGuardIdx).toBeLessThan(resolveAuthIdx);
-
-    // Must use clientError() not error() — GET is a client probe, not a server fault
-    const guardBlock = index.slice(getGuardIdx, resolveAuthIdx);
-    expect(guardBlock).toMatch(/\.clientError\(/);
-    expect(guardBlock).not.toMatch(/\.error\(/);
-
-    // And nothing in handleMcp can reach req.json() on a non-POST any more,
-    // because the request never gets that far.
+describe('mcp GET guard — the no-hang consequence only', () => {
+  // SCOPE. The method guard's placement contract — guard lives in `index.ts`,
+  // 405 + `Allow: POST`, ahead of `resolveAuth` and the plan/rate-limit
+  // lookups, inside `traceRequest`, `clientError` not `error`, no second copy
+  // in `handleMcp` — is owned by `mcp-method-guard-ordering.spec.ts`. It was
+  // duplicated here and two files pinning one contract drift, so the copy is
+  // gone.
+  //
+  // What stays is the half that belongs to THIS file's subject (auth-family
+  // responses must never hang a streamable-HTTP client): a non-POST must never
+  // reach `req.json()`, whose "Unexpected end of JSON input" surfaces as a
+  // misleading 400 instead of a 405. That is a consequence of the ordering
+  // contract, not a restatement of it — it asserts on `mcp-handler.ts`, which
+  // the ordering spec's placement assertions do not.
+  it('leaves req.json() unreachable for a non-POST, so no bare GET can produce a parse-error 400', () => {
+    // `handleMcp` owns the only `req.json()` and runs after auth, which runs
+    // after the guard — so a non-POST is answered before it ever gets here.
     expect(handler).toMatch(/body = await req\.json\(\)/);
+    // Not re-asserted as a placement check: if the guard were still in the
+    // handler, the request would reach the handler and this file's premise
+    // (the request is answered before auth) would be false.
     expect(handler).not.toMatch(/req\.method !== 'POST'/);
   });
 });
