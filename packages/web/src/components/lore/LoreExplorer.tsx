@@ -151,6 +151,8 @@ function ControlRow({
   onEditField,
   range,
   onRangeChange,
+  dateLabel,
+  dateActive,
   status,
   onStatusChange,
 }: {
@@ -164,6 +166,10 @@ function ControlRow({
   onEditField: (field: FilterField | null) => void;
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
+  /** Preset label for the date trigger when a preset (not a custom window) is active. */
+  dateLabel?: string;
+  /** Whether the date control should read as an active narrowing (preset or custom). */
+  dateActive?: boolean;
   status: MemoryStatus;
   onStatusChange: (status: MemoryStatus) => void;
 }) {
@@ -193,7 +199,13 @@ function ControlRow({
         onEditField={onEditField}
         variant={variant}
       />
-      <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
+      <DateRangePicker
+        value={range}
+        onChange={onRangeChange}
+        displayLabel={dateLabel}
+        active={dateActive}
+        className="shrink-0"
+      />
       <StatusControl value={status} onChange={onStatusChange} variant={variant} />
     </div>
   );
@@ -308,6 +320,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // param has always held.
   const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
 
+  // The date control and the stat panel's preset picker share ONE `range`, so
+  // the date control must SHOW that shared selection rather than reading "All
+  // time" while the list below is filtered. When a preset is active it carries no
+  // custom `pickerRange`, so surface the preset's own label ('24h'/'7d'/'30d')
+  // and keep the control styled active; `all` / unset stay the inactive "All
+  // time" grey the reader resets to.
+  const rangeIsAll = range === null || (isPresetRange(range) && range.preset === 'all');
+  const dateActive = !rangeIsAll;
+  const dateLabel =
+    isPresetRange(range) && range.preset !== 'all' ? range.preset : undefined;
+
   // The pre-facet `?owner=` param. Ownership is a server-side filter DIMENSION
   // now (migration 00064), folded into the bar below like every other
   // dimension, so this legacy param is READ (never written) purely to keep old
@@ -332,6 +355,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // below resurrected the pill the user had just removed.
   const [rawFilters, setRawFilters] = useUrlState<Filter[] | null>('filters', null, {
     cleanOnPathname: '/lore',
+    // Push, not replace: adding/removing a filter is a navigational step the
+    // reader expects the Back button to undo (return to the previous filter
+    // set), the way scope selection already behaves.
+    navigationMode: 'push',
   });
 
   // The pre-filter-bar `?tags=` param. Still read (never written) so links
@@ -744,6 +771,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onEditField={setEditingField}
           range={pickerRange}
           onRangeChange={handleDatePickerChange}
+          dateLabel={dateLabel}
+          dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
         />
@@ -773,6 +802,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onEditField={setEditingField}
           range={pickerRange}
           onRangeChange={handleDatePickerChange}
+          dateLabel={dateLabel}
+          dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
         />

@@ -41,6 +41,7 @@
 import { useMemo } from 'react';
 import { Archive, BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import {
   effectiveStatsRange,
   statsWindow,
@@ -210,23 +211,27 @@ export function ExplorerStats({
     },
     {
       // Lifecycle: the two ways a memory leaves the active set — archived by a
-      // caller, or expired when its TTL ran out. Archived leads because it is
-      // the one someone browsing lore acts on; expired rides along as the
-      // secondary figure so the card carries a real number even when nothing
-      // has expired (which, with no TTLs set, is most of the time).
+      // caller, or expired when its TTL ran out — shown as one "archived /
+      // expired" pair so the card carries both without a second row. The tooltip
+      // names the order (a bare "0 / 0" doesn't say which is which).
       id: 'lifecycle',
       icon: Archive,
-      label: 'Memories archived',
+      label: 'Archived / expired',
       tag: 'Lifecycle',
       tooltip:
-        'Memories that left the active set in the selected range: archived by a caller, or expired when their TTL ran out (the secondary figure). Both are ACCOUNT-WIDE even when a scope is selected — archiving is recorded per user, and the nightly purge that observes expiry runs per user and spans scopes, so neither event carries a scope to filter on.',
+        'Two figures, in order: memories ARCHIVED / memories EXPIRED in the selected range. Archived is a caller action; expired is counted when the nightly purge removes a TTL-elapsed memory. Both are ACCOUNT-WIDE even when a scope is selected — archiving is recorded per user, and the purge runs per user and spans scopes, so neither event carries a scope to filter on.',
       value: data?.archived ?? 0,
+      valueNode: (
+        <span className="inline-flex items-baseline gap-1.5">
+          <AnimatedNumber value={data?.archived ?? 0} />
+          <span className="text-lg font-normal text-[var(--color-content-tertiary)] sm:text-xl">/</span>
+          <AnimatedNumber value={data?.expired ?? 0} />
+        </span>
+      ),
       // No scope suffix, deliberately — see the tooltip.
       description: `across your account in ${rangeText}`,
-      secondary: { label: 'expired', value: data?.expired ?? 0 },
-      // No series: the API reports these as totals with no per-bucket breakdown,
-      // so there is nothing honest to draw. StatCard renders the numbers alone
-      // rather than an empty chart.
+      // No series today: the usage endpoint reports these as totals with no
+      // per-bucket breakdown, so there is nothing honest to draw yet.
     },
   ];
 
@@ -250,29 +255,30 @@ export function ExplorerStats({
   // expanding reads as one motion — the answer stays put and only the evidence
   // unfolds — rather than a strip cross-fading into a different set of cards.
   //
-  // Columns key off the PANEL's own width (`@container` + `@3xl`), not the
-  // viewport. A viewport breakpoint (`md:grid-cols-4`) can't see that the panel
-  // is narrower than the screen — the sidebar eats width, and a narrow embed is
-  // narrower still — so it packed four full cards into a ~370px column. Sized to
-  // the container, the grid goes four-up only once the panel can seat four cards
-  // and their sparkbars without cramping (~768px), and stays two-up below that.
+  // Columns key off the PANEL's own width (`@3xl` against the `@container` on the
+  // insights `<section>`), not the viewport. A viewport breakpoint
+  // (`md:grid-cols-4`) can't see that the panel is narrower than the screen — the
+  // sidebar eats width, and a narrow embed is narrower still — so it packed four
+  // full cards into a ~370px column. Sized to the panel, the grid goes four-up
+  // only once the panel can seat four cards and their sparkbars without cramping
+  // (~768px), and stays two-up below that.
   return (
-    <div className="@container">
-      <div
-        className={`grid grid-cols-2 gap-3 transition-opacity duration-150 @3xl:grid-cols-4 ${dim}`}
-        aria-busy={isFetching || isLoading}
-      >
-        {cards.map(({ id, ...card }) => (
-          <StatCard
-            key={id}
-            {...card}
-            trendTitle={trendTitle}
-            rangeTitle={rangeTitle}
-            collapsible
-            collapsed={!expanded}
-          />
-        ))}
-      </div>
+    <div
+      // One-up below ~384px (a small phone, where two cards would crush the
+      // number), two-up from there, four-up once the panel can seat four.
+      className={`grid grid-cols-1 gap-3 transition-opacity duration-150 @sm:grid-cols-2 @3xl:grid-cols-4 ${dim}`}
+      aria-busy={isFetching || isLoading}
+    >
+      {cards.map(({ id, ...card }) => (
+        <StatCard
+          key={id}
+          {...card}
+          trendTitle={trendTitle}
+          rangeTitle={rangeTitle}
+          collapsible
+          collapsed={!expanded}
+        />
+      ))}
     </div>
   );
 }

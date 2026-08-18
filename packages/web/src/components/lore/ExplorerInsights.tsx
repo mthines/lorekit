@@ -143,7 +143,10 @@ export function ExplorerInsights({
   return (
     <section
       aria-label="Activity for the current selection"
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+      // `@container` makes the panel a query container so the stat grid can size
+      // its columns to the PANEL's width (see ExplorerStats' `@3xl:grid-cols-4`),
+      // which is what the sidebar-agnostic four-up-when-it-fits behaviour needs.
+      className="@container rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
     >
       {/* The title + controls, then the persistent stat grid on its own
           full-width line. Keeping the grid out of the control row is what stops

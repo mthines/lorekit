@@ -583,7 +583,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
               className="flex min-h-0 flex-1 flex-col overflow-hidden"
               aria-label="Edit memory"
             >
-              <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
+              {/* `min-h-0` is load-bearing: without it a flex child's default
+                  `min-height:auto` refuses to shrink below its content, so
+                  `overflow-y-auto` never engages and a tall memory overflows the
+                  sheet's `max-h-[90vh]` (clipping the content and pushing the
+                  pinned footer off-screen) instead of scrolling inside it. */}
+              <div className="group flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-5">
                 {/* Content — Preview (rendered markdown) / Edit (raw textarea) */}
                 <Controller
                   name="value"

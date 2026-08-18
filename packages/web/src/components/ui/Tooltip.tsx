@@ -62,7 +62,18 @@ export function computeTooltipPosition(
       : align === 'right'
         ? trigger.right - panel.width
         : trigger.left + trigger.width / 2 - panel.width / 2;
-  const top = side === 'top' ? trigger.top - gap - panel.height : trigger.bottom + gap;
+
+  // Auto-flip to the side with room. A tall tooltip on a card near the top of
+  // the viewport can't fit ABOVE its trigger, and clamping it to `top:8` then
+  // drops it ON TOP of the trigger and the content around it — which reads as the
+  // tooltip being cut off / stuck inside the card. Flipping it below instead puts
+  // it in the clear. Symmetric for `bottom` near the viewport floor.
+  const fitsAbove = trigger.top - gap - panel.height >= 8;
+  const fitsBelow = trigger.bottom + gap + panel.height <= viewport.height - 8;
+  const placeSide =
+    side === 'top' ? (fitsAbove || !fitsBelow ? 'top' : 'bottom') : fitsBelow || !fitsAbove ? 'bottom' : 'top';
+  const top = placeSide === 'top' ? trigger.top - gap - panel.height : trigger.bottom + gap;
+
   return {
     top: Math.max(8, Math.min(top, viewport.height - panel.height - 8)),
     left: Math.max(8, Math.min(left, viewport.width - panel.width - 8)),
@@ -156,7 +167,7 @@ export function Tooltip({
       className={[
         'pointer-events-none fixed z-50 w-max max-w-[16rem] rounded-lg border border-[var(--color-border)]',
         'bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11px] leading-snug',
-        'text-[var(--color-content-secondary)] shadow-md',
+        'text-[var(--color-content-secondary)] shadow-lg',
         'transition-opacity duration-150 motion-reduce:transition-none',
         visible && pos ? 'opacity-100' : 'opacity-0',
       ].join(' ')}

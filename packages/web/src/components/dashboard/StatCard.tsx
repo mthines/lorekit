@@ -63,6 +63,13 @@ export interface StatCardProps {
   /** What the number counts, and what it deliberately does not. */
   tooltip: string;
   value: number;
+  /**
+   * Overrides the rendered headline. For a card that carries TWO figures in one
+   * line (the Explorer's Lifecycle card shows archived / expired), pass the
+   * composite here; `value` still feeds the default render and stays the
+   * single-number `aria` anchor for cards that don't set this.
+   */
+  valueNode?: ReactNode;
   /** The caption under the label — usually the range. */
   description: string;
   /**
@@ -118,6 +125,7 @@ export function StatCard({
   tag,
   tooltip,
   value,
+  valueNode,
   description,
   trend,
   trendTitle,
@@ -141,65 +149,73 @@ export function StatCard({
     </div>
   );
 
-  // The headline is the card's focal point and is sized to say so — the tag, the
-  // label and the caption around it are all ≤12px, so the number carries the
-  // hierarchy on its own without a second accent. It steps up again on `sm` and
-  // above, where the cards are 2- or 4-up and each one is narrow enough that the
-  // number has to win the column at a glance. It COUNTS to a new value rather
-  // than swapping: see AnimatedNumber for why that is a change indicator.
-  const numberBlock = (
-    <div>
-      <p className="text-2xl font-bold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-3xl">
-        <AnimatedNumber value={value} />
-      </p>
-      <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
-        {label}
-        <Tooltip content={tooltip} side="top" align="center">
-          <Info
-            className="size-3 shrink-0 text-[var(--color-content-tertiary)] opacity-60"
-            aria-hidden
-          />
-        </Tooltip>
-      </p>
-      <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
-        {description}
-      </p>
-      {secondary && (
-        <p className="mt-1.5 text-[11px] text-[var(--color-content-tertiary)]">
-          <span className="font-semibold tabular-nums text-[var(--color-content-secondary)]">
-            <AnimatedNumber value={secondary.value} />
-          </span>{' '}
-          {secondary.label}
-        </p>
-      )}
-    </div>
+  // The card's pieces, built once so the plain and collapsible layouts compose
+  // the SAME elements — the plain card stacks them all; the collapsible card
+  // keeps the focal pair (number + label) mounted and folds the rest away.
+  //
+  // The headline is the focal point and is sized to say so — the tag, the label
+  // and the caption around it are all ≤12px, so the number carries the hierarchy
+  // on its own. It COUNTS to a new value rather than swapping: see AnimatedNumber
+  // for why that is a change indicator.
+  const numberEl = (
+    <p className="text-2xl font-bold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-3xl">
+      {valueNode ?? <AnimatedNumber value={value} />}
+    </p>
   );
+  const labelEl = (
+    <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
+      {label}
+      <Tooltip content={tooltip} side="top" align="center">
+        <Info
+          className="size-3 shrink-0 text-[var(--color-content-tertiary)] opacity-60"
+          aria-hidden
+        />
+      </Tooltip>
+    </p>
+  );
+  const captionEl = (
+    <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
+      {description}
+    </p>
+  );
+  const secondaryEl = secondary ? (
+    <p className="mt-1.5 text-[11px] text-[var(--color-content-tertiary)]">
+      <span className="font-semibold tabular-nums text-[var(--color-content-secondary)]">
+        <AnimatedNumber value={secondary.value} />
+      </span>{' '}
+      {secondary.label}
+    </p>
+  ) : null;
 
-  const sparkbar = trend && (
+  const sparkbar = trend ? (
     <Sparkbar
       points={trend.points}
       unit={unit}
       className="mt-auto h-7 w-full"
       ariaLabel={rangeTitle ? `${label}: ${rangeTitle}` : label}
     />
-  );
+  ) : null;
 
-  // ── Collapsible: the same card at two densities ─────────────────────────────
-  // Only the Lore Explorer's insights panel passes `collapsible`. The icon, tag,
-  // number, label and caption never move between the two densities — they are the
-  // answer, and the answer should stay put. It is the EVIDENCE that folds: the
-  // trend chip fades in place (top-right, no reflow) and the sparkbar unfolds its
-  // own height. Because it is ONE card growing rather than a strip cross-fading
-  // into a different card, the expand reads as a single motion, not a swap.
+  // ── Collapsible: a compact tile that unfolds into the full card ──────────────
+  // Only the Lore Explorer's insights panel passes `collapsible`. COLLAPSED is
+  // deliberately lean — the icon SITS LEFT OF THE NUMBER on one line with the
+  // label beneath, so a card is barely taller than the number itself. Expanding
+  // UNFOLDS the evidence in one motion: the trend chip fades in beside the number
+  // (no vertical shift), and the caption + full-width sparkbar grow their own
+  // height below. The icon, number and label never move.
   if (collapsible) {
-    return <CollapsibleStatCard
-      iconBox={iconBox}
-      tag={tag}
-      numberBlock={numberBlock}
-      sparkbar={sparkbar}
-      chip={chip}
-      collapsed={collapsed}
-    />;
+    return (
+      <CollapsibleStatCard
+        iconBox={iconBox}
+        chip={chip}
+        numberEl={numberEl}
+        labelEl={labelEl}
+        captionEl={captionEl}
+        secondaryEl={secondaryEl}
+        sparkbar={sparkbar}
+        collapsed={collapsed}
+      />
+    );
   }
 
   return (
@@ -211,7 +227,12 @@ export function StatCard({
         </div>
         {chip}
       </div>
-      {numberBlock}
+      <div>
+        {numberEl}
+        {labelEl}
+        {captionEl}
+        {secondaryEl}
+      </div>
       {/* Per-metric trend — hover (desktop) or tap (mobile) a bar for values. */}
       {sparkbar}
     </div>
@@ -222,59 +243,90 @@ export function StatCard({
  * The collapsible rendering of {@link StatCard}, split out so the plain card's
  * markup stays untouched (and its Overview baseline with it).
  *
- * Spacing is `mt-3` rather than the plain card's `flex … gap-3` deliberately:
- * the reveal's own gap lives INSIDE its animated height, so when the sparkbar
- * folds away its spacing folds with it — a flex `gap` between the number block
- * and the reveal would leave a 12px orphan that snaps shut on unmount.
+ * The icon sits LEFT OF THE NUMBER, with the label beneath — so a COLLAPSED card
+ * is barely taller than the number itself (no header row, no tag). That trio is
+ * always mounted. Folded away when collapsed: the trend chip (fades beside the
+ * number, adding no height so the number never shifts) and the caption +
+ * full-width sparkbar (each grows its own height below). Every reveal carries
+ * its OWN spacing inside the animated region, so a folded piece leaves no gap.
  */
 function CollapsibleStatCard({
   iconBox,
-  tag,
-  numberBlock,
-  sparkbar,
   chip,
+  numberEl,
+  labelEl,
+  captionEl,
+  secondaryEl,
+  sparkbar,
   collapsed,
 }: {
   iconBox: ReactNode;
-  tag: string;
-  numberBlock: ReactNode;
-  sparkbar: ReactNode;
   chip: ReactNode;
+  numberEl: ReactNode;
+  labelEl: ReactNode;
+  captionEl: ReactNode;
+  secondaryEl: ReactNode;
+  sparkbar: ReactNode;
   collapsed: boolean;
 }) {
   const reduceMotion = useReducedMotion();
-  return (
-    <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {iconBox}
-          <UnitTag label={tag} />
-        </div>
-        {/* The chip carries no layout of its own (the row is space-between), so
-            it can just fade — no height to animate, no reflow of the number. */}
+
+  // Height reveal for the pieces that grow the card downward (caption, sparkbar).
+  // `overflow:hidden` is what lets an auto-height animation run; reduced motion
+  // collapses it to an opacity swap per the repo's motion rule.
+  const reveal = (children: ReactNode, key: string) => (
+    <AnimatePresence initial={false}>
+      {!collapsed && children && (
         <motion.div
-          animate={{ opacity: collapsed ? 0 : 1 }}
-          transition={{ duration: reduceMotion ? 0 : 0.15 }}
-          aria-hidden={collapsed}
+          key={key}
+          initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+          transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
+          style={{ overflow: 'hidden' }}
         >
-          {chip}
+          {children}
         </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
+  return (
+    <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+      {/* Icon left of the number; number + label stacked to its right. */}
+      <div className="flex items-start gap-3">
+        {iconBox}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            {numberEl}
+            {/* The chip adds no vertical space (it shares the number's row), so
+                the number never shifts as it fades in on expand. */}
+            <AnimatePresence initial={false}>
+              {!collapsed && chip && (
+                <motion.div
+                  key="chip"
+                  initial={reduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.15 }}
+                  className="shrink-0"
+                >
+                  {chip}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          {labelEl}
+          {reveal(
+            <>
+              {captionEl}
+              {secondaryEl}
+            </>,
+            'caption',
+          )}
+        </div>
       </div>
-      <div className="mt-3">{numberBlock}</div>
-      <AnimatePresence initial={false}>
-        {!collapsed && sparkbar && (
-          <motion.div
-            key="evidence"
-            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
-            style={{ overflow: 'hidden' }}
-          >
-            <div className="mt-3">{sparkbar}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {sparkbar ? reveal(<div className="mt-3">{sparkbar}</div>, 'spark') : null}
     </div>
   );
 }

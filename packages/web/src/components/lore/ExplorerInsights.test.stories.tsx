@@ -127,6 +127,10 @@ export const CardsReflectTheActiveSelection: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
+    // Numbers read in either density, but the captions this test checks are
+    // evidence — folded away when collapsed — so open the panel first.
+    await userEvent.click(await canvas.findByRole('button', { name: /show activity detail/i }));
+
     let accountWritten = 0;
     await step('all scopes: the Written card counts every fixture memory', async () => {
       await waitFor(async () => {
@@ -205,23 +209,23 @@ export const LifecycleTileShowsTheUsageLedger: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
-    await step('the headline is archived, from GET /memories/usage summary.archived', async () => {
-      await waitFor(async () => {
-        await expect(await headline(canvas, 'Memories archived')).toBe(ARCHIVED_RECORDS);
-      });
-    });
-
-    await step('and expired rides along as the secondary figure', async () => {
-      // Rendered as "<n> expired" under the caption; read the settled value off
-      // its own AnimatedNumber rather than the concatenated text. Found by DOM
-      // scan (not getByText) so the number span nested in the same <p> can't make
-      // the match ambiguous, and so the portaled tooltip's prose is out of reach.
-      const card = cardOf(canvas, 'Memories archived') as HTMLElement;
-      const secondary = Array.from(card.querySelectorAll('p')).find((p) =>
-        /expired/.test(p.textContent ?? ''),
+    // The Lifecycle card shows both figures as one "archived / expired" pair, so
+    // its headline holds TWO AnimatedNumbers — the first is archived, the second
+    // expired. Read each off its own settled (sr-only) value.
+    const lifecycleFigures = () => {
+      const card = cardOf(canvas, 'Archived / expired') as HTMLElement;
+      const values = Array.from(card.querySelectorAll('.sr-only')).map((n) =>
+        Number(n.textContent?.trim()),
       );
-      await expect(secondary).toBeTruthy();
-      await expect(exactValue(secondary)).toBe(EXPIRED_RECORDS);
+      return { archived: values[0], expired: values[1] };
+    };
+
+    await step('the pair is archived / expired, from GET /memories/usage', async () => {
+      await waitFor(async () => {
+        const { archived, expired } = lifecycleFigures();
+        await expect(archived).toBe(ARCHIVED_RECORDS);
+        await expect(expired).toBe(EXPIRED_RECORDS);
+      });
     });
 
     await step('it is ACCOUNT-wide — selecting a scope changes neither figure', async () => {
@@ -230,22 +234,26 @@ export const LifecycleTileShowsTheUsageLedger: Story = {
       // pretended otherwise would be inventing a number the API cannot produce.
       await userEvent.click(canvas.getByRole('button', { name: 'Select repo' }));
       await waitFor(async () => {
-        await expect(await headline(canvas, 'Memories archived')).toBe(ARCHIVED_RECORDS);
+        const { archived, expired } = lifecycleFigures();
+        await expect(archived).toBe(ARCHIVED_RECORDS);
+        await expect(expired).toBe(EXPIRED_RECORDS);
       });
     });
 
     await step('and its caption says so instead of naming the scope', async () => {
-      await expect(canvas.getByText(/across your account/)).toBeInTheDocument();
+      // The caption is folded evidence — open the panel to read it.
+      await userEvent.click(await canvas.findByRole('button', { name: /show activity detail/i }));
+      await waitFor(async () => {
+        await expect(canvas.getByText(/across your account/)).toBeInTheDocument();
+      });
     });
 
-    await step('it draws no sparkbar, because lifecycle has no per-bucket series', async () => {
-      // Open the panel so the OTHER cards reveal their sparkbars — the point is
-      // that the Lifecycle card still has none even when evidence is unfolded.
-      await userEvent.click(canvas.getByRole('button', { name: /show activity detail/i }));
+    await step('it draws no sparkbar — lifecycle has no per-bucket series yet', async () => {
+      // The OTHER cards reveal sparkbars once expanded; the Lifecycle card has none.
       await waitFor(async () => {
         await expect(canvas.getAllByRole('img').length).toBeGreaterThan(0);
       });
-      const card = cardOf(canvas, 'Memories archived');
+      const card = cardOf(canvas, 'Archived / expired');
       await expect((card as HTMLElement).querySelector('[role="img"]')).toBeNull();
     });
   },
@@ -268,19 +276,22 @@ export const CollapsedStillShowsTheNumbers: Story = {
       await expect(
         canvas.getByRole('button', { name: /show activity detail/i }),
       ).toBeInTheDocument();
-      // No sparkbars, no heatmap — the evidence is what folds.
+      // Collapsed is just the numbers + labels: no icons/tags, no captions, no
+      // sparkbars, no heatmap. That is what keeps the summary a thin strip of
+      // cards rather than a wall of them.
       await expect(canvas.queryAllByRole('img')).toHaveLength(0);
       await expect(canvas.queryByText(/last \d+ weeks/i)).toBeNull();
+      await expect(canvas.queryByText(/in the last/i)).toBeNull();
     });
 
     let collapsedWritten = 0;
-    await step('but the four cards keep their numbers, labels and captions', async () => {
+    await step('but the four cards keep their numbers and labels', async () => {
       await waitFor(async () => {
         for (const label of [
           'Memories written',
           'Memories read',
           'Scopes active',
-          'Memories archived',
+          'Archived / expired',
         ]) {
           await expect(canvas.getByText(label)).toBeInTheDocument();
         }
@@ -383,6 +394,8 @@ export const UntouchedRangeShowsTheLast24Hours: Story = {
     });
 
     await step('and the cards describe that window', async () => {
+      // The caption is folded evidence now, so open the panel to read it.
+      await userEvent.click(canvas.getByRole('button', { name: /show activity detail/i }));
       await waitFor(async () => {
         await expect(canvas.getAllByText(/in the last 24 hours/i).length).toBeGreaterThan(0);
       });
@@ -431,7 +444,7 @@ export const CardsAreOneRowOfFourEqualColumnsWhenWide: Story = {
       await expect(await headline(canvas, 'Memories written')).toBeGreaterThan(0);
     });
 
-    const labels = ['Memories written', 'Memories read', 'Scopes active', 'Memories archived'];
+    const labels = ['Memories written', 'Memories read', 'Scopes active', 'Archived / expired'];
     const items = labels.map((label) => (cardOf(canvas, label) as HTMLElement).getBoundingClientRect());
 
     await step('all four sit on a single row', async () => {

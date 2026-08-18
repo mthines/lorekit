@@ -113,10 +113,11 @@ describe('Tooltip — viewport clamping (the anti-crop guarantee)', () => {
     expect(computeTooltipPosition(edge, PANEL, 'top', 'center', GAP, VIEWPORT).left).toBe(792);
   });
 
-  it('clamps a top overflow to 8px below the viewport top', () => {
+  it('flips a side="top" tooltip BELOW when there is no room above', () => {
     const high: TooltipTriggerRect = { top: 10, left: 500, right: 516, bottom: 26, width: 16, height: 16 };
-    // above would be 10 - 6 - 40 = -36; clamps to 8.
-    expect(computeTooltipPosition(high, PANEL, 'top', 'center', GAP, VIEWPORT).top).toBe(8);
+    // Above needs 10 - 6 - 40 = -36 (doesn't fit ≥8), so it flips below the
+    // trigger: bottom 26 + gap 6 = 32 — in the clear, not clamped over content.
+    expect(computeTooltipPosition(high, PANEL, 'top', 'center', GAP, VIEWPORT).top).toBe(32);
   });
 
   it('never positions the panel off the left edge', () => {
