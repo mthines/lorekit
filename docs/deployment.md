@@ -298,19 +298,23 @@ Three things to know when reading a run:
   commit, or a checkout whose parent is not present) the resolver diffs nothing
   and treats **every tracked file** as changed — it never falls back to `HEAD`,
   because `git diff HEAD HEAD` is empty and would resolve both halves `false`.
-- **`rollback-web-production` must DELETE the web tag.** It reverts the *domain*
-  to the previously promoted deployment, whose commit the tag no longer names.
-  Leaving the tag in place is **not** a safe error, and the non-ancestor rule does
-  not catch it: `promote-web-production` sets the tag to `github.sha`, a commit on
-  `main`, so it stays an *ancestor* of every later `HEAD` no matter what the domain
-  is serving. The next merge would then diff the web half against a bundle
-  production never kept and could resolve `web=false`, skipping the half
-  production is not serving — the incident above with the halves swapped. Deleting
-  the tag is the only fail-open answer available to that job: with no marker,
-  `pickBaseline` falls back to the push baseline. The rollback job's own tag delete
-  is best-effort (`|| true`) — a failed delete must not mask the deploy failure
-  that triggered the rollback, and a stale tag is repaired by the next successful
-  promote.
+- **Both rollback jobs must DELETE their half's tag.** The markers are moved by
+  the *flip* jobs, which run **before** `smoke-production` — so a marker is
+  already on this run's SHA by the time the smoke gate fails, and neither
+  rollback undoes that by itself. `rollback-production` reverts the edge
+  functions to `HEAD~1` while `deployed/api-production` still names `HEAD`, and
+  `rollback-web-production` reverts the *domain* to the previously promoted
+  deployment, whose commit `deployed/web-production` no longer names. Leaving
+  either tag in place is **not** a safe error, and the non-ancestor rule does not
+  catch it: both are set to `github.sha`, a commit on `main`, so each stays an
+  *ancestor* of every later `HEAD` no matter what production is actually serving.
+  The next merge would then diff that half against something production never
+  kept and could resolve it `false`, skipping the half production is not serving
+  — the incident above, once per half. Deleting is the only fail-open answer
+  available to a rollback job: with no marker, `pickBaseline` falls back to the
+  push baseline. Each delete is best-effort (`|| true`, `if: always()`) — a failed
+  delete must not mask the deploy failure that triggered the rollback, and a stale
+  tag is repaired by the next successful flip.
 - **The decision is a tested module, not a shell block.**
   `scripts/resolve-deploy-scope.mjs` with `scripts/resolve-deploy-scope.test.mjs`
   (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — added by the
@@ -385,27 +389,25 @@ quietly. Use `API_DEPLOYED_TAG` in `deploy-production` and `WEB_DEPLOYED_TAG` in
           echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
 ```
 
-**4. `deploy.yml` → `rollback-web-production`.** Add `permissions: contents:
-write` and **delete** the web marker, for the reason in the bullet above: the tag
-names a bundle the domain no longer serves, and it is still an ancestor of `HEAD`,
-so the non-ancestor rule will not save the next run. Best-effort — a failed delete
-must not mask the failure that triggered the rollback.
+**4. `deploy.yml` → BOTH rollback jobs.** Add `permissions: contents: write` to
+`rollback-production` and `rollback-web-production`, and give each this step,
+using `API_DEPLOYED_TAG` in the former and `WEB_DEPLOYED_TAG` in the latter. The
+reason is the bullet above: the flip jobs move their marker *before*
+`smoke-production` runs, so by the time a rollback fires the tag already names a
+SHA production is no longer serving — and it is still an ancestor of `HEAD`, so
+the non-ancestor rule will not save the next run. In `rollback-production` the
+step must come **before** `Report rollback`, which ends in `exit 1`.
 
 ```yaml
-      - name: Drop the promoted-web marker (the domain no longer serves it)
+      - name: Drop the deployed marker (production no longer serves it)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+          TAG: ${{ env.API_DEPLOYED_TAG }}
         run: |
           gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
-          echo "- Dropped web marker \`${TAG}\` (rolled back)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Dropped marker \`${TAG}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
 ```
-
-`rollback-production` (the API half) needs no counterpart: it reverts the edge
-functions to the *previous commit*, so leaving `deployed/api-production` on the
-failed SHA would skip that revert's own redeploy — drop it there too if that job
-is ever made to move the tag.
 
 **5. `ci.yml`.** Add a `deploy` path-filter output over
 `^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
