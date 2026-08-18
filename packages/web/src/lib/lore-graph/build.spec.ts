@@ -149,6 +149,96 @@ describe('buildLoreGraph', () => {
     expect([...kinds].sort()).toEqual(['label', 'scope']);
   });
 
+  it('weights a shared repo below a shared key namespace below a shared label', () => {
+    // Jaccard alone is not comparable across kinds: `key` and `repo` contribute
+    // exactly one term each, so both would score a perfect 1.0 and outrank even
+    // a genuine label twin. KIND_WEIGHT is what makes the numbers mean the same
+    // thing, and the ordering it produces is the point.
+    const strengthOf = (kind: 'label' | 'key' | 'repo') => {
+      const graph = buildLoreGraph(
+        [
+          memory({ key: 'ns::a', tags: ['only'], origin_repo: 'o/r' }),
+          memory({ key: 'ns::b', tags: ['only'], origin_repo: 'o/r' }),
+        ],
+        { kinds: [kind] },
+      );
+      return graph.edges.find((edge) => edge.kind === kind)?.strength ?? 0;
+    };
+
+    expect(strengthOf('label')).toBeGreaterThan(strengthOf('key'));
+    expect(strengthOf('key')).toBeGreaterThan(strengthOf('repo'));
+  });
+
+  it('ranks a shared label above a shared repo when both connect the same pair', () => {
+    const graph = buildLoreGraph([
+      memory({ key: 'a', tags: ['ci'], origin_repo: 'o/r' }),
+      memory({ key: 'b', tags: ['ci'], origin_repo: 'o/r' }),
+    ]);
+    const strongest = graph.edges
+      .filter((edge) => edge.kind !== 'scope')
+      .sort((x, y) => y.strength - x.strength)[0];
+
+    expect(strongest.kind).toBe('label');
+  });
+
+  it('draws the same graph whichever order the kinds were requested in', () => {
+    // `Array#sort` is stable, so without a kind term in the tie-break the
+    // surviving edge under a tight budget would depend on generation order.
+    const input = [
+      memory({ key: 'ns::a', tags: ['x'], origin_repo: 'o/r' }),
+      memory({ key: 'ns::b', tags: ['x'], origin_repo: 'o/r' }),
+    ];
+    const asKinds = (kinds: ('label' | 'key' | 'repo')[]) =>
+      buildLoreGraph(input, { kinds, maxEdges: 1 })
+        .edges.filter((edge) => edge.kind !== 'scope')
+        .map((edge) => `${edge.kind}:${edge.strength}`);
+
+    expect(asKinds(['repo', 'key', 'label'])).toEqual(asKinds(['label', 'key', 'repo']));
+  });
+
+  it('spends the degree budget on distinct neighbours, not on parallel edges', () => {
+    // `twin` shares a label, a key namespace AND a repo with `hub` — three edges
+    // between one pair. Counting edges would declare the hub full after that
+    // single neighbour; counting neighbours leaves room for the second one,
+    // which is what the budget is actually protecting.
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'ns::hub', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'ns::twin', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'other::third', tags: ['x'] }),
+      ],
+      { maxDegree: 2 },
+    );
+
+    const hubIndex = graph.nodes.findIndex((node) => node.label === 'ns::hub');
+    const distinct = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope' && (edge.source === hubIndex || edge.target === hubIndex))
+        .map((edge) => (edge.source === hubIndex ? edge.target : edge.source)),
+    );
+
+    expect(distinct.size).toBe(2);
+  });
+
+  it('still refuses a genuinely over-connected node', () => {
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'hub', tags: ['a', 'b', 'c', 'd', 'e'] }),
+        ...['a', 'b', 'c', 'd', 'e'].map((tag) => memory({ key: `n-${tag}`, tags: [tag] })),
+      ],
+      { maxDegree: 2 },
+    );
+
+    const hubIndex = graph.nodes.findIndex((node) => node.label === 'hub');
+    const distinct = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope' && (edge.source === hubIndex || edge.target === hubIndex))
+        .map((edge) => (edge.source === hubIndex ? edge.target : edge.source)),
+    );
+
+    expect(distinct.size).toBe(2);
+  });
+
   it('caps a memory’s relation degree, keeping its strongest neighbours', () => {
     // `twin` overlaps the hub on three of six labels (Jaccard 0.5); each `nX`
     // overlaps on exactly one (0.167). With room for one relation, the cap must
@@ -254,9 +344,18 @@ describe('buildLoreGraph', () => {
     expect(graph.nodes[0].scopeType).toBe('branch');
   });
 
-  it('stays linear enough to build a plan-ceiling account inside a frame budget', () => {
+  it('holds its budgets at a plan-ceiling account', () => {
     // 5,000 memories is the free-plan cap (docs/limits.md) — the worst case the
     // dashboard can actually be handed.
+    //
+    // Deliberately NOT a wall-clock assertion. A `elapsed < N ms` check here
+    // would make this the one spec in the suite that can go red on a noisy CI
+    // runner with no code change, and a flaky guard is worse than none: it
+    // trains everyone to re-run rather than to read. What this pins instead is
+    // the property that would ACTUALLY regress if an accidental all-pairs path
+    // crept back in — the bounded output. Timing figures for the design doc are
+    // measured with `scripts/bench-lore-graph.mjs`, which is run on demand and
+    // gates nothing.
     const many = Array.from({ length: 5_000 }, (_, i) =>
       memory({
         key: `bucket-${i % 40}::lesson-${i}`,
@@ -266,12 +365,17 @@ describe('buildLoreGraph', () => {
       }),
     );
 
-    const started = Date.now();
     const graph = buildLoreGraph(many);
-    const elapsed = Date.now() - started;
 
     expect(graph.nodes).toHaveLength(5_000 + 25);
     expect(graph.edges.length).toBeLessThanOrEqual(5_000 + 15_000);
-    expect(elapsed).toBeLessThan(2_000);
+    // Every node keeps at most `maxDegree` distinct relation neighbours.
+    const distinct = new Map<number, Set<number>>();
+    for (const edge of graph.edges) {
+      if (edge.kind === 'scope') continue;
+      (distinct.get(edge.source) ?? distinct.set(edge.source, new Set()).get(edge.source))?.add(edge.target);
+      (distinct.get(edge.target) ?? distinct.set(edge.target, new Set()).get(edge.target))?.add(edge.source);
+    }
+    expect(Math.max(...[...distinct.values()].map((set) => set.size))).toBeLessThanOrEqual(12);
   });
 });

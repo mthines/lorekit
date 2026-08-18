@@ -61,19 +61,81 @@ export interface GraphBuildOptions {
   maxNodes?: number;
   /** Max memory↔memory edges kept, strongest first. */
   maxEdges?: number;
-  /** Max relation edges per memory. Scope edges are exempt — they are the skeleton. */
+  /**
+   * Max distinct relation NEIGHBOURS per memory — not edges.
+   *
+   * The distinction is load-bearing. Two memories that share a label, a key
+   * namespace AND an origin repo produce three edges between the same pair, and
+   * counting edges would spend three of the budget on one neighbour: with
+   * `maxDegree: 3` a hub would keep three lines to a single other node and be
+   * declared full. Neighbours are what the budget is protecting — a node
+   * tethered to twelve others is a hairball; a node with three parallel lines to
+   * one other is a single, slightly bolder relationship.
+   *
+   * So an edge to an ALREADY-connected neighbour is free: it draws over the
+   * same path and costs nothing in legibility.
+   *
+   * Scope edges are exempt entirely — they are the skeleton.
+   */
   maxDegree?: number;
   /** A term shared by more than this many memories is a facet, not a relation. */
   hubSize?: number;
-  /** Relation kinds to derive. Order is irrelevant; membership is not. */
+  /**
+   * Relation kinds to derive. Membership matters; ORDER does not — the sort that
+   * ranks candidates breaks ties on `KIND_RANK` and then on node indices, never
+   * on the position a kind happened to occupy in this array.
+   */
   kinds?: readonly Exclude<EdgeKind, 'scope'>[];
 }
+
+/**
+ * How much a shared term of each kind is worth, relative to a shared label.
+ *
+ * Without this, Jaccard is **not comparable across kinds**. A key namespace and
+ * an origin repo contribute exactly ONE term each, so every such pair scores a
+ * perfect 1.0 — `shared 1 / union 1` — and sorts ahead of even a genuine label
+ * twin before `maxDegree` gets a look in. The graph would then be dominated by
+ * "these two lessons came from the same repo", which is the weakest evidence of
+ * a relationship the model has and the least interesting thing to draw.
+ *
+ * The multipliers encode the evidence strength directly: sharing a whole label
+ * vocabulary is a real statement about two memories; sharing a bucket namespace
+ * is a weaker one; being written from the same repository is weaker still, and
+ * is already visible from the scope clustering.
+ */
+export const KIND_WEIGHT: Record<Exclude<EdgeKind, 'scope'>, number> = {
+  label: 1,
+  key: 0.55,
+  repo: 0.35,
+};
+
+/**
+ * Tie-break order when two candidate edges score identically.
+ *
+ * Its only job is to make the result independent of the caller's `kinds` array
+ * order. `Array#sort` is stable, so without an explicit kind term a tie would be
+ * resolved by whichever kind was generated first — meaning
+ * `kinds: ['label','repo']` and `['repo','label']` could keep different edges
+ * under a tight `maxDegree`. Same inputs, different picture, no reason.
+ */
+const KIND_RANK: Record<EdgeKind, number> = { scope: 0, label: 1, key: 2, repo: 3 };
 
 /**
  * Defaults chosen against the 5,000-memory plan ceiling.
  *
  * `maxNodes` is the ceiling itself: below it nothing is dropped, so the common
- * account sees its whole graph. `maxEdges` is ~3× the node ceiling because a
+ * account sees its whole graph.
+ *
+ * The 5,000 cap counts ACTIVE memories only — archiving frees headroom
+ * immediately (`docs/limits.md`) — so an account can hold more than 5,000 rows
+ * in total. That does not make this budget too small, because the two
+ * populations never arrive together: the Explorer's Status control is
+ * single-select (`active` | `archived` | `expiring`) and the list is fetched
+ * with one `archived` value, so the map is only ever handed one population at a
+ * time. If a future caller ever feeds it both, `truncated` will say so rather
+ * than the map silently thinning out.
+ *
+ * `maxEdges` is ~3× the node ceiling because a
  * readable graph is sparse — past roughly three edges per node the screen is a
  * fog of lines regardless of how fast it renders. `hubSize` of 64 is the point
  * where a shared term stops discriminating: a label on 65 of your memories is
@@ -187,9 +249,18 @@ function pairsFromPostings(
   return pairs;
 }
 
-/** Strongest first; pair order breaks ties so a rebuild draws the same graph. */
+/**
+ * Strongest first, then kind, then node indices.
+ *
+ * Every term after the first exists to make the ordering TOTAL: with only
+ * `strength`, ties fall through to `Array#sort`'s stability and the result
+ * depends on generation order — which is the caller's `kinds` array order. A
+ * total order means the same inputs always draw the same graph, whichever way
+ * they were handed in.
+ */
 function byStrength(a: GraphEdge, b: GraphEdge): number {
   if (b.strength !== a.strength) return b.strength - a.strength;
+  if (a.kind !== b.kind) return KIND_RANK[a.kind] - KIND_RANK[b.kind];
   if (a.source !== b.source) return a.source - b.source;
   return a.target - b.target;
 }
@@ -285,19 +356,47 @@ export function buildLoreGraph(
       terms.map((t) => t.length),
     );
     for (const pair of pairs.values()) {
-      candidates.push({ source: pair.source, target: pair.target, kind, strength: pair.shared });
+      candidates.push({
+        source: pair.source,
+        target: pair.target,
+        kind,
+        // Scaled so the score means the same thing across kinds — see KIND_WEIGHT.
+        strength: pair.shared * KIND_WEIGHT[kind],
+      });
     }
   }
 
   candidates.sort(byStrength);
 
-  const degree = new Int32Array(nodes.length);
+  // Distinct NEIGHBOURS per node, not edge count — see `maxDegree`. A second
+  // edge between an already-connected pair draws over the same path, so it
+  // spends no legibility and must spend no budget.
+  const neighbours: Map<number, Set<number>> = new Map();
+  const neighboursOf = (node: number): Set<number> => {
+    const existing = neighbours.get(node);
+    if (existing) return existing;
+    const created = new Set<number>();
+    neighbours.set(node, created);
+    return created;
+  };
+
   const relations: GraphEdge[] = [];
   for (const edge of candidates) {
     if (relations.length >= maxEdges) break;
-    if (degree[edge.source] >= maxDegree || degree[edge.target] >= maxDegree) continue;
-    degree[edge.source] += 1;
-    degree[edge.target] += 1;
+
+    const sourceNeighbours = neighboursOf(edge.source);
+    const targetNeighbours = neighboursOf(edge.target);
+    const alreadyConnected = sourceNeighbours.has(edge.target);
+
+    if (
+      !alreadyConnected &&
+      (sourceNeighbours.size >= maxDegree || targetNeighbours.size >= maxDegree)
+    ) {
+      continue;
+    }
+
+    sourceNeighbours.add(edge.target);
+    targetNeighbours.add(edge.source);
     relations.push(edge);
   }
   if (relations.length < candidates.length) {

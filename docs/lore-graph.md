@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~80–100 ms (measured, `buildLoreGraph`) | Runs once per dataset change, not per frame, and off the main thread. |
+| **Graph build** | ~30–130 ms, median ~50 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
@@ -57,9 +57,23 @@ decorative line.
 | `repo` | two memories were recorded from the same `origin_repo`. |
 
 Relation strength is the **Jaccard** overlap of the two term sets (shared over
-union). Normalising by the smaller set instead — the obvious first attempt —
-scores a single-label memory as a perfect twin of every memory carrying that
-label, which manufactures exactly the false clusters the view exists to disprove.
+union), scaled by a **per-kind weight**. Two corrections are baked into that
+sentence, both of which the first version got wrong:
+
+- Normalising by the *smaller* set instead of the union scores a single-label
+  memory as a perfect twin of every memory carrying that label — manufacturing
+  exactly the false clusters the view exists to disprove.
+- Jaccard alone is **not comparable across kinds.** A key namespace and an
+  origin repo contribute exactly one term each, so every such pair scores a
+  perfect `1/1` and outranks even a genuine label twin before any budget is
+  applied. `KIND_WEIGHT` (`label 1`, `key 0.55`, `repo 0.35`) encodes the actual
+  evidence strength: sharing a label vocabulary says something about two
+  memories; being written from the same repository is the weakest signal the
+  model has, and is already visible from the scope clustering.
+
+The `kinds` option's **order is irrelevant** — the candidate sort is total
+(strength, then kind rank, then node indices), so it never depends on which kind
+happened to be generated first.
 
 ### The three bounds that keep it linear
 
@@ -71,13 +85,47 @@ Applied in this order, each reporting what it dropped in `graph.truncated`:
    posting list makes the pair count quadratic. One label on 3,000 memories
    would alone yield ~4.5 M pairs. Dropping it removes the cost and the noise in
    one move, which is why it is first rather than a later cap.
-2. **Degree cap** (`maxDegree`, default 12). Strongest neighbours first. A
-   hairball around one node hides the clustering the view is for.
+2. **Degree cap** (`maxDegree`, default 12) — counted in **distinct neighbours,
+   not edges**. Strongest first. A pair that shares a label *and* a key
+   namespace *and* a repo produces three edges between the same two nodes;
+   spending three of the budget on them would declare a node full after one
+   neighbour. What the cap protects is legibility, and a hairball is twelve
+   *different* nodes — three parallel lines to one node is a single, slightly
+   bolder relationship. So an edge to an already-connected neighbour is free.
 3. **Edge budget** (`maxEdges`, default 15,000), strongest first.
 
 `truncated` is not optional decoration: a picture of "the shape of your lore"
 that quietly omits half of it is worse than no picture, so the UI must say when
 a bound fired.
+
+### Reproducing the build figure
+
+The number above is not folklore — run it yourself:
+
+```bash
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bench-lore-graph.mjs --runs 9
+```
+
+```text
+buildLoreGraph — 5,000 memories, 9 runs
+  node       v24.19.0
+  min/med/max 30.3 ms / 51.2 ms / 145.4 ms
+  nodes      5,025
+  edges      20,000
+  truncated  [{"of":"edges","total":26008,"kept":15000}]
+```
+
+The spread is wide because the harness this was captured on is a shared cloud
+container; the shape of the number is what matters — tens of milliseconds, not
+seconds, and flat in the node count rather than quadratic.
+
+The benchmark imports the real `build.ts` (Node strips the types; a small
+`registerHooks` resolver supplies the `@/` alias), so it can never drift into
+measuring a copy. It is **not** a test and gates nothing — a wall-clock
+assertion in the suite would be the one check that goes red on a noisy runner
+with no code change, and a flaky guard trains everyone to re-run rather than to
+read. `build.spec.ts` pins the bounded-output property instead, which is what
+would actually regress if an accidental all-pairs path crept back in.
 
 ## Layout
 
