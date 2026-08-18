@@ -54,6 +54,29 @@ Rate-limit attributes on the root `lorekit.mcp` span:
 | `rate_limit.current_count` | `47` | Current window request count |
 | `rate_limit.limit_value` | `120` | Effective RPM limit |
 
+A non-POST is answered **before** authentication and rate limiting, so its span
+carries none of the three `rate_limit.*` attributes and none of the `lorekit.*`
+tool attributes. Filter them out with `auth.outcome = not_attempted` (below)
+rather than treating the absence as missing data.
+
+Auth attributes on the root `lorekit.mcp` span:
+
+| Attribute | Values | Notes |
+|-----------|--------|-------|
+| `auth.type` | `none`, `service`, `api_key`, `jwt`, `user` | The credential tier. Written by `resolveAuthTiers` (`supabase/functions/mcp/auth.ts`) and then **overwritten** from the resolved `AuthContext.type` when auth succeeds — which is why a valid JWT lands on `user` while an invalid one stays `jwt`. |
+| `auth.outcome` | `missing_token`, `service_role`, `api_key_valid`, `api_key_invalid`, `jwt_valid`, `jwt_invalid`, `not_attempted` | How resolution ended. |
+| `auth.result` | `ok`, `failed` | Set by `mcp/index.ts` after `resolveAuth` returns; absent when auth never ran. |
+| `auth.user_id` | uuid | Present only on `api_key_valid` and `jwt_valid`. |
+| `auth.error_code` | `bounded code` | JWT path only, on `jwt_invalid`. Bounded code, never the free-form message. |
+
+`not_attempted` is the pre-auth case and the only one where `auth.type` is not
+a resolution result: a non-POST `/mcp` is answered `405` above `resolveAuth`, so
+the tier is classified from the request line alone (`credentialTier`) and
+`auth.user_id` is never known — it lives in the `api_tokens` row that the early
+answer exists to avoid reading. **Always filter on `auth.outcome` before
+comparing `auth.type` across probe and non-probe traffic**, or a valid-JWT probe
+(`jwt`) will be counted apart from the same credential on a POST (`user`).
+
 ---
 
 ## Structured usage events (`usage_events` table)
