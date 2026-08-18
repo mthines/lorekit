@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -199,7 +199,6 @@ describe('REST scope filters are validated before they reach a query', () => {
     // predicate and assert the list above accounts for it. An earlier revision
     // of this spec asserted facets.ts had no scope filter — it does — so the
     // list is now derived from the source rather than from memory.
-    const { readdirSync } = require('node:fs') as typeof import('node:fs');
     const listed = new Set(SCOPE_FILTERING_HANDLERS.map(([f]) => f));
     // `create.ts` matches the predicate pattern (`p_scope: body.scope`) but is
     // the WRITE path, not a filter — it is what STORES the scope, and it is
