@@ -84,12 +84,17 @@ function Nodes({
     const scale = new THREE.Vector3();
     const position = new THREE.Vector3();
     const rotation = new THREE.Quaternion();
+    // One scratch colour for the whole rebuild, like the scratch matrix and
+    // vectors above: `setColorAt` copies into the instance buffer, so the
+    // object is never retained and a per-instance `new THREE.Color` would only
+    // hand the GC 5,000 corpses per rebuild.
+    const colour = new THREE.Color();
 
     for (let i = 0; i < graph.nodes.length; i++) {
       position.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
       scale.setScalar(radii[i]);
       instanced.setMatrixAt(i, matrix.compose(position, rotation, scale));
-      instanced.setColorAt(i, new THREE.Color(colors[i * 3], colors[i * 3 + 1], colors[i * 3 + 2]));
+      instanced.setColorAt(i, colour.setRGB(colors[i * 3], colors[i * 3 + 1], colors[i * 3 + 2]));
     }
 
     instanced.instanceMatrix.needsUpdate = true;
