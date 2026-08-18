@@ -249,7 +249,7 @@ $$;
 
 comment on function lorekit_api_token_org_allowed(text, uuid[], uuid) is
   'May a key with this tenancy reach a row owned by p_org_id (NULL = personal)? '
-  'Authoritative over org_scope_bindings auto-routing — see 00067 decision 4.';
+  'Authoritative over org_scope_bindings auto-routing — see 00068 decision 4.';
 
 revoke execute on function lorekit_api_token_scope_allowed(text[], text) from public, anon;
 revoke execute on function lorekit_api_token_org_allowed(text, uuid[], uuid) from public, anon;

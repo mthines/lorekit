@@ -1,6 +1,6 @@
 -- API key scoping, part 3: the audit vocabulary.
 --
--- 00067 gave a key a scope allowlist and a tenancy; 00068 enforced them. Both
+-- 00068 gave a key a scope allowlist and a tenancy; 00069 enforced them. Both
 -- are AUTHORIZATION state, so changing them has to leave a trail — and today it
 -- cannot: `audit_log_action_check` has admitted `api_key.create` and
 -- `api_key.revoke` since 00010 and nothing else on that resource.

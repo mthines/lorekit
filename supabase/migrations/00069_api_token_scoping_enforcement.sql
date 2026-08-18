@@ -1,15 +1,15 @@
 -- ═════════════════════════════════════════════════════════════════════════
 -- API token scoping, part 2 of 2: the SQL-side enforcement.
 --
--- 00067 added the data model (`api_tokens.scopes` / `org_access` / `org_ids`)
+-- 00068 added the data model (`api_tokens.scopes` / `org_access` / `org_ids`)
 -- and the two predicates, and enforced nothing. This migration teaches the SEVEN
 -- functions that the transports CANNOT stand in front of — two mutation gates
--- and five per-scope aggregates — and re-issues one of 00067's own predicates:
+-- and five per-scope aggregates — and re-issues one of 00068's own predicates:
 --
 --   1. `memory_write` — the last unbypassable gate on the write path, on BOTH
 --      axes. The edge holds the service-role key, so every check above this
 --      function is advisory by construction; and the scope→org BINDING lives in
---      here, where no transport can see it. 00067 decision 4 says the key
+--      here, where no transport can see it. 00068 decision 4 says the key
 --      restriction beats the binding, and this is the only place that sentence
 --      can be true.
 --
@@ -40,7 +40,7 @@
 --
 -- All of them take the calling key's restriction as DEFAULTED trailing parameters, so
 -- every existing caller — a dashboard JWT, the Node `mcp-server`, CI on the
--- service role — keeps the pre-00068 behaviour with no call-site change, and an
+-- service role — keeps the pre-00069 behaviour with no call-site change, and an
 -- unscoped key is byte-for-byte unaffected.
 --
 -- ── Why the parameters are trustworthy ────────────────────────────────────
@@ -93,7 +93,7 @@ create or replace function memory_write(
   p_kind          text        default null,
   p_host          text        default null,
   -- The CALLING KEYs restriction — BOTH axes, defaulted so every existing
-  -- caller (JWT, the Node path, CI service-role) keeps the pre-00068 behaviour
+  -- caller (JWT, the Node path, CI service-role) keeps the pre-00069 behaviour
   -- untouched. The scope allowlist is here for the same reason the tenancy is:
   -- the edge holds the service-role key, so the dispatchers refusal is
   -- advisory, and this is the last gate a write cannot go around.
@@ -164,7 +164,7 @@ begin
     join orgs o on o.id = b.org_id
     where b.scope = p_scope and o.deleted_at is null;
 
-    -- 00067 decision 4: THE KEY WINS OVER THE BINDING. Auto-routing is a
+    -- 00068 decision 4: THE KEY WINS OVER THE BINDING. Auto-routing is a
     -- convenience; the keys tenancy is an authorization boundary, and a
     -- boundary a convenience can widen is not one. A key that may not reach
     -- the bound org falls back to a PERSONAL write — the same graceful
@@ -370,7 +370,7 @@ grant  execute on function lorekit_memory_scopes(uuid, text[], text, uuid[])
 
 comment on function lorekit_memory_scopes(uuid, text[], text, uuid[]) is
   'Per-scope active counts and last activity visible to the EFFECTIVE caller,
-   further narrowed by the CALLING KEY''s scope allowlist and tenancy (00067).
+   further narrowed by the CALLING KEY''s scope allowlist and tenancy (00068).
    Ordered by count desc then scope asc (matching lorekit_memory_tags). Actor
    resolved by the 00046/00041 service-role-gated rule: a caller-supplied
    p_user_id is honoured only on a verified service-role connection, otherwise
@@ -393,7 +393,7 @@ comment on function lorekit_memory_scopes(uuid, text[], text, uuid[]) is
 -- account through the charts instead of through the catalog.
 --
 -- Same shape as `lorekit_memory_scopes`: defaulted trailing parameters, the two
--- 00067 predicates ANDed on top of the caller's own visibility (never instead
+-- 00068 predicates ANDed on top of the caller's own visibility (never instead
 -- of it), and an unscoped key byte-for-byte unaffected. Narrowed HERE rather
 -- than post-filtered in the edge for the reason the catalog is: the rows are
 -- aggregates, so dropping rows afterwards would report counts that do not add
@@ -437,7 +437,7 @@ create or replace function lorekit_memory_activity(
   p_origin_pr_mode     text   default 'in',
   p_owner              text[] default null,
   p_owner_mode         text   default 'in',
-  -- The CALLING KEY's restriction (00067), defaulted to unrestricted.
+  -- The CALLING KEY's restriction (00068), defaulted to unrestricted.
   p_key_scopes         text[] default '{}',
   p_key_org_access     text   default 'all',
   p_key_org_ids        uuid[] default '{}'
@@ -537,7 +537,7 @@ comment on function lorekit_memory_activity(
    [p_since, p_until) window, visible to the EFFECTIVE caller, narrowed by the
    optional scope + dimension filters (00063) plus the owner dimension (00064,
    `personal` / org slug), and further narrowed by the CALLING KEY''s scope
-   allowlist and tenancy (00067) — this series returns one row per scope NAME,
+   allowlist and tenancy (00068) — this series returns one row per scope NAME,
    so leaving it unnarrowed would leak exactly what lorekit_memory_scopes hides.
    The eight text/tags/int dimension predicates come from lorekit_match_text /
    _tags / _int (00066). The key parameters default to unrestricted, so a
@@ -551,7 +551,7 @@ create or replace function lorekit_read_activity(
   p_since   timestamptz default null,
   p_until   timestamptz default null,
   p_scope   text        default null,
-  -- The CALLING KEY's scope allowlist (00067). No org parameters: `usage_events`
+  -- The CALLING KEY's scope allowlist (00068). No org parameters: `usage_events`
   -- is a per-user ledger with no org_id, so there is no tenancy axis to narrow.
   p_key_scopes text[] default '{}'
 )
@@ -590,7 +590,7 @@ begin
        -- silently drop every unattributed event — including every row written
        -- before this migration.
        and ue.client is distinct from 'dashboard'
-       -- The calling key's scope allowlist (00067). A NULL scope is an
+       -- The calling key's scope allowlist (00068). A NULL scope is an
        -- unattributable read: it names nothing, so it leaks nothing, and it is
        -- passed through rather than dropped so the account total a scoped key
        -- sees stays the sum of the rows it is allowed to attribute plus the
@@ -624,7 +624,7 @@ comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, 
   'Memory RECORDS read per UTC hour/day per scope over the half-open
    [p_since, p_until) window, summed from usage_events.result_count over the
    read tools, excluding dashboard-originated reads. Further narrowed by the
-   CALLING KEY''s scope allowlist (00067): this series returns one row per scope
+   CALLING KEY''s scope allowlist (00068): this series returns one row per scope
    NAME, so leaving it unnarrowed would leak what lorekit_memory_scopes hides.
    A NULL scope is unattributable, names nothing and is passed through, so the
    account total stays complete. No org parameters — usage_events is a per-user
@@ -659,9 +659,9 @@ create or replace function memory_delete(
   p_scope    text default null,
   p_key      text default null,
   p_force    boolean default false,
-  -- The CALLING KEY's restriction (00067), defaulted to unrestricted so every
+  -- The CALLING KEY's restriction (00068), defaulted to unrestricted so every
   -- existing caller — dashboard JWT, the Node path, CI on the service role —
-  -- keeps the pre-00068 behaviour with no call-site change.
+  -- keeps the pre-00069 behaviour with no call-site change.
   p_key_scopes     text[] default '{}',
   p_key_org_access text   default 'all',
   p_key_org_ids    uuid[] default '{}'
@@ -762,7 +762,7 @@ comment on function memory_delete(uuid, text, text, text, boolean, text[], text,
   'Archives (p_force=false) or hard-deletes (p_force=true) the effective
    caller''s own memory, or an org''s memory when p_org_slug is given and the
    actor holds the archive / hard_delete capability. Further gated by the
-   CALLING KEY''s scope allowlist and tenancy (00067): the org branch chooses
+   CALLING KEY''s scope allowlist and tenancy (00068): the org branch chooses
    its rows inside this function, so no transport-side filter can cover it, and
    both dispatchers run on the service-role client and are advisory. The key
    parameters default to unrestricted, so a non-key caller is unaffected.';
@@ -847,7 +847,7 @@ grant  execute on function lorekit_memory_tags(uuid, boolean, text[], text, uuid
 comment on function lorekit_memory_tags(uuid, boolean, text[], text, uuid[]) is
   'Label (memories.tags) catalog with per-label counts, for the partition
    selected by p_archived, visible to the EFFECTIVE caller and further narrowed
-   by the CALLING KEY''s scope allowlist and tenancy (00067). Same
+   by the CALLING KEY''s scope allowlist and tenancy (00068). Same
    service-role-gated actor rule and tenant predicate as lorekit_memory_scopes.
    Ordered count desc, tag asc. The key parameters default to unrestricted, so a
    non-key caller sees byte-for-byte 00050''s result.';
@@ -881,7 +881,7 @@ create or replace function lorekit_memory_facets(
   -- visible rows. All optional: null/absent = not filtered.
   p_owner              text[]  default null,
   p_owner_mode         text    default 'in',
-  -- The CALLING KEY's restriction (00067), defaulted to unrestricted.
+  -- The CALLING KEY's restriction (00068), defaulted to unrestricted.
   p_key_scopes         text[]  default '{}',
   p_key_org_access     text    default 'all',
   p_key_org_ids        uuid[]  default '{}'
@@ -1028,7 +1028,7 @@ comment on function lorekit_memory_facets(
    source_agent, trigger, kind, host, origin_repo, origin_branch, origin_pr,
    owner) over the partition selected by p_archived, visible to the EFFECTIVE
    caller and further narrowed by the CALLING KEY''s scope allowlist and tenancy
-   (00067) — `origin_repo` is a repository name, so an unnarrowed facet list
+   (00068) — `origin_repo` is a repository name, so an unnarrowed facet list
    would leak what lorekit_memory_scopes hides. `owner` (00064) is `personal`
    for org_id-null rows, else the org slug. Counts are DRILL-DOWN (00057). The
    key parameters default to unrestricted, so a non-key caller sees
@@ -1037,7 +1037,7 @@ comment on function lorekit_memory_facets(
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 8. lorekit_api_token_scope_allowed — the same shape test as the edge
 --
--- 00067 treated any pattern ending in `*` as a prefix wildcard. The authority
+-- 00068 treated any pattern ending in `*` as a prefix wildcard. The authority
 -- on what a pattern may look like is `SCOPE_PATTERN` in `schemas/api-key.ts`
 -- (and `api_tokens_scopes_shape`, which mirrors it): a `*` is a wildcard only
 -- directly after `/` or `::`. Under the looser rule a stored `repo::mthines/lore*`
@@ -1046,13 +1046,13 @@ comment on function lorekit_memory_facets(
 -- these predicates must never move.
 --
 -- Both guards exist because the column can hold a value the CHECK never saw: a
--- BYOD install bootstrapped before 00067, or a constraint dropped by hand. A
+-- BYOD install bootstrapped before 00068, or a constraint dropped by hand. A
 -- non-conforming pattern now contributes nothing, exactly as the edge's
 -- `keyScopeFilter` drops it — and a key whose patterns ALL fail the shape test
 -- matches no row, which is the fail-closed answer for "restricted, with no
 -- usable patterns".
 --
--- `create or replace` with an unchanged signature, so the 00067 grants stand.
+-- `create or replace` with an unchanged signature, so the 00068 grants stand.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 create or replace function lorekit_api_token_scope_allowed(
@@ -1094,7 +1094,7 @@ comment on function lorekit_api_token_scope_allowed(text[], text) is
   'May a key whose api_tokens.scopes is p_patterns touch p_scope? Empty '
   'allowlist = yes (unrestricted). NULL scope = no (fail closed). A pattern '
   'outside SCOPE_PATTERN''s shape is DROPPED, not matched, so a stored '
-  'mid-token wildcard cannot widen the key (00068).';
+  'mid-token wildcard cannot widen the key (00069).';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9. lorekit_memory_list
@@ -1163,8 +1163,8 @@ create or replace function lorekit_memory_list(
   -- The caller passes limit + 1 and derives `hasMore` from the overflow row,
   -- exactly as the PostgREST path did — the pagination contract is unchanged.
   p_limit                integer     default 51,
-  -- The CALLING KEY's restriction (00068). Defaulted, so every existing caller
-  -- — a dashboard JWT, CI on the service role — keeps the pre-00069 behaviour.
+  -- The CALLING KEY's restriction (00069). Defaulted, so every existing caller
+  -- — a dashboard JWT, CI on the service role — keeps the pre-00070 behaviour.
   p_key_scopes           text[]      default '{}',
   p_key_org_access       text        default 'all',
   p_key_org_ids          uuid[]      default '{}'
@@ -1366,6 +1366,6 @@ comment on function lorekit_memory_list(
   timestamptz, uuid, integer, text[], text, uuid[]
 ) is
   'One keyset page of the memories visible to the EFFECTIVE caller, further
-   narrowed by the CALLING KEY''s scope allowlist and tenancy (00068). Otherwise
+   narrowed by the CALLING KEY''s scope allowlist and tenancy (00069). Otherwise
    identical to the function 00067 introduced; the key parameters default to
    unrestricted, so a non-key caller is unaffected.';
