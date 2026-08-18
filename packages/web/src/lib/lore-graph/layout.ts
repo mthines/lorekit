@@ -208,6 +208,24 @@ function cellKey(x: number, y: number, z: number): number {
 const NUDGE = 0.02;
 
 /**
+ * Floor on the separation the inverse-square repulsion is allowed to divide by.
+ *
+ * The per-iteration clamp further down bounds the STEP, not the VELOCITY, so an
+ * unfloored `repulsion / d²` is not actually bounded by it: two nodes a nudge
+ * apart produce an impulse three orders of magnitude above the clamp, which
+ * then pays out AT the clamp for dozens of iterations before `damping` erodes
+ * it — carrying the pair clean outside the sphere it was seeded on. Flooring
+ * the divisor caps one pair's impulse at `repulsion / MIN_SEPARATION²`, so the
+ * furthest that pair can travel is a geometric sum of that over `damping`
+ * rather than an unbounded run at the clamp.
+ *
+ * Repulsion below this distance is therefore constant rather than exploding,
+ * which is the right shape anyway: the job of the term at point-blank range is
+ * to separate the pair, not to launch it.
+ */
+const MIN_SEPARATION = 1;
+
+/**
  * A deterministic separation direction for two nodes sitting exactly on top of
  * each other, where the real offset carries no direction at all.
  *
@@ -289,8 +307,8 @@ export function relaxPositions(
                 distanceSquared = ox * ox + oy * oy + oz * oz;
               }
 
-              const push = repulsion / distanceSquared;
               const distance = Math.sqrt(distanceSquared);
+              const push = repulsion / Math.max(distanceSquared, MIN_SEPARATION * MIN_SEPARATION);
               velocity[node * 3] += (ox / distance) * push;
               velocity[node * 3 + 1] += (oy / distance) * push;
               velocity[node * 3 + 2] += (oz / distance) * push;
