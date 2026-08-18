@@ -83,7 +83,9 @@ const ROWS: UsageStatRow[] = [
   { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 0, total_duration_ms: 5000 },
   { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, record_count: 0, total_duration_ms: 40 },
   { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, record_count: 0, total_duration_ms: 90 },
-  { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 3, total_duration_ms: 120 },
+  // record_count 0 on purpose: a real archive (a write) sets no result-count
+  // header, so `archived` MUST come from event_count, not record_count.
+  { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 0, total_duration_ms: 120 },
   { tool_name: 'memory.expired', outcome: 'ok', scope_type: null, event_count: 1, record_count: 6, total_duration_ms: null },
 ];
 
@@ -95,7 +97,7 @@ describe('summarizeUsageRows', () => {
       writes: 105,          // memory.write ×102 + memory.archive ×3
       other: 1,             // the memory.expired event
       records_read: 6000,   // "read 6000 memories" — not 608 read calls
-      archived: 3,          // "3 lessons got archived"
+      archived: 3,          // "3 lessons archived" — from event_count (record_count is 0)
       expired: 6,           // "6 lessons got expired"
       by_outcome: { ok: 704, cap_exceeded: 2, error: 8 },
     });

@@ -159,10 +159,16 @@ export function usageToolKind(toolName: string): UsageToolKind {
 export const EXPIRED_TOOL_NAME = 'memory.expired';
 
 /**
- * The tool_name a caller's archive action records (`memory.archive`). Its
- * `record_count` is the records that archive touched, so "N lessons archived"
- * is `sum(record_count)` over this bucket — the lifecycle counterpart to
- * {@link EXPIRED_TOOL_NAME}, surfaced as the summary's `archived` field.
+ * The tool_name a caller's archive action records (`memory.archive`).
+ *
+ * Counted by EVENT, not record: one `memory.archive` call archives exactly one
+ * memory, and — unlike a read — the archive handler sets no
+ * `X-LoreKit-Result-Count` header, so its `record_count` is NULL. Summing
+ * `record_count` here would therefore always yield 0; summing `event_count`
+ * gives the true "N memories archived" and needs no per-handler plumbing or
+ * backfill. This is why `archived` reads `event_count` while `expired` (one
+ * purge event carrying the deleted count) reads `record_count` — the two events
+ * have genuinely different shapes.
  */
 export const ARCHIVED_TOOL_NAME = 'memory.archive';
 
@@ -320,7 +326,10 @@ export function summarizeUsageRows(rows: readonly UsageStatRow[]): UsageSummary 
     summary.total_events += n;
     summary[bucket[kind]] += n;
     if (kind === 'read') summary.records_read += row.record_count;
-    if (row.tool_name === ARCHIVED_TOOL_NAME) summary.archived += row.record_count;
+    // Archived counts EVENTS (one call = one memory; record_count is NULL for
+    // this write); expired counts RECORDS (one purge event, N deleted). See
+    // ARCHIVED_TOOL_NAME.
+    if (row.tool_name === ARCHIVED_TOOL_NAME) summary.archived += row.event_count;
     if (row.tool_name === EXPIRED_TOOL_NAME) summary.expired += row.record_count;
     summary.by_outcome[row.outcome] = (summary.by_outcome[row.outcome] ?? 0) + n;
   }
