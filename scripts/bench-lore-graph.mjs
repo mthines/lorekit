@@ -55,9 +55,24 @@ registerHooks({
 });
 
 const args = process.argv.slice(2);
+/**
+ * Read `--<name> <number>`, rejecting anything that is not a positive integer.
+ *
+ * Without the check, `--runs` with no value (or a typo'd one) is
+ * `Number(undefined)` — `NaN` — so the timing loop never executes and the run
+ * dies forty lines later on `graph.nodes` of an undefined graph. A benchmark
+ * that answers a mistyped flag with a `TypeError` tells you nothing about the
+ * flag.
+ */
 const flag = (name, fallback) => {
   const at = args.indexOf(`--${name}`);
-  return at === -1 ? fallback : Number(args[at + 1]);
+  if (at === -1) return fallback;
+  const value = Number(args[at + 1]);
+  if (!Number.isInteger(value) || value < 1) {
+    console.error(`--${name} needs a positive integer, got: ${args[at + 1] ?? '(nothing)'}`);
+    process.exit(1);
+  }
+  return value;
 };
 
 const NODES = flag('nodes', 5_000);
