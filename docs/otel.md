@@ -54,6 +54,49 @@ Rate-limit attributes on the root `lorekit.mcp` span:
 | `rate_limit.current_count` | `47` | Current window request count |
 | `rate_limit.limit_value` | `120` | Effective RPM limit |
 
+### `mcp.*` — JSON-RPC protocol attributes
+
+Set by `supabase/functions/mcp/mcp-handler.ts` on the root `lorekit.mcp` span.
+These describe the **MCP wire protocol**, not a LoreKit lesson operation, which is
+why they are namespaced `mcp.*` rather than `lorekit.*`.
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `mcp.method` | `tools/call` | The JSON-RPC method. `unknown` when the body is unparseable or carries no `method` |
+| `mcp.tool.name` | `memory.write` | `tools/call` only — the requested tool, including one that does not exist (that request is a client error, not a server fault) |
+| `mcp.protocol_version` | `2025-06-18` | `initialize` only — the version **we answered with**, from `negotiateProtocolVersion`. This is our own output, never evidence about the client |
+| `mcp.protocol_version.requested` | `2024-11-05` | `initialize` only — what the **client** asked for, from `requestedProtocolVersionAttribute` |
+
+**Reading the two version attributes together.** They are deliberately separate,
+and the interesting query is the comparison: `requested != protocol_version`
+means the client was offered something other than what it wanted. There is no
+stored "did we substitute" boolean — a name for it would have to explain which
+direction it reads, so derive it at query time instead.
+
+`mcp.protocol_version.requested` is bounded **by length, not by membership**. A
+plausible value — a non-empty string of at most 32 characters — is recorded
+verbatim, so a client sending `latest` produces the attribute value `latest`.
+That is the point: an unexpected value is the signal this attribute carries, and
+restricting the domain to date-shaped strings would discard it. What *is* a
+closed set is the four sentinels a non-plausible value maps to, which keeps the
+failure modes distinguishable from each other and from a real revision:
+
+| Value | Meaning |
+|-------|---------|
+| `unset` | No `protocolVersion` field in `initialize` params |
+| `not-a-string` | Present but not a string (number, object, `null`, …) |
+| `empty` | Present, a string, zero-length |
+| `too-long` | Present, a string, longer than 32 characters |
+
+No sentinel is date-shaped, so none can be mistaken for a real revision. The
+32-character ceiling is the only cardinality guard — it stops a large
+caller-supplied blob from reaching the span, but it does not make the value set
+enumerable. The
+supported revisions and the negotiation rule itself live in
+`packages/mcp-core/src/mcp-protocol-version.ts` (mirrored into
+`supabase/functions/_shared/`), which also records the known transport MUSTs the
+`2025-06-18` claim does not yet meet.
+
 ---
 
 ## Structured usage events (`usage_events` table)

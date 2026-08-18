@@ -79,7 +79,8 @@ describe('mcp-handler auth status guard', () => {
 describe('mcp-handler GET guard', () => {
   it('intercepts non-POST requests with 405 before trying to parse JSON, using clientError()', () => {
     // GET is used by modern mcp-remote clients probing for SSE support (MCP 2025-03-26 spec).
-    // The server implements 2024-11-05 (POST-only). Without this guard, GET hits req.json()
+    // The server is Streamable-HTTP POST-only across every protocol revision it
+    // negotiates (see mcp-protocol-version.ts). Without this guard, GET hits req.json()
     // which throws "Unexpected end of JSON input" — a misleading 400, not the correct 405.
     // The guard must use clientError() (not error()) so the span is not marked ERROR.
     expect(handler).toMatch(/req\.method !== 'POST'/);
