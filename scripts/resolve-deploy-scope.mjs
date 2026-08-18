@@ -237,11 +237,20 @@ if (invokedDirectly) {
       const webChangedFiles = changedSince(web.base);
       scope = classify({ apiChangedFiles, webChangedFiles });
 
+      // Report the COUNT plus the paths that actually drove the decision. On the
+      // no-baseline path `changedSince` returns every tracked file, and dumping
+      // the whole repository into the job log buries the two lines a reader of a
+      // failed run came for.
       const shown = (base) => base ?? 'none';
-      console.log(`API baseline  ${shown(api.base)} (${api.source})`);
-      console.log(apiChangedFiles.join('\n'));
-      console.log(`Web baseline  ${shown(web.base)} (${web.source})`);
-      console.log(webChangedFiles.join('\n'));
+      const report = (half, picked, files, paths) => {
+        const matched = files.filter((f) => paths.test(f));
+        console.log(
+          `${half} baseline  ${shown(picked.base)} (${picked.source}) — ${files.length} changed file(s), ${matched.length} in this half`,
+        );
+        if (matched.length) console.log(matched.map((f) => `  ${f}`).join('\n'));
+      };
+      report('API', api, apiChangedFiles, API_PATHS);
+      report('Web', web, webChangedFiles, WEB_PATHS);
 
       lines.push('### Deploy scope');
       lines.push(`- API baseline: \`${shown(api.base)}\` (${api.source})`);
