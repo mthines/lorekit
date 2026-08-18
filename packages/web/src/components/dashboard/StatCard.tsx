@@ -80,13 +80,6 @@ export interface StatCardProps {
   /** Range title for the sparkbar's accessible name. */
   rangeTitle?: string;
   /**
-   * A second, quieter figure shown under the caption — for a card that carries
-   * two related counts (the Explorer's Lifecycle card pairs archived with
-   * expired). It is part of the ANSWER, so it stays visible at both densities;
-   * it renders below the caption as "<value> <label>", never as a chart.
-   */
-  secondary?: { label: string; value: number };
-  /**
    * Opt this card into the two-density morph used by the Lore Explorer's
    * collapsible insights panel. OFF by default, so every OTHER caller (the
    * Overview) renders the card exactly as before — a `collapsible` card gets an
@@ -123,7 +116,6 @@ export function StatCard({
   trendTitle,
   unit = 'memories',
   rangeTitle,
-  secondary,
   collapsible = false,
   collapsed = false,
 }: StatCardProps) {
@@ -170,15 +162,6 @@ export function StatCard({
       {description}
     </p>
   );
-  const secondaryEl = secondary ? (
-    <p className="mt-1.5 text-[11px] text-[var(--color-content-tertiary)]">
-      <span className="font-semibold tabular-nums text-[var(--color-content-secondary)]">
-        <AnimatedNumber value={secondary.value} />
-      </span>{' '}
-      {secondary.label}
-    </p>
-  ) : null;
-
   const sparkbar = trend ? (
     <Sparkbar
       points={trend.points}
@@ -203,7 +186,6 @@ export function StatCard({
         numberEl={numberEl}
         labelEl={labelEl}
         captionEl={captionEl}
-        secondaryEl={secondaryEl}
         sparkbar={sparkbar}
         collapsed={collapsed}
       />
@@ -223,7 +205,6 @@ export function StatCard({
         {numberEl}
         {labelEl}
         {captionEl}
-        {secondaryEl}
       </div>
       {/* Per-metric trend — hover (desktop) or tap (mobile) a bar for values. */}
       {sparkbar}
@@ -248,7 +229,6 @@ function CollapsibleStatCard({
   numberEl,
   labelEl,
   captionEl,
-  secondaryEl,
   sparkbar,
   collapsed,
 }: {
@@ -257,7 +237,6 @@ function CollapsibleStatCard({
   numberEl: ReactNode;
   labelEl: ReactNode;
   captionEl: ReactNode;
-  secondaryEl: ReactNode;
   sparkbar: ReactNode;
   collapsed: boolean;
 }) {
@@ -309,13 +288,7 @@ function CollapsibleStatCard({
             </AnimatePresence>
           </div>
           {labelEl}
-          {reveal(
-            <>
-              {captionEl}
-              {secondaryEl}
-            </>,
-            'caption',
-          )}
+          {reveal(captionEl, 'caption')}
         </div>
       </div>
       {sparkbar ? reveal(<div className="mt-3">{sparkbar}</div>, 'spark') : null}
