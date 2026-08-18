@@ -7,6 +7,7 @@ import {
   PREFERRED_PROTOCOL_VERSION,
   OLDEST_PROTOCOL_VERSION,
   negotiateProtocolVersion,
+  requestedProtocolVersionAttribute,
 } from './mcp-protocol-version.js';
 
 /**
@@ -117,6 +118,46 @@ describe('negotiateProtocolVersion', () => {
   });
 });
 
+describe('requestedProtocolVersionAttribute', () => {
+  it('records a plausible client version verbatim', () => {
+    expect(requestedProtocolVersionAttribute({ protocolVersion: '2025-06-18' })).toBe(
+      '2025-06-18',
+    );
+    // Including one we do NOT support — the attribute reports what the client
+    // asked for, not what we answered.
+    expect(requestedProtocolVersionAttribute({ protocolVersion: '2025-03-26' })).toBe(
+      '2025-03-26',
+    );
+  });
+
+  it('tells the four "no usable value" cases apart instead of collapsing them', () => {
+    // The whole point of the attribute: a client sending something unexpected
+    // must not read the same as a client sending nothing.
+    expect(requestedProtocolVersionAttribute({})).toBe('unset');
+    expect(requestedProtocolVersionAttribute(undefined)).toBe('unset');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: undefined })).toBe('unset');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: 42 })).toBe('not-a-string');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: null })).toBe('not-a-string');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: {} })).toBe('not-a-string');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: '' })).toBe('empty');
+    expect(requestedProtocolVersionAttribute({ protocolVersion: 'x'.repeat(33) })).toBe(
+      'too-long',
+    );
+  });
+
+  it('keeps the sentinel set closed, bounded, and not date-shaped', () => {
+    // Bounded: an arbitrary caller-supplied blob must never become a span
+    // attribute value, so every rejection maps into this fixed set.
+    const sentinels = ['unset', 'not-a-string', 'empty', 'too-long'];
+    for (const junk of [undefined, null, 42, {}, [], true, '', 'y'.repeat(64)]) {
+      const value = requestedProtocolVersionAttribute({ protocolVersion: junk });
+      expect(sentinels, `${String(junk)} → ${value}`).toContain(value);
+      // Not date-shaped, so a sentinel can never be read as a real revision.
+      expect(value).not.toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+});
+
 /**
  * Drift guard against the deployed edge handler. `edge-parity.spec.ts` proves
  * the mirrored MODULE matches; this proves the handler actually CALLS it and no
@@ -147,6 +188,11 @@ describe('mcp-handler initialize negotiation guard', () => {
     // about client versions for eleven days. Record both sides.
     expect(handler).toMatch(/'mcp\.protocol_version': negotiated/);
     expect(handler).toMatch(/mcp\.protocol_version\.requested/);
+    // …via the classifier, not `requested ?? 'unset'`, which reported "no
+    // protocolVersion", "not a string", "empty" and "over-long" identically —
+    // erasing the unexpected-client signal the attribute exists to carry.
+    expect(handler).toMatch(/requestedProtocolVersionAttribute\(params\)/);
+    expect(handler).not.toMatch(/requested \?\? 'unset'/);
     // …and NOT a third, derived attribute. "Did we have to downgrade" is
     // `requested !== protocol_version`, computable at query time. A stored
     // boolean would need its name to explain which direction it reads, which
