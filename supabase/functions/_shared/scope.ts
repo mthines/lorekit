@@ -44,6 +44,53 @@ export function validateScope(raw: string): string {
 }
 
 /**
+ * Validate a caller-supplied scope FILTER, and return it unchanged.
+ *
+ * Three properties, and the third is the surprising one:
+ *
+ * 1. THROWS `UserInputError` on an ungrammatical scope, so the handler can
+ *    answer 400. A scope filter IS the question being asked; keeping a
+ *    malformed one and matching nothing answers a different question and calls
+ *    it an empty result. This is the rule `GET /memories/read-activity` already
+ *    follows and `memories/CLAUDE.md` states outright. That route shares the
+ *    GRAMMAR only: it keeps calling the normalising `validateScope`, because it
+ *    filters `usage_events.scope`, which is recorded through
+ *    `safeValidateScope` and is therefore already lowercased.
+ *
+ * 2. `undefined` in, `undefined` out — an absent filter is not an error.
+ *
+ * 2b. REJECTS SURROUNDING WHITESPACE. `validateScope` trims before it checks,
+ *    so `" global"` is grammatical to it — but this returns the caller's own
+ *    string, and `.eq('scope', ' global')` matches nothing. That is exactly the
+ *    200-with-an-empty-page this whole change removes, so a padded filter is
+ *    named as bad input instead. Trimming it silently would rewrite the
+ *    question the caller asked, which property 3 forbids.
+ *
+ * 3. DOES NOT NORMALISE. `validateScope` lowercases, and this deliberately
+ *    discards that result and returns the caller's own string. The REST write
+ *    path does NOT normalise — `CreateMemoryBodySchema` overrides the
+ *    normalising `ScopeSchema` with `RawScopeSchema` and `handlers/create.ts`
+ *    passes `body.scope` through verbatim, with no `lower(scope)` anywhere in
+ *    the migrations. So `memories.scope` legitimately holds mixed-case values,
+ *    and lowercasing a filter here would make those rows unmatchable by list —
+ *    and, worse, undeletable by natural key. Reject-only keeps the exact-match
+ *    contract writes actually established.
+ *
+ * If the write path is ever normalised, normalise here in the same change and
+ * not before; the two halves have to move together or existing rows are
+ * stranded.
+ */
+export function parseScopeFilter(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  // Before the grammar check, because the grammar check trims it away.
+  if (raw !== raw.trim()) {
+    throw new UserInputError(`Invalid scope "${raw}": remove the surrounding whitespace`);
+  }
+  validateScope(raw); // throws UserInputError; the normalised result is discarded on purpose
+  return raw;
+}
+
+/**
  * The ceiling `usage_events.scope` is stored under (`usage_events_scope_len`,
  * migration 00058), mirroring `packages/mcp-core/src/scope.ts`.
  */

@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import type { SortColumn } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -97,14 +98,36 @@ async function respondWithPage(
   span: Span,
   cors: Record<string, string>,
 ): Promise<Response> {
+  // Name the operation BEFORE the first early return, so a rejected request is
+  // still attributable: a 400 that returns above this carries no
+  // `lorekit.operation`, and the `memories.list` metric cited as the evidence
+  // for this change would never show the rejections it is meant to count.
   span.setAttributes({
     'lorekit.operation': 'memories.list',
-    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
     ...(params.key ? { 'lorekit.key': params.key } : {}),
     'lorekit.limit': params.limit,
     'lorekit.archived': String(params.archived),
     'lorekit.sort': params.sort,
   });
+
+  // `ListMemoriesQuerySchema.scope` / `ListMemoriesBodySchema.scope` are
+  // `RawScopeSchema` (shape-only), so the canonical grammar runs here, where a
+  // rejection can become a 400 — the rule `memories/CLAUDE.md` states and
+  // `GET /memories/read-activity` already follows. A scope filter IS the
+  // question; keeping an ungrammatical one and matching nothing answers a
+  // different question and calls it empty. `parseScopeFilter` rejects without
+  // normalising — see its docblock.
+  //
+  // It runs on the decoded request rather than in either entry point, so the
+  // query and body transports cannot diverge on which scopes they accept.
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(params.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
+  }
+
+  if (scopeFilter) span.setAttributes({ 'lorekit.scope': scopeFilter });
 
   const { dimensions: d } = params;
 
@@ -131,7 +154,7 @@ async function respondWithPage(
     // function's own visibility predicate IS the tenant boundary.
     p_user_id: auth.userId ?? null,
     p_archived: params.archived,
-    p_scope: params.scope ?? null,
+    p_scope: scopeFilter ?? null,
     p_key: params.key ?? null,
     // Already LIKE-escaped; the function appends the one active wildcard.
     p_key_prefix: likeNeedle(params.key_prefix),

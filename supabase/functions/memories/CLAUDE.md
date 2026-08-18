@@ -578,6 +578,44 @@ would answer "reads everywhere" under the label the caller asked for. Same call 
 `?correlation_id=`. Both sides go through the **canonical** `validateScope`; there is no
 second grammar.
 
+**That rule now holds on every scope-filtering route, not just this one.**
+`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `DELETE /?scope=…&key=…`
+and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. **So do the body
+transports** `POST /list`, `POST /activity` and `POST /facets`: each decodes into the same
+module-private reader as its `GET` twin (`respondWithPage` / `runActivity` / `runFacets`),
+which is where the filter is validated — that is what stops the two transports disagreeing
+about which scopes are legal, and it means the rule covers a `scope` in the JSON body
+exactly as it covers one in the query string. (`POST /` — the write path — is untouched: it
+stores `scope`, it does not filter by it.) They previously
+passed the raw value into the predicate, so a bad scope matched nothing and the route
+answered `200` with an empty page — the same input getting a `400` from one route and a
+cheerful empty result from five others. The shared entry point is
+**`parseScopeFilter`** (`_shared/scope.ts`).
+
+`parseScopeFilter` **rejects without normalising**, and that is deliberate: `validateScope`
+lowercases, but the write path does not (`CreateMemoryBodySchema` binds `RawScopeSchema`,
+`handlers/create.ts` passes `body.scope` verbatim, and no migration lowers it), so
+`memories.scope` legitimately holds mixed-case values. Lowercasing a *filter* would make
+those rows unmatchable by `GET /` and undeletable by natural key. If the write path is ever
+normalised, normalise the filters in the same change — never before. It also **rejects
+surrounding whitespace**: `validateScope` trims before it checks, so a padded value is
+grammatical to it while the untrimmed string reaches the predicate and matches nothing —
+the same empty-page failure, so it is named as bad input rather than silently trimmed. This
+applies to the `parseScopeFilter` routes only: `GET /read-activity` compares the NORMALISED
+value, so padding is trimmed there and `?scope=%20global` is a legitimate `200`.
+
+**`GET /read-activity` is the one route that still normalises, and must keep doing so.** It
+filters `usage_events.scope`, which is written through `safeValidateScope` at the recording
+site (`_shared/api/router.ts`) and is therefore already lowercased; a reject-only filter
+there would miss every mixed-case request. The six routes share the GRAMMAR; the case rule
+follows whichever path wrote the column. `scope-filter-validation.spec.ts` pins the required
+validator per handler, so neither direction can be "harmonised" into stranding rows.
+
+The array-valued `?scopes=` paths (`POST /search`, `GET /relevant`) are **not** covered:
+they need a per-entry decision — reject the whole request, or drop the bad entry — that has
+not been made yet. The MCP twin (`mcp/tools.ts`) validates each entry, so that is the
+precedent to reconcile against when it is.
+
 `safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope.ts` and
 `supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
 that file is excluded from `MIRRORS` because the two `validateScope` bodies deliberately

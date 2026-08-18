@@ -62,4 +62,8 @@ Wildcards work **only** in `memory.search` — not in `memory.list`,
 2. `repo::` must include a `/` (owner/repo); `repo::mthines` → 400.
 3. `branch::` must have exactly two `::` separators.
 4. Only `global`, `project`, `repo`, `branch` prefixes are valid.
-5. Segments are trimmed and lowercased on ingest.
+5. Segments are trimmed and lowercased on ingest by the MCP tools (`memory.write`
+   validates through the normalising `validateScope`). The REST write path
+   (`POST /memories`) stores the scope EXACTLY as sent, so `memories.scope` can
+   hold mixed case — which is why a `?scope=` filter on the `/memories` routes is
+   validated but never lowercased and matches the stored string exactly.
