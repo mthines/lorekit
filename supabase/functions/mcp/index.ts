@@ -91,10 +91,16 @@ Deno.serve(async (req: Request) => {
       span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
         'mcp.method': 'unknown',
       });
+      // Name the protocol version this server actually negotiates, not a
+      // transport name. `initialize` answers `protocolVersion: '2024-11-05'`
+      // (mcp-handler.ts), whose transport is HTTP+SSE — so telling a client it
+      // is talking to Streamable HTTP contradicts the handshake the same server
+      // performs one request later. What is true regardless of version, and is
+      // the only thing the probing client needs, is: POST only.
       return new Response(
         JSON.stringify({
           error:
-            'Method Not Allowed. This MCP server uses Streamable HTTP over POST; GET/SSE is not supported.',
+            'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05); GET/SSE is not supported.',
         }),
         {
           status: 405,
