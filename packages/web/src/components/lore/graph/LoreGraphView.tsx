@@ -102,14 +102,20 @@ export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreG
 
   return (
     <div className="flex flex-col gap-3">
-      {notice !== null && (
-        <p
-          role="status"
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-xs text-[var(--color-content-secondary)]"
-        >
-          {notice}
-        </p>
-      )}
+      {/* Always mounted, contents swapped. A live region inserted into the DOM
+          with its text already in it is unreliably announced — several screen
+          readers only report changes to a region they were already observing —
+          so the empty case keeps the element and drops only the visible box. */}
+      <p
+        role="status"
+        className={
+          notice === null
+            ? 'sr-only'
+            : 'rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-xs text-[var(--color-content-secondary)]'
+        }
+      >
+        {notice}
+      </p>
 
       {/* The non-visual equivalent of the canvas. Polite, not assertive: the
           map settling is not an interruption worth talking over. */}
