@@ -67,6 +67,14 @@ async function runActivity(
 ): Promise<Response> {
   const { bucket, dimensions: d } = input;
 
+  // Name the operation BEFORE the first early return, so a rejected request is
+  // still attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
+  span.setAttributes({
+    'lorekit.operation': 'memories.activity',
+    'lorekit.bucket': bucket,
+  });
+
   // Same contract as the sibling `GET /memories/read-activity`: the query
   // schema is shape-only and the canonical grammar runs here so a rejection can
   // become a 400. The two endpoints answer the same question about opposite
@@ -86,11 +94,7 @@ async function runActivity(
   const until = input.until ?? new Date().toISOString();
   const since = input.since ?? new Date(Date.parse(until) - DEFAULT_WINDOW_DAYS * DAY_MS).toISOString();
 
-  span.setAttributes({
-    'lorekit.operation': 'memories.activity',
-    'lorekit.bucket': bucket,
-    ...(scopeFilter ? { 'lorekit.scope': scopeFilter } : {}),
-  });
+  if (scopeFilter) span.setAttributes({ 'lorekit.scope': scopeFilter });
 
   // Empty → null = "not filtered", which is what the RPC's parameters mean.
   const list = (values: readonly string[]) => (values.length ? [...values] : null);

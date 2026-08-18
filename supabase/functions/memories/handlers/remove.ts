@@ -51,6 +51,15 @@ export async function handleRemove(
   const force = forceParam === 'true';
   const idParam = params.id;
 
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
+  span.setAttributes({
+    'lorekit.operation': 'memories.remove',
+    'lorekit.delete.force': force,
+    ...(orgParam ? { 'lorekit.org': orgParam } : {}),
+  });
+
   // `DeleteMemoryQuerySchema.scope` is shape-only ("normalisation happens
   // downstream" — its own docblock); downstream is here. On a DELETE the stakes
   // are higher than on a read: an ungrammatical or differently-cased scope
@@ -65,11 +74,6 @@ export async function handleRemove(
 
   const tracedDb = createTracedClient(db, span);
   const now = new Date().toISOString();
-  span.setAttributes({
-    'lorekit.operation': 'memories.remove',
-    'lorekit.delete.force': force,
-    ...(orgParam ? { 'lorekit.org': orgParam } : {}),
-  });
 
   if (orgParam) {
     return await removeOrgOwned(

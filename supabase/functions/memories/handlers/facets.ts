@@ -73,6 +73,20 @@ async function runFacets(
 ): Promise<Response> {
   const { archived, named, requested, narrowed, dimensions: d } = input;
 
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
+  //
+  // The attribute reports what the CALLER asked for (`named`), not the
+  // recognised subset (`requested`): with every named dimension unknown the
+  // subset is empty, so a `?facets=nope` trace would be indistinguishable from
+  // a recognised narrowing that matched no rows. Do not "tighten" this back.
+  span.setAttributes({
+    'lorekit.operation': 'memories.facets',
+    'lorekit.archived': String(archived),
+    ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
+  });
+
   // The Explorer sends its selected scope here as well as to GET /memories, so
   // the filter-menu counts drill down with the list. The two must therefore
   // agree on what a scope IS: if this one kept an ungrammatical value while the
@@ -87,16 +101,6 @@ async function runFacets(
   } catch (e) {
     return badRequest((e as Error).message, undefined, cors);
   }
-
-  // The attribute reports what the CALLER asked for (`named`), not the
-  // recognised subset (`requested`): with every named dimension unknown the
-  // subset is empty, so a `?facets=nope` trace would be indistinguishable from
-  // a recognised narrowing that matched no rows. Do not "tighten" this back.
-  span.setAttributes({
-    'lorekit.operation': 'memories.facets',
-    'lorekit.archived': String(archived),
-    ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
-  });
 
   // Empty → null = "not filtered", which is what the RPC's parameters mean.
   const list = (values: readonly string[]) => (values.length ? [...values] : null);

@@ -98,6 +98,18 @@ async function respondWithPage(
   span: Span,
   cors: Record<string, string>,
 ): Promise<Response> {
+  // Name the operation BEFORE the first early return, so a rejected request is
+  // still attributable: a 400 that returns above this carries no
+  // `lorekit.operation`, and the `memories.list` metric cited as the evidence
+  // for this change would never show the rejections it is meant to count.
+  span.setAttributes({
+    'lorekit.operation': 'memories.list',
+    ...(params.key ? { 'lorekit.key': params.key } : {}),
+    'lorekit.limit': params.limit,
+    'lorekit.archived': String(params.archived),
+    'lorekit.sort': params.sort,
+  });
+
   // `ListMemoriesQuerySchema.scope` / `ListMemoriesBodySchema.scope` are
   // `RawScopeSchema` (shape-only), so the canonical grammar runs here, where a
   // rejection can become a 400 — the rule `memories/CLAUDE.md` states and
@@ -115,14 +127,7 @@ async function respondWithPage(
     return badRequest((e as Error).message, undefined, cors);
   }
 
-  span.setAttributes({
-    'lorekit.operation': 'memories.list',
-    ...(scopeFilter ? { 'lorekit.scope': scopeFilter } : {}),
-    ...(params.key ? { 'lorekit.key': params.key } : {}),
-    'lorekit.limit': params.limit,
-    'lorekit.archived': String(params.archived),
-    'lorekit.sort': params.sort,
-  });
+  if (scopeFilter) span.setAttributes({ 'lorekit.scope': scopeFilter });
 
   const { dimensions: d } = params;
 
