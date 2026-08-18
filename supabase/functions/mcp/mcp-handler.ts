@@ -8,7 +8,7 @@ import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
 import {
   negotiateProtocolVersion,
-  readRequestedProtocolVersion,
+  requestedProtocolVersionAttribute,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from '../_shared/mcp-protocol-version.ts';
 import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
@@ -162,7 +162,6 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // literal is what made a newer client complete the handshake and then go
     // silent instead of listing tools.
     const negotiated = negotiateProtocolVersion(params);
-    const requested = readRequestedProtocolVersion(params);
     span.setAttributes({
       'mcp.protocol_version': negotiated,
       // What the CLIENT asked for, kept separate from what we answered. The
@@ -171,7 +170,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       // being unequal is the signal that a client was offered something other
       // than what it wanted — derive it from these, rather than storing a
       // boolean whose name would have to explain which way round it reads.
-      'mcp.protocol_version.requested': requested ?? 'unset',
+      //
+      // Not `requested ?? unset`: the reader returns null for four different
+      // things (absent, not a string, empty, over-long), and collapsing them
+      // would make a client sending something unexpected — the signal this
+      // attribute exists for — indistinguishable from one sending nothing.
+      // `requestedProtocolVersionAttribute` keeps them apart on a closed,
+      // bounded sentinel set.
+      'mcp.protocol_version.requested': requestedProtocolVersionAttribute(params),
     });
     return jsonrpc(id, {
       protocolVersion: negotiated,

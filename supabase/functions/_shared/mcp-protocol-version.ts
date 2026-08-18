@@ -104,11 +104,38 @@ export function negotiateProtocolVersion(params: unknown): SupportedProtocolVers
   return notNewerThanRequested ?? OLDEST_PROTOCOL_VERSION;
 }
 
+// A protocol revision is a date, so anything longer than this is junk and must
+// never reach a span attribute or a comparison.
+const MAX_PROTOCOL_VERSION_LENGTH = 32;
+
 // The raw, unvalidated value the client sent, for telemetry. Returned as a
 // string only when it actually is one — anything else is reported as absent, so
 // the attribute stays low-cardinality and never carries a serialised object.
 export function readRequestedProtocolVersion(params: unknown): string | null {
   if (typeof params !== 'object' || params === null) return null;
   const raw = (params as { protocolVersion?: unknown }).protocolVersion;
-  return typeof raw === 'string' && raw.length > 0 && raw.length <= 32 ? raw : null;
+  return typeof raw === 'string' && raw.length > 0 && raw.length <= MAX_PROTOCOL_VERSION_LENGTH
+    ? raw
+    : null;
+}
+
+// The value recorded on the `mcp.protocol_version.requested` span attribute.
+//
+// `readRequestedProtocolVersion` collapses four distinct situations into a
+// single `null` — the field is absent, it is not a string, it is empty, it is
+// implausibly long — and folding those into one telemetry value defeats the
+// attribute. A client sending something unexpected is exactly the signal it
+// exists to catch, and it would read identically to a client sending nothing.
+//
+// Return the plausible value verbatim, and one distinct sentinel per failure
+// otherwise. The sentinel set is closed, so cardinality stays bounded, and no
+// sentinel is date-shaped, so none can be mistaken for a real revision.
+export function requestedProtocolVersionAttribute(params: unknown): string {
+  if (typeof params !== 'object' || params === null) return 'unset';
+  const raw = (params as { protocolVersion?: unknown }).protocolVersion;
+  if (raw === undefined) return 'unset';
+  if (typeof raw !== 'string') return 'not-a-string';
+  if (raw.length === 0) return 'empty';
+  if (raw.length > MAX_PROTOCOL_VERSION_LENGTH) return 'too-long';
+  return raw;
 }
