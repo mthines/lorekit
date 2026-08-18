@@ -104,10 +104,10 @@ Deno.serve(async (req: Request) => {
       // skip. `auth.outcome: 'not_attempted'` says so explicitly rather than
       // leaving the attribute absent and ambiguous — a probe is therefore
       // attributable to a credential SHAPE and a source, not to an account.
-      const probeToken = extractToken(
-        req.headers.get('Authorization'),
-        new URL(req.url).searchParams.get('token'),
-      );
+      // `url` is the one already parsed at the top of the handler and reused by
+      // `resolveAuth` below. A second `new URL(req.url)` would put a parse back
+      // onto the exact path this change exists to make free.
+      const probeToken = extractToken(req.headers.get('Authorization'), url.searchParams.get('token'));
       span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
         'mcp.method': 'unknown',
         'auth.type': credentialTier(probeToken),

@@ -131,6 +131,13 @@ describe('mcp entrypoint rejects a non-POST before authenticating', () => {
     // the `api_tokens` row this guard exists to avoid reading. Matched as the
     // quoted ATTRIBUTE KEY, so the surrounding comment may name it in prose.
     expect(block).not.toMatch(/'auth\.user_id'/);
+    // And it must not re-derive what the enclosing handler already computed:
+    // the guard reads the `url` parsed once at the top and reused by
+    // `resolveAuth`. A second parse on the path this change exists to make free
+    // is the cost the change is arguing against.
+    expect(block).toMatch(/url\.searchParams\.get\('token'\)/);
+    // The STATEMENT form, so the explanatory comments may name the expression.
+    expect((index.match(/new URL\(req\.url\);/g) ?? []).length).toBe(1);
   });
 
   it('derives the guard tier from the same mapping resolveAuthTiers uses', () => {
