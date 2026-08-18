@@ -20,13 +20,11 @@
  * change, which trains everyone to re-run rather than to read — so the timing
  * lives here and `build.spec.ts` pins the bounded-output property instead.
  *
- * The synthetic account is shaped like a real one rather than uniformly random:
- * a hundred key namespaces (the `<bucket>-lessons::` convention), a hundred
- * repos, and three label families that straddle `hubSize` — a long tail, one
- * family just under the cap, and one hub family well over it. A uniform-random
- * dataset would produce almost no shared terms and measure the cheap path, and
- * a fixture where every family lands on ONE side of `hubSize` measures only
- * half the algorithm (see the `tags` comment below).
+ * The synthetic account comes from `packages/web/src/lib/lore-graph/fixtures.ts`,
+ * which is the SAME fixture `build.spec.ts` bounds the builder against — the
+ * spec's work bound is calibrated from the numbers this script prints, so the
+ * two cannot be allowed to drift. That file documents the term families and
+ * which side of `hubSize` each one sits on.
  */
 
 import { performance } from 'node:perf_hooks';
@@ -66,28 +64,9 @@ const NODES = flag('nodes', 5_000);
 const RUNS = flag('runs', 5);
 
 const { buildLoreGraph } = await import(new URL('lib/lore-graph/build.ts', WEB_SRC).href);
+const { planCeilingMemories } = await import(new URL('lib/lore-graph/fixtures.ts', WEB_SRC).href);
 
-const memories = Array.from({ length: NODES }, (_, i) => ({
-  key: `bucket-${i % 100}::lesson-${i}`,
-  scope: `repo::owner/repo-${i % 100}`,
-  // Three label families in SEPARATE namespaces, deliberately straddling
-  // `hubSize: 64`.
-  //
-  // The first two used to share one `t*` prefix and collided: `t0`–`t96` drew
-  // members from BOTH cycles, reached 68–69, and were hub-suppressed to a term,
-  // leaving only the ≤17-member tail live. The label kind was being measured far
-  // below the worst case it has to survive.
-  //
-  //   topic-*  300 terms ×  ~17 members — the long tail
-  //   theme-*   97 terms × ~52 members — just UNDER the cap, so the longest
-  //                                      posting list the label path must walk
-  //   facet-*    3 terms × ~1667 members — way OVER it, so suppression fires and
-  //                                        the run measures the bound, not just
-  //                                        the tail it protects
-  tags: [`topic-${i % 300}`, `theme-${i % 97}`, `facet-${i % 3}`],
-  origin_repo: `owner/repo-${i % 100}`,
-  updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i % 3600)).toISOString(),
-}));
+const memories = planCeilingMemories(NODES);
 
 const timings = [];
 let graph;

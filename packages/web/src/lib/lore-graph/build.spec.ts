@@ -6,6 +6,7 @@ import {
   scopeNodeId,
   type GraphMemoryInput,
 } from './build';
+import { PLAN_CEILING_MEMORIES, planCeilingMemories } from './fixtures';
 import type { GraphEdge } from './types';
 
 /** A memory with only the fields under test set; everything else is inert. */
@@ -541,35 +542,20 @@ describe('buildLoreGraph', () => {
     // 4,333,368 without (and ~0.4 s against ~8 s). That is a deterministic,
     // machine-independent proxy for the work done, so it is what this asserts.
     //
-    // The three label families deliberately straddle `hubSize: 64`, and this is
-    // the same fixture `scripts/bench-lore-graph.mjs` uses — keep them in step.
-    // They used to share one `t*` prefix and collided: `t0`–`t96` drew members
-    // from both cycles, reached 68–69, and were suppressed to a term, so only
-    // the ≤17-member tail was ever exercised and the near-cap posting list this
-    // is supposed to bound never existed.
-    //
-    //   topic-*  300 terms ×  ~17 members — the long tail
-    //   theme-*   97 terms ×  ~52 members — just UNDER the cap
-    //   facet-*    3 terms × ~1667 members — well OVER it, so suppression fires
-    const many = Array.from({ length: 5_000 }, (_, i) =>
-      memory({
-        key: `bucket-${i % 100}::lesson-${i}`,
-        scope: `repo::owner/repo-${i % 100}`,
-        tags: [`topic-${i % 300}`, `theme-${i % 97}`, `facet-${i % 3}`],
-        origin_repo: `owner/repo-${i % 100}`,
-        updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i % 3600)).toISOString(),
-      }),
-    );
+    // The fixture — its term families and which side of `hubSize` each sits on —
+    // is defined once in `./fixtures` and shared with the benchmark, because the
+    // work bound below is calibrated from figures that benchmark measured. Two
+    // copies of it kept in step by a comment is what this was, and its shape was
+    // wrong twice.
+    const graph = buildLoreGraph(planCeilingMemories());
 
-    const graph = buildLoreGraph(many);
-
-    expect(graph.nodes).toHaveLength(5_000 + 100);
+    expect(graph.nodes).toHaveLength(PLAN_CEILING_MEMORIES + 100);
 
     // Skeleton (one per memory) plus at most `maxEdges` RELATIONSHIPS, each of
     // which may be drawn once per kind. The parallel lines overlay exactly, so
     // they cost GPU vertices rather than legibility — which is the trade
     // `maxEdges` counting pairs deliberately makes.
-    expect(graph.edges.length).toBeLessThanOrEqual(5_000 + 15_000 * 3);
+    expect(graph.edges.length).toBeLessThanOrEqual(PLAN_CEILING_MEMORIES + 15_000 * 3);
 
     const relationships = new Set(
       graph.edges
