@@ -23,7 +23,12 @@ export default function LorePage() {
   const signedOut = isNotAuthenticated(scopesErr);
 
   return (
-    <div className="flex flex-col gap-4">
+    // Capped and left-aligned (matching the Settings/Tutorials shells) so the
+    // stat columns, heatmap and list do not stretch edge-to-edge on an ultrawide
+    // display, where four cards spread across ~1900px read as sparse and each
+    // memory line runs too long to scan. Below the cap the page is full-width as
+    // before, so laptops are unaffected.
+    <div className="flex max-w-[1400px] flex-col gap-4">
       {/* Title is static — renders immediately, never skeletoned */}
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">

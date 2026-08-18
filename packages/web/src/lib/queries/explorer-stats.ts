@@ -42,11 +42,13 @@ export interface ExplorerStatsData {
   rows: TrendRow[];
   /** Records read per bucket, already restricted to the selected scope server-side. */
   readBuckets: CountBucketRow[];
+  /** Memory records archived in the window. Account-wide — see the module docblock. */
+  archived: number;
   /** Memory records expired in the window. Account-wide — see the module docblock. */
   expired: number;
 }
 
-const EMPTY: ExplorerStatsData = { rows: [], readBuckets: [], expired: 0 };
+const EMPTY: ExplorerStatsData = { rows: [], readBuckets: [], archived: 0, expired: 0 };
 
 /**
  * What the header charts when the Explorer's range is UNBOUNDED.
@@ -136,6 +138,7 @@ async function fetchExplorerStats(
     // (and dimension) selection, so re-filtering here would double-apply it.
     rows: trendRowsFromActivity(activity.buckets),
     readBuckets: readActivity.buckets,
+    archived: usage.summary.archived,
     expired: usage.summary.expired,
   };
 }

@@ -83,26 +83,28 @@ const ROWS: UsageStatRow[] = [
   { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 0, total_duration_ms: 5000 },
   { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, record_count: 0, total_duration_ms: 40 },
   { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, record_count: 0, total_duration_ms: 90 },
+  { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 3, total_duration_ms: 120 },
   { tool_name: 'memory.expired', outcome: 'ok', scope_type: null, event_count: 1, record_count: 6, total_duration_ms: null },
 ];
 
 describe('summarizeUsageRows', () => {
-  it('separates CALL counts (reads/writes) from RECORD counts (records_read/expired)', () => {
+  it('separates CALL counts (reads/writes) from RECORD counts (records_read/archived/expired)', () => {
     expect(summarizeUsageRows(ROWS)).toEqual({
-      total_events: 711,
+      total_events: 714,
       reads: 608,
-      writes: 102,
+      writes: 105,          // memory.write ×102 + memory.archive ×3
       other: 1,             // the memory.expired event
       records_read: 6000,   // "read 6000 memories" — not 608 read calls
+      archived: 3,          // "3 lessons got archived"
       expired: 6,           // "6 lessons got expired"
-      by_outcome: { ok: 701, cap_exceeded: 2, error: 8 },
+      by_outcome: { ok: 704, cap_exceeded: 2, error: 8 },
     });
   });
 
   it('is empty-safe', () => {
     expect(summarizeUsageRows([])).toEqual({
       total_events: 0, reads: 0, writes: 0, other: 0,
-      records_read: 0, expired: 0, by_outcome: {},
+      records_read: 0, archived: 0, expired: 0, by_outcome: {},
     });
   });
 });
@@ -110,7 +112,7 @@ describe('summarizeUsageRows', () => {
 describe('rollupByScopeType', () => {
   it('sums by scope_type, sorted by count desc', () => {
     expect(rollupByScopeType(ROWS)).toEqual([
-      { scope_type: 'repo', event_count: 702 },
+      { scope_type: 'repo', event_count: 705 }, // list 600 + write 100 + write 2 + archive 3
       { scope_type: null, event_count: 9 },
     ]);
   });

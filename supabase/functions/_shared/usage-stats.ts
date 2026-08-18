@@ -159,6 +159,14 @@ export function usageToolKind(toolName: string): UsageToolKind {
 export const EXPIRED_TOOL_NAME = 'memory.expired';
 
 /**
+ * The tool_name a caller's archive action records (`memory.archive`). Its
+ * `record_count` is the records that archive touched, so "N lessons archived"
+ * is `sum(record_count)` over this bucket — the lifecycle counterpart to
+ * {@link EXPIRED_TOOL_NAME}, surfaced as the summary's `archived` field.
+ */
+export const ARCHIVED_TOOL_NAME = 'memory.archive';
+
+/**
  * How many records an event touched, from a tool RESULT of unknown shape.
  * Total and fail-safe (returns null when it cannot tell), so a telemetry count
  * can never break the call it is measuring:
@@ -284,6 +292,7 @@ export interface UsageSummary {
    * (sum of `record_count` over the `memory.expired` bucket).
    */
   records_read: number;
+  archived: number;
   expired: number;
   by_outcome: Record<string, number>;
 }
@@ -298,7 +307,7 @@ export interface UsageSummary {
 export function summarizeUsageRows(rows: readonly UsageStatRow[]): UsageSummary {
   const summary: UsageSummary = {
     total_events: 0, reads: 0, writes: 0, other: 0,
-    records_read: 0, expired: 0, by_outcome: {},
+    records_read: 0, archived: 0, expired: 0, by_outcome: {},
   };
   const bucket: Record<UsageToolKind, 'reads' | 'writes' | 'other'> = {
     read: 'reads',
@@ -311,6 +320,7 @@ export function summarizeUsageRows(rows: readonly UsageStatRow[]): UsageSummary 
     summary.total_events += n;
     summary[bucket[kind]] += n;
     if (kind === 'read') summary.records_read += row.record_count;
+    if (row.tool_name === ARCHIVED_TOOL_NAME) summary.archived += row.record_count;
     if (row.tool_name === EXPIRED_TOOL_NAME) summary.expired += row.record_count;
     summary.by_outcome[row.outcome] = (summary.by_outcome[row.outcome] ?? 0) + n;
   }

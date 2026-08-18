@@ -30,12 +30,14 @@
  *
  * ## Motion
  *
- * The expansion animates height and opacity so the list below is seen to move
- * rather than jumping — a 240px shift with no transition reads as a layout bug.
- * The strip cross-fades against the cards so the numbers appear to persist
- * across the change, which is what makes the two states read as one panel at
- * two densities rather than two different panels. Under `prefers-reduced-motion`
- * both collapse to an instant swap, per the repo's motion rule.
+ * The four cards are ALWAYS mounted — one persistent grid that {@link
+ * ExplorerStats} folds to a compact density when collapsed and unfolds when
+ * open. The answer (icon, number, label, caption) never moves; only the
+ * evidence unfolds — each card's sparkbar grows its own height and the heatmap
+ * region below animates in — so the expand reads as ONE motion rather than a
+ * strip cross-fading into a different set of cards. Height + opacity so the list
+ * below is seen to move rather than jump. Under `prefers-reduced-motion` both
+ * collapse to an instant swap, per the repo's motion rule.
  */
 
 import { useState } from 'react';
@@ -143,11 +145,11 @@ export function ExplorerInsights({
       aria-label="Activity for the current selection"
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
     >
-      {/* Two rows: the title + controls, then the collapsed strip on its own
-          full-width line. Keeping the strip out of the control row is what stops
+      {/* The title + controls, then the persistent stat grid on its own
+          full-width line. Keeping the grid out of the control row is what stops
           the numbers and the range picker colliding on a phone — the old single
           wrapping row overlapped them. */}
-      <div className="flex flex-col gap-2 px-4 py-3">
+      <div className="flex flex-col gap-3 px-4 py-3">
         <div className="flex items-center gap-3">
           {/* Truncates rather than wrapping: a long scope name on a phone used
               to push the header to two lines and shove the picker down with
@@ -187,29 +189,17 @@ export function ExplorerInsights({
           </div>
         </div>
 
-        {/* The collapsed summary — the four numbers on their own line. Cross-fades
-            against the cards so the numbers appear to survive the expand. */}
-        <AnimatePresence initial={false} mode="wait">
-          {!open && (
-            <motion.div
-              key="strip"
-              className="min-w-0"
-              initial={reduceMotion ? false : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: reduceMotion ? 0 : 0.12 }}
-            >
-              <ExplorerStats
-                scope={scope}
-                filters={filters}
-                range={shownRange}
-                scopeLabel={scopeLabel}
-                variant="strip"
-                nowIso={nowIso}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* ONE persistent grid at two densities — collapsed folds each card's
+            evidence away, open unfolds it. The card is never remounted, so the
+            numbers stay put and the expand reads as one motion. */}
+        <ExplorerStats
+          scope={scope}
+          filters={filters}
+          range={shownRange}
+          scopeLabel={scopeLabel}
+          expanded={open}
+          nowIso={nowIso}
+        />
       </div>
 
       <AnimatePresence initial={false}>
@@ -225,31 +215,24 @@ export function ExplorerInsights({
             transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
             style={{ overflow: 'hidden' }}
           >
-            <div className="flex flex-col gap-4 px-4 pb-4">
-              <ExplorerStats
-                scope={scope}
-                filters={filters}
-                range={shownRange}
-                scopeLabel={scopeLabel}
-                variant="cards"
-                nowIso={nowIso}
-              />
-
-              {/* The heatmap keeps its own span deliberately: it is a
-                  range SELECTOR, not a reading of the selected range, so
-                  shrinking it to the current window would remove the very
-                  context you use to pick a different one. It highlights the
-                  selection instead. It is also ACCOUNT-WIDE and unfiltered
-                  (`heatmapData` comes from `useLoreData`, not the scoped stats
-                  query), so its caption says so rather than implying the cards'
-                  selection narrows it. */}
-              {/* No `overflow-x-auto` any more: the chart sizes itself to this
-                  box rather than to a fixed cell pitch, so there is nothing left
-                  to scroll — it fills the panel on a desktop and fits a phone. */}
-              <div className="border-t border-[var(--color-border)] pt-4">
-                <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
-                  Memories written — last {heatmapWeeks} weeks · across every scope
-                </p>
+            {/* The heatmap keeps its own span deliberately: it is a range
+                SELECTOR, not a reading of the selected range, so shrinking it to
+                the current window would remove the very context you use to pick a
+                different one. It highlights the selection instead. It is also
+                ACCOUNT-WIDE and unfiltered (`heatmapData` comes from
+                `useLoreData`, not the scoped stats query), so its caption says so
+                rather than implying the cards' selection narrows it. */}
+            <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-4">
+              <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
+                Memories written — last {heatmapWeeks} weeks · across every scope
+              </p>
+              {/* Capped and left-aligned so it reads as one more panel, not a
+                  full-bleed band: fluid cells that fill a 1300px column blow up
+                  to a ~250px-tall calendar on a wide screen. The cap lands the
+                  desktop cell around 16px — big enough to read and tap, small
+                  enough that the chart stays card-height. A phone is narrower
+                  than the cap, so it still fills there. */}
+              <div className="max-w-[960px]">
                 <ContributionHeatmap
                   data={heatmapData}
                   weeks={heatmapWeeks}

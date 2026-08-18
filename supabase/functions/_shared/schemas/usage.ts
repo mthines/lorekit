@@ -55,6 +55,9 @@ export const UsageSummarySchema = z.object({
   other: z.number().int().nonnegative(),
   // Record-level headline figures (distinct from the call counts above).
   records_read: z.number().int().nonnegative(),
+  // Lifecycle record counts in the window: `archived` sums the records touched
+  // by `memory.archive` calls, `expired` the records the TTL purge removed.
+  archived: z.number().int().nonnegative(),
   expired: z.number().int().nonnegative(),
   by_outcome: z.record(z.number().int().nonnegative()),
 });
