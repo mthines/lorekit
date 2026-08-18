@@ -468,9 +468,15 @@ So both emitters resolve the tag through one shared pure module,
   Vercel production and preview deployment. `VERCEL_ENV` is mapped straight
   through.
 - anything else — a dev server. The result is narrowed to `development` (what
-  `vercel dev` genuinely is) or `local`, **never** `production` / `preview`, and
-  a one-time `console.warn` names the clamped value so the developer can drop
-  `VERCEL_ENV` from their local env files.
+  `vercel dev` genuinely is) or `local`, **never** `production` / `preview`.
+  The two outcomes are not equally loud:
+  - a claimed `production` / `preview` is **clamped** to `local`, and a one-time
+    `console.warn` names the value that was dropped so the developer can clear
+    `VERCEL_ENV` out of their local env files.
+  - a claimed `development` — what `vercel env pull` writes by default — is
+    reported as `development` **silently**: nothing was clamped, so there is
+    nothing to warn about, and the dev server's telemetry sits alongside the
+    Vercel Development deployment rather than under `local`.
 
 An unrecognised `VERCEL_ENV` (a typo, `staging`, …) falls back to `local` rather
 than being passed through, so it can never invent a new environment in Dash0.
