@@ -220,5 +220,12 @@ async function removeOrgOwned(
     auditUserId(auth),
   );
 
-  return noContent(cors);
+  // Same rule as the personal branch: report the affected-row count so the
+  // usage ledger records a real number instead of null. `memory_delete` is
+  // keyed on the natural key (org_id + scope + key), which is unique, and the
+  // `!deleted && !archived` guard above already returned 404 for a miss — so
+  // reaching here means exactly one row changed.
+  const res = noContent(cors);
+  res.headers.set('X-LoreKit-Result-Count', '1');
+  return res;
 }
