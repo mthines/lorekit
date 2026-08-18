@@ -6,6 +6,7 @@ import {
   scopeNodeId,
   type GraphMemoryInput,
 } from './build';
+import { PLAN_CEILING_MEMORIES, planCeilingMemories } from './fixtures';
 import type { GraphEdge } from './types';
 
 /** A memory with only the fields under test set; everything else is inert. */
@@ -149,6 +150,130 @@ describe('buildLoreGraph', () => {
     expect([...kinds].sort()).toEqual(['label', 'scope']);
   });
 
+  it('does not let a suppressed hub term dilute the pair it was excluded from', () => {
+    // A hub term is declared "not evidence of a relationship". Leaving it in the
+    // Jaccard denominator makes it evidence AGAINST one, which is the opposite:
+    // two memories sharing a niche label, each also carrying fifteen hub labels,
+    // used to score 0.032 and sink below a pair sharing one of two ordinary
+    // labels.
+    const hubLabels = Array.from({ length: 15 }, (_, i) => `loop::h${i}`);
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'a', tags: [...hubLabels, 'niche'] }),
+        memory({ key: 'b', tags: [...hubLabels, 'niche'] }),
+        ...Array.from({ length: 18 }, (_, i) => memory({ key: `filler${i}`, tags: hubLabels })),
+      ],
+      { hubSize: 10, kinds: ['label'] },
+    );
+
+    const pair = graph.edges.find((edge) => edge.kind === 'label');
+    expect(pair?.strength).toBe(1);
+  });
+
+  it('still counts a memory’s unshared labels against it', () => {
+    // Single-occurrence terms are real, discriminating vocabulary — they just
+    // have no partner here — so unlike hub terms they stay in the denominator.
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'narrow', tags: ['shared'] }),
+        memory({ key: 'wide', tags: ['shared', 'mine-alone', 'also-mine'] }),
+      ],
+      { kinds: ['label'] },
+    );
+
+    expect(graph.edges.find((edge) => edge.kind === 'label')?.strength).toBeLessThan(1);
+  });
+
+  it('weights a shared repo below a shared key namespace below a shared label', () => {
+    // Jaccard alone is not comparable across kinds: `key` and `repo` contribute
+    // exactly one term each, so both would score a perfect 1.0 and outrank even
+    // a genuine label twin. KIND_WEIGHT is what makes the numbers mean the same
+    // thing, and the ordering it produces is the point.
+    const strengthOf = (kind: 'label' | 'key' | 'repo') => {
+      const graph = buildLoreGraph(
+        [
+          memory({ key: 'ns::a', tags: ['only'], origin_repo: 'o/r' }),
+          memory({ key: 'ns::b', tags: ['only'], origin_repo: 'o/r' }),
+        ],
+        { kinds: [kind] },
+      );
+      return graph.edges.find((edge) => edge.kind === kind)?.strength ?? 0;
+    };
+
+    expect(strengthOf('label')).toBeGreaterThan(strengthOf('key'));
+    expect(strengthOf('key')).toBeGreaterThan(strengthOf('repo'));
+  });
+
+  it('ranks a shared label above a shared repo when both connect the same pair', () => {
+    const graph = buildLoreGraph([
+      memory({ key: 'a', tags: ['ci'], origin_repo: 'o/r' }),
+      memory({ key: 'b', tags: ['ci'], origin_repo: 'o/r' }),
+    ]);
+    const strongest = graph.edges
+      .filter((edge) => edge.kind !== 'scope')
+      .sort((x, y) => y.strength - x.strength)[0];
+
+    expect(strongest.kind).toBe('label');
+  });
+
+  it('draws the same graph whichever order the kinds were requested in', () => {
+    // `Array#sort` is stable, so without a kind term in the tie-break the
+    // surviving edge under a tight budget would depend on generation order.
+    const input = [
+      memory({ key: 'ns::a', tags: ['x'], origin_repo: 'o/r' }),
+      memory({ key: 'ns::b', tags: ['x'], origin_repo: 'o/r' }),
+    ];
+    const asKinds = (kinds: ('label' | 'key' | 'repo')[]) =>
+      buildLoreGraph(input, { kinds, maxEdges: 1 })
+        .edges.filter((edge) => edge.kind !== 'scope')
+        .map((edge) => `${edge.kind}:${edge.strength}`);
+
+    expect(asKinds(['repo', 'key', 'label'])).toEqual(asKinds(['label', 'key', 'repo']));
+  });
+
+  it('spends the degree budget on distinct neighbours, not on parallel edges', () => {
+    // `twin` shares a label, a key namespace AND a repo with `hub` — three edges
+    // between one pair. Counting edges would declare the hub full after that
+    // single neighbour; counting neighbours leaves room for the second one,
+    // which is what the budget is actually protecting.
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'ns::hub', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'ns::twin', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'other::third', tags: ['x'] }),
+      ],
+      { maxDegree: 2 },
+    );
+
+    const hubIndex = graph.nodes.findIndex((node) => node.label === 'ns::hub');
+    const distinct = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope' && (edge.source === hubIndex || edge.target === hubIndex))
+        .map((edge) => (edge.source === hubIndex ? edge.target : edge.source)),
+    );
+
+    expect(distinct.size).toBe(2);
+  });
+
+  it('still refuses a genuinely over-connected node', () => {
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'hub', tags: ['a', 'b', 'c', 'd', 'e'] }),
+        ...['a', 'b', 'c', 'd', 'e'].map((tag) => memory({ key: `n-${tag}`, tags: [tag] })),
+      ],
+      { maxDegree: 2 },
+    );
+
+    const hubIndex = graph.nodes.findIndex((node) => node.label === 'hub');
+    const distinct = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope' && (edge.source === hubIndex || edge.target === hubIndex))
+        .map((edge) => (edge.source === hubIndex ? edge.target : edge.source)),
+    );
+
+    expect(distinct.size).toBe(2);
+  });
+
   it('caps a memory’s relation degree, keeping its strongest neighbours', () => {
     // `twin` overlaps the hub on three of six labels (Jaccard 0.5); each `nX`
     // overlaps on exactly one (0.167). With room for one relation, the cap must
@@ -196,6 +321,75 @@ describe('buildLoreGraph', () => {
     expect(graph.truncated).toContainEqual({ of: 'nodes', total: 2, kept: 1 });
   });
 
+  it('spends the edge budget on relationships, not on parallel edges', () => {
+    // `a`/`b` share a label, a key namespace AND a repo — one relationship, three
+    // edges. With room for two relationships, the duplicates must not eat the
+    // slot the `c` pair needs.
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'ns::a', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'ns::b', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'other::c', tags: ['y'] }),
+        memory({ key: 'other::d', tags: ['y'] }),
+      ],
+      { maxEdges: 2 },
+    );
+
+    const relationships = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope')
+        .map((edge) => `${edge.source}|${edge.target}`),
+    );
+    expect(relationships.size).toBe(2);
+  });
+
+  it('counts a multi-dimension pair as one dropped relationship, not three', () => {
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'ns::a', tags: ['x'], origin_repo: 'o/r' }),
+        memory({ key: 'ns::b', tags: ['x'], origin_repo: 'o/r' }),
+      ],
+      { maxEdges: 0 },
+    );
+
+    expect(graph.truncated).toContainEqual({ of: 'edges', total: 1, kept: 0 });
+  });
+
+  it('reports the terms hub suppression removed, so a sparse graph is distinguishable from a suppressed one', () => {
+    const graph = buildLoreGraph(
+      [
+        ...Array.from({ length: 6 }, (_, i) => memory({ key: `m${i}`, tags: ['everywhere', 'niche'] })),
+      ],
+      { hubSize: 3, kinds: ['label'] },
+    );
+
+    // `everywhere` and `niche` are both on all six, so both are hubs: nothing
+    // survives, and the report says exactly that rather than staying silent.
+    expect(graph.truncated).toContainEqual({ of: 'terms', total: 2, kept: 0 });
+  });
+
+  it('says nothing about terms when no term was suppressed', () => {
+    const graph = buildLoreGraph([memory({ key: 'a', tags: ['x'] }), memory({ key: 'b', tags: ['x'] })]);
+    expect(graph.truncated.some((entry) => entry.of === 'terms')).toBe(false);
+  });
+
+  it('orders same-timestamp memories by code unit, not by the runtime locale', () => {
+    // Every entry in `edges` addresses nodes by INDEX, so a locale-dependent
+    // tie-break would make the same account a different graph in two browsers.
+    // These keys sort differently under `localeCompare` in most locales
+    // (which ignores punctuation) than by code unit.
+    const sameInstant = '2026-01-01T00:00:00.000Z';
+    const graph = buildLoreGraph([
+      memory({ key: 'a-b', scope: 'global', updated_at: sameInstant }),
+      memory({ key: 'ab', scope: 'global', updated_at: sameInstant }),
+      memory({ key: 'a_b', scope: 'global', updated_at: sameInstant }),
+    ]);
+
+    const order = graph.nodes.filter((node) => node.kind === 'memory').map((node) => node.label);
+    const byCodeUnit = ['a-b', 'a_b', 'ab'].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+    expect(order).toEqual(byCodeUnit);
+  });
+
   it('reports what an edge budget dropped', () => {
     const graph = buildLoreGraph(
       [
@@ -206,6 +400,21 @@ describe('buildLoreGraph', () => {
       { maxEdges: 1 },
     );
     expect(graph.truncated).toContainEqual({ of: 'edges', total: 3, kept: 1 });
+  });
+
+  it('treats an explicit undefined option as not supplied', () => {
+    // A caller building options from optional state (`{ maxNodes: filters.max }`)
+    // hands over an own property whose value is `undefined`, which a spread
+    // happily copies over the default. It used to return zero nodes.
+    const baseline = buildLoreGraph([memory({ key: 'a', tags: ['x'] }), memory({ key: 'b', tags: ['x'] })]);
+    const explicitlyUndefined = buildLoreGraph(
+      [memory({ key: 'a', tags: ['x'] }), memory({ key: 'b', tags: ['x'] })],
+      { maxNodes: undefined, maxEdges: undefined, maxDegree: undefined, hubSize: undefined, kinds: undefined },
+    );
+
+    expect(explicitlyUndefined).toEqual(baseline);
+    expect(explicitlyUndefined.nodes.length).toBeGreaterThan(0);
+    expect(explicitlyUndefined.truncated).toEqual([]);
   });
 
   it('says nothing was truncated when nothing was', () => {
@@ -224,6 +433,67 @@ describe('buildLoreGraph', () => {
       weightOf(memoryNodeId({ scope: 'repo::mthines/lorekit', key: 'once' })),
     );
     expect(weightOf(scopeNodeId('repo::mthines/lorekit'))).toBeGreaterThan(weightOf(scopeNodeId('global')));
+  });
+
+  it('draws every memory at the base size when no row carries a seen_count', () => {
+    // `seen_count` arrives with migration 00059, so an account can legitimately
+    // have none. With no spread there is no signal to encode, and the honest
+    // rendering is the BASE size — the earlier `max <= 1 ⇒ 1` guard drew the
+    // ENTIRE graph at maximum radius, which is the size channel shouting while
+    // meaning nothing.
+    const graph = buildLoreGraph([memory({ key: 'a' }), memory({ key: 'b' }), memory({ key: 'c' })]);
+    const memories = graph.nodes.filter((node) => node.kind === 'memory');
+
+    expect(memories).toHaveLength(3);
+    expect(memories.every((node) => node.weight === 0)).toBe(true);
+  });
+
+  it('draws every memory at the base size when the recurrence is uniform', () => {
+    // "No spread" is `min === max`, not `max <= 1`. A uniform `seen_count: 3`
+    // cleared the old guard and came out at `weight: 1` for every memory — the
+    // max-radius rendering the guard existed to remove.
+    const graph = buildLoreGraph([
+      memory({ key: 'a', seen_count: 3 }),
+      memory({ key: 'b', seen_count: 3 }),
+    ]);
+
+    expect(graph.nodes.filter((node) => node.kind === 'memory').every((node) => node.weight === 0)).toBe(
+      true,
+    );
+  });
+
+  it('draws equal-sized scopes at the base size', () => {
+    const graph = buildLoreGraph([
+      memory({ key: 'a', scope: 'repo::mthines/one' }),
+      memory({ key: 'b', scope: 'repo::mthines/two' }),
+    ]);
+
+    expect(graph.nodes.filter((node) => node.kind === 'scope').every((node) => node.weight === 0)).toBe(
+      true,
+    );
+  });
+
+  it('does not inflate rows with no recurrence when one row gains one', () => {
+    // Scaled from zero, a single `seen_count: 2` dragged every no-recurrence row
+    // from 0 to 0.631 — three fifths of the size channel spent on rows carrying
+    // no recurrence at all. Anchored at the observed minimum, they stay at base.
+    const graph = buildLoreGraph([
+      memory({ key: 'absent-a' }),
+      memory({ key: 'absent-b' }),
+      memory({ key: 'present', seen_count: 2 }),
+    ]);
+    const weightOf = (label: string) => graph.nodes.find((node) => node.label === label)?.weight ?? -1;
+
+    expect(weightOf('absent-a')).toBe(0);
+    expect(weightOf('absent-b')).toBe(0);
+    expect(weightOf('present')).toBe(1);
+  });
+
+  it('still separates sizes as soon as one row carries a recurrence', () => {
+    const graph = buildLoreGraph([memory({ key: 'once' }), memory({ key: 'often', seen_count: 9 })]);
+    const weightOf = (label: string) => graph.nodes.find((node) => node.label === label)?.weight ?? -1;
+
+    expect(weightOf('often')).toBeGreaterThan(weightOf('once'));
   });
 
   it('dates a scope by its freshest memory', () => {
@@ -254,24 +524,85 @@ describe('buildLoreGraph', () => {
     expect(graph.nodes[0].scopeType).toBe('branch');
   });
 
-  it('stays linear enough to build a plan-ceiling account inside a frame budget', () => {
+  it('holds its budgets at a plan-ceiling account', () => {
     // 5,000 memories is the free-plan cap (docs/limits.md) — the worst case the
     // dashboard can actually be handed.
-    const many = Array.from({ length: 5_000 }, (_, i) =>
-      memory({
-        key: `bucket-${i % 40}::lesson-${i}`,
-        scope: `repo::owner/repo-${i % 25}`,
-        tags: [`t${i % 300}`, `t${i % 97}`],
-        updated_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i % 3600)).toISOString(),
-      }),
+    //
+    // Deliberately NOT a wall-clock assertion: it would be the one check in the
+    // suite that can go red on a noisy CI runner with no code change, and a
+    // flaky guard trains everyone to re-run rather than to read. Timing figures
+    // for the design doc come from `scripts/bench-lore-graph.mjs`, which gates
+    // nothing.
+    //
+    // The bounded OUTPUT alone would not catch an all-pairs regression either —
+    // disable hub suppression and the node, edge and degree caps still clamp
+    // everything to the same numbers; only the runtime explodes. What actually
+    // separates the two worlds is the CANDIDATE count before capping, which
+    // `truncated` reports: 248,878 on this fixture with hub suppression,
+    // 4,333,368 without (and ~0.4 s against ~8 s). That is a deterministic,
+    // machine-independent proxy for the work done, so it is what this asserts.
+    //
+    // The fixture — its term families and which side of `hubSize` each sits on —
+    // is defined once in `./fixtures` and shared with the benchmark, because the
+    // work bound below is calibrated from figures that benchmark measured. Two
+    // copies of it kept in step by a comment is what this was, and its shape was
+    // wrong twice.
+    const graph = buildLoreGraph(planCeilingMemories());
+
+    expect(graph.nodes).toHaveLength(PLAN_CEILING_MEMORIES + 100);
+
+    // Skeleton (one per memory) plus at most `maxEdges` RELATIONSHIPS, each of
+    // which may be drawn once per kind. The parallel lines overlay exactly, so
+    // they cost GPU vertices rather than legibility — which is the trade
+    // `maxEdges` counting pairs deliberately makes.
+    expect(graph.edges.length).toBeLessThanOrEqual(PLAN_CEILING_MEMORIES + 15_000 * 3);
+
+    const relationships = new Set(
+      graph.edges
+        .filter((edge) => edge.kind !== 'scope')
+        .map((edge) => `${edge.source}|${edge.target}`),
     );
+    expect(relationships.size).toBeLessThanOrEqual(15_000);
 
-    const started = Date.now();
-    const graph = buildLoreGraph(many);
-    const elapsed = Date.now() - started;
+    // The work bound. Measured on this fixture: 248,878 candidate pairs with hub
+    // suppression, 4,333,368 without. The ceiling sits at 2× the former and 8×
+    // below the latter — loose enough not to be brittle, tight enough that an
+    // accidental all-pairs path cannot slip under it.
+    //
+    // Hub suppression must also be observable, or the fixture is only measuring
+    // the tail it protects.
+    //
+    // Assert the entry EXISTS first. `?? 0` made the bound vacuous: raise
+    // `hubSize`/`maxEdges` far enough that nothing is dropped, the entry
+    // disappears, and the assertion degrades to `0 < 200_000` — passing loudest
+    // in exactly the configuration it is meant to catch.
+    expect(graph.truncated.find((entry) => entry.of === 'terms')).toBeDefined();
 
-    expect(graph.nodes).toHaveLength(5_000 + 25);
-    expect(graph.edges.length).toBeLessThanOrEqual(5_000 + 15_000);
-    expect(elapsed).toBeLessThan(2_000);
+    const consideredEdges = graph.truncated.find((entry) => entry.of === 'edges');
+    expect(consideredEdges).toBeDefined();
+    expect(consideredEdges?.total).toBeLessThan(500_000);
+
+    // Every node keeps at most `maxDegree` distinct relation neighbours.
+    const distinct = new Map<number, Set<number>>();
+    const neighboursOf = (node: number): Set<number> => {
+      const existing = distinct.get(node);
+      if (existing) return existing;
+      const created = new Set<number>();
+      distinct.set(node, created);
+      return created;
+    };
+    for (const edge of graph.edges) {
+      if (edge.kind === 'scope') continue;
+      neighboursOf(edge.source).add(edge.target);
+      neighboursOf(edge.target).add(edge.source);
+    }
+    // Folded, not `Math.max(...sizes)`: the spread passes one argument per node
+    // and this is the plan-ceiling test, which is the exact shape `range()` in
+    // `build.ts` documents as RangeError-prone.
+    let maxDistinct = 0;
+    for (const neighbours of distinct.values()) {
+      if (neighbours.size > maxDistinct) maxDistinct = neighbours.size;
+    }
+    expect(maxDistinct).toBeLessThanOrEqual(12);
   });
 });

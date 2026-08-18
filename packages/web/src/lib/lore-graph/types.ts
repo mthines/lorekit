@@ -72,6 +72,13 @@ export interface GraphNode {
    * Relative visual weight in `[0, 1]`, used for radius. For a memory this
    * follows `seen_count` (a lesson written twelve times is more load-bearing
    * than one written once); for a scope it follows how many memories it holds.
+   *
+   * **`weight: 0` means the BASE radius, not zero radius.** It is the FLOOR of
+   * the observed range, not an absence, so a renderer must read it as
+   * `radius = BASE + weight * EXTRA` — never `radius = weight * R`, which would
+   * draw nothing at all. Zero is also the common case rather than an edge case:
+   * `seen_count` only arrives with migration 00059, so an account with none has
+   * no spread and EVERY node comes back at 0.
    */
   weight: number;
   /** Labels carried by the memory. Empty for scope nodes. */
@@ -94,8 +101,16 @@ export interface GraphEdge {
 
 /** One entry of the "what got left out" report. */
 export interface GraphTruncation {
-  /** What was capped. */
-  of: 'nodes' | 'edges';
+  /**
+   * What was capped.
+   *
+   * `terms` is hub suppression — the shared labels, key namespaces and repos
+   * that were too common to be evidence of anything. It is reported for the
+   * same reason the other two are: it is a bound that changes the picture, and
+   * a reader who cannot see that "we ignored 12 labels because everything
+   * carries them" cannot tell a sparse graph from a suppressed one.
+   */
+  of: 'nodes' | 'edges' | 'terms';
   /** How many candidates existed. */
   total: number;
   /** How many survived the cap. */

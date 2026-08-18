@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~80–100 ms (measured, `buildLoreGraph`) | Runs once per dataset change, not per frame, and off the main thread. |
+| **Graph build** | ~320–710 ms, median ~415 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
@@ -43,6 +43,23 @@ between memories instead.
 Node identity is the natural key (`scope::key`), not the array index, so a
 refetch that re-orders the list does not move the user's selection.
 
+Node **weight** (which drives radius) follows `seen_count` for a memory and
+member count for a scope, `log1p`-scaled across the **observed range** so one
+400× outlier cannot flatten the rest. When there is no spread — `min === max` —
+the weight is **0**, i.e. the base size, *not* zero radius. That is the common
+case for `seen_count`, which only arrives with migration 00059.
+
+Two earlier guards drew the entire graph at maximum radius instead, and both are
+worth stating because the second looks like a fix for the first: returning `1`
+on no spread made the size channel shout while meaning nothing; guarding on
+`max <= 1` only caught the all-absent case, so a uniform `seen_count: 3` — or
+two scopes of equal size — still came out at `1` everywhere.
+
+Scaling is anchored at the observed **minimum** for the same reason. An absent
+`seen_count` reads as 1, so scaling from zero meant a single row gaining
+`seen_count: 2` shoved every other row from `0` to `0.631` — three fifths of the
+size channel spent on rows that carry no recurrence at all.
+
 ### Edges
 
 Every edge kind is derivable from a single memory row — no extra request, no
@@ -57,9 +74,23 @@ decorative line.
 | `repo` | two memories were recorded from the same `origin_repo`. |
 
 Relation strength is the **Jaccard** overlap of the two term sets (shared over
-union). Normalising by the smaller set instead — the obvious first attempt —
-scores a single-label memory as a perfect twin of every memory carrying that
-label, which manufactures exactly the false clusters the view exists to disprove.
+union), scaled by a **per-kind weight**. Two corrections are baked into that
+sentence, both of which the first version got wrong:
+
+- Normalising by the *smaller* set instead of the union scores a single-label
+  memory as a perfect twin of every memory carrying that label — manufacturing
+  exactly the false clusters the view exists to disprove.
+- Jaccard alone is **not comparable across kinds.** A key namespace and an
+  origin repo contribute exactly one term each, so every such pair scores a
+  perfect `1/1` and outranks even a genuine label twin before any budget is
+  applied. `KIND_WEIGHT` (`label 1`, `key 0.55`, `repo 0.35`) encodes the actual
+  evidence strength: sharing a label vocabulary says something about two
+  memories; being written from the same repository is the weakest signal the
+  model has, and is already visible from the scope clustering.
+
+The `kinds` option's **order is irrelevant** — the candidate sort is total
+(strength, then kind rank, then node indices), so it never depends on which kind
+happened to be generated first.
 
 ### The three bounds that keep it linear
 
@@ -71,13 +102,99 @@ Applied in this order, each reporting what it dropped in `graph.truncated`:
    posting list makes the pair count quadratic. One label on 3,000 memories
    would alone yield ~4.5 M pairs. Dropping it removes the cost and the noise in
    one move, which is why it is first rather than a later cap.
-2. **Degree cap** (`maxDegree`, default 12). Strongest neighbours first. A
-   hairball around one node hides the clustering the view is for.
-3. **Edge budget** (`maxEdges`, default 15,000), strongest first.
+
+   A suppressed term is excluded from the Jaccard **denominator** too. Declaring
+   a term "not evidence of a relationship" and then letting it count as evidence
+   *against* one is incoherent, and it bit: two memories sharing a niche label,
+   each also carrying fifteen `loop::*` hub labels, scored 0.032 and sank below
+   a pair sharing one of two ordinary labels. Single-occurrence terms **do**
+   stay in the denominator — they are real, discriminating vocabulary that
+   simply has no partner in this dataset.
+
+   Suppression is reported as `{of: 'terms', …}`. Without it a reader cannot
+   tell a genuinely sparse graph from a heavily suppressed one, which is the
+   same information gap the node and edge budgets report to close.
+2. **Degree cap** (`maxDegree`, default 12) — counted in **distinct neighbours,
+   not edges**. Strongest first. A pair that shares a label *and* a key
+   namespace *and* a repo produces three edges between the same two nodes;
+   spending three of the budget on them would declare a node full after one
+   neighbour. What the cap protects is legibility, and a hairball is twelve
+   *different* nodes — three parallel lines to one node is a single, slightly
+   bolder relationship. So an edge to an already-connected neighbour is free.
+3. **Edge budget** (`maxEdges`, default 15,000), strongest first — also counted
+   in **relationships, not edges**, for consistency with the degree cap. Charging
+   this budget per edge while the degree cap charged per neighbour let a
+   duplicate take the last slot from a genuinely new relationship. The drawn line
+   count is therefore up to `kinds.length ×` the budget (three today); those
+   parallel lines overlay exactly, so they cost GPU vertices rather than
+   legibility, which is the resource the budget protects.
+
+All three report in the same units the reader thinks in: `{of: 'edges', total:
+1, kept: 0}` for a pair that shares three dimensions, never `total: 3` — that
+would read as three dropped relationships when only one ever existed.
 
 `truncated` is not optional decoration: a picture of "the shape of your lore"
 that quietly omits half of it is worse than no picture, so the UI must say when
 a bound fired.
+
+### Reproducing the build figure
+
+The number above is not folklore — run it yourself:
+
+```bash
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bench-lore-graph.mjs --runs 9
+```
+
+```text
+buildLoreGraph — 5,000 memories, 9 runs
+  node       v24.19.0
+  min/med/max 317.3 ms / 415.2 ms / 705.3 ms
+  nodes      5,100
+  edges      39,300
+  truncated  [{"of":"terms","total":600,"kept":597},{"of":"edges","total":248878,"kept":15000}]
+```
+
+**The fixture shape dominates this number, and it has been wrong twice — in
+opposite directions — so it is worth spelling out what it now is.** The first
+synthetic account used 40 key namespaces and 25 repos across 5,000 memories (125
+and 200 members each, both over `hubSize: 64`), so both of those kinds were
+suppressed entirely and the run timed the label path alone: eight times too
+optimistic. Raising them to 100 each (50 members apiece) fixed those two kinds
+but left the *labels* mis-shaped — both label families were emitted under one
+`t*` prefix, so `t0`–`t96` drew members from both cycles, reached 68–69 and were
+themselves suppressed, leaving only a ≤17-member tail live.
+
+The fixture now puts each family in its own namespace and straddles the cap
+deliberately, so every branch of the algorithm is on the clock:
+
+| Family | Terms | Members each | Role |
+|--------|-------|--------------|------|
+| `topic-*` | 300 | ~17 | the long tail |
+| `theme-*` | 97 | ~52 | just **under** `hubSize`, so this is the longest posting list the label path must walk |
+| `facet-*` | 3 | ~1667 | well **over** it, so suppression actually fires |
+| `bucket-*::` (key) | 100 | 50 | live |
+| `owner/repo-*` (repo) | 100 | 50 | live |
+
+The spread is wide because the harness this was captured on is a shared cloud
+container. What matters is the shape: hundreds of milliseconds, not seconds, and
+driven by the candidate-pair count (248,878 here) rather than by `n²` — the same
+build with hub suppression switched off considers **4,333,368** pairs and takes
+~8 s.
+
+It is also worth being plain that ~415 ms is not free. It is paid once per
+dataset change, in the worker, alongside the layout — and the analytic seed
+means the user sees a correct picture before the relaxation finishes, so the
+cost lands on "the graph settles a moment later", not on a frozen tab. If the
+figure grows, the server-side projection under [Fetching](#fetching) is the
+place to move this work, not a micro-optimisation here.
+
+The benchmark imports the real `build.ts` (Node strips the types; a small
+`registerHooks` resolver supplies the `@/` alias), so it can never drift into
+measuring a copy. It is **not** a test and gates nothing — a wall-clock
+assertion in the suite would be the one check that goes red on a noisy runner
+with no code change, and a flaky guard trains everyone to re-run rather than to
+read. `build.spec.ts` pins the bounded-output property instead, which is what
+would actually regress if an accidental all-pairs path crept back in.
 
 ## Layout
 
