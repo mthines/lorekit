@@ -193,11 +193,15 @@ function Selection({
     () => (selectedId ? graph.nodes.findIndex((node) => node.id === selectedId) : -1),
     [graph, selectedId],
   );
+  // Memoised for the same reason `Nodes` memoises it: this component re-renders
+  // on every hover, and `nodeRadii` rebuilds the whole per-node array. Declared
+  // above the early return so the hook order never depends on the selection.
+  const radii = useMemo(() => nodeRadii(graph), [graph]);
 
   useEffect(() => invalidate(), [index, invalidate]);
   if (index < 0) return null;
 
-  const radius = nodeRadii(graph)[index] * 1.8;
+  const radius = radii[index] * 1.8;
   return (
     <mesh
       position={[positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]]}
