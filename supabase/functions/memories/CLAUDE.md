@@ -591,7 +591,17 @@ lowercases, but the write path does not (`CreateMemoryBodySchema` binds `RawScop
 `handlers/create.ts` passes `body.scope` verbatim, and no migration lowers it), so
 `memories.scope` legitimately holds mixed-case values. Lowercasing a *filter* would make
 those rows unmatchable by `GET /` and undeletable by natural key. If the write path is ever
-normalised, normalise the filters in the same change — never before.
+normalised, normalise the filters in the same change — never before. It also **rejects
+surrounding whitespace**: `validateScope` trims before it checks, so a padded value is
+grammatical to it while the untrimmed string reaches the predicate and matches nothing —
+the same empty-page failure, so it is named as bad input rather than silently trimmed.
+
+**`GET /read-activity` is the one route that still normalises, and must keep doing so.** It
+filters `usage_events.scope`, which is written through `safeValidateScope` at the recording
+site (`_shared/api/router.ts`) and is therefore already lowercased; a reject-only filter
+there would miss every mixed-case request. The six routes share the GRAMMAR; the case rule
+follows whichever path wrote the column. `scope-filter-validation.spec.ts` pins the required
+validator per handler, so neither direction can be "harmonised" into stranding rows.
 
 The array-valued `?scopes=` paths (`POST /search`, `GET /relevant`) are **not** covered:
 they need a per-entry decision — reject the whole request, or drop the bad entry — that has

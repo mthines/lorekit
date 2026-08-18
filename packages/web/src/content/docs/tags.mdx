@@ -16,7 +16,9 @@ keywords: ["tags", "scopes", "global", "project", "repo", "branch", "namespace",
 
 `::` is the only valid separator. Single `:` or `/` returns a 400 error. All segments are lowercased on ingest.
 
-The same grammar applies when you *filter* by a scope, not only when you write one. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all return a **400** for an ungrammatical `?scope=`. They used to pass the value straight into the query, so a typo matched nothing and came back as an empty page — or, on delete and restore, as "no such memory". A scope filter is the question you are asking, so a malformed one is rejected instead of quietly answering a different question. Filters are validated but not lowercased, so a filter matches exactly the scope string that was stored.
+The same grammar applies when you *filter* by a scope, not only when you write one. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all return a **400** for an ungrammatical `?scope=`. They used to pass the value straight into the query, so a typo matched nothing and came back as an empty page — or, on delete and restore, as "no such memory". A scope filter is the question you are asking, so a malformed one is rejected instead of quietly answering a different question. A filter with leading or trailing whitespace is a **400** too, since the padded form could never match anything.
+
+On the five `/memories` routes the filter is validated but **not** lowercased, so it matches exactly the scope string that was stored — the write path keeps your capitalisation, so the filter has to as well. `GET /memories/read-activity` is the exception: it filters recorded read events, whose scope was already lowercased when the event was recorded, so it lowercases your filter to match. Same grammar everywhere; the case rule follows whatever wrote the value.
 
 <TutorialStep number={1} title="Choose the right scope">
 

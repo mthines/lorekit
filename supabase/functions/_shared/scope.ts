@@ -52,7 +52,10 @@ export function validateScope(raw: string): string {
  *    answer 400. A scope filter IS the question being asked; keeping a
  *    malformed one and matching nothing answers a different question and calls
  *    it an empty result. This is the rule `GET /memories/read-activity` already
- *    follows and `memories/CLAUDE.md` states outright.
+ *    follows and `memories/CLAUDE.md` states outright. That route shares the
+ *    GRAMMAR only: it keeps calling the normalising `validateScope`, because it
+ *    filters `usage_events.scope`, which is recorded through
+ *    `safeValidateScope` and is therefore already lowercased.
  *
  * 2. `undefined` in, `undefined` out — an absent filter is not an error.
  *
