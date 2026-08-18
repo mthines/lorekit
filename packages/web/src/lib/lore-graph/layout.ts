@@ -44,7 +44,29 @@ import type { LoreGraph } from './types';
 export interface LayoutOptions {
   /** Radius of the sphere the scope clusters are arranged on. */
   radius?: number;
-  /** Radius of a single scope's cloud, before its member-count scaling. */
+  /**
+   * Radius of a single scope's cloud, before its member-count scaling.
+   *
+   * KNOWN LIMITATION — the cloud is scaled by `cbrt(memberCount)` and is not
+   * bounded by the spacing between scope centres, so a populous account grows
+   * clouds that interpenetrate. Measured at the plan ceiling with the defaults
+   * (5,000 memories over 25 scopes, so 200 each): the widest cloud reaches
+   * 35.1 against a smallest centre-to-centre gap of 24.5, the seed's furthest
+   * node sits 94.7 from the origin against a `radius` of 60, and **1,890 of
+   * the 5,000 memories are physically nearer a FOREIGN scope centre than their
+   * own**.
+   *
+   * The layout is still deterministic, still stable, and still correct in the
+   * sense the relaxation cares about; what degrades is READABILITY — "which
+   * cluster is that node in" stops being answerable by eye. Note that the
+   * `places each memory nearer its own scope than any other scope` spec runs
+   * at 8 memories per scope, so it passes and does not cover this.
+   *
+   * Capping the spread against the centre spacing is the obvious fix and is a
+   * product-design call (compress the clouds, grow `radius` with the scope
+   * count, or let them mix and lean on colour), so it is deliberately not
+   * taken here.
+   */
   clusterRadius?: number;
   /** Relaxation iterations. Fixed, not run-to-convergence. */
   iterations?: number;
