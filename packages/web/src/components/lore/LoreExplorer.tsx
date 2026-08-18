@@ -584,7 +584,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // any filter/search/transition state changed — replaying every card's enter
   // animation even when the same cards remain. Inlining the returned JSX keeps
   // each keyed card mounted across renders, so only genuinely-new cards animate.
-  const renderResults = () => {
+  const renderResults = (variant: 'desktop' | 'mobile') => {
     if (isLoading) {
       return (
         <div className="flex flex-col gap-2 p-3" aria-label="Loading memories" role="status">
@@ -613,6 +613,16 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     // copy: "no memories to map" wants to explain what the map draws, which the
     // list's "try a different search term" does not.
     if (view === 'map') {
+      // Both breakpoint layouts stay mounted — the split below is CSS, not a
+      // conditional render — which is free for a list and expensive for a map:
+      // rendering it in both would mean two `buildLoreGraph` passes, two layout
+      // workers and two WebGL contexts, one of them feeding a canvas nobody can
+      // see. So the map is the one branch that IS gated in JS, on the same
+      // `useIsMobile` the FilterMenu split already needs. A first paint before
+      // the media query resolves renders the desktop one and then swaps, which
+      // costs one remount on a phone and never two live scenes.
+      if ((variant === 'mobile') !== isMobile) return null;
+
       return (
         <div className="flex flex-col gap-2">
           <LoreGraphView
@@ -810,7 +820,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onEditField={setEditingField}
         />
 
-        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
+        <div className="flex-1 overflow-y-auto p-3">{renderResults('desktop')}</div>
       </div>
 
       {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
@@ -841,7 +851,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           />
         </div>
 
-        <div>{renderResults()}</div>
+        <div>{renderResults('mobile')}</div>
       </div>
     </div>
   );
