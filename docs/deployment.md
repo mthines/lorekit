@@ -254,6 +254,13 @@ repo-level variable, defaulting to `https://lorekit.io`).
 
 #### The deploy scope is measured against what is DEPLOYED, not the last commit
 
+> **Status: not wired yet.** `scripts/resolve-deploy-scope.mjs` is on `main`, but
+> `deploy.yml` does not call it — the GitHub App that opens automated PRs has no
+> `workflows` permission, the same constraint as "Wiring the sweep into CI". Until a
+> human applies [Wiring the deployed-SHA baseline into `deploy.yml`](#wiring-the-deployed-sha-baseline-into-deployyml)
+> below, the pipeline still diffs a single push and everything in this subsection
+> describes the intended behaviour, not the current one.
+
 Lockstep above only binds the two halves **within one run**. It says nothing
 about a half that never reached production in an *earlier* run — and that gap is
 what broke production once already:
