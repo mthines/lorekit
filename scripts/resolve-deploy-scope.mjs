@@ -222,25 +222,39 @@ if (invokedDirectly) {
     scope = manual;
     lines.push(`### Deploy scope (manual override: \`${DEPLOY_TARGET}\`)`);
   } else {
-    const pushBase = pushBaseline(BEFORE);
-    const api = resolveHalf(API_DEPLOYED_TAG, { pushBase });
-    const web = resolveHalf(WEB_DEPLOYED_TAG, { pushBase });
-    apiBase = api.base ?? '';
-    webBase = web.base ?? '';
+    // Every git call below can throw (no repository, a corrupt object store, a
+    // git that is not on PATH). The header promises this always exits 0, and a
+    // non-zero exit would red the `changes` job and stop the deploy — so a throw
+    // must land where every other doubt in this module lands: BOTH halves true,
+    // one redundant deploy, never a skip.
+    try {
+      const pushBase = pushBaseline(BEFORE);
+      const api = resolveHalf(API_DEPLOYED_TAG, { pushBase });
+      const web = resolveHalf(WEB_DEPLOYED_TAG, { pushBase });
+      apiBase = api.base ?? '';
+      webBase = web.base ?? '';
 
-    const apiChangedFiles = changedSince(api.base);
-    const webChangedFiles = changedSince(web.base);
-    scope = classify({ apiChangedFiles, webChangedFiles });
+      const apiChangedFiles = changedSince(api.base);
+      const webChangedFiles = changedSince(web.base);
+      scope = classify({ apiChangedFiles, webChangedFiles });
 
-    const shown = (base) => base ?? 'none';
-    console.log(`API baseline  ${shown(api.base)} (${api.source})`);
-    console.log(apiChangedFiles.join('\n'));
-    console.log(`Web baseline  ${shown(web.base)} (${web.source})`);
-    console.log(webChangedFiles.join('\n'));
+      const shown = (base) => base ?? 'none';
+      console.log(`API baseline  ${shown(api.base)} (${api.source})`);
+      console.log(apiChangedFiles.join('\n'));
+      console.log(`Web baseline  ${shown(web.base)} (${web.source})`);
+      console.log(webChangedFiles.join('\n'));
 
-    lines.push('### Deploy scope');
-    lines.push(`- API baseline: \`${shown(api.base)}\` (${api.source})`);
-    lines.push(`- Web baseline: \`${shown(web.base)}\` (${web.source})`);
+      lines.push('### Deploy scope');
+      lines.push(`- API baseline: \`${shown(api.base)}\` (${api.source})`);
+      lines.push(`- Web baseline: \`${shown(web.base)}\` (${web.source})`);
+    } catch (error) {
+      scope = { api: true, web: true };
+      apiBase = '';
+      webBase = '';
+      console.error(`Deploy-scope detection failed, deploying both halves: ${error.message}`);
+      lines.push('### Deploy scope (detection failed — both halves)');
+      lines.push(`- \`${error.message}\``);
+    }
   }
 
   lines.push(`- API (Supabase): ${scope.api}`);

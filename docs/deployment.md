@@ -298,6 +298,10 @@ Three things to know when reading a run:
   commit, or a checkout whose parent is not present) the resolver diffs nothing
   and treats **every tracked file** as changed — it never falls back to `HEAD`,
   because `git diff HEAD HEAD` is empty and would resolve both halves `false`.
+  And if git cannot answer at all (no repository, no git on `PATH`, a corrupt
+  object store) the resolver catches it, reports `api=true web=true`, and still
+  **exits 0** — it classifies, it does not gate, so a red exit here would stop the
+  deploy rather than fail open.
 - **Both rollback jobs must DELETE their half's tag.** The markers are moved by
   the *flip* jobs, which run **before** `smoke-production` — so a marker is
   already on this run's SHA by the time the smoke gate fails, and neither

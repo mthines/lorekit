@@ -6,6 +6,8 @@
 // front an API that had never been deployed, so it is exactly what a test is for.
 // Importing the module must NOT run the git plumbing — the `invokedDirectly`
 // seam ensures that (argv[1] ends in `.test.mjs`, not the script's own name).
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -259,6 +261,20 @@ test('changedSince lists every tracked file when there is no baseline', () => {
 test('changedSince diffs the baseline against HEAD when there is one', () => {
   const git = fakeGit({ run: { 'diff --name-only dead HEAD': 'docs/deployment.md\n\n' } });
   assert.deepEqual(changedSince('dead', git), ['docs/deployment.md']);
+});
+
+test('the CLI exits 0 and deploys both halves when git cannot answer at all', () => {
+  // The header promises this always exits 0 — it classifies, it does not gate.
+  // Run it where there is no repository: every git call throws, and a non-zero
+  // exit would red the `changes` job and stop the deploy outright.
+  const script = fileURLToPath(new URL('./resolve-deploy-scope.mjs', import.meta.url));
+  const run = spawnSync(process.execPath, [script], {
+    cwd: '/',
+    encoding: 'utf8',
+    env: { ...process.env, BEFORE: '', DEPLOY_TARGET: '', GITHUB_OUTPUT: '', GITHUB_STEP_SUMMARY: '' },
+  });
+  assert.equal(run.status, 0, `expected exit 0, got ${run.status}: ${run.stderr}`);
+  assert.match(run.stdout, /api=true web=true/, 'doubt must deploy both halves, never skip one');
 });
 
 test('a manual deploy_target overrides detection, and auto/empty defers to it', () => {
