@@ -159,8 +159,13 @@ export function edgeColors(graph: LoreGraph, base: Rgb, into?: Float32Array): Fl
   const out = buffer(into, graph.edges.length * 6);
   const opacities = edgeOpacities(graph);
   graph.edges.forEach((_, index) => {
-    const opacity = opacities[index * 2];
     for (let vertex = 0; vertex < 2; vertex++) {
+      // Per VERTEX, not per edge. `edgeOpacities` writes an explicit pair
+      // precisely so "fade an edge toward its weaker end" is a one-line change
+      // there; reading only the first entry would have made that seam dead the
+      // moment it was used. The two entries are equal today, so this is
+      // identical output and a live seam instead of a documented one.
+      const opacity = opacities[index * 2 + vertex];
       const at = index * 6 + vertex * 3;
       out[at] = base[0] * opacity;
       out[at + 1] = base[1] * opacity;
