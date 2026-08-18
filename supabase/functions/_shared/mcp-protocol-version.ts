@@ -55,6 +55,18 @@ export type SupportedProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[numb
 export const PREFERRED_PROTOCOL_VERSION: SupportedProtocolVersion =
   SUPPORTED_PROTOCOL_VERSIONS[0];
 
+// The floor: the OLDEST revision we still speak, and the offer for a client
+// asking for something older than everything on the list. There is no
+// not-newer-than-requested candidate in that case, and answering with our
+// newest would hand a very old client a revision released years after it —
+// the same shape the 2025-03-26 path below exists to avoid. The oldest we
+// speak is the closest legal offer available, and the likeliest to be
+// understood. This is deliberately NOT `PREFERRED_PROTOCOL_VERSION`: that
+// constant answers a client that expressed no preference at all, which is a
+// different question.
+export const OLDEST_PROTOCOL_VERSION: SupportedProtocolVersion =
+  SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1];
+
 export function isSupportedProtocolVersion(raw: unknown): raw is SupportedProtocolVersion {
   return (
     typeof raw === 'string' &&
@@ -66,8 +78,8 @@ export function isSupportedProtocolVersion(raw: unknown): raw is SupportedProtoc
 // object and return the version to answer with.
 //
 // Echo it when we speak it. Otherwise offer the newest version we speak that is
-// NOT NEWER than what was asked for, and only fall back to our newest overall
-// when no such version exists.
+// NOT NEWER than what was asked for, and fall back to the OLDEST version we
+// speak when no such version exists.
 //
 // That middle rule is the whole point and it is easy to get wrong. Answering
 // every unsupported request with our newest version reproduces the bug this
@@ -89,7 +101,7 @@ export function negotiateProtocolVersion(params: unknown): SupportedProtocolVers
   if (requested === null) return PREFERRED_PROTOCOL_VERSION;
   if (isSupportedProtocolVersion(requested)) return requested;
   const notNewerThanRequested = SUPPORTED_PROTOCOL_VERSIONS.find((v) => v <= requested);
-  return notNewerThanRequested ?? PREFERRED_PROTOCOL_VERSION;
+  return notNewerThanRequested ?? OLDEST_PROTOCOL_VERSION;
 }
 
 // The raw, unvalidated value the client sent, for telemetry. Returned as a

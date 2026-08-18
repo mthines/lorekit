@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   SUPPORTED_PROTOCOL_VERSIONS,
   PREFERRED_PROTOCOL_VERSION,
+  OLDEST_PROTOCOL_VERSION,
   negotiateProtocolVersion,
 } from './mcp-protocol-version.js';
 
@@ -44,11 +45,14 @@ describe('negotiateProtocolVersion', () => {
     expect(negotiateProtocolVersion({ protocolVersion: '2025-01-01' })).toBe('2024-11-05');
   });
 
-  it('falls back to the preferred version only when nothing older is supported', () => {
-    // Older than everything we speak — there is no "not newer" candidate, so
-    // our newest is the only offer we can make.
+  it('falls back to the OLDEST supported version when nothing older is supported', () => {
+    // Older than everything we speak — there is no "not newer than requested"
+    // candidate, so no legal offer can satisfy the property. Offer the oldest
+    // revision we speak rather than the newest: answering a 1999 client with
+    // 2025-06-18 is the same "handed a revision released after you" shape the
+    // 2025-03-26 case above exists to remove.
     expect(negotiateProtocolVersion({ protocolVersion: '1999-01-01' })).toBe(
-      PREFERRED_PROTOCOL_VERSION,
+      OLDEST_PROTOCOL_VERSION,
     );
     // Newer than everything we speak: echo is impossible, and the newest we
     // have is both "not newer than requested" and our preferred version.
@@ -90,6 +94,13 @@ describe('negotiateProtocolVersion', () => {
 
   it('prefers the newest supported version and never claims 2025-03-26', () => {
     expect(PREFERRED_PROTOCOL_VERSION).toBe(SUPPORTED_PROTOCOL_VERSIONS[0]);
+    // The floor is a distinct constant from the preferred version — if these
+    // ever collapse to the same value the too-old fallback stops being a
+    // different answer and the assertion above it goes vacuous.
+    expect(OLDEST_PROTOCOL_VERSION).toBe(
+      SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1],
+    );
+    expect(OLDEST_PROTOCOL_VERSION).not.toBe(PREFERRED_PROTOCOL_VERSION);
     expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2024-11-05');
     expect(SUPPORTED_PROTOCOL_VERSIONS).not.toContain('2025-03-26');
   });
