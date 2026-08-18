@@ -143,6 +143,8 @@ in `packages/web/CLAUDE.md`:
 
 The map draws the **same server-filtered memories the list draws**, so scope, search, range, status and every filter-bar dimension apply to it unchanged — switching view never silently widens what you are looking at.
 
+That list is an infinite query, so "the same memories" means the pages loaded so far, not the whole result set. The map says so rather than implying otherwise: while more pages are pending it prints a coverage notice (`coverageNotice` in `lib/lore-graph/summary.ts`, composed with the builder's own cap notice), and an empty first page renders the loading skeleton rather than the "nothing to map" empty state.
+
 Two rendering notes that are easy to undo by accident:
 
 - **Node matrices are written in `useLayoutEffect`, not `useEffect`.** With `useEffect` the first frame after a rebuild shows every instance stacked at the origin — a visible black hole on every data change.
@@ -163,6 +165,11 @@ only way to reach a memory. The rules:
   text summary (node count, scope count, current selection) beside it.
 - Selecting a node opens the same `LessonDetailSheet` the list opens, so
   everything reachable in 3D is reachable in 2D.
+- The List ⇄ Map switch is a real APG radio group: one tab stop for the pair
+  (roving `tabIndex` on the checked option), Left/Up and Right/Down moving
+  between them with selection following focus, plus Home and End. `role="radio"`
+  on a `<button>` gives none of that for free — only a real `<input
+  type="radio">` gets it from the platform — so `ViewToggle` implements it.
 
 ## Fetching
 
