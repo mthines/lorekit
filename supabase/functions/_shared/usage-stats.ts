@@ -325,12 +325,21 @@ export function summarizeUsageRows(rows: readonly UsageStatRow[]): UsageSummary 
     const kind = usageToolKind(row.tool_name);
     summary.total_events += n;
     summary[bucket[kind]] += n;
-    if (kind === 'read') summary.records_read += row.record_count;
-    // Archived counts EVENTS (one call = one memory; record_count is NULL for
-    // this write); expired counts RECORDS (one purge event, N deleted). See
-    // ARCHIVED_TOOL_NAME.
-    if (row.tool_name === ARCHIVED_TOOL_NAME) summary.archived += row.event_count;
-    if (row.tool_name === EXPIRED_TOOL_NAME) summary.expired += row.record_count;
+    // The CALL buckets above count every ATTEMPT — "how many archive calls did
+    // this account make" includes the ones that were refused. The RECORD/effect
+    // counters below answer "what actually happened", so they gate on
+    // `outcome === 'ok'`: without it a 403 (`permission_denied`) or a 404
+    // (`error`) archive attempt was summed into `archived` as though a memory
+    // had been retired. Residual, stated so it is not mistaken for covered: a
+    // dry-run answers 200 and is therefore bucketed `ok`, so it still counts.
+    // Telling one apart needs a dry-run marker on the event row, which
+    // `usage_events` does not carry.
+    const effective = row.outcome === 'ok';
+    if (effective && kind === 'read') summary.records_read += row.record_count;
+    // Archived counts EVENTS (one call = one memory); expired counts RECORDS
+    // (one purge event, N deleted). See ARCHIVED_TOOL_NAME.
+    if (effective && row.tool_name === ARCHIVED_TOOL_NAME) summary.archived += row.event_count;
+    if (effective && row.tool_name === EXPIRED_TOOL_NAME) summary.expired += row.record_count;
     summary.by_outcome[row.outcome] = (summary.by_outcome[row.outcome] ?? 0) + n;
   }
   return summary;

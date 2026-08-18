@@ -103,6 +103,28 @@ describe('summarizeUsageRows', () => {
     });
   });
 
+  it('counts refused archives as CALLS but never as archives', () => {
+    const refused: UsageStatRow[] = [
+      { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 1, total_duration_ms: 120 },
+      { tool_name: 'memory.archive', outcome: 'permission_denied', scope_type: 'repo', event_count: 4, record_count: 0, total_duration_ms: 20 },
+      { tool_name: 'memory.archive', outcome: 'error', scope_type: 'repo', event_count: 5, record_count: 0, total_duration_ms: 30 },
+    ];
+    const summary = summarizeUsageRows(refused);
+    // Every attempt is still a write CALL — the refusals are real traffic.
+    expect(summary.writes).toBe(12);
+    // Only the successful ones retired a memory.
+    expect(summary.archived).toBe(3);
+  });
+
+  it('does not credit a failed read with the records it never returned', () => {
+    const summary = summarizeUsageRows([
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 1, record_count: 10, total_duration_ms: 5 },
+      { tool_name: 'memory.list', outcome: 'error', scope_type: 'repo', event_count: 1, record_count: 99, total_duration_ms: 5 },
+    ]);
+    expect(summary.reads).toBe(2);
+    expect(summary.records_read).toBe(10);
+  });
+
   it('is empty-safe', () => {
     expect(summarizeUsageRows([])).toEqual({
       total_events: 0, reads: 0, writes: 0, other: 0,
