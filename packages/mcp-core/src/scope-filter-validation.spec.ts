@@ -128,6 +128,14 @@ describe('parseScopeFilter', () => {
 // dropped — and the MCP twin (`mcp/tools.ts`, which validates each entry) is the
 // precedent to reconcile against. Tracked separately; naming them here so their
 // absence is a recorded decision rather than an oversight.
+//
+// That deferral is a SEMANTICS call about the per-entry outcome, and explicitly
+// not a judgement that the charset check is optional there. Per
+// `_shared/scope.ts:34`, the charset guard exists because a scope is
+// interpolated into a PostgREST filter value where `"` `,` `(` `)` are
+// structural — and `.in('scope', …)` is exactly that shape. So whichever
+// per-entry outcome is chosen, every entry still has to pass the grammar; the
+// open question is what to do with the request, not whether to check.
 const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string]> = [
   ['list.ts', 'handleList'],
   ['activity.ts', 'handleActivity'],
