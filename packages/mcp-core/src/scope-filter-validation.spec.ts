@@ -88,6 +88,18 @@ describe('parseScopeFilter', () => {
     expect(parseScopeFilter(undefined)).toBeUndefined();
   });
 
+  it('rejects surrounding whitespace instead of filtering on a value that cannot match', () => {
+    // `validateScope` trims before it checks, so ` global` is grammatical to
+    // it — and the untrimmed string then reaches `.eq('scope', ' global')` and
+    // matches nothing. That is the 200-with-an-empty-page this change removes,
+    // so the padded form is bad input, not an empty result.
+    expect(() => parseScopeFilter(' global')).toThrow(UserInputError);
+    expect(() => parseScopeFilter('global ')).toThrow(/remove the surrounding whitespace/);
+    expect(() => parseScopeFilter('\trepo::mthines/lorekit\n')).toThrow(UserInputError);
+    // Rejected, never silently trimmed — the caller's question is not rewritten.
+    expect(parseScopeFilter('global')).toBe('global');
+  });
+
   it('accepts every canonical form and returns it UNCHANGED', () => {
     for (const scope of [
       'global',

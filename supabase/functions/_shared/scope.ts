@@ -56,6 +56,13 @@ export function validateScope(raw: string): string {
  *
  * 2. `undefined` in, `undefined` out — an absent filter is not an error.
  *
+ * 2b. REJECTS SURROUNDING WHITESPACE. `validateScope` trims before it checks,
+ *    so `" global"` is grammatical to it — but this returns the caller's own
+ *    string, and `.eq('scope', ' global')` matches nothing. That is exactly the
+ *    200-with-an-empty-page this whole change removes, so a padded filter is
+ *    named as bad input instead. Trimming it silently would rewrite the
+ *    question the caller asked, which property 3 forbids.
+ *
  * 3. DOES NOT NORMALISE. `validateScope` lowercases, and this deliberately
  *    discards that result and returns the caller's own string. The REST write
  *    path does NOT normalise — `CreateMemoryBodySchema` overrides the
@@ -72,6 +79,10 @@ export function validateScope(raw: string): string {
  */
 export function parseScopeFilter(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
+  // Before the grammar check, because the grammar check trims it away.
+  if (raw !== raw.trim()) {
+    throw new UserInputError(`Invalid scope "${raw}": remove the surrounding whitespace`);
+  }
   validateScope(raw); // throws UserInputError; the normalised result is discarded on purpose
   return raw;
 }
