@@ -173,9 +173,19 @@ export function keyNamespace(key: string): string | null {
   return at > 0 ? key.slice(0, at) : null;
 }
 
-/** `log1p`-scaled into `[0, 1]`, so one 400× outlier cannot flatten the rest. */
+/**
+ * `log1p`-scaled into `[0, 1]`, so one 400× outlier cannot flatten the rest.
+ *
+ * **No spread means zero, not one.** When every candidate carries the same value
+ * — the common case for `seen_count`, which only arrives with migration 00059,
+ * so a whole account can legitimately have none — there is no signal to encode,
+ * and the honest rendering is the BASE size. Returning 1 instead (the obvious
+ * `max <= 1` guard) drew every node in the graph at maximum radius: the size
+ * channel stopped meaning anything while shouting that everything was important,
+ * which is worse than it meaning nothing quietly.
+ */
 function normalizedWeight(value: number, max: number): number {
-  if (max <= 1) return value > 0 ? 1 : 0;
+  if (max <= 1) return 0;
   return Math.log1p(Math.max(value, 0)) / Math.log1p(max);
 }
 
@@ -194,11 +204,15 @@ function pairKey(a: number, b: number): string {
 /**
  * Group node indices by a term, dropping terms that only one memory carries
  * (no pair to draw) and terms carried by more than `hubSize` (a facet).
+ *
+ * Returns the surviving index AND the set of terms suppressed as hubs. The
+ * caller needs the second half to keep the Jaccard denominator honest — see
+ * {@link pairsFromPostings}.
  */
 function postingLists(
   terms: readonly (readonly string[])[],
   hubSize: number,
-): Map<string, number[]> {
+): { index: Map<string, number[]>; hubs: Set<string> } {
   const index = new Map<string, number[]>();
   terms.forEach((nodeTerms, node) => {
     for (const term of nodeTerms) {
@@ -207,10 +221,13 @@ function postingLists(
       else index.set(term, [node]);
     }
   });
+
+  const hubs = new Set<string>();
   for (const [term, list] of index) {
+    if (list.length > hubSize) hubs.add(term);
     if (list.length < 2 || list.length > hubSize) index.delete(term);
   }
-  return index;
+  return { index, hubs };
 }
 
 /**
@@ -223,6 +240,19 @@ function postingLists(
  * single-label memory becomes a perfect twin of every memory that happens to
  * carry that label, which is precisely the false cluster this view must not
  * draw.
+ *
+ * **Hub terms are excluded from the union.** A term carried by more than
+ * `hubSize` memories has been declared "not evidence of a relationship" — it
+ * generates no pairs — and it must not be evidence *against* one either. Left
+ * in the denominator it silently is: two memories sharing only a niche label,
+ * each also carrying fifteen `loop::*`-style hub labels, scored 0.032 and sank
+ * below a pair that shares one of two ordinary labels. That is the opposite of
+ * what hub suppression is for.
+ *
+ * Single-occurrence terms DO stay in the denominator. They are real,
+ * discriminating vocabulary — a memory with twenty labels nobody else carries
+ * genuinely is less of a twin than one with two — they simply have no partner
+ * in this dataset.
  */
 function pairsFromPostings(
   index: Map<string, number[]>,
@@ -351,9 +381,11 @@ export function buildLoreGraph(
   const candidates: GraphEdge[] = [];
   for (const kind of kinds) {
     const terms = kept.map(termsFor[kind]);
+    const { index, hubs } = postingLists(terms, hubSize);
     const pairs = pairsFromPostings(
-      postingLists(terms, hubSize),
-      terms.map((t) => t.length),
+      index,
+      // The union counts only terms that were allowed to be evidence.
+      terms.map((nodeTerms) => nodeTerms.filter((term) => !hubs.has(term)).length),
     );
     for (const pair of pairs.values()) {
       candidates.push({

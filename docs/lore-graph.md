@@ -43,6 +43,14 @@ between memories instead.
 Node identity is the natural key (`scope::key`), not the array index, so a
 refetch that re-orders the list does not move the user's selection.
 
+Node **weight** (which drives radius) follows `seen_count` for a memory and
+member count for a scope, `log1p`-scaled so one 400× outlier cannot flatten the
+rest. When there is no spread at all — the common case for `seen_count`, which
+only arrives with migration 00059 — the weight is **0**, i.e. the base size. The
+obvious `max <= 1 ⇒ 1` guard drew the entire graph at maximum radius: the size
+channel shouting while meaning nothing, which is worse than meaning nothing
+quietly.
+
 ### Edges
 
 Every edge kind is derivable from a single memory row — no extra request, no
@@ -85,6 +93,14 @@ Applied in this order, each reporting what it dropped in `graph.truncated`:
    posting list makes the pair count quadratic. One label on 3,000 memories
    would alone yield ~4.5 M pairs. Dropping it removes the cost and the noise in
    one move, which is why it is first rather than a later cap.
+
+   A suppressed term is excluded from the Jaccard **denominator** too. Declaring
+   a term "not evidence of a relationship" and then letting it count as evidence
+   *against* one is incoherent, and it bit: two memories sharing a niche label,
+   each also carrying fifteen `loop::*` hub labels, scored 0.032 and sank below
+   a pair sharing one of two ordinary labels. Single-occurrence terms **do**
+   stay in the denominator — they are real, discriminating vocabulary that
+   simply has no partner in this dataset.
 2. **Degree cap** (`maxDegree`, default 12) — counted in **distinct neighbours,
    not edges**. Strongest first. A pair that shares a label *and* a key
    namespace *and* a repo produces three edges between the same two nodes;

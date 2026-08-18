@@ -149,6 +149,40 @@ describe('buildLoreGraph', () => {
     expect([...kinds].sort()).toEqual(['label', 'scope']);
   });
 
+  it('does not let a suppressed hub term dilute the pair it was excluded from', () => {
+    // A hub term is declared "not evidence of a relationship". Leaving it in the
+    // Jaccard denominator makes it evidence AGAINST one, which is the opposite:
+    // two memories sharing a niche label, each also carrying fifteen hub labels,
+    // used to score 0.032 and sink below a pair sharing one of two ordinary
+    // labels.
+    const hubLabels = Array.from({ length: 15 }, (_, i) => `loop::h${i}`);
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'a', tags: [...hubLabels, 'niche'] }),
+        memory({ key: 'b', tags: [...hubLabels, 'niche'] }),
+        ...Array.from({ length: 18 }, (_, i) => memory({ key: `filler${i}`, tags: hubLabels })),
+      ],
+      { hubSize: 10, kinds: ['label'] },
+    );
+
+    const pair = graph.edges.find((edge) => edge.kind === 'label');
+    expect(pair?.strength).toBe(1);
+  });
+
+  it('still counts a memory’s unshared labels against it', () => {
+    // Single-occurrence terms are real, discriminating vocabulary — they just
+    // have no partner here — so unlike hub terms they stay in the denominator.
+    const graph = buildLoreGraph(
+      [
+        memory({ key: 'narrow', tags: ['shared'] }),
+        memory({ key: 'wide', tags: ['shared', 'mine-alone', 'also-mine'] }),
+      ],
+      { kinds: ['label'] },
+    );
+
+    expect(graph.edges.find((edge) => edge.kind === 'label')?.strength).toBeLessThan(1);
+  });
+
   it('weights a shared repo below a shared key namespace below a shared label', () => {
     // Jaccard alone is not comparable across kinds: `key` and `repo` contribute
     // exactly one term each, so both would score a perfect 1.0 and outrank even
@@ -316,6 +350,26 @@ describe('buildLoreGraph', () => {
     expect(weightOf(scopeNodeId('repo::mthines/lorekit'))).toBeGreaterThan(weightOf(scopeNodeId('global')));
   });
 
+  it('draws every memory at the base size when no row carries a seen_count', () => {
+    // `seen_count` arrives with migration 00059, so an account can legitimately
+    // have none. With no spread there is no signal to encode, and the honest
+    // rendering is the BASE size — the earlier `max <= 1 ⇒ 1` guard drew the
+    // ENTIRE graph at maximum radius, which is the size channel shouting while
+    // meaning nothing.
+    const graph = buildLoreGraph([memory({ key: 'a' }), memory({ key: 'b' }), memory({ key: 'c' })]);
+    const memories = graph.nodes.filter((node) => node.kind === 'memory');
+
+    expect(memories).toHaveLength(3);
+    expect(memories.every((node) => node.weight === 0)).toBe(true);
+  });
+
+  it('still separates sizes as soon as one row carries a recurrence', () => {
+    const graph = buildLoreGraph([memory({ key: 'once' }), memory({ key: 'often', seen_count: 9 })]);
+    const weightOf = (label: string) => graph.nodes.find((node) => node.label === label)?.weight ?? -1;
+
+    expect(weightOf('often')).toBeGreaterThan(weightOf('once'));
+  });
+
   it('dates a scope by its freshest memory', () => {
     const graph = buildLoreGraph([
       memory({ key: 'stale', updated_at: '2020-01-01T00:00:00.000Z' }),
@@ -348,14 +402,19 @@ describe('buildLoreGraph', () => {
     // 5,000 memories is the free-plan cap (docs/limits.md) — the worst case the
     // dashboard can actually be handed.
     //
-    // Deliberately NOT a wall-clock assertion. A `elapsed < N ms` check here
-    // would make this the one spec in the suite that can go red on a noisy CI
-    // runner with no code change, and a flaky guard is worse than none: it
-    // trains everyone to re-run rather than to read. What this pins instead is
-    // the property that would ACTUALLY regress if an accidental all-pairs path
-    // crept back in — the bounded output. Timing figures for the design doc are
-    // measured with `scripts/bench-lore-graph.mjs`, which is run on demand and
-    // gates nothing.
+    // Deliberately NOT a wall-clock assertion: it would be the one check in the
+    // suite that can go red on a noisy CI runner with no code change, and a
+    // flaky guard trains everyone to re-run rather than to read. Timing figures
+    // for the design doc come from `scripts/bench-lore-graph.mjs`, which gates
+    // nothing.
+    //
+    // The bounded OUTPUT alone would not catch an all-pairs regression either —
+    // disable hub suppression and the node, edge and degree caps still clamp
+    // everything to the same numbers; only the runtime explodes. What actually
+    // separates the two worlds is the CANDIDATE count before capping, which
+    // `truncated` reports: ~26k with hub suppression, millions without. That is
+    // a deterministic, machine-independent proxy for the work done, so it is
+    // what this asserts.
     const many = Array.from({ length: 5_000 }, (_, i) =>
       memory({
         key: `bucket-${i % 40}::lesson-${i}`,
@@ -369,6 +428,13 @@ describe('buildLoreGraph', () => {
 
     expect(graph.nodes).toHaveLength(5_000 + 25);
     expect(graph.edges.length).toBeLessThanOrEqual(5_000 + 15_000);
+
+    // The work bound. Without hub suppression this dataset generates millions of
+    // candidate pairs; with it, tens of thousands. The ceiling is generous
+    // enough not to be brittle and orders of magnitude below the regression.
+    const consideredEdges = graph.truncated.find((entry) => entry.of === 'edges');
+    expect(consideredEdges?.total ?? 0).toBeLessThan(200_000);
+
     // Every node keeps at most `maxDegree` distinct relation neighbours.
     const distinct = new Map<number, Set<number>>();
     for (const edge of graph.edges) {
