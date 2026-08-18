@@ -474,6 +474,29 @@ to review what is about to lapse and either let it go or refresh the TTL with `m
 filtered on instead of listing memories and tallying them client-side — the tally is silently
 truncated past the row cap.
 
+### When the filters do not fit a URL (`POST /memories/list`, `/facets`, `/activity`)
+
+Each of those three reads has a POST twin taking the SAME filters in a JSON body:
+
+```bash
+curl -X POST -H "Authorization: Bearer lk_ro_…" -H "Content-Type: application/json" \
+  -d '{"scope":"global","host":["reviewer","aw"],"host_mode":"in","limit":50}' \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories/list"
+```
+
+Reach for these when a dimension carries more values than a query string can hold, or when a
+value contains a comma. The query form joins a dimension's values into one comma-separated
+parameter capped at 2048 characters, so how many values fit depends on how long they happen to
+be, and a comma inside a value is read as a separator. In the body every dimension is a real
+array (`"host": [...]`, with its `host_mode`) bounded by a COUNT — 1000 values of up to 512
+characters each — and a comma is just a character. `archived` and `limit` take their real JSON
+types (`true`, not `"true"`).
+
+Both transports decode to one filter shape server-side and report under the same
+`memory.list` / `memory.facets` / `memory.activity` usage name, so the choice is purely about
+what fits. The GET forms are unchanged and remain the right call for anything link-shaped. The
+body is optional — a bodiless `POST /memories/list` is the unfiltered first page, not an error.
+
 ## Which lore matters right now (`GET /memories/relevant`)
 
 Listing and searching tell you what EXISTS. They do not tell you what is worth reading:

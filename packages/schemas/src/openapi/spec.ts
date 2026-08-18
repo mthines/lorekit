@@ -29,6 +29,9 @@ import {
   FacetsResponseSchema,
   ActivityQuerySchema,
   ActivityResponseSchema,
+  ListMemoriesBodySchema,
+  ListFacetsBodySchema,
+  ActivityBodySchema,
   ReadActivityQuerySchema,
   ReadActivityResponseSchema,
 } from '../memory.ts';
@@ -106,6 +109,9 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('CreateMemoryBody', CreateMemoryBodySchema);
   registry.register('UpdateMemoryBody', UpdateMemoryBodySchema);
   registry.register('SearchMemoriesBody', SearchMemoriesBodyDocSchema);
+  registry.register('ListMemoriesBody', ListMemoriesBodySchema);
+  registry.register('ListFacetsBody', ListFacetsBodySchema);
+  registry.register('ActivityBody', ActivityBodySchema);
   registry.register('RestoreMemoryBody', RestoreMemoryBodySchema);
   registry.register('PurgeMemoriesBody', PurgeMemoriesBodySchema);
   registry.register('RestoreResponse', RestoreResponseSchema);
@@ -179,6 +185,32 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });
+  // ── The body transport ──────────────────────────────────────────────────
+  // `POST /memories/list`, `/memories/facets` and `/memories/activity` are the
+  // three GET reads above in another encoding, for the one caller the query
+  // string cannot serve: a filter bar whose value sets are unbounded. Each
+  // dimension is a real array bounded by a COUNT (1000 values of 512
+  // characters) instead of `ValueListSchema`'s 2048-character-per-dimension
+  // cap, and a value containing a comma is reachable because nothing splits on
+  // one. The GET forms stay fully supported and unchanged.
+  const bodyTransportNote =
+    '\n\nThe BODY form of the read above, for callers whose filters do not fit a URL. ' +
+    'Every dimension is a real array (`{"host": ["reviewer", "aw"], "host_mode": "in"}`) ' +
+    'bounded at 1000 values of 512 characters each, where the query form caps a dimension ' +
+    'at 2048 characters and splits every value on a comma. Both transports decode to ONE ' +
+    'normalised filter shape server-side, so they return the same rows and report under the ' +
+    'same usage tool name — this is a transport choice and nothing else. The body is optional: ' +
+    'a bodiless request is the unfiltered read.';
+  registry.registerPath({
+    method: 'post', path: '/memories/list', summary: 'List memories (filters in a JSON body)',
+    tags: ['Memories'],
+    description: 'The same read as `GET /memories`.' + bodyTransportNote,
+    security, request: { body: { content: { 'application/json': { schema: ListMemoriesBodySchema } } } },
+    responses: {
+      200: memoryPageResponse('Paginated memories'),
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
   registry.registerPath({
     method: 'post', path: '/memories', summary: 'Create or update a memory', tags: ['Memories'],
     security, request: { body: { content: { 'application/json': { schema: CreateMemoryBodySchema } } } },
@@ -243,10 +275,35 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     },
   });
   registry.registerPath({
+    method: 'post', path: '/memories/facets',
+    summary: 'List every filterable value with its memory count (filters in a JSON body)',
+    tags: ['Memories'],
+    description:
+      'The same drill-down catalog as `GET /memories/facets`. `facets` is an array of the ' +
+      'closed facet vocabulary rather than a comma list, so an unknown name is a `400` here ' +
+      'where the query form tolerated one and narrowed to nothing.' + bodyTransportNote,
+    security, request: { body: { content: { 'application/json': { schema: ListFacetsBodySchema } } } },
+    responses: {
+      200: { description: 'Facet values', content: { 'application/json': { schema: FacetsResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
     method: 'get', path: '/memories/activity',
     summary: 'Memories created per UTC hour/day per scope over a window', tags: ['Memories'],
     description: 'An invalid `scope` is a `400`, not a silently ignored filter — the same rule the read counterpart `GET /memories/read-activity` follows.',
     security, request: { query: ActivityQuerySchema },
+    responses: {
+      200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/activity',
+    summary: 'Memories created per UTC hour/day per scope over a window (filters in a JSON body)',
+    tags: ['Memories'],
+    description: 'The same series as `GET /memories/activity`.' + bodyTransportNote,
+    security, request: { body: { content: { 'application/json': { schema: ActivityBodySchema } } } },
     responses: {
       200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,

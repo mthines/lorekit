@@ -31,9 +31,17 @@ const repoRoot = path.resolve(here, '../../..');
 const handlerDir = path.join(repoRoot, 'supabase/functions/memories/handlers');
 const read = (f: string) => readFileSync(path.join(handlerDir, f), 'utf8');
 
-/** Slice a handler's body by brace-depth so nested braces do not end it early. */
+/**
+ * Slice a handler's body by brace-depth so nested braces do not end it early.
+ *
+ * The function named is not always the exported route entry point: `list.ts`,
+ * `activity.ts` and `facets.ts` each decode two transports (`GET` + `POST`) into
+ * one shape and hand it to a single module-private reader, which is where the
+ * scope filter is validated — once, so the two transports cannot diverge on
+ * which scopes they accept. So `export` is optional here.
+ */
 function handlerBody(src: string, fnName: string): string {
-  const at = src.indexOf(`export async function ${fnName}(`);
+  const at = src.search(new RegExp(`(?:export )?async function ${fnName}\\(`));
   if (at === -1) throw new Error(`handler ${fnName} not found`);
   const bodyStart = src.indexOf('{', src.indexOf(')', at));
   let depth = 0;
@@ -137,10 +145,15 @@ describe('parseScopeFilter', () => {
 // per-entry outcome is chosen, every entry still has to pass the grammar; the
 // open question is what to do with the request, not whether to check.
 const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string]> = [
-  ['list.ts', 'handleList'],
-  ['activity.ts', 'handleActivity'],
+  // The three dual-transport routes name their shared reader, not the exported
+  // `GET`/`POST` entry point: both transports decode into one shape and only the
+  // reader touches the scope, so validating there is what stops `GET /memories`
+  // and `POST /memories/list` disagreeing about which scopes are legal. The
+  // entry points are pinned to route through it by DUAL_TRANSPORT_ROUTES below.
+  ['list.ts', 'respondWithPage'],
+  ['activity.ts', 'runActivity'],
+  ['facets.ts', 'runFacets'],
   ['remove.ts', 'handleRemove'],
-  ['facets.ts', 'handleFacets'],
   ['restore.ts', 'handleRestore'],
   // The one that was already correct — kept so a regression there trips the
   // same guard. It predates `parseScopeFilter` and calls `validateScope`
@@ -198,6 +211,25 @@ describe('REST scope filters are validated before they reach a query', () => {
       }
       for (const m of body.matchAll(/p_scope:\s*([^,\n]+)/g)) {
         expect(m[1], `${fn}: p_scope: ${m[1]} does not use ${name}`).toContain(name);
+      }
+    },
+  );
+
+  // A route whose scope filter lives in a shared reader is only guarded if BOTH
+  // its transports actually go through that reader. Without this, moving one
+  // entry point back to its own query would pass every assertion above.
+  const DUAL_TRANSPORT_ROUTES: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+    ['list.ts', 'respondWithPage', ['handleList', 'handleListPost']],
+    ['activity.ts', 'runActivity', ['handleActivity', 'handleActivityPost']],
+    ['facets.ts', 'runFacets', ['handleFacets', 'handleFacetsPost']],
+  ];
+
+  it.each(DUAL_TRANSPORT_ROUTES)(
+    '%s: both transports read through %s',
+    (file, reader, entryPoints) => {
+      const src = read(file);
+      for (const fn of entryPoints) {
+        expect(handlerBody(src, fn), `${fn} does not call ${reader}`).toContain(`${reader}(`);
       }
     },
   );
