@@ -600,7 +600,9 @@ those rows unmatchable by `GET /` and undeletable by natural key. If the write p
 normalised, normalise the filters in the same change — never before. It also **rejects
 surrounding whitespace**: `validateScope` trims before it checks, so a padded value is
 grammatical to it while the untrimmed string reaches the predicate and matches nothing —
-the same empty-page failure, so it is named as bad input rather than silently trimmed.
+the same empty-page failure, so it is named as bad input rather than silently trimmed. This
+applies to the `parseScopeFilter` routes only: `GET /read-activity` compares the NORMALISED
+value, so padding is trimmed there and `?scope=%20global` is a legitimate `200`.
 
 **`GET /read-activity` is the one route that still normalises, and must keep doing so.** It
 filters `usage_events.scope`, which is written through `safeValidateScope` at the recording
