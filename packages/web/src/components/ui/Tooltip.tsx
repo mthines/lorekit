@@ -120,8 +120,8 @@ export function Tooltip({
   // shows an unpositioned flash. `useEffect`, not layout, to stay quiet under
   // SSR (this is a client component that still server-renders).
   const GAP = 6;
-  useEffect(() => {
-    if (!visible || !triggerRef.current || !panelRef.current) return;
+  const reposition = useCallback(() => {
+    if (!triggerRef.current || !panelRef.current) return;
     const t = triggerRef.current.getBoundingClientRect();
     const p = panelRef.current.getBoundingClientRect();
     setPos(
@@ -130,7 +130,29 @@ export function Tooltip({
         height: window.innerHeight,
       }),
     );
-  }, [visible, side, align, content]);
+  }, [side, align]);
+
+  useEffect(() => {
+    if (visible) reposition();
+  }, [visible, reposition, content]);
+
+  // A `fixed` panel is positioned in VIEWPORT coordinates, so it does not travel
+  // with its trigger the way the old `absolute` panel did: scroll the page (or
+  // any scrollable ancestor) with a tap-toggled tooltip left open and it detaches
+  // and hangs over unrelated content. Re-measure on scroll and resize while the
+  // tooltip is open — `capture: true` so scrolls inside a non-window scroller
+  // (the Explorer's own panes) are heard too, and `passive` so this never blocks
+  // the scroll it is following. Only mounted while `visible`, so a closed
+  // tooltip costs nothing.
+  useEffect(() => {
+    if (!visible) return undefined;
+    window.addEventListener('scroll', reposition, { capture: true, passive: true });
+    window.addEventListener('resize', reposition, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', reposition, { capture: true });
+      window.removeEventListener('resize', reposition);
+    };
+  }, [visible, reposition]);
 
   // Dismiss when the user clicks/taps outside the wrapper.
   const onOutsideDown = useCallback((e: PointerEvent) => {
