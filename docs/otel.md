@@ -446,7 +446,7 @@ All signals carry these resource attributes:
 | `service.namespace` | `lorekit` |
 | `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below). On `web` the ambient value is `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI, the Node MCP server, and the edge (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. |
 
 ### `web` never reports `production` from a dev server
 

@@ -30,6 +30,21 @@
  * `NODE_ENV` is conclusive evidence that this is a dev server, whatever
  * `VERCEL_ENV` claims, and `production` / `preview` are clamped away.
  *
+ * ## Known residual, and why `VERCEL` is deliberately not also checked
+ *
+ * A local `next build && next start` with a pulled `VERCEL_ENV=production` sets
+ * `NODE_ENV=production` and so is still reported as `production`. Gating
+ * additionally on Vercel's `VERCEL` variable would not close that hole:
+ * `vercel env pull` writes the system variables too, `VERCEL=1` among them, so
+ * the same `.env.local` that supplies the bad `VERCEL_ENV` supplies a matching
+ * `VERCEL`. It would, however, add a way for a real deployment to be
+ * mis-detected as local if that variable ever stops reaching the Next.js server
+ * runtime — a silent loss of production telemetry, which is the worse failure.
+ *
+ * The residual is accepted because running a production build against pulled
+ * production credentials is a deliberate, rare act, whereas `next dev` is what
+ * every contributor runs all day — and `next dev` is what caused the incident.
+ *
  * This mirrors `otel-service-name.ts`, which exists for the same shape of bug —
  * an environment variable silently outranking the code and mislabelling a
  * component's telemetry — and is deliberately written the same way: a total,
