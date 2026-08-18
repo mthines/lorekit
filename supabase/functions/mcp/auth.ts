@@ -85,14 +85,37 @@ export async function resolveAuth(
  * answers a non-POST before `resolveAuth` runs, and without this the probe span
  * carried no `auth.*` attribute at all.
  *
- * It is exported so there is exactly ONE mapping — `resolveAuthTiers` below
- * branches on this same function, so the guard's `auth.type` can never disagree
- * with the one a POST to the same endpoint would get.
+ * It is exported so there is exactly ONE mapping: `resolveAuthTiers` below
+ * branches on this same function, so the guard can never disagree with the tier
+ * this module itself writes.
  *
  * The tier is NOT a verification result: `api_key` means "presented a token
  * shaped like `lk_*`", not "presented a valid one". `resolveAuthTiers` reports
  * it the same way — it sets `auth.type: 'api_key'` on `api_key_invalid` too —
  * so pair it with `auth.outcome` to tell presented from accepted.
+ *
+ * ### Where this diverges from a completed request — read before querying
+ *
+ * `auth.type` is written TWICE on a successful request. This module writes the
+ * tier, and then `mcp/index.ts` OVERWRITES it from the resolved
+ * `AuthContext.type` once auth succeeds. Those agree on four of the five
+ * outcomes:
+ *
+ * | presented              | this function | final `auth.type` on the span |
+ * |------------------------|---------------|-------------------------------|
+ * | nothing                | `none`        | `none`                        |
+ * | service-role key       | `service`     | `service`                     |
+ * | `lk_*`, valid          | `api_key`     | `api_key`                     |
+ * | `lk_*`, invalid        | `api_key`     | `api_key` (no overwrite — auth failed) |
+ * | anything else, invalid | `jwt`         | `jwt` (no overwrite — auth failed) |
+ * | **anything else, VALID** | **`jwt`**   | **`user`** — `AuthContext.type` for a JWT is `user` |
+ *
+ * The last row is inherent, not an oversight: the only way to know a JWT is
+ * valid is the GoTrue call, which is precisely what a caller using this
+ * function has chosen not to make. So a span carrying
+ * `auth.outcome: 'not_attempted'` reports `jwt` where the same credential on a
+ * POST would end at `user`. Filter on `auth.outcome` before comparing
+ * `auth.type` across the two.
  */
 export function credentialTier(token: string | null): 'none' | 'service' | 'api_key' | 'jwt' {
   if (!token) return 'none';

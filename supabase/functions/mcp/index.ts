@@ -96,8 +96,13 @@ Deno.serve(async (req: Request) => {
       // the way this change's own evidence picked out the one real caller.
       //
       // `credentialTier` is the classification `resolveAuthTiers` performs
-      // BEFORE its first query, so this agrees with what a POST to the same
-      // endpoint would report, and it costs one string comparison.
+      // BEFORE its first query, so one mapping serves both and it costs a
+      // string comparison. It reports the credential SHAPE presented, which
+      // matches the final `auth.type` of a completed request in every case but
+      // one: a VALID JWT ends at `user`, because the `span.setAttributes` below
+      // overwrites the tier with `AuthContext.type` once auth succeeds. That
+      // gap is inherent — knowing the JWT is valid costs the GoTrue call this
+      // guard exists to skip — and `credentialTier`'s docblock tabulates it.
       //
       // `auth.user_id` is deliberately NOT recovered: it exists only in the
       // `api_tokens` row, and reading it is the 149 ms this guard exists to
