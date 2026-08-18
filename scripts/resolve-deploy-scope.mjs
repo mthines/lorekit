@@ -103,7 +103,9 @@ export function pickBaseline({ tagSha, tagIsAncestor, pushBase }) {
     ? { base: pushBase, source: 'push' }
     : { base: null, source: 'no baseline — every tracked file' };
   if (!tagSha) return fallback;
-  if (!tagIsAncestor) return { ...fallback, source: `${fallback.source}, marker not an ancestor of HEAD` };
+  if (!tagIsAncestor) {
+    return { ...fallback, source: `${fallback.source}, marker not an ancestor of HEAD` };
+  }
   return { base: tagSha, source: 'deployed' };
 }
 
@@ -127,20 +129,30 @@ export function classify({ apiChangedFiles, webChangedFiles }) {
 
 // ── IO seam ──────────────────────────────────────────────────────────────────
 
-const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
-const gitOk = (...args) => {
-  try {
-    execFileSync('git', args, { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+/**
+ * The one place this module shells out. Everything below takes it as an
+ * injectable argument so the marker-to-baseline wiring — the part the incident
+ * actually turned on — is assertable without a repository, a tag, or a reflog.
+ *
+ * `run` returns trimmed stdout and throws on a non-zero exit; `ok` reports the
+ * exit status of a command run for its status alone.
+ */
+export const execGit = {
+  run: (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim(),
+  ok: (...args) => {
+    try {
+      execFileSync('git', args, { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  },
 };
 
 /** Resolve a tag to a commit sha, or null when it is not present. */
-function tagCommit(tag) {
+export function tagCommit(tag, git = execGit) {
   try {
-    return git('rev-parse', '-q', '--verify', `refs/tags/${tag}^{commit}`) || null;
+    return git.run('rev-parse', '-q', '--verify', `refs/tags/${tag}^{commit}`) || null;
   } catch {
     return null;
   }
@@ -155,22 +167,37 @@ function tagCommit(tag) {
  * "this half has no changes", which is exactly the answer the incident was made
  * of. A null baseline makes `changedSince` list every tracked file instead.
  */
-function pushBaseline(before) {
+export function pushBaseline(before, git = execGit) {
   const usable =
     before &&
     before !== '0000000000000000000000000000000000000000' &&
-    gitOk('cat-file', '-e', `${before}^{commit}`);
+    git.ok('cat-file', '-e', `${before}^{commit}`);
   if (usable) return before;
   try {
-    return git('rev-parse', 'HEAD~1');
+    return git.run('rev-parse', 'HEAD~1');
   } catch {
     return null;
   }
 }
 
+/**
+ * One half's baseline: read its marker, ask whether HEAD can reach it, and let
+ * the pure `pickBaseline` decide. The `tagIsAncestor` probe is deliberately
+ * skipped when there is no marker — `merge-base --is-ancestor` with an empty
+ * argument is a usage error, not a `false`.
+ */
+export function resolveHalf(tag, { pushBase, git = execGit } = {}) {
+  const tagSha = tagCommit(tag, git);
+  return pickBaseline({
+    tagSha,
+    tagIsAncestor: tagSha ? git.ok('merge-base', '--is-ancestor', tagSha, 'HEAD') : false,
+    pushBase,
+  });
+}
+
 /** Files changed since `base`, or every tracked file when there is no baseline. */
-function changedSince(base) {
-  const out = base ? git('diff', '--name-only', base, 'HEAD') : git('ls-files');
+export function changedSince(base, git = execGit) {
+  const out = base ? git.run('diff', '--name-only', base, 'HEAD') : git.run('ls-files');
   return out.split('\n').filter(Boolean);
 }
 
@@ -196,16 +223,8 @@ if (invokedDirectly) {
     lines.push(`### Deploy scope (manual override: \`${DEPLOY_TARGET}\`)`);
   } else {
     const pushBase = pushBaseline(BEFORE);
-    const resolveHalf = (tag) => {
-      const tagSha = tagCommit(tag);
-      return pickBaseline({
-        tagSha,
-        tagIsAncestor: tagSha ? gitOk('merge-base', '--is-ancestor', tagSha, 'HEAD') : false,
-        pushBase,
-      });
-    };
-    const api = resolveHalf(API_DEPLOYED_TAG);
-    const web = resolveHalf(WEB_DEPLOYED_TAG);
+    const api = resolveHalf(API_DEPLOYED_TAG, { pushBase });
+    const web = resolveHalf(WEB_DEPLOYED_TAG, { pushBase });
     apiBase = api.base ?? '';
     webBase = web.base ?? '';
 

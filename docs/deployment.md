@@ -317,7 +317,10 @@ Three things to know when reading a run:
   wiring below, like everything else under `.github/workflows/` here — the same
   extract-and-test treatment `check-remote-migration-drift.mjs` got, for the same
   reason. The test pins both the fixed behaviour and the old one that caused the
-  incident. The step summary prints both baselines and where each came from.
+  incident. Every git call goes through one injectable `execGit` seam, so the
+  marker-to-baseline wiring (`tagCommit` / `pushBaseline` / `resolveHalf` /
+  `changedSince`) is covered without a repository, a tag, or a reflog. The step
+  summary prints both baselines and where each came from.
 
 The first `deploy.yml` run after this landed has no tags yet, so both halves fall
 back to the push baseline — and since the change touches `deploy.yml` itself

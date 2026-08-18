@@ -12,11 +12,38 @@ import assert from 'node:assert/strict';
 import {
   API_PATHS,
   WEB_PATHS,
+  changedSince,
   classify,
   halfChanged,
   pickBaseline,
+  pushBaseline,
+  resolveHalf,
   resolveManualTarget,
+  tagCommit,
 } from './resolve-deploy-scope.mjs';
+
+/**
+ * A fake of the module's `execGit` seam. `run` answers from a table keyed by the
+ * joined argv (a missing key throws, like git exiting non-zero); `ok` answers
+ * from a set of argv prefixes. Every call is recorded, so a test can assert what
+ * the resolver did NOT ask git as well as what it did.
+ */
+function fakeGit({ run = {}, ok = [] } = {}) {
+  const calls = [];
+  return {
+    calls,
+    run: (...args) => {
+      calls.push(args.join(' '));
+      const key = args.join(' ');
+      if (!(key in run)) throw new Error(`git ${key} failed`);
+      return run[key];
+    },
+    ok: (...args) => {
+      calls.push(args.join(' '));
+      return ok.includes(args.join(' '));
+    },
+  };
+}
 
 // The two merges from the incident, by their real changed-path sets.
 const PR_492_FILES = [
@@ -148,6 +175,90 @@ test('pickBaseline still prefers a usable marker when the push baseline is missi
     base: 'dead',
     source: 'deployed',
   });
+});
+
+// ── The git-touching wiring, through the injectable seam ─────────────────────
+
+test('tagCommit returns the marker sha, and null when the marker is absent', () => {
+  const present = fakeGit({
+    run: { 'rev-parse -q --verify refs/tags/deployed/api-production^{commit}': 'dead' },
+  });
+  assert.equal(tagCommit('deployed/api-production', present), 'dead');
+  // git exits non-zero for an unknown ref under `-q --verify`.
+  assert.equal(tagCommit('deployed/web-production', fakeGit()), null);
+});
+
+test('pushBaseline prefers a usable github.event.before over HEAD~1', () => {
+  const git = fakeGit({ ok: ['cat-file -e beef^{commit}'], run: { 'rev-parse HEAD~1': 'parent' } });
+  assert.equal(pushBaseline('beef', git), 'beef');
+  assert.ok(!git.calls.includes('rev-parse HEAD~1'), 'a usable BEFORE must not cost a rev-parse');
+});
+
+test('pushBaseline falls back to HEAD~1 for an empty, all-zero or unfetched BEFORE', () => {
+  for (const before of ['', '0000000000000000000000000000000000000000', 'gone']) {
+    const git = fakeGit({ run: { 'rev-parse HEAD~1': 'parent' } });
+    assert.equal(pushBaseline(before, git), 'parent', `BEFORE=${before || '(empty)'}`);
+  }
+});
+
+test('pushBaseline returns null rather than HEAD when there is no parent', () => {
+  // THE REGRESSION this seam exists to pin: returning HEAD here made
+  // `changedSince` diff HEAD against HEAD and resolve both halves false.
+  const git = fakeGit();
+  assert.equal(pushBaseline('', git), null);
+  assert.ok(!git.calls.includes('rev-parse HEAD'), 'must never reach for HEAD as a baseline');
+});
+
+test('resolveHalf uses the marker when HEAD can reach it', () => {
+  const git = fakeGit({
+    run: { 'rev-parse -q --verify refs/tags/deployed/api-production^{commit}': 'dead' },
+    ok: ['merge-base --is-ancestor dead HEAD'],
+  });
+  assert.deepEqual(resolveHalf('deployed/api-production', { pushBase: 'beef', git }), {
+    base: 'dead',
+    source: 'deployed',
+  });
+});
+
+test('resolveHalf falls back to the push baseline for a non-ancestor marker', () => {
+  const git = fakeGit({
+    run: { 'rev-parse -q --verify refs/tags/deployed/web-production^{commit}': 'ahead' },
+    ok: [], // `merge-base --is-ancestor` non-zero → not reachable from HEAD
+  });
+  const picked = resolveHalf('deployed/web-production', { pushBase: 'beef', git });
+  assert.equal(picked.base, 'beef');
+  assert.match(picked.source, /not an ancestor/);
+});
+
+test('resolveHalf does not probe ancestry when there is no marker', () => {
+  // `merge-base --is-ancestor` with an empty argument is a usage error, not a false.
+  const git = fakeGit({ run: {} });
+  assert.deepEqual(resolveHalf('deployed/web-production', { pushBase: 'beef', git }), {
+    base: 'beef',
+    source: 'push',
+  });
+  assert.ok(!git.calls.some((c) => c.startsWith('merge-base')), 'no marker → no ancestry probe');
+});
+
+test('changedSince lists every tracked file when there is no baseline', () => {
+  const git = fakeGit({
+    run: { 'ls-files': 'packages/web/src/app.tsx\nsupabase/functions/mcp/index.ts\n' },
+  });
+  assert.deepEqual(changedSince(null, git), [
+    'packages/web/src/app.tsx',
+    'supabase/functions/mcp/index.ts',
+  ]);
+  // And that answer must deploy both halves rather than skip them.
+  const all = changedSince(null, git);
+  assert.deepEqual(classify({ apiChangedFiles: all, webChangedFiles: all }), {
+    api: true,
+    web: true,
+  });
+});
+
+test('changedSince diffs the baseline against HEAD when there is one', () => {
+  const git = fakeGit({ run: { 'diff --name-only dead HEAD': 'docs/deployment.md\n\n' } });
+  assert.deepEqual(changedSince('dead', git), ['docs/deployment.md']);
 });
 
 test('a manual deploy_target overrides detection, and auto/empty defers to it', () => {
