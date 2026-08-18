@@ -294,7 +294,10 @@ Three things to know when reading a run:
   a re-run of an older ref), because diffing against a marker *ahead* of `HEAD`
   reports the marker-only files as changed here. Doubt never resolves to "this
   half has no changes": a wrong `false` is the incident above, a wrong `true` is
-  one redundant deploy.
+  one redundant deploy. When there is no usable push baseline either (a root
+  commit, or a checkout whose parent is not present) the resolver diffs nothing
+  and treats **every tracked file** as changed — it never falls back to `HEAD`,
+  because `git diff HEAD HEAD` is empty and would resolve both halves `false`.
 - **`rollback-web-production` must DELETE the web tag.** It reverts the *domain*
   to the previously promoted deployment, whose commit the tag no longer names.
   Leaving the tag in place is **not** a safe error, and the non-ancestor rule does

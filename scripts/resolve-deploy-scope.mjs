@@ -91,10 +91,19 @@ export function resolveManualTarget(target) {
  * re-run of an older ref, `git diff <marker>..HEAD` reports the marker-only files
  * as changed, which is a true statement about the diff and a misleading one about
  * this merge. Fall back and let the push decide — one redundant deploy, no skips.
+ *
+ * `pushBase` is itself null when there is no usable push baseline either (a root
+ * commit, or a checkout with no parent reachable). `base: null` then means "no
+ * baseline at all" and the caller must treat EVERY tracked file as changed —
+ * never "nothing changed", which is the one answer this module must never
+ * produce out of doubt.
  */
 export function pickBaseline({ tagSha, tagIsAncestor, pushBase }) {
-  if (!tagSha) return { base: pushBase, source: 'push' };
-  if (!tagIsAncestor) return { base: pushBase, source: 'push (marker not an ancestor of HEAD)' };
+  const fallback = pushBase
+    ? { base: pushBase, source: 'push' }
+    : { base: null, source: 'no baseline — every tracked file' };
+  if (!tagSha) return fallback;
+  if (!tagIsAncestor) return { ...fallback, source: `${fallback.source}, marker not an ancestor of HEAD` };
   return { base: tagSha, source: 'deployed' };
 }
 
@@ -137,7 +146,15 @@ function tagCommit(tag) {
   }
 }
 
-/** The push baseline — `github.event.before`, or HEAD~1 when it is unusable. */
+/**
+ * The push baseline — `github.event.before`, or HEAD~1 when it is unusable.
+ *
+ * Returns null when neither is available (a root commit, or a checkout whose
+ * parent is not present). It must NOT fall back to HEAD: `git diff HEAD HEAD` is
+ * empty, so both halves would resolve false — the single doubt path that answers
+ * "this half has no changes", which is exactly the answer the incident was made
+ * of. A null baseline makes `changedSince` list every tracked file instead.
+ */
 function pushBaseline(before) {
   const usable =
     before &&
@@ -147,12 +164,14 @@ function pushBaseline(before) {
   try {
     return git('rev-parse', 'HEAD~1');
   } catch {
-    return git('rev-parse', 'HEAD');
+    return null;
   }
 }
 
+/** Files changed since `base`, or every tracked file when there is no baseline. */
 function changedSince(base) {
-  return git('diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean);
+  const out = base ? git('diff', '--name-only', base, 'HEAD') : git('ls-files');
+  return out.split('\n').filter(Boolean);
 }
 
 const invokedDirectly = process.argv[1] && /resolve-deploy-scope\.mjs$/.test(process.argv[1]);
@@ -187,21 +206,22 @@ if (invokedDirectly) {
     };
     const api = resolveHalf(API_DEPLOYED_TAG);
     const web = resolveHalf(WEB_DEPLOYED_TAG);
-    apiBase = api.base;
-    webBase = web.base;
+    apiBase = api.base ?? '';
+    webBase = web.base ?? '';
 
     const apiChangedFiles = changedSince(api.base);
     const webChangedFiles = changedSince(web.base);
     scope = classify({ apiChangedFiles, webChangedFiles });
 
-    console.log(`API baseline  ${api.base} (${api.source})`);
+    const shown = (base) => base ?? 'none';
+    console.log(`API baseline  ${shown(api.base)} (${api.source})`);
     console.log(apiChangedFiles.join('\n'));
-    console.log(`Web baseline  ${web.base} (${web.source})`);
+    console.log(`Web baseline  ${shown(web.base)} (${web.source})`);
     console.log(webChangedFiles.join('\n'));
 
     lines.push('### Deploy scope');
-    lines.push(`- API baseline: \`${api.base}\` (${api.source})`);
-    lines.push(`- Web baseline: \`${web.base}\` (${web.source})`);
+    lines.push(`- API baseline: \`${shown(api.base)}\` (${api.source})`);
+    lines.push(`- Web baseline: \`${shown(web.base)}\` (${web.source})`);
   }
 
   lines.push(`- API (Supabase): ${scope.api}`);

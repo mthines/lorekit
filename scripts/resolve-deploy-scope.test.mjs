@@ -128,6 +128,28 @@ test('pickBaseline falls back when the marker is not an ancestor of HEAD', () =>
   assert.match(picked.source, /not an ancestor/);
 });
 
+test('pickBaseline never resolves doubt to "nothing changed" when there is no push baseline', () => {
+  // A root commit, or a checkout whose parent is not present: `HEAD~1` fails.
+  // Falling back to HEAD would make `git diff HEAD HEAD` empty and BOTH halves
+  // false — the one doubt path that answers "this half has no changes", which is
+  // the answer the incident was made of. `base: null` means "every tracked file".
+  for (const tag of [
+    { tagSha: null, tagIsAncestor: false },
+    { tagSha: 'ahead', tagIsAncestor: false },
+  ]) {
+    const picked = pickBaseline({ ...tag, pushBase: null });
+    assert.equal(picked.base, null, 'no baseline must not degrade to a HEAD..HEAD diff');
+    assert.match(picked.source, /every tracked file/);
+  }
+});
+
+test('pickBaseline still prefers a usable marker when the push baseline is missing', () => {
+  assert.deepEqual(pickBaseline({ tagSha: 'dead', tagIsAncestor: true, pushBase: null }), {
+    base: 'dead',
+    source: 'deployed',
+  });
+});
+
 test('a manual deploy_target overrides detection, and auto/empty defers to it', () => {
   assert.deepEqual(resolveManualTarget('all'), { api: true, web: true });
   assert.deepEqual(resolveManualTarget('api'), { api: true, web: false });
