@@ -87,7 +87,7 @@ async function runFacets(
   // Early refusal for a NAMED scope outside the key's allowlist (00068/00069).
   // Without it `p_key_scopes` narrows the counts to empty inside the RPC,
   // which reads as "there is nothing there" rather than "you may not ask".
-  const deniedScope = firstDeniedScope(auth, [params.scope]);
+  const deniedScope = firstDeniedScope(auth, [scope]);
   if (deniedScope !== null) {
     span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
     return forbidden(
