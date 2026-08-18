@@ -63,13 +63,6 @@ export interface StatCardProps {
   /** What the number counts, and what it deliberately does not. */
   tooltip: string;
   value: number;
-  /**
-   * Overrides the rendered headline. For a card that carries TWO figures in one
-   * line (the Explorer's Lifecycle card shows archived / expired), pass the
-   * composite here; `value` still feeds the default render and stays the
-   * single-number `aria` anchor for cards that don't set this.
-   */
-  valueNode?: ReactNode;
   /** The caption under the label — usually the range. */
   description: string;
   /**
@@ -125,7 +118,6 @@ export function StatCard({
   tag,
   tooltip,
   value,
-  valueNode,
   description,
   trend,
   trendTitle,
@@ -159,7 +151,7 @@ export function StatCard({
   // for why that is a change indicator.
   const numberEl = (
     <p className="text-2xl font-bold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-3xl">
-      {valueNode ?? <AnimatedNumber value={value} />}
+      <AnimatedNumber value={value} />
     </p>
   );
   const labelEl = (

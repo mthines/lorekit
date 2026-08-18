@@ -3,13 +3,7 @@ import { useState } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { ExplorerInsights } from './ExplorerInsights';
-import {
-  memoryHandlers,
-  FROZEN_NOW,
-  EXPIRED_RECORDS,
-  ARCHIVED_RECORDS,
-  MEMORY_ROWS,
-} from '@/mocks/memories';
+import { memoryHandlers, FROZEN_NOW, ARCHIVED_RECORDS, MEMORY_ROWS } from '@/mocks/memories';
 
 /** A few dated cells so the heatmap renders something once expanded. */
 const HEATMAP = [
@@ -25,7 +19,7 @@ import type { TimeRange } from '@/lib/time-range';
  * These cover what a screenshot cannot: that the cards actually re-fetch and
  * re-render against a NEW selection (AC-1), that the Read card is driven by the
  * scope-filtered read series rather than the account-wide one (AC-2), and that
- * the Lifecycle tile shows the usage ledger's archived + expired figures (AC-3).
+ * the Archived tile shows the usage ledger's archived figure (AC-3).
  *
  * The panel is ONE persistent grid of cards at two densities: collapsed keeps
  * every number, label and caption and folds only the evidence (trend chip,
@@ -205,38 +199,26 @@ export const ReadCardUsesTheScopedReadSeries: Story = {
   },
 };
 
-export const LifecycleTileShowsTheUsageLedger: Story = {
+export const ArchivedTileShowsTheUsageLedger: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
-    // The Lifecycle card shows both figures as one "archived / expired" pair, so
-    // its headline holds TWO AnimatedNumbers — the first is archived, the second
-    // expired. Read each off its own settled (sr-only) value.
-    const lifecycleFigures = () => {
-      const card = cardOf(canvas, 'Archived / expired') as HTMLElement;
-      const values = Array.from(card.querySelectorAll('.sr-only')).map((n) =>
-        Number(n.textContent?.trim()),
-      );
-      return { archived: values[0], expired: values[1] };
-    };
-
-    await step('the pair is archived / expired, from GET /memories/usage', async () => {
+    await step('the headline is archived, from GET /memories/usage', async () => {
+      // Expiry is intentionally NOT a figure here: the product expires on read,
+      // so there is no expiry event to count. Archived is the one countable
+      // lifecycle metric.
       await waitFor(async () => {
-        const { archived, expired } = lifecycleFigures();
-        await expect(archived).toBe(ARCHIVED_RECORDS);
-        await expect(expired).toBe(EXPIRED_RECORDS);
+        await expect(await headline(canvas, 'Memories archived')).toBe(ARCHIVED_RECORDS);
       });
     });
 
-    await step('it is ACCOUNT-wide — selecting a scope changes neither figure', async () => {
-      // The honest asymmetry: archiving is recorded per user and the purge spans
-      // scopes, so neither event carries a scope to narrow by. A header that
-      // pretended otherwise would be inventing a number the API cannot produce.
+    await step('it is ACCOUNT-wide — selecting a scope does not change it', async () => {
+      // Archiving is recorded per user, so the event carries no scope to narrow
+      // by. A header that pretended otherwise would invent a number the API
+      // cannot produce.
       await userEvent.click(canvas.getByRole('button', { name: 'Select repo' }));
       await waitFor(async () => {
-        const { archived, expired } = lifecycleFigures();
-        await expect(archived).toBe(ARCHIVED_RECORDS);
-        await expect(expired).toBe(EXPIRED_RECORDS);
+        await expect(await headline(canvas, 'Memories archived')).toBe(ARCHIVED_RECORDS);
       });
     });
 
@@ -248,12 +230,12 @@ export const LifecycleTileShowsTheUsageLedger: Story = {
       });
     });
 
-    await step('it draws no sparkbar — lifecycle has no per-bucket series yet', async () => {
-      // The OTHER cards reveal sparkbars once expanded; the Lifecycle card has none.
+    await step('it draws no sparkbar — archived has no per-bucket series yet', async () => {
+      // The OTHER cards reveal sparkbars once expanded; the Archived card has none.
       await waitFor(async () => {
         await expect(canvas.getAllByRole('img').length).toBeGreaterThan(0);
       });
-      const card = cardOf(canvas, 'Archived / expired');
+      const card = cardOf(canvas, 'Memories archived');
       await expect((card as HTMLElement).querySelector('[role="img"]')).toBeNull();
     });
   },
@@ -291,7 +273,7 @@ export const CollapsedStillShowsTheNumbers: Story = {
           'Memories written',
           'Memories read',
           'Scopes active',
-          'Archived / expired',
+          'Memories archived',
         ]) {
           await expect(canvas.getByText(label)).toBeInTheDocument();
         }
@@ -444,7 +426,7 @@ export const CardsAreOneRowOfFourEqualColumnsWhenWide: Story = {
       await expect(await headline(canvas, 'Memories written')).toBeGreaterThan(0);
     });
 
-    const labels = ['Memories written', 'Memories read', 'Scopes active', 'Archived / expired'];
+    const labels = ['Memories written', 'Memories read', 'Scopes active', 'Memories archived'];
     const items = labels.map((label) => (cardOf(canvas, label) as HTMLElement).getBoundingClientRect());
 
     await step('all four sit on a single row', async () => {

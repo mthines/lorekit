@@ -41,7 +41,6 @@
 import { useMemo } from 'react';
 import { Archive, BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
-import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import {
   effectiveStatsRange,
   statsWindow,
@@ -210,27 +209,23 @@ export function ExplorerStats({
       unit: 'scopes',
     },
     {
-      // Lifecycle: the two ways a memory leaves the active set — archived by a
-      // caller, or expired when its TTL ran out — shown as one "archived /
-      // expired" pair so the card carries both without a second row. The tooltip
-      // names the order (a bare "0 / 0" doesn't say which is which).
-      id: 'lifecycle',
+      // Archived: memories a caller archived in the range. This is the one
+      // countable lifecycle metric — it is a caller ACTION, recorded as an
+      // event. Expiry is deliberately NOT shown here: the product expires memories
+      // ON READ (a read filters an expired row out; `list.ts`), so there is no
+      // expiry EVENT to count and no purge runs — the figure would be a
+      // structural zero. Soon-to-expire memories are surfaced where they are
+      // actionable instead: the list's "Expiring" status filter.
+      id: 'archived',
       icon: Archive,
-      label: 'Archived / expired',
-      tag: 'Lifecycle',
+      label: 'Memories archived',
+      tag: 'Archived',
       tooltip:
-        'Two figures, in order: memories ARCHIVED / memories EXPIRED in the selected range. Archived is a caller action; expired is counted when the nightly purge removes a TTL-elapsed memory. Both are ACCOUNT-WIDE even when a scope is selected — archiving is recorded per user, and the purge runs per user and spans scopes, so neither event carries a scope to filter on.',
+        'Memories archived by a caller in the selected range. ACCOUNT-WIDE even when a scope is selected — archiving is recorded per user, so the event carries no scope to filter on. (Expired memories are hidden on read rather than counted here; find soon-to-expire ones via the Expiring status filter.)',
       value: data?.archived ?? 0,
-      valueNode: (
-        <span className="inline-flex items-baseline gap-1.5">
-          <AnimatedNumber value={data?.archived ?? 0} />
-          <span className="text-lg font-normal text-[var(--color-content-tertiary)] sm:text-xl">/</span>
-          <AnimatedNumber value={data?.expired ?? 0} />
-        </span>
-      ),
       // No scope suffix, deliberately — see the tooltip.
       description: `across your account in ${rangeText}`,
-      // No series today: the usage endpoint reports these as totals with no
+      // No series today: the usage endpoint reports this as a total with no
       // per-bucket breakdown, so there is nothing honest to draw yet.
     },
   ];
