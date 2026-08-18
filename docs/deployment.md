@@ -369,11 +369,20 @@ would need `fetch-tags: true`, and a marker that never arrives just falls back.
 
 **3. `deploy.yml` → `deploy-production` and `promote-web-production`.** Each needs
 `permissions: contents: write` (for its own tag, nothing else) and this as its
-**last, unguarded** step, so it runs only when every step above succeeded. Moved
-through the API rather than `git push --force`: these checkouts are shallow, and
-force-pushing a moving tag from a shallow clone is exactly what goes wrong
-quietly. Use `API_DEPLOYED_TAG` in `deploy-production` and `WEB_DEPLOYED_TAG` in
-`promote-web-production`.
+**last** step, with **no `if:`** — that is what makes it run only when every step
+above succeeded. Moved through the API rather than `git push --force`: these
+checkouts are shallow, and force-pushing a moving tag from a shallow clone is
+exactly what goes wrong quietly. Use `API_DEPLOYED_TAG` in `deploy-production` and
+`WEB_DEPLOYED_TAG` in `promote-web-production`.
+
+The step's own failure is a **warning, not a red job**. The deploy has already
+succeeded by this point, so failing here would skip `promote-web-production` and
+trip `rollback-production`, reverting a healthy production API over a bookkeeping
+hiccup. A marker that fails to advance is the safe error — the next run diffs from
+an older baseline and redeploys an unchanged half, which is the direction the
+whole mechanism fails in. (Do **not** reach for `if: always()` to make it robust:
+that would move the marker after a failed deploy, which is the one thing the
+unguarded-last-step placement exists to prevent.)
 
 ```yaml
       - name: Record the deployed commit
@@ -382,11 +391,14 @@ quietly. Use `API_DEPLOYED_TAG` in `deploy-production` and `WEB_DEPLOYED_TAG` in
           SHA: ${{ github.sha }}
           TAG: ${{ env.API_DEPLOYED_TAG }}
         run: |
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-            -f "sha=${SHA}" -F force=true >/dev/null
-          echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${SHA}" -F force=true >/dev/null 2>&1; then
+            echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} to ${SHA} — the next run diffs this half from an older baseline and redeploys it."
+          fi
 ```
 
 **4. `deploy.yml` → BOTH rollback jobs.** Add `permissions: contents: write` to
