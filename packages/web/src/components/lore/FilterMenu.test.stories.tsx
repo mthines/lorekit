@@ -5,10 +5,10 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { FilterMenu } from './FilterMenu';
 import { FilterPillRow } from './FilterBar';
 import { FACETS } from './filter-fixtures';
-import { ListMemoriesQuerySchema } from '@lorekit/schemas/memory';
+import { ListMemoriesBodySchema } from '@lorekit/schemas/memory';
 import {
   FILTER_FIELDS,
-  filtersToQueryParams,
+  filtersToBody,
   removeFilter,
   setFilterOperator,
   toggleFilterValue,
@@ -170,22 +170,24 @@ export const KindAndHostFilterTheTaxonomy: Story = {
       await userEvent.click(within(list).getByRole('option', { name: /reviewer/i }));
     });
 
-    await step('the committed bar maps to the params the route accepts', async () => {
+    await step('the committed bar maps to the body the route accepts', async () => {
       // The step the earlier stories never take. Asserted against the SCHEMA,
-      // not a hand-written string, so a param the route does not accept fails
-      // here rather than being dropped silently on the wire.
-      const params = filtersToQueryParams([
+      // not a hand-written string, so a field the route does not accept fails
+      // here rather than being dropped silently on the wire. Values are ARRAYS:
+      // the body transport never joins them, which is what lets the bar grow
+      // past the query string's per-dimension cap.
+      const body = filtersToBody([
         { field: 'kind', operator: 'in', values: ['lesson'] },
         { field: 'host', operator: 'in', values: ['reviewer'] },
       ]);
-      await expect(params).toEqual({
-        kind: 'lesson',
+      await expect(body).toEqual({
+        kind: ['lesson'],
         kind_mode: 'in',
-        host: 'reviewer',
+        host: ['reviewer'],
         host_mode: 'in',
       });
-      for (const key of Object.keys(params)) {
-        await expect(Object.keys(ListMemoriesQuerySchema.shape)).toContain(key);
+      for (const key of Object.keys(body)) {
+        await expect(Object.keys(ListMemoriesBodySchema.shape)).toContain(key);
       }
     });
   },
