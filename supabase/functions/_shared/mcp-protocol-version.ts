@@ -1,10 +1,12 @@
 // MCP lifecycle: which protocol revisions this server speaks, and how an
 // `initialize` request is answered.
 //
-// Mirrored verbatim into `supabase/functions/_shared/mcp-protocol-version.ts`
-// (the Deno edge tree cannot cross-import this package) and guarded by
-// `edge-parity.spec.ts`. Behaviour is asserted here, on the mcp-core copy, by
-// `mcp-protocol-version.spec.ts`.
+// This is the EDGE MIRROR. The original lives at
+// `packages/mcp-core/src/mcp-protocol-version.ts`; it is copied here because the
+// Deno edge tree cannot cross-import that package, and the two are held
+// byte-identical (modulo comments, which `executableSource` strips) by
+// `edge-parity.spec.ts`. Behaviour is asserted on the mcp-core copy by
+// `mcp-protocol-version.spec.ts` — edit the original, then re-mirror.
 //
 // WHY THIS EXISTS. The `initialize` handler used to answer every client with a
 // hard-coded `'2024-11-05'`, ignoring `params.protocolVersion` entirely. The
