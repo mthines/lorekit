@@ -295,13 +295,23 @@ Three things to know when reading a run:
   reports the marker-only files as changed here. Doubt never resolves to "this
   half has no changes": a wrong `false` is the incident above, a wrong `true` is
   one redundant deploy.
-- **`rollback-web-production` deliberately does not move the web tag.** It
-  reverts the *domain* to the previously promoted deployment, whose commit the
-  tag no longer names — and leaving the tag ahead is the safe error, because the
-  non-ancestor rule then makes the next run fall back rather than skip.
+- **`rollback-web-production` must DELETE the web tag.** It reverts the *domain*
+  to the previously promoted deployment, whose commit the tag no longer names.
+  Leaving the tag in place is **not** a safe error, and the non-ancestor rule does
+  not catch it: `promote-web-production` sets the tag to `github.sha`, a commit on
+  `main`, so it stays an *ancestor* of every later `HEAD` no matter what the domain
+  is serving. The next merge would then diff the web half against a bundle
+  production never kept and could resolve `web=false`, skipping the half
+  production is not serving — the incident above with the halves swapped. Deleting
+  the tag is the only fail-open answer available to that job: with no marker,
+  `pickBaseline` falls back to the push baseline. The rollback job's own tag delete
+  is best-effort (`|| true`) — a failed delete must not mask the deploy failure
+  that triggered the rollback, and a stale tag is repaired by the next successful
+  promote.
 - **The decision is a tested module, not a shell block.**
   `scripts/resolve-deploy-scope.mjs` with `scripts/resolve-deploy-scope.test.mjs`
-  (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — the same
+  (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — added by the
+  wiring below, like everything else under `.github/workflows/` here — the same
   extract-and-test treatment `check-remote-migration-drift.mjs` got, for the same
   reason. The test pins both the fixed behaviour and the old one that caused the
   incident. The step summary prints both baselines and where each came from.
@@ -309,6 +319,92 @@ Three things to know when reading a run:
 The first `deploy.yml` run after this landed has no tags yet, so both halves fall
 back to the push baseline — and since the change touches `deploy.yml` itself
 (which forces both halves), that run deploys both and mints both tags.
+
+#### Wiring the deployed-SHA baseline into `deploy.yml` (one-time, must be committed by a human)
+
+The GitHub App that opens automated PRs cannot modify `.github/workflows/**` (no
+`workflows` permission), the same constraint as [Wiring the sweep into
+CI](#wiring-the-sweep-into-ci-one-time-must-be-committed-by-a-human). Until the
+five edits below are applied by hand, `scripts/resolve-deploy-scope.mjs` is dead
+code and `changes` still diffs a single push.
+
+**1. `deploy.yml` → top level**, after `permissions: {}`. One place names the tags.
+
+```yaml
+env:
+  API_DEPLOYED_TAG: deployed/api-production
+  WEB_DEPLOYED_TAG: deployed/web-production
+```
+
+**2. `deploy.yml` → `changes` job.** Replace the `Compare changed paths against
+the deploy globs` shell step with the resolver. The checkout already uses
+`fetch-depth: 0`; add `fetch-tags: true` so the markers are present.
+
+```yaml
+      - name: Set up Node.js (for the deploy-scope resolver)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Resolve the deploy scope
+        id: filter
+        env:
+          BEFORE: ${{ github.event.before }}
+          DEPLOY_TARGET: ${{ inputs.deploy_target }}
+          API_DEPLOYED_TAG: ${{ env.API_DEPLOYED_TAG }}
+          WEB_DEPLOYED_TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: node scripts/resolve-deploy-scope.mjs
+```
+
+**3. `deploy.yml` → `deploy-production` and `promote-web-production`.** Each needs
+`permissions: contents: write` (for its own tag, nothing else) and this as its
+**last, unguarded** step, so it runs only when every step above succeeded. Moved
+through the API rather than `git push --force`: these checkouts are shallow, and
+force-pushing a moving tag from a shallow clone is exactly what goes wrong
+quietly. Use `API_DEPLOYED_TAG` in `deploy-production` and `WEB_DEPLOYED_TAG` in
+`promote-web-production`.
+
+```yaml
+      - name: Record the deployed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ env.API_DEPLOYED_TAG }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+            -f "sha=${SHA}" -F force=true >/dev/null
+          echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+```
+
+**4. `deploy.yml` → `rollback-web-production`.** Add `permissions: contents:
+write` and **delete** the web marker, for the reason in the bullet above: the tag
+names a bundle the domain no longer serves, and it is still an ancestor of `HEAD`,
+so the non-ancestor rule will not save the next run. Best-effort — a failed delete
+must not mask the failure that triggered the rollback.
+
+```yaml
+      - name: Drop the promoted-web marker (the domain no longer serves it)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: |
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
+          echo "- Dropped web marker \`${TAG}\` (rolled back)" >> "$GITHUB_STEP_SUMMARY"
+```
+
+`rollback-production` (the API half) needs no counterpart: it reverts the edge
+functions to the *previous commit*, so leaving `deployed/api-production` on the
+failed SHA would skip that revert's own redeploy — drop it there too if that job
+is ever made to move the tag.
+
+**5. `ci.yml`.** Add a `deploy` path-filter output over
+`^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
+and a `deploy-scope` job gated on it that runs
+`node --test scripts/resolve-deploy-scope.test.mjs`. This is what keeps the
+decision honest on every PR that touches it.
 
 ### Skew Protection (already-open tabs and Server Actions)
 
