@@ -60,7 +60,29 @@ export interface LayoutInput {
 export interface LayoutOptions {
   /** Radius of the sphere the scope clusters are arranged on. */
   radius?: number;
-  /** Radius of a single scope's cloud, before its member-count scaling. */
+  /**
+   * Radius of a single scope's cloud, before its member-count scaling.
+   *
+   * KNOWN LIMITATION — the cloud is scaled by `cbrt(memberCount)` and is not
+   * bounded by the spacing between scope centres, so a populous account grows
+   * clouds that interpenetrate. Measured at the plan ceiling with the defaults
+   * (5,000 memories over 25 scopes, so 200 each): the widest cloud reaches
+   * 35.1 against a smallest centre-to-centre gap of 24.5, the seed's furthest
+   * node sits 94.7 from the origin against a `radius` of 60, and **1,890 of
+   * the 5,000 memories are physically nearer a FOREIGN scope centre than their
+   * own**.
+   *
+   * The layout is still deterministic, still stable, and still correct in the
+   * sense the relaxation cares about; what degrades is READABILITY — "which
+   * cluster is that node in" stops being answerable by eye. Note that the
+   * `places each memory nearer its own scope than any other scope` spec runs
+   * at 8 memories per scope, so it passes and does not cover this.
+   *
+   * Capping the spread against the centre spacing is the obvious fix and is a
+   * product-design call (compress the clouds, grow `radius` with the scope
+   * count, or let them mix and lean on colour), so it is deliberately not
+   * taken here.
+   */
   clusterRadius?: number;
   /** Relaxation iterations. Fixed, not run-to-convergence. */
   iterations?: number;
@@ -75,6 +97,18 @@ export interface LayoutOptions {
    * keeps a pathologically dense cluster from re-introducing `O(n²)`.
    */
   maxNeighbours?: number;
+  /**
+   * Furthest a node may move in one iteration.
+   *
+   * This is the integrator's stability bound, and it is deliberately its OWN
+   * option rather than being derived from `clusterRadius`. The two were the
+   * same number — the grid cell doubled as the clamp — which meant tuning the
+   * seed's cloud density silently retuned the relaxation's stability, in units
+   * that have nothing to do with each other. A `clusterRadius` of `0.001`
+   * (a legitimate way to seed a deliberately-overlapping graph) also pinned
+   * every node to a thousandth-of-a-unit step.
+   */
+  maxStep?: number;
 }
 
 export const LAYOUT_DEFAULTS = {
@@ -85,6 +119,9 @@ export const LAYOUT_DEFAULTS = {
   attraction: 0.08,
   damping: 0.82,
   maxNeighbours: 24,
+  // The value the old cell-derived clamp produced at the default clusterRadius,
+  // so decoupling the two changed no default behaviour.
+  maxStep: 6,
 } satisfies Required<LayoutOptions>;
 
 /**
@@ -212,13 +249,106 @@ function buildGrid(positions: Float32Array, cell: number): Map<number, number[]>
  *
  * A string key (`` `${x},${y},${z}` ``) allocates a string per node per
  * iteration — 600,000 short-lived strings for a 5,000-node, 120-iteration run,
- * which is enough garbage to show up as GC pauses mid-layout. The offset keeps
- * negative coordinates in range; the multipliers are prime-ish and far apart so
- * distinct cells within ±2048 cannot collide.
+ * which is enough garbage to show up as GC pauses mid-layout.
+ *
+ * The packing is exact rather than merely collision-unlikely: the offset lifts
+ * each coordinate into `[0, 4096)`, and the multipliers are `2^24` and `2^12`,
+ * so the key is the three coordinates written as base-4096 digits. Distinct
+ * cells within ±2048 therefore CANNOT collide — that bound is the digit width,
+ * not a probabilistic estimate. The largest key is `4095 * 2^24 + 4095 * 2^12 +
+ * 4095`, comfortably inside the exact-integer range of a double.
  */
 function cellKey(x: number, y: number, z: number): number {
   return (x + 2048) * 16_777_216 + (y + 2048) * 4096 + (z + 2048);
 }
+
+/** Length of the synthetic separation given to two exactly coincident nodes. */
+const NUDGE = 0.02;
+
+/**
+ * Floor on the separation the inverse-square repulsion is allowed to divide by.
+ *
+ * The per-iteration clamp further down bounds the STEP, not the VELOCITY, so an
+ * unfloored `repulsion / d²` is not actually bounded by it: two nodes a nudge
+ * apart produce an impulse three orders of magnitude above the clamp, which
+ * then pays out AT the clamp for dozens of iterations before `damping` erodes
+ * it — carrying the pair clean outside the sphere it was seeded on. Flooring
+ * the divisor caps one pair's impulse at `repulsion / MIN_SEPARATION²`, so the
+ * furthest that pair can travel is a geometric sum of that over `damping`
+ * rather than an unbounded run at the clamp.
+ *
+ * Repulsion below this distance is therefore constant rather than exploding,
+ * which is the right shape anyway: the job of the term at point-blank range is
+ * to separate the pair, not to launch it.
+ */
+const MIN_SEPARATION = 1;
+
+/**
+ * A deterministic separation direction for two nodes sitting exactly on top of
+ * each other, where the real offset carries no direction at all.
+ *
+ * Deterministic — never `Math.random()`, or the layout stops being reproducible
+ * and the view stops being navigable.
+ *
+ * ANTISYMMETRIC, which is the property that actually separates the pair:
+ * `coincidentNudge(a, b) === -coincidentNudge(b, a)`. Both ends derive the same
+ * vector from the UNORDERED pair and then take opposite signs from their index
+ * order, so the two nodes always move apart. Keying the components on each end
+ * INDEPENDENTLY (`a % 7` here, `b % 3` there) is what fails: a pair whose
+ * indices agree modulo the component periods — 105 for 7, 5, and 3 — receives
+ * one identical push and translates together forever, still coincident.
+ */
+function coincidentNudge(a: number, b: number): [number, number, number] {
+  const pair = a < b ? a * 31 + b : b * 31 + a;
+  const sign = a < b ? 1 : -1;
+  const x = (pair % 7) - 3;
+  const y = (pair % 5) - 2;
+  const z = (pair % 3) - 1;
+  // All three components can vanish together (pair ≡ 52 mod 105), which would
+  // leave a zero-length "separation". Fall back to a single axis.
+  if (x === 0 && y === 0 && z === 0) return [sign * NUDGE, 0, 0];
+  const scale = (sign * NUDGE) / Math.hypot(x, y, z);
+  return [x * scale, y * scale, z * scale];
+}
+
+/**
+ * The 27 cells of a node's 3×3×3 neighbourhood, in the order they are scanned.
+ *
+ * The order matters because `maxNeighbours` truncates the scan, and a truncated
+ * scan is a BIASED scan unless the order is symmetric. Iterating
+ * `dx,dy,dz = -1..1` and stopping at the cap means a saturated node only ever
+ * repels from its lowest-coordinate cells, so the term that is supposed to
+ * separate it instead drifts it steadily toward `+x+y+z`.
+ *
+ * So: the node's own cell first (the neighbours most likely to be overlapping
+ * it), then every offset immediately followed by its negation, nearest shell
+ * outward. Truncation now cuts between opposite pairs, leaving at most one
+ * unbalanced direction instead of thirteen.
+ *
+ * Built once at module load, and FLAT (`x, y, z` triples in one `Int8Array`)
+ * rather than an array of tuples, so the innermost loop of the whole layout
+ * indexes numbers instead of destructuring a fresh pair of array elements
+ * 27 times per node per iteration.
+ */
+const NEIGHBOUR_CELLS: Int8Array = (() => {
+  const ordered: number[] = [0, 0, 0];
+  const taken = new Set<string>(['0,0,0']);
+  // Squared distance 1 = faces, 2 = edges, 3 = corners.
+  for (const shell of [1, 2, 3]) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          if (dx * dx + dy * dy + dz * dz !== shell) continue;
+          if (taken.has(`${dx},${dy},${dz}`)) continue;
+          taken.add(`${dx},${dy},${dz}`);
+          taken.add(`${-dx},${-dy},${-dz}`);
+          ordered.push(dx, dy, dz, -dx, -dy, -dz);
+        }
+      }
+    }
+  }
+  return Int8Array.from(ordered);
+})();
 
 /**
  * Refine a seeded layout in place, and return the same array.
@@ -232,7 +362,7 @@ export function relaxPositions(
   positions: Float32Array,
   options: LayoutOptions = {},
 ): Float32Array {
-  const { iterations, repulsion, attraction, damping, clusterRadius, maxNeighbours } = {
+  const { iterations, repulsion, attraction, damping, clusterRadius, maxNeighbours, maxStep } = {
     ...LAYOUT_DEFAULTS,
     ...options,
   };
@@ -255,37 +385,34 @@ export function relaxPositions(
       const cz = Math.floor(positions[node * 3 + 2] / cell);
       let considered = 0;
 
-      for (let dx = -1; dx <= 1 && considered < maxNeighbours; dx++) {
-        for (let dy = -1; dy <= 1 && considered < maxNeighbours; dy++) {
-          for (let dz = -1; dz <= 1 && considered < maxNeighbours; dz++) {
-            const bucket = grid.get(cellKey(cx + dx, cy + dy, cz + dz));
-            if (!bucket) continue;
-            for (const other of bucket) {
-              if (other === node) continue;
-              if (considered++ >= maxNeighbours) break;
+      for (let offset = 0; offset < NEIGHBOUR_CELLS.length && considered < maxNeighbours; offset += 3) {
+        const bucket = grid.get(
+          cellKey(
+            cx + NEIGHBOUR_CELLS[offset],
+            cy + NEIGHBOUR_CELLS[offset + 1],
+            cz + NEIGHBOUR_CELLS[offset + 2],
+          ),
+        );
+        if (!bucket) continue;
+        for (const other of bucket) {
+          if (other === node) continue;
+          if (considered++ >= maxNeighbours) break;
 
-              let ox = positions[node * 3] - positions[other * 3];
-              let oy = positions[node * 3 + 1] - positions[other * 3 + 1];
-              let oz = positions[node * 3 + 2] - positions[other * 3 + 2];
-              let distanceSquared = ox * ox + oy * oy + oz * oz;
+          let ox = positions[node * 3] - positions[other * 3];
+          let oy = positions[node * 3 + 1] - positions[other * 3 + 1];
+          let oz = positions[node * 3 + 2] - positions[other * 3 + 2];
+          let distanceSquared = ox * ox + oy * oy + oz * oz;
 
-              if (distanceSquared < 1e-6) {
-                // Two nodes exactly on top of each other have no direction to
-                // separate along. Nudge deterministically (never randomly, or
-                // the layout stops being reproducible) using the index delta.
-                ox = ((node % 7) - 3) * 0.01;
-                oy = ((node % 5) - 2) * 0.01;
-                oz = ((other % 3) - 1) * 0.01;
-                distanceSquared = Math.max(ox * ox + oy * oy + oz * oz, 1e-6);
-              }
-
-              const push = repulsion / distanceSquared;
-              const distance = Math.sqrt(distanceSquared);
-              velocity[node * 3] += (ox / distance) * push;
-              velocity[node * 3 + 1] += (oy / distance) * push;
-              velocity[node * 3 + 2] += (oz / distance) * push;
-            }
+          if (distanceSquared < 1e-6) {
+            [ox, oy, oz] = coincidentNudge(node, other);
+            distanceSquared = ox * ox + oy * oy + oz * oz;
           }
+
+          const distance = Math.sqrt(distanceSquared);
+          const push = repulsion / Math.max(distanceSquared, MIN_SEPARATION * MIN_SEPARATION);
+          velocity[node * 3] += (ox / distance) * push;
+          velocity[node * 3 + 1] += (oy / distance) * push;
+          velocity[node * 3 + 2] += (oz / distance) * push;
         }
       }
     }
@@ -316,8 +443,10 @@ export function relaxPositions(
       velocity[i] *= damping;
       // Clamp the step so a pair that started nearly coincident cannot launch
       // a node across the scene on the first iteration and leave a visible
-      // outlier the camera then has to frame.
-      positions[i] += Math.max(-cell, Math.min(cell, velocity[i]));
+      // outlier the camera then has to frame. `maxStep`, NOT `cell`: the grid
+      // resolution and the integrator's stability bound are unrelated
+      // quantities that merely happened to share a number.
+      positions[i] += Math.max(-maxStep, Math.min(maxStep, velocity[i]));
     }
   }
 

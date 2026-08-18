@@ -30,6 +30,25 @@ function distance(a: readonly number[], b: readonly number[]): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
+/** The smallest distance between any two MEMORY nodes — the layout's crowding. */
+function closestMemoryPair(graph: LoreGraph, positions: Float32Array): number {
+  let min = Infinity;
+  for (let a = 0; a < graph.nodes.length; a++) {
+    if (graph.nodes[a].kind !== 'memory') continue;
+    for (let b = a + 1; b < graph.nodes.length; b++) {
+      if (graph.nodes[b].kind !== 'memory') continue;
+      min = Math.min(
+        min,
+        distance(
+          [positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]],
+          [positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]],
+        ),
+      );
+    }
+  }
+  return min;
+}
+
 /** Mean distance between the two ends of every edge — the layout's tightness. */
 function meanEdgeLength(graph: LoreGraph, positions: Float32Array): number {
   if (graph.edges.length === 0) return 0;
@@ -142,11 +161,42 @@ describe('seedPositions', () => {
     expect(spreadOf('repo::big/one')).toBeGreaterThan(spreadOf('repo::small/one'));
   });
 
-  it('keeps every scope cluster inside the configured sphere', () => {
-    const graph = graphOf(['global', 'repo::a/b', 'repo::c/d'], 10);
+  it('keeps each scope cloud smaller than half the gap to the nearest other scope', () => {
+    // `boundingRadius < radius + clusterRadius * cbrt(members)` was the obvious
+    // bound and a tautology: it just restates the spread formula, so it holds
+    // for every radius and every population and would survive the cloud growing
+    // large enough to swallow the sphere.
+    //
+    // Containment is a RELATION between two independently-derived quantities —
+    // the Fibonacci spacing of the scope centres, and the cube-root spread of a
+    // cloud. Pin that. A linear spread (the mistake the docblock warns about)
+    // fails this at these parameters; the cube root passes with room.
+    //
+    // Note the parameters: 10 memories per scope. At the plan ceiling
+    // (~200 per scope) the clouds DO interpenetrate — see the `clusterRadius`
+    // docblock. This pins the shape of the growth curve, not a claim that the
+    // clouds stay disjoint at every population.
+    const scopes = ['global', 'repo::a/b', 'repo::c/d'];
+    const graph = graphOf(scopes, 10);
     const positions = seedPositions(graph, { radius: 50, clusterRadius: 4 });
-    // The sphere radius plus a cluster's own reach, generously bounded.
-    expect(boundingRadius(positions)).toBeLessThan(50 + 4 * Math.cbrt(10) + 1);
+    const centres = scopes.map((scope) => positionOf(graph, positions, scopeNodeId(scope)));
+
+    let minCentreGap = Infinity;
+    for (let a = 0; a < centres.length; a++) {
+      for (let b = a + 1; b < centres.length; b++) {
+        minCentreGap = Math.min(minCentreGap, distance(centres[a], centres[b]));
+      }
+    }
+
+    const widestCloud = Math.max(
+      ...graph.nodes
+        .filter((node) => node.kind === 'memory')
+        .map((node) =>
+          distance(positionOf(graph, positions, node.id), centres[scopes.indexOf(node.scope)]),
+        ),
+    );
+
+    expect(widestCloud).toBeLessThan(minCentreGap / 2);
   });
 });
 
@@ -165,25 +215,7 @@ describe('relaxPositions', () => {
     const seeded = seedPositions(graph, { clusterRadius: 0.001 });
     const relaxed = relaxPositions(graph, Float32Array.from(seeded), { iterations: 40 });
 
-    const closestPair = (positions: Float32Array) => {
-      let min = Infinity;
-      for (let a = 0; a < graph.nodes.length; a++) {
-        if (graph.nodes[a].kind !== 'memory') continue;
-        for (let b = a + 1; b < graph.nodes.length; b++) {
-          if (graph.nodes[b].kind !== 'memory') continue;
-          min = Math.min(
-            min,
-            distance(
-              [positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]],
-              [positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]],
-            ),
-          );
-        }
-      }
-      return min;
-    };
-
-    expect(closestPair(relaxed)).toBeGreaterThan(closestPair(seeded));
+    expect(closestMemoryPair(graph, relaxed)).toBeGreaterThan(closestMemoryPair(graph, seeded));
   });
 
   it('keeps related memories closer than unrelated ones', () => {
@@ -226,7 +258,64 @@ describe('relaxPositions', () => {
     const second = relaxPositions(graph, Float32Array.from(stacked), { iterations: 10 });
 
     expect([...first]).toEqual([...second]);
-    expect(boundingRadius(first)).toBeGreaterThan(0);
+    // `boundingRadius > 0` alone would pass on a pair that stayed coincident and
+    // merely drifted together, which is the exact failure the nudge exists to
+    // prevent — so assert the pair actually came APART.
+    expect(closestMemoryPair(graph, first)).toBeGreaterThan(1);
+  });
+
+  it('separates a coincident pair whose indices agree modulo the nudge periods', () => {
+    // The nudge components have periods 7, 5, and 3. Keyed on each end
+    // independently, a pair 105 apart (their lcm) received one IDENTICAL push
+    // and translated together forever. 120 memories guarantee such a pair.
+    const graph = graphOf(['global'], 120);
+    const stacked = new Float32Array(graph.nodes.length * 3);
+
+    expect(closestMemoryPair(graph, relaxPositions(graph, stacked, { iterations: 10 }))).toBeGreaterThan(1);
+  });
+
+  it('does not launch a coincident pair out of the sphere, at any point in the run', () => {
+    // The per-iteration clamp bounds the step, not the velocity: before the
+    // repulsion divisor was floored, a coincident pair banked an impulse ~1e3×
+    // the clamp and paid it out at the clamp for dozens of iterations, peaking
+    // ~238 units out of a radius-60 sphere before damping reeled it back in.
+    //
+    // Sampling only the FINISHED layout misses that entirely — it had settled
+    // to ~16 by iteration 120 — so sample the excursion, not just the endpoint.
+    const graph = graphOf(['global'], 6);
+    const stacked = new Float32Array(graph.nodes.length * 3);
+
+    for (const iterations of [5, 10, 20, 40, LAYOUT_DEFAULTS.iterations]) {
+      const relaxed = relaxPositions(graph, Float32Array.from(stacked), { iterations });
+      expect(boundingRadius(relaxed)).toBeLessThan(LAYOUT_DEFAULTS.radius);
+    }
+  });
+
+  it('does not drift a saturated cluster along the neighbour-scan direction', () => {
+    // `maxNeighbours` truncates the 27-cell scan, so the scan ORDER decides
+    // which neighbours a crowded node is allowed to feel. Scanning
+    // `dx,dy,dz = -1..1` and stopping at the cap let a saturated node repel
+    // only from its lowest cells, turning a separation term into a steady push
+    // toward +x+y+z: this cluster's centroid walked 3.2 units off its anchor.
+    //
+    // Repulsion is internal, so with a symmetric scan the centroid should
+    // barely move at all — the scope node is pinned at the cloud's own centre,
+    // so attraction has nothing to pull it toward either.
+    const graph = graphOf(['global'], 60);
+    const seeded = seedPositions(graph, { clusterRadius: 0.5 });
+    const centre = positionOf(graph, seeded, scopeNodeId('global'));
+    const relaxed = relaxPositions(graph, Float32Array.from(seeded), { iterations: 30 });
+
+    const memories = graph.nodes.filter((node) => node.kind === 'memory');
+    const centroid = memories
+      .map((node) => positionOf(graph, relaxed, node.id))
+      .reduce(
+        (sum, at) => [sum[0] + at[0], sum[1] + at[1], sum[2] + at[2]],
+        [0, 0, 0] as [number, number, number],
+      )
+      .map((total) => total / memories.length);
+
+    expect(distance(centroid, centre)).toBeLessThan(1);
   });
 
   it('tightens the graph rather than loosening it', () => {
@@ -236,6 +325,33 @@ describe('relaxPositions', () => {
     const after = meanEdgeLength(graph, relaxPositions(graph, seeded));
 
     expect(after).toBeLessThan(before);
+  });
+
+  it('clamps the step by maxStep, independently of clusterRadius', () => {
+    // The clamp used to BE the grid cell (`max(clusterRadius, 1)`), so these
+    // two runs — identical but for `maxStep` — were impossible to express:
+    // seeding a deliberately-overlapping graph with a tiny `clusterRadius`
+    // also throttled every node to a 1-unit step.
+    const graph = graphOf(['global'], 6);
+    const stacked = new Float32Array(graph.nodes.length * 3);
+    const furthestStep = (positions: Float32Array) =>
+      Math.max(...[...positions].map(Math.abs));
+
+    const loose = relaxPositions(graph, Float32Array.from(stacked), {
+      iterations: 1,
+      clusterRadius: 0.001,
+      maxStep: 3,
+    });
+    const throttled = relaxPositions(graph, Float32Array.from(stacked), {
+      iterations: 1,
+      clusterRadius: 0.001,
+      maxStep: 0.05,
+    });
+
+    // `+ 1e-6` is the Float32 round-trip of the stored coordinate, not slack.
+    expect(furthestStep(throttled)).toBeLessThanOrEqual(0.05 + 1e-6);
+    // Above the 1-unit clamp the old cell-derived value would have imposed.
+    expect(furthestStep(loose)).toBeGreaterThan(1);
   });
 
   it('is a no-op when asked for no iterations', () => {
@@ -264,10 +380,12 @@ describe('relaxPositions', () => {
 
     expect(positions).toHaveLength(graph.nodes.length * 3);
     expect([...positions].every(Number.isFinite)).toBe(true);
-    // Generous: this runs off the main thread, and CI machines are slow. The
-    // assertion that matters is that it is seconds, not minutes — i.e. that no
-    // accidental all-pairs path crept back in.
-    expect(elapsed).toBeLessThan(20_000);
+    // ~10-15 ms per iteration on a developer machine, so ~300-450 ms for this
+    // 30-iteration pass. The budget is 100 ms per iteration: roughly 7× that
+    // headroom for a slow shared CI runner, and still tight enough that an
+    // accidental all-pairs path — which is ~1000× the work at this size, not
+    // 7× — cannot slip through. This is the number `docs/lore-graph.md` cites.
+    expect(elapsed).toBeLessThan(30 * 100);
   });
 });
 

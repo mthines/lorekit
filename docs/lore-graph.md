@@ -18,7 +18,7 @@ At that ceiling the three costs land like this:
 | Cost | At 5,000 memories | Why it is not a problem |
 |------|-------------------|-------------------------|
 | **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
-| **Graph build** | ~320–710 ms, median ~415 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame, and off the main thread. |
+| **Graph build** | ~320–710 ms, median ~415 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame — but **on the main thread today**, unlike the layout. It returns `GraphNode[]`/`GraphEdge[]`, so moving it into the worker costs a structured clone of that object graph, where the layout's `Float32Array` transfers for free. See [Where the build actually runs](#where-the-build-actually-runs). |
 | **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
 | **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
 
@@ -137,6 +137,29 @@ would read as three dropped relationships when only one ever existed.
 that quietly omits half of it is worse than no picture, so the UI must say when
 a bound fired.
 
+### Where the build actually runs
+
+Worth stating plainly, because two sentences in this document disagreed about it
+until they were merged: **the layout runs in a Web Worker; `buildLoreGraph` does
+not.** It runs in a `useMemo` inside `LoreGraphView`, on the main thread.
+
+That is a deliberate position, not an oversight, and it is a close call:
+
+- The layout's output is a `Float32Array`, which a worker **transfers** at zero
+  copy cost. That is what makes moving it a pure win.
+- The build's output is `GraphNode[]` / `GraphEdge[]` — an object graph of
+  ~20,000 entries at the ceiling — which crosses a worker boundary by
+  **structured clone**, not by transfer. The clone is not obviously cheaper than
+  the ~415 ms it would offload, and it is paid on every rebuild.
+
+So the honest status is: at the plan ceiling this is a several-hundred-
+millisecond main-thread block on the transition into the map view. It is once
+per dataset change rather than per frame, and it is not on the dashboard's
+initial load — but it is not free, and "off the main thread" would be a false
+claim. The fix, if it is needed, is the server-side projection under
+[Fetching](#fetching) — which returns the graph already built and sidesteps both
+the block and the clone — not a worker move made on assumption. Measure first.
+
 ### Reproducing the build figure
 
 The number above is not folklore — run it yourself:
@@ -215,11 +238,22 @@ The design is two-stage:
 Positions are `Float32Array`s from end to end — the worker posts a transferable
 buffer straight into the GPU attribute, with no per-node object allocation.
 
-**Measured at the 5,000-memory ceiling** (`layout.spec.ts`): the seed is
-effectively free, and relaxation costs ~11 ms per iteration, so a 30-iteration
-pass is ~330 ms and the 120-iteration default is ~1.3 s. Both are off the main
-thread and both refine an already-correct picture, so the view is interactive
-from the first frame regardless.
+**At the 5,000-memory ceiling**, the seed is effectively free and relaxation
+costs ~10-15 ms per iteration on a developer machine — so a 30-iteration pass is
+~300-450 ms and the 120-iteration default is a second or two.
+
+Those are observations, not a contract. What `layout.spec.ts` actually *asserts*
+is a ceiling of **100 ms per iteration** (a 30-iteration pass under 3 s), which
+is ~7× the observed cost so a slow shared CI runner does not go red on load
+alone. That gap is deliberate and the guarantee still holds: the regression the
+budget exists to catch is an accidental all-pairs path, which at 5,000 nodes is
+~1000× the work, not 7×.
+
+Both stages are intended to run in a Web Worker off the main thread — the
+`Float32Array` shape above is what makes that transfer free — but the worker
+itself is not part of this module; it lands with the R3F scene. Either way both
+stages refine an already-correct picture, so the view is interactive from the
+first frame.
 
 Two properties the specs pin, because they are what make the view usable rather
 than merely fast:
