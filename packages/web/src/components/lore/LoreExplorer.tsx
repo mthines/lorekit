@@ -605,7 +605,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
     // The map draws the SAME server-filtered `lessons` the list does, so every
     // filter, scope and range selection applies to it unchanged — switching
-    // view never silently widens what you are looking at. It is placed before
+    // view never silently widens what you are looking at. `lessons` is the
+    // pages loaded so far, though, so `hasMore` goes with it: the map has to say
+    // out loud that it is drawing a prefix, or it reads as the whole account.
+    // It is placed before
     // the empty-state branch because it renders its own, map-specific empty
     // copy: "no memories to map" wants to explain what the map draws, which the
     // list's "try a different search term" does not.
@@ -613,6 +616,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       return (
         <LoreGraphView
           memories={lessons}
+          hasMore={hasNextPage}
           selectedId={openLesson ? memoryNodeId(openLesson) : null}
           onSelect={(selection) => {
             const lesson = lessons.find(

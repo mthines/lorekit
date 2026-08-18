@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildLoreGraph, type GraphMemoryInput } from './build';
-import { graphSummary, truncationNotice } from './summary';
+import { coverageNotice, graphSummary, truncationNotice } from './summary';
 import { EMPTY_GRAPH } from './types';
 
 function memory(key: string, scope = 'repo::mthines/lorekit', tags: string[] = []): GraphMemoryInput {
@@ -84,5 +84,29 @@ describe('truncationNotice', () => {
     expect(notice).toContain('memories');
     expect(notice).toContain('relationships');
     expect(notice.split('.').filter(Boolean)).toHaveLength(1);
+  });
+});
+
+describe('coverageNotice', () => {
+  it('is null when the whole result set is loaded and nothing was clipped', () => {
+    expect(coverageNotice(buildLoreGraph([memory('a')]))).toBeNull();
+  });
+
+  it('says the map is a prefix when more pages are pending', () => {
+    expect(coverageNotice(buildLoreGraph([memory('a')]), { hasMore: true })).toBe(
+      'This map draws only the memories loaded so far — scroll the list to load the rest.',
+    );
+  });
+
+  it('leads with the pagination truth, then the cap', () => {
+    const graph = buildLoreGraph([memory('a'), memory('b'), memory('c')], { maxNodes: 2 });
+    const notice = coverageNotice(graph, { hasMore: true }) ?? '';
+
+    expect(notice.indexOf('loaded so far')).toBeLessThan(notice.indexOf('capped for legibility'));
+  });
+
+  it('still reports a cap on a fully-loaded result set', () => {
+    const graph = buildLoreGraph([memory('a'), memory('b'), memory('c')], { maxNodes: 2 });
+    expect(coverageNotice(graph)).toBe(truncationNotice(graph));
   });
 });

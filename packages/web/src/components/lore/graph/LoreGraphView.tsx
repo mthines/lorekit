@@ -35,7 +35,7 @@ import { Boxes } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useLoreGraphLayout } from '@/lib/hooks/useLoreGraphLayout';
 import { buildLoreGraph, type GraphMemoryInput } from '@/lib/lore-graph/build';
-import { graphSummary, truncationNotice } from '@/lib/lore-graph/summary';
+import { graphSummary, coverageNotice } from '@/lib/lore-graph/summary';
 import { SCOPE_HEX } from '@/lib/lore-graph/palette';
 import type { ScopePrefix } from '@/lib/scope';
 
@@ -44,6 +44,13 @@ const LoreGraphScene = lazy(() => import('./LoreGraphScene'));
 export interface LoreGraphViewProps {
   /** The memories currently loaded by the Explorer — the map shows what the list shows. */
   memories: readonly GraphMemoryInput[];
+  /**
+   * Whether the Explorer's infinite query still has pages to fetch.
+   *
+   * `memories` is the pages loaded SO FAR, so without this the map would draw a
+   * complete-looking picture of a subset, so it gates the coverage notice.
+   */
+  hasMore: boolean;
   /** `scope::key` of the open memory, so the map and the list agree on selection. */
   selectedId: string | null;
   /** Called with a memory's `scope` and `key` when a node is chosen. */
@@ -53,7 +60,7 @@ export interface LoreGraphViewProps {
 /** Scope types in the order the legend reads them — broadest first. */
 const LEGEND: readonly ScopePrefix[] = ['global', 'project', 'repo', 'branch'];
 
-export function LoreGraphView({ memories, selectedId, onSelect }: LoreGraphViewProps) {
+export function LoreGraphView({ memories, hasMore, selectedId, onSelect }: LoreGraphViewProps) {
   const graph = useMemo(() => buildLoreGraph(memories), [memories]);
   const { positions, settling } = useLoreGraphLayout(graph);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -64,7 +71,7 @@ export function LoreGraphView({ memories, selectedId, onSelect }: LoreGraphViewP
   );
   const selectedLabel = selectedId ? (nodeById.get(selectedId)?.label ?? null) : null;
   const hovered = hoveredId ? nodeById.get(hoveredId) : undefined;
-  const notice = truncationNotice(graph);
+  const notice = coverageNotice(graph, { hasMore });
 
   if (memories.length === 0) {
     return (

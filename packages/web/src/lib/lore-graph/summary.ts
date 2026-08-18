@@ -70,3 +70,27 @@ export function truncationNotice(graph: LoreGraph): string | null {
   }
   return `This map is capped for legibility — ${clauses.join(', and ')}.`;
 }
+
+/**
+ * Everything the map has to admit about its own coverage, or `null` when it has
+ * nothing to admit.
+ *
+ * `truncationNotice` only knows about the builder's caps — the memories it was
+ * HANDED and then clipped. It cannot see the other way a map lies: the Explorer
+ * list is an infinite query, so the array it passes down is the pages loaded so
+ * far, not the result set. A half-paged account otherwise gets a complete-looking
+ * picture of a subset with nothing on screen saying so, which is the one failure
+ * mode this whole module exists to prevent.
+ *
+ * Kept as a composition rather than a second parameter on `truncationNotice` so
+ * that function stays what its name says: the caps, and only the caps.
+ */
+export function coverageNotice(graph: LoreGraph, { hasMore = false } = {}): string | null {
+  const sentences: string[] = [];
+  if (hasMore) {
+    sentences.push('This map draws only the memories loaded so far — scroll the list to load the rest.');
+  }
+  const truncation = truncationNotice(graph);
+  if (truncation) sentences.push(truncation);
+  return sentences.length === 0 ? null : sentences.join(' ');
+}
