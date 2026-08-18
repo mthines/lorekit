@@ -76,27 +76,19 @@ describe('mcp-handler auth status guard', () => {
   });
 });
 
-describe('mcp-handler GET guard', () => {
-  it('intercepts non-POST requests with 405 before trying to parse JSON, using clientError()', () => {
-    // GET is used by modern mcp-remote clients probing for SSE support (MCP 2025-03-26 spec).
-    // The server implements 2024-11-05 (POST-only). Without this guard, GET hits req.json()
-    // which throws "Unexpected end of JSON input" — a misleading 400, not the correct 405.
-    // The guard must use clientError() (not error()) so the span is not marked ERROR.
-    expect(handler).toMatch(/req\.method !== 'POST'/);
-    expect(handler).toMatch(/status: 405/);
-    expect(handler).toMatch(/Allow: 'POST'/);
-    // The guard must appear BEFORE req.json() — check it's before the try/catch for body parsing
-    const getGuardIdx = handler.indexOf("req.method !== 'POST'");
-    const jsonParseIdx = handler.indexOf('body = await req.json()');
-    expect(getGuardIdx).toBeGreaterThan(-1);
-    expect(jsonParseIdx).toBeGreaterThan(-1);
-    expect(getGuardIdx).toBeLessThan(jsonParseIdx);
-    // Must use clientError() not error() — GET is a client probe, not a server fault
-    const guardBlock = handler.slice(getGuardIdx, jsonParseIdx);
-    expect(guardBlock).toMatch(/\.clientError\(/);
-    expect(guardBlock).not.toMatch(/\.error\(/);
-  });
-});
+// The MCP method guard is NOT asserted in this file. Its whole contract —
+// the guard lives in `index.ts`, answers 405 + `Allow: POST`, sits ahead of
+// `resolveAuth` and the plan/rate-limit lookups, stays inside `traceRequest`,
+// uses `clientError`, leaves no second copy in `handleMcp`, and is reached
+// before `handleMcp` so `req.json()` is unreachable for a non-POST — lives in
+// `mcp-method-guard-ordering.spec.ts`.
+//
+// It was briefly asserted in both files. Splitting it did not help: every
+// statement about the guard has its subject in `index.ts`, so the assertions
+// left behind here read only `mcp-handler.ts` and passed with the guard
+// deleted outright. A claim of the form "X is unreachable because of a guard
+// in Y" cannot be pinned without reading Y, so it belongs in the one spec that
+// reads both.
 
 describe('index.ts auth-failure guard', () => {
   it('answers a bad/missing token in-band with a real id and HTTP 200, not 401', () => {

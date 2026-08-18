@@ -109,22 +109,16 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
 }
 
 export async function handleMcp(req: Request, auth: AuthContext, span: Span, adapter: StorageAdapter): Promise<Response> {
-  // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
-  // support with GET; answer 405 before req.json() to avoid the misleading
-  // "Unexpected end of JSON input" parse error. Client probe — use clientError().
-  if (req.method !== 'POST') {
-    span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
-      'mcp.method': 'unknown',
-    });
-    return new Response(
-      JSON.stringify({ error: 'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05). GET/SSE is not supported.' }),
-      {
-        status: 405,
-        headers: { 'Content-Type': 'application/json', Allow: 'POST' },
-      },
-    );
-  }
-
+  // POST-only, and the guard is NOT here — it lives in `index.ts` ABOVE
+  // `resolveAuth`, so an SSE-probing client does not pay the authenticated
+  // preamble (token + plan + rate-limit, ~319 ms) to be told the method is
+  // wrong. `handleMcp` has exactly one caller, so a second copy here would be
+  // dead code and a place for the two 405 responses to drift. The ordering is
+  // pinned by `packages/mcp-core/src/mcp-method-guard-ordering.spec.ts`.
+  //
+  // The consequence for this function: `req.json()` below is only ever reached
+  // on a POST, which is what makes the "Unexpected end of JSON input" parse
+  // error unreachable for a bare GET.
   let body: { id?: unknown; method?: string; params?: Params };
   try {
     body = await req.json();

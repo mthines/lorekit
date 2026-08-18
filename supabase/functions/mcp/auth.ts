@@ -75,6 +75,55 @@ export async function resolveAuth(
   }
 }
 
+/**
+ * Which auth tier a token belongs to, decided from the token STRING ALONE —
+ * no database read, no GoTrue call.
+ *
+ * This is the classification `resolveAuthTiers` performs before it does any
+ * I/O, lifted out so a caller that deliberately does not authenticate can still
+ * report `auth.type`. `mcp/index.ts`'s pre-auth method guard is that caller: it
+ * answers a non-POST before `resolveAuth` runs, and without this the probe span
+ * carried no `auth.*` attribute at all.
+ *
+ * It is exported so there is exactly ONE mapping: `resolveAuthTiers` below
+ * branches on this same function, so the guard can never disagree with the tier
+ * this module itself writes.
+ *
+ * The tier is NOT a verification result: `api_key` means "presented a token
+ * shaped like `lk_*`", not "presented a valid one". `resolveAuthTiers` reports
+ * it the same way — it sets `auth.type: 'api_key'` on `api_key_invalid` too —
+ * so pair it with `auth.outcome` to tell presented from accepted.
+ *
+ * ### Where this diverges from a completed request — read before querying
+ *
+ * `auth.type` is written TWICE on a successful request. This module writes the
+ * tier, and then `mcp/index.ts` OVERWRITES it from the resolved
+ * `AuthContext.type` once auth succeeds. Of the six outcomes below, five agree
+ * and one does not:
+ *
+ * | presented              | this function | final `auth.type` on the span |
+ * |------------------------|---------------|-------------------------------|
+ * | nothing                | `none`        | `none`                        |
+ * | service-role key       | `service`     | `service`                     |
+ * | `lk_*`, valid          | `api_key`     | `api_key`                     |
+ * | `lk_*`, invalid        | `api_key`     | `api_key` (no overwrite — auth failed) |
+ * | anything else, invalid | `jwt`         | `jwt` (no overwrite — auth failed) |
+ * | **anything else, VALID** | **`jwt`**   | **`user`** — `AuthContext.type` for a JWT is `user` |
+ *
+ * The last row is inherent, not an oversight: the only way to know a JWT is
+ * valid is the GoTrue call, which is precisely what a caller using this
+ * function has chosen not to make. So a span carrying
+ * `auth.outcome: 'not_attempted'` reports `jwt` where the same credential on a
+ * POST would end at `user`. Filter on `auth.outcome` before comparing
+ * `auth.type` across the two.
+ */
+export function credentialTier(token: string | null): 'none' | 'service' | 'api_key' | 'jwt' {
+  if (!token) return 'none';
+  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return 'service';
+  if (token.startsWith('lk_')) return 'api_key';
+  return 'jwt';
+}
+
 async function resolveAuthTiers(
   authHeader: string | null,
   queryToken: string | null,
@@ -85,19 +134,22 @@ async function resolveAuthTiers(
   // out of server logs) or ?token= query param (legacy fallback for MCP clients
   // that cannot inject custom headers). extractToken() implements the precedence.
   const token = extractToken(authHeader, queryToken);
+  const tier = credentialTier(token);
+  // `!token` rather than `tier === 'none'` only so TypeScript narrows `token` to
+  // `string` for the tiers below; the two conditions are the same by definition.
   if (!token) {
     span?.setAttributes({ 'auth.outcome': 'missing_token', 'auth.type': 'none' });
     return null;
   }
 
   // 1. Service-role key — CI / internal use only
-  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) {
+  if (tier === 'service') {
     span?.setAttributes({ 'auth.outcome': 'service_role', 'auth.type': 'service' });
     return { type: 'service' };
   }
 
   // 2. LoreKit API token (lk_rw_..., lk_ro_..., or lk_wo_...)
-  if (token.startsWith('lk_')) {
+  if (tier === 'api_key') {
     const hash = await sha256hex(token);
     const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
