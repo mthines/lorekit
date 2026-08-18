@@ -41,9 +41,13 @@
  *   node scripts/resolve-deploy-scope.mjs
  *
  * Reads DEPLOY_TARGET, BEFORE, API_DEPLOYED_TAG, WEB_DEPLOYED_TAG from the
- * environment; writes `api`, `web`, `api_base` and `web_base` to $GITHUB_OUTPUT
- * when set, and a human summary to stdout. Always exits 0 — this classifies, it
- * does not gate.
+ * environment; writes `api` and `web` to $GITHUB_OUTPUT when set, and a human
+ * summary to stdout and $GITHUB_STEP_SUMMARY. Always exits 0 — this classifies,
+ * it does not gate.
+ *
+ * The two baselines it chose are reported to stdout and the step summary, not to
+ * $GITHUB_OUTPUT: they are there to make a run readable, and an output nothing
+ * declares in the job's `outputs:` is a contract with no consumer.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -214,8 +218,6 @@ if (invokedDirectly) {
 
   const lines = [];
   let scope;
-  let apiBase = '';
-  let webBase = '';
 
   const manual = resolveManualTarget(DEPLOY_TARGET);
   if (manual) {
@@ -231,9 +233,6 @@ if (invokedDirectly) {
       const pushBase = pushBaseline(BEFORE);
       const api = resolveHalf(API_DEPLOYED_TAG, { pushBase });
       const web = resolveHalf(WEB_DEPLOYED_TAG, { pushBase });
-      apiBase = api.base ?? '';
-      webBase = web.base ?? '';
-
       const apiChangedFiles = changedSince(api.base);
       const webChangedFiles = changedSince(web.base);
       scope = classify({ apiChangedFiles, webChangedFiles });
@@ -249,8 +248,6 @@ if (invokedDirectly) {
       lines.push(`- Web baseline: \`${shown(web.base)}\` (${web.source})`);
     } catch (error) {
       scope = { api: true, web: true };
-      apiBase = '';
-      webBase = '';
       console.error(`Deploy-scope detection failed, deploying both halves: ${error.message}`);
       lines.push('### Deploy scope (detection failed — both halves)');
       lines.push(`- \`${error.message}\``);
@@ -265,7 +262,7 @@ if (invokedDirectly) {
   if (GITHUB_OUTPUT) {
     appendFileSync(
       GITHUB_OUTPUT,
-      `api=${scope.api}\nweb=${scope.web}\napi_base=${apiBase}\nweb_base=${webBase}\n`,
+      `api=${scope.api}\nweb=${scope.web}\n`,
     );
   }
   if (GITHUB_STEP_SUMMARY) appendFileSync(GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
