@@ -623,25 +623,40 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       // costs one remount on a phone and never two live scenes.
       if ((variant === 'mobile') !== isMobile) return null;
 
-      return (
-        <div className="flex flex-col gap-2">
-          <LoreGraphView
-            memories={lessons}
-            hasMore={hasNextPage}
-            selectedId={openLesson ? memoryNodeId(openLesson) : null}
-            onSelect={(selection) => {
-              const lesson = lessons.find(
-                (candidate) => candidate.scope === selection.scope && candidate.key === selection.key,
-              );
-              if (lesson) handleLessonClick(lesson);
-            }}
-          />
-          {/* The SAME control the list gets. A map that admits it is drawing a
-              prefix has to offer the way to extend it, or the notice names a
-              remedy the reader has to leave the view to reach. */}
-          {loadMore}
-        </div>
-      );
+      // The map's own empty copy explains what the map draws — the right answer
+      // for an account with no lore, and the wrong one for a query that matched
+      // nothing: it would tell a reader whose filter is too tight that their
+      // agents have written nothing, and offer none of the ways out. So an
+      // empty result that ANY narrowing could have caused falls through to the
+      // list's empty state below, which names the cause and carries the
+      // "View all time" action.
+      const narrowed =
+        selectedScope !== null ||
+        isNarrowedWithinView ||
+        rangeIsNarrowing ||
+        status !== 'active';
+      if (!(lessons.length === 0 && !hasNextPage && narrowed)) {
+        return (
+          <div className="flex flex-col gap-2">
+            <LoreGraphView
+              memories={lessons}
+              hasMore={hasNextPage}
+              selectedId={openLesson ? memoryNodeId(openLesson) : null}
+              onSelect={(selection) => {
+                const lesson = lessons.find(
+                  (candidate) =>
+                    candidate.scope === selection.scope && candidate.key === selection.key,
+                );
+                if (lesson) handleLessonClick(lesson);
+              }}
+            />
+            {/* The SAME control the list gets. A map that admits it is drawing
+                a prefix has to offer the way to extend it, or the notice names
+                a remedy the reader has to leave the view to reach. */}
+            {loadMore}
+          </div>
+        );
+      }
     }
 
     // Empty state only when nothing is left to show AND nothing more to load.
