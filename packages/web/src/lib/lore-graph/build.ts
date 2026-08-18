@@ -161,6 +161,28 @@ export const GRAPH_DEFAULTS = {
   kinds: ['label', 'key', 'repo'] as const,
 } satisfies Required<GraphBuildOptions>;
 
+/**
+ * Fill in the defaults, treating an explicit `undefined` as "not supplied".
+ *
+ * `{ ...GRAPH_DEFAULTS, ...options }` does not — a spread copies an own
+ * property even when its value is `undefined`, so the default is overwritten
+ * with nothing. That is the shape every caller building options from optional
+ * state produces (`{ maxNodes: filters.maxNodes }` with the filter unset), and
+ * the failure is silent and total: `{ maxNodes: undefined }` returned ZERO
+ * nodes (`Math.max(undefined, 0)` is `NaN`, and `slice(0, NaN)` is empty), while
+ * `{ hubSize: undefined }` switched hub suppression off entirely and put the
+ * quadratic path back.
+ */
+function withDefaults(options: GraphBuildOptions): Required<GraphBuildOptions> {
+  return {
+    maxNodes: options.maxNodes ?? GRAPH_DEFAULTS.maxNodes,
+    maxEdges: options.maxEdges ?? GRAPH_DEFAULTS.maxEdges,
+    maxDegree: options.maxDegree ?? GRAPH_DEFAULTS.maxDegree,
+    hubSize: options.hubSize ?? GRAPH_DEFAULTS.hubSize,
+    kinds: options.kinds ?? GRAPH_DEFAULTS.kinds,
+  };
+}
+
 /** The natural key — the one identity that survives a refetch and a re-sort. */
 export function memoryNodeId(memory: Pick<GraphMemoryInput, 'scope' | 'key'>): string {
   return `${memory.scope}::${memory.key}`;
@@ -363,7 +385,7 @@ export function buildLoreGraph(
   memories: readonly GraphMemoryInput[],
   options: GraphBuildOptions = {},
 ): LoreGraph {
-  const { maxNodes, maxEdges, maxDegree, hubSize, kinds } = { ...GRAPH_DEFAULTS, ...options };
+  const { maxNodes, maxEdges, maxDegree, hubSize, kinds } = withDefaults(options);
   if (memories.length === 0) return EMPTY_GRAPH;
 
   const truncated: GraphTruncation[] = [];

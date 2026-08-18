@@ -401,6 +401,21 @@ describe('buildLoreGraph', () => {
     expect(graph.truncated).toContainEqual({ of: 'edges', total: 3, kept: 1 });
   });
 
+  it('treats an explicit undefined option as not supplied', () => {
+    // A caller building options from optional state (`{ maxNodes: filters.max }`)
+    // hands over an own property whose value is `undefined`, which a spread
+    // happily copies over the default. It used to return zero nodes.
+    const baseline = buildLoreGraph([memory({ key: 'a', tags: ['x'] }), memory({ key: 'b', tags: ['x'] })]);
+    const explicitlyUndefined = buildLoreGraph(
+      [memory({ key: 'a', tags: ['x'] }), memory({ key: 'b', tags: ['x'] })],
+      { maxNodes: undefined, maxEdges: undefined, maxDegree: undefined, hubSize: undefined, kinds: undefined },
+    );
+
+    expect(explicitlyUndefined).toEqual(baseline);
+    expect(explicitlyUndefined.nodes.length).toBeGreaterThan(0);
+    expect(explicitlyUndefined.truncated).toEqual([]);
+  });
+
   it('says nothing was truncated when nothing was', () => {
     expect(buildLoreGraph([memory({ key: 'a' })]).truncated).toEqual([]);
   });
