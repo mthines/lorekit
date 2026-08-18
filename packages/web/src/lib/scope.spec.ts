@@ -198,3 +198,21 @@ describe('resolveScopeParam', () => {
     }
   });
 });
+
+describe('mixed-case scopes (accepted since the reject-only filter change)', () => {
+  it('types a mixed-case scope by its lowercased prefix', () => {
+    // Reading the raw prefix would return `Repo`, which is not a ScopePrefix
+    // and silently loses the repo link derived from it.
+    expect(scopeType('Repo::Owner/Name')).toBe('repo');
+    expect(scopeType('BRANCH::Owner/Name::Feat/X')).toBe('branch');
+    expect(scopeType('GLOBAL')).toBe('global');
+  });
+
+  it('still derives the repo reference from a mixed-case scope', () => {
+    expect(scopeRepoRef('Repo::Owner/Name')).toEqual({ repo: 'Owner/Name', branch: null });
+    expect(scopeRepoRef('Branch::Owner/Name::Feat/X')).toEqual({
+      repo: 'Owner/Name',
+      branch: 'Feat/X',
+    });
+  });
+});

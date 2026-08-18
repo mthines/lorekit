@@ -107,11 +107,18 @@ export function resolveScopeParam(raw: string | null): ResolvedScopeParam {
 
 /**
  * Return the scope type for use as a low-cardinality attribute/badge label.
+ *
+ * The prefix is lowercased before it is returned. A scope is NOT guaranteed to
+ * arrive lowercased any more — the REST write path stores it verbatim and
+ * `isCanonicalScope` accepts a mixed-case filter — so reading the raw prefix
+ * would type `Repo::Owner/Name` as `Repo`, which is neither a `ScopePrefix` nor
+ * the low-cardinality label this exists to produce, and would silently drop the
+ * repo link `scopeRepoRef` derives from it.
  */
 export function scopeType(scope: string): ScopePrefix {
-  if (scope === 'global') return 'global';
-  const prefix = scope.split('::')[0] as ScopePrefix;
-  return prefix;
+  const prefix = scope.split('::')[0]?.toLowerCase() ?? '';
+  if (prefix === 'global') return 'global';
+  return prefix as ScopePrefix;
 }
 
 /**
@@ -125,11 +132,14 @@ export function scopeType(scope: string): ScopePrefix {
  * Returns `null` for `global` / `project` scopes (no repository to point at)
  * and for malformed scopes.
  *
- * Note on case: canonical scopes are lowercased upstream. GitHub matches
- * owner/repo case-insensitively (and redirects), so repo links are always
- * safe. Branch names are case-sensitive in git, so a `/tree/<branch>` link
- * for a branch that was authored with upper-case characters may 404 — an
- * accepted trade-off for pointing directly at the branch.
+ * Note on case: a scope is NOT necessarily lowercased. The REST write path
+ * stores it verbatim, so `repo::Owner/Name` is a real stored value and a
+ * mixed-case filter is accepted. The prefix is matched case-insensitively (via
+ * `scopeType`) and the owner/repo is passed through as written — GitHub matches
+ * owner/repo case-insensitively and redirects, so repo links are safe either
+ * way. Branch names are case-sensitive in git, so a `/tree/<branch>` link for a
+ * branch authored with upper-case characters may 404 — an accepted trade-off
+ * for pointing directly at the branch.
  */
 /**
  * What a scope string already tells the reader about a repository.
@@ -142,7 +152,7 @@ export function scopeType(scope: string): ScopePrefix {
  * `repo` and `branch` are `null` for `global` / `project` / malformed scopes.
  */
 export interface ScopeRepoRef {
-  /** `owner/name`, lowercased by the canonical scope format. */
+  /** `owner/name`, exactly as the scope spells it — which may be mixed case. */
   repo: string | null;
   /** The branch a `branch::` scope names; `null` for every other scope type. */
   branch: string | null;
