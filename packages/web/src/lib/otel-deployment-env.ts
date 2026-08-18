@@ -52,6 +52,10 @@
  *
  * Dependency-free (no React, no `next/*`, no node builtins) so it is unit
  * testable and safe in both the Node.js runtime and the browser bundle.
+ *
+ * Recorded as a do-not-relitigate decision alongside its sibling rule — see
+ * `docs/decisions.md` → "VERCEL_ENV must never decide the deployment
+ * environment alone", indexed from the root `CLAUDE.md` → Key decisions.
  */
 
 /** The four environments the `web` component reports. */
