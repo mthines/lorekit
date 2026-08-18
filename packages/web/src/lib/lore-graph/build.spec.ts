@@ -603,6 +603,13 @@ describe('buildLoreGraph', () => {
       (distinct.get(edge.source) ?? distinct.set(edge.source, new Set()).get(edge.source))?.add(edge.target);
       (distinct.get(edge.target) ?? distinct.set(edge.target, new Set()).get(edge.target))?.add(edge.source);
     }
-    expect(Math.max(...[...distinct.values()].map((set) => set.size))).toBeLessThanOrEqual(12);
+    // Folded, not `Math.max(...sizes)`: the spread passes one argument per node
+    // and this is the plan-ceiling test, which is the exact shape `range()` in
+    // `build.ts` documents as RangeError-prone.
+    let maxDistinct = 0;
+    for (const neighbours of distinct.values()) {
+      if (neighbours.size > maxDistinct) maxDistinct = neighbours.size;
+    }
+    expect(maxDistinct).toBeLessThanOrEqual(12);
   });
 });
