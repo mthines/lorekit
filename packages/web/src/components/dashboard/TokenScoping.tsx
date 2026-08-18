@@ -16,7 +16,8 @@
  */
 
 import { useCallback, useState } from 'react';
-import { Filter, Building2 } from 'lucide-react';
+import { Building2, ChevronDown, Filter } from 'lucide-react';
+import { DisclosurePanel, useDisclosure } from '@/components/ui/DisclosurePanel';
 import {
   ORG_ACCESS_TIERS,
   creatableScopePattern,
@@ -98,6 +99,7 @@ export function ScopingFields({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const { panelId, triggerProps } = useDisclosure(open);
 
   // The CURRENT selection is merged into the offered set, not just the catalog.
   // `scopeCatalog` holds scopes that have a memory; a pattern already saved on
@@ -129,24 +131,39 @@ export function ScopingFields({
   }, []);
   const orgOptions: ComboboxItem[] = orgs.map((o) => ({ value: o.id, label: o.name }));
   const orgNames = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
+  const summary = isScoped(scoping) ? describeScoping(scoping, orgNames) : 'Unrestricted';
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex min-h-11 w-full items-center justify-between gap-2 px-3 py-2 text-left"
+        {...triggerProps}
+        className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors duration-150 hover:bg-[var(--color-bg-raised)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
       >
-        <span className="text-xs font-medium text-[var(--color-content-secondary)]">
+        {/* A chevron, because `aria-expanded` is invisible to everyone who can
+            see. Rotation is the cheapest possible state signal — one transform,
+            no layout — and it makes the row read as expandable before it is
+            clicked rather than after. */}
+        <ChevronDown
+          className="size-3.5 shrink-0 text-[var(--color-content-tertiary)] transition-transform duration-200 ease-[var(--ease-out-smooth)]"
+          style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+          aria-hidden
+        />
+        <span className="shrink-0 text-xs font-medium text-[var(--color-content-secondary)]">
           Scoping
         </span>
-        <span className="truncate text-[10px] text-[var(--color-content-tertiary)]">
-          {isScoped(scoping) ? describeScoping(scoping, orgNames) : 'Unrestricted'}
+        {/* `title` because this line is the whole point of the collapsed state
+            and it is the first thing to truncate on a narrow screen. */}
+        <span
+          title={summary}
+          className="min-w-0 flex-1 truncate text-right text-[10px] text-[var(--color-content-tertiary)]"
+        >
+          {summary}
         </span>
       </button>
 
-      {open && (
+      <DisclosurePanel open={open} id={panelId}>
         <div className="flex flex-col gap-3 border-t border-[var(--color-border)] p-3">
           <div className="flex flex-col gap-1.5">
             <span className="text-[10px] uppercase tracking-wide text-[var(--color-content-tertiary)]">
@@ -229,7 +246,7 @@ export function ScopingFields({
             )}
           </div>
         </div>
-      )}
+      </DisclosurePanel>
     </div>
   );
 }

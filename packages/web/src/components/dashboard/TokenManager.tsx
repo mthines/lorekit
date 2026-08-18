@@ -10,6 +10,7 @@ import { generateToken, revokeToken, setTokenScoping, type ApiToken, type TokenP
 import { PERMISSION_TIERS, tierFor, type PermissionTierValue } from '@/lib/token-permission';
 import { type TokenScoping } from '@/lib/token-scoping';
 import { ScopingBadges, ScopingFields } from '@/components/dashboard/TokenScoping';
+import { DisclosurePanel, useDisclosure } from '@/components/ui/DisclosurePanel';
 
 const TIER_ICONS: Record<PermissionTierValue, typeof ShieldCheck> = {
   rw: ShieldCheck,
@@ -261,6 +262,8 @@ function TokenRow({
   // at generation — which is why this is an edit affordance for scoping alone
   // and not a general "edit token" panel.
   const [editing, setEditing] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorToggleRef = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState<TokenScoping>({
     scopes: token.scopes,
     org_access: token.org_access,
@@ -270,6 +273,19 @@ function TokenRow({
   const [saving, startSaving] = useTransition();
 
   const draftIncomplete = draft.org_access === 'selected' && draft.org_ids.length === 0;
+  const { panelId: editorPanelId, triggerProps: editorTriggerProps } = useDisclosure(editing);
+
+  // Move focus INTO the panel when it opens. The generate form already does
+  // this (its name input self-focuses); the row editor did not, so opening it
+  // from the keyboard left focus on the toggle with the new controls somewhere
+  // below, reachable only by tabbing blind.
+  useEffect(() => {
+    if (!editing) return;
+    const first = editorRef.current?.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    first?.focus();
+  }, [editing]);
 
   function openEditor() {
     // Re-seed from the row on every open, so a cancelled edit cannot leave a
@@ -277,6 +293,15 @@ function TokenRow({
     setDraft({ scopes: token.scopes, org_access: token.org_access, org_ids: token.org_ids });
     setSaveError('');
     setEditing(true);
+  }
+
+  function closeEditor(returnFocus: boolean) {
+    setEditing(false);
+    // Focus goes back to the control that opened the panel. Without this it
+    // lands on `<body>` when the panel unmounts and the next Tab restarts from
+    // the top of the page — the standard way a disclosure strands a keyboard
+    // user.
+    if (returnFocus) editorToggleRef.current?.focus();
   }
 
   function handleSaveScoping() {
@@ -350,8 +375,9 @@ function TokenRow({
       ) : (
         <>
           <button
-            onClick={() => (editing ? setEditing(false) : openEditor())}
-            aria-expanded={editing}
+            ref={editorToggleRef}
+            onClick={() => (editing ? closeEditor(false) : openEditor())}
+            {...editorTriggerProps}
             aria-label={`Edit scoping for token ${token.name}`}
             className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
           >
@@ -368,8 +394,21 @@ function TokenRow({
       )}
       </div>
 
-      {editing && (
-        <div className="flex flex-col gap-3 border-t border-[var(--color-border)] p-3">
+      <DisclosurePanel open={editing} id={editorPanelId}>
+        <div
+          ref={editorRef}
+          // Escape closes the panel and returns focus, the behaviour every
+          // dismissible surface in this app already has (`Combobox`,
+          // `BottomSheet`). Without it the only way out of an open editor is to
+          // find the Cancel button.
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              closeEditor(true);
+            }
+          }}
+          className="flex flex-col gap-3 border-t border-[var(--color-border)] p-3"
+        >
           <ScopingFields
             scoping={draft}
             onChange={setDraft}
@@ -395,14 +434,14 @@ function TokenRow({
             </button>
             <button
               type="button"
-              onClick={() => setEditing(false)}
+              onClick={() => closeEditor(true)}
               className="min-h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-tertiary)] transition-colors hover:text-[var(--color-content-primary)]"
             >
               Cancel
             </button>
           </div>
         </div>
-      )}
+      </DisclosurePanel>
     </motion.div>
   );
 }
@@ -440,6 +479,15 @@ export function TokenManager({
   const orgNames = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
   const [tokens, setTokens] = useState<ApiToken[]>(initialTokens);
   const [showForm, setShowForm] = useState(false);
+  const { panelId: formPanelId, triggerProps: formTriggerProps } = useDisclosure(showForm);
+  const formTriggerRef = useRef<HTMLButtonElement>(null);
+
+  function closeForm(returnFocus: boolean) {
+    setShowForm(false);
+    // Focus back to the trigger, or it lands on `<body>` when the panel
+    // unmounts and the next Tab restarts from the top of the page.
+    if (returnFocus) formTriggerRef.current?.focus();
+  }
   // If a token was auto-generated server-side, open the amber banner immediately.
   const [newToken, setNewToken] = useState<string | null>(initialNewToken ?? null);
   const [newTokenRecord, setNewTokenRecord] = useState<ApiToken | null>(
@@ -488,20 +536,21 @@ export function TokenManager({
       </AnimatePresence>
 
       {/* Generate form */}
-      <AnimatePresence>
-        {showForm && (
-          <motion.div
-            key="form"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden"
-          >
-            <GenerateForm onGenerated={handleGenerated} scopeCatalog={scopeCatalog} orgs={orgs} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <DisclosurePanel open={showForm} id={formPanelId}>
+        <div
+          onKeyDown={(e) => {
+            // Same dismissal contract as every other transient surface here.
+            // `stopPropagation` so one Escape closes one thing — the scoping
+            // combobox inside this form handles its own first.
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              closeForm(true);
+            }
+          }}
+        >
+          <GenerateForm onGenerated={handleGenerated} scopeCatalog={scopeCatalog} orgs={orgs} />
+        </div>
+      </DisclosurePanel>
 
       {/* Token list */}
       {tokens.length > 0 && (
@@ -525,14 +574,29 @@ export function TokenManager({
         </div>
       )}
 
-      {/* Generate button */}
-      {!showForm && !newToken && (
+      {/* Generate trigger — persists while the form is open, because a
+          disclosure whose trigger vanishes has no way back. Before this, opening
+          the form was one-way: `GenerateForm` has a submit button and nothing
+          else, so a user who opened it by mistake could only reload the page.
+          Still hidden while the shown-once banner is up: that banner carries a
+          secret the user has to copy before it is gone, and a second form under
+          it invites them to walk away from it. */}
+      {!newToken && (
         <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          ref={formTriggerRef}
+          onClick={() => (showForm ? closeForm(true) : setShowForm(true))}
+          {...formTriggerProps}
+          className="flex items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
         >
-          <Plus className="size-4" aria-hidden />
-          Generate new token
+          {/* One icon that rotates rather than two that swap: the 45° turn from
+              + to × is the same glyph continuing, which reads as one control
+              changing state instead of two controls replacing each other. */}
+          <Plus
+            className="size-4 transition-transform duration-200 ease-[var(--ease-out-smooth)]"
+            style={{ transform: showForm ? 'rotate(45deg)' : 'rotate(0deg)' }}
+            aria-hidden
+          />
+          {showForm ? 'Cancel' : 'Generate new token'}
         </button>
       )}
     </div>
