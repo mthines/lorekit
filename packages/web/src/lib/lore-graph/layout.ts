@@ -59,6 +59,18 @@ export interface LayoutOptions {
    * keeps a pathologically dense cluster from re-introducing `O(n²)`.
    */
   maxNeighbours?: number;
+  /**
+   * Furthest a node may move in one iteration.
+   *
+   * This is the integrator's stability bound, and it is deliberately its OWN
+   * option rather than being derived from `clusterRadius`. The two were the
+   * same number — the grid cell doubled as the clamp — which meant tuning the
+   * seed's cloud density silently retuned the relaxation's stability, in units
+   * that have nothing to do with each other. A `clusterRadius` of `0.001`
+   * (a legitimate way to seed a deliberately-overlapping graph) also pinned
+   * every node to a thousandth-of-a-unit step.
+   */
+  maxStep?: number;
 }
 
 export const LAYOUT_DEFAULTS = {
@@ -69,6 +81,9 @@ export const LAYOUT_DEFAULTS = {
   attraction: 0.08,
   damping: 0.82,
   maxNeighbours: 24,
+  // The value the old cell-derived clamp produced at the default clusterRadius,
+  // so decoupling the two changed no default behaviour.
+  maxStep: 6,
 } satisfies Required<LayoutOptions>;
 
 /**
@@ -309,7 +324,7 @@ export function relaxPositions(
   positions: Float32Array,
   options: LayoutOptions = {},
 ): Float32Array {
-  const { iterations, repulsion, attraction, damping, clusterRadius, maxNeighbours } = {
+  const { iterations, repulsion, attraction, damping, clusterRadius, maxNeighbours, maxStep } = {
     ...LAYOUT_DEFAULTS,
     ...options,
   };
@@ -390,8 +405,10 @@ export function relaxPositions(
       velocity[i] *= damping;
       // Clamp the step so a pair that started nearly coincident cannot launch
       // a node across the scene on the first iteration and leave a visible
-      // outlier the camera then has to frame.
-      positions[i] += Math.max(-cell, Math.min(cell, velocity[i]));
+      // outlier the camera then has to frame. `maxStep`, NOT `cell`: the grid
+      // resolution and the integrator's stability bound are unrelated
+      // quantities that merely happened to share a number.
+      positions[i] += Math.max(-maxStep, Math.min(maxStep, velocity[i]));
     }
   }
 

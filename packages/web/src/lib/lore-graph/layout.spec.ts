@@ -327,6 +327,33 @@ describe('relaxPositions', () => {
     expect(after).toBeLessThan(before);
   });
 
+  it('clamps the step by maxStep, independently of clusterRadius', () => {
+    // The clamp used to BE the grid cell (`max(clusterRadius, 1)`), so these
+    // two runs — identical but for `maxStep` — were impossible to express:
+    // seeding a deliberately-overlapping graph with a tiny `clusterRadius`
+    // also throttled every node to a 1-unit step.
+    const graph = graphOf(['global'], 6);
+    const stacked = new Float32Array(graph.nodes.length * 3);
+    const furthestStep = (positions: Float32Array) =>
+      Math.max(...[...positions].map(Math.abs));
+
+    const loose = relaxPositions(graph, Float32Array.from(stacked), {
+      iterations: 1,
+      clusterRadius: 0.001,
+      maxStep: 3,
+    });
+    const throttled = relaxPositions(graph, Float32Array.from(stacked), {
+      iterations: 1,
+      clusterRadius: 0.001,
+      maxStep: 0.05,
+    });
+
+    // `+ 1e-6` is the Float32 round-trip of the stored coordinate, not slack.
+    expect(furthestStep(throttled)).toBeLessThanOrEqual(0.05 + 1e-6);
+    // Above the 1-unit clamp the old cell-derived value would have imposed.
+    expect(furthestStep(loose)).toBeGreaterThan(1);
+  });
+
   it('is a no-op when asked for no iterations', () => {
     const graph = graphOf(['global'], 5);
     const seeded = seedPositions(graph);
