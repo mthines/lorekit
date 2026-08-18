@@ -466,7 +466,11 @@ So both emitters resolve the tag through one shared pure module,
 
 - `NODE_ENV === 'production'` — a real `next build` output, as served by every
   Vercel production and preview deployment. `VERCEL_ENV` is mapped straight
-  through.
+  through. A local `next build && next start` also sets `NODE_ENV=production`,
+  so it lands in this branch too: run against a pulled `VERCEL_ENV=production`
+  it still reports `production`. That residual is accepted deliberately —
+  `otel-deployment-env.ts` documents why gating additionally on `VERCEL` would
+  not close it, and `next dev` is the case that caused the incident.
 - anything else — a dev server. The result is narrowed to `development` (what
   `vercel dev` genuinely is) or `local`, **never** `production` / `preview`.
   The two outcomes are not equally loud:
