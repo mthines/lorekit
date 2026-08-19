@@ -249,7 +249,7 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
 
       // Fetch name + prefix before the delete so the audit event has a
       // human-readable target — the row is gone by the time we'd otherwise ask.
-      const { data: existing } = await supabase
+      const { data: existing, error: preReadError } = await supabase
         .from('api_tokens')
         .select('name, token_prefix')
         .eq('id', tokenId)
@@ -273,16 +273,22 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
         return { error: error.message };
       }
 
+      // The audit event is recorded whether or not the pre-read answered. The
+      // pre-read is a decoration — it makes the target human-readable — and a
+      // transient failure on it must not turn a revocation that DID land into a
+      // silent gap in the trail. `resourceId` identifies the key either way.
       if (existing) {
         span.setAttribute('lorekit.api_token.prefix', (existing.token_prefix as string) ?? '');
-        await recordAuditEvent({
-          action: 'api_key.revoke',
-          resourceType: 'api_token',
-          resourceId: tokenId,
-          target: existing.name as string,
-          metadata: { name: existing.name, token_prefix: existing.token_prefix },
-        });
       }
+      await recordAuditEvent({
+        action: 'api_key.revoke',
+        resourceType: 'api_token',
+        resourceId: tokenId,
+        target: (existing?.name as string) ?? tokenId,
+        metadata: existing
+          ? { name: existing.name, token_prefix: existing.token_prefix }
+          : { name: null, token_prefix: null, pre_read_unavailable: preReadError?.message ?? 'not_found' },
+      });
 
       revalidatePath('/overview');
       revalidatePath('/settings', 'layout');
@@ -323,7 +329,7 @@ export async function setTokenScoping(
       // and the previous scoping so the trail records a transition rather than
       // just a destination — "narrowed to one repo" is the interesting event,
       // and it is unreadable without the "from".
-      const { data: existing } = await supabase
+      const { data: existing, error: preReadError } = await supabase
         .from('api_tokens')
         .select('name, scopes, org_access, org_ids')
         .eq('id', tokenId)
@@ -342,23 +348,31 @@ export async function setTokenScoping(
         return { error: applied.error };
       }
 
-      if (existing) {
-        await recordAuditEvent({
-          action: 'api_key.scope_change',
-          resourceType: 'api_token',
-          resourceId: tokenId,
-          target: existing.name as string,
-          metadata: {
-            name: existing.name,
-            from: {
-              scopes: existing.scopes ?? [],
-              org_access: existing.org_access ?? 'all',
-              org_ids: existing.org_ids ?? [],
-            },
-            to: applied.scoping,
-          },
-        });
-      }
+      // Unconditional: the change has LANDED by this point, so skipping the
+      // event when the pre-read failed would leave exactly the silent hole in
+      // the authorization trail that 00070 exists to close. A missing `from` is
+      // a degraded record; a missing ROW is no record at all, and only one of
+      // those is recoverable by a reader.
+      await recordAuditEvent({
+        action: 'api_key.scope_change',
+        resourceType: 'api_token',
+        resourceId: tokenId,
+        target: (existing?.name as string) ?? tokenId,
+        metadata: {
+          name: existing?.name ?? null,
+          from: existing
+            ? {
+                scopes: existing.scopes ?? [],
+                org_access: existing.org_access ?? 'all',
+                org_ids: existing.org_ids ?? [],
+              }
+            : null,
+          // Present only on the degraded path, so a reader can tell "the key
+          // was unscoped before" from "we could not find out".
+          ...(existing ? {} : { from_unavailable: preReadError?.message ?? 'not_found' }),
+          to: applied.scoping,
+        },
+      });
 
       revalidatePath('/overview');
       revalidatePath('/settings', 'layout');
