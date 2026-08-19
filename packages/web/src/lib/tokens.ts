@@ -256,9 +256,15 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
         .eq('user_id', user.id)
         .maybeSingle();
 
-      const { error } = await supabase
+      // `count: 'exact'` is what makes the audit below honest. Without it the
+      // delete reports success for a filter that matched NOTHING — a stale tab,
+      // a double-click, an id already revoked — and an unconditional audit
+      // write would record a revocation that never happened. The row count is
+      // the positive signal that the operation landed; the pre-read above is
+      // not (it only says whether we could READ the row).
+      const { error, count } = await supabase
         .from('api_tokens')
-        .delete()
+        .delete({ count: 'exact' })
         .eq('id', tokenId)
         .eq('user_id', user.id); // Ensure ownership
 
@@ -273,10 +279,21 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
         return { error: error.message };
       }
 
-      // The audit event is recorded whether or not the pre-read answered. The
-      // pre-read is a decoration — it makes the target human-readable — and a
-      // transient failure on it must not turn a revocation that DID land into a
-      // silent gap in the trail. `resourceId` identifies the key either way.
+      // Nothing matched: the key was already gone. Idempotent for the caller —
+      // the desired state holds — but there is no revocation to audit. Recorded
+      // on the span so a no-op is observable rather than silently indistinguishable
+      // from a real revoke.
+      if (count === 0) {
+        span.setAttribute('lorekit.api_token.revoke.no_op', true);
+        revalidatePath('/overview');
+        revalidatePath('/settings', 'layout');
+        return {};
+      }
+
+      // A row DID go. From here the audit event is unconditional: the pre-read
+      // is a decoration — it makes the target human-readable — and a transient
+      // failure on it must not turn a revocation that landed into a silent gap
+      // in the trail. `resourceId` identifies the key either way.
       if (existing) {
         span.setAttribute('lorekit.api_token.prefix', (existing.token_prefix as string) ?? '');
       }
