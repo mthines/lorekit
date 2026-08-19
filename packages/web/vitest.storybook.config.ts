@@ -74,6 +74,11 @@ export default defineConfig({
       'motion/react',
       '@lorekit/schemas/tags',
       '@lorekit/schemas/memory',
+      // `TokenScoping` value-imports `@lorekit/schemas/api-key` (via
+      // `@/lib/token-scoping`), which is the third runtime entry into the linked
+      // package — the same mid-run re-optimize trigger as the two above, and the
+      // only one this PR adds.
+      '@lorekit/schemas/api-key',
       'react-markdown',
       'remark-gfm',
       'rehype-sanitize',
