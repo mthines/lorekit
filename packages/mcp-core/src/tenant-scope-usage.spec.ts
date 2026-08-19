@@ -23,8 +23,12 @@ const toolsPath = path.resolve(here, '../../../supabase/functions/mcp/tools.ts')
 const source = readFileSync(toolsPath, 'utf8');
 
 // The four read handlers widened in Phase 1 (plan.md Technical Approach #2).
-// Write/delete/archive/restore/purge stay personal-only (Requirement R7) and
-// are deliberately excluded from this guard.
+// The write/delete/archive/restore/purge family is excluded from THIS guard
+// because it does not build a widen-able `memories` SELECT — it removes by
+// (scope,key) through memory_delete. Its allowlist half is enforced inside that
+// RPC (00068 + 00071): a scoped key may now manage any writer's row WITHIN its
+// allowlist, but the RPC still raises LK002 for a scope outside it, so the
+// allowlist boundary this suite protects is unchanged.
 //
 // `toolScopes` is a FIFTH read handler and is deliberately absent, for a
 // different reason than the write family: it has no query to scope. It calls
@@ -265,7 +269,10 @@ describe('key-scope usage guard (RPC-backed per-scope reads)', () => {
  * from the sources so a new `p_key_scopes:` anywhere in the edge tree fails here
  * until it is added to a list.
  */
-const REST_RPC_WRITES = ['create', 'remove'] as const;
+// `restore` joined `remove` here once its scope+key form began routing through
+// restore_memory (00072): both now pass the key's allowlist to an RPC that
+// chooses its own rows, so the fail-open `'{}'` default must never be sent.
+const REST_RPC_WRITES = ['create', 'remove', 'restore'] as const;
 
 describe('key-scope usage guard (RPC-backed writes + MCP surface)', () => {
   it.each(REST_RPC_WRITES)('%s passes p_key_scopes to its RPC', (name) => {
@@ -273,14 +280,17 @@ describe('key-scope usage guard (RPC-backed writes + MCP surface)', () => {
   });
 
   it('every MCP RPC call that takes p_key_scopes passes the calling key scoping', () => {
-    // `tools.ts` calls three of these RPCs — memory_write, memory_delete and
-    // lorekit_memory_scopes. Each must send the restriction, not rely on the
-    // default.
+    // `tools.ts` calls memory_delete TWICE (`toolDelete` + `toolArchive`) and
+    // restore_memory once (`toolRestore`) — all three routed through the RPC so
+    // a scoped key manages any writer's row within its allowlist — plus
+    // memory_write and lorekit_memory_scopes. Five call sites; each must send
+    // the restriction so the in-RPC scope allowlist (00068) engages instead of
+    // the fail-open `'{}'` default.
     const matches = source.match(/p_key_scopes:\s*keyScoping\?\.scopes\s*\?\?\s*\[\]/g) ?? [];
-    expect(matches.length).toBe(3);
+    expect(matches.length).toBe(5);
     // Anti-vacuity in the other direction: no bare `p_key_scopes` that is not
-    // one of those three.
-    expect((source.match(/p_key_scopes:/g) ?? []).length).toBe(3);
+    // one of those five.
+    expect((source.match(/p_key_scopes:/g) ?? []).length).toBe(5);
   });
 
   it('no p_key_scopes call site in the edge tree is left unpinned', () => {
@@ -429,5 +439,42 @@ describe('account-wide tool guard', () => {
     );
     expect(edge).toContain("'memory.purge',");
     expect(edge).toContain("'memory.purge_expired',");
+  });
+});
+
+/**
+ * Drift guard: the two removal tools route through memory_delete and surface
+ * the not_found / forbidden signal (00071).
+ *
+ * `toolArchive` and `toolDelete` USED to run a raw service-role
+ * `.update()/.delete()` filtered by `.eq('user_id', userId)`, which ignored the
+ * key's scope allowlist and reported a 0-row result as a bare `false`. 00071
+ * moves the whole decision into the memory_delete RPC — so a SCOPED key can
+ * manage any writer's row within its allowlist — and returns `existed` so the
+ * tool can tell not_found from forbidden. The behavioural half is proven in
+ * `migrations.test.sql` §83; this is the static half, pinning that neither tool
+ * regresses to a hand-rolled `.eq('user_id', …)` removal or drops the mapping.
+ * (The edge is Deno and no vitest harness executes it, hence a source guard.)
+ */
+describe('scope-authorized removal surfaces existed → reason (00071 / 00072)', () => {
+  // Each removal tool and the RPC that now carries its authorization.
+  const REMOVAL_TOOLS: ReadonlyArray<readonly [string, string]> = [
+    ['toolArchive', 'memory_delete'],
+    ['toolDelete', 'memory_delete'],
+    ['toolRestore', 'restore_memory'],
+  ];
+
+  it.each(REMOVAL_TOOLS)('%s removes through the %s RPC (no hand-rolled user_id removal)', (fnName, rpc) => {
+    const body = extractFunctionBody(source, fnName);
+    expect(body).toContain(`rpc('${rpc}'`);
+    // No hand-rolled ownership removal left behind — that was the pre-00071/72 hole.
+    expect(body).not.toMatch(/\.(update|delete)\([\s\S]*?\.eq\(\s*['"]user_id['"]/);
+  });
+
+  it.each(REMOVAL_TOOLS)('%s maps existed to a not_found / forbidden reason', (fnName) => {
+    const body = extractFunctionBody(source, fnName);
+    expect(body).toMatch(/row\.existed\s*\?/);
+    expect(body).toContain("'forbidden'");
+    expect(body).toContain("'not_found'");
   });
 });

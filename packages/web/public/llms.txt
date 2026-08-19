@@ -123,6 +123,8 @@ scope is narrowed instead. `memory.scopes` is narrowed too, so a scoped token
 cannot enumerate scope names it may not read. An operation that carries no scope
 at all (`memory.purge_expired`) is refused for a token that has an allowlist.
 
+For a scope INSIDE the allowlist, a scoped token can archive, delete, or restore any writer's row for that scope+key — the management authority the owner granted by scoping the key — reporting `404` (nothing there) vs `403` (present, but not this token's to touch); an unscoped token stays own-rows-only.
+
 A revoked token is rejected with HTTP 401 (`{"error":"Authentication required","code":"unauthorized"}`)
 on REST and `-32001` on MCP. `npx @lorekit/cli doctor` verifies this directly: its
 `connectivity` check probes the public `/health` function (network path only) and its

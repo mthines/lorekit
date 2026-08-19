@@ -6834,6 +6834,276 @@ begin
 end;
 $$;
 
+-- ── 84. API token scope-authorized removal + not-found/forbidden signal (00071) ─
+-- 00071 lets a key with a NON-EMPTY scope allowlist, reaching memory_delete on
+-- the service-role connection, manage any writer's row WITHIN its allowlist —
+-- while an UNSCOPED key and any non-service-role caller stay pinned to their own
+-- rows (the 00046 actor guard is untouched). It also returns `existed`, so a
+-- 0-row removal is reported as not_found vs forbidden instead of a silent false.
+--
+-- Owner under test = user A (…a1). Every row here is written by user B (…b2), a
+-- DIFFERENT principal, so ownership can never be what authorises the removal —
+-- only the key's scoping can.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-arch', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-keep', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-hard', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::other',   'sar-out',  'written by B');
+
+-- An org-owned row under phase2-org (f2, seeded in §11 with A as owner) exercises
+-- the org branch's new `existed` column in case (6).
+insert into memories (user_id, org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000f2',
+   'project::managed', 'sar-org-row', 'org-owned by phase2-org');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  -- (1) service-role + SCOPED key archives another writer's in-allowlist row.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-arch',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert r.archived and r.existed and not r.deleted,
+    format('SAR-1: a scoped key must archive an in-allowlist row it does not own (archived=%s existed=%s deleted=%s)',
+           r.archived, r.existed, r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-arch' and archived_at is not null;
+  assert v_count = 1, 'SAR-1: the row must actually be archived';
+
+  -- (1b) and hard-delete it, too.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-hard',
+    p_force      => true,
+    p_key_scopes => array['project::managed']);
+  assert r.deleted and r.existed and not r.archived,
+    format('SAR-1b: a scoped key must hard-delete an in-allowlist row it does not own (deleted=%s)', r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-hard';
+  assert v_count = 0, 'SAR-1b: the row must actually be gone';
+
+  -- (7) re-archiving the now ALREADY-archived sar-arch reports existed=true
+  --     (present), never not_found — the row is there, just nothing active to
+  --     archive. This is the case that would otherwise masquerade as not_found.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-arch',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert (not r.archived) and r.existed,
+    format('SAR-7: re-archiving an already-archived row must report existed=true, not not_found (archived=%s existed=%s)',
+           r.archived, r.existed);
+
+  -- (2) service-role + UNSCOPED key must NOT touch another writer's row; and
+  --     `existed` must report it present, i.e. forbidden — not not-found.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-keep',
+    p_force      => false,
+    p_key_scopes => array[]::text[]);
+  assert (not r.archived) and (not r.deleted) and r.existed,
+    format('SAR-2: an UNSCOPED key must not archive another user''s row, and existed must be true (archived=%s existed=%s)',
+           r.archived, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-keep' and archived_at is null;
+  assert v_count = 1, 'SAR-2: the unscoped key must have left the row active';
+
+  -- (3) not_found: a scoped key on a missing key removes nothing, existed=false.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-missing',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert (not r.archived) and (not r.existed),
+    format('SAR-3: a missing key must report existed=false / not_found (existed=%s)', r.existed);
+
+  -- (4) the scope allowlist STILL bounds a scoped key: a scope OUTSIDE the
+  --     allowlist is refused with LK002 before any widening can reach it.
+  begin
+    perform memory_delete(
+      p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+      p_org_slug   => null,
+      p_scope      => 'project::other',
+      p_key        => 'sar-out',
+      p_force      => false,
+      p_key_scopes => array['project::managed']);
+    assert false, 'SAR-4: a scope outside the allowlist must raise LK002';
+  exception when sqlstate 'LK002' then
+    null; -- expected
+  end;
+  select count(*) into v_count from memories
+    where scope = 'project::other' and key = 'sar-out' and archived_at is null;
+  assert v_count = 1, 'SAR-4: the out-of-allowlist row must be untouched';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (5) a raw AUTHENTICATED caller cannot widen with a request-supplied
+  --     p_key_scopes — auth.uid() pins the actor (00046), so B's row survives
+  --     and `existed` does not leak it. User C (…c3) is the would-be attacker.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',   -- spoofed; ignored off service_role
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-keep',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);               -- request input; must NOT widen
+  assert (not r.archived) and (not r.existed),
+    format('SAR-5: a request-supplied p_key_scopes must not let an authenticated caller widen (archived=%s existed=%s)',
+           r.archived, r.existed);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-keep' and archived_at is null;
+  assert v_count = 1, 'SAR-5: B''s row must survive the authenticated caller''s spoof attempt';
+
+  -- (6) the org branch carries `existed` too: A (owner of phase2-org) archives
+  --     an org-owned memory and gets archived=true alongside existed=true. The
+  --     org capability gate is 00068 verbatim; this only pins the new column.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select * into r from memory_delete(
+    p_user_id  => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug => 'phase2-org',
+    p_scope    => 'project::managed',
+    p_key      => 'sar-org-row',
+    p_force    => false);
+  assert r.archived and r.existed and not r.deleted,
+    format('SAR-6: an org archive must report archived + existed (archived=%s existed=%s)',
+           r.archived, r.existed);
+  select count(*) into v_count from memories
+    where org_id = '00000000-0000-0000-0000-0000000000f2' and key = 'sar-org-row' and archived_at is not null;
+  assert v_count = 1, 'SAR-6: the org row must actually be archived';
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 85. API token scope-authorized RESTORE + not-found/forbidden signal (00072) ─
+-- The restore-side symmetry of §83: a scoped key restores any writer's archived
+-- row within its allowlist; an unscoped key and any non-service-role caller stay
+-- own-rows-only; `existed` (scoped to ARCHIVED rows) distinguishes forbidden
+-- from not_found. Rows are archived up front (archived_at set) and written by B.
+insert into memories (user_id, scope, key, value, archived_at) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-arch', 'archived by B', now()),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-keep', 'archived by B', now()),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rother',   'res-out',  'archived by B', now());
+-- An ACTIVE (non-archived) row: there is nothing to restore, so it must read as
+-- not_found (existed=false), never forbidden.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-active', 'active, by B');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (1) scoped key restores another writer's archived in-allowlist row.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-arch',
+    p_key_scopes => array['project::rmanaged']);
+  assert r.restored and r.existed,
+    format('SAR-R1: a scoped key must restore an in-allowlist row it does not own (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-arch' and archived_at is null;
+  assert v_count = 1, 'SAR-R1: the row must actually be un-archived';
+
+  -- (2) UNSCOPED key must NOT restore another writer's row; existed=true.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-keep',
+    p_key_scopes => array[]::text[]);
+  assert (not r.restored) and r.existed,
+    format('SAR-R2: an UNSCOPED key must not restore another user''s row, existed must be true (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
+  assert v_count = 1, 'SAR-R2: the row must stay archived';
+
+  -- (3) not_found: a missing key AND an ACTIVE (nothing-to-restore) row both
+  --     report existed=false — there is no restorable row.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-missing',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed), 'SAR-R3a: a missing key must report existed=false';
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-active',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed),
+    format('SAR-R3b: an active (non-archived) row is not restorable → existed=false (existed=%s)', r.existed);
+
+  -- (4) scope allowlist still bounds a scoped key.
+  begin
+    perform restore_memory(
+      p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+      p_scope      => 'project::rother',
+      p_key        => 'res-out',
+      p_key_scopes => array['project::rmanaged']);
+    assert false, 'SAR-R4: a scope outside the allowlist must raise LK002';
+  exception when sqlstate 'LK002' then
+    null; -- expected
+  end;
+  select count(*) into v_count from memories
+    where scope = 'project::rother' and key = 'res-out' and archived_at is not null;
+  assert v_count = 1, 'SAR-R4: the out-of-allowlist row must stay archived';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (5) an authenticated caller cannot widen with request-supplied p_key_scopes.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-keep',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed),
+    format('SAR-R5: a request-supplied p_key_scopes must not let an authenticated caller widen (restored=%s existed=%s)',
+           r.restored, r.existed);
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
+  assert v_count = 1, 'SAR-R5: B''s archived row must survive the authenticated caller''s spoof attempt';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
