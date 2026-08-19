@@ -388,7 +388,16 @@ function TokenRow({
             <SlidersHorizontal className="size-3.5" aria-hidden />
           </button>
           <button
-            onClick={() => setConfirming(true)}
+            // Confirming swaps this whole button group out for Yes/Cancel, so
+            // the editor toggle unmounts while the panel below it does not:
+            // `aria-controls` would point at a panel with no trigger, and
+            // Escape's focus return would target a node that no longer exists.
+            // Close the editor first. No focus return — the control it would go
+            // to is the one being replaced.
+            onClick={() => {
+              if (editing) closeEditor(false);
+              setConfirming(true);
+            }}
             aria-label={`Revoke token ${token.name}`}
             className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
           >
