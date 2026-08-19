@@ -11,6 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 // ── mock @lorekit/core ────────────────────────────────────────────────────────
 const { mockCheckRateLimit } = vi.hoisted(() => ({
@@ -163,5 +166,40 @@ describe('Hosted mode — checkRateLimit is enforced', () => {
     });
 
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Drift guard for the BYOD smoke suite's CREDENTIAL PREFLIGHT.
+ *
+ * The preflight exists so a rotated `LOREKIT_BYOD_TOKEN` announces a skip
+ * instead of reddening `smoke-preview` — the BYOD project is not deployed by
+ * this pipeline, so its credential going stale must not block a deploy. The
+ * danger of such an escape hatch is that it widens: broaden the caught error
+ * and a genuine BYOD regression disappears into a green run.
+ *
+ * So pin the two properties that keep it narrow. Source-scanned, like
+ * `mcp-authz-status.spec.ts`: the preflight runs at module load in an
+ * integration spec, so importing it here would execute it.
+ */
+describe('BYOD smoke credential preflight', () => {
+  const src = readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'byod-smoke.integration.spec.ts'),
+    'utf8',
+  );
+
+  it('widens ONLY the unauthenticated code (-32001) into a skip', () => {
+    // The one code matched. -32001 is emitted in exactly one place (the edge's
+    // missing/invalid/rotated-token branch) and `mcp-authz-status.spec.ts` pins
+    // that every authorization denial uses JSONRPC_FORBIDDEN instead, so this
+    // cannot silently come to mean "denied" as well.
+    expect(src).toMatch(/message\.includes\('MCP error -32001'\)/);
+    // Nothing else is: no second code, and no bare catch that returns a skip.
+    const codes = src.match(/MCP error -\d+/g) ?? [];
+    expect(new Set(codes)).toEqual(new Set(['MCP error -32001']));
+  });
+
+  it('keeps the suite gated on both the config and the probe', () => {
+    expect(src).toMatch(/describe\.skipIf\(SKIP \|\| rejection !== null\)/);
   });
 });

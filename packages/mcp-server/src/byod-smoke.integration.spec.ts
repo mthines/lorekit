@@ -115,9 +115,68 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown>)
   }
 }
 
+// ── Credential preflight ──────────────────────────────────────────────────────
+//
+// The BYOD project is NOT deployed by this repository's pipeline — it is a
+// third-party Supabase project named only by two secrets, and `deploy.yml`
+// documents this suite as OPT-IN coverage whose contract is: an absent
+// configuration self-skips, and "only a real BYOD assertion failure fails the
+// step". A credential the project no longer accepts is neither: it is the same
+// class of condition as the unset secret, and it was failing the step —
+// reddening `smoke-preview` and, through the lockstep gate, blocking every
+// production deploy on a project outside this pipeline's control.
+//
+// So probe the credential ONCE before the suite is collected, and turn exactly
+// one outcome into an announced skip: JSON-RPC `-32001`. That code is emitted
+// in exactly ONE place (`supabase/functions/mcp/index.ts` — missing / invalid /
+// rotated token) and `mcp-authz-status.spec.ts` PINS that every authorization
+// denial uses `JSONRPC_FORBIDDEN` instead, so `-32001` cannot mean anything but
+// "this project does not accept this token". Every other outcome — an HTTP
+// error, an unreachable host, a 5xx from the function, a wrong answer — is left
+// to fail the suite exactly as it does today, so no functional regression in
+// the memory tools can hide behind this.
+//
+// The skip is LOUD on purpose (console + a GitHub warning annotation): silent
+// coverage loss is how a rotated secret stays rotated for weeks.
+const READ_PROBE_KEY = NS.name('preflight');
+
+async function credentialRejected(): Promise<string | null> {
+  try {
+    // A read of a key that was never written: no side effect on the BYOD
+    // project, and it exercises the same auth path every test below depends on.
+    await mcpCall('memory.read', { scope: SCOPES.global, key: READ_PROBE_KEY });
+    return null;
+  } catch (err) {
+    const message = (err as Error).message;
+    // Anything that is not the unauthenticated code is a real failure — hand it
+    // back to the suite rather than swallowing it into a skip.
+    return message.includes('MCP error -32001') ? message : null;
+  }
+}
+
+const rejection = SKIP ? null : await credentialRejected();
+
+if (rejection) {
+  console.warn(
+    '\n  ⚠ BYOD SMOKE SKIPPED — the BYOD project did not accept LOREKIT_BYOD_TOKEN.\n' +
+      `    Probe: memory.read against ${BASE_URL} → ${rejection}\n` +
+      '    Cause: the token was rotated, revoked, or never created in that project —\n' +
+      '    it is a third-party Supabase project this pipeline does not deploy to.\n' +
+      '    Effect: this run does NOT verify the BYOD write/read/list/search path.\n' +
+      '    Fix: mint a fresh lk_rw_* token in the BYOD project and update the\n' +
+      '    LOREKIT_BYOD_TOKEN repository secret (docs/deployment.md).\n',
+  );
+  if (process.env['GITHUB_ACTIONS']) {
+    console.log(
+      '::warning title=BYOD smoke skipped::LOREKIT_BYOD_TOKEN was rejected by the BYOD ' +
+        'project (MCP -32001). The BYOD path is UNVERIFIED for this deploy — rotate the secret.',
+    );
+  }
+}
+
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
-describe.skipIf(SKIP)('LoreKit BYOD smoke tests (integration)', () => {
+describe.skipIf(SKIP || rejection !== null)('LoreKit BYOD smoke tests (integration)', () => {
   // Best-effort cleanup — run regardless of pass/fail so the BYOD project
   // stays tidy across repeated CI runs.
   afterAll(async () => {
