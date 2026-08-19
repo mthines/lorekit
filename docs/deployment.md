@@ -252,6 +252,176 @@ The web jobs authenticate to Vercel with the same three repo-level secrets
 — and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
 repo-level variable, defaulting to `https://lorekit.io`).
 
+#### The deploy scope is measured against what is DEPLOYED, not the last commit
+
+Lockstep above only binds the two halves **within one run**. It says nothing
+about a half that never reached production in an *earlier* run — and that gap is
+what broke production once already:
+
+| | |
+|---|---|
+| **#492** | Changed both halves (`packages/web/**` + `supabase/functions/**` + migration 00067). `smoke-preview` failed, so `deploy-production` and `promote-web-production` were both skipped. Correct — nothing shipped. |
+| **#504** | Changed only `packages/web/**`. The scope filter diffed **that push** and reported `api=false`, so `promote-web-production` took its `changes.outputs.api == 'false'` branch and assigned the production domain to a bundle built from `HEAD` — carrying #492's client. |
+| **Result** | That client POSTs `/functions/v1/memories/list`, a route the production edge functions had never been given. **100% of production Lore Explorer list reads answered `405`** until the web was rolled back by hand. |
+
+So each half is now diffed against **the commit that half is actually serving**,
+recorded by two advisory tags. Only a **successful** production flip advances a
+tag — and, symmetrically, only that half's **rollback** moves it back:
+
+| Tag | Advanced by | Moved back by | Means |
+|-----|-------------|---------------|-------|
+| `deployed/api-production` | `deploy-production`, last step | `rollback-production` → `HEAD~1` | Migrations pushed **and** edge functions deployed at this SHA |
+| `deployed/web-production` | `promote-web-production`, last step | `rollback-web-production` → the previously promoted commit | The production domain points at a bundle built from this SHA |
+
+`changes` resolves each baseline, diffs it against `HEAD`, and applies the same
+path globs as before. Undeployed work therefore stays in the diff until it
+deploys: replay #504 with the API tag still on the pre-#492 commit and it
+resolves `api=true`, so `promote-web-production` must wait for
+`deploy-production` instead of running ahead of it. The same protection holds in
+the other direction (an API change whose web half never promoted).
+
+Three things to know when reading a run:
+
+- **The tags are advisory and fail open.** A missing, unfetched or
+  garbage-collected tag falls back to the push baseline — the previous
+  behaviour. So does a tag that is not an ancestor of `HEAD` (after a revert, or
+  a re-run of an older ref), because diffing against a marker *ahead* of `HEAD`
+  reports the marker-only files as changed here. Doubt never resolves to "this
+  half has no changes": a wrong `false` is the incident above, a wrong `true` is
+  one redundant deploy. When there is no usable push baseline either (a root
+  commit, or a checkout whose parent is not present) the resolver diffs nothing
+  and treats **every tracked file** as changed — it never falls back to `HEAD`,
+  because `git diff HEAD HEAD` is empty and would resolve both halves `false`.
+  And if git cannot answer at all (no repository, no git on `PATH`, a corrupt
+  object store) the resolver catches it, reports `api=true web=true`, and still
+  **exits 0** — it classifies, it does not gate, so a red exit here would stop the
+  deploy rather than fail open.
+- **Both rollback jobs must REPOINT their half's tag at what production went
+  back to.** The markers are moved by
+  the *flip* jobs, which run **before** `smoke-production` — so a marker is
+  already on this run's SHA by the time the smoke gate fails, and neither
+  rollback undoes that by itself. `rollback-production` reverts the edge
+  functions to `HEAD~1` while `deployed/api-production` still names `HEAD`, and
+  `rollback-web-production` reverts the *domain* to the previously promoted
+  deployment, whose commit `deployed/web-production` no longer names. Leaving
+  either tag in place is **not** a safe error, and the non-ancestor rule does not
+  catch it: both are set to `github.sha`, a commit on `main`, so each stays an
+  *ancestor* of every later `HEAD` no matter what production is actually serving.
+  The next merge would then diff that half against something production never
+  kept and could resolve it `false`, skipping the half production is not serving
+  — the incident above, once per half.
+
+  **Deleting the marker is not enough**, either: with no marker `pickBaseline`
+  falls back to the push baseline, which on the next merge is
+  `github.event.before` — the rolled-back commit itself — so the diff starts
+  *after* the work production is not serving and can skip the half a second time.
+  Each rollback job therefore sets its marker to the commit production went back
+  to. `rollback-production` uses `HEAD~1`, which is exactly the function code it
+  just redeployed. `rollback-web-production` cannot use `HEAD~1` — the web half is
+  skipped on merges that do not touch it, so the previously promoted deployment
+  can be many commits back — so `promote-web-production` captures the marker's old
+  value before overwriting it and exposes it as a job output for the rollback to
+  restore. If there was no previous promotion to restore, the marker is dropped
+  and the job emits a `::warning::` to force the next deploy manually
+  (`workflow_dispatch`, `deploy_target: web`), because detection genuinely cannot
+  cover that case. Every one of these writes is best-effort (`|| true`,
+  `if: always()`) — a failed marker write must not mask the deploy failure that
+  triggered the rollback.
+- **The decision is a tested module, not a shell block.**
+  `scripts/resolve-deploy-scope.mjs` with `scripts/resolve-deploy-scope.test.mjs`
+  (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — the same
+  extract-and-test treatment `check-remote-migration-drift.mjs` got, for the same
+  reason. The test pins both the fixed behaviour and the old one that caused the
+  incident. Every git call goes through one injectable `execGit` seam, so the
+  marker-to-baseline wiring (`tagCommit` / `pushBaseline` / `resolveHalf` /
+  `changedSince`) is covered without a repository, a tag, or a reflog. The step
+  summary prints both baselines and where each came from.
+
+The first `deploy.yml` run after this landed has no tags yet, so both halves fall
+back to the push baseline — and since the change touches `deploy.yml` itself
+(which forces both halves), that run deploys both and mints both tags.
+
+#### Where the marker wiring lives
+
+The tag names are declared once, at `deploy.yml`'s top level
+(`API_DEPLOYED_TAG` / `WEB_DEPLOYED_TAG`), and five places read or move them:
+
+| Where | Step | Does |
+|-------|------|------|
+| `changes` | `Resolve the deploy scope` | Runs `scripts/resolve-deploy-scope.mjs` — reads both markers, picks each half's baseline, writes `api` / `web` |
+| `deploy-production` | `Record the deployed commit` | Advances `deployed/api-production` to `github.sha` |
+| `promote-web-production` | `Capture the previously promoted marker` → `Record the deployed commit` | Exposes the marker's OLD value as `previous_marker` (+ `previous_marker_read`), then advances it to `github.sha` — unless that read failed |
+| `rollback-production` | `Point the API marker at the commit just rolled back to` | Repoints `deployed/api-production` at `HEAD~1` — but only if this run advanced it |
+| `rollback-web-production` | `Restore the promoted-web marker…` | Repoints `deployed/web-production` at `previous_marker`; drops it with a `::warning::` when nothing was ever promoted; leaves it untouched when the capture failed |
+
+Four properties of that wiring are load-bearing — do not "tidy" any of them away:
+
+- **Both record steps are the LAST step of their job and carry no `if:`.** That
+  is what makes a marker advance only when every step above it succeeded.
+  `if: always()` there would move the marker after a *failed* deploy — the one
+  thing this placement exists to prevent.
+- **A record step's own failure is a `::warning::`, not a red job.** The deploy
+  has already succeeded by then, so reddening the job would trip
+  `rollback-production` and revert a healthy production API over a bookkeeping
+  hiccup — from `deploy-production` it would also skip the web promote outright.
+  A marker that fails to advance just costs the next run a redundant deploy of an
+  unchanged half.
+- **Every marker write is create-or-update** (`POST /git/refs`, falling back to
+  `PATCH /git/refs/tags/…`) and goes through the API, never `git push --force`:
+  these checkouts are shallow, and force-pushing a moving tag from a shallow
+  clone goes wrong quietly. A `PATCH` alone 404s while the marker does not exist
+  yet — a first deploy, or after a web rollback with nothing to restore dropped
+  it.
+- **No marker write is fire-and-forget.** Every one of them — both records, both
+  repoints, the drop — branches on whether the write landed and emits a
+  `::warning::` naming the tag to move by hand when it did not. None of them can
+  fail the step, so a marker hiccup never masks the deploy failure that triggered
+  a rollback, but none of them reports a move that never happened either.
+- **Each of the four jobs holds `permissions: contents: write`** for its own
+  marker and nothing else; the workflow's top-level default stays `{}`.
+
+**`rollback-production` undoes only a marker this run advanced.** On the
+`deploy-production` **failure** arm nothing advanced it: it still names the last
+commit this half actually deployed, which can be many merges back, so writing
+`HEAD~1` would move it FORWARD over migrations `db push` never applied and
+functions production never received — and the next merge could then skip an API
+half production lacks. So the step is gated on
+`needs.deploy-production.result == 'success'`, which answers that locally and
+cannot itself fail. Past that gate it reads the marker, because a successful
+`deploy-production` proves its record step *ran*, not that the API write
+*landed* — a marker that does not name `github.sha` is one whose write was
+already warned about, and it is left alone. An **unreadable** marker is read as
+"it landed", never as "it did not": the two mistakes are not symmetric. Leaving a
+marker naming `github.sha` while production serves `HEAD~1` is the skip-a-half
+incident; repointing one that was already older costs a redundant deploy.
+
+**The web half never advances a marker it could not first read.** Its rollback
+restores a value captured *before* this run wrote anything, so that capture is
+the only record of where the domain was. An empty capture has two meanings —
+nothing was ever promoted, or the read failed — and collapsing them loses the
+previous commit: the rollback would *drop* the marker on a transient API error,
+and the next merge would then diff this half from the rolled-back commit and
+could skip it. So the capture uses `git/matching-refs`, which answers `200` with
+an empty array for an absent tag (`git/ref` 404s for both), retries, and reports
+`previous_marker_read` alongside the value. When that read failed,
+`Record the deployed commit` declines to advance the marker at all and warns —
+leaving it naming the commit the domain would return to, which is *already* the
+right answer if this run is rolled back, and one redundant web deploy on the next
+merge if it is not. The rollback then has nothing to restore and says so.
+
+The asymmetry with the API half is deliberate: `rollback-production` derives its
+target from `HEAD~1`, which is local and cannot fail, so it can always undo an
+advance. `rollback-web-production` cannot, so its job is not to undo well but to
+avoid advancing what it could not undo.
+
+`ci.yml` guards the decision on every PR that touches it: a `deploy` path filter
+over
+`^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
+gates a `deploy-scope` job running `node --test
+scripts/resolve-deploy-scope.test.mjs`, and that job is in the `summary` gate's
+`needs`. Without it the test would never run — `scripts/**` is outside
+`nx affected`, so the `check` job does not reach it.
+
 ### Skew Protection (already-open tabs and Server Actions)
 
 The lockstep flip above keeps the FE and API on the same version **for new page
