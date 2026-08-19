@@ -83,9 +83,14 @@ function LoreCommands() {
           },
         ];
       }
+      // Rows are label-only (see CommandRow), so the scope has to live IN the
+      // label: a key is only unique WITHIN a scope, and the same key in two
+      // scopes would otherwise render two identical, unpickable rows. Scope
+      // leads because the row truncates from the end — the disambiguator must
+      // survive truncation.
       return lessons.map((lesson) => ({
         id: `lore-lesson-${lesson.scope}::${lesson.key}`,
-        label: lesson.key,
+        label: `${lesson.scope} · ${lesson.key}`,
         description: lesson.scope,
         onSelect: () =>
           openLessonById({ scope: lesson.scope, key: lesson.key }),
