@@ -976,11 +976,14 @@ jobs:
             exit 0
           fi
           PREV="$(git rev-parse HEAD~1)"
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-            -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
-          echo "- API marker \`${TAG}\` → \`${PREV}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${PREV}" -F force=true >/dev/null 2>&1; then
+            echo "- API marker \`${TAG}\` → \`${PREV}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} back to ${PREV} — it still names ${SHA}, which production is no longer serving, so the next merge could skip this half. Move the tag by hand."
+          fi
 
       - name: Report rollback
         run: |
@@ -1068,15 +1071,21 @@ jobs:
           PREV: ${{ needs.promote-web-production.outputs.previous_marker }}
         run: |
           if [ -n "$PREV" ]; then
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-              -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
-            echo "- Restored web marker \`${TAG}\` → \`${PREV}\`" >> "$GITHUB_STEP_SUMMARY"
+            if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+                 -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
+               gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                 -f "sha=${PREV}" -F force=true >/dev/null 2>&1; then
+              echo "- Restored web marker \`${TAG}\` → \`${PREV}\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::could not restore ${TAG} to ${PREV} — it still names this run's commit, which the production domain no longer serves, so the next merge could skip the web half. Move the tag by hand."
+            fi
           else
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
+            if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "- Dropped web marker \`${TAG}\` (no previous promotion recorded)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::could not drop ${TAG} — it still names this run's commit, which the production domain no longer serves."
+            fi
             echo "::warning::no previous web marker to restore — run deploy.yml manually with deploy_target: web before trusting the next automatic scope."
-            echo "- Dropped web marker \`${TAG}\` (no previous promotion recorded)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ── 6. Notify Discord on ANY deploy-pipeline failure ─────────────────────────

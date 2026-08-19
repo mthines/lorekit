@@ -387,7 +387,10 @@ half needs no equivalent guard: it restores the value captured *before* this run
 wrote anything, so it can only ever move the marker back or leave it where it is.
 
 Both rollback steps are `if: always()` and best-effort — a failed marker write
-must not mask the deploy failure that triggered the rollback.
+must not mask the deploy failure that triggered the rollback — but, like the two
+record steps, they say so: a repoint that does not land emits a `::warning::`
+naming the tag to move by hand, rather than reporting a restore that never
+happened.
 
 `ci.yml` guards the decision on every PR that touches it: a `deploy` path filter
 over
