@@ -65,9 +65,11 @@ export function tokenPrefixFor(permissions: readonly Permission[]): 'rw' | 'ro' 
   throw new Error('tokenPrefixFor: permissions must include at least "read" or "write"');
 }
 
-// `ACCOUNT_WIDE_TOOLS` / `isRefusedForScopedKey` used to live here. They moved
-// to `../_shared/account-wide-tools.ts` when the REST purge endpoints needed the
-// same decision: the REST tree cannot cross-import this directory, so a rule
-// kept in this file could only ever be copied, and the copy is what let
+// `ACCOUNT_WIDE_TOOLS` / `isRefusedForScopedKey` deliberately do NOT live here,
+// even though tool-name gating otherwise does. They live in
+// `../_shared/account-wide-tools.ts` because BOTH transports enforce the
+// decision: the MCP dispatcher and the REST purge endpoints. The REST tree
+// cannot cross-import this directory, so a rule kept in this file could only
+// ever be copied to reach it — and a copied rule is what would let
 // `POST /memories/purge` ship with no key gate while the docs said it was
 // refused.
