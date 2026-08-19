@@ -1074,6 +1074,15 @@ jobs:
       # loudly: detection genuinely cannot cover it, so the next deploy of this
       # half has to be forced by hand. Best-effort throughout — a failed marker
       # write must not mask the failure that triggered the rollback.
+      #
+      # Deliberately NOT conditioned on the `vercel rollback` above succeeding,
+      # even though that step swallows its own failure. Restoring anyway leaves
+      # the marker naming a commit OLDER than what the domain serves, which
+      # over-reports the web half on the next merge — a redundant deploy. Gating
+      # on the rollback would instead leave it on this run's commit, and the
+      # manual rollback that step's warning demands would then make it name
+      # something the domain no longer serves — the skip-a-half direction. Of the
+      # two, restore unconditionally.
       - name: Restore the promoted-web marker to what the domain serves again
         if: always()
         env:
