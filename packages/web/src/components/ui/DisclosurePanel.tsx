@@ -102,7 +102,13 @@ export function DisclosurePanel({ open, id, children, className = '' }: Disclosu
   // this size that is a real regression for keyboard users, and an invisible
   // one for everyone else, which is how it survives review. Tracked in state
   // rather than poked onto the node so the two directions cannot disagree.
-  const [settled, setSettled] = useState(false);
+  // Seeded from the MOUNT-time `open`, not from `false`: `initial={false}` on
+  // the `AnimatePresence` below suppresses the entrance for a panel that is
+  // already open on first render — the row editor seeds itself open — so
+  // `onAnimationComplete` never fires for it and a `false` seed would leave
+  // `overflow: hidden` on for good. Nothing is animating in that case, so
+  // there is nothing to clip.
+  const [settled, setSettled] = useState(open);
   useEffect(() => {
     if (!open) setSettled(false);
   }, [open]);
