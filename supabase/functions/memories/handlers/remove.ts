@@ -116,6 +116,19 @@ export async function handleRemove(
     );
   }
 
+  // Personal scope+key: route through memory_delete (00071) so a scoped key
+  // manages any writer's row within its allowlist — symmetric with the org
+  // branch above and the MCP `memory.delete` tool — and so the RPC's `existed`
+  // distinguishes 403 (present, not this token's to remove) from 404. The RPC
+  // is keyed on (scope,key) and has no id parameter, so the `/:id` form below
+  // stays a direct own-row update.
+  if (!idParam && scopeParam && keyParam) {
+    return await removePersonalByKey(
+      { tracedDb, db, auth, span, cors },
+      { scope: scopeParam, key: keyParam, force, req },
+    );
+  }
+
   // Hard delete removes the row outright, so it must NOT be constrained to
   // non-archived rows the way the soft-archive is — purging an already-archived
   // memory is the main reason a caller asks for force.
@@ -268,6 +281,75 @@ async function removeOrgOwned(
       resourceType: 'memory',
       target: key,
       metadata: { scope, key, force, org },
+    },
+    auditUserId(auth),
+  );
+
+  return noContent(cors);
+}
+
+interface PersonalRemoveInput {
+  scope: string;
+  key: string;
+  force: boolean;
+  req: Request;
+}
+
+/**
+ * The personal `scope+key` branch. Calls `memory_delete` with `p_org_slug` null
+ * and the calling key's scoping, so a scoped key manages any writer's row within
+ * its allowlist (00071) and an unscoped key stays own-rows-only — the same rule
+ * the MCP tool now uses. `existed` turns a 0-row result into a 403 (present but
+ * not this token's to remove) rather than a 404 that sends the caller hunting a
+ * data bug.
+ */
+async function removePersonalByKey(
+  { tracedDb, db, auth, span, cors }: OrgRemoveCtx,
+  { scope, key, force, req }: PersonalRemoveInput,
+): Promise<Response> {
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+
+  // Everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
+
+  const { data, error } = await tracedDb
+    .rpc<{ deleted: boolean; archived: boolean; existed: boolean }>('memory_delete', {
+      p_user_id: auth.userId ?? null,
+      p_org_slug: null,
+      p_scope: scope,
+      p_key: key,
+      p_force: force,
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+    })
+    .single();
+
+  if (error) {
+    const mapped = translateDbError(error);
+    if (mapped) return mapped.toResponse(cors);
+    span.error(`DB: ${error.message}`);
+    throw error;
+  }
+
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean } | null;
+  const deleted = row?.deleted === true;
+  const archived = row?.archived === true;
+  span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': archived });
+
+  if (!deleted && !archived) {
+    return row?.existed
+      ? forbidden('This token is not allowed to remove that memory.', cors)
+      : notFound('Memory', cors);
+  }
+
+  await recordAudit(
+    db,
+    {
+      action: deleted ? 'memory.delete' : 'memory.archive',
+      resourceType: 'memory',
+      target: key,
+      metadata: { scope, key, force },
     },
     auditUserId(auth),
   );

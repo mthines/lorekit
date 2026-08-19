@@ -456,84 +456,53 @@ export async function toolDelete(
 
   const tracedDb = createTracedClient(db, span);
 
-  if (org) {
-    // Org-owned delete: role-gated inside the memory_delete RPC (SECURITY
-    // DEFINER) — never a raw service-role .delete()/.update(), which would
-    // bypass the role gate entirely since this client bypasses RLS.
-    const { data, error } = await tracedDb
-      .rpc('memory_delete', {
-        p_user_id: userId,
-        p_org_slug: org,
-        p_scope: scope,
-        p_key: key,
-        p_force: force,
-        // The calling key's restriction (00068/00069). This RPC picks its own
-        // rows, so there is no query for the transport to filter, and the
-        // dispatcher's refusal runs on the service-role client and is advisory
-        // — without these the org branch enforced the owner's ROLE and nothing
-        // about the key.
-        p_key_scopes: keyScoping?.scopes ?? [],
-        p_key_org_access: keyScoping?.orgAccess ?? 'all',
-        p_key_org_ids: keyScoping?.orgIds ?? [],
-      })
-      .single();
-    if (error) {
-      const translated = translateOrgPermissionError(error);
-      throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
-    }
-    const row = data as { deleted: boolean; archived: boolean };
-    span.setAttributes({ 'lorekit.result.deleted': row.deleted, 'lorekit.result.archived': row.archived });
-    if (row.deleted || row.archived) {
-      await recordAudit(
-        db,
-        {
-          action: row.deleted ? 'memory.delete' : 'memory.archive',
-          resourceType: 'memory',
-          target: key,
-          metadata: { scope, key, force, org },
-        },
-        userId,
-      );
-    }
-    return { deleted: row.deleted, archived: row.archived };
+  // Both the org and the personal branch go through the memory_delete RPC
+  // (SECURITY DEFINER) — never a raw service-role .delete()/.update(), which
+  // would bypass the role/ownership gate since this client bypasses RLS
+  // (00046). The RPC resolves the actor, applies the key's scope allowlist and
+  // org tenancy, lets a SCOPED key manage any writer's row within its scopes,
+  // and returns `existed` so a 0-row removal is reported as `not_found` vs
+  // `forbidden` rather than a silent false.
+  const { data, error } = await tracedDb
+    .rpc('memory_delete', {
+      p_user_id: userId,
+      p_org_slug: org ?? null,
+      p_scope: scope,
+      p_key: key,
+      p_force: force,
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
+    })
+    .single();
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
   }
-
-  if (force) {
-    let query = tracedDb.from('memories').delete({ count: 'exact' }).eq('scope', scope).eq('key', key);
-    if (userId) query = query.eq('user_id', userId);
-    const { error, count } = await query;
-    if (error) throw new Error(error.message);
-    const deleted = (count ?? 0) > 0;
-    span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': false });
-    if (deleted) {
-      await recordAudit(
-        db,
-        { action: 'memory.delete', resourceType: 'memory', target: key, metadata: { scope, key, force: true } },
-        userId,
-      );
-    }
-    return { deleted, archived: false };
-  }
-
-  let query = tracedDb
-    .from('memories')
-    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key)
-    .is('archived_at', null);
-  if (userId) query = query.eq('user_id', userId);
-  const { error, count } = await query;
-  if (error) throw new Error(error.message);
-  const archived = (count ?? 0) > 0;
-  span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
-  if (archived) {
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean };
+  span.setAttributes({
+    'lorekit.result.deleted': row.deleted,
+    'lorekit.result.archived': row.archived,
+    'lorekit.result.existed': row.existed,
+  });
+  if (row.deleted || row.archived) {
     await recordAudit(
       db,
-      { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
+      {
+        action: row.deleted ? 'memory.delete' : 'memory.archive',
+        resourceType: 'memory',
+        target: key,
+        metadata: { scope, key, force, ...(org ? { org } : {}) },
+      },
       userId,
     );
+    return { deleted: row.deleted, archived: row.archived };
   }
-  return { deleted: false, archived };
+  return {
+    deleted: false,
+    archived: false,
+    reason: row.existed ? ('forbidden' as const) : ('not_found' as const),
+  };
 }
 
 export async function toolSearch(
@@ -607,14 +576,13 @@ export async function toolArchive(
   params: Params,
   userId: string | null,
   span: Span,
-  // Unused, and that is a decision rather than an oversight — marked the way
-  // toolPurge marks its own. This tool and toolRestore address a memory by a
-  // NAMED scope, so the dispatcher's early refusal is the whole key gate: a
-  // scope outside the allowlist never reaches here. Unlike the reads there is
-  // no result set to narrow, and unlike memory_write / memory_delete there is
-  // no RPC underneath to hand the restriction to — the mutation is a direct
-  // query keyed on the scope that was already checked.
-  _keyScoping?: KeyRestriction,
+  // Handed to the memory_delete RPC (p_force=false) so a SCOPED key can archive
+  // any writer's row within the scopes it is scoped to, and so an unscoped key
+  // and a non-service-role caller stay pinned to their own rows — the same
+  // gate memory.delete uses. Routing through the RPC, rather than a raw
+  // service-role .update(), is what keeps that authorization decision in one
+  // SECURITY DEFINER place (00046).
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -623,25 +591,35 @@ export async function toolArchive(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb
-    .from('memories')
-    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key)
-    .is('archived_at', null);
-  if (userId) query = query.eq('user_id', userId);
-  const { error, count } = await query;
-  if (error) throw new Error(error.message);
-  const archived = (count ?? 0) > 0;
-  span.setAttributes({ 'lorekit.result.archived': archived });
-  if (archived) {
+  const { data, error } = await tracedDb
+    .rpc('memory_delete', {
+      p_user_id: userId,
+      p_org_slug: null,
+      p_scope: scope,
+      p_key: key,
+      p_force: false,
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
+    })
+    .single();
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean };
+  span.setAttributes({ 'lorekit.result.archived': row.archived, 'lorekit.result.existed': row.existed });
+  if (row.archived) {
     await recordAudit(
       db,
       { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
     );
+    return { archived: true };
   }
-  return { archived };
+  // Nothing archived: `existed` tells the caller which no-op this was so a
+  // permission/scope miss no longer masquerades as "not found".
+  return { archived: false, reason: row.existed ? ('forbidden' as const) : ('not_found' as const) };
 }
 
 /** List archived memories for a scope. */
@@ -680,9 +658,11 @@ export async function toolRestore(
   params: Params,
   userId: string | null,
   span: Span,
-  // Named-scope mutation with no result set and no RPC underneath — the same
-  // recorded decision as toolArchive above. The dispatcher's refusal is the gate.
-  _keyScoping?: KeyRestriction,
+  // Handed to the restore_memory RPC (00072) so restore is symmetric with
+  // archive/delete: a scoped key restores any writer's row within its
+  // allowlist, an unscoped key stays own-rows-only, and the auth decision lives
+  // in one SECURITY DEFINER place rather than a raw service-role .update().
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -691,25 +671,33 @@ export async function toolRestore(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb
-    .from('memories')
-    .update({ archived_at: null }, { count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key)
-    .not('archived_at', 'is', null);
-  if (userId) query = query.eq('user_id', userId);
-  const { error, count } = await query;
-  if (error) throw new Error(error.message);
-  const restored = (count ?? 0) > 0;
-  span.setAttributes({ 'lorekit.result.restored': restored });
-  if (restored) {
+  const { data, error } = await tracedDb
+    .rpc('restore_memory', {
+      p_user_id: userId,
+      p_scope: scope,
+      p_key: key,
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
+    })
+    .single();
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+  const row = data as { restored: boolean; existed: boolean };
+  span.setAttributes({ 'lorekit.result.restored': row.restored, 'lorekit.result.existed': row.existed });
+  if (row.restored) {
     await recordAudit(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
     );
+    return { restored: true };
   }
-  return { restored };
+  // `existed` here means an archived row was present but this call restored
+  // nothing (forbidden), vs no restorable row at all (not_found).
+  return { restored: false, reason: row.existed ? ('forbidden' as const) : ('not_found' as const) };
 }
 
 /**
