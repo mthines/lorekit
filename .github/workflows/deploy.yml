@@ -678,6 +678,9 @@ jobs:
       # merges that do not touch it), so rollback-web-production cannot derive it
       # from HEAD~1 the way the API half can.
       previous_marker: ${{ steps.prev_marker.outputs.sha }}
+      # Whether `previous_marker` is an ANSWER or an absence of one. An empty
+      # `previous_marker` with this false means "unknown", not "never promoted".
+      previous_marker_read: ${{ steps.prev_marker.outputs.read_ok }}
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -694,14 +697,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
+      # An empty read has two very different meanings — "no marker exists, nothing
+      # was ever promoted" and "the read failed" — and they must not collapse into
+      # one value: the first is an answer, the second is ignorance, and the
+      # rollback acts on them differently. `git/matching-refs` is what separates
+      # them: it answers 200 with an EMPTY ARRAY when nothing matches, so a
+      # non-zero exit means a real failure rather than an absent tag (`git/ref`
+      # 404s for both). Retried, because an unreadable marker costs this run its
+      # ability to advance one at all.
       - name: Capture the previously promoted marker
         id: prev_marker
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.WEB_DEPLOYED_TAG }}
         run: |
-          PREV="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null || true)"
+          PREV=""; READ_OK=false
+          for attempt in 1 2 3; do
+            if REFS="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG}" 2>/dev/null)"; then
+              PREV="$(printf '%s' "$REFS" | jq -r --arg r "refs/tags/${TAG}" 'map(select(.ref == $r)) | .[0].object.sha // ""')"
+              READ_OK=true
+              break
+            fi
+            echo "::notice::could not read ${TAG} (attempt ${attempt}/3)"
+            sleep 3
+          done
           echo "sha=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "read_ok=${READ_OK}" >> "$GITHUB_OUTPUT"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -743,7 +764,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
           TAG: ${{ env.WEB_DEPLOYED_TAG }}
+          READ_OK: ${{ steps.prev_marker.outputs.read_ok }}
         run: |
+          # Never advance a marker whose previous value was not captured: the
+          # rollback restores that value, so overwriting it here would make the
+          # old commit unrecoverable. Leaving the marker where it is costs one
+          # redundant web deploy on the next merge — the recoverable error — and
+          # keeps the marker correct if this run ends up rolled back instead.
+          if [ "$READ_OK" != true ]; then
+            echo "::warning::not advancing ${TAG} — its previous value could not be read, so a rollback could not restore it. The next merge redeploys this half from the older baseline."
+            exit 0
+          fi
           if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
                -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
@@ -1089,7 +1120,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.WEB_DEPLOYED_TAG }}
           PREV: ${{ needs.promote-web-production.outputs.previous_marker }}
+          READ_OK: ${{ needs.promote-web-production.outputs.previous_marker_read }}
         run: |
+          # Unreadable capture → promote-web-production declined to advance the
+          # marker, so it still names what the domain has gone back to. Nothing to
+          # restore, and writing anything here would be a guess.
+          if [ "$READ_OK" != true ]; then
+            echo "- Web marker \`${TAG}\` left alone — its previous value was never read, so this run never advanced it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ -n "$PREV" ]; then
             if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
                  -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||

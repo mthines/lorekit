@@ -350,9 +350,9 @@ The tag names are declared once, at `deploy.yml`'s top level
 |-------|------|------|
 | `changes` | `Resolve the deploy scope` | Runs `scripts/resolve-deploy-scope.mjs` — reads both markers, picks each half's baseline, writes `api` / `web` |
 | `deploy-production` | `Record the deployed commit` | Advances `deployed/api-production` to `github.sha` |
-| `promote-web-production` | `Capture the previously promoted marker` → `Record the deployed commit` | Exposes the marker's OLD value as the `previous_marker` output, then advances it to `github.sha` |
+| `promote-web-production` | `Capture the previously promoted marker` → `Record the deployed commit` | Exposes the marker's OLD value as `previous_marker` (+ `previous_marker_read`), then advances it to `github.sha` — unless that read failed |
 | `rollback-production` | `Point the API marker at the commit just rolled back to` | Repoints `deployed/api-production` at `HEAD~1` — but only if this run advanced it |
-| `rollback-web-production` | `Restore the promoted-web marker…` | Repoints `deployed/web-production` at `previous_marker`, or drops it with a `::warning::` when there was no previous promotion |
+| `rollback-web-production` | `Restore the promoted-web marker…` | Repoints `deployed/web-production` at `previous_marker`; drops it with a `::warning::` when nothing was ever promoted; leaves it untouched when the capture failed |
 
 Four properties of that wiring are load-bearing — do not "tidy" any of them away:
 
@@ -371,7 +371,12 @@ Four properties of that wiring are load-bearing — do not "tidy" any of them aw
   these checkouts are shallow, and force-pushing a moving tag from a shallow
   clone goes wrong quietly. A `PATCH` alone 404s while the marker does not exist
   yet — a first deploy, or after a web rollback with nothing to restore dropped
-  it — and that 404 would vanish into `|| true`.
+  it.
+- **No marker write is fire-and-forget.** Every one of them — both records, both
+  repoints, the drop — branches on whether the write landed and emits a
+  `::warning::` naming the tag to move by hand when it did not. None of them can
+  fail the step, so a marker hiccup never masks the deploy failure that triggered
+  a rollback, but none of them reports a move that never happened either.
 - **Each of the four jobs holds `permissions: contents: write`** for its own
   marker and nothing else; the workflow's top-level default stays `{}`.
 
@@ -388,15 +393,26 @@ cannot itself fail. Past that gate it reads the marker, because a successful
 already warned about, and it is left alone. An **unreadable** marker is read as
 "it landed", never as "it did not": the two mistakes are not symmetric. Leaving a
 marker naming `github.sha` while production serves `HEAD~1` is the skip-a-half
-incident; repointing one that was already older costs a redundant deploy. The web
-half needs no equivalent guard: it restores the value captured *before* this run
-wrote anything, so it can only ever move the marker back or leave it where it is.
+incident; repointing one that was already older costs a redundant deploy.
 
-Both rollback steps are `if: always()` and best-effort — a failed marker write
-must not mask the deploy failure that triggered the rollback — but, like the two
-record steps, they say so: a repoint that does not land emits a `::warning::`
-naming the tag to move by hand, rather than reporting a restore that never
-happened.
+**The web half never advances a marker it could not first read.** Its rollback
+restores a value captured *before* this run wrote anything, so that capture is
+the only record of where the domain was. An empty capture has two meanings —
+nothing was ever promoted, or the read failed — and collapsing them loses the
+previous commit: the rollback would *drop* the marker on a transient API error,
+and the next merge would then diff this half from the rolled-back commit and
+could skip it. So the capture uses `git/matching-refs`, which answers `200` with
+an empty array for an absent tag (`git/ref` 404s for both), retries, and reports
+`previous_marker_read` alongside the value. When that read failed,
+`Record the deployed commit` declines to advance the marker at all and warns —
+leaving it naming the commit the domain would return to, which is *already* the
+right answer if this run is rolled back, and one redundant web deploy on the next
+merge if it is not. The rollback then has nothing to restore and says so.
+
+The asymmetry with the API half is deliberate: `rollback-production` derives its
+target from `HEAD~1`, which is local and cannot fail, so it can always undo an
+advance. `rollback-web-production` cannot, so its job is not to undo well but to
+avoid advancing what it could not undo.
 
 `ci.yml` guards the decision on every PR that touches it: a `deploy` path filter
 over
