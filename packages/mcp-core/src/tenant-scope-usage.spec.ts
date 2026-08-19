@@ -139,6 +139,58 @@ describe('key-scope usage guard (REST read family)', () => {
 });
 
 /**
+ * Drift guard: `applyRestTenantScope` must build its ownership disjunct from
+ * the SHARED fragment, and must carry the tenancy exclusion on both branches.
+ *
+ * The narrowing arithmetic itself is behaviourally tested on the `mcp-core`
+ * copy (`tenant-scope.spec.ts`) and byte-pinned to the edge mirror by
+ * `edge-parity.spec.ts`, so what is left uncovered is this file's PLUMBING:
+ * whether the REST helper actually reaches for that arithmetic. It cannot be
+ * covered by importing it — `_shared/api/tenant.ts` pulls in Deno-only
+ * `otel.ts` — so it is pinned here, at the expression level rather than by
+ * name.
+ *
+ * Both branches matter and they fail differently. The widened branch would
+ * silently regress to a bare `user_id.eq.` disjunct, re-admitting the owner's
+ * own rows in orgs the key was never pointed at. The personal-only branch keeps
+ * its `.eq()` shape deliberately (an unrestricted caller must emit exactly what
+ * it always did), so its exclusion is a SEPARATE `.or('org_id.is.null')` line
+ * that is trivially deletable without breaking a type or another spec — which
+ * is precisely why it is pinned, and why the anti-vacuity assertion below
+ * refuses a bare `user_id.eq.${` interpolation anywhere in the file.
+ */
+const restTenantSource = () =>
+  readFileSync(path.resolve(here, '../../../supabase/functions/_shared/api/tenant.ts'), 'utf8');
+
+describe('tenancy exclusion guard (REST helper)', () => {
+  it('builds the ownership disjunct from the shared ownRowsFragment', () => {
+    expect(restTenantSource()).toMatch(/ownRowsFragment\(\s*userId\s*,\s*key\s*\)/);
+  });
+
+  it('never hand-rolls the ownership disjunct alongside it', () => {
+    // The whole point of importing the fragment: a second copy of the rule out
+    // here is the drift this module claims to have removed. `ownRowsFragment`
+    // is the ONLY thing allowed to interpolate a user id into a filter string.
+    expect(restTenantSource()).not.toMatch(/user_id\.eq\.\$\{/);
+  });
+
+  it('excludes org rows on the personal-only branch too', () => {
+    // The `.eq()` branch is reached under `personal`, and under `selected`
+    // whose intersection with the caller's memberships is empty. Without this
+    // second filter the owner's own org rows come back on both.
+    expect(restTenantSource()).toMatch(
+      /restrictsTenancy\(key\)\)\s*out\s*=\s*out\.or\('org_id\.is\.null'\)/,
+    );
+  });
+
+  it('imports both helpers from the single mirrored module', () => {
+    const src = restTenantSource();
+    expect(src).toMatch(/ownRowsFragment,[\s\S]*?from '\.\.\/tenant-scope\.ts'/);
+    expect(src).toMatch(/restrictsTenancy,[\s\S]*?from '\.\.\/tenant-scope\.ts'/);
+  });
+});
+
+/**
  * Drift guard: the RPC-BACKED per-scope reads must PASS `p_key_scopes`.
  *
  * These handlers are excluded from the list above for a real reason — they
