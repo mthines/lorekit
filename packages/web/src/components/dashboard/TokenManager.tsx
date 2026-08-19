@@ -313,7 +313,11 @@ function TokenRow({
       // normalises what it stored, so echoing the draft back would show the
       // user their request rather than the result.
       onScopingChange(token.id, result.scoping);
-      setEditing(false);
+      // `closeEditor(true)`, not a bare `setEditing(false)`: a successful save
+      // unmounts the panel exactly like Cancel and Escape do, so it owes the
+      // keyboard user the same focus return — otherwise focus lands on `<body>`
+      // and the next Tab restarts from the top of the page.
+      closeEditor(true);
     });
   }
 
