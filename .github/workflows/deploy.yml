@@ -950,30 +950,41 @@ jobs:
       # rolled-back commit itself. So repoint it at HEAD~1, exactly the function
       # code this job just redeployed.
       #
-      # But undo ONLY a marker this run advanced, which is what the $CUR check
-      # below establishes. On the deploy-production=FAILURE arm nothing advanced
-      # it: it still names the last commit this half actually deployed, which can
-      # be many merges back (the API half is skipped on merges that do not touch
-      # it, and a failed both-halves merge leaves it behind). Writing HEAD~1 there
-      # would move it FORWARD — over migrations `db push` never applied and
-      # functions production never received — and the next merge could then skip
-      # an API half production lacks. That is the incident this whole mechanism
-      # exists to prevent. Leaving it alone is correct there: it already names
-      # what production is serving.
+      # But undo ONLY a marker this run advanced. On the deploy-production=FAILURE
+      # arm nothing advanced it: it still names the last commit this half actually
+      # deployed, which can be many merges back (the API half is skipped on merges
+      # that do not touch it, and a failed both-halves merge leaves it behind).
+      # Writing HEAD~1 there would move it FORWARD — over migrations `db push`
+      # never applied and functions production never received — and the next merge
+      # could then skip an API half production lacks. That is the incident this
+      # whole mechanism exists to prevent. Leaving it alone is correct there: it
+      # already names what production is serving. `needs` answers that locally and
+      # cannot itself fail, so it is the gate rather than anything read at runtime.
       #
       # Best-effort throughout: a failed marker write must not mask the deploy
       # failure that triggered the rollback.
       - name: Point the API marker at the commit just rolled back to
-        if: always()
+        if: always() && needs.deploy-production.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.API_DEPLOYED_TAG }}
           SHA: ${{ github.sha }}
         run: |
-          CUR="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null || true)"
-          if [ "$CUR" != "$SHA" ]; then
-            echo "- API marker \`${TAG}\` left at \`${CUR:-none}\` — this run never advanced it, so it still names what production deployed." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          # A successful deploy-production proves its record step RAN; it does not
+          # prove the API write LANDED, since that step warns instead of failing.
+          # Read the marker to tell those apart — and read an UNREADABLE marker as
+          # "it landed", never as "it did not". The two mistakes are not
+          # symmetric: leaving a marker that names $SHA while production serves
+          # HEAD~1 is the skip-a-half incident, whereas repointing one that was
+          # already older costs a redundant deploy of an unchanged half. Doubt
+          # resolves toward the redundant deploy, as it does everywhere else here.
+          if CUR="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null)"; then
+            if [ "$CUR" != "$SHA" ]; then
+              echo "- API marker \`${TAG}\` left at \`${CUR:-none}\` — the record step never landed it, so it already names what production deployed." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          else
+            echo "::warning::could not read ${TAG} before repointing it — assuming deploy-production advanced it to ${SHA} and moving it back, which is the fail-open direction."
           fi
           PREV="$(git rev-parse HEAD~1)"
           if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \

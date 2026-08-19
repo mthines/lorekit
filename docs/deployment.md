@@ -375,14 +375,20 @@ Four properties of that wiring are load-bearing — do not "tidy" any of them aw
 - **Each of the four jobs holds `permissions: contents: write`** for its own
   marker and nothing else; the workflow's top-level default stays `{}`.
 
-**`rollback-production` undoes only a marker this run advanced.** It reads the
-marker first and repoints it at `HEAD~1` only when it already names
-`github.sha` — i.e. only when `deploy-production` ran all the way through its
-record step. On the `deploy-production` **failure** arm nothing advanced it: it
-still names the last commit this half actually deployed, which can be many merges
-back, so writing `HEAD~1` would move it FORWARD over migrations `db push` never
-applied and functions production never received — and the next merge could then
-skip an API half production lacks. Leaving it alone is correct there. The web
+**`rollback-production` undoes only a marker this run advanced.** On the
+`deploy-production` **failure** arm nothing advanced it: it still names the last
+commit this half actually deployed, which can be many merges back, so writing
+`HEAD~1` would move it FORWARD over migrations `db push` never applied and
+functions production never received — and the next merge could then skip an API
+half production lacks. So the step is gated on
+`needs.deploy-production.result == 'success'`, which answers that locally and
+cannot itself fail. Past that gate it reads the marker, because a successful
+`deploy-production` proves its record step *ran*, not that the API write
+*landed* — a marker that does not name `github.sha` is one whose write was
+already warned about, and it is left alone. An **unreadable** marker is read as
+"it landed", never as "it did not": the two mistakes are not symmetric. Leaving a
+marker naming `github.sha` while production serves `HEAD~1` is the skip-a-half
+incident; repointing one that was already older costs a redundant deploy. The web
 half needs no equivalent guard: it restores the value captured *before* this run
 wrote anything, so it can only ever move the marker back or leave it where it is.
 
