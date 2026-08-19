@@ -25,6 +25,7 @@ jobs:
   #    `code`   — any non-docs file touched → gates the `check` job.
   #    `api`    — API/backend paths → gates the (expensive) `integration` job.
   #    `plugin` — Claude-plugin paths → gates the `plugin` smoke job.
+  #    `deploy` — the deploy pipeline + its scope resolver → gates `deploy-scope`.
   #
   #    A skipped required check is treated as passing by branch protection, so
   #    docs- or web-only PRs sail through without booting any toolchain.
@@ -39,6 +40,7 @@ jobs:
       plugin: ${{ steps.filter.outputs.plugin }}
       web: ${{ steps.filter.outputs.web }}
       migrations: ${{ steps.filter.outputs.migrations }}
+      deploy: ${{ steps.filter.outputs.deploy }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -113,6 +115,16 @@ jobs:
             echo "migrations=true" >> "$GITHUB_OUTPUT"
           else
             echo "migrations=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Deploy-scope gate: the resolver that decides which halves deploy.yml
+          # promotes to production, its test, and the two workflows that consume
+          # it. `scripts/**` is outside `nx affected`, so the `check` job never
+          # runs this test — without this job the decision that gates production
+          # would ship unexercised.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)'; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── Typecheck + Test + Lint (only affected packages) ─────────────────────────
@@ -350,6 +362,35 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: node scripts/check-migration-order.mjs "$BASE"
 
+  # ── Deploy-scope resolver — the decision that gates production ───────────────
+  #    deploy.yml's `changes` job diffs each half (API / web) against the commit
+  #    that half is actually SERVING, not against the push. A wrong `false` there
+  #    promotes one half past the other — it did once, and every production Lore
+  #    Explorer read answered 405 until the web was rolled back by hand. So the
+  #    decision lives in a module with a test rather than in a shell block, and
+  #    that test runs here: `scripts/**` is outside `nx affected`, so the `check`
+  #    job would never execute it. Same treatment, same reason, as the migration
+  #    guards above.
+  deploy-scope:
+    name: Deploy-scope resolver (unit)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.deploy == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # node's built-in runner, zero deps — no install step needed.
+      - name: Unit-test the deploy-scope resolver
+        run: node --test scripts/resolve-deploy-scope.test.mjs
+
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
   #    Functions) and asserts an authenticated MCP tools/list returns 200. That
@@ -577,7 +618,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order]
+    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate
