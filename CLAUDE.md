@@ -422,7 +422,7 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory-cap trigger (`enforce_memory_cap`) + rate-limit RPC (`lorekit_check_rate_limit`) + `user_limits`/`lorekit_get_limit` config source |
 | `packages/web/src/lib/api/` | The dashboard's client for LoreKit's OWN REST API (`restFetch`, typed wrappers from `@lorekit/schemas`) |
-| `packages/web/src/lib/filters.ts` | Pure model for the Lore Explorer filter bar (OR within a dimension, AND across; `filtersToQueryParams` is the ONE wire seam) |
+| `packages/web/src/lib/filters.ts` | Pure model for the Lore Explorer filter bar (OR within a dimension, AND across; `filtersToBody` is the wire seam the Explorer uses, `filtersToQueryParams` the GET encoding kept for query-string callers) |
 | `packages/web/src/lib/dash0-rum.ts` | The SINGLE browser RUM init path for `@dash0/sdk-web` (init guard, endpoint validator, identity) |
 
 See [`docs/key-files.md`](./docs/key-files.md) for the remaining ~111 files:
@@ -439,7 +439,7 @@ All `lorekit.*` spans carry:
 - `lorekit.scope.type` — bounded: `global|project|repo|branch|mixed|invalid`, and OMITTED when the operation carries no scope. Resolved by the shared `scope-type-attribute.ts` (mirrored into `_shared/`), never by an inline `split('::')` in a transport
 - `lorekit.key` — lesson key
 - `service.namespace` — always `lorekit`
-- `deployment.environment.name` — `production|preview|development|local` (from `VERCEL_ENV`), plus the synthetic `test` stamped on smoke/CI runs (the pipelines set `DEPLOYMENT_ENVIRONMENT=test`; the edge also honours it per-request via the `X-LoreKit-Deployment-Environment` header, allowlisted to `test`) — see [docs/otel.md](./docs/otel.md) → "Smoke / test runs are tagged"
+- `deployment.environment.name` — `production|preview|development|local` (on `web`, from `VERCEL_ENV` **cross-checked against `NODE_ENV`**, never `VERCEL_ENV` alone — see Key decisions), plus the synthetic `test` stamped on smoke/CI runs (the pipelines set `DEPLOYMENT_ENVIRONMENT=test`; the edge also honours it per-request via the `X-LoreKit-Deployment-Environment` header, allowlisted to `test`) — see [docs/otel.md](./docs/otel.md) → "Smoke / test runs are tagged"
 
 Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + `lorekit.scope.type`.
 
@@ -482,6 +482,7 @@ their rationale inline. **Do not relitigate these.**
 - `instrumentation.ts` must be `async function register()` with `NEXT_RUNTIME === 'nodejs'` guard
 - **Browser RUM initialises in `lib/dash0-rum.ts`, identity set at INIT** — every event carries a `user.id` (`anon:<uuid>` until login); never simplify back to a login-only `identify()`. [rationale](./docs/decisions.md#browser-rum-init--identity-at-init)
 - **`OTEL_SERVICE_NAME` must never decide a component's name** — `register()` overwrites it with the code-declared name and warns on conflict. [rationale](./docs/decisions.md#otel_service_name-must-never-decide-a-components-name)
+- **`VERCEL_ENV` must never decide `deployment.environment.name` alone** — always cross-checked against `NODE_ENV` in one shared pure module (`otel-deployment-env.ts`), so a dev server can never report `production`/`preview`; `VERCEL` is deliberately not also gated on. [rationale](./docs/decisions.md#vercel_env-must-never-decide-the-deployment-environment-alone)
 - **Caller identity belongs on the ROOT request span** — `createRouter` sets `auth.type`/`auth.user_id` on the REST root span (as MCP does); enables web↔CLI↔MCP correlation by account, no fingerprinting. [rationale](./docs/decisions.md#caller-identity-belongs-on-the-root-request-span)
 - **Edge Function is self-contained Deno** — no cross-package/bare imports; schemas mirrored into `_shared/schemas/`, `npm:` specifiers only; never re-add an import map. [rationale](./docs/decisions.md#edge-function-is-self-contained-deno-no-import-map)
 - NX 22.4.0 — matches `gw-tools` exactly; bump both together
@@ -502,6 +503,7 @@ their rationale inline. **Do not relitigate these.**
 - **Hook scope ordering unified, project scope IS injected** — `readOrder` = `[project, branch, repo, global]`, matching the read commands' `scopeList`. [rationale](./docs/decisions.md#hook-scope-ordering-unified-project-scope-injected)
 - **Hook precedence + match is single source of truth with read commands** — `resolvePrecedence`/`matchesQuery` in dependency-free `lessons-pure.mjs`. [rationale](./docs/decisions.md#hook-precedence--match-is-single-source-of-truth-with-read-commands)
 - **CI/CD is split** — `ci.yml` verifies before merge, `deploy.yml` promotes the verified commit (preview→prod); don't re-merge or re-add a deploy-time test job. [rationale](./docs/decisions.md#cicd-is-split-ciyml-verifies-deployyml-promotes)
+- **The deploy SCOPE is measured against what is deployed** — each half is diffed against the SHA it last reached production at (`deployed/api-production` / `deployed/web-production`), never against the previous commit; a rollback repoints its half's tag at what production went back to, and never leaves it naming a commit production dropped (the one deletion is `rollback-web-production` when there was no previous promotion to restore, which warns loudly); `rollback-production` repoints only a marker that run advanced; the tags fail open; and the decision is the unit-tested `scripts/resolve-deploy-scope.mjs`, called by `deploy.yml`'s `changes` job and unit-tested by ci.yml's `deploy-scope` job. Never reinstate the single-push baseline: it let the web be promoted ahead of an API that had never deployed. [rationale](./docs/decisions.md#cicd-is-split-ciyml-verifies-deployyml-promotes)
 - **Smoke tests clean up after themselves + a sweeper** — hard-delete/purge; name-pattern sweep behind four guards; never revert to soft delete / id tracking / a permissive pattern. [rationale](./docs/decisions.md#smoke-tests-clean-up-after-themselves)
 - **Invite-details modal** — SECURITY DEFINER `lorekit_invite_org_details` gated on `lorekit_invite_addressed_to_caller`; Tier-A fields only, never leaks existence. [rationale](./docs/decisions.md#invite-details-modal)
 - **Docs are a PUBLIC MDX section at `/docs`** — single source `DOCS_SECTIONS`; full-text search derived from the same MDX files. [rationale](./docs/decisions.md#docs-are-a-public-mdx-section-at-docs)

@@ -133,7 +133,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 
 ## Scope format
 
-`::` is the only valid separator. Segments are lowercased on ingest.
+`::` is the only valid separator. The MCP tools lowercase every segment on ingest; the REST write path (`POST /memories`) stores the scope verbatim, so `memories.scope` can hold mixed case and a filter matches it exactly.
 
 | Type | Format | Example |
 |------|--------|---------|
@@ -143,6 +143,12 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | Branch | `branch::{owner}/{repo}::{branch}` | `branch::mthines/gw-tools::feat/x` |
 
 Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400; a segment containing a further `::` → 400 (`::` is reserved as the separator).
+
+The same grammar applies when a scope is used as a FILTER, not just when it is written. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all answer **400** for an ungrammatical `?scope=`. The body-transport forms `POST /memories/list`, `POST /memories/activity` and `POST /memories/facets` answer **400** for the same value in their JSON body: each decodes into the same reader as its `GET` twin, so the two transports cannot disagree about which scopes are legal. They previously passed the raw value through, so a bad scope matched nothing and the route answered `200` with an empty page (or, on delete/restore, `404`) — the same input getting a 400 from one route and a cheerful empty result from the others. A scope filter is the question being asked, so a malformed one is rejected rather than answered with a different question's result.
+
+On those routes a filter carrying leading or trailing whitespace is a **400** as well: the grammar check trims before it looks, but the predicate does not, so the padded form could only ever match nothing. `GET /memories/read-activity` is the exception — it normalises the filter before comparing, so it trims the padding and answers **200**.
+
+On the five `/memories` routes the filter is validated but **not** normalised: the write path stores `scope` verbatim over REST, so a filter matches exactly the string that was written. Lowercasing a filter would make a mixed-case row unmatchable by `GET /memories` and undeletable by its natural key. `GET /memories/read-activity` is the deliberate exception — it filters `usage_events`, whose `scope` is lowercased when the event is recorded, so it lowercases the filter to match its own column. The grammar is shared by all six; the case rule follows whichever path wrote the value. The array-valued `scopes` of `POST /memories/search` and `GET /memories/relevant` are not covered by this yet.
 
 ### Scope resolution (read order)
 
@@ -469,6 +475,29 @@ to review what is about to lapse and either let it go or refresh the TTL with `m
 `?archived=true|false` and narrowable with `?facets=tag,trigger`. Use it to discover what can be
 filtered on instead of listing memories and tallying them client-side — the tally is silently
 truncated past the row cap.
+
+### When the filters do not fit a URL (`POST /memories/list`, `/facets`, `/activity`)
+
+Each of those three reads has a POST twin taking the SAME filters in a JSON body:
+
+```bash
+curl -X POST -H "Authorization: Bearer lk_ro_…" -H "Content-Type: application/json" \
+  -d '{"scope":"global","host":["reviewer","aw"],"host_mode":"in","limit":50}' \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories/list"
+```
+
+Reach for these when a dimension carries more values than a query string can hold, or when a
+value contains a comma. The query form joins a dimension's values into one comma-separated
+parameter capped at 2048 characters, so how many values fit depends on how long they happen to
+be, and a comma inside a value is read as a separator. In the body every dimension is a real
+array (`"host": [...]`, with its `host_mode`) bounded by a COUNT — 1000 values of up to 512
+characters each — and a comma is just a character. `archived` and `limit` take their real JSON
+types (`true`, not `"true"`).
+
+Both transports decode to one filter shape server-side and report under the same
+`memory.list` / `memory.facets` / `memory.activity` usage name, so the choice is purely about
+what fits. The GET forms are unchanged and remain the right call for anything link-shaped. The
+body is optional — a bodiless `POST /memories/list` is the unfiltered first page, not an error.
 
 ## Which lore matters right now (`GET /memories/relevant`)
 

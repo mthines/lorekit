@@ -13,14 +13,17 @@
  *
  * | Card    | Endpoint                        | Follows |
  * |---------|---------------------------------|---------|
- * | Written | `GET /memories/activity`        | range + scope + dimension filters, all SERVER-side (migration 00063) |
+ * | Written | `POST /memories/activity`       | range + scope + dimension filters, all SERVER-side (migration 00063) |
  * | Scopes  | the same response               | the same — it counts the returned `rows`, so a selected scope collapses it to 1 |
  * | Read    | `GET /memories/read-activity`   | range + scope SERVER-side (`?scope=`, migration 00058) — NOT the dimension filters |
  * | Expired | `GET /memories/usage`           | range only — **never scope, never filters** |
  *
- * Written and Scopes carry the FULL predicate the list applies (via
- * `filtersToQueryParams`), so the header agrees with the list beneath it. Two
- * honest limitations remain, both surfaced in the UI rather than hidden here:
+ * Written and Scopes go over the BODY transport (`activityPostRequest`) for the
+ * same reason the list does: a filter bar's dimensions are unbounded and a query
+ * string caps each one at 2048 characters. They carry the FULL predicate the
+ * list applies (via `filtersToActivityBody`), so the header agrees with the list
+ * beneath it. Two honest limitations remain, both surfaced in the UI rather than
+ * hidden here:
  *
  * 1. **Read cannot follow the dimension filters.** `usage_events` records a
  *    read's scope (00058) but not the tags/repo of the memories it returned, so a
@@ -32,9 +35,9 @@
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
+import { activityPostRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
 import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
-import type { ActivityQuery } from '@lorekit/schemas/memory';
+import type { ActivityBody } from '@lorekit/schemas/memory';
 import { resolveRange, type BucketUnit, type TimeRange } from '@/lib/time-range';
 
 export interface ExplorerStatsData {
@@ -109,7 +112,7 @@ export function statsWindow(
 
 async function fetchExplorerStats(
   scope: string | null,
-  filters: Partial<ActivityQuery>,
+  filters: Partial<ActivityBody>,
   bucket: BucketUnit,
   since: string,
   until: string,
@@ -123,7 +126,7 @@ async function fetchExplorerStats(
     // the response is aggregated per (bucket, scope) and carries no per-memory
     // tag/agent/repo, so a dimension filter CANNOT be applied client-side — the
     // written/scopes counts have to be narrowed in the RPC to agree with the list.
-    activityRequest(token, { bucket, since, until, ...(scope ? { scope } : {}), ...filters }, signal),
+    activityPostRequest(token, { bucket, since, until, ...(scope ? { scope } : {}), ...filters }, signal),
     // Read follows scope + range ONLY: usage_events has no per-memory dimension,
     // so a label/repo filter is unanswerable for reads (the Read card is
     // scope-level by design). `scope` still goes server-side (00058) because the
@@ -154,7 +157,7 @@ async function fetchExplorerStats(
  */
 export function useExplorerStats(
   scope: string | null,
-  filters: Partial<ActivityQuery>,
+  filters: Partial<ActivityBody>,
   bucket: BucketUnit,
   since: string,
   until: string,

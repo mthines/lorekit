@@ -41,6 +41,7 @@ vi.mock('@dash0/sdk-web', () => {
 const {
   isValidOtlpEndpoint,
   resolveDeploymentEnv,
+  resolveDeploymentEnvResolution,
   buildVcsSignalAttributes,
   initDash0Rum,
   identifyDash0User,
@@ -124,23 +125,73 @@ describe('isValidOtlpEndpoint', () => {
   });
 });
 
-describe('resolveDeploymentEnv', () => {
+// `resolveDeploymentEnvResolution` is the export the production path uses:
+// `initDash0Rum` reads it and warns once when `clamped` is set.
+// `resolveDeploymentEnv` is the name-only wrapper over it, so the matrix is
+// asserted here and the wrapper is pinned to `.name` by a single case below.
+//
+// `NODE_ENV` is part of the input — a non-production build is a dev server
+// whatever `NEXT_PUBLIC_VERCEL_ENV` claims. Vitest runs with `NODE_ENV=test`,
+// so a production build has to be simulated explicitly, or the clamp returns
+// `local` for every input and the assertion holds whatever the VERCEL_ENV
+// mapping does. `vi.stubEnv` is required: `NODE_ENV` is typed read-only by
+// Next's ambient env declarations, so a plain assignment does not typecheck.
+describe('resolveDeploymentEnvResolution', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.each([
     ['production', 'production'],
     ['preview', 'preview'],
     ['development', 'development'],
-  ])('maps NEXT_PUBLIC_VERCEL_ENV=%s to %s', (input, expected) => {
+  ])('maps NEXT_PUBLIC_VERCEL_ENV=%s to %s on a production build', (input, expected) => {
+    vi.stubEnv('NODE_ENV', 'production');
     process.env['NEXT_PUBLIC_VERCEL_ENV'] = input;
-    expect(resolveDeploymentEnv()).toBe(expected);
+    expect(resolveDeploymentEnvResolution()).toEqual({ name: expected, clamped: null });
   });
 
-  it('falls back to local when unset', () => {
+  it('falls back to local when unset, on a production build', () => {
+    vi.stubEnv('NODE_ENV', 'production');
     delete process.env['NEXT_PUBLIC_VERCEL_ENV'];
-    expect(resolveDeploymentEnv()).toBe('local');
+    expect(resolveDeploymentEnvResolution()).toEqual({ name: 'local', clamped: null });
   });
 
-  it('falls back to local for an unrecognised value rather than passing it through', () => {
+  it('falls back to local for an unrecognised value rather than passing it through, on a production build', () => {
+    vi.stubEnv('NODE_ENV', 'production');
     process.env['NEXT_PUBLIC_VERCEL_ENV'] = 'staging';
+    expect(resolveDeploymentEnvResolution()).toEqual({ name: 'local', clamped: null });
+  });
+
+  // The incident, through the browser bundle's own env read. `clamped` is what
+  // makes `initDash0Rum` warn, so it is asserted, not just the name.
+  it.each(['production', 'preview'])(
+    'clamps a pulled NEXT_PUBLIC_VERCEL_ENV=%s on a dev build to local, and reports the clamp',
+    (input) => {
+      vi.stubEnv('NODE_ENV', 'development');
+      process.env['NEXT_PUBLIC_VERCEL_ENV'] = input;
+      expect(resolveDeploymentEnvResolution()).toEqual({ name: 'local', clamped: input });
+    },
+  );
+
+  it('reports `vercel dev` as development and flags no clamp', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    process.env['NEXT_PUBLIC_VERCEL_ENV'] = 'development';
+    expect(resolveDeploymentEnvResolution()).toEqual({ name: 'development', clamped: null });
+  });
+});
+
+describe('resolveDeploymentEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // The wrapper's whole contract: the resolution's name, and nothing else.
+  it('returns the resolution name, dropping the clamp', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    process.env['NEXT_PUBLIC_VERCEL_ENV'] = 'production';
+
+    expect(resolveDeploymentEnvResolution()).toEqual({ name: 'local', clamped: 'production' });
     expect(resolveDeploymentEnv()).toBe('local');
   });
 });

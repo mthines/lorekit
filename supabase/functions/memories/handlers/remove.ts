@@ -4,6 +4,7 @@ import { recordAudit } from '../../_shared/audit.ts';
 import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { DeleteMemoryQuerySchema } from '../../_shared/schemas/memory.ts';
@@ -46,17 +47,41 @@ export async function handleRemove(
 ): Promise<Response> {
   const validated = validateQuery(req, DeleteMemoryQuerySchema, cors);
   if (!validated.ok) return validated.response;
-  const { scope: scopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
+  const { scope: rawScopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
   const force = forceParam === 'true';
   const idParam = params.id;
 
-  const tracedDb = createTracedClient(db, span);
-  const now = new Date().toISOString();
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
   span.setAttributes({
     'lorekit.operation': 'memories.remove',
     'lorekit.delete.force': force,
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
+
+  // `DeleteMemoryQuerySchema.scope` is shape-only ("normalisation happens
+  // downstream" — its own docblock); downstream is here. On a DELETE the stakes
+  // are higher than on a read: an ungrammatical or differently-cased scope
+  // produced a predicate that matched nothing, and the caller was told the
+  // memory did not exist rather than that their scope was wrong.
+  //
+  // Scoped to the natural-key forms, which are the ones that turn `scope` into
+  // a predicate. `DELETE /:id` addresses the row by id and ignores `?scope=`
+  // entirely, so validating it there would 400 on a value the route never
+  // reads — a new rejection this change does not intend and the behaviour-change
+  // list does not claim.
+  let scopeParam: string | undefined;
+  if (!idParam) {
+    try {
+      scopeParam = parseScopeFilter(rawScopeParam);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
+
+  const tracedDb = createTracedClient(db, span);
+  const now = new Date().toISOString();
 
   if (orgParam) {
     return await removeOrgOwned(

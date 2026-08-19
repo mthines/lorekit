@@ -54,6 +54,14 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories GET /tags': 'memory.tags',
   'memories GET /facets': 'memory.facets',
   'memories GET /activity': 'memory.activity',
+  // The BODY transport for the three filtered reads. Deliberately mapped to the
+  // SAME tool names as their GET siblings: they are one operation spelled two
+  // ways, not two operations. Giving them their own names would have collapsed
+  // `memory.list` to zero and opened a fresh series on the day the dashboard
+  // switched transports, making the usage ledger read as an outage.
+  'memories POST /list': 'memory.list',
+  'memories POST /facets': 'memory.facets',
+  'memories POST /activity': 'memory.activity',
   'memories GET /read-activity': 'memory.read-activity',
   // The ranked shortlist. Its own tool name rather than folding into
   // `memory.search`: the two answer different questions (what matches vs what

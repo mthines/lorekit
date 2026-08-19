@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { boundedReturnTo } from '@/lib/auth-redirect';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { createServerClient } from '@/lib/supabase/server';
@@ -45,7 +46,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const headersList = await headers();
     const pathname = headersList.get('x-pathname') ?? '/overview';
     const search = headersList.get('x-search') ?? '';
-    const next = encodeURIComponent(`${pathname}${search}`);
+    // Bounded: this value is about to be percent-encoded a SECOND time (the
+    // search string already is), so a wide Explorer filter bar would roughly
+    // double on its way into ?next= and take the login redirect past the
+    // header limit. Over budget, the user comes back to the bare page instead
+    // of to a 431.
+    const next = encodeURIComponent(boundedReturnTo(pathname, search));
     redirect(`/login?next=${next}`);
   }
 

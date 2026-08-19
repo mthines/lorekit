@@ -9,6 +9,9 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | / | list.ts | read |
 | POST | / | create.ts | write |
 | DELETE | / | remove.ts | write |
+| POST | /list | list.ts | read |
+| POST | /facets | facets.ts | read |
+| POST | /activity | activity.ts | read |
 | POST | /search | search.ts | read |
 | POST | /restore | restore.ts | write |
 | POST | /purge | purge.ts | write |
@@ -26,10 +29,68 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`, `/activity`
-and `/read-activity` all collide with `/:id`.
+`/list`, `/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`,
+`/activity` and `/read-activity` all collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
+
+**A POST here does not imply a write.** `POST /list`, `POST /facets`, `POST /activity` and
+`POST /search` are all `requires: 'read'` and none of them records an audit event — the verb
+says "the request does not fit in a URL", not "this changes something". `audit-coverage.spec.ts`
+pins that exact list, so a fifth read-only POST is a deliberate edit rather than a silent one.
+
+## The body transport — `POST /list`, `POST /facets`, `POST /activity`
+
+Each is the SAME read as the identically-named `GET`, decoded from a JSON body instead of a
+query string. They exist because a query string is not a transport that carries an unbounded
+filter bar:
+
+- **Per dimension, 2048 characters.** `ValueListSchema` caps each comma-joined dimension, so
+  how many values a dimension can hold depends on how long the values happen to be — with
+  realistic ~28-character host names the wall lands between 50 and 75 selected values, and
+  the UI can only render the resulting 400 as "Failed to load memories. Please refresh."
+- **Per request, whatever the gateway allows.** Eight dimensions at 60 values each keeps
+  every individual param legal and still builds an ~8 KB URL. That one fails with no LoreKit
+  error envelope at all, which is the harder half to diagnose.
+
+Raising the first cap only moves it and makes the second arrive first, which is why this is a
+transport change and not a bigger number.
+
+**The same wall existed one hop downstream, and 00067 is what removed it.** Moving the client
+hop to a body was necessary and not sufficient: `handleList` still composed its predicates with
+postgrest-js, whose `.or()` is a query param and whose `.select()` is a GET, so a dimension
+carrying 200 values built a ~7 KB internal URL and the same gateway refused it — surfacing as a
+`500` with nothing pointing at the filter that caused it. Both routes now read through the
+`lorekit_memory_list` SQL function, which takes `text[]` parameters over a POST body, so the
+value set never reaches a URL on either hop. `/facets` and `/activity` never had this problem:
+they were already RPCs.
+
+**The two transports cannot diverge, by construction.** Neither handler decides anything
+about filtering, and since 00067 neither builds a query at all — both call `lorekit_memory_list`: `dimensionsFromQuery` and `dimensionsFromBody` (`_shared/schemas/dimensions.ts`)
+both produce one `MemoryDimensions`, and a single predicate function turns THAT into SQL. The
+decoders differ in exactly one thing — the query form splits on commas, the body form does not —
+and share the trim / drop-empty / dedupe rule and `origin_pr`'s digits-only filter. Adding a
+dimension is one field in `MemoryDimensions` and one line in the predicate, not two of each.
+
+Body shape, versus the query form:
+
+- Every dimension is a real **array** (`{"host": ["reviewer", "aw"], "host_mode": "in"}`),
+  bounded at `FILTER_VALUES_MAX` (1000) values of `FILTER_VALUE_MAX_CHARS` (512) characters.
+  The bound is explicit so it is a documented limit rather than an emergent one.
+- **A value containing a comma is reachable here** and is not over `GET /` — the splitting is
+  a property of the query wire format, and the whole reason the array form exists.
+- `archived` is a real **boolean**, not the query form's `'true'`/`'false'` string enum.
+- Everything else — `sort`, `limit` (still max 100), `cursor`, `q`, `key`, `key_prefix`,
+  `created_since`/`created_until`, `expiring_within_days` — is identical, including defaults.
+- The body is **optional**: a bodiless `POST /list` is the unfiltered first page, not a 400.
+
+`GET /` stays fully supported and unchanged — the CLI, the MCP surface and every API-token
+caller use it, and a link carrying a handful of filters is genuinely better as a URL. Only
+the dashboard, whose filter bar is unbounded, reads over the body form.
+
+Both forms report under the same `usage_events.tool_name` (`memory.list`, `memory.facets`,
+`memory.activity`): one operation over two transports, so splitting the name would have
+collapsed the existing series the day the dashboard switched.
 
 ## Archiving, restoring and deleting
 
@@ -131,21 +192,26 @@ its own `<column>_mode` of `in` (default) or `nin`.
 - **The dimensions AND together, the values within one OR together.** Each is its own
   conjunct, which is what a flat filter bar can render; cross-dimension OR and nested groups
   belong in `POST /search`'s `filter` tree, which already expresses them.
-- **The negation is `not.in`, never a chain of `neq`s.** They agree only while the column is
-  NOT NULL and all five are nullable, so keeping the negation inside one operator is what
-  stops the SQL disagreeing with the filter pill the user is reading.
-- **One encoding, shared with `?q=`.** Both directions go through `.or()` with a single
-  clause whose operand is built by `inListLiteral`, which quotes each value with the same
-  `quoteFilterValue` the substring filter and the `filter` tree use. These columns are free
-  text written by agents, so a value containing a `.`, a `()` or a double quote is reachable —
-  each of which would otherwise terminate the `in.()` operand or break the quoting, and
-  postgrest-js's own `.in()` quoting does not escape an embedded double quote. A COMMA is the
-  one reserved character these params cannot carry: `parseTagsParam` splits on it first, so a
-  comma-bearing value arrives as two values. `POST /search`'s `filter` tree is the way to
+- **The negation is one operator, never a chain of `neq`s.** They agree only while the column
+  is NOT NULL and all five are nullable, so keeping the negation inside one operator is what
+  stops the SQL disagreeing with the filter pill the user is reading. `lorekit_match_text` /
+  `lorekit_match_int` (00066) are where that now lives; `nin` there excludes a NULL row for
+  the same reason.
+- **No PostgREST operand is composed for these dimensions any more.** Both directions used to
+  go through `.or()` with a single clause built by `inListLiteral`, quoting each value with
+  the same `quoteFilterValue` the substring filter and the `filter` tree use — because these
+  columns are free text written by agents, so a value containing a `.`, a `()` or a double
+  quote is reachable, each of which would otherwise terminate the `in.()` operand or break
+  the quoting. 00067 moved the whole read into `lorekit_memory_list`, which takes the values
+  as real `text[]` parameters, so there is no operand to quote and **`inListLiteral` has no
+  callers left**. A COMMA remains the one reserved character the QUERY form cannot carry:
+  `parseTagsParam` splits on it first, so a comma-bearing value arrives over `GET /` as two
+  values — the body form (`POST /list`) carries it intact, and `POST /search`'s tree is the
   express one.
-- `origin_pr` is an `integer` column, so its values are filtered to digits (a non-numeric
-  entry is DROPPED, not 400'd — the list arrives from a hand-editable URL and one bad entry
-  should narrow the filter, not break the page) and emitted unquoted.
+- `origin_pr` is an `integer` column, so its values are filtered to a BOUNDED run of digits —
+  a non-numeric entry is DROPPED, not 400'd (the list arrives from a hand-editable URL and one
+  bad entry should narrow the filter, not break the page), and so is an all-digit entry too
+  wide for int4, which would otherwise raise 22003 instead of dropping.
 - `tags_mode` gained `none` — the negation of `any`, so `not.ov` and deliberately not
   `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries all) would also
   admit a row carrying all but one.
@@ -222,13 +288,14 @@ consequences to know before reading a number:
 
 The eight text/tags/int dimension predicates are the shared inlinable SQL helpers
 `lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066), so the
-catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **both
-`lorekit_memory_facets` and `lorekit_memory_activity` compose the same helpers**, so the
-load-bearing `nin` null test (an unattributed row is EXCLUDED from a negated filter, not
-silently dropped) lives in ONE place for the two RPCs. `GET /` (`list.ts`) is a **separate**
-implementation — it builds a PostgREST `not.in` predicate (`inListLiteral`), not these SQL
-helpers; it agrees by construction (Postgres `NOT (col IN (…))` is also NULL, hence excludes,
-for a null column) but is not unified with them. `owner` is the one dimension that stays
+catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **all three
+of `lorekit_memory_facets`, `lorekit_memory_activity` and `lorekit_memory_list` compose the
+same helpers**, so the load-bearing `nin` null test (an unattributed row is EXCLUDED from a
+negated filter, not silently dropped) lives in ONE place for every dimension reader. `GET /`
+and `POST /list` (`list.ts`) used to be a **separate** implementation building a PostgREST
+`not.in` predicate (`inListLiteral`); 00067 folded them onto `lorekit_memory_list`, so they
+are unified with the other two rather than merely agreeing by construction, and both
+transports share that one predicate. `owner` is the one dimension that stays
 inline in the RPCs: it is a LEFT JOIN-computed identity (`personal` / org slug), not a scalar
 column.
 
@@ -510,6 +577,44 @@ scope is the question itself, so a bad value is a `400` — silently dropping a 
 would answer "reads everywhere" under the label the caller asked for. Same call as
 `?correlation_id=`. Both sides go through the **canonical** `validateScope`; there is no
 second grammar.
+
+**That rule now holds on every scope-filtering route, not just this one.**
+`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `DELETE /?scope=…&key=…`
+and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. **So do the body
+transports** `POST /list`, `POST /activity` and `POST /facets`: each decodes into the same
+module-private reader as its `GET` twin (`respondWithPage` / `runActivity` / `runFacets`),
+which is where the filter is validated — that is what stops the two transports disagreeing
+about which scopes are legal, and it means the rule covers a `scope` in the JSON body
+exactly as it covers one in the query string. (`POST /` — the write path — is untouched: it
+stores `scope`, it does not filter by it.) They previously
+passed the raw value into the predicate, so a bad scope matched nothing and the route
+answered `200` with an empty page — the same input getting a `400` from one route and a
+cheerful empty result from five others. The shared entry point is
+**`parseScopeFilter`** (`_shared/scope.ts`).
+
+`parseScopeFilter` **rejects without normalising**, and that is deliberate: `validateScope`
+lowercases, but the write path does not (`CreateMemoryBodySchema` binds `RawScopeSchema`,
+`handlers/create.ts` passes `body.scope` verbatim, and no migration lowers it), so
+`memories.scope` legitimately holds mixed-case values. Lowercasing a *filter* would make
+those rows unmatchable by `GET /` and undeletable by natural key. If the write path is ever
+normalised, normalise the filters in the same change — never before. It also **rejects
+surrounding whitespace**: `validateScope` trims before it checks, so a padded value is
+grammatical to it while the untrimmed string reaches the predicate and matches nothing —
+the same empty-page failure, so it is named as bad input rather than silently trimmed. This
+applies to the `parseScopeFilter` routes only: `GET /read-activity` compares the NORMALISED
+value, so padding is trimmed there and `?scope=%20global` is a legitimate `200`.
+
+**`GET /read-activity` is the one route that still normalises, and must keep doing so.** It
+filters `usage_events.scope`, which is written through `safeValidateScope` at the recording
+site (`_shared/api/router.ts`) and is therefore already lowercased; a reject-only filter
+there would miss every mixed-case request. The six routes share the GRAMMAR; the case rule
+follows whichever path wrote the column. `scope-filter-validation.spec.ts` pins the required
+validator per handler, so neither direction can be "harmonised" into stranding rows.
+
+The array-valued `?scopes=` paths (`POST /search`, `GET /relevant`) are **not** covered:
+they need a per-entry decision — reject the whole request, or drop the bad entry — that has
+not been made yet. The MCP twin (`mcp/tools.ts`) validates each entry, so that is the
+precedent to reconcile against when it is.
 
 `safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope.ts` and
 `supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —

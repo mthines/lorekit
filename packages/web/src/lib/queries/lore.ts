@@ -22,18 +22,18 @@ import {
   activityRequest,
   getMemoryByIdRequest,
   getMemoryByRefRequest,
-  listFacetsRequest,
+  listFacetsPostRequest,
   listMemoriesRequest,
   listScopesRequest,
 } from '@/lib/api/memories';
 import { RestApiError } from '@/lib/api/rest';
 import {
-  filtersToFacetParams,
+  filtersToFacetBody,
   normalizeFilters,
   type FacetValue,
   type Filter,
 } from '@/lib/filters';
-import type { ListFacetsQuery } from '@lorekit/schemas/memory';
+import type { ListFacetsBody } from '@lorekit/schemas/memory';
 
 export interface LoreData {
   scopes: ScopeNode[];
@@ -175,11 +175,11 @@ async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
 // ---------------------------------------------------------------------------
 
 async function fetchFacets(
-  params: Partial<ListFacetsQuery>,
+  body: Partial<ListFacetsBody>,
   signal?: AbortSignal,
 ): Promise<FacetValue[]> {
   const token = await requireBrowserToken();
-  const { facets } = await listFacetsRequest(token, params, signal);
+  const { facets } = await listFacetsPostRequest(token, body, signal);
   return facets;
 }
 
@@ -191,19 +191,19 @@ export function useFacetCatalog(
   // Normalise so the query key is stable across the equivalent-but-differently-
   // shaped filter arrays a render can produce, exactly as `useMemories` does.
   const bar = normalizeFilters(filters as Filter[]);
-  const facetParams = filtersToFacetParams(bar);
+  const facetBody = filtersToFacetBody(bar);
   return useQuery<FacetValue[]>({
     queryKey: ['lore-facets', showArchived, scope, bar],
     queryFn: ({ signal }) =>
       fetchFacets(
         {
-          archived: showArchived ? 'true' : 'false',
+          archived: showArchived,
           // Scope the catalog to the selected scope, matching the list
           // (`useMemories` sends the same `scope`). Without it the counts would
           // reflect every scope while the list shows one, overstating the yield;
           // a null scope omits the param, so the all-scopes view is unchanged.
           ...(scope ? { scope } : {}),
-          ...facetParams,
+          ...facetBody,
         },
         signal,
       ),

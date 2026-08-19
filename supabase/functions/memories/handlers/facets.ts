@@ -1,14 +1,37 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
-import { validateQuery } from '../../_shared/api/validate.ts';
+import { badRequest, ok } from '../../_shared/api/respond.ts';
+import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
+import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
-import { ListFacetsQuerySchema, MemoryFacetSchema } from '../../_shared/schemas/memory.ts';
+import {
+  ListFacetsBodySchema,
+  ListFacetsQuerySchema,
+  MemoryFacetSchema,
+} from '../../_shared/schemas/memory.ts';
+import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
+import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
 import { parseTagsParam } from '../../_shared/schemas/tags.ts';
 
 type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Returns'][number];
+
+/**
+ * A facets request, decoded from either transport — the same arrangement
+ * `list.ts` uses, and for the same reason: one function talks to the RPC, so
+ * the two routes cannot count differently.
+ */
+interface FacetsInput {
+  archived: boolean;
+  /** What the caller NAMED, kept for the span attribute. */
+  named: readonly string[];
+  /** The subset the server recognises. */
+  requested: Set<string>;
+  narrowed: boolean;
+  scope?: string | undefined;
+  dimensions: MemoryDimensions;
+}
 
 /**
  * GET /memories/facets — every value the caller can filter by, per dimension,
@@ -41,13 +64,93 @@ type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Return
  * `created_until` are not mirrored, so under a search or date window a count is
  * an upper bound rather than the exact yield.
  */
+async function runFacets(
+  input: FacetsInput,
+  auth: AuthContext,
+  db: DbClient,
+  span: Span,
+  cors: Record<string, string>,
+): Promise<Response> {
+  const { archived, named, requested, narrowed, dimensions: d } = input;
+
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
+  //
+  // The attribute reports what the CALLER asked for (`named`), not the
+  // recognised subset (`requested`): with every named dimension unknown the
+  // subset is empty, so a `?facets=nope` trace would be indistinguishable from
+  // a recognised narrowing that matched no rows. Do not "tighten" this back.
+  span.setAttributes({
+    'lorekit.operation': 'memories.facets',
+    'lorekit.archived': String(archived),
+    ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
+  });
+
+  // The Explorer sends its selected scope here as well as to GET /memories, so
+  // the filter-menu counts drill down with the list. The two must therefore
+  // agree on what a scope IS: if this one kept an ungrammatical value while the
+  // list rejected it, the menu would quietly answer a different question than
+  // the rows beside it.
+  //
+  // It runs on the decoded input rather than in either entry point, so the
+  // query and body transports cannot diverge on which scopes they accept.
+  let scopeFilter: string | undefined;
+  try {
+    scopeFilter = parseScopeFilter(input.scope);
+  } catch (e) {
+    return badRequest((e as Error).message, undefined, cors);
+  }
+
+  // Empty → null = "not filtered", which is what the RPC's parameters mean.
+  const list = (values: readonly string[]) => (values.length ? [...values] : null);
+
+  const tracedDb = createTracedClient(db, span);
+  // Service-role callers have no user id; the RPC recognises a null p_user_id
+  // from a service_role JWT as "no tenant filter", matching GET /memories.
+  const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
+    p_user_id: auth.userId ?? null,
+    p_archived: archived,
+    p_scope: scopeFilter ?? null,
+    p_tags: list(d.tags.values),
+    p_tags_mode: d.tags.mode,
+    p_source_agent: list(d.source_agent.values),
+    p_source_agent_mode: d.source_agent.mode,
+    p_trigger: list(d.trigger.values),
+    p_trigger_mode: d.trigger.mode,
+    p_kind: list(d.kind.values),
+    p_kind_mode: d.kind.mode,
+    p_host: list(d.host.values),
+    p_host_mode: d.host.mode,
+    p_origin_repo: list(d.origin_repo.values),
+    p_origin_repo_mode: d.origin_repo.mode,
+    p_origin_branch: list(d.origin_branch.values),
+    p_origin_branch_mode: d.origin_branch.mode,
+    p_origin_pr: list(d.origin_pr.values),
+    p_origin_pr_mode: d.origin_pr.mode,
+    // Owner (00064): `personal` plus org slugs, resolved against member orgs
+    // inside the RPC. A plain value list like the other dimensions.
+    p_owner: list(d.owner.values),
+    p_owner_mode: d.owner.mode,
+  });
+  if (error) { span.error(`DB: ${error.message}`); throw error; }
+
+  const facets = ((data ?? []) as FacetRow[])
+    .filter((r) => !narrowed || requested.has(r.facet))
+    .map((r) => ({ facet: r.facet, value: r.value, count: Number(r.count) }));
+
+  span.setAttributes({ 'lorekit.result_count': facets.length });
+  return ok({ facets }, cors);
+}
+
+/** `GET /memories/facets` — the query-string form. */
 export async function handleFacets(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
   _params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
   const validated = validateQuery(req, ListFacetsQuerySchema, cors);
   if (!validated.ok) return validated.response;
-  const archived = validated.data.archived === 'true';
+  const q = validated.data;
 
   // An unknown name in `?facets=` narrows to nothing rather than 400ing: the
   // param arrives from a hand-editable URL, and the same list is re-read on
@@ -58,67 +161,46 @@ export async function handleFacets(
   // dimension, the second means none. Keep the caller's intent (`named`)
   // separate from the recognised subset (`requested`), or `?facets=nope`
   // silently WIDENS to the whole catalog — the opposite of narrowing.
-  const named = parseTagsParam(validated.data.facets);
-  const requested = new Set(
-    named.filter((f) => MemoryFacetSchema.safeParse(f).success),
-  );
-  const narrowed = named.length > 0;
+  const named = parseTagsParam(q.facets);
+  const requested = new Set(named.filter((f) => MemoryFacetSchema.safeParse(f).success));
 
-  // The attribute reports what the CALLER asked for (`named`), not the
-  // recognised subset (`requested`): with every named dimension unknown the
-  // subset is empty, so a `?facets=nope` trace would be indistinguishable from
-  // a recognised narrowing that matched no rows. Do not "tighten" this back.
-  span.setAttributes({
-    'lorekit.operation': 'memories.facets',
-    'lorekit.archived': validated.data.archived,
-    ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
-  });
+  return runFacets({
+    archived: q.archived === 'true',
+    named,
+    requested,
+    narrowed: named.length > 0,
+    scope: q.scope,
+    dimensions: dimensionsFromQuery(q),
+  }, auth, db, span, cors);
+}
 
-  // Parse the caller's active filters (same names/shapes as GET /memories) so
-  // the RPC can compute drill-down counts. Empty → null = "not filtered". A
-  // comma-list splits by the one shared rule (`parseTagsParam`); `origin_pr` is
-  // digits-only (a non-numeric entry narrows the filter, never 400s the page).
-  const q = validated.data;
-  const list = (v?: string) => { const a = parseTagsParam(v); return a.length ? a : null; };
-  const prList = (() => {
-    const a = parseTagsParam(q.origin_pr).filter((v) => /^\d+$/.test(v));
-    return a.length ? a : null;
-  })();
+/**
+ * `POST /memories/facets` — the same catalog, over a JSON body.
+ *
+ * The menu passes the caller's whole filter bar so the counts drill down, which
+ * means it hits `GET /memories`' 2048-character-per-dimension wall at exactly
+ * the same width the list does. Fixing the list alone would leave the Explorer
+ * loading its rows and failing to load the numbers beside them.
+ *
+ * `facets` is the closed `MemoryFacet` vocabulary here, so an unknown NAME is a
+ * 400 rather than a narrowing — a JSON client builds the array from the enum,
+ * where the query form's tolerance exists for a hand-typed URL.
+ */
+export async function handleFacetsPost(
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
+  _params: Record<string, string>, cors: Record<string, string>,
+): Promise<Response> {
+  const validated = await validateOptionalBody(req, ListFacetsBodySchema, cors);
+  if (!validated.ok) return validated.response;
+  const b = validated.data;
 
-  const tracedDb = createTracedClient(db, span);
-  // Service-role callers have no user id; the RPC recognises a null p_user_id
-  // from a service_role JWT as "no tenant filter", matching GET /memories.
-  const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
-    p_user_id: auth.userId ?? null,
-    p_archived: archived,
-    p_scope: q.scope ?? null,
-    p_tags: list(q.tags),
-    p_tags_mode: q.tags_mode,
-    p_source_agent: list(q.source_agent),
-    p_source_agent_mode: q.source_agent_mode,
-    p_trigger: list(q.trigger),
-    p_trigger_mode: q.trigger_mode,
-    p_kind: list(q.kind),
-    p_kind_mode: q.kind_mode,
-    p_host: list(q.host),
-    p_host_mode: q.host_mode,
-    p_origin_repo: list(q.origin_repo),
-    p_origin_repo_mode: q.origin_repo_mode,
-    p_origin_branch: list(q.origin_branch),
-    p_origin_branch_mode: q.origin_branch_mode,
-    p_origin_pr: prList,
-    p_origin_pr_mode: q.origin_pr_mode,
-    // Owner (00064): `personal` plus org slugs, resolved against member orgs
-    // inside the RPC. A plain value list like the other dimensions.
-    p_owner: list(q.owner),
-    p_owner_mode: q.owner_mode,
-  });
-  if (error) { span.error(`DB: ${error.message}`); throw error; }
-
-  const facets = ((data ?? []) as FacetRow[])
-    .filter((r) => !narrowed || requested.has(r.facet))
-    .map((r) => ({ facet: r.facet, value: r.value, count: Number(r.count) }));
-
-  span.setAttributes({ 'lorekit.result_count': facets.length });
-  return ok({ facets }, cors);
+  const named = b.facets ?? [];
+  return runFacets({
+    archived: b.archived,
+    named,
+    requested: new Set(named),
+    narrowed: named.length > 0,
+    scope: b.scope,
+    dimensions: dimensionsFromBody(b),
+  }, auth, db, span, cors);
 }

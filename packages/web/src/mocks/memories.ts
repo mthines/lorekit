@@ -371,10 +371,35 @@ function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
 
 function listFrom(rows: MemoryRow[], url: URL) {
   const limit = Number(url.searchParams.get('limit') ?? 50);
-  const matched = filterRows(rows, url).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Honour `sort` rather than pinning one: the route defaults to `updated_at`,
+  // but `listMemories` (lib/lore.ts) always sends `sort: 'created_at'`, so the
+  // Explorer reads in creation order. A mock that pinned EITHER value would
+  // render one order while the caller asked for another, which is the sort of
+  // difference a screenshot baseline then freezes in place.
+  const sort = url.searchParams.get('sort') === 'created_at' ? 'created_at' : 'updated_at';
+  const matched = filterRows(rows, url).sort((a, b) => String(b[sort]).localeCompare(String(a[sort])));
   // No cursor emulation: every story fits in one page, and a fake cursor would
   // encode a pagination contract the fixtures do not actually implement.
   return { entries: matched.slice(0, limit), hasMore: false, nextCursor: null };
+}
+
+/**
+ * Re-spell a body request as the URL the GET handlers above already understand.
+ *
+ * The mock keeps ONE predicate for the same reason the edge function does: the
+ * body routes are the query routes in another encoding, and a second
+ * reimplementation here could disagree with the first while both stories stayed
+ * green. Arrays are comma-joined because that is precisely what the query
+ * transport does — the mock is not the place to reproduce the wall the real
+ * transport has, only the semantics.
+ */
+function urlFromBody(body: Record<string, unknown>): URL {
+  const url = new URL('http://mock/memories');
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    url.searchParams.set(key, Array.isArray(value) ? value.join(',') : String(value));
+  }
+  return url;
 }
 
 /**
@@ -468,6 +493,31 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
     }),
     http.get('*/functions/v1/memories', ({ request }) =>
       HttpResponse.json(listFrom(rows, new URL(request.url)))),
+    // The BODY transport the dashboard uses. Same predicate, other encoding —
+    // a story that mocked only the GET form would render an empty Explorer.
+    http.post('*/functions/v1/memories/list', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return HttpResponse.json(listFrom(rows, urlFromBody(body)));
+    }),
+    http.post('*/functions/v1/memories/facets', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const only = (body.facets as string[] | undefined) ?? [];
+      const all = facetsFrom(rows, body.archived === true);
+      return HttpResponse.json({
+        facets: only.length ? all.filter((f) => only.includes(f.facet)) : all,
+      });
+    }),
+    http.post('*/functions/v1/memories/activity', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const url = urlFromBody(body);
+      const bucket = body.bucket === 'hour' ? 'hour' : 'day';
+      return HttpResponse.json({
+        bucket,
+        since: (body.since as string | undefined) ?? FROZEN_NOW,
+        until: (body.until as string | undefined) ?? FROZEN_NOW,
+        buckets: activityFrom(filterRows(rows, url), bucket),
+      });
+    }),
     http.get('*/auth/v1/user', () => HttpResponse.json(AUTH_USER)),
     http.post('*/auth/v1/user', () => HttpResponse.json(AUTH_USER)),
   ];
