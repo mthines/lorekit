@@ -36,7 +36,7 @@ in the token prefix, which is fixed at generation).
 > **Enforced.** `00068_api_token_scoping.sql` added the columns and the two
 > request-time predicates; `00069_api_token_scoping_enforcement.sql` made them
 > binding across all three layers — the transports (`mcp/auth.ts`,
-> `_shared/api/auth.ts`, `mcp-handler.ts`, `router.ts`, `applyTenantScope` /
+> `_shared/api/auth.ts`, `mcp-handler.ts`, `applyTenantScope` /
 > `applyRestTenantScope`, `applyKeyScopeFilter`, `firstDeniedScope`), and the
 > mutation gates and per-scope aggregates inside Postgres. Step 6 above is the
 > dashboard path that sets them (`TokenManager.tsx`), and
