@@ -122,7 +122,9 @@ function MetaChip({ icon: Icon, children }: { icon: typeof Bot; children: ReactN
 function Tags({ tags, max = 4 }: { tags: string[]; max?: number }) {
   if (tags.length === 0) return null;
   return (
-    <div className="mt-2 flex flex-wrap gap-1">
+    // Spacing from the card body's flex `gap`, not a margin here — see the card
+    // layout's note on why the whole body uses gaps rather than stacked margins.
+    <div className="flex flex-wrap gap-1">
       {tags.slice(0, max).map((tag) => (
         <span
           key={tag}
@@ -415,8 +417,15 @@ export const MemoryCard = memo(function MemoryCard({
         aria-label={`Open memory ${memoryKey}`}
         className="absolute inset-0 z-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       />
-      <div className="pointer-events-none relative z-10 p-4 text-left">
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+      {/* `flex-col gap-2` rather than per-child `mb-*`/`mt-*`: a fixed bottom
+          margin on a section that may not render (no preview, no meta, no tags)
+          leaves an orphan gap, and two adjacent margins (preview's `mb-3` +
+          tags' `mt-2`) stacked into ~20px of dead space. A flex gap only falls
+          between the sections actually present, so the card is as tall as its
+          content and no taller — short lore reads tight, long lore keeps the
+          same rhythm. */}
+      <div className="pointer-events-none relative z-10 flex flex-col gap-2 p-4 text-left">
+        <div className="flex flex-wrap items-center gap-1.5">
           {showScope && <ScopeBadge scope={scope} type={type} label />}
           <OwnershipBadge org={org} />
           {keyCode}
@@ -430,7 +439,7 @@ export const MemoryCard = memo(function MemoryCard({
         </div>
 
         {showPreview && (
-          <p className="mb-3 line-clamp-2 text-xs text-[var(--color-content-secondary)]">{preview}</p>
+          <p className="line-clamp-2 text-xs text-[var(--color-content-secondary)]">{preview}</p>
         )}
 
         {(hasMeta || withPath) && (

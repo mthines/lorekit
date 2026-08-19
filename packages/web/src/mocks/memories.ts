@@ -44,6 +44,13 @@ export const FROZEN_NOW = '2026-06-15T12:00:00.000Z';
  */
 export const EXPIRED_RECORDS = 17;
 
+/**
+ * Memory records archived in the window — the Lifecycle tile's headline number.
+ * From the usage ledger for the same reason as {@link EXPIRED_RECORDS}, and
+ * non-round so a story asserting it cannot pass against a placeholder zero.
+ */
+export const ARCHIVED_RECORDS = 42;
+
 const FROZEN_MS = new Date(FROZEN_NOW).getTime();
 const HOUR = 3_600_000;
 
@@ -476,6 +483,7 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
           records_read: 1_284,
           record_count: 1_284,
           event_count: 128,
+          archived: ARCHIVED_RECORDS,
           expired,
           by_outcome: { ok: 126, error: 2 },
         },

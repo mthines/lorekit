@@ -13,14 +13,72 @@
  * the description without requiring a hover interaction.
  *
  * Positioning: `top` (default) places the panel above the trigger; `bottom`
- * places it below. Edge-clipping is avoided by `align` (`center` default,
- * `left`, `right`).
+ * places it below; `align` (`center` default, `left`, `right`) sets the
+ * horizontal anchor. The panel is PORTALED to `document.body` and positioned
+ * with `position: fixed` against the trigger's measured rect, so it can never be
+ * clipped by an ancestor's `overflow: hidden` (the collapsible stat cards and
+ * their reveal regions have exactly that) — the failure the inline `absolute`
+ * panel had. The computed position is then clamped to the viewport so the panel
+ * cannot run off a screen edge either.
  *
  * Motion: the panel fades in/out with a short CSS transition, respecting
  * `prefers-reduced-motion` via a Tailwind utility.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
+/** A trigger's viewport rect — the fields {@link computeTooltipPosition} reads. */
+export interface TooltipTriggerRect {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where the portaled panel sits, in viewport (`fixed`) coordinates.
+ *
+ * Pure so it is unit-testable without a DOM: it takes the measured trigger and
+ * panel sizes and returns a clamped `{top,left}`. `side` picks above/below,
+ * `align` picks the horizontal anchor, and both axes are clamped 8px inside the
+ * viewport so the panel can never run off an edge — the guarantee the inline
+ * `absolute` panel could not make once an `overflow:hidden` ancestor or a screen
+ * edge got in the way.
+ */
+export function computeTooltipPosition(
+  trigger: TooltipTriggerRect,
+  panel: { width: number; height: number },
+  side: 'top' | 'bottom',
+  align: 'left' | 'center' | 'right',
+  gap: number,
+  viewport: { width: number; height: number },
+): { top: number; left: number } {
+  const left =
+    align === 'left'
+      ? trigger.left
+      : align === 'right'
+        ? trigger.right - panel.width
+        : trigger.left + trigger.width / 2 - panel.width / 2;
+
+  // Auto-flip to the side with room. A tall tooltip on a card near the top of
+  // the viewport can't fit ABOVE its trigger, and clamping it to `top:8` then
+  // drops it ON TOP of the trigger and the content around it — which reads as the
+  // tooltip being cut off / stuck inside the card. Flipping it below instead puts
+  // it in the clear. Symmetric for `bottom` near the viewport floor.
+  const fitsAbove = trigger.top - gap - panel.height >= 8;
+  const fitsBelow = trigger.bottom + gap + panel.height <= viewport.height - 8;
+  const placeSide =
+    side === 'top' ? (fitsAbove || !fitsBelow ? 'top' : 'bottom') : fitsBelow || !fitsAbove ? 'bottom' : 'top';
+  const top = placeSide === 'top' ? trigger.top - gap - panel.height : trigger.bottom + gap;
+
+  return {
+    top: Math.max(8, Math.min(top, viewport.height - panel.height - 8)),
+    left: Math.max(8, Math.min(left, viewport.width - panel.width - 8)),
+  };
+}
 
 export interface TooltipProps {
   /** The tooltip text shown on hover / tap. */
@@ -43,9 +101,58 @@ export function Tooltip({
   className = '',
 }: TooltipProps) {
   const [visible, setVisible] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const wrapperRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLSpanElement>(null);
   const id = useId();
   const tooltipId = `tooltip-${id.replace(/:/g, '')}`;
+
+  // Portals need `document`, which is absent during SSR — mount only after the
+  // first client render so the server and client trees match.
+  useEffect(() => setMounted(true), []);
+
+  // Position the portaled panel against the trigger's live rect, then clamp it
+  // to the viewport. Runs while visible (measurement needs the panel laid out;
+  // `opacity-0` still reports a rect) so the panel is placed before it fades in
+  // — it stays `opacity-0` until `pos` is set, so the one-frame delay never
+  // shows an unpositioned flash. `useEffect`, not layout, to stay quiet under
+  // SSR (this is a client component that still server-renders).
+  const GAP = 6;
+  const reposition = useCallback(() => {
+    if (!triggerRef.current || !panelRef.current) return;
+    const t = triggerRef.current.getBoundingClientRect();
+    const p = panelRef.current.getBoundingClientRect();
+    setPos(
+      computeTooltipPosition(t, { width: p.width, height: p.height }, side, align, GAP, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    );
+  }, [side, align]);
+
+  useEffect(() => {
+    if (visible) reposition();
+  }, [visible, reposition, content]);
+
+  // A `fixed` panel is positioned in VIEWPORT coordinates, so it does not travel
+  // with its trigger the way the old `absolute` panel did: scroll the page (or
+  // any scrollable ancestor) with a tap-toggled tooltip left open and it detaches
+  // and hangs over unrelated content. Re-measure on scroll and resize while the
+  // tooltip is open — `capture: true` so scrolls inside a non-window scroller
+  // (the Explorer's own panes) are heard too, and `passive` so this never blocks
+  // the scroll it is following. Only mounted while `visible`, so a closed
+  // tooltip costs nothing.
+  useEffect(() => {
+    if (!visible) return undefined;
+    window.addEventListener('scroll', reposition, { capture: true, passive: true });
+    window.addEventListener('resize', reposition, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', reposition, { capture: true });
+      window.removeEventListener('resize', reposition);
+    };
+  }, [visible, reposition]);
 
   // Dismiss when the user clicks/taps outside the wrapper.
   const onOutsideDown = useCallback((e: PointerEvent) => {
@@ -69,17 +176,27 @@ export function Tooltip({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [visible]);
 
-  const panelPosition =
-    side === 'top'
-      ? 'bottom-full mb-1.5'
-      : 'top-full mt-1.5';
-
-  const panelAlign =
-    align === 'left'
-      ? 'left-0'
-      : align === 'right'
-        ? 'right-0'
-        : 'left-1/2 -translate-x-1/2';
+  // The panel is portaled to <body>, so it is positioned via `fixed` + the
+  // measured `pos` rather than Tailwind edge utilities. Hidden until `pos` is
+  // known so it never flashes at the top-left corner before it is placed.
+  const panel = (
+    <span
+      ref={panelRef}
+      id={tooltipId}
+      role="tooltip"
+      aria-hidden={!visible}
+      style={pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0 }}
+      className={[
+        'pointer-events-none fixed z-50 w-max max-w-[16rem] rounded-lg border border-[var(--color-border)]',
+        'bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11px] leading-snug',
+        'text-[var(--color-content-secondary)] shadow-lg',
+        'transition-opacity duration-150 motion-reduce:transition-none',
+        visible && pos ? 'opacity-100' : 'opacity-0',
+      ].join(' ')}
+    >
+      {content}
+    </span>
+  );
 
   return (
     <span
@@ -92,27 +209,11 @@ export function Tooltip({
       onClick={() => setVisible((v) => !v)}
     >
       {/* Trigger — add aria-describedby so screen readers announce the tooltip. */}
-      <span aria-describedby={visible ? tooltipId : undefined}>
+      <span ref={triggerRef} aria-describedby={visible ? tooltipId : undefined}>
         {children}
       </span>
 
-      {/* Tooltip panel */}
-      <span
-        id={tooltipId}
-        role="tooltip"
-        aria-hidden={!visible}
-        className={[
-          'pointer-events-none absolute z-30 w-max max-w-[14rem] rounded-lg border border-[var(--color-border)]',
-          'bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11px] leading-snug',
-          'text-[var(--color-content-secondary)] shadow-md',
-          'transition-opacity duration-150 motion-reduce:transition-none',
-          panelPosition,
-          panelAlign,
-          visible ? 'opacity-100' : 'opacity-0',
-        ].join(' ')}
-      >
-        {content}
-      </span>
+      {mounted && createPortal(panel, document.body)}
     </span>
   );
 }

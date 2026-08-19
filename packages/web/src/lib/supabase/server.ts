@@ -1,12 +1,14 @@
 import { createServerClient as createSSRClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
+import { supabaseAnonKey, supabaseUrl } from './config';
+
 export async function createServerClient() {
   const cookieStore = await cookies();
 
   return createSSRClient(
-    process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-    process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY']!,
+    supabaseUrl(),
+    supabaseAnonKey(),
     {
       cookies: {
         getAll() {

@@ -10,7 +10,7 @@ import {
   selectionSummary,
   toggleSelection,
   type ComboboxOption,
-} from './combobox';
+} from './combobox-logic';
 
 const OPTIONS: ComboboxOption[] = [
   { value: 'a', label: 'Active', hint: 'Live memories' },

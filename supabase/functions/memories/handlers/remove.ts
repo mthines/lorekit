@@ -142,7 +142,16 @@ export async function handleRemove(
       actor,
     );
   }
-  return noContent(cors);
+  // Record how many rows this archive/delete touched, so the usage ledger's
+  // `result_count` is populated for a WRITE the same way a read's is. Before
+  // this the router recorded `null` here, which is why `memory.archive` events
+  // carried no count — the reason the usage summary counts archives by EVENT
+  // rather than by record. Setting it keeps the raw ledger honest going forward
+  // on BOTH DELETE branches (`removeOrgOwned` sets it too); the event-count read
+  // path stays correct for the historical rows this cannot backfill.
+  const res = noContent(cors);
+  res.headers.set('X-LoreKit-Result-Count', String(count));
+  return res;
 }
 
 interface OrgRemoveCtx {
@@ -236,5 +245,12 @@ async function removeOrgOwned(
     auditUserId(auth),
   );
 
-  return noContent(cors);
+  // Same rule as the personal branch: report the affected-row count so the
+  // usage ledger records a real number instead of null. `memory_delete` is
+  // keyed on the natural key (org_id + scope + key), which is unique, and the
+  // `!deleted && !archived` guard above already returned 404 for a miss — so
+  // reaching here means exactly one row changed.
+  const res = noContent(cors);
+  res.headers.set('X-LoreKit-Result-Count', '1');
+  return res;
 }

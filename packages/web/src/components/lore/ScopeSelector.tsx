@@ -231,7 +231,9 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
           ref={scrollerRef}
           role="radiogroup"
           aria-label="Filter by scope"
-          className="min-w-0 flex-1 items-center gap-1.5"
+          // `py-1` gives the chips vertical breathing room inside the strip (and
+          // clears the focus ring); `pr-1` keeps the last chip off the fade edge.
+          className="min-w-0 flex-1 items-center gap-1.5 py-1 pr-1"
         >
           {/* All scopes — always first, clears the filter. */}
           <button

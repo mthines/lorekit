@@ -8,11 +8,12 @@
 //   1. Scope chip row   (ScopeSelector)   — ONE shape on both breakpoints. The
 //      real selector is a single horizontal chip strip + a pinned "Browse all",
 //      not a breakpoint-split sidebar/accordion, so the skeleton is unified too.
-//   2. Insights panel   (ExplorerInsights, COLLAPSED) — also one shape on both:
-//      the Activity header (title + range pill + disclosure chevron) and the
-//      collapsed four-number strip. The heatmap lives INSIDE this panel and only
-//      renders when it is expanded, so — like the real collapsed default — it is
-//      not skeletoned here.
+//   2. Insights panel   (ExplorerInsights, COLLAPSED) — the Activity header
+//      (title + range pill + disclosure chevron) over the four COLLAPSED stat
+//      cards, on the panel's own `@container` grid (one-up, two-up from `@sm`,
+//      four-up from `@3xl`) exactly as `ExplorerStats` lays them out. The heatmap
+//      lives INSIDE this panel and only renders when it is expanded, so — like
+//      the real collapsed default — it is not skeletoned here.
 //   3. Results          — the ONLY breakpoint-split region, matching the real
 //      component's `hidden md:flex` desktop container vs `flex md:hidden` mobile
 //      stack. Both show the same control row + card list; scope no longer has a
@@ -21,7 +22,7 @@
 // `SEGMENT` widths are fixed px so the pulse blocks are stable between renders.
 const CHIP_WIDTHS = [64, 88, 56, 76, 60, 92];
 const CARDS = [0, 1, 2, 3, 4];
-const STRIP = [0, 1, 2, 3];
+const STRIP = [0, 1, 2, 3]; // the four collapsed stat cards
 
 /** The filter control row — identical on both breakpoints, as the real one is:
  *  search (grows) + filter trigger + date pill + status pill. */
@@ -68,12 +69,18 @@ export function LoreExplorerSkeleton() {
         <div className="h-7 w-16 shrink-0 animate-pulse rounded-full bg-[var(--color-bg-elevated)]" />
       </div>
 
-      {/* 2. Insights panel (collapsed): the Activity header + the four-number
-             strip, in the same bordered section the real panel uses so the height
-             matches. */}
+      {/* 2. Insights panel (collapsed): the Activity header + the four COLLAPSED
+             stat cards, in the same bordered section the real panel uses so the
+             height matches. The cards mirror `CollapsibleStatCard`'s collapsed
+             density exactly — each is its own `rounded-xl border … p-4` tile with
+             the icon left of the number and the label beneath — laid out on the
+             same `ExplorerStats` grid (one-up, two-up from `@sm`, four-up from
+             `@3xl`, sized to the PANEL via `@container`, not the viewport). A
+             flat four-number strip here is what made the panel jump on first
+             paint. */}
       <div
         aria-hidden
-        className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+        className="@container rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
       >
         <div className="flex flex-col gap-2 px-4 py-3">
           {/* Header row: title + range pill + disclosure chevron. */}
@@ -84,13 +91,19 @@ export function LoreExplorerSkeleton() {
               <div className="size-6 animate-pulse rounded-lg bg-[var(--color-bg-elevated)]" />
             </div>
           </div>
-          {/* Collapsed strip: four icon + number + label groups on one line. */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {/* Collapsed cards: four bordered tiles on the real grid. */}
+          <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4">
             {STRIP.map((i) => (
-              <div key={i} className="flex items-center gap-1.5">
-                <div className="size-3.5 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
-                <div className="h-4 w-8 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
-                <div className="h-3 w-12 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
+              <div
+                key={i}
+                className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
+              >
+                {/* Icon box, left of the number — the real card's `size-9` tile. */}
+                <div className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+                <div className="min-w-0 flex-1">
+                  <div className="h-6 w-12 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
+                  <div className="mt-1 h-3 w-20 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
+                </div>
               </div>
             ))}
           </div>

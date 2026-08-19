@@ -31,6 +31,20 @@ interface DateRangePickerProps {
   value: DateRange | null;
   onChange: (range: DateRange | null) => void;
   className?: string;
+  /**
+   * Overrides the trigger text. The Explorer shares ONE `range` between this
+   * control and the stat panel's preset picker; when a PRESET is active (24h /
+   * 7d / 30d) `value` is null (there is no custom window to highlight), so pass
+   * the preset's label here to keep the two controls showing the same thing
+   * instead of this one falling back to "All time".
+   */
+  displayLabel?: string;
+  /**
+   * Forces the active (accent) styling and the clear affordance on. Defaults to
+   * "there is a custom `value`", but a preset selection has no `value` yet is
+   * still an active narrowing the reader must be able to see and reset.
+   */
+  active?: boolean;
 }
 
 const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -75,7 +89,13 @@ function monthGrid(year: number, month: number): Date[] {
   });
 }
 
-export function DateRangePicker({ value, onChange, className = '' }: DateRangePickerProps) {
+export function DateRangePicker({
+  value,
+  onChange,
+  className = '',
+  displayLabel,
+  active,
+}: DateRangePickerProps) {
   const reduceMotion = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<string | null>(null);
@@ -139,7 +159,13 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
     setOpen(false);
   }
 
-  const label = value ? `${fmtShort(value.from)} – ${fmtShort(value.to)}` : 'All time';
+  // A preset selection has no custom `value` but is still an active narrowing —
+  // `active` (when passed) drives the accent styling and the clear affordance so
+  // this control mirrors the stat panel's preset picker rather than reading as
+  // unset. `displayLabel` overrides the text with the preset's own label.
+  const isActive = active ?? Boolean(value);
+  const label =
+    displayLabel ?? (value ? `${fmtShort(value.from)} – ${fmtShort(value.to)}` : 'All time');
   const today = todayKey();
 
   return (
@@ -154,14 +180,14 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
           // height and shape as the sibling "Archived" toggle in the Lore
           // Explorer filter row (LoreExplorer.tsx) so they read as one set.
           'flex min-h-9 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors duration-150',
-          value
+          isActive
             ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
         ].join(' ')}
       >
         <Calendar className="size-3.5 shrink-0" aria-hidden />
         {label}
-        {value && (
+        {isActive && (
           <span
             role="button"
             tabIndex={0}

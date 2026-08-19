@@ -39,10 +39,8 @@
  */
 
 import { useMemo } from 'react';
-import { BookOpen, BookOpenCheck, Hourglass, Layers } from 'lucide-react';
+import { Archive, BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
-import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
-import { formatCompact } from '@/lib/format-number';
 import {
   effectiveStatsRange,
   statsWindow,
@@ -61,21 +59,6 @@ import {
   type TimeRange,
 } from '@/lib/time-range';
 import { filtersToActivityBody, requireField, type Filter } from '@/lib/filters';
-
-/**
- * Shorter labels for the collapsed strip.
- *
- * The card labels are full sentences of a kind ("Memories written") because a
- * card has room and a heading should stand alone. Four of those on one line
- * reads as a paragraph, so the strip leans on the number carrying the emphasis
- * and the word only disambiguating it.
- */
-const STRIP_LABELS: Record<string, string> = {
-  written: 'written',
-  read: 'read',
-  scopes: 'scopes',
-  expired: 'expired',
-};
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
 
@@ -105,11 +88,14 @@ interface ExplorerStatsProps {
   /** Human label for the selected scope, for captions. */
   scopeLabel: string;
   /**
-   * `strip` is the collapsed rendering — the four numbers on one line, nothing
-   * else. `cards` is the expanded one. The panel chrome (heading, range picker,
-   * disclosure control) belongs to `ExplorerInsights`, which owns both states.
+   * The panel's disclosure state, owned by `ExplorerInsights`. This is ONE
+   * persistent grid of cards at two densities, not two renderings that swap:
+   * when `false` each card keeps its icon, number, label and caption and only
+   * folds away the evidence (trend chip + sparkbar); when `true` the evidence
+   * unfolds. Passing the flag down rather than mounting a different subtree is
+   * what lets the expand read as one motion instead of a cross-fade.
    */
-  variant: 'cards' | 'strip';
+  expanded: boolean;
   /**
    * ONE clock for the whole panel, owned by `ExplorerInsights` and shared by the
    * strip and the cards. Passed in rather than minted per instance so both
@@ -125,7 +111,7 @@ export function ExplorerStats({
   filters,
   range,
   scopeLabel,
-  variant,
+  expanded,
   nowIso,
 }: ExplorerStatsProps) {
   // Every derivation below hangs off the EFFECTIVE range, never the raw
@@ -224,18 +210,24 @@ export function ExplorerStats({
       unit: 'scopes',
     },
     {
-      id: 'expired',
-      icon: Hourglass,
-      label: 'Memories expired',
-      tag: 'Expiry',
+      // Archived: memories a caller archived in the range. This is the one
+      // countable lifecycle metric — it is a caller ACTION, recorded as an
+      // event. Expiry is deliberately NOT shown here: the product expires memories
+      // ON READ (a read filters an expired row out; `list.ts`), so there is no
+      // expiry EVENT to count and no purge runs — the figure would be a
+      // structural zero. Soon-to-expire memories are surfaced where they are
+      // actionable instead: the list's "Expiring" status filter.
+      id: 'archived',
+      icon: Archive,
+      label: 'Memories archived',
+      tag: 'Archived',
       tooltip:
-        'Memory records deleted in the selected range because their TTL ran out. Counted when the nightly purge removes them, which is the only moment expiry is observable — a read simply hides an expired row. This figure is ACCOUNT-WIDE even when a scope is selected: the purge runs per user and spans scopes, so the underlying event carries no scope to filter on.',
-      value: data?.expired ?? 0,
+        'Memories archived by a caller in the selected range. ACCOUNT-WIDE even when a scope is selected — archiving is recorded per user, so the event carries no scope to filter on. (Expired memories are hidden on read rather than counted here; find soon-to-expire ones via the Expiring status filter.)',
+      value: data?.archived ?? 0,
       // No scope suffix, deliberately — see the tooltip.
       description: `across your account in ${rangeText}`,
-      // No series: the API reports expiry as a total with no per-bucket
-      // breakdown, so there is nothing honest to draw. StatCard renders the
-      // number alone rather than an empty chart.
+      // No series today: the usage endpoint reports this as a total with no
+      // per-bucket breakdown, so there is nothing honest to draw yet.
     },
   ];
 
@@ -247,71 +239,41 @@ export function ExplorerStats({
     );
   }
 
-  // The held-frame rule, in both renderings: while a new selection loads the
-  // PREVIOUS render stays put at reduced opacity instead of collapsing to
-  // skeletons. Cards blanking on every scope click reads as the page breaking,
-  // and the layout jump loses the reader's place.
+  // The held-frame rule: while a new selection loads the PREVIOUS render stays
+  // put at reduced opacity instead of collapsing to skeletons. Cards blanking on
+  // every scope click reads as the page breaking, and the layout jump loses the
+  // reader's place.
   const dim = isFetching || isLoading ? 'opacity-60' : 'opacity-100';
 
-  // ── Collapsed: the numbers, and nothing else ───────────────────────────────
-  // Progressive disclosure that SUMMARISES rather than ERASES. The old collapse
-  // hid all four figures and left a header saying "Activity", which is the
-  // version of this pattern that makes people stop collapsing things: you lose
-  // the answer to keep the space. Here the answer stays and only the evidence
-  // (trends, bars, the heatmap) folds away.
-  if (variant === 'strip') {
-    return (
-      // FOUR EQUAL COLUMNS at every width, not a wrapping row. The row version
-      // packed the numbers against the left edge and left the rest of the panel
-      // empty on a desktop, then wrapped into two ragged lines on a phone —
-      // two different shapes, neither of which lined up with the four cards the
-      // strip cross-fades into. A fixed 4-column grid is the same shape as the
-      // expanded row, so expanding reads as the evidence unfolding UNDER each
-      // number rather than as the panel relaying itself.
-      //
-      // `grid-cols-4` is unconditional: four short labels at 10px fit a 320px
-      // phone once each column owns a quarter of the width and the label can
-      // truncate, and one row of four is what makes the summary readable in a
-      // single glance instead of two.
-      <dl
-        className={`grid grid-cols-4 gap-x-2 transition-opacity duration-150 ${dim}`}
-        aria-busy={isFetching || isLoading}
-      >
-        {cards.map(({ id, label, value, icon: Icon }) => (
-          <div key={id} className="flex min-w-0 flex-col">
-            {/* `dt` precedes `dd` in the DOM (valid description-list ordering, so
-                assistive tech pairs term→value); `order` stacks the number on
-                top, where the eye lands first. */}
-            <dt className="order-2 flex min-w-0 items-center gap-1 text-[10px] text-[var(--color-content-tertiary)] sm:text-[11px]">
-              {/* A subtle icon per metric makes the strip scannable — the eye
-                  finds "written" by its glyph before reading the word. */}
-              <Icon className="size-3 shrink-0" aria-hidden />
-              <span className="truncate">{STRIP_LABELS[id] ?? label}</span>
-            </dt>
-            {/* Sized to match the expanded card's headline, so the number does
-                not visibly grow or shrink through the cross-fade — the answer
-                appears to stay put while only the evidence moves. */}
-            {/* Compact above 10k: four equal columns leave ~58px each on a
-                320px phone, and an ungrouped six-digit figure at this size
-                would overflow into its neighbour. The exact value stays one
-                click away in the expanded card — and is what gets announced. */}
-            <dd className="order-1 text-xl font-semibold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-2xl">
-              <AnimatedNumber value={value} format={formatCompact} />
-            </dd>
-          </div>
-        ))}
-      </dl>
-    );
-  }
-
-  // ── Expanded: the evidence behind each number ──────────────────────────────
+  // ── One grid at two densities ──────────────────────────────────────────────
+  // The same four cards are ALWAYS mounted; `collapsed` folds each card's
+  // evidence (trend chip + sparkbar) away without unmounting the card, so
+  // expanding reads as one motion — the answer stays put and only the evidence
+  // unfolds — rather than a strip cross-fading into a different set of cards.
+  //
+  // Columns key off the PANEL's own width (`@3xl` against the `@container` on the
+  // insights `<section>`), not the viewport. A viewport breakpoint
+  // (`md:grid-cols-4`) can't see that the panel is narrower than the screen — the
+  // sidebar eats width, and a narrow embed is narrower still — so it packed four
+  // full cards into a ~370px column. Sized to the panel, the grid goes four-up
+  // only once the panel can seat four cards and their sparkbars without cramping
+  // (~768px), and stays two-up below that.
   return (
     <div
-      className={`grid grid-cols-1 gap-3 transition-opacity duration-150 sm:grid-cols-2 lg:grid-cols-4 ${dim}`}
+      // One-up below ~384px (a small phone, where two cards would crush the
+      // number), two-up from there, four-up once the panel can seat four.
+      className={`grid grid-cols-1 gap-3 transition-opacity duration-150 @sm:grid-cols-2 @3xl:grid-cols-4 ${dim}`}
       aria-busy={isFetching || isLoading}
     >
       {cards.map(({ id, ...card }) => (
-        <StatCard key={id} {...card} trendTitle={trendTitle} rangeTitle={rangeTitle} />
+        <StatCard
+          key={id}
+          {...card}
+          trendTitle={trendTitle}
+          rangeTitle={rangeTitle}
+          collapsible
+          collapsed={!expanded}
+        />
       ))}
     </div>
   );
