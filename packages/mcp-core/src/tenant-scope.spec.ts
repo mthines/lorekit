@@ -7,6 +7,8 @@ import {
   effectiveOrgIds,
   keyScopeFilter,
   normalizeKeyRestriction,
+  ownRowsFragment,
+  restrictsTenancy,
 } from './tenant-scope.js';
 
 interface FakeQuery {
@@ -195,6 +197,48 @@ describe('applyTenantScope with a key restriction', () => {
     const query = fakeQuery();
     applyTenantScope(query, 'user-1', ['org-a'], { scopes: [], orgAccess: 'personal', orgIds: [] });
     expect(query.eq).toHaveBeenCalledWith('user_id', 'user-1');
+    // ...and the owner's OWN org-owned rows are excluded too. `personal` is a
+    // tenancy, not an ownership test: `lorekit_api_token_org_allowed` answers
+    // false for every non-null org_id under it, so a filter that stopped at
+    // `user_id` would hand back rows the SQL side denies.
+    expect(query.or).toHaveBeenCalledWith('org_id.is.null');
+  });
+
+  it('under "selected", the personal disjunct excludes non-selected org rows', () => {
+    // The owner's own rows in an org the key was NOT pointed at must not come
+    // back: `and(...)` binds the ownership test to `org_id.is.null` so the
+    // only org rows that match are the ones named in the `in.()` list.
+    const query = fakeQuery();
+    applyTenantScope(query, 'user-1', ['org-a', 'org-b'], {
+      scopes: [],
+      orgAccess: 'selected',
+      orgIds: ['org-a'],
+    });
+    expect(query.or).toHaveBeenCalledWith(
+      'and(user_id.eq.user-1,org_id.is.null),org_id.in.("org-a")',
+    );
+  });
+
+  it('under "selected" with no reachable org, still excludes the owner\'s org rows', () => {
+    // The intersection can be empty (the key names an org its owner has since
+    // left). That collapses to the personal branch, which must carry the same
+    // exclusion rather than falling back to a bare ownership filter.
+    const query = fakeQuery();
+    applyTenantScope(query, 'user-1', ['org-a'], {
+      scopes: [],
+      orgAccess: 'selected',
+      orgIds: ['org-z'],
+    });
+    expect(query.eq).toHaveBeenCalledWith('user_id', 'user-1');
+    expect(query.or).toHaveBeenCalledWith('org_id.is.null');
+  });
+
+  it('an unrestricted key never gets the org_id.is.null exclusion', () => {
+    // The one direction this must not move: `all` (and no key at all) keeps
+    // the pre-00068 fragment exactly, org rows included.
+    const query = fakeQuery();
+    applyTenantScope(query, 'user-1', [], { scopes: [], orgAccess: 'all', orgIds: [] });
+    expect(query.eq).toHaveBeenCalledWith('user_id', 'user-1');
     expect(query.or).not.toHaveBeenCalled();
   });
 
@@ -225,6 +269,34 @@ describe('applyTenantScope with a key restriction', () => {
     });
     expect(query.eq).toHaveBeenCalledWith('user_id', 'user-1');
     expect(query.or).toHaveBeenCalledWith('scope.eq.global');
+  });
+});
+
+describe('ownRowsFragment', () => {
+  it('is the bare ownership test with no key, and under "all"', () => {
+    expect(ownRowsFragment('user-1')).toBe('user_id.eq.user-1');
+    expect(ownRowsFragment('user-1', { scopes: [], orgAccess: 'all', orgIds: [] }))
+      .toBe('user_id.eq.user-1');
+  });
+
+  it('binds ownership to org_id.is.null under "personal" and "selected"', () => {
+    expect(ownRowsFragment('user-1', { scopes: [], orgAccess: 'personal', orgIds: [] }))
+      .toBe('and(user_id.eq.user-1,org_id.is.null)');
+    expect(ownRowsFragment('user-1', { scopes: [], orgAccess: 'selected', orgIds: ['org-a'] }))
+      .toBe('and(user_id.eq.user-1,org_id.is.null)');
+  });
+});
+
+describe('restrictsTenancy', () => {
+  it('is false exactly where the pre-00068 behaviour must be preserved', () => {
+    expect(restrictsTenancy()).toBe(false);
+    expect(restrictsTenancy({ scopes: [], orgAccess: 'all', orgIds: [] })).toBe(false);
+    expect(restrictsTenancy({ scopes: ['global'], orgAccess: 'all', orgIds: [] })).toBe(false);
+  });
+
+  it('is true for both narrowing tenancies', () => {
+    expect(restrictsTenancy({ scopes: [], orgAccess: 'personal', orgIds: [] })).toBe(true);
+    expect(restrictsTenancy({ scopes: [], orgAccess: 'selected', orgIds: [] })).toBe(true);
   });
 });
 

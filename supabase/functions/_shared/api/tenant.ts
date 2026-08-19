@@ -18,7 +18,13 @@ import type { Span, TracedQuery } from '../otel.ts';
 import type { AuthContext, DbClient } from './auth.ts';
 import { keyRestriction } from './auth.ts';
 import { scopeAllowedByKey } from '../schemas/api-key.ts';
-import { effectiveOrgIds, keyScopeFilter, type KeyRestriction } from '../tenant-scope.ts';
+import {
+  effectiveOrgIds,
+  keyScopeFilter,
+  ownRowsFragment,
+  restrictsTenancy,
+  type KeyRestriction,
+} from '../tenant-scope.ts';
 
 /**
  * Resolve the org IDs the user is a member of via the single-source RPC.
@@ -65,9 +71,14 @@ export function applyRestTenantScope<Q extends TracedQuery<unknown>>(
   // a parenthesis; a uuid never does, but the two surfaces answering the same
   // question with two different fragments is the drift this module is supposed
   // to have removed.
+  // The ownership disjunct is `ownRowsFragment`, not a hand-rolled
+  // `user_id.eq.…`: under a tenancy-restricted key it also has to exclude the
+  // owner's OWN org-owned rows, and a second copy of that rule here is exactly
+  // the drift this module says it removed.
   let out = visibleOrgIds.length === 0
     ? (q.eq('user_id', userId) as Q)
-    : (q.or(`user_id.eq.${userId},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`) as Q);
+    : (q.or(`${ownRowsFragment(userId, key)},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`) as Q);
+  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) out = out.or('org_id.is.null') as Q;
   const scopeFilter = keyScopeFilter(key);
   // A second `.or()` — PostgREST ANDs top-level filters, so this reads as
   // "(mine or my orgs') AND (in the key's allowlist)".

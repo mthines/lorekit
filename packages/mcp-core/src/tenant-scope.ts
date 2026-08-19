@@ -86,6 +86,34 @@ export function effectiveOrgIds(memberOrgIds: string[], key?: KeyRestriction): s
 }
 
 /**
+ * True when the calling key narrows WHICH ORGS are reachable.
+ *
+ * `all` — and the absence of a key entirely — is the pre-00068 shape, so this
+ * is false there and every fragment below stays byte-for-byte what it was.
+ */
+export function restrictsTenancy(key?: KeyRestriction): boolean {
+  return !!key && key.orgAccess !== 'all';
+}
+
+/**
+ * The "rows this caller owns" disjunct of the tenant filter.
+ *
+ * Under a tenancy-restricted key the owner's OWN org-owned rows are out of
+ * reach too: `lorekit_api_token_org_allowed` (00068) answers false for any
+ * `org_id` the tenancy does not admit, and it never asks who OWNS the row —
+ * `personal` denies every org row, `selected` denies every org outside the
+ * allowlist. A bare `user_id.eq.<id>` disjunct matches those rows anyway, so
+ * the SQL predicate and this filter would disagree about what the key reaches,
+ * which is precisely the drift this module exists to prevent. Pair the
+ * ownership test with `org_id.is.null` so "mine" reads as "mine, and personal".
+ */
+export function ownRowsFragment(userId: string, key?: KeyRestriction): string {
+  return restrictsTenancy(key)
+    ? `and(user_id.eq.${userId},org_id.is.null)`
+    : `user_id.eq.${userId}`;
+}
+
+/**
  * The PostgREST `or()` fragment for a key's scope allowlist, or `null` when the
  * key is unrestricted and no fragment should be added at all.
  *
@@ -150,7 +178,12 @@ export function applyTenantScope<Q extends {
   const visibleOrgIds = effectiveOrgIds(orgIds, key);
   let q = visibleOrgIds.length === 0
     ? query.eq('user_id', userId)
-    : query.or(`user_id.eq.${userId},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`);
+    : query.or(`${ownRowsFragment(userId, key)},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`);
+  // The personal-only branch keeps its `.eq()` shape — an unrestricted caller
+  // must emit exactly what it always did — so the org-row exclusion a
+  // restricted key needs is a SECOND top-level filter, which PostgREST ANDs,
+  // rather than a rewrite of the first.
+  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) q = q.or('org_id.is.null');
   const scopeFilter = keyScopeFilter(key);
   // A second `.or()` — PostgREST ANDs top-level filters, so this reads as
   // "(mine or my orgs') AND (in the key's allowlist)".
