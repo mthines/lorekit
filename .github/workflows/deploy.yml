@@ -72,6 +72,15 @@ on:
 
 permissions: {}
 
+# The deployed-SHA markers the `changes` job diffs each half against. ONE place
+# names them; `deploy-production` / `promote-web-production` advance them on a
+# successful flip and the two rollback jobs repoint them at what production went
+# back to. See docs/deployment.md → "The deploy scope is measured against what is
+# DEPLOYED, not the last commit".
+env:
+  API_DEPLOYED_TAG: deployed/api-production
+  WEB_DEPLOYED_TAG: deployed/web-production
+
 # Never cancel an in-flight deploy — a half-applied migration is worse than a queue.
 concurrency:
   group: deploy-${{ github.ref }}
@@ -80,17 +89,29 @@ concurrency:
 jobs:
   # ── 0. Detect what changed — gate the API and web halves independently ────────
   #    A merge that touches only the web (or only the API, or only docs) should not
-  #    redeploy the unchanged half. Same path-filter approach as ci.yml's `changes`
-  #    job. `packages/schemas/` maps to BOTH (the edge functions mirror it and the
-  #    web transpiles it); the workspace files and deploy.yml itself force BOTH, so
-  #    a change to this pipeline exercises the whole thing. Skipping the unchanged
-  #    half is safe for the FE↔API lockstep — lockstep only matters when both
-  #    change, and then both halves run and flip together.
+  #    redeploy the unchanged half. `packages/schemas/` maps to BOTH (the edge
+  #    functions mirror it and the web transpiles it); the workspace files, the
+  #    resolver and deploy.yml itself force BOTH, so a change to this pipeline
+  #    exercises the whole thing.
+  #
+  #    Each half is diffed against THE COMMIT THAT HALF IS ACTUALLY SERVING —
+  #    its `deployed/*-production` marker — not against this push. Diffing one
+  #    push is what broke production once: #492 changed both halves and its
+  #    smoke-preview failed (nothing shipped, lockstep held), then #504 changed
+  #    only packages/web/**, reported api=false against its own parent, and
+  #    promoted a bundle carrying #492's client over edge functions that had never
+  #    been deployed — every production Lore Explorer read answered 405. Undeployed
+  #    work stays in the diff until it deploys. The markers are advisory and fail
+  #    OPEN (a missing or non-ancestor marker falls back to the push baseline);
+  #    doubt never resolves to "this half has no changes".
   #
   #    A MANUAL run (workflow_dispatch) can override the detection with the
   #    `deploy_target` input: `all` forces both halves, `api`/`web` force exactly
-  #    one, and `auto` (the default) falls back to the path filter — so a maintainer
+  #    one, and `auto` (the default) falls back to the marker diff — so a maintainer
   #    can redeploy an unchanged half from the Actions UI without a no-op commit.
+  #
+  #    The decision itself lives in scripts/resolve-deploy-scope.mjs (unit-tested
+  #    by ci.yml's `deploy-scope` job), not in a shell block nobody can run.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -100,62 +121,27 @@ jobs:
       api: ${{ steps.filter.outputs.api }}
       web: ${{ steps.filter.outputs.web }}
     steps:
+      # `fetch-depth: 0` brings the markers with it — a shallow checkout would
+      # need `fetch-tags: true`, and a marker that never arrives falls back to
+      # the push baseline rather than skipping a half.
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Compare changed paths against the deploy globs
+      - name: Set up Node.js (for the deploy-scope resolver)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Resolve the deploy scope
         id: filter
         env:
           BEFORE: ${{ github.event.before }}
           DEPLOY_TARGET: ${{ inputs.deploy_target }}
-        run: |
-          # Manual override: a workflow_dispatch run can force what deploys,
-          # bypassing the path filter entirely. `auto` (and any push, where the
-          # input is empty) falls through to the change detection below.
-          case "$DEPLOY_TARGET" in
-            all) API=true;  WEB=true  ;;
-            api) API=true;  WEB=false ;;
-            web) API=false; WEB=true  ;;
-            *)   API=skip;  WEB=skip  ;;  # auto / empty → detect below
-          esac
-          if [ "$API" != skip ]; then
-            echo "Manual deploy target '$DEPLOY_TARGET' → api=$API web=$WEB"
-            echo "api=$API" >> "$GITHUB_OUTPUT"
-            echo "web=$WEB" >> "$GITHUB_OUTPUT"
-            echo "### Deploy scope (manual override: \`$DEPLOY_TARGET\`)" >> "$GITHUB_STEP_SUMMARY"
-            echo "- API (Supabase): $API" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Web (Vercel): $WEB" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          BASE="$BEFORE"
-          # Fall back to the parent commit for a first push, a missing base SHA,
-          # or workflow_dispatch (no event.before) → compare against HEAD~1.
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
-          fi
-          echo "Comparing ${BASE}...HEAD"
-          CHANGED="$(git diff --name-only "${BASE}" HEAD)"
-          echo "$CHANGED"
-          API=false; WEB=false
-          # API = Supabase edge functions + migrations + the packages that compile
-          # into them (schemas mirror into the functions). Workspace files + this
-          # workflow force a deploy.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|packages/schemas/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/deploy\.yml)'; then
-            API=true
-          fi
-          # Web = the Next.js dashboard + the schemas it transpiles + the workspace
-          # files that change how it installs, plus this workflow.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/actions/vercel-preview-deploy/|\.github/workflows/deploy\.yml)'; then
-            WEB=true
-          fi
-          echo "api=$API" >> "$GITHUB_OUTPUT"
-          echo "web=$WEB" >> "$GITHUB_OUTPUT"
-          echo "### Deploy scope" >> "$GITHUB_STEP_SUMMARY"
-          echo "- API (Supabase): $API" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Web (Vercel): $WEB" >> "$GITHUB_STEP_SUMMARY"
+          API_DEPLOYED_TAG: ${{ env.API_DEPLOYED_TAG }}
+          WEB_DEPLOYED_TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: node scripts/resolve-deploy-scope.mjs
 
   # ── 1. Deploy to PREVIEW (migrations, then functions) ─────────────────────────
   #    No test job here: the commit on main already passed the required PR checks
@@ -571,7 +557,8 @@ jobs:
     needs: smoke-preview
     environment: production
     permissions:
-      contents: read
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -634,6 +621,35 @@ jobs:
             sleep 10
           done
 
+      # LAST step, deliberately with NO `if:` — that is what makes the marker
+      # advance only when every step above succeeded. `if: always()` here would
+      # move it after a FAILED deploy, the one thing this placement prevents.
+      #
+      # Moved through the API rather than `git push --force`: this checkout is
+      # shallow, and force-pushing a moving tag from a shallow clone is exactly
+      # what goes wrong quietly. Create-or-update (POST, falling back to PATCH) —
+      # a PATCH alone 404s while the marker does not exist yet.
+      #
+      # Its own failure is a WARNING, not a red job: the deploy has already
+      # succeeded, and failing here would skip promote-web-production and trip
+      # rollback-production, reverting a healthy production API over a bookkeeping
+      # hiccup. A marker that fails to advance is the safe error — the next run
+      # diffs from an older baseline and redeploys an unchanged half.
+      - name: Record the deployed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ env.API_DEPLOYED_TAG }}
+        run: |
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${SHA}" -F force=true >/dev/null 2>&1; then
+            echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} to ${SHA} — the next run diffs this half from an older baseline and redeploys it."
+          fi
+
   # ── 3b. Promote WEB to PRODUCTION (Vercel alias swap) ─────────────────────────
   #    The FE half of the production flip. Runs right after deploy-production (API),
   #    so the frontend goes live in lockstep with the backend it depends on. Because
@@ -653,7 +669,15 @@ jobs:
     if: always() && needs.stage-web-production.result == 'success' && (needs.changes.outputs.api == 'false' || needs.deploy-production.result == 'success')
     environment: production
     permissions:
-      contents: read
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
+    outputs:
+      # What the web marker named BEFORE this run overwrote it — the commit whose
+      # bundle the production domain was serving. `vercel rollback` returns to that
+      # deployment, which can be many commits back (the web half is skipped on
+      # merges that do not touch it), so rollback-web-production cannot derive it
+      # from HEAD~1 the way the API half can.
+      previous_marker: ${{ steps.prev_marker.outputs.sha }}
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -669,6 +693,15 @@ jobs:
       # from the repo's package.json (no `version:` is pinned on the action).
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
+
+      - name: Capture the previously promoted marker
+        id: prev_marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: |
+          PREV="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null || true)"
+          echo "sha=${PREV}" >> "$GITHUB_OUTPUT"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -700,6 +733,25 @@ jobs:
           vercel promote "$STAGED_URL" --scope="$VERCEL_SCOPE" --token="$VERCEL_TOKEN" --yes
           echo "### Web production promoted" >> "$GITHUB_STEP_SUMMARY"
           echo "- Promoted \`$STAGED_URL\` to the production domain (scope \`$VERCEL_SCOPE\`)." >> "$GITHUB_STEP_SUMMARY"
+
+      # LAST step, no `if:` — same contract as deploy-production's marker step:
+      # it advances only when the promote above actually succeeded, and its own
+      # failure is a warning rather than a red job that would trip a rollback of
+      # a healthy production web.
+      - name: Record the deployed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: |
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${SHA}" -F force=true >/dev/null 2>&1; then
+            echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} to ${SHA} — the next run diffs this half from an older baseline and redeploys it."
+          fi
 
   # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
@@ -863,7 +915,8 @@ jobs:
     if: always() && (needs.deploy-production.result == 'failure' || (needs.deploy-production.result == 'success' && (needs.promote-web-production.result == 'failure' || needs.smoke-production.result == 'failure')))
     environment: production
     permissions:
-      contents: read
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
@@ -883,6 +936,30 @@ jobs:
 
       - name: Redeploy previous edge functions
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+
+      # BEFORE `Report rollback`, which ends in `exit 1`. The marker was advanced
+      # by deploy-production, which runs BEFORE smoke-production — so it already
+      # names this run's SHA by the time the smoke gate fails, and the rollback
+      # does not undo that by itself. Leaving it is not a safe error: it is a
+      # commit on main, so it stays an ANCESTOR of every later HEAD and the
+      # non-ancestor fallback never fires; the next merge would diff this half
+      # against something production never kept. Deleting it is not enough either
+      # — with no marker the next merge falls back to `github.event.before`, the
+      # rolled-back commit itself. So repoint it at HEAD~1, exactly the function
+      # code this job just redeployed. Best-effort: a failed marker write must not
+      # mask the deploy failure that triggered the rollback.
+      - name: Point the API marker at the commit just rolled back to
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.API_DEPLOYED_TAG }}
+        run: |
+          PREV="$(git rev-parse HEAD~1)"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+            -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
+          echo "- API marker \`${TAG}\` → \`${PREV}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report rollback
         run: |
@@ -914,7 +991,8 @@ jobs:
     if: always() && needs.promote-web-production.result == 'success' && needs.smoke-production.result == 'failure'
     environment: production
     permissions:
-      contents: read
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -952,6 +1030,32 @@ jobs:
             echo "The production domain was reverted to the previous Vercel deployment." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::warning::vercel rollback failed — roll the production web back manually from the Vercel dashboard."
+          fi
+
+      # `vercel rollback` reverted the DOMAIN to the previously promoted
+      # deployment, whose commit the marker no longer names — so restore the value
+      # promote-web-production captured before overwriting it. The one case with no
+      # answer (nothing was ever promoted before) drops the marker and warns
+      # loudly: detection genuinely cannot cover it, so the next deploy of this
+      # half has to be forced by hand. Best-effort throughout — a failed marker
+      # write must not mask the failure that triggered the rollback.
+      - name: Restore the promoted-web marker to what the domain serves again
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+          PREV: ${{ needs.promote-web-production.outputs.previous_marker }}
+        run: |
+          if [ -n "$PREV" ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+              -f "sha=${PREV}" -F force=true >/dev/null 2>&1 || true
+            echo "- Restored web marker \`${TAG}\` → \`${PREV}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
+            echo "::warning::no previous web marker to restore — run deploy.yml manually with deploy_target: web before trusting the next automatic scope."
+            echo "- Dropped web marker \`${TAG}\` (no previous promotion recorded)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ── 6. Notify Discord on ANY deploy-pipeline failure ─────────────────────────
