@@ -1083,7 +1083,7 @@ jobs:
             if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1; then
               echo "- Dropped web marker \`${TAG}\` (no previous promotion recorded)" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "::warning::could not drop ${TAG} — it still names this run's commit, which the production domain no longer serves."
+              echo "::warning::could not drop ${TAG} — check what it names by hand before trusting the next automatic scope."
             fi
             echo "::warning::no previous web marker to restore — run deploy.yml manually with deploy_target: web before trusting the next automatic scope."
           fi
