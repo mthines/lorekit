@@ -6048,6 +6048,13 @@ begin
   assert v_facet = v_rows,
     format('list rpc AC-10d: the owner count must agree with lorekit_memory_facets, list=%s facets=%s', v_rows, v_facet);
 
+  -- Hand the transaction back as the migration owner. `set local role` is
+  -- TRANSACTION-scoped, not block-scoped, so leaving `service_role` in place
+  -- here leaks into every later section — and the next one seeds `auth.users`,
+  -- which service_role may not write.
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
 end;
 $$;
 
