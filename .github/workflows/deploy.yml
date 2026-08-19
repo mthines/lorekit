@@ -937,23 +937,44 @@ jobs:
       - name: Redeploy previous edge functions
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
 
-      # BEFORE `Report rollback`, which ends in `exit 1`. The marker was advanced
-      # by deploy-production, which runs BEFORE smoke-production — so it already
-      # names this run's SHA by the time the smoke gate fails, and the rollback
-      # does not undo that by itself. Leaving it is not a safe error: it is a
-      # commit on main, so it stays an ANCESTOR of every later HEAD and the
-      # non-ancestor fallback never fires; the next merge would diff this half
-      # against something production never kept. Deleting it is not enough either
-      # — with no marker the next merge falls back to `github.event.before`, the
+      # BEFORE `Report rollback`, which ends in `exit 1`.
+      #
+      # When deploy-production SUCCEEDED, its last step already advanced the
+      # marker to this run's SHA — it runs before smoke-production, so the marker
+      # names HEAD by the time the smoke gate fails, and the rollback does not
+      # undo that by itself. Leaving it there is not a safe error: it is a commit
+      # on main, so it stays an ANCESTOR of every later HEAD and the non-ancestor
+      # fallback never fires; the next merge would diff this half against
+      # something production never kept. Deleting it is not enough either — with
+      # no marker the next merge falls back to `github.event.before`, the
       # rolled-back commit itself. So repoint it at HEAD~1, exactly the function
-      # code this job just redeployed. Best-effort: a failed marker write must not
-      # mask the deploy failure that triggered the rollback.
+      # code this job just redeployed.
+      #
+      # But undo ONLY a marker this run advanced, which is what the $CUR check
+      # below establishes. On the deploy-production=FAILURE arm nothing advanced
+      # it: it still names the last commit this half actually deployed, which can
+      # be many merges back (the API half is skipped on merges that do not touch
+      # it, and a failed both-halves merge leaves it behind). Writing HEAD~1 there
+      # would move it FORWARD — over migrations `db push` never applied and
+      # functions production never received — and the next merge could then skip
+      # an API half production lacks. That is the incident this whole mechanism
+      # exists to prevent. Leaving it alone is correct there: it already names
+      # what production is serving.
+      #
+      # Best-effort throughout: a failed marker write must not mask the deploy
+      # failure that triggered the rollback.
       - name: Point the API marker at the commit just rolled back to
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.API_DEPLOYED_TAG }}
+          SHA: ${{ github.sha }}
         run: |
+          CUR="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null || true)"
+          if [ "$CUR" != "$SHA" ]; then
+            echo "- API marker \`${TAG}\` left at \`${CUR:-none}\` — this run never advanced it, so it still names what production deployed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           PREV="$(git rev-parse HEAD~1)"
           gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
             -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||

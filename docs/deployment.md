@@ -351,7 +351,7 @@ The tag names are declared once, at `deploy.yml`'s top level
 | `changes` | `Resolve the deploy scope` | Runs `scripts/resolve-deploy-scope.mjs` — reads both markers, picks each half's baseline, writes `api` / `web` |
 | `deploy-production` | `Record the deployed commit` | Advances `deployed/api-production` to `github.sha` |
 | `promote-web-production` | `Capture the previously promoted marker` → `Record the deployed commit` | Exposes the marker's OLD value as the `previous_marker` output, then advances it to `github.sha` |
-| `rollback-production` | `Point the API marker at the commit just rolled back to` | Repoints `deployed/api-production` at `HEAD~1` |
+| `rollback-production` | `Point the API marker at the commit just rolled back to` | Repoints `deployed/api-production` at `HEAD~1` — but only if this run advanced it |
 | `rollback-web-production` | `Restore the promoted-web marker…` | Repoints `deployed/web-production` at `previous_marker`, or drops it with a `::warning::` when there was no previous promotion |
 
 Four properties of that wiring are load-bearing — do not "tidy" any of them away:
@@ -375,8 +375,19 @@ Four properties of that wiring are load-bearing — do not "tidy" any of them aw
 - **Each of the four jobs holds `permissions: contents: write`** for its own
   marker and nothing else; the workflow's top-level default stays `{}`.
 
-Both rollback steps are `if: always()` and best-effort (`|| true`) — a failed
-marker write must not mask the deploy failure that triggered the rollback.
+**`rollback-production` undoes only a marker this run advanced.** It reads the
+marker first and repoints it at `HEAD~1` only when it already names
+`github.sha` — i.e. only when `deploy-production` ran all the way through its
+record step. On the `deploy-production` **failure** arm nothing advanced it: it
+still names the last commit this half actually deployed, which can be many merges
+back, so writing `HEAD~1` would move it FORWARD over migrations `db push` never
+applied and functions production never received — and the next merge could then
+skip an API half production lacks. Leaving it alone is correct there. The web
+half needs no equivalent guard: it restores the value captured *before* this run
+wrote anything, so it can only ever move the marker back or leave it where it is.
+
+Both rollback steps are `if: always()` and best-effort — a failed marker write
+must not mask the deploy failure that triggered the rollback.
 
 `ci.yml` guards the decision on every PR that touches it: a `deploy` path filter
 over
