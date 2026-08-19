@@ -51,7 +51,7 @@
  * whichever of the two the user is typing or arrowing in.
  *
  * The decisions worth testing without a browser — keyboard movement, filtering,
- * where the highlight opens — live in the pure `combobox.ts`.
+ * where the highlight opens — live in the pure `combobox-logic.ts`.
  */
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
