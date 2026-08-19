@@ -32,8 +32,14 @@ const LOCAL_SUPABASE_URL = 'http://127.0.0.1:54321';
 const LOCAL_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE2NDE3NjkyMDAsImV4cCI6MTc5OTUzNTYwMH0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE';
 
-/** True when the dashboard is pinned to a local `supabase start` stack. */
-export function useLocalSupabase(): boolean {
+/**
+ * True when the dashboard is pinned to a local `supabase start` stack.
+ *
+ * Named `is…`, not `use…`: this is a plain environment predicate, not a React
+ * hook, and the `use` prefix would make `react-hooks/rules-of-hooks` treat every
+ * call from a non-component function below as an illegal hook call.
+ */
+export function isLocalSupabase(): boolean {
   const flag = process.env['NEXT_PUBLIC_USE_LOCAL_SUPABASE'];
   return flag === 'true' || flag === '1';
 }
@@ -44,12 +50,12 @@ export function useLocalSupabase(): boolean {
  * require it, e.g. `restBaseUrl`, throw their own named configuration error).
  */
 export function supabaseUrl(): string {
-  if (useLocalSupabase()) return LOCAL_SUPABASE_URL;
+  if (isLocalSupabase()) return LOCAL_SUPABASE_URL;
   return process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? '';
 }
 
 /** The Supabase anon key every client should use — local demo key when the flag is on. */
 export function supabaseAnonKey(): string {
-  if (useLocalSupabase()) return LOCAL_SUPABASE_ANON_KEY;
+  if (isLocalSupabase()) return LOCAL_SUPABASE_ANON_KEY;
   return process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] ?? '';
 }
