@@ -48,6 +48,34 @@ export function parseTagsParam(raw: string | undefined | null): string[] {
 }
 
 /**
+ * Coerce an untrusted `tags` input of ANY shape into a normalized label list.
+ *
+ * The MCP surface takes its params as raw JSON-RPC (`Record<string, unknown>`),
+ * so `tags` arrives exactly as the client sent it — an array on the happy path,
+ * but a bare string, a number, or an object when a client gets the shape wrong.
+ * A bare string is the dangerous one: it is truthy, it has a `.length`, and it
+ * therefore survives an `if (tags?.length)` guard all the way into
+ * postgrest-js's `.overlaps(column, string)` overload, which forwards it
+ * verbatim as `ov.<string>` — no braces — and Postgres rejects the request with
+ * `malformed array literal: "<tag>"`. The caller gets a 400 and the server
+ * records an ERROR span for what is really a shape mismatch.
+ *
+ * Routing every label filter through this function makes the shape total:
+ *   - an array  → {@link normalizeTagList} (trim / drop empties / dedupe)
+ *   - a string  → {@link parseTagsParam}, i.e. the same comma-separated form
+ *                 the `GET /memories?tags=` query param accepts
+ *   - anything else → `[]`, which callers read as "no label filter"
+ *
+ * Pair it with {@link pgArrayLiteral} at the query site so the wire value is a
+ * correctly quoted Postgres array literal in every case.
+ */
+export function toTagList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return normalizeTagList(raw);
+  if (typeof raw === 'string') return parseTagsParam(raw);
+  return [];
+}
+
+/**
  * Derive `{ kind, host }` from a memory's loop tags — the back-compat bridge
  * for the taxonomy columns (migration 00056).
  *
