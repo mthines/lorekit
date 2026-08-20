@@ -78,6 +78,29 @@ declare
     auth.role() = 'service_role'
     and array_length(p_key_scopes, 1) is not null
   );
+  -- The SERVICE tier — the bare `SUPABASE_SERVICE_ROLE_KEY` (CI, the smoke
+  -- suite, an operator script). It authenticates as no user and no key, so both
+  -- surfaces resolve `p_user_id => null` for it (REST `auth.userId` is unset for
+  -- `type:'service'`; MCP's `toolUserId` returns null for anything that is not
+  -- an api_key). `auth.uid()` is null on that connection too, so v_actor is NULL
+  -- and every `m.user_id = v_actor` disjunct below is NULL — before this the
+  -- personal branch matched ZERO rows for the tier that is meant to reach all of
+  -- them, and the edge reported the row it could see but not touch as a 403.
+  --
+  -- Own-rows-only is the API-KEY rule (00046), and null actor is precisely "no
+  -- key, no user": the tier that holds the service-role secret can write the
+  -- table directly, so pinning it here protected nothing. This restores what
+  -- the raw-query paths have always done — `if (userId) …eq('user_id', userId)`,
+  -- i.e. no owner filter when there is no user (mcp-core/src/tools/delete.ts).
+  --
+  -- It cannot widen anyone else: an api_key ALWAYS carries `p_user_id` (the
+  -- `api_tokens.user_id` it was matched by), and a non-service-role caller fails
+  -- the role conjunct, so `auth.uid()` keeps pinning it — the 00046 IDOR guard
+  -- is untouched on both.
+  v_service_tier boolean := (
+    auth.role() = 'service_role'
+    and p_user_id is null
+  );
 begin
   -- The scope allowlist, before either branch. LK002 maps to a 403 on both
   -- surfaces, so no second mapping is needed here.
@@ -157,7 +180,8 @@ begin
     if p_force then
       delete from memories m
        where m.scope = p_scope and m.key = p_key
-         and ( m.user_id = v_actor
+         and ( v_service_tier
+               or m.user_id = v_actor
                or m.org_id in (select lorekit_member_org_ids(v_actor))
                or ( v_scope_managed
                     and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) ) );
@@ -168,7 +192,8 @@ begin
       update memories m
          set archived_at = now()
        where m.scope = p_scope and m.key = p_key and m.archived_at is null
-         and ( m.user_id = v_actor
+         and ( v_service_tier
+               or m.user_id = v_actor
                or m.org_id in (select lorekit_member_org_ids(v_actor))
                or ( v_scope_managed
                     and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) ) );
@@ -195,5 +220,7 @@ comment on function memory_delete(uuid, text, text, text, boolean, text[], text,
    non-empty scope allowlist reaching this function on the service-role
    connection manages every writer''s row within the scopes/orgs it is scoped
    to; an unscoped key, and any non-service-role caller, stay pinned to their
-   own (and member-org) rows, preserving the 00046 actor guard. Org removals
-   remain gated on the archive / hard_delete capability.';
+   own (and member-org) rows, preserving the 00046 actor guard. The service tier
+   (service-role connection, no p_user_id — no user and no key) is unpinned: it
+   has no actor to be pinned to. Org removals remain gated on the archive /
+   hard_delete capability.';

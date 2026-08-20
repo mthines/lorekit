@@ -522,28 +522,55 @@ begin
 end;
 $$;
 
+-- 00072 mirrored. The hosted function was recreated with the calling key's
+-- restriction appended and a `(restored, existed)` return, so the pre-00072
+-- `returns uuid` form is DROPPED rather than replaced: PostgREST resolves by
+-- argument NAME and the edge now sends all six, so leaving the 3-arg overload
+-- behind would either shadow this one or fail to resolve at all.
+--
+-- BYOD is a personal install with no orgs, so `p_key_org_access` / `p_key_org_ids`
+-- are accepted and inert (same as `memory_delete` below); the scope allowlist is
+-- enforced, because that half is what scoping a key means here too.
+drop function if exists restore_memory(uuid, text, text);
+
 create or replace function restore_memory(
   p_user_id  uuid,
-  p_scope    text,
-  p_key      text
+  p_scope    text default null,
+  p_key      text default null,
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',   -- inert in BYOD (no orgs)
+  p_key_org_ids    uuid[] default '{}'     -- inert in BYOD (no orgs)
 )
-returns uuid
+returns table (restored boolean, existed boolean)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_id uuid;
+  v_count   integer;
+  v_existed boolean;
 begin
-  update memories
-     set archived_at = null
-   where user_id = p_user_id
-     and scope    = p_scope
-     and key      = p_key
-     and archived_at is not null
-  returning id into v_id;
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
 
-  return v_id;
+  -- A null p_user_id is the SERVICE tier (no user, no key) — the hosted
+  -- functions' rule, and the one the raw-query paths have always used. It must
+  -- not degrade to `user_id = null`, which matches nothing.
+  v_existed := exists(
+    select 1 from memories m
+     where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+       and (p_user_id is null or m.user_id = p_user_id)
+  );
+
+  update memories m
+     set archived_at = null
+   where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+     and (p_user_id is null or m.user_id = p_user_id);
+  get diagnostics v_count = row_count;
+
+  return query select (v_count > 0), (v_existed or v_count > 0);
 end;
 $$;
 
@@ -761,6 +788,9 @@ grant execute on function memory_write(uuid, text, text, text, text[], text, tex
 -- keys on the argument list, so adding parameters would leave two overloads and
 -- PostgREST would resolve the old one for a caller that omits them.
 drop function if exists memory_delete(uuid, text, text, text, boolean);
+-- 00071 mirrored: the return gained `existed`, and `create or replace` cannot
+-- change a return type, so the 00069-shaped 8-arg form is dropped as well.
+drop function if exists memory_delete(uuid, text, text, text, boolean, text[], text, uuid[]);
 
 create or replace function memory_delete(
   p_user_id  uuid,
@@ -776,13 +806,14 @@ create or replace function memory_delete(
   p_key_org_access text   default 'all',   -- inert in BYOD (no orgs)
   p_key_org_ids    uuid[] default '{}'     -- inert in BYOD (no orgs)
 )
-returns table (deleted boolean, archived boolean)
+returns table (deleted boolean, archived boolean, existed boolean)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_count integer;
+  v_count   integer;
+  v_existed boolean;
 begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-gated deletes require the hosted LoreKit product.
@@ -793,19 +824,31 @@ begin
       message = format('key_scope_denied: scope=%s', p_scope);
   end if;
 
+  -- 00071 mirrored: `existed` is what lets the edge answer 404 (nothing there)
+  -- vs 403 (present, but this call removed nothing) instead of collapsing both
+  -- into not_found. And a null p_user_id is the SERVICE tier (no user, no key),
+  -- never "the user with no id" — see restore_memory above.
+  v_existed := exists(
+    select 1 from memories m
+     where m.scope = p_scope and m.key = p_key
+       and (p_user_id is null or m.user_id = p_user_id)
+  );
+
   if p_force then
-    delete from memories
-     where user_id = p_user_id and scope = p_scope and key = p_key;
+    delete from memories m
+     where m.scope = p_scope and m.key = p_key
+       and (p_user_id is null or m.user_id = p_user_id);
     get diagnostics v_count = row_count;
 
-    return query select (v_count > 0), false;
+    return query select (v_count > 0), false, (v_existed or v_count > 0);
   else
-    update memories
+    update memories m
        set archived_at = now()
-     where user_id = p_user_id and scope = p_scope and key = p_key and archived_at is null;
+     where m.scope = p_scope and m.key = p_key and m.archived_at is null
+       and (p_user_id is null or m.user_id = p_user_id);
     get diagnostics v_count = row_count;
 
-    return query select false, (v_count > 0);
+    return query select false, (v_count > 0), (v_existed or v_count > 0);
   end if;
 end;
 $$;
@@ -827,7 +870,7 @@ grant execute on function lorekit_get_limit(uuid, text) to anon, authenticated, 
 grant execute on function lorekit_check_rate_limit(uuid, integer) to anon, authenticated, service_role;
 grant execute on function lorekit_purge_rate_limit_counters(interval) to anon, authenticated, service_role;
 grant execute on function archive_memory(uuid, text, text) to anon, authenticated, service_role;
-grant execute on function restore_memory(uuid, text, text) to anon, authenticated, service_role;
+grant execute on function restore_memory(uuid, text, text, text[], text, uuid[]) to anon, authenticated, service_role;
 grant execute on function purge_archived_memories(uuid, integer) to anon, authenticated, service_role;
 grant execute on function purge_expired_memories(uuid) to authenticated, service_role;
 

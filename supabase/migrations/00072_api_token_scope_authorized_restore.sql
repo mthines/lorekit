@@ -51,6 +51,16 @@ declare
     auth.role() = 'service_role'
     and array_length(p_key_scopes, 1) is not null
   );
+  -- The SERVICE tier, exactly as in 00071's `memory_delete` — see that header
+  -- for the full argument. Short form: the bare service-role key authenticates
+  -- as no user and no key, so `p_user_id` is null AND `auth.uid()` is null,
+  -- leaving v_actor NULL and every ownership disjunct below NULL. Restore has to
+  -- answer this the same way removal does, or a row the service tier can archive
+  -- is a row it cannot un-archive.
+  v_service_tier boolean := (
+    auth.role() = 'service_role'
+    and p_user_id is null
+  );
 begin
   if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
     raise exception using errcode = 'LK002',
@@ -76,7 +86,8 @@ begin
   update memories m
      set archived_at = null
    where m.scope = p_scope and m.key = p_key and m.archived_at is not null
-     and ( m.user_id = v_actor
+     and ( v_service_tier
+           or m.user_id = v_actor
            or m.org_id in (select lorekit_member_org_ids(v_actor))
            or ( v_scope_managed
                 and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) ) );
@@ -97,4 +108,5 @@ comment on function restore_memory(uuid, text, text, text[], text, uuid[]) is
    on the service-role connection restores any writer''s row within its
    scopes/orgs; an unscoped key and any non-service-role caller stay pinned to
    their own (and member-org) rows — the 00046/00071 actor guard, applied to
-   restore.';
+   restore. The service tier (service-role connection, no p_user_id — no user and
+   no key) is unpinned: it has no actor to be pinned to.';

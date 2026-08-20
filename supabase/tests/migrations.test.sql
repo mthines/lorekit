@@ -2713,7 +2713,10 @@ declare
   v_purged_arch int;
   v_purged_exp  int;
   v_arch_id     uuid;
-  v_rest_id     uuid;
+  -- 00072 replaced `restore_memory`'s `returns uuid` with
+  -- `returns table (restored boolean, existed boolean)`, so the call is a FROM
+  -- item now and the guard reads `restored` instead of "an id came back".
+  r_rest        record;
 begin
   set local role authenticated;
   perform set_config('request.jwt.claims',
@@ -2722,7 +2725,8 @@ begin
   select purge_archived_memories('00000000-0000-0000-0000-0000000000d4', 0) into v_purged_arch;
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4')     into v_purged_exp;
   select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
-  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select * into r_rest
+    from restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived');
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
@@ -2733,7 +2737,7 @@ begin
     format('IDOR: e5 hard-deleted %s of d4''s expired rows by naming d4 as p_user_id', v_purged_exp);
   assert v_arch_id is null,
     'IDOR: e5 archived one of d4''s rows by naming d4 as p_user_id';
-  assert v_rest_id is null,
+  assert not r_rest.restored,
     'IDOR: e5 restored one of d4''s rows by naming d4 as p_user_id';
 
   -- d4's three rows are all exactly as seeded.
@@ -2755,7 +2759,8 @@ $$;
 do $$
 declare
   v_arch_id    uuid;
-  v_rest_id    uuid;
+  -- See 60a: 00072 made `restore_memory` a table-returning function.
+  r_rest       record;
   v_purged_exp int;
 begin
   set local role authenticated;
@@ -2763,14 +2768,15 @@ begin
     '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
 
   select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
-  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select * into r_rest
+    from restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived');
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4') into v_purged_exp;
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
 
   assert v_arch_id is not null, 'self-service: d4 archiving its OWN active row must succeed';
-  assert v_rest_id is not null, 'self-service: d4 restoring its OWN archived row must succeed';
+  assert r_rest.restored,       'self-service: d4 restoring its OWN archived row must succeed';
   assert v_purged_exp >= 1,     'self-service: d4 purging its OWN expired row must delete it';
   assert not exists (select 1 from memories
                      where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
@@ -2847,7 +2853,12 @@ declare
   v_sig  text;
   v_sigs text[] := array[
     'archive_memory(uuid, text, text)',
-    'restore_memory(uuid, text, text)',
+    -- 00072 recreated `restore_memory` with the calling key's restriction
+    -- appended (p_key_scopes, p_key_org_access, p_key_org_ids → 6 args), for the
+    -- same reason 00069 did it to `memory_delete` below: name the CURRENT
+    -- signature, or `has_function_privilege` ERRORS on a function that no longer
+    -- exists and aborts the whole run.
+    'restore_memory(uuid, text, text, text[], text, uuid[])',
     'purge_archived_memories(uuid, integer)',
     'purge_expired_memories(uuid)',
     -- 00069 appended the calling key's restriction (p_key_scopes, p_key_org_access,
@@ -7101,6 +7112,78 @@ begin
   select count(*) into v_count from memories
     where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
   assert v_count = 1, 'SAR-R5: B''s archived row must survive the authenticated caller''s spoof attempt';
+end;
+$$;
+
+-- ── 86. The SERVICE tier reaches every row on both removal paths (00071/00072) ─
+--
+-- The bare service-role key (CI, the REST smoke suite, an operator script) is
+-- neither a user nor an API key, so both surfaces resolve `p_user_id => null`
+-- for it — and on that connection `auth.uid()` is null too, so the actor these
+-- RPCs derive is NULL and every `user_id = v_actor` disjunct is NULL. Pinning
+-- that caller to its "own" rows therefore matched NOTHING: the natural-key
+-- archive and the restore both came back 403 (`existed` true, nothing changed)
+-- for the tier that holds the secret which can write the table directly.
+--
+-- §84/§85 pin the two KEY tiers (scoped and unscoped); this pins the one above
+-- them. The complement — that a NON-service-role caller gains nothing from a
+-- null/spoofed p_user_id — is 60a/60f and SAR-5/SAR-R5, all still in force.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::svctier', 'svc-row', 'written by B');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (1) Archive another principal's row with NO p_user_id and NO key scoping —
+  --     the exact call `handleRemove`'s natural-key branch makes for a
+  --     service-token request.
+  select * into r from memory_delete(
+    p_user_id  => null,
+    p_org_slug => null,
+    p_scope    => 'project::svctier',
+    p_key      => 'svc-row',
+    p_force    => false);
+  assert r.archived and r.existed and not r.deleted,
+    format('SVC-1: the service tier must archive any row (archived=%s existed=%s deleted=%s)',
+           r.archived, r.existed, r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::svctier' and key = 'svc-row' and archived_at is not null;
+  assert v_count = 1, 'SVC-1: the row must actually be archived';
+
+  -- (2) …and restore it. A tier that can archive a row but not un-archive it is
+  --     the asymmetry 00072 exists to close.
+  select * into r from restore_memory(
+    p_user_id => null,
+    p_scope   => 'project::svctier',
+    p_key     => 'svc-row');
+  assert r.restored and r.existed,
+    format('SVC-2: the service tier must restore the row it just archived (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::svctier' and key = 'svc-row' and archived_at is null;
+  assert v_count = 1, 'SVC-2: the row must be live again';
+
+  -- (3) …and hard-delete it.
+  select * into r from memory_delete(
+    p_user_id  => null,
+    p_org_slug => null,
+    p_scope    => 'project::svctier',
+    p_key      => 'svc-row',
+    p_force    => true);
+  assert r.deleted and not r.archived,
+    format('SVC-3: the service tier must hard-delete any row (deleted=%s archived=%s)',
+           r.deleted, r.archived);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories where scope = 'project::svctier';
+  assert v_count = 0, 'SVC-3: the row must be physically gone';
 end;
 $$;
 
