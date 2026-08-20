@@ -2,7 +2,9 @@
 // component resolves. Title renders as real text so it's immediately readable.
 export default function OverviewLoading() {
   return (
-    <div className="flex flex-col gap-6">
+    // Same `max-w-page` cap as the real page, so the skeleton and the resolved
+    // page share one content edge and nothing shifts on mount.
+    <div className="flex max-w-page flex-col gap-6">
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">
           Overview

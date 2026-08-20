@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Shared with /api/auth/callback and the client-side password sign-in so all
 // three enforce one definition of a safe `?next=` target.
 import { safeNextPath, boundedReturnTo } from '@/lib/auth-redirect';
+import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
 
 /** 24 hours — matches the Supabase project jwt_expiry so the cookie
  *  outlives the access token and the refresh token can be used. */
@@ -64,8 +65,8 @@ export async function middleware(request: NextRequest) {
   });
 
   const supabase = createServerClient(
-    process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-    process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY']!,
+    supabaseUrl(),
+    supabaseAnonKey(),
     {
       cookies: {
         getAll() {

@@ -91,7 +91,7 @@ export function RangePicker({
             // the two states the same value and the choice unexpressible.
             onClick={() => onChange({ preset })}
             className={[
-              'min-h-6 rounded px-2 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',
+              'inline-flex min-h-6 items-center justify-center rounded px-2 py-0.5 text-[10px] font-medium tabular-nums leading-none transition-colors duration-150',
               isActive
                 ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
                 : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
@@ -123,7 +123,7 @@ export function RangePicker({
           // tab order while marking it inactive — you leave it by focusing a preset.
           tabIndex={0}
           aria-label={`Custom range — ${rangeLabel(value, nowIso)}`}
-          className="min-h-6 rounded bg-[var(--color-bg-raised)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-content-primary)] shadow-sm"
+          className="inline-flex min-h-6 items-center justify-center rounded bg-[var(--color-bg-raised)] px-2 py-0.5 text-[10px] font-medium leading-none text-[var(--color-content-primary)] shadow-sm"
           title="Custom range — pick a preset to leave it"
         >
           {rangeLabel(value, nowIso)}

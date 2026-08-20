@@ -74,7 +74,7 @@ import {
   toggleSelection,
   withCreatableOption,
   type ComboboxOption,
-} from './combobox';
+} from './combobox-logic';
 
 export type { ComboboxOption };
 

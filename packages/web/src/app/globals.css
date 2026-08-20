@@ -37,6 +37,17 @@
   /* Motion */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Layout — the shared cap for the WIDE dashboard shells (Overview, Lore
+     Explorer). It exists so those pages agree on one number instead of each
+     page inventing its own arbitrary width: content stays left-aligned and
+     full-width below the cap, and stops stretching edge-to-edge on ultrawide
+     displays, where card rows read as sparse and text lines run too long to
+     scan. Tailwind v4 turns the `--container-*` namespace into width
+     utilities, so this token IS `max-w-page`. The narrow form shells
+     (Settings, Tutorials, Onboarding) keep their own tighter `max-w-4xl`/
+     `max-w-3xl` — those are reading-measure caps, a different intent. */
+  --container-page: 1400px;
 }
 
 /* ── Base ────────────────────────────────────────────────────────────────── */

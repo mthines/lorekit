@@ -11,19 +11,12 @@
 
 import { describe, it, expect } from 'vitest';
 
+// The panel is portaled and positioned with `fixed` coords, so its placement is
+// no longer a set of Tailwind edge classes but a pure geometry function — import
+// and test the REAL one rather than a copy.
+import { computeTooltipPosition, type TooltipTriggerRect } from './Tooltip';
+
 // ── Pure helpers that mirror Tooltip's internal decisions ────────────────────
-
-/** Returns the CSS classes for vertical panel placement. */
-function panelPositionClass(side: 'top' | 'bottom'): string {
-  return side === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5';
-}
-
-/** Returns the CSS classes for horizontal panel alignment. */
-function panelAlignClass(align: 'left' | 'center' | 'right'): string {
-  if (align === 'left') return 'left-0';
-  if (align === 'right') return 'right-0';
-  return 'left-1/2 -translate-x-1/2';
-}
 
 /** Returns whether the panel should currently be visible. */
 function isVisible(state: boolean): boolean {
@@ -69,31 +62,68 @@ function hideOnMouseLeave(): boolean {
   return false;
 }
 
-// ── Panel placement ──────────────────────────────────────────────────────────
+// ── Panel placement (computeTooltipPosition) ─────────────────────────────────
 
-describe('Tooltip — panel placement (side prop)', () => {
+// A trigger comfortably in the middle of a roomy viewport, so nothing clamps.
+const TRIGGER: TooltipTriggerRect = {
+  top: 300,
+  left: 500,
+  right: 516,
+  bottom: 316,
+  width: 16,
+  height: 16,
+};
+const PANEL = { width: 200, height: 40 };
+const VIEWPORT = { width: 1000, height: 800 };
+const GAP = 6;
+
+describe('Tooltip — vertical placement (side prop)', () => {
   it('places the panel above the trigger by default (top)', () => {
-    expect(panelPositionClass('top')).toBe('bottom-full mb-1.5');
+    // bottom edge of panel sits GAP above the trigger top: 300 - 6 - 40 = 254
+    expect(computeTooltipPosition(TRIGGER, PANEL, 'top', 'center', GAP, VIEWPORT).top).toBe(254);
   });
 
   it('places the panel below the trigger when side="bottom"', () => {
-    expect(panelPositionClass('bottom')).toBe('top-full mt-1.5');
+    // top edge of panel sits GAP below the trigger bottom: 316 + 6 = 322
+    expect(computeTooltipPosition(TRIGGER, PANEL, 'bottom', 'center', GAP, VIEWPORT).top).toBe(322);
   });
 });
 
-// ── Panel alignment ──────────────────────────────────────────────────────────
-
-describe('Tooltip — panel alignment (align prop)', () => {
-  it('centres the panel by default', () => {
-    expect(panelAlignClass('center')).toBe('left-1/2 -translate-x-1/2');
+describe('Tooltip — horizontal placement (align prop)', () => {
+  it('centres the panel on the trigger by default', () => {
+    // 500 + 16/2 - 200/2 = 408
+    expect(computeTooltipPosition(TRIGGER, PANEL, 'top', 'center', GAP, VIEWPORT).left).toBe(408);
   });
 
-  it('left-aligns the panel when align="left"', () => {
-    expect(panelAlignClass('left')).toBe('left-0');
+  it('left-aligns the panel with the trigger when align="left"', () => {
+    expect(computeTooltipPosition(TRIGGER, PANEL, 'top', 'left', GAP, VIEWPORT).left).toBe(500);
   });
 
-  it('right-aligns the panel when align="right"', () => {
-    expect(panelAlignClass('right')).toBe('right-0');
+  it('right-aligns the panel with the trigger when align="right"', () => {
+    // trigger.right - panel.width = 516 - 200 = 316
+    expect(computeTooltipPosition(TRIGGER, PANEL, 'top', 'right', GAP, VIEWPORT).left).toBe(316);
+  });
+});
+
+describe('Tooltip — viewport clamping (the anti-crop guarantee)', () => {
+  it('clamps a right-edge overflow back inside the viewport', () => {
+    const edge: TooltipTriggerRect = { top: 300, left: 960, right: 976, bottom: 316, width: 16, height: 16 };
+    // centred would be 960 + 8 - 100 = 868; panel right would be 1068 > 1000, so
+    // it clamps to 1000 - 200 - 8 = 792.
+    expect(computeTooltipPosition(edge, PANEL, 'top', 'center', GAP, VIEWPORT).left).toBe(792);
+  });
+
+  it('flips a side="top" tooltip BELOW when there is no room above', () => {
+    const high: TooltipTriggerRect = { top: 10, left: 500, right: 516, bottom: 26, width: 16, height: 16 };
+    // Above needs 10 - 6 - 40 = -36 (doesn't fit ≥8), so it flips below the
+    // trigger: bottom 26 + gap 6 = 32 — in the clear, not clamped over content.
+    expect(computeTooltipPosition(high, PANEL, 'top', 'center', GAP, VIEWPORT).top).toBe(32);
+  });
+
+  it('never positions the panel off the left edge', () => {
+    const left: TooltipTriggerRect = { top: 300, left: 0, right: 16, bottom: 316, width: 16, height: 16 };
+    // centred would be 0 + 8 - 100 = -92; clamps to 8.
+    expect(computeTooltipPosition(left, PANEL, 'top', 'center', GAP, VIEWPORT).left).toBe(8);
   });
 });
 

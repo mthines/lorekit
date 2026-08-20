@@ -170,6 +170,11 @@ export function NavigationCommands() {
     onSelect: () => router.push('/docs'),
   });
 
+  // NOTE: no "Go to Blog" command here on purpose — the blog is not a released
+  // surface yet, so the app palette must not advertise it. Re-add (with `g b`)
+  // when the blog ships. ⌘K still works ON the blog page itself; it just isn't
+  // discoverable from the rest of the app.
+
   // ── Settings ──────────────────────────────────────────────────────────────
 
   useCommand({

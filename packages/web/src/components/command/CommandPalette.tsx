@@ -66,13 +66,17 @@ function groupCommands(commands: Command[]): GroupedItems[] {
 function ShortcutBadge({ keys }: { keys: string[] }) {
   return (
     <span
-      className="flex shrink-0 items-center gap-0.5 text-[10px] font-mono text-[var(--color-content-tertiary)]"
+      className="flex shrink-0 items-center gap-1 text-[11px] text-[var(--color-content-tertiary)]"
       aria-label={`Shortcut: ${formatShortcut(keys)}`}
     >
       {keys.map((k, i) => (
-        <span key={i}>
-          {i > 0 && <span className="mx-0.5 opacity-40">then</span>}
-          <kbd className="inline-flex min-w-5 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5">
+        <span key={i} className="flex items-center gap-1">
+          {/* "then" in the chord — kept dim and lowercase, Linear-style. */}
+          {i > 0 && <span className="text-[var(--color-content-tertiary)]">then</span>}
+          {/* Soft key cap: subtle fill + hairline (border-subtle, not the harder
+              border), sans font, muted-but-legible text — a quiet hint, not a
+              boxed button. */}
+          <kbd className="inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1.5 leading-none text-[var(--color-content-secondary)]">
             {formatShortcut([k])}
           </kbd>
         </span>
@@ -118,13 +122,13 @@ function CommandRow({
       onMouseEnter={onHover}
       onClick={onActivate}
       className={[
-        'flex w-full min-h-10 items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors focus:outline-none',
+        'flex w-full min-h-10 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors focus:outline-none',
         selected
           ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
           : 'text-[var(--color-content-primary)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
     >
-      {/* Icon */}
+      {/* Icon — vertically centered across the row (single- and two-line) */}
       {command.icon && (
         <span
           className={[
@@ -139,15 +143,12 @@ function CommandRow({
         </span>
       )}
 
-      {/* Label + description */}
-      <span className="flex-1 min-w-0">
-        <span className="block truncate font-medium">{command.label}</span>
-        {command.description && (
-          <span className="block truncate text-xs text-[var(--color-content-tertiary)]">
-            {command.description}
-          </span>
-        )}
-      </span>
+      {/* Label only — single-line rows (Linear / VS Code style) so the list
+          scans fast and reads calm. The description is intentionally NOT
+          rendered: it stays in the SEARCH index (see `matchesSearch`) so typing
+          a word from it still surfaces the command, without the per-row weight
+          of a second line. */}
+      <span className="min-w-0 flex-1 truncate font-normal">{command.label}</span>
 
       {/* Shortcut badge */}
       {command.shortcut && (
@@ -302,7 +303,7 @@ export function CommandPalette() {
         }}
       >
         {/* Header: breadcrumb + search */}
-        <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
+        <div className="flex items-center gap-2 px-3 py-2.5">
           {/* Back button when nested */}
           {isNested && (
             <button
@@ -363,7 +364,7 @@ export function CommandPalette() {
           />
 
           {/* Keyboard hint */}
-          <kbd className="shrink-0 text-[10px] font-mono text-[var(--color-content-tertiary)] border border-[var(--color-border)] rounded px-1 py-0.5">
+          <kbd className="shrink-0 text-[10px] font-mono text-[var(--color-content-tertiary)] border border-[var(--color-border-subtle)] rounded px-1 py-0.5">
             esc
           </kbd>
         </div>
@@ -418,23 +419,23 @@ export function CommandPalette() {
         </div>
 
         {/* Footer hint */}
-        <div className="flex items-center justify-between border-t border-[var(--color-border)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
+        <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
           <span className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+              <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
                 ↑↓
               </kbd>
               navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+              <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
                 ↵
               </kbd>
               select
             </span>
             {isNested && (
               <span className="flex items-center gap-1">
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+                <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
                   ⌫
                 </kbd>
                 back
@@ -442,7 +443,7 @@ export function CommandPalette() {
             )}
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+            <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
               ⌘K
             </kbd>
             toggle
