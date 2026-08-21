@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { ContributionHeatmap } from './ContributionHeatmap';
 
@@ -62,12 +62,21 @@ export const FillsItsContainerAtAnyWidth: Story = {
 
     await step('the grid reaches the container’s right edge', async () => {
       const all = cells(canvasElement);
-      const last = all[all.length - 1]!.getBoundingClientRect();
+      const last = all[all.length - 1]!;
       const box = container.getBoundingClientRect();
       // Within a couple of pixels of the edge — the old fixed-pitch grid stopped
       // ~600px short of a 900px container, so the tolerance is nowhere near
       // wide enough to let that regression back in.
-      await expect(box.right - last.right).toBeLessThan(3);
+      //
+      // Read under `waitFor` because `getBoundingClientRect` is transform-
+      // INCLUSIVE and the cells animate in from `scale(0.6)`. Caught mid-flight,
+      // the last cell's right edge sits exactly `0.2 × trackWidth` short of the
+      // container (a centre-origin 0.6 scale loses 0.4 × width, half off each
+      // side) — that measures the ENTRY ANIMATION, not the layout this step is
+      // about. The threshold is deliberately unchanged: a grid that genuinely
+      // stops short of its container never converges, so the regression above
+      // still fails here, it just no longer fails on a transient frame.
+      await waitFor(() => expect(box.right - last.getBoundingClientRect().right).toBeLessThan(3));
     });
 
     await step('and it never overflows it', async () => {
@@ -106,8 +115,10 @@ export const ShrinksToAPhoneWidthWithoutOverflowing: Story = {
     });
 
     await step('and the last column still lands on the right edge', async () => {
-      const last = all[all.length - 1]!.getBoundingClientRect();
-      await expect(box.right - last.right).toBeLessThan(3);
+      // Under `waitFor` for the same reason as the 900px story: the rect
+      // includes the entry animation's `scale(0.6)` until it settles.
+      const last = all[all.length - 1]!;
+      await waitFor(() => expect(box.right - last.getBoundingClientRect().right).toBeLessThan(3));
     });
   },
 };
