@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.53.0](https://github.com/mthines/lorekit/compare/cli-v1.52.3...cli-v1.53.0) (2026-08-21)
+
+
+### Features
+
+* **auth:** scope-authorized removal and restore for API tokens ([4c097d5](https://github.com/mthines/lorekit/commit/4c097d5cd7b68f6dbec66905e31ca4d1cba03c43))
+* **auth:** scope-authorized removal and restore for API tokens ([d3aaad6](https://github.com/mthines/lorekit/commit/d3aaad60f0819b0d2216b7370d7f59c7e083da25))
+* scope an API key from the dashboard, and enforce it end to end ([ccc50ee](https://github.com/mthines/lorekit/commit/ccc50eee758be4622ec9dbd6b0612832e7ec119e))
+
 ## [1.52.3](https://github.com/mthines/lorekit/compare/cli-v1.52.2...cli-v1.52.3) (2026-08-18)
 
 
