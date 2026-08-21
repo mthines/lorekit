@@ -478,6 +478,7 @@ their rationale inline. **Do not relitigate these.**
 - `lk_rw_` prefix encodes permission visibly in config files
 - **Write-only tokens (`lk_wo_*`)** store `permissions: ['write']` in the existing `text[]` column (zero migration); gating logic in the shared pure `permissions.ts`. [rationale](./docs/decisions.md#write-only-tokens-lk_wo_)
 - Token SHA-256 hash in DB — shown once, never stored in plain text
+- **API token scoping (scopes + orgs)** — `api_tokens.scopes` (empty = unrestricted, owner wildcards reuse `expandScopeForSearch`'s grammar, with the trailing `*` legal only after a `/` or a `::`) + a tri-state `org_access`/`org_ids`; the key restriction is authoritative over `org_scope_bindings` auto-routing; scoping is set through an owner-only SECURITY DEFINER RPC, never an UPDATE policy. **Live end to end — 00068 ships the columns and the two predicates, 00069 makes them binding in three layers (transport refusal, query narrowing, and the SQL functions the transports cannot stand in front of), `TokenManager.tsx` sets them, and 00070 audits every change.** [rationale](./docs/decisions.md#api-token-scoping-scopes--orgs)
 - `AlwaysOn` OTel sampler — sampling deferred to Dash0 pipeline, never SDK-side
 - `instrumentation.ts` must be `async function register()` with `NEXT_RUNTIME === 'nodejs'` guard
 - **Browser RUM initialises in `lib/dash0-rum.ts`, identity set at INIT** — every event carries a `user.id` (`anon:<uuid>` until login); never simplify back to a login-only `identify()`. [rationale](./docs/decisions.md#browser-rum-init--identity-at-init)

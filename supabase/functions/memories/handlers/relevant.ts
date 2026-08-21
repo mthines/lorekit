@@ -1,11 +1,12 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import {
   RelevantQuerySchema,
   RELEVANT_SELECT,
@@ -96,6 +97,24 @@ export async function handleRelevant(
     'lorekit.scope_count': scopes.length,
   });
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00068/00069),
+  // identical to `POST /memories/search`, which takes the same list shape.
+  // Without it `applyRestTenantScope` narrows the candidate set to empty, which
+  // reads as "there is nothing relevant there" rather than "you may not ask
+  // about that scope". EVERY named scope must be allowed, not just one:
+  // answering over the allowed subset would answer a different question than
+  // the one asked, and the precedence order the caller expressed would silently
+  // lose a rank. `firstDeniedScope` returns null for a JWT/service caller and
+  // for an unrestricted key, so an unscoped token is byte-for-byte unaffected.
+  const deniedScope = firstDeniedScope(auth, scopes);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   const tracedDb = createTracedClient(db, span);
 
   let q: TracedQuery<MemoryRow> = tracedDb
@@ -118,7 +137,7 @@ export async function handleRelevant(
   // read route; there is no second predicate here to drift from them.
   if (auth.type === 'api_key' && auth.userId) {
     const orgIds = await getMemberOrgIds(db, auth.userId, span);
-    q = applyRestTenantScope(q, auth.userId, orgIds);
+    q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
 
   if (params.q) q = q.textSearch('fts', params.q, { type: 'websearch', config: 'english' });

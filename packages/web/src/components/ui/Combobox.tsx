@@ -72,6 +72,7 @@ import {
   nextEnabledIndex,
   selectionSummary,
   toggleSelection,
+  withCreatableOption,
   type ComboboxOption,
 } from './combobox-logic';
 
@@ -99,6 +100,24 @@ export interface ComboboxBaseProps<T extends string> {
   searchable?: boolean;
   /** Placeholder for the search box. */
   searchPlaceholder?: string;
+  /**
+   * Let the user commit a value that is not in `options`.
+   *
+   * Off by default — a picker over a closed set must stay closed. It exists for
+   * the controls whose option set is DERIVED from existing data and therefore
+   * cannot express a legitimate value that has no data yet: the API-token scope
+   * picker offers the account's scope catalog, and a key scoped to a scope with
+   * no memories in it yet is a normal thing to want.
+   *
+   * Called with the current search query. Return the row to offer — the caller
+   * owns normalisation (casing, trimming) AND validation, so a value the
+   * backend would reject is simply never offered — or `null` to offer nothing.
+   * Requires `searchable`: with no search box there is no query to create from.
+   *
+   * The row is appended to the filtered list and behaves like any other option,
+   * so keyboard selection, the tick, and toggling-off all work unchanged.
+   */
+  creatable?: (query: string) => ComboboxItem<T> | null;
   /** Extra classes on the trigger. */
   className?: string;
   /**
@@ -166,6 +185,7 @@ export function Combobox<T extends string>(props: ComboboxProps<T>) {
     searchPlaceholder = 'Search…',
     className = '',
     compact = false,
+    creatable,
   } = props;
   // Read off the union rather than destructured, so `props` stays narrowable in
   // `commit` — that is the one place the two modes actually diverge.
@@ -185,7 +205,19 @@ export function Combobox<T extends string>(props: ComboboxProps<T>) {
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const visible = useMemo(() => filterOptions(options, query), [options, query]);
+  const filtered = useMemo(() => filterOptions(options, query), [options, query]);
+  // `creatable` is only consulted while the search box exists — with no query
+  // there is nothing to create from — and the candidate is the caller's own
+  // normalised, validated value, so an unsavable row is never offered.
+  const visible = useMemo(
+    () =>
+      withCreatableOption(
+        filtered,
+        options,
+        searchable && creatable ? creatable(query) : null,
+      ),
+    [filtered, options, searchable, creatable, query],
+  );
   // Only meaningful for the trigger's icon, which needs ONE option — an icon for
   // "3 selected" does not exist, so multi mode falls back to no icon past one.
   const selected = props.multiple

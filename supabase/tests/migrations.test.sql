@@ -2713,7 +2713,10 @@ declare
   v_purged_arch int;
   v_purged_exp  int;
   v_arch_id     uuid;
-  v_rest_id     uuid;
+  -- 00072 replaced `restore_memory`'s `returns uuid` with
+  -- `returns table (restored boolean, existed boolean)`, so the call is a FROM
+  -- item now and the guard reads `restored` instead of "an id came back".
+  r_rest        record;
 begin
   set local role authenticated;
   perform set_config('request.jwt.claims',
@@ -2722,7 +2725,8 @@ begin
   select purge_archived_memories('00000000-0000-0000-0000-0000000000d4', 0) into v_purged_arch;
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4')     into v_purged_exp;
   select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
-  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select * into r_rest
+    from restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived');
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
@@ -2733,7 +2737,7 @@ begin
     format('IDOR: e5 hard-deleted %s of d4''s expired rows by naming d4 as p_user_id', v_purged_exp);
   assert v_arch_id is null,
     'IDOR: e5 archived one of d4''s rows by naming d4 as p_user_id';
-  assert v_rest_id is null,
+  assert not r_rest.restored,
     'IDOR: e5 restored one of d4''s rows by naming d4 as p_user_id';
 
   -- d4's three rows are all exactly as seeded.
@@ -2755,7 +2759,8 @@ $$;
 do $$
 declare
   v_arch_id    uuid;
-  v_rest_id    uuid;
+  -- See 60a: 00072 made `restore_memory` a table-returning function.
+  r_rest       record;
   v_purged_exp int;
 begin
   set local role authenticated;
@@ -2763,14 +2768,15 @@ begin
     '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
 
   select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
-  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select * into r_rest
+    from restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived');
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4') into v_purged_exp;
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
 
   assert v_arch_id is not null, 'self-service: d4 archiving its OWN active row must succeed';
-  assert v_rest_id is not null, 'self-service: d4 restoring its OWN archived row must succeed';
+  assert r_rest.restored,       'self-service: d4 restoring its OWN archived row must succeed';
   assert v_purged_exp >= 1,     'self-service: d4 purging its OWN expired row must delete it';
   assert not exists (select 1 from memories
                      where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
@@ -2847,10 +2853,19 @@ declare
   v_sig  text;
   v_sigs text[] := array[
     'archive_memory(uuid, text, text)',
-    'restore_memory(uuid, text, text)',
+    -- 00072 recreated `restore_memory` with the calling key's restriction
+    -- appended (p_key_scopes, p_key_org_access, p_key_org_ids → 6 args), for the
+    -- same reason 00069 did it to `memory_delete` below: name the CURRENT
+    -- signature, or `has_function_privilege` ERRORS on a function that no longer
+    -- exists and aborts the whole run.
+    'restore_memory(uuid, text, text, text[], text, uuid[])',
     'purge_archived_memories(uuid, integer)',
     'purge_expired_memories(uuid)',
-    'memory_delete(uuid, text, text, text, boolean)'
+    -- 00069 appended the calling key's restriction (p_key_scopes, p_key_org_access,
+    -- p_key_org_ids → 8 args). The grant guard names a signature, so a recreate
+    -- that changes the parameter list leaves this pointing at a function that no
+    -- longer exists and `has_function_privilege` ERRORS rather than failing.
+    'memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])'
   ];
 begin
   assert array_length(v_sigs, 1) = 5,
@@ -3191,7 +3206,8 @@ declare
   v_sig  text;
   -- Reads: authenticated + service_role, never anon.
   v_read text[] := array[
-    'lorekit_memory_scopes(uuid)',
+    -- 00069 appended the key restriction (4 args) — see the note in 60d.
+    'lorekit_memory_scopes(uuid, text[], text, uuid[])',
     'lorekit_memory_count(uuid)'
   ];
   -- Service-role-only: never anon, never authenticated.
@@ -3425,7 +3441,9 @@ $$;
 -- with p_kind + p_host (17 args) ────────────────────────────────────────────
 do $$
 declare
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text)';
+  -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
+  -- p_key_org_ids → 20 args).
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, text[], text, uuid[])';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
@@ -4117,7 +4135,9 @@ do $$
 declare
   -- 00057 widened the signature with the drill-down filter params (19 args);
   -- 00064 appended the owner dimension (p_owner, p_owner_mode → 21 args).
-  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text)';
+  -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
+  -- p_key_org_ids → 24 args).
+  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, uuid[])';
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';
@@ -4736,7 +4756,11 @@ $$;
 -- reads the whole usage ledger.
 do $$
 declare
-  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text)';
+  -- 00069 appended `p_key_scopes text[]`, so the live signature is the 6-arg
+  -- one. Asserted against the CURRENT signature rather than 00058's: a
+  -- privilege probe against a signature that no longer exists errors out, and
+  -- the overload count below is what pins that only one form is live.
+  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[])';
   v_overloads int;
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
@@ -6035,6 +6059,1131 @@ begin
   assert v_facet = v_rows,
     format('list rpc AC-10d: the owner count must agree with lorekit_memory_facets, list=%s facets=%s', v_rows, v_facet);
 
+  -- Hand the transaction back as the migration owner. `set local role` is
+  -- TRANSACTION-scoped, not block-scoped, so leaving `service_role` in place
+  -- here leaks into every later section — and the next one seeds `auth.users`,
+  -- which service_role may not write.
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+end;
+$$;
+
+-- ── 82. api_tokens scoping — columns, CHECKs, predicates, RPC (00068) ───────
+--
+-- The FIRST assertions this file has ever carried about `api_tokens`. The table
+-- has held an authorization record since 00002 with no DB-level proof of its
+-- constraints; 00068 puts a second authorization decision on it, so the gap is
+-- closed here rather than deferred again.
+do $$
+declare
+  v_owner   uuid := gen_random_uuid();
+  v_other   uuid := gen_random_uuid();
+  v_org_a   uuid;
+  v_org_b   uuid;
+  v_token   uuid;
+  v_scopes  text[];
+  v_access  text;
+  v_ids     uuid[];
+  v_failed  boolean;
+begin
+  -- Two orgs, the owner a member of only the first. `api_tokens.user_id`
+  -- references `auth.users`, so the fixtures go in there first.
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values
+    ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+     'lk-mig-keyscope-owner@test.local', now(), now()),
+    ('00000000-0000-0000-0000-000000000000', v_other, 'authenticated', 'authenticated',
+     'lk-mig-keyscope-other@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values ('scoping-org-a', 'A', v_owner)
+    returning id into v_org_a;
+  insert into orgs (slug, name, created_by) values ('scoping-org-b', 'B', v_other)
+    returning id into v_org_b;
+  insert into org_members (org_id, user_id, role) values (v_org_a, v_owner, 'owner');
+  insert into org_members (org_id, user_id, role) values (v_org_b, v_other, 'owner');
+
+  -- ── AC-1: a new key is unrestricted by default ────────────────────────────
+  -- The load-bearing backwards-compatibility claim of 00068 decision 1: adding
+  -- the columns must not narrow a single key that already exists.
+  insert into api_tokens (user_id, name, token_prefix, token_hash)
+  values (v_owner, 'scoping fixture', 'lk_rw_aaaa...', 'hash-scoping-fixture-0001')
+  returning id into v_token;
+
+  select scopes, org_access, org_ids into v_scopes, v_access, v_ids
+  from api_tokens where id = v_token;
+
+  assert v_scopes = '{}'::text[],
+    'api_tokens AC-1: a new key must default to an EMPTY scope allowlist';
+  assert v_access = 'all',
+    'api_tokens AC-1: a new key must default to org_access = all';
+  assert v_ids = '{}'::uuid[],
+    'api_tokens AC-1: a new key must default to no org ids';
+  assert lorekit_api_token_scope_allowed(v_scopes, 'repo::mthines/lorekit'),
+    'api_tokens AC-1: an empty allowlist must permit every scope';
+  assert lorekit_api_token_org_allowed(v_access, v_ids, v_org_a),
+    'api_tokens AC-1: the default tenancy must permit every org';
+
+  -- ── AC-2: the scope predicate ─────────────────────────────────────────────
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2: an exact pattern matches its own scope';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines/gw-tools'),
+    'scope_allowed AC-2: an exact pattern matches nothing else';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines'),
+    'scope_allowed AC-2: an exact pattern must not widen to its own prefix';
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/anything'),
+    'scope_allowed AC-2: an owner wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::someone/lorekit'),
+    'scope_allowed AC-2: an owner wildcard must not cross the owner boundary';
+  assert lorekit_api_token_scope_allowed(array['global', 'repo::mthines/*'], 'global'),
+    'scope_allowed AC-2: patterns are OR-ed';
+
+  -- The `::` half of the CHECK's `(/|::)` alternation. Everything above exercises
+  -- the `/` branch only, and the two are different literal prefixes both in the
+  -- regex and at match time — proving one says nothing about the other. The TS
+  -- twin pins `project::*` and the docs advertise it, so SQL was the gap.
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['project::*'], 'projectx::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard must not cross the prefix boundary';
+
+  -- The discriminating case for the LIKE escape. Without `replace(_, '\_')`,
+  -- `_` is LIKE's single-character wildcard and the second assertion fails —
+  -- which would silently widen every allowlist containing an underscore.
+  assert lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::my_org/lorekit'),
+    'scope_allowed AC-2: an underscore in the prefix still matches itself';
+  assert not lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::myxorg/lorekit'),
+    'scope_allowed AC-2: an underscore must stay LITERAL, not act as a LIKE wildcard';
+
+  -- The scope-side twin of AC-3's NULL-element case, and it gets there by a
+  -- different mechanism: `org_allowed` needed an explicit `coalesce(…, false)`
+  -- because `= any(array[null])` is a scalar NULL, whereas here `right(null,1)`
+  -- makes the CASE yield NULL, the WHERE drops the row, and `exists` is false by
+  -- construction. Correct, but INCIDENTALLY correct — adding an `else` to that
+  -- CASE would flip it to NULL with nothing failing. `is false`, not `not`,
+  -- because `assert not NULL` also fails and would not discriminate.
+  assert lorekit_api_token_scope_allowed(array[null]::text[], 'global') is false,
+    'scope_allowed AC-2: a NULL pattern element must yield FALSE, never NULL';
+  -- And it must not POISON the list: a good pattern alongside a NULL one still
+  -- matches. This is the case a cargo-culted `coalesce` wrapper would break.
+  assert lorekit_api_token_scope_allowed(array['global', null]::text[], 'global'),
+    'scope_allowed AC-2: a NULL element must not suppress a sibling pattern that matches';
+
+  -- Fail closed on a scopeless operation, but only for a RESTRICTED key.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], null),
+    'scope_allowed AC-2: a restricted key must not reach a scopeless operation';
+  assert lorekit_api_token_scope_allowed('{}'::text[], null),
+    'scope_allowed AC-2: an unrestricted key still reaches a scopeless operation';
+
+  -- AC-2b (00069): a pattern outside SCOPE_PATTERN's shape is DROPPED, not
+  -- honoured as a prefix. `*` is a wildcard only directly after `/` or `::`, so
+  -- a stored `repo::mthines/lore*` must not reach every repo starting with
+  -- those letters — that would WIDEN the key, the one direction these
+  -- predicates may never move. Pins the shape test itself: without this,
+  -- deleting the `pattern ~ …` line leaves the suite green, while the two TS
+  -- twins are pinned by tenant-scope.spec.ts and api-key.spec.ts.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: a mid-token wildcard must not prefix-match';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lore-other'),
+    'scope_allowed AC-2b: a dropped pattern must not match anything beneath it';
+  -- A key whose patterns ALL fail the shape test matches nothing — fail closed,
+  -- never "no restriction".
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'global'),
+    'scope_allowed AC-2b: an all-malformed allowlist must reach nothing';
+  -- …and the two LEGAL wildcard positions are untouched.
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: an owner wildcard still expands';
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::alpha'),
+    'scope_allowed AC-2b: a prefix wildcard after `::` still expands';
+
+  -- ── AC-3: the tenancy predicate ───────────────────────────────────────────
+  assert lorekit_api_token_org_allowed('personal', '{}'::uuid[], null),
+    'org_allowed AC-3: a personal row is reachable under every tenancy';
+  assert not lorekit_api_token_org_allowed('personal', '{}'::uuid[], v_org_a),
+    'org_allowed AC-3: `personal` must refuse every org';
+  assert lorekit_api_token_org_allowed('selected', array[v_org_a], v_org_a),
+    'org_allowed AC-3: `selected` admits a listed org';
+  assert not lorekit_api_token_org_allowed('selected', array[v_org_a], v_org_b),
+    'org_allowed AC-3: `selected` refuses an unlisted org';
+  assert not lorekit_api_token_org_allowed('nonsense', '{}'::uuid[], v_org_a),
+    'org_allowed AC-3: an unknown tenancy must fail CLOSED';
+
+  -- `= any(array[null])` is NULL, so without the outer coalesce this predicate
+  -- returns NULL — neither true nor false — out of an authorization check.
+  -- `assert not` is the discriminating form: `assert` on a NULL fails, but so
+  -- does `assert not NULL`, and only `is false` distinguishes the two. Written
+  -- explicitly so a regression cannot pass as "not true".
+  assert lorekit_api_token_org_allowed('selected', array[null]::uuid[], v_org_a) is false,
+    'org_allowed AC-3: a NULL element must yield FALSE, never NULL, from the predicate';
+
+  -- ── AC-4: the CHECKs actually reject ──────────────────────────────────────
+  -- Each is asserted by attempting the write and catching, because a CHECK that
+  -- exists but does not fire is indistinguishable from no CHECK at all.
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['a,value.not.is.null'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a pattern outside the injection-guard charset must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::*/lorekit'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: an INTERIOR wildcard must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'everything' where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: an unknown org_access must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'selected', org_ids = '{}'::uuid[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: `selected` with no org ids must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'personal', org_ids = array[v_org_a] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: org ids under a tenancy that does not use them must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens
+       set scopes = (select array_agg('project::p' || i) from generate_series(1, 51) as i)
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-pattern allowlist must be rejected (cardinality cap)';
+
+  -- The org-list twin of the cap above. `org_access` is set to 'selected' in the
+  -- SAME statement on purpose: with the tenancy left at 'all', a non-empty
+  -- org_ids also violates api_tokens_org_ids_match_access, and BOTH constraints
+  -- raise check_violation — so the assertion would pass while proving the wrong
+  -- one. Under 'selected' the match constraint is satisfied (selected = true,
+  -- cardinality > 0 = true), leaving api_tokens_org_ids_len as the only
+  -- constraint the row can violate.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array_fill(v_org_a, array[51])
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-org list must be rejected (cardinality cap)';
+
+  -- The org-list twin of the NULL-element case below. `{null}` has cardinality
+  -- 1, so api_tokens_org_ids_len and api_tokens_org_ids_match_access are both
+  -- satisfied under 'selected' — api_tokens_org_ids_not_null is the only
+  -- constraint that can fire, which is what makes this assertion specific.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array[null]::uuid[]
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL org id must be rejected, not read as an empty list';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['project::' || repeat('a', 200)] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a pattern over 200 chars must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::mthines/lore*'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a trailing wildcard off a segment boundary must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array[null]::text[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL element must be INVALID, not unknown-therefore-fine';
+
+  -- The accept side of the same alternation: the CHECK must admit a
+  -- `::`-boundary wildcard, not only a `/` one. Without this the regex could be
+  -- narrowed to `/` alone and every assertion above would still pass, while the
+  -- TS twin and the docs kept advertising `project::*`.
+  update api_tokens set scopes = array['project::*'] where id = v_token;
+  select scopes into v_scopes from api_tokens where id = v_token;
+  assert v_scopes = array['project::*'],
+    'api_tokens AC-4: a `::`-boundary wildcard must be accepted';
+
+  -- A valid pair still lands — the CHECKs must not be so tight that the
+  -- feature is unusable.
+  update api_tokens
+     set scopes = array['repo::mthines/*'], org_access = 'selected', org_ids = array[v_org_a]
+   where id = v_token;
+  select scopes, org_access into v_scopes, v_access from api_tokens where id = v_token;
+  assert v_scopes = array['repo::mthines/*'] and v_access = 'selected',
+    'api_tokens AC-4: a valid scoping must be accepted';
+
+  -- ── AC-5: the RPC is owner-only and membership-checked ────────────────────
+  -- The AC-4 block above wrote as the migration owner (superuser, RLS bypassed)
+  -- because `api_tokens` deliberately has no UPDATE policy. From here the actor
+  -- matters, so the session becomes a real `authenticated` JWT — the same shape
+  -- sections 4–12 use for the org RPCs.
+  --
+  -- Acting as the OTHER user: the key is not theirs, so the call must RAISE
+  -- rather than silently match zero rows and report success.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_other), true);
+
+  -- The RPC raises DISTINCT sqlstates, so each refusal is caught by code rather
+  -- than by `when others` — which would also pass on a typo, a missing function
+  -- or a permissions error, i.e. on the test being wrong.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
+  exception when no_data_found then v_failed := true;
+  end;
+  assert v_failed, 'set_scoping AC-5: a non-owner must get the not-found refusal (P0002)';
+
+  -- Back as the owner: pointing the key at an org the OWNER is not in must be
+  -- refused, or the row would record access that does not exist.
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_owner), true);
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', array[v_org_b]);
+  exception when insufficient_privilege then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a non-member org must get the permission refusal (42501)';
+
+  -- The RPC RE-STATES the table's five CHECKs so a bad argument comes back as a
+  -- legible LK004 instead of a raw constraint-violation string. Duplicated logic
+  -- drifts from its original unless something asserts it, and AC-4 only proves
+  -- the CHECKs themselves — it writes as the migration owner and never enters
+  -- this function. Each case therefore feeds ONE bad argument with the other
+  -- three valid, and catches the RPC's own sqlstate (22023 =
+  -- `invalid_parameter_value`) rather than `others`, for the same reason the
+  -- refusals above catch theirs by code.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array_fill('global'::text, array[51]), 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-pattern allowlist must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array['a,value.not.is.null'], 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a malformed scope pattern must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array_fill(v_org_a, array[51]));
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-org list must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'everything', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: an unknown org_access must be refused with LK004';
+
+  -- NULL is a THIRD case, not a variant of the one above: `null not in (…)` is
+  -- NULL, so without the explicit `is null` the guard does not fire, and neither
+  -- does the equality guard after it. The tenancy would reach the UPDATE and come
+  -- back as a raw 23502 from the column's NOT NULL — an internal constraint name
+  -- instead of an LK004. `invalid_parameter_value` here is therefore asserting
+  -- that the re-statement is TOTAL, not merely present.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], null, '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_access must be refused with LK004, not a raw NOT NULL violation';
+
+  -- A NULL ARGUMENT is not the same as an empty array, and for `scopes` the
+  -- difference is a widening: '{}' means UNRESTRICTED, so a coalesce here would
+  -- turn `null` into "every scope the owner can see". Giving the arguments no
+  -- DEFAULT only stops them being OMITTED; these two cases pin that an explicit
+  -- null is refused as well.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, null, 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL scopes argument must be refused, never coalesced to the unrestricted default';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', null);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_ids argument must be refused, never coalesced';
+
+  -- The RPC's own re-statement of api_tokens_org_ids_not_null. It has to run
+  -- BEFORE the membership guard, because that guard cannot see a NULL: the row
+  -- IS selected into v_stray (`m.org_id = null` is NULL, so `not exists` holds)
+  -- and `v_stray is not null` is then false. Catching LK004's 22023 rather than
+  -- LK002's 42501 is what proves the ordering.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array[null]::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org id must be refused with LK004, ahead of the membership guard';
+
+  -- Both directions of the equality, because a one-sided implication would let
+  -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
+  -- carrying orgs. The second uses v_org_a, an org the actor IS a member of, so
+  -- it is the mismatch that refuses it and not the membership check below it.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: `selected` with no org ids must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'personal', array[v_org_a]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: org ids under a tenancy that does not use them must be refused with LK004';
+
+  -- And the happy path returns the row it wrote.
+  select t.scopes, t.org_access, t.org_ids into v_scopes, v_access, v_ids
+  from lorekit_api_token_set_scoping(v_token, array['global'], 'selected', array[v_org_a]) t;
+  assert v_scopes = array['global'] and v_access = 'selected' and v_ids = array[v_org_a],
+    'set_scoping AC-5: the RPC must return the scoping it persisted';
+
+  -- Clearing it is how a key is un-scoped again (decision 1's other direction).
+  perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select scopes, org_access, org_ids into v_scopes, v_access, v_ids
+  from api_tokens where id = v_token;
+  assert v_scopes = '{}'::text[] and v_access = 'all' and v_ids = '{}'::uuid[],
+    'set_scoping AC-5: clearing the scoping must restore the unrestricted default';
+end;
+$$;
+
+-- ── 83. api_token scoping ENFORCEMENT — the eight functions 00069 teaches ───
+--
+-- §81 proved the predicates answer correctly in isolation. This proves the
+-- functions that CONSUME them actually changed behaviour: the two mutation
+-- gates (memory_write, memory_delete), which are the last unbypassable checks
+-- on their paths, and the five per-scope aggregates (lorekit_memory_scopes,
+-- _activity, lorekit_read_activity, _tags, _facets), each of which would
+-- otherwise leak the very names scoping hides.
+do $$
+declare
+  v_owner    uuid := gen_random_uuid();
+  v_org      uuid;
+  v_org_slug text := 'keyenf-org';
+  v_scopes   text[];
+  v_routed   boolean;
+  v_binding  text;
+  v_count    integer;
+  v_failed   boolean;
+begin
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+          'lk-mig-keyenf@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values (v_org_slug, 'Key Enforcement', v_owner)
+    returning id into v_org;
+  insert into org_members (org_id, user_id, role) values (v_org, v_owner, 'owner');
+
+  -- Adopt the service-role claim BEFORE any assertion, exactly as §80 does for
+  -- lorekit_memory_scopes. Every aggregate 00069 re-issues resolves its actor
+  -- with `case when auth.role() = 'service_role' then coalesce(p_user_id,
+  -- auth.uid()) else auth.uid() end`, and memory_delete resolves its actor the
+  -- same way. Without the claim `auth.role()` is NULL, so v_actor collapses to a
+  -- NULL auth.uid(): the aggregates return NO rows and the AC-4/5/6 "must see"
+  -- asserts fail while every "must not see" assert passes VACUOUSLY — the worst
+  -- of both, since the narrowing this section exists to prove would be untested.
+  -- Only the claim is set (no `set local role`), because auth.role() reads
+  -- request.jwt.claims and the inserts above need the harness's own privileges.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- ── AC-1: an unscoped caller is completely unaffected ─────────────────────
+  -- The defaults must reproduce the pre-00069 behaviour exactly, or this
+  -- migration is a regression for every existing key, JWT session and CI run.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-default',
+    p_value => 'v', p_org_slug => v_org_slug
+  ) w;
+  assert v_routed,
+    'enforcement AC-1: an explicit org write must still route to the org by default';
+
+  -- ── AC-2: the explicit-org branch refuses a key outside its tenancy ───────
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-denied',
+      p_value => 'v', p_org_slug => v_org_slug,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2: a personal-only key must not write into a named org';
+
+  -- ── AC-2b: the SCOPE allowlist is enforced on the write path too ──────────
+  -- Both dispatchers already refuse a named scope outside the allowlist, but
+  -- both run on the service-role client, so this RPC is the only gate a write
+  -- cannot route around. Without it the allowlist half had no unbypassable
+  -- enforcement at all, unlike the tenancy half AC-2 covers.
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::other/repo', p_key => 'k-scope-denied',
+      p_value => 'v', p_key_scopes => array['repo::mthines/*']
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2b: a key allowlisted elsewhere must not write under repo::other/repo';
+
+  -- …and the same key writing INSIDE its allowlist still succeeds, so AC-2b
+  -- denies on the allowlist and not on some unrelated failure.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/allowed', p_key => 'k-scope-allowed',
+    p_value => 'v', p_key_scopes => array['repo::mthines/*']
+  );
+  select count(*) into v_count from memories m
+   where m.user_id = v_owner and m.scope = 'repo::mthines/allowed';
+  assert v_count = 1,
+    'enforcement AC-2b: a write INSIDE the allowlist must still land';
+
+  -- ── AC-3: the binding branch — THE KEY WINS (00068 decision 4) ────────────
+  -- Bind the scope to the org, then write with NO explicit org. A default
+  -- caller is auto-routed; a personal-only key must fall back to a PERSONAL
+  -- write instead — never rejected, and still told which org the scope belongs
+  -- to, exactly as a non-member already is.
+  -- Inserted directly rather than through `lorekit_scope_bind`, which resolves
+  -- its actor from auth.uid() — null in this superuser block. The binding ROW is
+  -- what memory_write reads; how it got there is 00026's concern, not this one.
+  insert into org_scope_bindings (org_id, scope, created_by) values (v_org, 'repo::bound/repo', v_owner);
+
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-default', p_value => 'v'
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: an unrestricted caller must still be auto-routed by the binding';
+
+  select w.org_routed, w.binding_org_slug into v_routed, v_binding
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-personal',
+    p_value => 'v', p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) w;
+  assert not v_routed,
+    'enforcement AC-3: a personal-only key must NOT be auto-routed into the bound org';
+  assert v_binding = v_org_slug,
+    'enforcement AC-3: the fallback must still report the bound org so the caller can be told';
+
+  -- The same key pointed AT that org is routed — proving AC-3 denies on the
+  -- tenancy and not on some unrelated failure.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-selected',
+    p_value => 'v', p_key_org_access => 'selected', p_key_org_ids => array[v_org]
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: a key that DOES include the bound org must still be routed';
+
+  -- ── AC-4: lorekit_memory_scopes honours the key's allowlist ───────────────
+  -- Two personal scopes exist by now (repo::mthines/lorekit from AC-1 landed in
+  -- the org, so seed a personal one explicitly) plus the bound-repo rows.
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-alpha', p_value => 'v');
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::beta',  p_key => 'k-beta',  p_value => 'v');
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: an unrestricted caller must still see every scope';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::alpha']) s;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-4: an allowlisted key must see ONLY its allowlisted scopes';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::*']) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: a wildcard pattern must match every scope beneath it';
+  assert not ('repo::bound/repo' = any(v_scopes)),
+    'enforcement AC-4: a wildcard must not leak a scope outside its prefix';
+
+  -- And the tenancy narrows the catalog too — otherwise a personal-only key
+  -- still enumerates the org's repo names, which is the leak this closes.
+  --
+  -- The probe needs a name that exists ONLY on an org-owned row.
+  -- `repo::bound/repo` cannot serve: AC-3's fallback wrote a PERSONAL row under
+  -- that same name, and a `personal` key keeps its own rows by design, so the
+  -- name legitimately survives the narrowing (asserted directly below).
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::orgonly/repo', p_key => 'k-orgonly',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner) s
+  where s.scope = 'repo::orgonly/repo';
+  assert v_count = 1,
+    'enforcement AC-4: an unrestricted caller must still enumerate the org-owned scope';
+
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::orgonly/repo';
+  assert v_count = 0,
+    'enforcement AC-4: a personal-only key must not enumerate an org-owned scope';
+
+  -- The mixed case, and the reason the probe above needed its own scope: under
+  -- `repo::bound/repo` the account holds two org rows (k-bound-default,
+  -- k-bound-selected) and one personal row (k-bound-personal). A `personal` key
+  -- must lose the org's two and keep its own one — the NAME survives with a
+  -- narrower count rather than disappearing, which is what "narrows, never
+  -- revokes" means for a scope the owner writes on both sides.
+  select s.count into v_count
+  from lorekit_memory_scopes(v_owner) s where s.scope = 'repo::bound/repo';
+  assert v_count = 3,
+    'enforcement AC-4: an unrestricted caller must count both the org rows and the personal one';
+
+  select s.count into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::bound/repo';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must keep its OWN row under a scope it also shares with an org';
+
+  -- A personal-only key still sees its OWN scopes: `personal` narrows which
+  -- ORGS are reachable, it never revokes the owner's own memories.
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'project::alpha';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must still see its own personal scopes';
+
+  -- ── AC-4b: memory_delete is gated on BOTH axes ────────────────────────────
+  -- The org branch chooses its rows inside the function, so no transport-side
+  -- filter reaches them. Without these guards it enforced the OWNER's role and
+  -- nothing about the key: a personal-only key could hard-delete an org row.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::deltest/repo', p_key => 'k-del',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a personal-only key must not delete an org-owned memory';
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true, p_key_scopes => array['repo::other/*']
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a key allowlisted elsewhere must not delete this scope';
+
+  -- The unrestricted default still deletes, so AC-4b denies on the key and not
+  -- on some unrelated failure.
+  select count(*) into v_count
+  from memory_delete(
+    p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+    p_key => 'k-del', p_force => true
+  ) d where d.deleted;
+  assert v_count = 1,
+    'enforcement AC-4b: an unrestricted caller must still delete the org-owned memory';
+
+  -- ── AC-5: the two ACTIVITY series are narrowed the same way ───────────────
+  -- `lorekit_memory_scopes` is not the only per-scope catalog: GET
+  -- /memories/activity and /read-activity also return one row per scope NAME,
+  -- so narrowing only the catalog would move the leak rather than close it.
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner) a;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-5: an unrestricted caller must still see every scope in the activity series';
+
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner, p_key_scopes => array['project::alpha']) a;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must see ONLY its allowlisted scopes in the activity series';
+
+  -- `repo::orgonly/repo`, not `repo::bound/repo`, for the reason AC-4 gives:
+  -- only the former names a row the owner holds solely through the org.
+  select count(*) into v_count
+  from lorekit_memory_activity(p_user_id => v_owner) a
+  where a.scope = 'repo::orgonly/repo';
+  assert v_count = 1,
+    'enforcement AC-5: an unrestricted caller must still see the org-owned scope in the activity series';
+
+  select count(*) into v_count
+  from lorekit_memory_activity(
+    p_user_id => v_owner, p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) a
+  where a.scope = 'repo::orgonly/repo';
+  assert v_count = 0,
+    'enforcement AC-5: a personal-only key must not see an org-owned scope in the activity series';
+
+  -- The read series, over its own ledger. `scope` is NULLABLE there — an
+  -- unattributable read names nothing, so it must survive the allowlist rather
+  -- than being dropped, or a scoped key's chart silently loses every event
+  -- written before 00058.
+  insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome,
+                            duration_ms, result_count, scope, created_at) values
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 5, 'project::alpha',
+     timestamptz '2026-05-01 01:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 7, 'project::beta',
+     timestamptz '2026-05-01 02:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'unknown', 'api_key', 'ok', 10, 3, null,
+     timestamptz '2026-05-01 03:00:00+00');
+
+  select array_agg(distinct r.scope order by r.scope) into v_scopes
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is not null;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must not see another scope NAME in the read series';
+
+  select count(*) into v_count
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is null;
+  assert v_count = 1,
+    'enforcement AC-5: an unattributable read names nothing and must survive the allowlist';
+
+  -- ── AC-6: the tag and facet catalogs are narrowed too ─────────────────────
+  -- `origin_repo` is a repository name by construction, so the facet list is a
+  -- scope-name catalog wearing a different hat. Narrowing four of six aggregate
+  -- endpoints moves the leak rather than closing it.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-facet-a',
+    p_value => 'v', p_tags => array['tag-alpha'], p_origin_repo => 'mthines/alpha'
+  );
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::beta', p_key => 'k-facet-b',
+    p_value => 'v', p_tags => array['tag-beta'], p_origin_repo => 'mthines/beta'
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a repo name from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/alpha';
+  assert v_count = 1,
+    'enforcement AC-6: the facet inside the allowlist must still be listed';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner, p_key_scopes => array['project::alpha']) t
+  where t.tag = 'tag-beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a label from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner) t where t.tag = 'tag-beta';
+  assert v_count = 1,
+    'enforcement AC-6: an unrestricted caller must still see every label';
+
+  -- Leave the session as this block found it, so a section appended after this
+  -- one does not silently inherit a service-role actor (§80's `reset role` +
+  -- empty-claims pairing, minus the role it never set).
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 84. API token scope-authorized removal + not-found/forbidden signal (00071) ─
+-- 00071 lets a key with a NON-EMPTY scope allowlist, reaching memory_delete on
+-- the service-role connection, manage any writer's row WITHIN its allowlist —
+-- while an UNSCOPED key and any non-service-role caller stay pinned to their own
+-- rows (the 00046 actor guard is untouched). It also returns `existed`, so a
+-- 0-row removal is reported as not_found vs forbidden instead of a silent false.
+--
+-- Owner under test = user A (…a1). Every row here is written by user B (…b2), a
+-- DIFFERENT principal, so ownership can never be what authorises the removal —
+-- only the key's scoping can.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-arch', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-keep', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-hard', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::other',   'sar-out',  'written by B');
+
+-- An org-owned row under phase2-org (f2, seeded in §11 with A as owner) exercises
+-- the org branch's new `existed` column in case (6).
+insert into memories (user_id, org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000f2',
+   'project::managed', 'sar-org-row', 'org-owned by phase2-org');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  -- (1) service-role + SCOPED key archives another writer's in-allowlist row.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-arch',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert r.archived and r.existed and not r.deleted,
+    format('SAR-1: a scoped key must archive an in-allowlist row it does not own (archived=%s existed=%s deleted=%s)',
+           r.archived, r.existed, r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-arch' and archived_at is not null;
+  assert v_count = 1, 'SAR-1: the row must actually be archived';
+
+  -- (1b) and hard-delete it, too.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-hard',
+    p_force      => true,
+    p_key_scopes => array['project::managed']);
+  assert r.deleted and r.existed and not r.archived,
+    format('SAR-1b: a scoped key must hard-delete an in-allowlist row it does not own (deleted=%s)', r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-hard';
+  assert v_count = 0, 'SAR-1b: the row must actually be gone';
+
+  -- (7) re-archiving the now ALREADY-archived sar-arch reports existed=true
+  --     (present), never not_found — the row is there, just nothing active to
+  --     archive. This is the case that would otherwise masquerade as not_found.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-arch',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert (not r.archived) and r.existed,
+    format('SAR-7: re-archiving an already-archived row must report existed=true, not not_found (archived=%s existed=%s)',
+           r.archived, r.existed);
+
+  -- (2) service-role + UNSCOPED key must NOT touch another writer's row; and
+  --     `existed` must report it present, i.e. forbidden — not not-found.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-keep',
+    p_force      => false,
+    p_key_scopes => array[]::text[]);
+  assert (not r.archived) and (not r.deleted) and r.existed,
+    format('SAR-2: an UNSCOPED key must not archive another user''s row, and existed must be true (archived=%s existed=%s)',
+           r.archived, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-keep' and archived_at is null;
+  assert v_count = 1, 'SAR-2: the unscoped key must have left the row active';
+
+  -- (3) not_found: a scoped key on a missing key removes nothing, existed=false.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-missing',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert (not r.archived) and (not r.existed),
+    format('SAR-3: a missing key must report existed=false / not_found (existed=%s)', r.existed);
+
+  -- (4) the scope allowlist STILL bounds a scoped key: a scope OUTSIDE the
+  --     allowlist is refused with LK002 before any widening can reach it.
+  begin
+    perform memory_delete(
+      p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+      p_org_slug   => null,
+      p_scope      => 'project::other',
+      p_key        => 'sar-out',
+      p_force      => false,
+      p_key_scopes => array['project::managed']);
+    assert false, 'SAR-4: a scope outside the allowlist must raise LK002';
+  exception when sqlstate 'LK002' then
+    null; -- expected
+  end;
+  select count(*) into v_count from memories
+    where scope = 'project::other' and key = 'sar-out' and archived_at is null;
+  assert v_count = 1, 'SAR-4: the out-of-allowlist row must be untouched';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (5) a raw AUTHENTICATED caller cannot widen with a request-supplied
+  --     p_key_scopes — auth.uid() pins the actor (00046), so B's row survives
+  --     and `existed` does not leak it. User C (…c3) is the would-be attacker.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',   -- spoofed; ignored off service_role
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-keep',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);               -- request input; must NOT widen
+  assert (not r.archived) and (not r.existed),
+    format('SAR-5: a request-supplied p_key_scopes must not let an authenticated caller widen (archived=%s existed=%s)',
+           r.archived, r.existed);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-keep' and archived_at is null;
+  assert v_count = 1, 'SAR-5: B''s row must survive the authenticated caller''s spoof attempt';
+
+  -- (6) the org branch carries `existed` too: A (owner of phase2-org) archives
+  --     an org-owned memory and gets archived=true alongside existed=true. The
+  --     org capability gate is 00068 verbatim; this only pins the new column.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select * into r from memory_delete(
+    p_user_id  => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug => 'phase2-org',
+    p_scope    => 'project::managed',
+    p_key      => 'sar-org-row',
+    p_force    => false);
+  assert r.archived and r.existed and not r.deleted,
+    format('SAR-6: an org archive must report archived + existed (archived=%s existed=%s)',
+           r.archived, r.existed);
+  select count(*) into v_count from memories
+    where org_id = '00000000-0000-0000-0000-0000000000f2' and key = 'sar-org-row' and archived_at is not null;
+  assert v_count = 1, 'SAR-6: the org row must actually be archived';
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 85. API token scope-authorized RESTORE + not-found/forbidden signal (00072) ─
+-- The restore-side symmetry of §83: a scoped key restores any writer's archived
+-- row within its allowlist; an unscoped key and any non-service-role caller stay
+-- own-rows-only; `existed` (scoped to ARCHIVED rows) distinguishes forbidden
+-- from not_found. Rows are archived up front (archived_at set) and written by B.
+insert into memories (user_id, scope, key, value, archived_at) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-arch', 'archived by B', now()),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-keep', 'archived by B', now()),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rother',   'res-out',  'archived by B', now());
+-- An ACTIVE (non-archived) row: there is nothing to restore, so it must read as
+-- not_found (existed=false), never forbidden.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-active', 'active, by B');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (1) scoped key restores another writer's archived in-allowlist row.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-arch',
+    p_key_scopes => array['project::rmanaged']);
+  assert r.restored and r.existed,
+    format('SAR-R1: a scoped key must restore an in-allowlist row it does not own (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-arch' and archived_at is null;
+  assert v_count = 1, 'SAR-R1: the row must actually be un-archived';
+
+  -- (2) UNSCOPED key must NOT restore another writer's row; existed=true.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-keep',
+    p_key_scopes => array[]::text[]);
+  assert (not r.restored) and r.existed,
+    format('SAR-R2: an UNSCOPED key must not restore another user''s row, existed must be true (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
+  assert v_count = 1, 'SAR-R2: the row must stay archived';
+
+  -- (3) not_found: a missing key AND an ACTIVE (nothing-to-restore) row both
+  --     report existed=false — there is no restorable row.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-missing',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed), 'SAR-R3a: a missing key must report existed=false';
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-active',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed),
+    format('SAR-R3b: an active (non-archived) row is not restorable → existed=false (existed=%s)', r.existed);
+
+  -- (4) scope allowlist still bounds a scoped key.
+  begin
+    perform restore_memory(
+      p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+      p_scope      => 'project::rother',
+      p_key        => 'res-out',
+      p_key_scopes => array['project::rmanaged']);
+    assert false, 'SAR-R4: a scope outside the allowlist must raise LK002';
+  exception when sqlstate 'LK002' then
+    null; -- expected
+  end;
+  select count(*) into v_count from memories
+    where scope = 'project::rother' and key = 'res-out' and archived_at is not null;
+  assert v_count = 1, 'SAR-R4: the out-of-allowlist row must stay archived';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (5) an authenticated caller cannot widen with request-supplied p_key_scopes.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-keep',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed),
+    format('SAR-R5: a request-supplied p_key_scopes must not let an authenticated caller widen (restored=%s existed=%s)',
+           r.restored, r.existed);
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
+  assert v_count = 1, 'SAR-R5: B''s archived row must survive the authenticated caller''s spoof attempt';
+end;
+$$;
+
+-- ── 86. The SERVICE tier reaches every row on both removal paths (00071/00072) ─
+--
+-- The bare service-role key (CI, the REST smoke suite, an operator script) is
+-- neither a user nor an API key, so both surfaces resolve `p_user_id => null`
+-- for it — and on that connection `auth.uid()` is null too, so the actor these
+-- RPCs derive is NULL and every `user_id = v_actor` disjunct is NULL. Pinning
+-- that caller to its "own" rows therefore matched NOTHING: the natural-key
+-- archive and the restore both came back 403 (`existed` true, nothing changed)
+-- for the tier that holds the secret which can write the table directly.
+--
+-- §84/§85 pin the two KEY tiers (scoped and unscoped); this pins the one above
+-- them. The complement — that a NON-service-role caller gains nothing from a
+-- null/spoofed p_user_id — is 60a/60f and SAR-5/SAR-R5, all still in force.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::svctier', 'svc-row', 'written by B');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (1) Archive another principal's row with NO p_user_id and NO key scoping —
+  --     the exact call `handleRemove`'s natural-key branch makes for a
+  --     service-token request.
+  select * into r from memory_delete(
+    p_user_id  => null,
+    p_org_slug => null,
+    p_scope    => 'project::svctier',
+    p_key      => 'svc-row',
+    p_force    => false);
+  assert r.archived and r.existed and not r.deleted,
+    format('SVC-1: the service tier must archive any row (archived=%s existed=%s deleted=%s)',
+           r.archived, r.existed, r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::svctier' and key = 'svc-row' and archived_at is not null;
+  assert v_count = 1, 'SVC-1: the row must actually be archived';
+
+  -- (2) …and restore it. A tier that can archive a row but not un-archive it is
+  --     the asymmetry 00072 exists to close.
+  select * into r from restore_memory(
+    p_user_id => null,
+    p_scope   => 'project::svctier',
+    p_key     => 'svc-row');
+  assert r.restored and r.existed,
+    format('SVC-2: the service tier must restore the row it just archived (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::svctier' and key = 'svc-row' and archived_at is null;
+  assert v_count = 1, 'SVC-2: the row must be live again';
+
+  -- (3) …and hard-delete it.
+  select * into r from memory_delete(
+    p_user_id  => null,
+    p_org_slug => null,
+    p_scope    => 'project::svctier',
+    p_key      => 'svc-row',
+    p_force    => true);
+  assert r.deleted and not r.archived,
+    format('SVC-3: the service tier must hard-delete any row (deleted=%s archived=%s)',
+           r.deleted, r.archived);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories where scope = 'project::svctier';
+  assert v_count = 0, 'SVC-3: the row must be physically gone';
 end;
 $$;
 

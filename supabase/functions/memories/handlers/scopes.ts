@@ -1,4 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
@@ -40,6 +41,14 @@ export async function handleScopes(
   // from a service_role JWT as "no tenant filter", matching GET /memories.
   const { data, error } = await tracedDb.rpc<ScopeRow>('lorekit_memory_scopes', {
     p_user_id: auth.userId ?? null,
+    // Narrowed inside the RPC, for the same reason the tenant predicate is:
+    // there is no query out here to post-filter. Without it a key restricted to
+    // one repo could still enumerate every scope name on the account — and a
+    // scope string IS a repo or project name, so scoping would leak exactly
+    // what it hides.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

@@ -20,7 +20,10 @@ export type Database = {
           id: string
           last_used_at: string | null
           name: string
+          org_access: string
+          org_ids: string[]
           permissions: string[]
+          scopes: string[]
           token_hash: string
           token_prefix: string
           user_id: string
@@ -30,7 +33,10 @@ export type Database = {
           id?: string
           last_used_at?: string | null
           name: string
+          org_access?: string
+          org_ids?: string[]
           permissions?: string[]
+          scopes?: string[]
           token_hash: string
           token_prefix: string
           user_id: string
@@ -40,7 +46,10 @@ export type Database = {
           id?: string
           last_used_at?: string | null
           name?: string
+          org_access?: string
+          org_ids?: string[]
           permissions?: string[]
+          scopes?: string[]
           token_hash?: string
           token_prefix?: string
           user_id?: string
@@ -647,11 +656,37 @@ export type Database = {
           org_slug: string
         }[]
       }
+      lorekit_api_token_org_allowed: {
+        Args: { p_org_access: string; p_org_id: string; p_org_ids: string[] }
+        Returns: boolean
+      }
+      lorekit_api_token_scope_allowed: {
+        Args: { p_patterns: string[]; p_scope: string }
+        Returns: boolean
+      }
+      lorekit_api_token_scopes_valid: { Args: { p_patterns: string[] }; Returns: boolean }
+      lorekit_api_token_set_scoping: {
+        Args: {
+          p_org_access: string
+          p_org_ids: string[]
+          p_scopes: string[]
+          p_token_id: string
+        }
+        Returns: {
+          id: string
+          org_access: string
+          org_ids: string[]
+          scopes: string[]
+        }[]
+      }
       lorekit_member_org_ids: { Args: { p_user_id: string }; Returns: string[] }
       lorekit_memory_count: { Args: { p_user_id: string }; Returns: Json }
       lorekit_memory_activity: {
         Args: {
           p_bucket?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_since?: string
           p_until?: string
           p_user_id: string
@@ -663,7 +698,13 @@ export type Database = {
         }[]
       }
       lorekit_memory_facets: {
-        Args: { p_archived?: boolean; p_user_id: string }
+        Args: {
+          p_archived?: boolean
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
+          p_user_id: string
+        }
         Returns: {
           count: number
           facet: string
@@ -671,7 +712,12 @@ export type Database = {
         }[]
       }
       lorekit_memory_scopes: {
-        Args: { p_user_id: string }
+        Args: {
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
+          p_user_id: string
+        }
         Returns: {
           count: number
           last_activity: string | null
@@ -679,7 +725,13 @@ export type Database = {
         }[]
       }
       lorekit_memory_tags: {
-        Args: { p_archived?: boolean; p_user_id: string }
+        Args: {
+          p_archived?: boolean
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
+          p_user_id: string
+        }
         Returns: {
           count: number
           tag: string
@@ -752,6 +804,21 @@ export type Database = {
         Args: { p_older_than?: string }
         Returns: number
       }
+      lorekit_read_activity: {
+        Args: {
+          p_bucket?: string
+          p_key_scopes?: string[]
+          p_scope?: string
+          p_since?: string
+          p_until?: string
+          p_user_id: string
+        }
+        Returns: {
+          bucket: string
+          count: number
+          scope: string | null
+        }[]
+      }
       lorekit_record_usage_event: {
         Args: {
           p_auth_type?: string
@@ -784,6 +851,9 @@ export type Database = {
         Args: {
           p_force?: boolean
           p_key?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_org_slug?: string
           p_scope?: string
           p_user_id: string
@@ -798,6 +868,9 @@ export type Database = {
           p_clear_ttl?: boolean
           p_created_at?: string
           p_key: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_org_slug?: string
           p_origin_branch?: string
           p_origin_commit?: string
