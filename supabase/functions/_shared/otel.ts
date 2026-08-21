@@ -600,7 +600,27 @@ interface QueryState {
   filters: string[];
   orderBy?: string;
   lim?: number;
-  qb: ReturnType<SupabaseClient['from']>;
+  /**
+   * The postgrest builder being accumulated. Deliberately untyped, because the
+   * real type CHANGES ALONG THE CHAIN and no single annotation describes it:
+   * `.from()` yields a `PostgrestQueryBuilder` (select / insert / update /
+   * delete), and `.select()` yields a `PostgrestFilterBuilder` (eq / gt / in /
+   * order / limit …). The two share almost no methods.
+   *
+   * This was `ReturnType<SupabaseClient['from']>`, i.e. the FIRST of those two,
+   * which made every filter call below a type error — `Property 'eq' does not
+   * exist on type 'PostgrestQueryBuilder'` and so on, 34 of them. Nothing
+   * noticed because no typechecker had ever run over this tree; `overlaps()`
+   * below already carried an `as any` for a narrower instance of the same
+   * problem.
+   *
+   * `TracedQuery` exists precisely to erase this distinction — it presents one
+   * flat fluent surface and records SQL text as it goes — so the honest
+   * annotation is the permissive one, with the method signatures on
+   * `TracedQuery` serving as the contract callers actually see.
+   */
+  // deno-lint-ignore no-explicit-any -- see above: the builder's type changes along the chain
+  qb: any;
 }
 
 function buildSql(s: QueryState): string {
