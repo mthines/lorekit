@@ -516,6 +516,41 @@ class RemoteStore {
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
 
+  // ── Maintenance sweeps → REST ─────────────────────────────────────────────
+  // `POST /memories/purge` and `/purge-expired` (handlers/purge.ts). Both are
+  // account-wide and irreversible, and both refuse a token carrying a scope
+  // allowlist with a 403 (`refuseAccountWideSweep`). `httpStatus` is passed
+  // through so the caller can print that refusal verbatim instead of a generic
+  // failure — the real status lives ONLY there, never in `error.code` (see
+  // `listScopes` above for why).
+
+  // Optional body: `{ retention_days }`, 1–365. Omitted entirely when the
+  // caller passes nothing, so the server applies its own documented default
+  // rather than the CLI asserting a second copy of it.
+  async purge({ retentionDays } = {}) {
+    const body = retentionDays == null ? undefined : { retention_days: retentionDays };
+    const res = await this._rest('/memories/purge', { method: 'POST', body });
+    return {
+      ok: res.ok,
+      purged: res.ok ? (res.data?.purged ?? 0) : null,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      networkError: res.networkError,
+    };
+  }
+
+  // Takes no body — the row set is every TTL-expired memory the caller owns.
+  async purgeExpired() {
+    const res = await this._rest('/memories/purge-expired', { method: 'POST' });
+    return {
+      ok: res.ok,
+      purged: res.ok ? (res.data?.purged ?? 0) : null,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      networkError: res.networkError,
+    };
+  }
+
   // ── Org operations → REST ─────────────────────────────────────────────────
   // `supabase/functions/orgs/` serves `lk_*` tokens on every route as of
   // 00041_org_actor_override.sql (see the file header). Each method's RETURN

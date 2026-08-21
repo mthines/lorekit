@@ -45,6 +45,7 @@ import { hook } from './hook.mjs';
 import { migrate } from './migrate.mjs';
 import { bootstrap } from './bootstrap.mjs';
 import { mcpServer } from './mcp-server.mjs';
+import { purge, purgeExpired } from './purge.mjs';
 
 /**
  * Every command, in the order the top-level help lists them.
@@ -76,6 +77,8 @@ export const COMMANDS = [
   { name: 'archive', run: archive, traced: true, strictFlags: true, tool: 'memory.archive' },
   { name: 'delete', run: del, traced: true, strictFlags: true, tool: 'memory.delete', aliases: ['rm'] },
   { name: 'restore', run: restore, traced: true, strictFlags: true, tool: 'memory.restore' },
+  { name: 'purge', run: purge, traced: true, strictFlags: true, tool: 'memory.purge' },
+  { name: 'purge-expired', run: purgeExpired, traced: true, strictFlags: true, tool: 'memory.purge_expired' },
 
   // ── Machine-facing ──────────────────────────────────────────────────────────
   { name: 'hook', run: hook, traced: false, strictFlags: false, machine: true, native: 'host hook engine — stdout is the host\'s JSON contract' },

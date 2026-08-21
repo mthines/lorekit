@@ -359,8 +359,7 @@ export const MCP_TOOLS = [
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
-      cli: null,
-      cliExempt: 'KNOWN GAP — no CLI command yet; being added',
+      cli: 'purge',
       rest: 'POST /purge',
       handler: 'toolPurge',
       localMcpExempt: 'account-wide sweep against server-side state; the offline store has no equivalent',
@@ -386,8 +385,7 @@ export const MCP_TOOLS = [
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
-      cli: null,
-      cliExempt: 'KNOWN GAP — no CLI command yet; being added',
+      cli: 'purge-expired',
       rest: 'POST /purge-expired',
       handler: 'toolPurgeExpired',
       localMcpExempt: 'account-wide sweep against server-side state; the offline store has no equivalent',

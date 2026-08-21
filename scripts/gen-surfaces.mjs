@@ -97,7 +97,7 @@ function literal(value, indent = 0) {
  * stays the only place CLI behaviour is decided.
  */
 export function renderCliSurfaces(catalog) {
-  const { MCP_TOOLS, wireTools } = catalog;
+  const { MCP_TOOLS, wireTools, PURGE_RETENTION_DAYS_DEFAULT } = catalog;
 
   const memory = MCP_TOOLS.filter((t) => t.name.startsWith('memory.')).map((t) => t.name);
   const org = MCP_TOOLS.filter((t) => t.name.startsWith('org.')).map((t) => t.name);
@@ -147,6 +147,16 @@ export const CLI_EXEMPT = ${literal(cliExempt)};
 
 /** Op -> why the local stdio MCP server does not dispatch it. */
 export const LOCAL_MCP_EXEMPT = ${literal(localMcpExempt)};
+
+/**
+ * Default retention window for \`memory.purge\`, in days.
+ *
+ * Derived rather than restated: this value appears in the tool description the
+ * server advertises, in the CLI's help text, and in the CLI's client-side
+ * validation. Three hand-written copies of one number is three chances for the
+ * help to promise a default the server does not apply.
+ */
+export const PURGE_RETENTION_DAYS_DEFAULT = ${JSON.stringify(PURGE_RETENTION_DAYS_DEFAULT)};
 `;
 }
 

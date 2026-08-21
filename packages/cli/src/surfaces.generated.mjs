@@ -474,7 +474,9 @@ export const CLI_BINDINGS = {
   "search": "memory.search",
   "archive": "memory.archive",
   "scopes": "memory.scopes",
-  "restore": "memory.restore"
+  "restore": "memory.restore",
+  "purge": "memory.purge",
+  "purge-expired": "memory.purge_expired"
 };
 
 /** CLI alias -> canonical command name. */
@@ -490,8 +492,6 @@ export const CLI_ALIASES = {
  */
 export const CLI_EXEMPT = {
   "memory.list_archived": "surfaced as a flag on an existing command — `lorekit list --archived` — not a command of its own",
-  "memory.purge": "KNOWN GAP — no CLI command yet; being added",
-  "memory.purge_expired": "KNOWN GAP — no CLI command yet; being added",
   "org.create": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
   "org.list": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
   "org.rename": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
@@ -504,3 +504,13 @@ export const LOCAL_MCP_EXEMPT = {
   "memory.purge": "account-wide sweep against server-side state; the offline store has no equivalent",
   "memory.purge_expired": "account-wide sweep against server-side state; the offline store has no equivalent"
 };
+
+/**
+ * Default retention window for `memory.purge`, in days.
+ *
+ * Derived rather than restated: this value appears in the tool description the
+ * server advertises, in the CLI's help text, and in the CLI's client-side
+ * validation. Three hand-written copies of one number is three chances for the
+ * help to promise a default the server does not apply.
+ */
+export const PURGE_RETENTION_DAYS_DEFAULT = 30;

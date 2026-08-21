@@ -486,6 +486,39 @@ lesson link, `search foo --link` → `/lore?q="foo"` (+ scope), and `list --link
 multi-scope `list`/`tree` view maps to its primary scope. (The same JSON-encoded
 links now back the hooks' write-confirmation and retrospective nudges.)
 
+### `lorekit purge` / `lorekit purge-expired`
+
+The two maintenance sweeps. Both permanently delete rows, and neither can be undone.
+
+```bash
+lorekit purge --retention-days 30 --yes   # hard-delete archived lore older than 30 days
+lorekit purge-expired --yes               # hard-delete every TTL-expired memory
+```
+
+`purge` removes **archived** memories past a retention window — archived lore is
+hidden from reads but recoverable with `lorekit restore`, so this is the step that
+makes it unrecoverable. `purge-expired` removes memories whose `ttl_days` window
+has passed. `--retention-days` accepts 1–365 and defaults to 30; it is validated
+before any request, so an out-of-range or non-integer value fails immediately
+rather than costing a round trip.
+
+**Remote only.** They sweep server-side state and the offline store has no
+equivalent operation, so `--local` is refused with a message rather than quietly
+doing nothing.
+
+**Confirmation, not a dry run.** There is no `--dry-run`, and that is not an
+omission: the purge RPCs return their count only *after* deleting, and the REST
+dry-run header stops before the write with nothing to preview — so "would purge
+N" cannot be answered honestly. Instead an interactive terminal is prompted, and
+**`--yes` is required whenever there is nobody to ask** (a pipe, CI, or `--json`).
+An unattended agent cannot purge by omission.
+
+**Scoped tokens are refused.** A token restricted to specific scopes cannot run
+an account-wide sweep — there is no scope to check and no result set to narrow.
+The server's refusal is printed verbatim with a one-line next step; the CLI makes
+exactly one request and never retries, splits the sweep, or re-scopes around it.
+Use an unscoped `lk_rw_*` / `lk_wo_*` token for maintenance.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
@@ -963,12 +996,13 @@ also returns their headroom against the plan's memory cap.
 | `--mcp-json` | Also write a committable project `.mcp.json` (auth via `${LOREKIT_TOKEN}`, no embedded token) for Claude Code on the web (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link` / `purge` / `purge-expired`) |
 | `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. On `show` / `write` it **names** the scope, overriding the positional |
 | `--key <key>` | Name the key outright (`show` / `write` / `link`) — the way to address a key that itself contains `::` |
 | `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
+| `--retention-days <1..365>` | Only purge archived memories older than this (`purge`; default `30`, derived from the tool catalog) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |

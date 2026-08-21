@@ -7,6 +7,9 @@ import { parseArgs, log, err, c } from '../src/util.mjs';
 // registry — see ../src/commands.mjs for why membership lives there and the
 // help prose stays here.
 import { COMMANDS_BY_NAME, STRICT_FLAG_COMMANDS, COMMAND_ALIASES } from '../src/commands.mjs';
+// Catalog-derived, so the default this help PROMISES is the one the server
+// applies — see src/surfaces.generated.mjs.
+import { PURGE_RETENTION_DAYS_DEFAULT } from '../src/surfaces.generated.mjs';
 import { traceCommand } from '../src/telemetry.mjs';
 import { loadDotEnv } from '../src/dotenv.mjs';
 
@@ -77,6 +80,15 @@ ${c.bold('Commands')}
               Explorer (--q / --owner / --tags / --range / --archived);
               --base or LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
               lorekit link | pbcopy.
+  purge       Permanently delete ARCHIVED memories older than --retention-days
+              (default ${PURGE_RETENTION_DAYS_DEFAULT}, range 1-365). Remote only, account-wide and
+              IRREVERSIBLE: prompts for confirmation, and requires --yes when
+              there is no terminal to prompt (a pipe, CI, or --json). A token
+              restricted to specific scopes is refused by the server.
+  purge-expired
+              Permanently delete every TTL-EXPIRED memory. Same posture as
+              purge: remote only, account-wide, irreversible, --yes required
+              non-interactively. Takes no options.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
@@ -107,6 +119,9 @@ ${c.bold('Options')}
       --link              Print the equivalent dashboard deep-link URL instead of running (show / search / list / tree)
       --base <url>        Dashboard base URL for deep links (link / --link; else LOREKIT_APP_URL, default https://lorekit.io)
       --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
+      --retention-days <1..365>
+                          Only purge archived memories older than this (purge;
+                          default ${PURGE_RETENTION_DAYS_DEFAULT})
       --from <path>       Source store to migrate from (migrate)
       --to <dest>         Migration destination: home | project | remote (migrate;
                           default routes each entry by scope across the local tiers)
@@ -630,6 +645,60 @@ ${c.bold('Examples')}
   npx @lorekit/cli migrate --from .lorekit --to remote        # preview the push
   npx @lorekit/cli migrate --from .lorekit --to remote --yes  # push local lore up
 `,
+  purge: `${c.bold('lorekit purge')} — permanently delete archived memories past a retention window
+
+${c.bold('Usage')}
+  lorekit purge [--retention-days <1..365>] [--yes] [--json]
+
+Hard-deletes ARCHIVED memories older than the retention window. Archived lore is
+hidden from reads but recoverable with ${c.cyan('lorekit restore')} — this is what makes it
+unrecoverable, so it is the one step in the lifecycle that cannot be walked back.
+
+${c.bold('Remote only')}
+It sweeps server-side state; the offline store has no equivalent, so ${c.cyan('--local')} is
+refused rather than quietly doing nothing.
+
+${c.bold('Confirmation')}
+There is no dry run: the purge RPC returns its count only AFTER deleting, so
+"would purge N" cannot be answered honestly. Instead you are asked to confirm,
+and ${c.cyan('--yes')} is REQUIRED when there is no terminal to ask (a pipe, CI, or --json)
+— an unattended agent must not be able to purge by omission.
+
+${c.bold('Scoped tokens')}
+A token restricted to specific scopes is refused by the server: an account-wide
+sweep has no scope to check and no result set to narrow. Use an unscoped token
+for maintenance.
+
+${c.bold('Options')}
+      --retention-days <n>  Only purge archived memories older than n days
+                            (1-365, default ${PURGE_RETENTION_DAYS_DEFAULT})
+  -y, --yes                 Confirm; required when non-interactive
+      --json                Machine-readable result ({ ok, purged, error })
+  -e, --endpoint <url>      LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>       LoreKit token (needs write permission, unscoped)
+`,
+
+  'purge-expired': `${c.bold('lorekit purge-expired')} — permanently delete every TTL-expired memory
+
+${c.bold('Usage')}
+  lorekit purge-expired [--yes] [--json]
+
+Hard-deletes memories whose ${c.cyan('ttl_days')} window has passed. Complementary to
+${c.cyan('lorekit purge')}, which removes archived rows: this one removes rows that expired
+on their own. Takes no options of its own — the row set is every expired memory
+you own.
+
+Same posture as ${c.cyan('purge')}: remote only, account-wide, irreversible, confirmation
+required (${c.cyan('--yes')} when non-interactive), and refused for a token restricted to
+specific scopes.
+
+${c.bold('Options')}
+  -y, --yes               Confirm; required when non-interactive
+      --json              Machine-readable result ({ ok, purged, error })
+  -e, --endpoint <url>    LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>     LoreKit token (needs write permission, unscoped)
+`,
+
   hook: `${c.bold('lorekit hook')} — hook engine for Claude Code / Cursor / Codex
 
 ${c.bold('Usage')}
@@ -673,6 +742,7 @@ const KNOWN_FLAGS = [
   // error. It is parsed and discarded (nothing reads `args.view`). Remove it once
   // 1.x links have aged out.
   'link', 'base', 'q', 'owner', 'range', 'archived', 'view',
+  'retention-days',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
