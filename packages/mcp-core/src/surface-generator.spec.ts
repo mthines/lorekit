@@ -33,6 +33,31 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../..');
 const generator = 'scripts/gen-surfaces.mjs';
 const cliArtifact = 'packages/cli/src/surfaces.generated.mjs';
+const edgeArtifact = 'supabase/functions/mcp/tool-dispatch.generated.ts';
+
+/**
+ * Both artifacts the generator owns. The freshness cases run over BOTH, because
+ * they used to run over the CLI one only — so when the edge dispatch map was
+ * added as a second target, nothing proved it went red on a hand-edit. A gate
+ * that covers one of two outputs reports a guarantee it is half providing, and
+ * the uncovered half was the one whose staleness a reviewer cannot spot by eye
+ * (a dispatch map binding an op to the wrong handler still looks plausible).
+ *
+ * A literal list, cross-checked against the generator's own `GENERATED_TARGETS`
+ * in its own case below, so adding a third target fails until it is listed here
+ * too. The cross-check reads the manifest out of the SOURCE rather than
+ * importing it: `@nx/enforce-module-boundaries` (correctly) forbids reaching
+ * into `scripts/` by relative path from inside a project, and this file already
+ * reads that source for the bare-specifier scan.
+ */
+const ARTIFACTS = [cliArtifact, edgeArtifact];
+
+/** The `path:` values of the generator's `GENERATED_TARGETS`, read from source. */
+function declaredTargets(): string[] {
+  const source = readFileSync(path.join(repoRoot, generator), 'utf8');
+  const manifest = source.slice(source.indexOf('export const GENERATED_TARGETS'));
+  return [...manifest.matchAll(/\{\s*path:\s*'([^']+)'/g)].map((m) => m[1] as string);
+}
 
 function runGenerator(args: string[], cwd = repoRoot): string {
   return execFileSync('node', [generator, ...args], { cwd, stdio: 'pipe', encoding: 'utf8' });
@@ -66,15 +91,26 @@ describe('gen-surfaces freshness', () => {
     expect(() => runGenerator(['--check'])).not.toThrow();
   });
 
-  it('is idempotent — regenerating in a sandbox reproduces the committed bytes', () => {
+  it('owns exactly the artifacts these tests cover', () => {
+    // Guards the list above against the generator growing a third target that
+    // the freshness cases then silently skip — which is the bug this file just
+    // had, one target late.
+    const declared = declaredTargets();
+    // Anti-vacuity: a manifest the regex failed to parse would make the
+    // comparison below trivially true on two empty arrays.
+    expect(declared.length).toBe(ARTIFACTS.length);
+    expect([...declared].sort()).toEqual([...ARTIFACTS].sort());
+  });
+
+  it.each(ARTIFACTS)('is idempotent — regenerating in a sandbox reproduces %s byte for byte', (artifact) => {
     // Byte-for-byte equality with the committed artifact IS the idempotence
     // claim, and asserting it against a fresh generate in a sandbox proves it
     // without rewriting the file under test.
     const { dir, dispose } = sandbox();
     try {
       runGenerator([], dir);
-      expect(readFileSync(path.join(dir, cliArtifact), 'utf8')).toBe(
-        readFileSync(path.join(repoRoot, cliArtifact), 'utf8'),
+      expect(readFileSync(path.join(dir, artifact), 'utf8')).toBe(
+        readFileSync(path.join(repoRoot, artifact), 'utf8'),
       );
     } finally {
       dispose();
@@ -83,16 +119,22 @@ describe('gen-surfaces freshness', () => {
 
   // The gate-bites proof, permanent rather than a one-off manual step. Run in a
   // sandbox so an interrupted test can never leave the real artifact perturbed.
-  it('goes RED when a generated artifact is edited by hand', () => {
+  it.each(ARTIFACTS)('goes RED when %s is edited by hand', (artifact) => {
     const { dir, dispose } = sandbox();
     try {
       runGenerator([], dir);
-      const artifact = path.join(dir, cliArtifact);
+      const target = path.join(dir, artifact);
       // Green first, so the red below is attributable to the perturbation and
       // not to something already wrong with the sandbox.
       expect(() => runGenerator(['--check'], dir)).not.toThrow();
 
-      writeFileSync(artifact, readFileSync(artifact, 'utf8').replace('memory.write', 'memory.wrote'));
+      // `memory.write` appears in both artifacts — as a name in the CLI's data
+      // module, and as a dispatch key in the edge map — so one perturbation
+      // works for both. Asserted rather than assumed: a silent no-op edit would
+      // leave `--check` green and the test would pass for the wrong reason.
+      const before = readFileSync(target, 'utf8');
+      expect(before, `${artifact} does not contain the perturbation target`).toContain('memory.write');
+      writeFileSync(target, before.replace('memory.write', 'memory.wrote'));
       expect(() => runGenerator(['--check'], dir)).toThrow();
 
       runGenerator([], dir);
@@ -102,11 +144,11 @@ describe('gen-surfaces freshness', () => {
     }
   });
 
-  it('goes RED when a generated artifact is missing entirely', () => {
+  it.each(ARTIFACTS)('goes RED when %s is missing entirely', (artifact) => {
     const { dir, dispose } = sandbox();
     try {
       runGenerator([], dir);
-      rmSync(path.join(dir, cliArtifact));
+      rmSync(path.join(dir, artifact));
       expect(() => runGenerator(['--check'], dir)).toThrow();
     } finally {
       dispose();
