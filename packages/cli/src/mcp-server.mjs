@@ -342,16 +342,35 @@ const ORG_DISPATCH = {
 // but this server does not back carries a `localMcpExempt` reason there.
 const CATALOG_DEFS_BY_NAME = new Map(MCP_TOOL_DEFS.map((def) => [def.name, def]));
 
-/** Resolve dispatchable names to their catalog advertisement, in catalog order. */
-function advertise(dispatch) {
-  return MCP_TOOL_NAMES.filter((name) => name in dispatch).map((name) => {
-    const def = CATALOG_DEFS_BY_NAME.get(name);
-    // Unreachable unless a dispatch map names an op the catalog does not
-    // declare. Loud rather than an `undefined` in `tools/list`, which a client
-    // would report as a malformed server.
-    if (!def) throw new Error(`mcp-server dispatches "${name}", which the tool catalog does not declare`);
-    return def;
-  });
+/** Catalog order, so the advertisement lists ops the way `tools/list` does. */
+const CATALOG_ORDER = new Map(MCP_TOOL_NAMES.map((name, index) => [name, index]));
+
+/**
+ * Resolve dispatchable names to their catalog advertisement, in catalog order.
+ *
+ * Driven by the DISPATCH keys, not by the catalog. Iterating the catalog and
+ * filtering to what is dispatchable reads more naturally and is wrong: every
+ * name would then be a catalog name by construction, so the check below could
+ * never fire, and the case it exists for — a dispatch key the catalog does not
+ * declare — would instead be SILENTLY DROPPED from `tools/list` while
+ * `tools/call` went on serving it. An op that is served but not advertised is
+ * precisely the drift this file stopped hand-maintaining its defs to avoid.
+ *
+ * Exported so the failure is directly testable; nothing else calls it.
+ */
+export function advertise(dispatch) {
+  return Object.keys(dispatch)
+    .map((name) => {
+      const def = CATALOG_DEFS_BY_NAME.get(name);
+      if (!def) {
+        throw new Error(
+          `mcp-server dispatches "${name}", which the tool catalog does not declare. `
+          + 'Add it to packages/schemas/src/tool-catalog.ts (and regenerate: node scripts/gen-surfaces.mjs).',
+        );
+      }
+      return def;
+    })
+    .sort((a, b) => CATALOG_ORDER.get(a.name) - CATALOG_ORDER.get(b.name));
 }
 
 export const MEMORY_TOOL_DEFS = advertise(MEMORY_DISPATCH);

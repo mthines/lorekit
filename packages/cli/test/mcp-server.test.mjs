@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS } from '../src/mcp-server.mjs';
+import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS, advertise } from '../src/mcp-server.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -274,6 +274,26 @@ test('memory.scopes is advertised and returns the store-wide inventory', async (
   // Store-wide, not cwd-scoped: `repo::acme/widget` is not this working
   // directory's scope and is enumerated anyway.
   assert.ok(!('note' in payload), 'a healthy enumeration carries no note');
+});
+
+describe('advertise() refuses to serve an op the catalog does not declare', () => {
+  test('throws, naming the op and where to declare it', () => {
+    // The failure this exists for: a dispatch key with no catalog entry. Left
+    // unchecked it is not a crash but something worse — the op is dropped from
+    // `tools/list` while `tools/call` keeps serving it, so a client cannot see
+    // a capability the server has.
+    assert.throws(
+      () => advertise({ 'memory.bogus': () => {} }),
+      /dispatches "memory\.bogus", which the tool catalog does not declare/,
+    );
+  });
+
+  test('a fully-declared dispatch map resolves, in catalog order', () => {
+    // Anti-vacuity for the case above: the same function must succeed on real
+    // input, or the throw could be coming from anywhere.
+    const defs = advertise({ 'memory.scopes': () => {}, 'memory.write': () => {} });
+    assert.deepEqual(defs.map((d) => d.name), ['memory.write', 'memory.scopes']);
+  });
 });
 
 test('memory.restore is advertised and undoes a memory.archive', async () => {
