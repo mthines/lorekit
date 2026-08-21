@@ -88,12 +88,16 @@ interface ExplorerStatsProps {
   /** Human label for the selected scope, for captions. */
   scopeLabel: string;
   /**
-   * The panel's disclosure state, owned by `ExplorerInsights`. This is ONE
-   * persistent grid of cards at two densities, not two renderings that swap:
+   * Whether the cards show their evidence, owned by `ExplorerInsights`. This is
+   * ONE persistent grid of cards at two densities, not two renderings that swap:
    * when `false` each card keeps its icon, number, label and caption and only
    * folds away the evidence (trend chip + sparkbar); when `true` the evidence
    * unfolds. Passing the flag down rather than mounting a different subtree is
    * what lets the expand read as one motion instead of a cross-fade.
+   *
+   * It is the panel being OPEN *and* on its `charts` view — on `heatmap` the
+   * cards are the compact summary the calendar is read against, so they stay
+   * folded even though the panel is open.
    */
   expanded: boolean;
   /**

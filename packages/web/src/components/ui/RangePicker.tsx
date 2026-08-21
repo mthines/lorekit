@@ -23,8 +23,23 @@
  * everything is the thing people come to the Explorer to do. Same control, same
  * vocabulary, different menu — which is a property of the question each page
  * asks, not a drift.
+ *
+ * ## The rail is now shared
+ *
+ * The bordered rail, the segment sizing and the lifted active segment used to be
+ * private utility strings here. They are {@link SegmentedControl} now, because a
+ * second surface (the Explorer's Activity panel view toggle) needed the same
+ * control and two copies of a look that must match is how it stops matching. The
+ * ONE thing this picker has that a generic segmented control does not — the inert
+ * custom-window arm below — goes in through its `trailing` slot, so the rendered
+ * rail is unchanged.
  */
 
+import {
+  SEGMENTED_TRAILING_CLASS,
+  SegmentedControl,
+  type SegmentedControlItem,
+} from '@/components/ui/SegmentedControl';
 import { isPresetRange, rangeLabel, type RangePreset, type TimeRange } from '@/lib/time-range';
 
 /** The label on each segment. Terse, because the control sits in a dense row. */
@@ -64,71 +79,55 @@ export function RangePicker({
   // back to the custom-window chip instead of leaving the control looking unset.
   const selected = resolved && presets.includes(resolved) ? resolved : null;
 
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Time range"
-      className={[
-        'flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5',
-        className,
-      ].join(' ')}
-    >
-      {presets.map((preset) => {
-        const isActive = selected === preset;
-        return (
-          <button
-            key={preset}
-            type="button"
-            role="radio"
-            aria-checked={isActive}
-            aria-label={preset === 'all' ? 'All time' : `Last ${PRESET_LABELS[preset]}`}
-            // `all` emits `{preset:'all'}`, NOT `null`. Both resolve to an
-            // unbounded window (`resolveRange`), so nothing downstream can tell
-            // them apart — but a CALLER can, and the Explorer needs to: an
-            // absent `?range=` is "the reader has not chosen yet" (its Activity
-            // panel substitutes a 24h display default), while an explicit `All`
-            // is a choice that must survive as one. Emitting `null` here made
-            // the two states the same value and the choice unexpressible.
-            onClick={() => onChange({ preset })}
-            className={[
-              'inline-flex min-h-6 items-center justify-center rounded px-2 py-0.5 text-[10px] font-medium tabular-nums leading-none transition-colors duration-150',
-              isActive
-                ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
-                : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-            ].join(' ')}
-          >
-            {PRESET_LABELS[preset]}
-          </button>
-        );
-      })}
+  const items: SegmentedControlItem<RangePreset>[] = presets.map((preset) => ({
+    value: preset,
+    label: PRESET_LABELS[preset],
+    ariaLabel: preset === 'all' ? 'All time' : `Last ${PRESET_LABELS[preset]}`,
+  }));
 
-      {/* A custom window gets its own segment rather than leaving the control
-          looking unset. It is ACTIVE and inert: clicking a preset is how you
-          leave it, so there is no extra concept to learn and no dead control —
-          and without it, drilling into an hour from a chart would silently
-          deselect everything and read as a bug. It is a CHECKED radio, not a
-          bare span: this arm is what the radiogroup has selected, so a screen
-          reader that found no checked preset must find the selection here
-          instead of reporting the whole group unset. `aria-disabled` says it
-          is inert without removing it from the group's checked count. */}
-      {selected === null && (
-        <span
-          role="radio"
-          aria-checked={true}
-          aria-disabled={true}
-          // Focusable even though it is inert: it is the group's CHECKED arm, and
-          // the preset arms are native buttons, so without this the one selected
-          // item is the one a keyboard user cannot reach. `aria-disabled` (not the
-          // `disabled` attribute, which a span can't take anyway) keeps it in the
-          // tab order while marking it inactive — you leave it by focusing a preset.
-          tabIndex={0}
-          aria-label={`Custom range — ${rangeLabel(value, nowIso)}`}
-          className="inline-flex min-h-6 items-center justify-center rounded bg-[var(--color-bg-raised)] px-2 py-0.5 text-[10px] font-medium leading-none text-[var(--color-content-primary)] shadow-sm"
-          title="Custom range — pick a preset to leave it"
-        >
-          {rangeLabel(value, nowIso)}
-        </span>
-      )}
-    </div>
+  return (
+    <SegmentedControl
+      label="Time range"
+      items={items}
+      value={selected}
+      // `all` emits `{preset:'all'}`, NOT `null`. Both resolve to an unbounded
+      // window (`resolveRange`), so nothing downstream can tell them apart — but
+      // a CALLER can, and the Explorer needs to: an absent `?range=` is "the
+      // reader has not chosen yet" (its Activity panel substitutes a 24h display
+      // default), while an explicit `All` is a choice that must survive as one.
+      // Emitting `null` here made the two states the same value and the choice
+      // unexpressible.
+      onChange={(preset) => onChange({ preset })}
+      className={className}
+      trailing={
+        // A custom window gets its own segment rather than leaving the control
+        // looking unset. It is ACTIVE and inert: clicking a preset is how you
+        // leave it, so there is no extra concept to learn and no dead control —
+        // and without it, drilling into an hour from a chart would silently
+        // deselect everything and read as a bug. It is a CHECKED radio, not a
+        // bare span: this arm is what the radiogroup has selected, so a screen
+        // reader that found no checked preset must find the selection here
+        // instead of reporting the whole group unset. `aria-disabled` says it
+        // is inert without removing it from the group's checked count.
+        selected === null ? (
+          <span
+            role="radio"
+            aria-checked={true}
+            aria-disabled={true}
+            // Focusable even though it is inert: it is the group's CHECKED arm, and
+            // the preset arms are native buttons, so without this the one selected
+            // item is the one a keyboard user cannot reach. `aria-disabled` (not the
+            // `disabled` attribute, which a span can't take anyway) keeps it in the
+            // tab order while marking it inactive — you leave it by focusing a preset.
+            tabIndex={0}
+            aria-label={`Custom range — ${rangeLabel(value, nowIso)}`}
+            className={SEGMENTED_TRAILING_CLASS}
+            title="Custom range — pick a preset to leave it"
+          >
+            {rangeLabel(value, nowIso)}
+          </span>
+        ) : null
+      }
+    />
   );
 }

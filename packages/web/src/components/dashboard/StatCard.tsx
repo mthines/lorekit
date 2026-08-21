@@ -22,6 +22,7 @@ import { Sparkbar } from '@/components/dashboard/Sparkbar';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { StatTrend } from '@/lib/aggregations';
+import { formatPercentDelta, isPercentDeltaAbbreviated } from '@/lib/format-number';
 
 /** The small uppercase dimension tag in a card's header. */
 export function UnitTag({ label }: { label: string }) {
@@ -32,7 +33,29 @@ export function UnitTag({ label }: { label: string }) {
   );
 }
 
-/** Period-over-period change, coloured by direction. */
+/**
+ * Period-over-period change, coloured by direction.
+ *
+ * ## Large deltas ABBREVIATE
+ *
+ * The chip shares a line with the headline figure it annotates, and it carries two
+ * characters the figure does not — a sign and a `%`. A young scope's first busy
+ * week produces genuinely enormous percentages (a read count going from 3 to 265
+ * is `+8834%`), and at seven characters the chip collided with a `22,425` beside
+ * it on a desktop and was clipped at the card's edge on a phone. So the magnitude
+ * abbreviates above four digits (`+8.8K%`), through the same
+ * `lib/format-number.ts` vocabulary the dashboard's figures use — one meaning for
+ * `K` everywhere, rather than a second abbreviation invented for one badge.
+ *
+ * Small deltas are untouched: `+100%` means "doubled" and is the one figure in
+ * that range a reader actually reasons about.
+ *
+ * When something WAS dropped, the exact percentage stays reachable two ways: in
+ * the hover title, and as an `sr-only` twin with the visible text hidden from
+ * assistive tech — the same two-node pattern `AnimatedNumber` uses, for the same
+ * reason. Below the threshold there is no twin, so nothing changes for the
+ * overwhelming majority of chips.
+ */
 export function TrendChip({ changePct, title }: { changePct: number; title: string }) {
   const dir = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
   const Icon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus;
@@ -43,13 +66,23 @@ export function TrendChip({ changePct, title }: { changePct: number; title: stri
         ? 'text-[var(--color-error)]'
         : 'text-[var(--color-content-tertiary)]';
 
+  const abbreviated = isPercentDeltaAbbreviated(changePct);
+  const exact = `${changePct > 0 ? '+' : ''}${changePct}%`;
+
   return (
     <span
-      className={`flex items-center gap-1 text-xs font-medium tabular-nums ${color}`}
-      title={title}
+      // `shrink-0 whitespace-nowrap`: the chip shares a flex row with a headline
+      // figure that can be five digits wide, and a chip that shrinks or wraps
+      // reads as clipped rather than as short of room.
+      className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-medium tabular-nums ${color}`}
+      // The comparison the chip describes, prefixed with the exact figure when the
+      // visible one is rounded — so hovering recovers what was dropped without a
+      // second tooltip surface.
+      title={abbreviated ? `${exact} — ${title}` : title}
     >
       <Icon className="size-3.5" aria-hidden />
-      {changePct > 0 ? `+${changePct}` : changePct}%
+      <span aria-hidden={abbreviated || undefined}>{formatPercentDelta(changePct)}</span>
+      {abbreviated && <span className="sr-only">{exact}</span>}
     </span>
   );
 }

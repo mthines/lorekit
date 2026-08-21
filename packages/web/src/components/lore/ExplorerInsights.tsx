@@ -16,41 +16,94 @@
  * Two panels become one, with ONE disclosure control, and the analytics stop
  * competing with the thing the page is for.
  *
+ * ## One panel, two bodies, one at a time
+ *
+ * Merging the panels left the two charts stacked INSIDE one card: four stat cards
+ * with sparkbars, then a 52-week heatmap under them. That is still two charts of
+ * the same metric competing for one reader, and expanded it still pushed the list
+ * below the fold. They also answer different questions — the cards answer *how
+ * much, in the window I selected*; the heatmap answers *when, over the last year,
+ * regardless of what I selected* — so the honest control is a switch, not a stack.
+ *
+ * The segmented control sits where the `Activity · <scope>` label used to. The
+ * label was redundant twice over: this `<section>` is already named "Activity for
+ * the current selection" for assistive tech, and every card caption already ends
+ * "in <scopeLabel>". Spending the panel's most prominent slot on a duplicate of
+ * both, when the panel needed somewhere to say which of two views you are in, was
+ * the trade to make. See `lib/explorer-insights-view.ts`.
+ *
  * ## Progressive disclosure that summarises rather than erases
  *
  * The collapsed state is not empty: it is the four numbers on a single line.
- * That is the difference between disclosure and hiding — the old collapse
+ * That is the difference between disclosure and hiding — an earlier collapse
  * removed all four figures and left a header reading "Activity", so folding the
  * panel cost you the answer to buy back the space, which is exactly why people
  * stop collapsing things. Here the ANSWER stays visible and only the EVIDENCE
  * (trends, sparkbars, the heatmap) folds away.
  *
- * It therefore opens COLLAPSED. The page's job is browsing lore; the numbers
- * are context, and context should be a line, not a screen, until asked for.
+ * That is also why the stat grid is OUTSIDE the disclosure and the view toggle
+ * only decides what the disclosure contains: on `charts` the cards unfold their
+ * own evidence in place, and on `heatmap` they stay compact while the calendar
+ * unfolds beneath them. Either way the four numbers are on screen.
+ *
+ * ## It opens EXPANDED, and remembers if you disagree
+ *
+ * It used to open collapsed, because expanded meant a screen of analytics before
+ * the first memory. Showing one body at a time roughly halves that, so the
+ * evidence is affordable by default — and a panel whose header now advertises two
+ * views is only self-explanatory if you can see what they hold.
+ *
+ * Both the disclosure state and the chosen view persist to `localStorage`
+ * (`lib/hooks/usePersistedPreference.ts`), so a reader who prefers it folded folds
+ * it once. They are NOT url-backed: a shared link should carry what you are
+ * looking at, not how tall you left a panel.
+ *
+ * **The no-flash rule.** Until the client store has been consulted, the panel
+ * renders COLLAPSED — never expanded. An expanded-then-collapsed snap is the one
+ * artefact persistence must not introduce, and rendering the neutral state first
+ * makes it unreachable rather than merely unlikely. In practice there is no flash
+ * in either direction: `/lore` renders `LoreExplorerSkeleton` until the scope tree
+ * resolves, so this panel first mounts client-side and the stored preference is
+ * already known on its first paint.
  *
  * ## Motion
  *
  * The four cards are ALWAYS mounted — one persistent grid that {@link
- * ExplorerStats} folds to a compact density when collapsed and unfolds when
- * open. The answer (icon, number, label, caption) never moves; only the
- * evidence unfolds — each card's sparkbar grows its own height and the heatmap
- * region below animates in — so the expand reads as ONE motion rather than a
- * strip cross-fading into a different set of cards. Height + opacity so the list
+ * ExplorerStats} folds to a compact density when collapsed (or when the heatmap is
+ * the chosen view) and unfolds when open. The answer (icon, number, label,
+ * caption) never moves; only the evidence unfolds. Height + opacity so the list
  * below is seen to move rather than jump. Under `prefers-reduced-motion` both
  * collapse to an instant swap, per the repo's motion rule.
  */
 
-import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ChevronDown } from 'lucide-react';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ExplorerStats } from '@/components/lore/ExplorerStats';
 import { RangePicker } from '@/components/ui/RangePicker';
+import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/SegmentedControl';
 import type { DateRange } from '@/components/ui/DateRangePicker';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+import { usePersistedPreference } from '@/lib/hooks/usePersistedPreference';
 // The span and the fetch window that must cover it live together — see the
 // module for why they cannot be two numbers in two files.
 import { HEATMAP_WEEKS } from '@/lib/heatmap-window';
+import {
+  DEFAULT_INSIGHTS_OPEN,
+  DEFAULT_INSIGHTS_VIEW,
+  INSIGHTS_VIEWS,
+  INSIGHTS_VIEW_ARIA_LABELS,
+  INSIGHTS_VIEW_ICONS,
+  INSIGHTS_VIEW_LABELS,
+  type InsightsView,
+} from '@/lib/explorer-insights-view';
+import {
+  PREFERENCE_KEYS,
+  isResolved,
+  parseBooleanPreference,
+  parseEnumPreference,
+  serializeBooleanPreference,
+} from '@/lib/persisted-preference';
 import type { RangePreset, TimeRange } from '@/lib/time-range';
 import type { Filter } from '@/lib/filters';
 
@@ -84,6 +137,16 @@ const EXPLORER_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d', 'all'];
  * an explicit `all` is a choice, and only the first one gets substituted.
  */
 const DEFAULT_STATS_RANGE: TimeRange = { preset: '24h' };
+
+/** The view toggle's segments, built from the single source in `lib/explorer-insights-view.ts`. */
+const VIEW_ITEMS: SegmentedControlItem<InsightsView>[] = INSIGHTS_VIEWS.map((view) => ({
+  value: view,
+  label: INSIGHTS_VIEW_LABELS[view],
+  icon: INSIGHTS_VIEW_ICONS[view],
+  // Load-bearing rather than decorative: the visible label is hidden at narrow
+  // panel widths, so this is the segment's only accessible name there.
+  ariaLabel: INSIGHTS_VIEW_ARIA_LABELS[view],
+}));
 
 interface ExplorerInsightsProps {
   scope: string | null;
@@ -127,11 +190,16 @@ export function ExplorerInsights({
   onSelectDate,
   nowIso,
 }: ExplorerInsightsProps) {
-  // Ephemeral, like the heatmap's collapse was: a reader folding the panel away
-  // is decluttering their view, not choosing something to share. Deliberately
-  // NOT url-backed — a shared link should carry what you are looking at, not
-  // how tall you left a panel.
-  const [open, setOpen] = useState(false);
+  const openPref = usePersistedPreference(PREFERENCE_KEYS.explorerInsightsOpen);
+  const viewPref = usePersistedPreference(PREFERENCE_KEYS.explorerInsightsView);
+
+  // Has a client store been consulted yet? Until it has, the panel must render
+  // its NEUTRAL state (collapsed) rather than its default (expanded) — see the
+  // no-flash rule in the docblock.
+  const resolved = isResolved(openPref.raw);
+  const open = resolved && parseBooleanPreference(openPref.raw, DEFAULT_INSIGHTS_OPEN);
+  const view = parseEnumPreference(viewPref.raw, INSIGHTS_VIEWS, DEFAULT_INSIGHTS_VIEW);
+
   const reduceMotion = useReducedMotion();
   const isMobile = useIsMobile();
   const heatmapWeeks = isMobile ? HEATMAP_WEEKS.mobile : HEATMAP_WEEKS.desktop;
@@ -140,27 +208,43 @@ export function ExplorerInsights({
   // the picker's highlight and the cards' window can never disagree.
   const shownRange = range ?? DEFAULT_STATS_RANGE;
 
+  // The heatmap is the only body that mounts and unmounts; the cards morph in
+  // place. So this is the one thing the disclosure animates.
+  const showHeatmap = open && view === 'heatmap';
+
   return (
     <section
       aria-label="Activity for the current selection"
       // `@container` makes the panel a query container so the stat grid can size
       // its columns to the PANEL's width (see ExplorerStats' `@3xl:grid-cols-4`),
       // which is what the sidebar-agnostic four-up-when-it-fits behaviour needs.
+      // The view toggle keys off the same container for its icon-only rendering.
       className="@container rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
     >
-      {/* The title + controls, then the persistent stat grid on its own
+      {/* The view toggle + controls, then the persistent stat grid on its own
           full-width line. Keeping the grid out of the control row is what stops
           the numbers and the range picker colliding on a phone — the old single
           wrapping row overlapped them. */}
       <div className="flex flex-col gap-3 px-4 py-3">
-        <div className="flex items-center gap-3">
-          {/* Truncates rather than wrapping: a long scope name on a phone used
-              to push the header to two lines and shove the picker down with
-              it. The full name is one line below, on every card's caption. */}
-          <p className="min-w-0 truncate text-xs font-medium text-[var(--color-content-tertiary)]">
-            {scope ? `Activity · ${scopeLabel}` : 'Activity · all scopes'}
-          </p>
-          <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {/* `min-w-0` + `shrink` so that when three controls cannot all fit at
+              phone width it is this one that gives — and it gives by dropping its
+              labels to icons (`labels="wide"`), not by wrapping the row. */}
+          <SegmentedControl
+            label="Activity view"
+            items={VIEW_ITEMS}
+            value={view}
+            onChange={(next) => {
+              viewPref.write(next);
+              // Picking a view while folded EXPANDS. Otherwise the segment lights
+              // up and nothing else happens, which reads as a dead control — and
+              // "show me the heatmap" is a request to see it, not to select it.
+              if (!open) openPref.write(serializeBooleanPreference(true));
+            }}
+            labels="wide"
+            className="min-w-0"
+          />
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <RangePicker
               value={shownRange}
               onChange={onRangeChange}
@@ -169,12 +253,14 @@ export function ExplorerInsights({
             />
             <button
               type="button"
-              onClick={() => setOpen((v) => !v)}
+              onClick={() =>
+                openPref.write(serializeBooleanPreference(!open))
+              }
               aria-expanded={open}
               // Only reference the detail region while it EXISTS — AnimatePresence
               // unmounts it when collapsed, so a static IDREF would dangle exactly
               // in that state.
-              {...(open ? { 'aria-controls': 'explorer-insights-detail' } : {})}
+              {...(showHeatmap ? { 'aria-controls': 'explorer-insights-detail' } : {})}
               aria-label={open ? 'Hide activity detail' : 'Show activity detail'}
               className="flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)]"
             >
@@ -192,61 +278,69 @@ export function ExplorerInsights({
           </div>
         </div>
 
-        {/* ONE persistent grid at two densities — collapsed folds each card's
-            evidence away, open unfolds it. The card is never remounted, so the
-            numbers stay put and the expand reads as one motion. */}
+        {/* ONE persistent grid at two densities — compact folds each card's
+            evidence away, expanded unfolds it. The card is never remounted, so
+            the numbers stay put and the expand reads as one motion. It unfolds
+            only on the `charts` view: on `heatmap` the cards are the summary the
+            calendar is read against, so they stay compact. */}
         <ExplorerStats
           scope={scope}
           filters={filters}
           range={shownRange}
           scopeLabel={scopeLabel}
-          expanded={open}
+          expanded={open && view === 'charts'}
           nowIso={nowIso}
         />
       </div>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            id="explorer-insights-detail"
-            key="detail"
-            // Height + opacity so the list below is SEEN to move. `overflow
-            // hidden` is what makes an auto-height animation possible at all.
-            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
-            style={{ overflow: 'hidden' }}
-          >
-            {/* The heatmap keeps its own span deliberately: it is a range
-                SELECTOR, not a reading of the selected range, so shrinking it to
-                the current window would remove the very context you use to pick a
-                different one. It highlights the selection instead. It is also
-                ACCOUNT-WIDE and unfiltered (`heatmapData` comes from
-                `useLoreData`, not the scoped stats query), so its caption says so
-                rather than implying the cards' selection narrows it. */}
-            <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-4">
-              <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
-                Memories written — last {heatmapWeeks} weeks · across every scope
-              </p>
-              {/* Capped and left-aligned so it reads as one more panel, not a
-                  full-bleed band: fluid cells that fill a 1300px column blow up
-                  to a ~250px-tall calendar on a wide screen. The cap lands the
-                  desktop cell around 16px — big enough to read and tap, small
-                  enough that the chart stays card-height. A phone is narrower
-                  than the cap, so it still fills there. */}
-              <div className="max-w-[960px]">
-                <ContributionHeatmap
-                  data={heatmapData}
-                  weeks={heatmapWeeks}
-                  selectedRange={highlightRange}
-                  onSelectDate={onSelectDate}
-                />
+      {/* Mounted only once the stored preference is known, so the very first
+          application of it is an instant swap rather than an animated unfold —
+          `AnimatePresence initial={false}` skips the enter transition for children
+          present on its OWN first render. Every later toggle animates normally. */}
+      {resolved && (
+        <AnimatePresence initial={false}>
+          {showHeatmap && (
+            <motion.div
+              id="explorer-insights-detail"
+              key="detail"
+              // Height + opacity so the list below is SEEN to move. `overflow
+              // hidden` is what makes an auto-height animation possible at all.
+              initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeOut' }}
+              style={{ overflow: 'hidden' }}
+            >
+              {/* The heatmap keeps its own span deliberately: it is a range
+                  SELECTOR, not a reading of the selected range, so shrinking it to
+                  the current window would remove the very context you use to pick a
+                  different one. It highlights the selection instead. It is also
+                  ACCOUNT-WIDE and unfiltered (`heatmapData` comes from
+                  `useLoreData`, not the scoped stats query), so its caption says so
+                  rather than implying the cards' selection narrows it. */}
+              <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-4">
+                <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
+                  Memories written — last {heatmapWeeks} weeks · across every scope
+                </p>
+                {/* Capped and left-aligned so it reads as one more panel, not a
+                    full-bleed band: fluid cells that fill a 1300px column blow up
+                    to a ~250px-tall calendar on a wide screen. The cap lands the
+                    desktop cell around 16px — big enough to read and tap, small
+                    enough that the chart stays card-height. A phone is narrower
+                    than the cap, so it still fills there. */}
+                <div className="max-w-[960px]">
+                  <ContributionHeatmap
+                    data={heatmapData}
+                    weeks={heatmapWeeks}
+                    selectedRange={highlightRange}
+                    onSelectDate={onSelectDate}
+                  />
+                </div>
               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
     </section>
   );
 }
