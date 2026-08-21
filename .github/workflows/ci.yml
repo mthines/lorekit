@@ -441,6 +441,13 @@ jobs:
       # `--no-lock` — there is no deno.json / deno.lock (edge functions are
       # deliberately self-contained with `npm:` specifiers and no import map),
       # and this job must not be the thing that introduces one.
+      #
+      # The `supabase:deno:check` nx target runs the same flags and the same
+      # check-all-then-summarise policy, for running this locally. This job does
+      # NOT call it: the target needs pnpm + Node + an install to invoke, which
+      # would add a minute to an 8-second Deno-only job, and it cannot emit the
+      # `::group::` / `::error::` annotations that make a failure navigable from
+      # the checks UI. Keep the two in step — same flags, same semantics.
       - name: Typecheck every Edge Function
         run: |
           failed=""
