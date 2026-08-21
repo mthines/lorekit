@@ -130,12 +130,13 @@ create table if not exists auth.identities (
 -- Both the modern (`request.jwt.claims`, a JSON object) and legacy
 -- (`request.jwt.claim.<name>`, flat strings) forms are honoured, because
 -- migrations.test.sql uses the former and some Supabase versions set the latter.
+-- `request.jwt.claims` is the ONLY whole-claims GUC. There is no singular
+-- `request.jwt.claim` holding the object — the legacy form is per-field
+-- (`request.jwt.claim.<name>`), which is why only `auth.uid()`/`auth.role()`
+-- below have a legacy arm and this one does not.
 create or replace function auth.jwt() returns jsonb
 language sql stable as $fn$
-  select coalesce(
-    nullif(current_setting('request.jwt.claim', true), ''),
-    nullif(current_setting('request.jwt.claims', true), '')
-  )::jsonb
+  select nullif(current_setting('request.jwt.claims', true), '')::jsonb
 $fn$;
 
 create or replace function auth.uid() returns uuid
