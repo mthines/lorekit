@@ -17,12 +17,16 @@ import { fileURLToPath } from 'node:url';
  * inside `mcp-core` runs whenever `mcp-core` is affected, and the generated
  * artifacts live inside affected packages.
  *
- * Two of these tests are deliberately SELF-VERIFYING: they perturb the real
- * artifact and assert the gate goes red. A freshness gate that has never been
- * observed to fail is indistinguishable from one that cannot fail — which is
- * exactly how the first draft of this gate shipped as a `grep -E` with a
- * negative lookahead that ERE does not support, so `! grep …` reported success
- * on every possible input.
+ * Several of these tests are deliberately SELF-VERIFYING: they generate into a
+ * throwaway tree, perturb the artifact there, and assert the gate goes red. A
+ * freshness gate that has never been observed to fail is indistinguishable from
+ * one that cannot fail — which is exactly how the first draft of this gate
+ * shipped as a `grep -E` with a negative lookahead that ERE does not support,
+ * so `! grep …` reported success on every possible input.
+ *
+ * The perturbation happens in a sandbox rather than on the committed file (see
+ * `sandbox()`): restoring in a `finally` narrows the window but does not close
+ * it, since an interrupted run never reaches the `finally` at all.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -34,32 +38,79 @@ function runGenerator(args: string[], cwd = repoRoot): string {
   return execFileSync('node', [generator, ...args], { cwd, stdio: 'pipe', encoding: 'utf8' });
 }
 
+/**
+ * A throwaway tree containing only what the generator resolves against, so a
+ * test can perturb an artifact without touching the worktree.
+ *
+ * The perturbation tests used to edit the REAL committed artifact and restore
+ * it in a `finally`. That is fine until the run is interrupted — Ctrl-C or a
+ * timeout kills the process before `finally` runs and leaves a corrupted file
+ * staged for whoever commits next. A sandbox removes the failure mode instead
+ * of narrowing it, and costs nothing: the generator resolves every path from
+ * its own location, so a copy of it plus the catalog behaves identically.
+ */
+function sandbox(): { dir: string; dispose: () => void } {
+  const dir = mkdtempSync(path.join(tmpdir(), 'gen-surfaces-'));
+  mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+  mkdirSync(path.join(dir, 'packages/schemas/src'), { recursive: true });
+  copyFileSync(path.join(repoRoot, generator), path.join(dir, generator));
+  copyFileSync(
+    path.join(repoRoot, 'packages/schemas/src/tool-catalog.ts'),
+    path.join(dir, 'packages/schemas/src/tool-catalog.ts'),
+  );
+  return { dir, dispose: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
 describe('gen-surfaces freshness', () => {
   it('reports the committed artifacts as in sync', () => {
     expect(() => runGenerator(['--check'])).not.toThrow();
   });
 
-  it('is idempotent — a regenerate leaves the committed artifact byte-identical', () => {
-    const before = readFileSync(path.join(repoRoot, cliArtifact), 'utf8');
-    runGenerator([]);
-    expect(readFileSync(path.join(repoRoot, cliArtifact), 'utf8')).toBe(before);
+  it('is idempotent — regenerating in a sandbox reproduces the committed bytes', () => {
+    // Byte-for-byte equality with the committed artifact IS the idempotence
+    // claim, and asserting it against a fresh generate in a sandbox proves it
+    // without rewriting the file under test.
+    const { dir, dispose } = sandbox();
+    try {
+      runGenerator([], dir);
+      expect(readFileSync(path.join(dir, cliArtifact), 'utf8')).toBe(
+        readFileSync(path.join(repoRoot, cliArtifact), 'utf8'),
+      );
+    } finally {
+      dispose();
+    }
   });
 
-  // The gate-bites proof, permanent rather than a one-off manual step: a
-  // perturbation of the REAL artifact must turn --check red. Restored in
-  // `finally` so a failure here cannot leave the tree dirty.
-  it('goes RED when the committed artifact is edited by hand', () => {
-    const artifact = path.join(repoRoot, cliArtifact);
-    const original = readFileSync(artifact, 'utf8');
+  // The gate-bites proof, permanent rather than a one-off manual step. Run in a
+  // sandbox so an interrupted test can never leave the real artifact perturbed.
+  it('goes RED when a generated artifact is edited by hand', () => {
+    const { dir, dispose } = sandbox();
     try {
-      writeFileSync(artifact, original.replace('memory.write', 'memory.wrote'));
-      expect(() => runGenerator(['--check'])).toThrow();
+      runGenerator([], dir);
+      const artifact = path.join(dir, cliArtifact);
+      // Green first, so the red below is attributable to the perturbation and
+      // not to something already wrong with the sandbox.
+      expect(() => runGenerator(['--check'], dir)).not.toThrow();
+
+      writeFileSync(artifact, readFileSync(artifact, 'utf8').replace('memory.write', 'memory.wrote'));
+      expect(() => runGenerator(['--check'], dir)).toThrow();
+
+      runGenerator([], dir);
+      expect(() => runGenerator(['--check'], dir)).not.toThrow();
     } finally {
-      writeFileSync(artifact, original);
+      dispose();
     }
-    // And green again once restored — so the red above was caused by the
-    // perturbation, not by an unrelated broken invocation.
-    expect(() => runGenerator(['--check'])).not.toThrow();
+  });
+
+  it('goes RED when a generated artifact is missing entirely', () => {
+    const { dir, dispose } = sandbox();
+    try {
+      runGenerator([], dir);
+      rmSync(path.join(dir, cliArtifact));
+      expect(() => runGenerator(['--check'], dir)).toThrow();
+    } finally {
+      dispose();
+    }
   });
 });
 
@@ -72,26 +123,20 @@ describe('gen-surfaces portability', () => {
    * states the requirement, and it cannot pass vacuously.
    */
   it('runs with no node_modules reachable and produces identical output', () => {
-    const sandbox = mkdtempSync(path.join(tmpdir(), 'gen-surfaces-'));
+    // `sandbox()` builds exactly the bare tree this test needs: the generator
+    // and the catalog, and nothing else — no node_modules anywhere in the
+    // ancestor chain, since it lives under the OS temp dir.
+    const { dir, dispose } = sandbox();
     try {
-      // Reproduce only the layout the generator resolves against.
-      mkdirSync(path.join(sandbox, 'scripts'), { recursive: true });
-      mkdirSync(path.join(sandbox, 'packages/schemas/src'), { recursive: true });
-      copyFileSync(path.join(repoRoot, generator), path.join(sandbox, generator));
-      copyFileSync(
-        path.join(repoRoot, 'packages/schemas/src/tool-catalog.ts'),
-        path.join(sandbox, 'packages/schemas/src/tool-catalog.ts'),
-      );
-
-      expect(() => runGenerator([], sandbox)).not.toThrow();
+      expect(() => runGenerator([], dir)).not.toThrow();
 
       // Byte-identical to the committed artifact: the generator depends on
       // nothing outside the catalog, so a bare tree must yield the same bytes.
-      expect(readFileSync(path.join(sandbox, cliArtifact), 'utf8')).toBe(
+      expect(readFileSync(path.join(dir, cliArtifact), 'utf8')).toBe(
         readFileSync(path.join(repoRoot, cliArtifact), 'utf8'),
       );
     } finally {
-      rmSync(sandbox, { recursive: true, force: true });
+      dispose();
     }
   });
 
