@@ -31,7 +31,7 @@
     "deno:check": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "failed=''; for e in supabase/functions/*/index.ts; do fn=$(basename $(dirname \"$e\")); if deno check --no-lock --node-modules-dir=none \"$e\"; then echo \"ok   $fn\"; else echo \"FAIL $fn\"; failed=\"$failed $fn\"; fi; done; [ -z \"$failed\" ] || { echo \"deno check failed for:$failed\"; exit 1; }",
+        "command": "node scripts/deno-check-functions.mjs",
         "cwd": "{workspaceRoot}"
       }
     },

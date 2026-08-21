@@ -74,7 +74,7 @@ jobs:
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|scripts/deno-check-functions|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
@@ -391,26 +391,28 @@ jobs:
       - name: Unit-test the deploy-scope resolver
         run: node --test scripts/resolve-deploy-scope.test.mjs
 
-  # ── Edge typecheck — `deno check` over every Edge Function ───────────────────
+  # ── Edge typecheck — `deno check` over every Edge Function, ratcheted ────────
   #    Until this job existed, `supabase/functions/**` was typechecked by
   #    NOTHING: no `deno check` anywhere, no tsconfig covering the tree, and no
-  #    nx target (the `check` job's `nx affected` only sees the Node packages).
-  #    The only thing exercising the tree was `integration`'s `supabase start`,
-  #    which proves modules RESOLVE and the functions boot — not that any type
-  #    is correct.
+  #    nx target. The only thing exercising it was `integration`'s
+  #    `supabase start`, which proves modules RESOLVE and functions BOOT — not
+  #    that any type is correct.
   #
   #    That gap is load-bearing now. The MCP dispatch map is generated from the
   #    tool catalog and binds each op name to a handler imported from
-  #    `mcp/tools.ts`; a vitest scan can confirm the handler is EXPORTED, but
+  #    `mcp/tools.ts`; a source scan can confirm the handler is EXPORTED, but
   #    only a typechecker can confirm it is exported with the right SIGNATURE.
   #    Passing `(db, args, span)` where `(db, args, userId, span)` is expected
   #    still resolves, still exports, still passes every unit test — and then
   #    throws at runtime on the first `span.setAttributes`, on a surface no
   #    smoke test calls.
   #
-  #    Every entrypoint is checked independently and the failures are summarised
-  #    at the end, rather than aborting on the first: when this gate does go red,
-  #    the log should say which functions are affected in one run.
+  #    The first run over the tree found errors that predate this gate, so the
+  #    check is a RATCHET rather than a clean gate: each function's existing
+  #    count is written down in `supabase/deno-check-baseline.json` and the job
+  #    fails the moment one goes UP. See scripts/deno-check-functions.mjs for
+  #    why blocking on zero was not an option (the debt is in `_shared/` modules
+  #    every function imports, so narrowing the gate does not avoid it either).
   edge-typecheck:
     name: Edge typecheck (deno check)
     runs-on: ubuntu-latest
@@ -427,57 +429,17 @@ jobs:
         with:
           deno-version: v2.x
 
-      # Two resolver flags, both load-bearing:
-      #
-      # `--node-modules-dir=none` — the repo root has a pnpm `package.json`, so
-      # Deno otherwise switches to node_modules resolution and fails every
-      # function with "Could not find a matching package for
-      # 'npm:@supabase/supabase-js@2' in the node_modules directory". That
-      # package is not a root dependency and should not become one: the deployed
-      # edge runtime resolves `npm:` specifiers from Deno's own cache with no
-      # node_modules at all, so this flag is what makes the check resolve the
-      # way production does.
-      #
-      # `--no-lock` — there is no deno.json / deno.lock (edge functions are
-      # deliberately self-contained with `npm:` specifiers and no import map),
-      # and this job must not be the thing that introduces one.
-      #
-      # The `supabase:deno:check` nx target runs the same flags and the same
-      # check-all-then-summarise policy, for running this locally. This job does
-      # NOT call it: the target needs pnpm + Node + an install to invoke, which
-      # would add a minute to an 8-second Deno-only job, and it cannot emit the
-      # `::group::` / `::error::` annotations that make a failure navigable from
-      # the checks UI. Keep the two in step — same flags, same semantics.
+      # The runner's own Node runs these; the ratchet script is dependency-free
+      # on purpose so this job needs no pnpm/Node setup and stays fast.
+      - name: Unit-test the ratchet
+        run: node --test scripts/deno-check-functions.test.mjs
+
+      # One implementation, called by BOTH this job and the `supabase:deno:check`
+      # nx target, so a contributor running it locally sees exactly what CI sees.
+      # It previously lived twice — once here and once in the target — and the
+      # two had already drifted on what a failure looks like.
       - name: Typecheck every Edge Function
-        run: |
-          failed=""
-          for entry in supabase/functions/*/index.ts; do
-            fn="$(basename "$(dirname "$entry")")"
-            echo "::group::deno check $fn"
-            if deno check --no-lock --node-modules-dir=none "$entry"; then
-              echo "✅ $fn"
-            else
-              echo "❌ $fn"
-              failed="${failed}${fn} "
-              echo "::error::deno check failed for supabase/functions/${fn}/ — open this job's '${fn}' group for the type errors."
-            fi
-            echo "::endgroup::"
-          done
-
-          {
-            echo "### Edge typecheck"
-            echo ""
-            if [ -n "$failed" ]; then
-              echo "Failed: \`${failed% }\`"
-            else
-              echo "All Edge Functions typecheck cleanly."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ -n "$failed" ]; then
-            echo "deno check failed for: ${failed% }"
-            exit 1
-          fi
+        run: node scripts/deno-check-functions.mjs
 
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
