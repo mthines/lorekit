@@ -31,7 +31,7 @@ and never drift. All paths are under `packages/web/src`.
 | `components/command/types.ts`                   | `Command`, `CommandShortcut`, `KeySequence`, `PaletteFrame`   |
 | `components/command/shortcut.ts`                | Pure chord/modifier engine (`parseKey`, `formatShortcut`, `CHORD_TIMEOUT_MS`) |
 | `components/command/CommandPaletteProvider.tsx` | Registry + open/close + the global keydown chord machine       |
-| `components/command/useCommand.tsx`             | The hook every registration uses                               |
+| `components/command/useCommand.ts`              | The hook every registration uses                               |
 | `components/command/NavigationCommands.tsx`     | Dashboard registrations (mounted in the dashboard layout)      |
 | `components/docs/DocsCommands.tsx`              | Public `/docs` page registrations                              |
 | `components/docs/DocsSessionCommands.tsx`       | `/docs` + `/blog` "Navigate" group, shown only when signed in  |
@@ -43,8 +43,12 @@ The registration call sites — the crawl's "what is registered" set — are
 `DocsCommands.tsx`, `DocsSessionCommands.tsx`, and `BlogCommands.tsx`. Find them with:
 
 ```bash
+# `*.stories.tsx` is excluded on purpose: CommandPalette.stories.tsx registers
+# sample commands (`d-setup`, `n-overview`, …) that exist only in Storybook.
+# Counting them as coverage would hide a real gap behind a fixture.
 grep -rn "useCommand(" packages/web/src --include='*.tsx' \
-  | grep -v "components/command/useCommand"
+  | grep -v "components/command/useCommand" \
+  | grep -v "\.stories\.tsx"
 ```
 
 ## The `Command` type
@@ -53,7 +57,7 @@ grep -rn "useCommand(" packages/web/src --include='*.tsx' \
 interface Command {
   id: string;                    // stable, unique — React key + de-dup
   label: string;                 // shown in the palette row
-  description?: string;          // smaller supporting text
+  description?: string;          // NOT rendered — search-index only (rows are label-only)
   icon?: ReactNode;              // a lucide-react icon, `className="size-4"`
   group?: string;                // separator label; clusters rows
   shortcut?: { keys: KeySequence; label?: string };
@@ -74,9 +78,13 @@ in place when non-`id` fields change.
 hook position — **never inside a `.map()`**. To register one command per item
 in a list, wrap each item in its own tiny component that calls `useCommand`
 once, then render the list of components. This is the `DocsCommandItem`
-pattern:
+pattern, shown as it appears in the **dashboard** registry
+(`NavigationCommands.tsx`) — note the prefix: the standalone public `/docs`
+copy in `DocsCommands.tsx` is the same shape but emits `docs-nav-${section.id}`
+so it cannot collide with these dashboard ids:
 
 ```tsx
+// packages/web/src/components/command/NavigationCommands.tsx
 function DocsCommandItem({ section }: { section: DocsSection }) {
   const router = useRouter();
   const Icon = section.icon;
@@ -137,6 +145,7 @@ Register navigation from these tables, not a hand-copied list:
 | ------------------ | ------------------------------------- | ---------------------------------------- |
 | `DOCS_SECTIONS`    | `lib/docs/sections.ts`                | One "Docs" command per docs page         |
 | `SETTINGS_SECTIONS`| `components/settings/sections.ts`     | The settings section jumps               |
+| `BLOG_SECTIONS`    | `lib/blog/sections.ts`                | One "Blog" command per post              |
 | App routes         | `app/**/page.tsx`                     | Every top-level destination              |
 
 When a new page is added to one of these tables, the palette command for it
@@ -151,7 +160,8 @@ table but has no derived command is a **drift bug**, not just a gap.
 | `settings-*` | Dashboard settings jumps                  |
 | `docs-*`     | Dashboard docs jumps                      |
 | `lore-*`     | Lore-specific commands                    |
-| `docs-nav-*` | Standalone `/docs` copies (avoid `nav-*` collision) |
+| `docs-nav-*` | Standalone `/docs` + `/blog` copies (avoid `nav-*` collision) |
+| `blog-post-*`| One per blog post (driven by `BLOG_SECTIONS`) |
 
 New action commands should extend this scheme by feature area
 (e.g. `explorer-filter`, `explorer-search`).

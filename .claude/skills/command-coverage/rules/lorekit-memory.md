@@ -12,9 +12,11 @@ tags:
 
 How this skill uses LoreKit so the *approach* — conventions, decisions, and
 previously-found gaps — compounds across runs. Recall in Phase 0; record in
-Phase 6. LoreKit is already wired in this repo (the `lorekit` MCP server is
-enabled in `.claude/settings.local.json`), so use the `mcp__lorekit__*` tools
-directly. If a project has NOT set LoreKit up, run `/lorekit-setup` first.
+Phase 6. LoreKit is wired per-developer, not by the repo: `.claude/settings.local.json`
+is untracked, so a fresh clone has no MCP server configured. Check whether the
+`mcp__lorekit__*` tools are available and use them directly if so; if they are
+not, run `/lorekit-setup` first — and if LoreKit is unavailable, skip Phase 0
+and Phase 6 rather than blocking the audit.
 
 ## Scope & keys
 
@@ -28,9 +30,15 @@ directly. If a project has NOT set LoreKit up, run `/lorekit-setup` first.
 
 Before crawling, load prior insight so the run does not re-derive decisions:
 
+`MemorySearchSchema` takes a single string `q` and a `scopes` **array**
+(`packages/schemas/src/memory.ts`), so this is one call per query term, not an
+array in one call:
+
 ```text
-memory_search  q=["command palette","keyboard shortcut","command-coverage","Linear shortcut"]
-               scope="repo::mthines/lorekit"
+memory_search  q="command palette"     scopes=["repo::mthines/lorekit"]
+memory_search  q="keyboard shortcut"   scopes=["repo::mthines/lorekit"]
+memory_search  q="command-coverage"    scopes=["repo::mthines/lorekit"]
+memory_search  q="Linear shortcut"     scopes=["repo::mthines/lorekit"]
 ```
 
 Read the top hits in full with `memory_read`. Apply what you find:

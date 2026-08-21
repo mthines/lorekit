@@ -56,7 +56,11 @@ export interface Command {
   id: string;
   /** Display label shown in the palette. */
   label: string;
-  /** Optional supporting text shown in a smaller font beside the label. */
+  /**
+   * Optional supporting text. NOT rendered — rows are single-line and
+   * label-only (see `CommandRow`). It stays in the SEARCH index
+   * (`matchesSearch`), so typing a word from it still surfaces the command.
+   */
   description?: string;
   /** Lucide icon or any ReactNode rendered to the left of the label. */
   icon?: ReactNode;

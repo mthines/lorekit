@@ -11,7 +11,7 @@ import { Combobox, type ComboboxItem } from './Combobox';
  * These cover the parts a screenshot cannot: the keyboard model, the fact that
  * the list opens ON the current value, filtering, and the two dismissal paths.
  * The arithmetic behind all of it (wrapping, skipping disabled options,
- * re-homing a highlight after a filter) is unit-tested in `combobox.spec.ts`;
+ * re-homing a highlight after a filter) is unit-tested in `combobox-logic.spec.ts`;
  * what is asserted here is that the component is actually wired to it.
  *
  * The popover is PORTALED to `document.body`, so its rows resolve against the

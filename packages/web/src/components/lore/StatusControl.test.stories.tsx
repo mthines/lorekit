@@ -23,7 +23,7 @@ import {
  *
  * The control is now the shared `Combobox`, so the popup's own behaviour —
  * keyboard movement, filtering, the mobile bottom sheet — is covered by
- * `Combobox.test.stories.tsx` and `combobox.spec.ts`. What is asserted here is
+ * `Combobox.test.stories.tsx` and `combobox-logic.spec.ts`. What is asserted here is
  * what is specific to STATUS: the three states, their hints, and their query
  * mapping.
  *
