@@ -3,6 +3,7 @@ import {
   normalizeTagList,
   parseTagsParam,
   pgArrayLiteral,
+  toTagList,
   inferKindHost,
   resolveKindHost,
 } from './tags.ts';
@@ -46,6 +47,34 @@ describe('pgArrayLiteral', () => {
 
   it('renders an empty selection as an empty array literal', () => {
     expect(pgArrayLiteral([])).toBe('{}');
+  });
+});
+
+describe('toTagList', () => {
+  it('normalizes an array like normalizeTagList', () => {
+    expect(toTagList([' perf ', 'perf', '', 'auth'])).toEqual(['perf', 'auth']);
+  });
+
+  it('accepts a bare string instead of throwing it at Postgres', () => {
+    // Regression: a client sending `tags: "loop::ideate-lessons"` used to reach
+    // postgrest-js's string overload as `ov.loop::ideate-lessons`, which
+    // Postgres rejects with `malformed array literal: "loop::ideate-lessons"`.
+    expect(toTagList('loop::ideate-lessons')).toEqual(['loop::ideate-lessons']);
+    expect(toTagList('perf, auth ,perf')).toEqual(['perf', 'auth']);
+  });
+
+  it('is total for every other shape', () => {
+    expect(toTagList(undefined)).toEqual([]);
+    expect(toTagList(null)).toEqual([]);
+    expect(toTagList('')).toEqual([]);
+    expect(toTagList(42)).toEqual([]);
+    expect(toTagList({ tags: ['perf'] })).toEqual([]);
+    expect(toTagList([1, null, {}])).toEqual([]);
+  });
+
+  it('composes with pgArrayLiteral into a valid Postgres array literal', () => {
+    expect(pgArrayLiteral(toTagList('loop::ideate-lessons'))).toBe('{"loop::ideate-lessons"}');
+    expect(pgArrayLiteral(toTagList(['a,b']))).toBe('{"a,b"}');
   });
 });
 
