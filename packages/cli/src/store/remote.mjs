@@ -524,12 +524,22 @@ class RemoteStore {
   // failure — the real status lives ONLY there, never in `error.code` (see
   // `listScopes` above for why).
 
-  // Optional body: `{ retention_days }`, 1–365. Omitted entirely when the
-  // caller passes nothing, so the server applies its own documented default
-  // rather than the CLI asserting a second copy of it.
-  async purge({ retentionDays } = {}) {
-    const body = retentionDays == null ? undefined : { retention_days: retentionDays };
-    const res = await this._rest('/memories/purge', { method: 'POST', body });
+  // `retention_days` is always SENT, never left to the server's default. For an
+  // irreversible sweep the request should record the exact window it used, and
+  // the caller has to know that number anyway to say what it is about to delete
+  // — `lorekit purge`'s confirmation names it. The default itself is derived
+  // from the tool catalog (`PURGE_RETENTION_DAYS_DEFAULT`), so sending it
+  // explicitly cannot disagree with what the server would have applied.
+  //
+  // An earlier version omitted the body when the argument was absent, to "let
+  // the server default apply". That branch was unreachable — the CLI resolves
+  // the default before calling — so it was dead code guarded by a comment that
+  // described behaviour the code did not have.
+  async purge({ retentionDays }) {
+    const res = await this._rest('/memories/purge', {
+      method: 'POST',
+      body: { retention_days: retentionDays },
+    });
     return {
       ok: res.ok,
       purged: res.ok ? (res.data?.purged ?? 0) : null,

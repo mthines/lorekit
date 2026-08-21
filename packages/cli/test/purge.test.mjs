@@ -191,24 +191,38 @@ describe('the remote store speaks the documented REST contract', () => {
     );
     assert.match(source, /'\/memories\/purge',\s*\{\s*method:\s*'POST'/);
     assert.match(source, /'\/memories\/purge-expired',\s*\{\s*method:\s*'POST'/);
-    assert.match(source, /retention_days:\s*retentionDays/);
+    assert.match(source, /body: \{ retention_days: retentionDays \}/);
   });
 
-  test('purge omits the body entirely when no window is given', async () => {
-    // So the server applies its own documented default rather than the CLI
-    // asserting a second copy of it.
+  test('purge always sends an explicit retention window', async () => {
+    // Never left to the server's default: an irreversible sweep should record
+    // the window it used, and the CLI has to know the number anyway because its
+    // confirmation prompt names what is about to be deleted.
     const { createRemoteStore } = await import('../src/store/remote.mjs');
     const store = createRemoteStore({ endpoint: 'https://example.test/functions/v1/mcp', token: 'lk_rw_x' });
     const seen = [];
     store._rest = async (p, opts) => { seen.push({ p, opts }); return { ok: true, data: { purged: 3 } }; };
 
-    const res = await store.purge({});
+    const res = await store.purge({ retentionDays: PURGE_RETENTION_DAYS_DEFAULT });
     assert.equal(res.ok, true);
     assert.equal(res.purged, 3);
-    assert.equal(seen[0].opts.body, undefined, 'no body when retentionDays is absent');
+    assert.deepEqual(seen[0].opts.body, { retention_days: PURGE_RETENTION_DAYS_DEFAULT });
 
     await store.purge({ retentionDays: 90 });
     assert.deepEqual(seen[1].opts.body, { retention_days: 90 });
+  });
+
+  test('purge-expired sends no body at all', async () => {
+    // The asymmetry is real and worth pinning: `purge-expired` has no window to
+    // name — the row set is every expired memory the caller owns.
+    const { createRemoteStore } = await import('../src/store/remote.mjs');
+    const store = createRemoteStore({ endpoint: 'https://example.test/functions/v1/mcp', token: 'lk_rw_x' });
+    let seen;
+    store._rest = async (p, opts) => { seen = { p, opts }; return { ok: true, data: { purged: 0 } }; };
+
+    await store.purgeExpired();
+    assert.equal(seen.p, '/memories/purge-expired');
+    assert.equal(seen.opts.body, undefined);
   });
 
   test('a failed purge carries httpStatus through for the 403 message', async () => {
