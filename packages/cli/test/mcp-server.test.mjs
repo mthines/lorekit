@@ -78,8 +78,11 @@ test('initialize → tools/list → write/read/list round-trip over stdio', asyn
   assert.deepEqual(init.result.capabilities, { tools: {} });
 
   const list = m.get(2);
-  // 7 memory.* tools + 4 org.* tools
-  assert.equal(list.result.tools.length, 11);
+  // 8 memory.* tools + 4 org.* tools. Was 11: `memory.restore` joined the
+  // dispatch map, which both stores had always implemented. Bump this with the
+  // op named, never loosen it — the count is what catches an op appearing in
+  // `tools/list` that nothing can actually dispatch.
+  assert.equal(list.result.tools.length, 12);
   assert.ok(list.result.tools.some((t) => t.name === 'memory.write'));
   assert.ok(list.result.tools.some((t) => t.name === 'memory.archive'));
   assert.ok(list.result.tools.some((t) => t.name === 'org.create'));
@@ -271,6 +274,42 @@ test('memory.scopes is advertised and returns the store-wide inventory', async (
   // Store-wide, not cwd-scoped: `repo::acme/widget` is not this working
   // directory's scope and is enumerated anyway.
   assert.ok(!('note' in payload), 'a healthy enumeration carries no note');
+});
+
+test('memory.restore is advertised and undoes a memory.archive', async () => {
+  // The archive/restore pair, end to end over stdio. `memory.restore` was
+  // absent from this server's dispatch map while `memory.archive` was present,
+  // so an agent could hide a lesson through it and had no way to bring it back
+  // — even though every store already implemented restore. Asserted as a round-trip
+  // rather than by advertisement alone: appearing in `tools/list` is the half
+  // that was never the problem.
+  const store = tmpDir();
+  const home = tmpDir();
+  const { messages } = await serve(
+    [
+      { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory.write', arguments: { scope: 'repo::acme/widget', key: 'k1', value: 'v' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'memory.archive', arguments: { scope: 'repo::acme/widget', key: 'k1' } } },
+      // Hidden from a normal read while archived.
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'memory.list', arguments: { scope: 'repo::acme/widget' } } },
+      { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'memory.restore', arguments: { scope: 'repo::acme/widget', key: 'k1' } } },
+      { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'memory.list', arguments: { scope: 'repo::acme/widget' } } },
+    ],
+    { store, home },
+  );
+
+  const m = byId(messages);
+  assert.ok(
+    m.get(1).result.tools.some((t) => t.name === 'memory.restore'),
+    'memory.restore is advertised in tools/list',
+  );
+
+  const keysAt = (id) => JSON.parse(m.get(id).result.content[0].text).entries.map((e) => e.key);
+  assert.deepEqual(keysAt(4), [], 'archived lesson is hidden from a normal list');
+
+  const restored = m.get(5);
+  assert.ok(!restored.result.isError, 'restore is not a tool error');
+  assert.deepEqual(keysAt(6), ['k1'], 'restore brings the lesson back');
 });
 
 test('memory.scopes is not advertised when the memory store is off', async () => {

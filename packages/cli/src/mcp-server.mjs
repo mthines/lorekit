@@ -224,6 +224,12 @@ const MEMORY_DISPATCH = {
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),
+  // The counterpart to archive. Both stores have implemented `restore` all
+  // along (local.mjs, remote.mjs, and the two-tier store that fronts them), so
+  // its absence here left an agent able to archive a lesson through this server
+  // but not undo it — with no stated reason. Surfaced by giving the catalog a
+  // `localMcpExempt` field and finding this op had no honest reason to fill it.
+  'memory.restore': (store, a) => store.restore(a),
   'memory.scopes': (store) => listScopes(store),
 };
 

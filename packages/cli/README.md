@@ -519,9 +519,20 @@ It speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (the MCP stdio
 transport, hand-rolled — zero dependencies) and is **not run by hand**: only
 JSON-RPC frames reach stdout. It serves whatever mode resolves — `local` serves
 the `.lorekit/` files directly, `remote` passes calls through to the hosted
-endpoint, and `off` advertises no tools. Tools advertised: `memory.write`,
-`memory.read`, `memory.list`, `memory.search`, `memory.delete`,
-`memory.archive`.
+endpoint, and `off` advertises no tools.
+
+Tools advertised are **derived from the canonical tool catalog**
+(`packages/schemas/src/tool-catalog.ts`) rather than declared here, so this
+server and the hosted one describe each operation identically. In `local` and
+`remote` mode that is `memory.write`, `memory.read`, `memory.list`,
+`memory.search`, `memory.delete`, `memory.archive`, `memory.restore` and
+`memory.scopes`, plus `org.create`, `org.list`, `org.rename` and `org.delete`
+(which always route to the hosted API). `off` advertises the `org.*` tools only.
+
+An operation the catalog declares but this server cannot back — `memory.purge`,
+`memory.purge_expired` and `memory.list_archived` — carries a recorded reason in
+the catalog's `surfaces.localMcpExempt` field, so the gap is a stated decision
+rather than an omission.
 
 Wire it into `.mcp.json` as an alternative to the `mcp-remote <url>` transport —
 this variant needs no endpoint or token for local mode:

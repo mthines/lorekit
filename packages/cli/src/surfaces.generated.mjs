@@ -501,7 +501,6 @@ export const CLI_EXEMPT = {
 /** Op -> why the local stdio MCP server does not dispatch it. */
 export const LOCAL_MCP_EXEMPT = {
   "memory.list_archived": "reachable through memory.list's archived filter on the offline store",
-  "memory.restore": "NOT YET DISPATCHED — both stores back it; being wired up, do not treat as intentional",
   "memory.purge": "account-wide sweep against server-side state; the offline store has no equivalent",
   "memory.purge_expired": "account-wide sweep against server-side state; the offline store has no equivalent"
 };

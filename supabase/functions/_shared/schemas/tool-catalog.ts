@@ -353,15 +353,7 @@ export const MCP_TOOLS = [
     description: 'Restore an archived lesson back to active',
     permission: 'write',
     auth: 'token-or-jwt',
-    surfaces: {
-      mcp: true,
-      cli: 'restore',
-      rest: 'POST /restore',
-      handler: 'toolRestore',
-      // Not a real exemption — an unintentional omission this binding surfaced.
-      // Both stores implement restore, so nothing justified leaving it out.
-      localMcpExempt: 'NOT YET DISPATCHED — both stores back it; being wired up, do not treat as intentional',
-    },
+    surfaces: { mcp: true, cli: 'restore', rest: 'POST /restore', handler: 'toolRestore' },
     inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
     returns: '`{ "restored": true }` if restored, `{ "restored": false }` if already active or not found.',
   },
