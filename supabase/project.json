@@ -28,6 +28,14 @@
       }
     },
 
+    "deno:check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "for e in supabase/functions/*/index.ts; do echo \"== $e\"; deno check --no-lock \"$e\" || exit 1; done",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
     "db:push": {
       "executor": "nx:run-commands",
       "dependsOn": [
