@@ -6,13 +6,25 @@
  * own memories plus org-shared memories. JWT auth uses an RLS-scoped client,
  * so no filtering is needed — RLS handles it automatically.
  *
- * This module mirrors the logic in supabase/functions/mcp/tenant-scope.ts and
+ * The narrowing arithmetic itself is IMPORTED from the single mirrored
+ * supabase/functions/_shared/tenant-scope.ts (shared with the MCP surface); what
+ * lives here is the REST-specific plumbing around it — the org-id RPC with its
+ * span, and the auth-tier predicates. It used to duplicate
  * packages/mcp-core/src/tenant-scope.ts but is specific to the REST shared
  * API (different import chain, different span naming).
  */
 import { createTracedClient } from '../otel.ts';
 import type { Span, TracedQuery } from '../otel.ts';
 import type { AuthContext, DbClient } from './auth.ts';
+import { keyRestriction } from './auth.ts';
+import { scopeAllowedByKey } from '../schemas/api-key.ts';
+import {
+  effectiveOrgIds,
+  keyScopeFilter,
+  ownRowsFragment,
+  restrictsTenancy,
+  type KeyRestriction,
+} from '../tenant-scope.ts';
 
 /**
  * Resolve the org IDs the user is a member of via the single-source RPC.
@@ -37,17 +49,85 @@ export async function getMemberOrgIds(db: DbClient, userId: string, parentSpan: 
  * JWT callers use RLS — do not apply this filter for them.
  *
  * Returns the query unchanged when auth.type === 'service' (CI — full access).
+ *
+ * The optional `key` is the calling API key's restriction (00068), and it is
+ * applied HERE for the same reason the MCP side applies it inside
+ * `applyTenantScope`: a scoped key must not see an out-of-allowlist row on a
+ * read that names no scope at all (`GET /memories` unfiltered, `/search` across
+ * scopes), and a per-handler check cannot cover that. The narrowing arithmetic
+ * itself is not re-implemented — it is imported from the single mirrored
+ * `tenant-scope.ts`, so the two surfaces cannot disagree about what a key
+ * reaches.
  */
 export function applyRestTenantScope<Q extends TracedQuery<unknown>>(
   q: Q,
   userId: string,
   orgIds: string[],
+  key?: KeyRestriction,
 ): Q {
-  if (orgIds.length === 0) {
-    return q.eq('user_id', userId) as Q;
+  const visibleOrgIds = effectiveOrgIds(orgIds, key);
+  // Each id QUOTED, matching the MCP-side `applyTenantScope` exactly. An
+  // unquoted PostgREST `in.()` list breaks on any member containing a comma or
+  // a parenthesis; a uuid never does, but the two surfaces answering the same
+  // question with two different fragments is the drift this module is supposed
+  // to have removed.
+  // The ownership disjunct is `ownRowsFragment`, not a hand-rolled
+  // `user_id.eq.…`: under a tenancy-restricted key it also has to exclude the
+  // owner's OWN org-owned rows, and a second copy of that rule here is exactly
+  // the drift this module says it removed.
+  let out = visibleOrgIds.length === 0
+    ? (q.eq('user_id', userId) as Q)
+    : (q.or(`${ownRowsFragment(userId, key)},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`) as Q);
+  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) out = out.or('org_id.is.null') as Q;
+  const scopeFilter = keyScopeFilter(key);
+  // A second `.or()` — PostgREST ANDs top-level filters, so this reads as
+  // "(mine or my orgs') AND (in the key's allowlist)".
+  if (scopeFilter) out = out.or(scopeFilter) as Q;
+  return out;
+}
+
+/**
+ * Narrow a query to the calling key's scope allowlist, and nothing else.
+ *
+ * The write family (`PATCH`, `DELETE`, `POST /restore`) is personal-only — it
+ * never widens to org rows — so it does not call `applyRestTenantScope` and was
+ * therefore missing the allowlist half of the boundary entirely: a scoped key
+ * could PATCH or DELETE a memory outside its allowlist BY ID, because `user_id`
+ * alone was the whole filter. This adds the missing half without pulling those
+ * handlers into a tenancy widening they deliberately do not want.
+ *
+ * A no-op for a JWT/service caller and for an unrestricted key.
+ */
+export function applyKeyScopeFilter<Q extends TracedQuery<unknown>>(q: Q, auth: AuthContext): Q {
+  const filter = keyScopeFilter(keyRestriction(auth));
+  return filter ? (q.or(filter) as Q) : q;
+}
+
+/**
+ * The first scope in `named` the calling key may not reach, or `null`.
+ *
+ * The REST twin of the MCP dispatcher's early refusal, and it exists for the
+ * same reason: when a request NAMES a scope, a plain 403 is a better answer
+ * than an empty result set, which reads as "there is nothing there" and sends
+ * the caller looking for a bug in their data. Reads that name no scope are
+ * narrowed by `applyRestTenantScope` instead, because there is nothing to
+ * refuse.
+ *
+ * Every named scope must be allowed, not just one: refusing the whole call is
+ * honest, where quietly answering over the allowed subset would answer a
+ * different question than the one asked.
+ *
+ * Returns `null` for a JWT or service caller — they have no key — and for an
+ * unrestricted key, so an unscoped token is byte-for-byte unaffected.
+ */
+export function firstDeniedScope(auth: AuthContext, named: readonly (string | null | undefined)[]): string | null {
+  const key = keyRestriction(auth);
+  if (!key || key.scopes.length === 0) return null;
+  for (const raw of named) {
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    if (!scopeAllowedByKey(key.scopes, raw.toLowerCase().trim())) return raw;
   }
-  const joined = orgIds.join(',');
-  return q.or(`user_id.eq.${userId},org_id.in.(${joined})`) as Q;
+  return null;
 }
 
 /**

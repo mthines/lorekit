@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./audit": "./src/audit.ts",
+    "./api-key": "./src/api-key.ts",
     "./scope": "./src/scope.ts",
     "./common": "./src/common.ts",
     "./filter": "./src/filter.ts",

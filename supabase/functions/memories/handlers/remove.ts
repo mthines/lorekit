@@ -1,7 +1,8 @@
+import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
+import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
 import { parseScopeFilter } from '../../_shared/scope.ts';
@@ -80,6 +81,31 @@ export async function handleRemove(
     }
   }
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00068), hoisted
+  // ABOVE the `?org=` dispatch on purpose. `applyKeyScopeFilter` below is a query
+  // filter, and the org branch has no query to filter — it returns through
+  // `removeOrgOwned`, whose `memory_delete` RPC chooses the rows itself — so a
+  // gate placed further down covers only the personal branch and leaves
+  // `DELETE /memories?scope=…&key=…&org=…` with no key gate at all.
+  //
+  // Here it also upgrades the personal scope+key form from an empty match (404)
+  // to the plain 403 `handleCreate` already returns for the same situation: when
+  // the request NAMES a scope, "your token may not use it" is the honest answer,
+  // where "not found" sends the caller hunting a data bug.
+  //
+  // It reads `scopeParam`, so it is deliberately BELOW the grammar check and
+  // inherits its `/:id` exemption: that form addresses the row by id and never
+  // turns `?scope=` into a predicate, so there is no named scope to refuse. The
+  // id form's allowlist half stays with `applyKeyScopeFilter` on the query.
+  const deniedScope = firstDeniedScope(auth, [scopeParam]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   const tracedDb = createTracedClient(db, span);
   const now = new Date().toISOString();
 
@@ -87,6 +113,19 @@ export async function handleRemove(
     return await removeOrgOwned(
       { tracedDb, db, auth, span, cors },
       { org: orgParam, scope: scopeParam, key: keyParam, force, idParam },
+    );
+  }
+
+  // Personal scope+key: route through memory_delete (00071) so a scoped key
+  // manages any writer's row within its allowlist — symmetric with the org
+  // branch above and the MCP `memory.delete` tool — and so the RPC's `existed`
+  // distinguishes 403 (present, not this token's to remove) from 404. The RPC
+  // is keyed on (scope,key) and has no id parameter, so the `/:id` form below
+  // stays a direct own-row update.
+  if (!idParam && scopeParam && keyParam) {
+    return await removePersonalByKey(
+      { tracedDb, db, auth, span, cors },
+      { scope: scopeParam, key: keyParam, force, req },
     );
   }
 
@@ -112,6 +151,9 @@ export async function handleRemove(
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control.
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  // The allowlist half. `user_id` alone let a scoped key delete a memory outside
+  // its allowlist by id.
+  q = applyKeyScopeFilter(q, auth);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
@@ -203,6 +245,13 @@ async function removeOrgOwned(
       p_scope: scope,
       p_key: key,
       p_force: force,
+      // The calling key's restriction (00068/00069). The scope refusal above
+      // this dispatch is advisory — the edge holds the service-role key — and
+      // the TENANCY half has nowhere else to live at all: this RPC chooses its
+      // rows, so `applyKeyScopeFilter` never sees them.
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     })
     .single();
 
@@ -253,4 +302,73 @@ async function removeOrgOwned(
   const res = noContent(cors);
   res.headers.set('X-LoreKit-Result-Count', '1');
   return res;
+}
+
+interface PersonalRemoveInput {
+  scope: string;
+  key: string;
+  force: boolean;
+  req: Request;
+}
+
+/**
+ * The personal `scope+key` branch. Calls `memory_delete` with `p_org_slug` null
+ * and the calling key's scoping, so a scoped key manages any writer's row within
+ * its allowlist (00071) and an unscoped key stays own-rows-only — the same rule
+ * the MCP tool now uses. `existed` turns a 0-row result into a 403 (present but
+ * not this token's to remove) rather than a 404 that sends the caller hunting a
+ * data bug.
+ */
+async function removePersonalByKey(
+  { tracedDb, db, auth, span, cors }: OrgRemoveCtx,
+  { scope, key, force, req }: PersonalRemoveInput,
+): Promise<Response> {
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+
+  // Everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
+
+  const { data, error } = await tracedDb
+    .rpc<{ deleted: boolean; archived: boolean; existed: boolean }>('memory_delete', {
+      p_user_id: auth.userId ?? null,
+      p_org_slug: null,
+      p_scope: scope,
+      p_key: key,
+      p_force: force,
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+    })
+    .single();
+
+  if (error) {
+    const mapped = translateDbError(error);
+    if (mapped) return mapped.toResponse(cors);
+    span.error(`DB: ${error.message}`);
+    throw error;
+  }
+
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean } | null;
+  const deleted = row?.deleted === true;
+  const archived = row?.archived === true;
+  span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': archived });
+
+  if (!deleted && !archived) {
+    return row?.existed
+      ? forbidden('This token is not allowed to remove that memory.', cors)
+      : notFound('Memory', cors);
+  }
+
+  await recordAudit(
+    db,
+    {
+      action: deleted ? 'memory.delete' : 'memory.archive',
+      resourceType: 'memory',
+      target: key,
+      metadata: { scope, key, force },
+    },
+    auditUserId(auth),
+  );
+
+  return noContent(cors);
 }

@@ -1,5 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { badRequest, ok } from '../../_shared/api/respond.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
 import { parseScopeFilter } from '../../_shared/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
@@ -129,6 +131,23 @@ async function respondWithPage(
 
   if (scopeFilter) span.setAttributes({ 'lorekit.scope': scopeFilter });
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00068/00069).
+  // A plain 403 beats an empty page, which reads as "there is nothing there".
+  //
+  // It runs AFTER the grammar check so the two rejections cannot disagree about
+  // what they are rejecting: an ungrammatical scope is a 400 for every caller,
+  // restricted or not, and what reaches the allowlist match is always a
+  // well-formed scope. (`parseScopeFilter` rejects without normalising, so this
+  // still tests the value the caller sent.)
+  const deniedScope = firstDeniedScope(auth, [scopeFilter]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   const { dimensions: d } = params;
 
   // A cursor minted under the other sort order is not comparable with this one,
@@ -188,6 +207,13 @@ async function respondWithPage(
     // which is why the owner filter no longer needs a round-trip of its own.
     p_owner: d.owner.values.length ? d.owner.values : null,
     p_owner_mode: d.owner.mode,
+    // The calling key's restriction (00068/00069). 00067 moved this read into the
+    // function, which took it out of `applyRestTenantScope`'s reach — so the
+    // narrowing an unfiltered list needs now happens in there too. Without
+    // these three, `GET /memories` is the one family a scoped key reads whole.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     p_sort: params.sort,
     p_cursor_ts: usableCursor?.ts ?? null,
     p_cursor_id: usableCursor?.id ?? null,

@@ -10,6 +10,7 @@ import { list } from '../src/list.mjs';
 import { search } from '../src/search.mjs';
 import { show } from '../src/show.mjs';
 import { write } from '../src/write.mjs';
+import { archive, del, restore } from '../src/remove.mjs';
 import { stats } from '../src/stats.mjs';
 import { scopes } from '../src/scopes.mjs';
 import { diff } from '../src/diff.mjs';
@@ -698,11 +699,12 @@ const KNOWN_FLAGS = [
 const HUMAN_COMMANDS = new Set([
   'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
   'diff', 'tree', 'lint', 'dedupe', 'link', 'migrate', 'write',
+  'archive', 'delete', 'restore',
 ]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
 // and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link' };
+const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link', rm: 'delete' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -797,6 +799,12 @@ async function main() {
       return traceCommand('bootstrap', args, VERSION, () => bootstrap(args));
     case 'write':
       return traceCommand('write', args, VERSION, () => write(args));
+    case 'archive':
+      return traceCommand('archive', args, VERSION, () => archive(args));
+    case 'delete':
+      return traceCommand('delete', args, VERSION, () => del(args));
+    case 'restore':
+      return traceCommand('restore', args, VERSION, () => restore(args));
     default:
       err(`${c.red('Unknown command:')} ${command}\n`);
       log(HELP);

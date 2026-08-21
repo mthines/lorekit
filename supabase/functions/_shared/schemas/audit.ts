@@ -54,6 +54,7 @@ import { z } from 'npm:zod@3';
 export const AUDIT_ACTIONS = [
   'api_key.create',
   'api_key.revoke',
+  'api_key.scope_change',
   'webhook_secret.create',
   'webhook_secret.rotate',
   'webhook_secret.deactivate',

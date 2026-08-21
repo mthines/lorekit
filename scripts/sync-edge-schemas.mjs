@@ -50,6 +50,7 @@ const mirrorDir = join(repoRoot, 'supabase/functions/_shared/schemas');
  */
 export const MIRRORED_SCHEMA_FILES = [
   'audit.ts',
+  'api-key.ts',
   'common.ts',
   'filter.ts',
   'tags.ts',

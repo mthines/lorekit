@@ -74,6 +74,11 @@ export default defineConfig({
       'motion/react',
       '@lorekit/schemas/tags',
       '@lorekit/schemas/memory',
+      // `TokenScoping` value-imports `@lorekit/schemas/api-key` (via
+      // `@/lib/token-scoping`), which is the third runtime entry into the linked
+      // package — the same mid-run re-optimize trigger as the two above, and the
+      // only one this PR adds.
+      '@lorekit/schemas/api-key',
       'react-markdown',
       'remark-gfm',
       'rehype-sanitize',
@@ -82,6 +87,14 @@ export default defineConfig({
   test: {
     name: 'storybook',
     setupFiles: [path.join(storybookDir, 'vitest.setup.ts')],
+    // Same reporter pairing as the node/jsdom `vitest.config.ts`: in GitHub
+    // Actions, add the `github-actions` reporter so each failing story emits a
+    // `::error file=…,line=…::` annotation. This job is the ONE suite whose
+    // output was previously log-only — a browser run's failure could only be
+    // read by expanding the job log, so the checks API (and anything reading
+    // it) saw nothing but "Process completed with exit code 1". No-op locally.
+    reporters:
+      process.env.GITHUB_ACTIONS === 'true' ? ['default', 'github-actions'] : ['default'],
     browser: {
       enabled: true,
       headless: true,

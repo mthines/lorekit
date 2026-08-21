@@ -21,9 +21,9 @@ import { parseCreatedAt } from '../_shared/created-at.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
-import { applyTenantScope } from './tenant-scope.ts';
+import { applyTenantScope, type KeyRestriction } from '../_shared/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
-import { resolveKindHost } from '../_shared/schemas/tags.ts';
+import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';
 import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/outcome-signal.ts';
@@ -132,6 +132,7 @@ export async function toolWrite(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
@@ -193,6 +194,14 @@ export async function toolWrite(
       p_origin_pr: origin.pr,
       p_kind: resolvedKind,
       p_host: resolvedHost,
+      // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
+      // LAST gate on the write path — the edge runs on the service-role client,
+      // so the dispatcher's check above it is advisory — and it is also the only
+      // place that can see the scope→org BINDING, which must not route a
+      // restricted key's write into an org it was never granted.
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
     })
     .single();
   if (error) {
@@ -243,6 +252,7 @@ export async function toolRead(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -253,7 +263,7 @@ export async function toolRead(
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   return data ?? null;
@@ -264,8 +274,11 @@ export async function toolList(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
-  const { scope: rawScope, tags, limit = 50, cursor: cursorParam, kind, host } = params;
+  const { scope: rawScope, tags: rawTags, limit = 50, cursor: cursorParam, kind, host } = params;
+  // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
+  const tags = toTagList(rawTags);
   if (!rawScope) throw new Error('scope is required');
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
@@ -320,8 +333,8 @@ export async function toolList(
       .order('updated_at', { ascending: false })
       .order('id', { ascending: false })
       .limit(CANDIDATE_LIMIT);
-    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId));
-    if (tags?.length) rankQuery = rankQuery.overlaps('tags', tags);
+    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId), keyScoping);
+    if (tags.length) rankQuery = rankQuery.overlaps('tags', pgArrayLiteral(tags));
     // Taxonomy filters are applied BEFORE ranking, not after: the candidate
     // window is bounded at CANDIDATE_LIMIT, so filtering afterwards would rank
     // over a window that a prolific other bucket could have already filled.
@@ -394,8 +407,8 @@ export async function toolList(
     .order('updated_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(pageLimit + 1);
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
-  if (tags?.length) query = query.overlaps('tags', tags);
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (kind) query = query.eq('kind', kind);
   if (host) query = query.eq('host', host);
   // Apply cursor keyset predicate when a valid cursor is supplied.
@@ -430,6 +443,7 @@ export async function toolDelete(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key, force = false, org } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -444,76 +458,53 @@ export async function toolDelete(
 
   const tracedDb = createTracedClient(db, span);
 
-  if (org) {
-    // Org-owned delete: role-gated inside the memory_delete RPC (SECURITY
-    // DEFINER) — never a raw service-role .delete()/.update(), which would
-    // bypass the role gate entirely since this client bypasses RLS.
-    const { data, error } = await tracedDb
-      .rpc('memory_delete', {
-        p_user_id: userId,
-        p_org_slug: org,
-        p_scope: scope,
-        p_key: key,
-        p_force: force,
-      })
-      .single();
-    if (error) {
-      const translated = translateOrgPermissionError(error);
-      throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
-    }
-    const row = data as { deleted: boolean; archived: boolean };
-    span.setAttributes({ 'lorekit.result.deleted': row.deleted, 'lorekit.result.archived': row.archived });
-    if (row.deleted || row.archived) {
-      await recordAudit(
-        db,
-        {
-          action: row.deleted ? 'memory.delete' : 'memory.archive',
-          resourceType: 'memory',
-          target: key,
-          metadata: { scope, key, force, org },
-        },
-        userId,
-      );
-    }
-    return { deleted: row.deleted, archived: row.archived };
+  // Both the org and the personal branch go through the memory_delete RPC
+  // (SECURITY DEFINER) — never a raw service-role .delete()/.update(), which
+  // would bypass the role/ownership gate since this client bypasses RLS
+  // (00046). The RPC resolves the actor, applies the key's scope allowlist and
+  // org tenancy, lets a SCOPED key manage any writer's row within its scopes,
+  // and returns `existed` so a 0-row removal is reported as `not_found` vs
+  // `forbidden` rather than a silent false.
+  const { data, error } = await tracedDb
+    .rpc('memory_delete', {
+      p_user_id: userId,
+      p_org_slug: org ?? null,
+      p_scope: scope,
+      p_key: key,
+      p_force: force,
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
+    })
+    .single();
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
   }
-
-  if (force) {
-    let query = tracedDb.from('memories').delete({ count: 'exact' }).eq('scope', scope).eq('key', key);
-    if (userId) query = query.eq('user_id', userId);
-    const { error, count } = await query;
-    if (error) throw new Error(error.message);
-    const deleted = (count ?? 0) > 0;
-    span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': false });
-    if (deleted) {
-      await recordAudit(
-        db,
-        { action: 'memory.delete', resourceType: 'memory', target: key, metadata: { scope, key, force: true } },
-        userId,
-      );
-    }
-    return { deleted, archived: false };
-  }
-
-  let query = tracedDb
-    .from('memories')
-    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key)
-    .is('archived_at', null);
-  if (userId) query = query.eq('user_id', userId);
-  const { error, count } = await query;
-  if (error) throw new Error(error.message);
-  const archived = (count ?? 0) > 0;
-  span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
-  if (archived) {
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean };
+  span.setAttributes({
+    'lorekit.result.deleted': row.deleted,
+    'lorekit.result.archived': row.archived,
+    'lorekit.result.existed': row.existed,
+  });
+  if (row.deleted || row.archived) {
     await recordAudit(
       db,
-      { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
+      {
+        action: row.deleted ? 'memory.delete' : 'memory.archive',
+        resourceType: 'memory',
+        target: key,
+        metadata: { scope, key, force, ...(org ? { org } : {}) },
+      },
       userId,
     );
+    return { deleted: row.deleted, archived: row.archived };
   }
-  return { deleted: false, archived };
+  return {
+    deleted: false,
+    archived: false,
+    reason: row.existed ? ('forbidden' as const) : ('not_found' as const),
+  };
 }
 
 export async function toolSearch(
@@ -521,8 +512,11 @@ export async function toolSearch(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
-  const { q, scopes, tags, limit = 20, cursor: cursorParam } = params;
+  const { q, scopes, tags: rawTags, limit = 20, cursor: cursorParam } = params;
+  // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
+  const tags = toTagList(rawTags);
   if (!q) throw new Error('q is required');
   const pageLimit = Math.min(limit, 100);
 
@@ -541,8 +535,8 @@ export async function toolSearch(
   // Tenant .or() and the scope-glob .or() below are applied as two separate
   // .or() calls, which PostgREST ANDs together — never merged into one
   // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
-  if (tags?.length) query = query.overlaps('tags', tags);
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (scopes?.length) {
     const exactScopes: string[] = [];
     const likePatterns: string[] = [];
@@ -586,6 +580,13 @@ export async function toolArchive(
   params: Params,
   userId: string | null,
   span: Span,
+  // Handed to the memory_delete RPC (p_force=false) so a SCOPED key can archive
+  // any writer's row within the scopes it is scoped to, and so an unscoped key
+  // and a non-service-role caller stay pinned to their own rows — the same
+  // gate memory.delete uses. Routing through the RPC, rather than a raw
+  // service-role .update(), is what keeps that authorization decision in one
+  // SECURITY DEFINER place (00046).
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -594,25 +595,35 @@ export async function toolArchive(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb
-    .from('memories')
-    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key)
-    .is('archived_at', null);
-  if (userId) query = query.eq('user_id', userId);
-  const { error, count } = await query;
-  if (error) throw new Error(error.message);
-  const archived = (count ?? 0) > 0;
-  span.setAttributes({ 'lorekit.result.archived': archived });
-  if (archived) {
+  const { data, error } = await tracedDb
+    .rpc('memory_delete', {
+      p_user_id: userId,
+      p_org_slug: null,
+      p_scope: scope,
+      p_key: key,
+      p_force: false,
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
+    })
+    .single();
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean };
+  span.setAttributes({ 'lorekit.result.archived': row.archived, 'lorekit.result.existed': row.existed });
+  if (row.archived) {
     await recordAudit(
       db,
       { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
     );
+    return { archived: true };
   }
-  return { archived };
+  // Nothing archived: `existed` tells the caller which no-op this was so a
+  // permission/scope miss no longer masquerades as "not found".
+  return { archived: false, reason: row.existed ? ('forbidden' as const) : ('not_found' as const) };
 }
 
 /** List archived memories for a scope. */
@@ -621,6 +632,7 @@ export async function toolListArchived(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, limit = 50 } = params;
   if (!rawScope) throw new Error('scope is required');
@@ -636,7 +648,7 @@ export async function toolListArchived(
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
     .limit(Math.min(limit, 100));
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const entries = data ?? [];
@@ -650,6 +662,11 @@ export async function toolRestore(
   params: Params,
   userId: string | null,
   span: Span,
+  // Handed to the restore_memory RPC (00072) so restore is symmetric with
+  // archive/delete: a scoped key restores any writer's row within its
+  // allowlist, an unscoped key stays own-rows-only, and the auth decision lives
+  // in one SECURITY DEFINER place rather than a raw service-role .update().
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -658,25 +675,33 @@ export async function toolRestore(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb
-    .from('memories')
-    .update({ archived_at: null }, { count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key)
-    .not('archived_at', 'is', null);
-  if (userId) query = query.eq('user_id', userId);
-  const { error, count } = await query;
-  if (error) throw new Error(error.message);
-  const restored = (count ?? 0) > 0;
-  span.setAttributes({ 'lorekit.result.restored': restored });
-  if (restored) {
+  const { data, error } = await tracedDb
+    .rpc('restore_memory', {
+      p_user_id: userId,
+      p_scope: scope,
+      p_key: key,
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
+    })
+    .single();
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+  const row = data as { restored: boolean; existed: boolean };
+  span.setAttributes({ 'lorekit.result.restored': row.restored, 'lorekit.result.existed': row.existed });
+  if (row.restored) {
     await recordAudit(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
     );
+    return { restored: true };
   }
-  return { restored };
+  // `existed` here means an archived row was present but this call restored
+  // nothing (forbidden), vs no restorable row at all (not_found).
+  return { restored: false, reason: row.existed ? ('forbidden' as const) : ('not_found' as const) };
 }
 
 /**
@@ -688,6 +713,10 @@ export async function toolPurge(
   params: Params,
   userId: string | null,
   span: Span,
+  // Refused for a scoped key at the dispatcher (ACCOUNT_WIDE_TOOLS), so the
+  // restriction is never consulted here — the parameter exists only because
+  // every memory tool shares one call signature.
+  _keyScoping?: KeyRestriction,
 ) {
   const retentionDays = Math.min(Math.max(Number(params.retention_days ?? PURGE_RETENTION_DAYS_DEFAULT), 1), 365);
   if (!userId) throw new Error('memory.purge requires a user_id');
@@ -884,6 +913,10 @@ export async function toolPurgeExpired(
   _params: Params,
   userId: string | null,
   span: Span,
+  // Refused for a scoped key at the dispatcher (ACCOUNT_WIDE_TOOLS), so the
+  // restriction is never consulted here — the parameter exists only because
+  // every memory tool shares one call signature.
+  _keyScoping?: KeyRestriction,
 ) {
   if (!userId) {
     throw new Error('memory.purge_expired requires a user_id');
@@ -945,12 +978,21 @@ export async function toolScopes(
   _params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const tracedDb = createTracedClient(db, span);
   // A service-role caller has no user id; the RPC reads a null `p_user_id` on a
   // service_role connection as "no tenant filter", matching every other read.
   const { data, error } = await tracedDb.rpc('lorekit_memory_scopes', {
     p_user_id: userId ?? null,
+    // Narrowed inside the RPC for the same reason the tenant filter is: there
+    // is no query here to post-filter, and a second predicate out here would be
+    // a place for the two to drift. Without this a key restricted to one repo
+    // could still enumerate every scope name on the account — and a scope
+    // string IS a repo or project name, so scoping would leak what it hides.
+    p_key_scopes: keyScoping?.scopes ?? [],
+    p_key_org_access: keyScoping?.orgAccess ?? 'all',
+    p_key_org_ids: keyScoping?.orgIds ?? [],
   });
   if (error) throw new Error((error as { message: string }).message);
 

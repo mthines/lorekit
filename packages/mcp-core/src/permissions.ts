@@ -66,3 +66,12 @@ export function tokenPrefixFor(permissions: readonly Permission[]): 'rw' | 'ro' 
   if (hasRead) return 'ro';
   throw new Error('tokenPrefixFor: permissions must include at least "read" or "write"');
 }
+
+// `ACCOUNT_WIDE_TOOLS` / `isRefusedForScopedKey` deliberately do NOT live here,
+// even though tool-name gating otherwise does. They live in
+// `account-wide-tools.ts` because BOTH transports enforce the decision: the MCP
+// dispatcher and the REST purge endpoints. The REST tree cannot cross-import
+// `supabase/functions/mcp/`, so a rule kept alongside this file's mirror could
+// only ever be copied to reach it — and a copied rule is what would let
+// `POST /memories/purge` ship with no key gate while the docs said it was
+// refused.

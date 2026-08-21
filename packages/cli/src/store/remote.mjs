@@ -508,6 +508,14 @@ class RemoteStore {
     return this.delete({ scope, key, force: false });
   }
 
+  // Natural-key RESTORE — un-archive a soft-deleted memory. POST
+  // /memories/restore with {scope, key} (supabase/functions/memories/handlers/
+  // restore.ts). Symmetric with archive; scope-authorized server-side (00072).
+  async restore({ scope, key } = {}) {
+    const res = await this._rest('/memories/restore', { method: 'POST', body: { scope, key } });
+    return { ok: res.ok, error: res.error, networkError: res.networkError };
+  }
+
   // ── Org operations → REST ─────────────────────────────────────────────────
   // `supabase/functions/orgs/` serves `lk_*` tokens on every route as of
   // 00041_org_actor_override.sql (see the file header). Each method's RETURN

@@ -6,6 +6,7 @@ import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 
 type MemoryRow = Tables<'memories'>;
@@ -31,7 +32,7 @@ export async function handleGet(
   // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
   if (auth.type === 'api_key' && auth.userId) {
     const orgIds = await getMemberOrgIds(db, auth.userId, span);
-    q = applyRestTenantScope(q, auth.userId, orgIds);
+    q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
 
   const { data, error } = await q.maybeSingle();

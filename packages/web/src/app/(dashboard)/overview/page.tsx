@@ -21,7 +21,12 @@ export default async function OverviewPage() {
   ]);
 
   return (
-    <div className="flex flex-col gap-6">
+    // `max-w-page` is the shared wide-shell cap (`--container-page` in
+    // globals.css), the same one the Lore Explorer uses. Overview was
+    // uncapped, so moving between the two pages shifted the content edge on an
+    // ultrawide display; capping both keeps the shell stable across navigation
+    // and stops the stat/scope grids from spreading into sparse rows.
+    <div className="flex max-w-page flex-col gap-6">
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">Overview</h1>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">

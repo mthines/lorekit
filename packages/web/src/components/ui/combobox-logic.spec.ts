@@ -9,6 +9,7 @@ import {
   nextEnabledIndex,
   selectionSummary,
   toggleSelection,
+  withCreatableOption,
   type ComboboxOption,
 } from './combobox-logic';
 
@@ -163,6 +164,45 @@ describe('filterOptions', () => {
     // Filtering them out would make their absence look like a missing feature
     // rather than an unavailable choice.
     expect(filterOptions(WITH_DISABLED, 'archived').map((o) => o.value)).toEqual(['b']);
+  });
+});
+
+describe('withCreatableOption', () => {
+  const CANDIDATE: ComboboxOption = { value: 'd', label: 'd', hint: 'Use this scope' };
+
+  it('appends the candidate, never prepends it', () => {
+    // The highlight travels by INDEX over this array. A row at the front would
+    // move every existing option under the user's highlight on the keystroke
+    // that made the candidate valid.
+    const out = withCreatableOption(OPTIONS, OPTIONS, CANDIDATE);
+    expect(out.map((o) => o.value)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('offers nothing for a null candidate', () => {
+    // `null` is how the caller says "what is typed is not a value I could
+    // save". Offering a row the backend would reject is worse than none.
+    expect(withCreatableOption(OPTIONS, OPTIONS, null)).toBe(OPTIONS);
+  });
+
+  it('does not re-offer a value that is already an option', () => {
+    const dup: ComboboxOption = { value: 'b', label: 'b' };
+    expect(withCreatableOption(OPTIONS, OPTIONS, dup)).toBe(OPTIONS);
+  });
+
+  it('does not re-offer a value already in `options` but filtered OUT of view', () => {
+    // The filtered list is what the user sees; `options` is the authority on
+    // what exists. Without this check, typing an exact existing value that the
+    // filter happens to hide would offer to "create" a duplicate of it.
+    const visible = filterOptions(OPTIONS, 'zzz');
+    const dup: ComboboxOption = { value: 'c', label: 'c' };
+    expect(withCreatableOption(visible, OPTIONS, dup)).toEqual([]);
+  });
+
+  it('appends onto an EMPTY filtered list, which is the common case', () => {
+    // Typing a scope nobody has used yet matches no option, so this is the
+    // path the escape hatch exists for.
+    const visible = filterOptions(OPTIONS, 'zzz');
+    expect(withCreatableOption(visible, OPTIONS, CANDIDATE).map((o) => o.value)).toEqual(['d']);
   });
 });
 

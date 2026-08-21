@@ -1,5 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { badRequest, ok } from '../../_shared/api/respond.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
 import { parseScopeFilter } from '../../_shared/scope.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -102,6 +104,21 @@ async function runFacets(
     return badRequest((e as Error).message, undefined, cors);
   }
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00068/00069).
+  // Without it `p_key_scopes` narrows the counts to empty inside the RPC,
+  // which reads as "there is nothing there" rather than "you may not ask".
+  //
+  // It runs AFTER the grammar check, as it does in `list.ts` — the two routes
+  // drill down together, so they must also refuse together, in the same order.
+  const deniedScope = firstDeniedScope(auth, [scopeFilter]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   // Empty → null = "not filtered", which is what the RPC's parameters mean.
   const list = (values: readonly string[]) => (values.length ? [...values] : null);
 
@@ -132,6 +149,12 @@ async function runFacets(
     // inside the RPC. A plain value list like the other dimensions.
     p_owner: list(d.owner.values),
     p_owner_mode: d.owner.mode,
+    // The calling key's restriction (00068/00069). The `origin_repo` facet is a
+    // repository name by construction, so an unnarrowed facet list would leak
+    // exactly what the scope catalog hides.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

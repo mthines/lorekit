@@ -4,7 +4,10 @@ import { LoreExplorerSkeleton } from '@/components/lore/LoreExplorerSkeleton';
 // Title renders as real text so users can read it instantly.
 export default function LoreLoading() {
   return (
-    <div className="flex flex-col gap-4">
+    // Same `max-w-page` cap as the real page — without it the skeleton renders
+    // full-bleed on an ultrawide display and the content edge jumps inward the
+    // moment the page mounts.
+    <div className="flex max-w-page flex-col gap-4">
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">
           Lore Explorer
