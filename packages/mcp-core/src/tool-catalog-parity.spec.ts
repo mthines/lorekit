@@ -37,11 +37,42 @@ describe('tool catalog ↔ permissions.ts', () => {
     expect(fromCatalog).toEqual([...WRITE_TOOLS].sort());
   });
 
-  it('marks exactly the ungated tools as org tools', () => {
+  it('gates every catalogued tool, and agrees on which permission', () => {
     for (const tool of MCP_TOOLS) {
       expect(toolRequires(tool.name)).toBe(tool.permission);
-      if (tool.permission === null) expect(tool.auth).toBe('jwt-only');
     }
+  });
+
+  it('leaves no tool ungated', () => {
+    // This replaces `permission === null ⇒ auth === 'jwt-only'`, which went
+    // vacuous the moment the org tools became token-gated: no tool is null any
+    // more, so the implication held for nothing. The property worth keeping is
+    // the stronger one — every tool IS gated, and `null` is not a state the
+    // catalog is currently allowed to be in. A tool arriving with no permission
+    // and no `jwt-only` auth would otherwise be reachable by any token.
+    for (const tool of MCP_TOOLS) {
+      if (tool.permission === null) {
+        expect(tool.auth, `${tool.name} is ungated, so it must be jwt-only`).toBe('jwt-only');
+      } else {
+        expect(['read', 'write']).toContain(tool.permission);
+      }
+    }
+    expect(MCP_TOOLS.filter((t) => t.permission === null)).toEqual([]);
+  });
+
+  it('serves the org tools to tokens, not only to a dashboard session', () => {
+    // The Phase-3a outcome, pinned by name. `org.list` reads, the three
+    // mutations write, and all four accept an `lk_*` token. Token permission is
+    // orthogonal to org ROLE: a `lk_rw_*` held by a viewer still cannot rename,
+    // because `lorekit_org_can` inside the RPCs is still the only role gate.
+    const org = MCP_TOOLS.filter((t) => t.name.startsWith('org.'));
+    expect(org.map((t) => t.name).sort()).toEqual(['org.create', 'org.delete', 'org.list', 'org.rename']);
+    for (const tool of org) {
+      expect(tool.auth, `${tool.name} must accept tokens`).toBe('token-or-jwt');
+    }
+    expect(org.filter((t) => t.permission === 'read').map((t) => t.name)).toEqual(['org.list']);
+    expect(org.filter((t) => t.permission === 'write').map((t) => t.name).sort())
+      .toEqual(['org.create', 'org.delete', 'org.rename']);
   });
 });
 

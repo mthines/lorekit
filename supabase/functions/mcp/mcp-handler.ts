@@ -3,7 +3,7 @@
  * Handles initialize, tools/list, and tools/call.
  */
 
-import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth, keyRestriction } from './auth.ts';
+import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction } from './auth.ts';
 import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
@@ -64,7 +64,7 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
   // promise never resolves. Deliver every auth-family error IN-BAND at HTTP 200
   // instead — the client parses the JSON-RPC error and surfaces it immediately:
   //   -32001          unauthenticated (missing / invalid / rotated token)
-  //   JSONRPC_FORBIDDEN authenticated but not permitted (org.* JWT, token scope)
+  //   JSONRPC_FORBIDDEN authenticated but not permitted (token permission, key scope)
   // Malformed / internal errors stay 400 (a bad request, not an auth signal).
   // Nothing returns 401 — a fast, legible error always beats a hang.
   const status = code === -32001 || code === JSONRPC_FORBIDDEN ? 200 : 400;
@@ -135,49 +135,42 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
     const isOrgTool = toolName in ORG_TOOLS;
 
-    if (isOrgTool) {
-      // org.* tools require a Supabase user JWT so auth.uid() resolves inside
-      // the SECURITY DEFINER RPCs. Reject api_key and service callers.
-      // This is an AUTHORIZATION denial (the caller authenticated fine) → it
-      // must be JSONRPC_FORBIDDEN (HTTP 200), never -32001 (HTTP 401), or the
-      // MCP client hangs. See jsonrpcError().
-      if (!isJwtAuth(auth)) {
-        // Authorization denial — the caller authenticated but lacks the right
-        // auth type. Not a server fault; use clientError() so the span is not
-        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
-        span
-          .clientError('PermissionDenied: org.* requires JWT auth')
-          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'jwt_required' });
-        return jsonrpcError(
-          id,
-          JSONRPC_FORBIDDEN,
-          'org.* tools require Supabase JWT authentication. ' +
-            'They are not available via API token — connect via the dashboard or a Supabase user session.',
-        );
-      }
-    } else {
-      // memory.* permission check (api_key auth only; JWT auth is RLS-gated).
-      // Authenticated-but-insufficient-scope → JSONRPC_FORBIDDEN (HTTP 200).
-      const requiredPermission = toolRequires(toolName as keyof typeof MEMORY_TOOLS);
-      if (requiredPermission === 'write' && !canWrite(auth)) {
-        // Token scope denial — caller authenticated but the token lacks write
-        // permission. Not a server fault; use clientError() so the span is not
-        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
-        span
-          .clientError('PermissionDenied: read-only token')
-          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'write_permission_missing' });
-        return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
-      }
-      if (requiredPermission === 'read' && !canRead(auth)) {
-        // Token scope denial — caller authenticated but the token lacks read
-        // permission. Not a server fault; use clientError() so the span is not
-        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
-        span
-          .clientError('PermissionDenied: write-only token')
-          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'read_permission_missing' });
-        return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
-      }
+    // Permission gate, now shared by BOTH families. Org tools used to be
+    // refused here outright unless the caller held a dashboard JWT, because
+    // their RPCs read `auth.uid()` and a service-role connection has none.
+    // `00041_org_actor_override.sql` gave those RPCs an explicit actor
+    // parameter, honoured only on a verified service_role connection, and the
+    // REST `/orgs` routes have served `lk_*` tokens through it since. This
+    // brings MCP onto the same path rather than keeping one surface behind.
+    //
+    // Authenticated-but-insufficient → JSONRPC_FORBIDDEN (HTTP 200), never
+    // -32001: a 401 on this endpoint makes streamable-HTTP clients retry the
+    // session instead of surfacing the error. See jsonrpcError().
+    const requiredPermission = toolRequires(toolName);
+    if (requiredPermission === 'write' && !canWrite(auth)) {
+      span
+        .clientError('PermissionDenied: read-only token')
+        .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'write_permission_missing' });
+      return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
+    }
+    if (requiredPermission === 'read' && !canRead(auth)) {
+      span
+        .clientError('PermissionDenied: write-only token')
+        .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'read_permission_missing' });
+      return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
+    }
 
+    // Token permission is NOT authorization to act on an org. It says what the
+    // KEY may attempt; `lorekit_org_can` inside the SECURITY DEFINER RPCs still
+    // decides what the PERSON may do, so a `lk_rw_*` held by a viewer passes
+    // here and is denied there (LK002 → OrgPermissionError → clientError).
+
+    // ── Scope gating: memory tools only ──────────────────────────────────────
+    // Org tools carry no `scope`/`scopes` argument, so the checks below would be
+    // inert for them. Skipped EXPLICITLY rather than left to that inertness: a
+    // future org tool that happened to take a `scope`-named argument would
+    // otherwise start silently obeying a memory-shaped rule.
+    if (!isOrgTool) {
       // Scope allowlist (migration 00068). Same class of denial as the two
       // above — authenticated, insufficient scope — so the same
       // JSONRPC_FORBIDDEN (HTTP 200), never -32001.
@@ -217,8 +210,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           return jsonrpcError(
             id,
             JSONRPC_FORBIDDEN,
-            `This token is not allowed to use the scope "${denied}". ` +
-              'It is restricted to specific scopes — widen it in the dashboard under Settings → API keys.',
+            `This token is not allowed to use the scope "${denied}". `
+              + 'It is restricted to specific scopes — widen it in the dashboard under Settings → API keys.',
           );
         }
       }
@@ -298,9 +291,13 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       let result: unknown;
 
       if (isOrgTool) {
-        // org.* tools: (db, args, span) — no userId parameter; auth.uid()
-        // is resolved inside the SECURITY DEFINER RPCs from the JWT.
-        result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
+        // org.* tools: (db, args, toolUserId, span) — the same shape as the
+        // memory family, so both maps look alike and this dispatcher threads
+        // the actor one way. null for a JWT caller (auth.uid() applies inside
+        // the RPCs); the token owner for an api_key caller, forwarded as
+        // `p_actor_user_id` and honoured only on a verified service_role
+        // connection.
+        result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolUserId, toolSpan);
       } else {
         // memory.* tools: (db, args, toolUserId, span)
         // toolUserId is null for JWT auth — RLS handles scoping on the DB side.

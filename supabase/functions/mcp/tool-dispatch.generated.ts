@@ -39,7 +39,8 @@ export const MEMORY_TOOLS = {
   'memory.purge_expired': toolPurgeExpired,
 } as const satisfies Record<MemoryToolName, unknown>;
 
-// org.* tools — dispatched with (db, args, span).
+// org.* tools — dispatched with (db, args, userId, span), the same shape as
+// the memory family so the dispatcher threads the actor one way.
 export const ORG_TOOLS = {
   'org.create': toolOrgCreate,
   'org.list': toolOrgList,

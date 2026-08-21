@@ -5,11 +5,20 @@
  * .eq('user_id', userId). The service-role client bypasses RLS — without this
  * filter, users could access each other's memories.
  *
- * org.* tools REQUIRE a Supabase user JWT (auth.uid() is resolved inside the
- * SECURITY DEFINER RPCs on the server). They are NOT accessible via api_key
- * auth because the RPCs use auth.uid() — a service-role client has no session
- * JWT and therefore no auth.uid(). Callers with api_key tokens receive a
- * -32001 PermissionDenied response.
+ * org.* tools accept BOTH auth tiers. A JWT caller resolves inside the SECURITY
+ * DEFINER RPCs from auth.uid() as before; an api_key caller has no auth.uid()
+ * on its service-role connection, so the resolved userId is passed explicitly
+ * as `p_actor_user_id` and `lorekit_org_actor` honours it — but ONLY on a
+ * verified service_role connection, so an `authenticated` caller can never
+ * name someone else (00041_org_actor_override.sql).
+ *
+ * The SECURITY note above therefore applies to the org handlers too, and for
+ * the same reason: on the api_key path RLS is bypassed, so any RAW table read
+ * must carry the tenant predicate itself. Both raw reads here do —
+ * `toolOrgList` on `org_members`, and `resolveOrgId` on `orgs` THROUGH the
+ * caller's membership. Token permission is orthogonal to org ROLE and does not
+ * replace it: `lorekit_org_can` inside the RPCs is still the only thing that
+ * decides what a member may do.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -757,28 +766,54 @@ export async function toolPurge(
 // All org.* tools require a Supabase user JWT — they route through SECURITY
 // DEFINER RPCs that resolve the actor from auth.uid(). api_key auth provides
 // no session JWT so auth.uid() is null inside the RPCs; callers using api_key
-// tokens receive a -32001 before reaching these handlers (enforced by the
-// dispatcher in mcp-handler.ts).
+// Both auth tiers reach these handlers now. The dispatcher resolves the caller
+// and passes `userId` — null for a JWT caller (auth.uid() applies), the token
+// owner for an api_key caller (passed on as `p_actor_user_id`).
 
 /**
- * Resolve an org's UUID from its slug. Throws if the org does not exist or is
- * soft-deleted. Shared by toolOrgRename and toolOrgDelete — both need the id
- * to call their respective SECURITY DEFINER RPCs.
+ * Resolve an org's UUID from its slug. Throws if the org does not exist, is
+ * soft-deleted, or (on the api_key path) the caller is not a member.
+ *
+ * The membership join is NOT redundant with the role check inside the RPCs. On
+ * a JWT connection RLS on `orgs` already restricts this read to the caller's
+ * orgs. On an api_key connection the client is service-role, so RLS is bypassed
+ * and a bare `.eq('slug', slug)` answers for EVERY org — turning this into an
+ * existence oracle for any guessable slug, before any RPC gets a chance to deny
+ * anything. Reading through `org_members` closes that: a non-member gets the
+ * same "org not found" a non-existent slug gets, which is also the answer that
+ * leaks least.
  */
 async function resolveOrgId(
   tracedDb: ReturnType<typeof createTracedClient>,
   slug: string,
+  userId: string | null,
 ): Promise<string> {
-  const { data: org, error } = await tracedDb
-    .from('orgs')
-    .select('id')
-    .eq('slug', slug)
-    .is('deleted_at', null)
+  // JWT path: unchanged, RLS-scoped.
+  if (!userId) {
+    const { data: org, error } = await tracedDb
+      .from('orgs')
+      .select('id')
+      .eq('slug', slug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) throw new Error((error as { message: string }).message);
+    if (!org) throw new Error(`org not found: ${slug}`);
+    return (org as { id: string }).id;
+  }
+
+  // api_key path: service-role, so the tenant predicate has to be explicit.
+  const { data: row, error } = await tracedDb
+    .from('org_members')
+    .select('org_id, orgs!inner(id, slug, deleted_at)')
+    .eq('user_id', userId)
+    .eq('orgs.slug', slug)
+    .is('orgs.deleted_at', null)
     .maybeSingle();
 
   if (error) throw new Error((error as { message: string }).message);
-  if (!org) throw new Error(`org not found: ${slug}`);
-  return (org as { id: string }).id;
+  if (!row) throw new Error(`org not found: ${slug}`);
+  return (row as { org_id: string }).org_id;
 }
 
 /**
@@ -788,6 +823,7 @@ async function resolveOrgId(
 export async function toolOrgCreate(
   db: ReturnType<typeof createClient>,
   params: Params,
+  userId: string | null,
   span: Span,
 ) {
   const { slug, name } = params;
@@ -797,7 +833,7 @@ export async function toolOrgCreate(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc('lorekit_org_create', { p_slug: slug, p_name: name })
+    .rpc('lorekit_org_create', { p_slug: slug, p_name: name, p_actor_user_id: userId })
     .single();
 
   if (error) {
@@ -817,17 +853,26 @@ export async function toolOrgCreate(
 export async function toolOrgList(
   db: ReturnType<typeof createClient>,
   _params: Params,
+  userId: string | null,
   span: Span,
 ) {
   const tracedDb = createTracedClient(db, span);
-  // Join orgs to get name + slug alongside the role. RLS on org_members
-  // restricts rows to the authenticated user's own memberships; RLS on orgs
-  // restricts to orgs the user belongs to (00014_orgs.sql) and excludes
-  // soft-deleted orgs (00025_safe_org_deletion.sql).
-  const { data, error } = await tracedDb
+  // Join orgs to get name + slug alongside the role. On a JWT connection RLS on
+  // org_members restricts rows to the caller's own memberships and RLS on orgs
+  // to orgs they belong to (00014_orgs.sql), excluding soft-deleted ones
+  // (00025_safe_org_deletion.sql).
+  //
+  // On the api_key path the client is SERVICE-ROLE, so neither policy applies
+  // and an unfiltered read returns every membership row in the table. The
+  // explicit `user_id` predicate is what stands between this tool and listing
+  // other people's orgs — it is not belt-and-braces on top of RLS, it IS the
+  // only tenant boundary on that path.
+  let query = tracedDb
     .from('org_members')
     .select('role, orgs(id, slug, name, created_at)')
     .order('created_at', { referencedTable: 'orgs', ascending: false });
+  if (userId) query = query.eq('user_id', userId);
+  const { data, error } = await query;
 
   if (error) throw new Error((error as { message: string }).message);
 
@@ -853,6 +898,7 @@ export async function toolOrgList(
 export async function toolOrgRename(
   db: ReturnType<typeof createClient>,
   params: Params,
+  userId: string | null,
   span: Span,
 ) {
   const { slug, name } = params;
@@ -861,10 +907,10 @@ export async function toolOrgRename(
   span.setAttributes({ 'lorekit.org.slug': slug });
 
   const tracedDb = createTracedClient(db, span);
-  const orgId = await resolveOrgId(tracedDb, slug);
+  const orgId = await resolveOrgId(tracedDb, slug, userId);
 
   const { error } = await tracedDb
-    .rpc('lorekit_org_rename', { p_org_id: orgId, p_name: name });
+    .rpc('lorekit_org_rename', { p_org_id: orgId, p_name: name, p_actor_user_id: userId });
 
   if (error) {
     const translated = translateOrgPermissionError(error);
@@ -883,6 +929,7 @@ export async function toolOrgRename(
 export async function toolOrgDelete(
   db: ReturnType<typeof createClient>,
   params: Params,
+  userId: string | null,
   span: Span,
 ) {
   const { slug } = params;
@@ -891,10 +938,12 @@ export async function toolOrgDelete(
   span.setAttributes({ 'lorekit.org.slug': slug });
 
   const tracedDb = createTracedClient(db, span);
-  const orgId = await resolveOrgId(tracedDb, slug);
+  const orgId = await resolveOrgId(tracedDb, slug, userId);
 
+  // SOFT delete (`lorekit_org_delete`, 00025) — org lore is hidden from every
+  // read immediately, and a separate owner-only purge removes it for good.
   const { error } = await tracedDb
-    .rpc('lorekit_org_delete', { p_org_id: orgId });
+    .rpc('lorekit_org_delete', { p_org_id: orgId, p_actor_user_id: userId });
 
   if (error) {
     const translated = translateOrgPermissionError(error);

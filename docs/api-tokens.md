@@ -131,6 +131,30 @@ routed into an org the token was never granted.
 | `memory.purge` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.purge_expired` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.list_archived` | ✓ | ✓ | ✗ (returns -32001) |
+| `org.list` | ✓ | ✓ | ✗ (returns -32001) |
+| `org.create` | ✓ | ✗ (returns -32001) | ✓ |
+| `org.rename` | ✓ | ✗ (returns -32001) | ✓ |
+| `org.delete` | ✓ | ✗ (returns -32001) | ✓ |
+
+The four `org.*` rows are new: those tools used to be dashboard-JWT-only on the
+MCP surface, while the REST `/orgs` routes already served `lk_*` tokens. Both
+surfaces now take tokens, through the same actor override
+(`00041_org_actor_override.sql`).
+
+**A token permission is not an org role, and does not become one.** The table
+above says what the KEY may attempt. What the HOLDER may do is decided
+separately by `lorekit_org_can` inside the SECURITY DEFINER RPCs, so a `lk_rw_*`
+token owned by an org *viewer* passes the permission gate above and is then
+refused the rename with `LK002`. Both gates apply, and neither substitutes for
+the other.
+
+**Scope restrictions do not currently narrow org operations.** A token with a
+scope allowlist can still create, rename and soft-delete orgs — on MCP as on
+REST, which has behaved this way since the org routes opened to tokens. Scope
+restrictions were designed for lore, and orgs carry no scope to match against.
+Whether an allowlist *ought* to imply "no org administration" is a real
+question, deliberately left open rather than answered differently on each
+surface; see [decisions.md](./decisions.md).
 
 ## Using a token
 

@@ -52,10 +52,20 @@ describe('READ_TOOLS / WRITE_TOOLS', () => {
       // `memory.scopes` is the inventory read: the one read tool that takes no
       // scope. It is gated with the family because scope STRINGS embed repo and
       // project names — it is not exempt merely because it names no scope.
-      ['memory.list', 'memory.list_archived', 'memory.read', 'memory.scopes', 'memory.search'].sort(),
+      // `org.list` joined the read family when the org tools stopped being
+      // JWT-only: listing the orgs you belong to is exactly what a read token
+      // should be able to do.
+      ['memory.list', 'memory.list_archived', 'memory.read', 'memory.scopes', 'memory.search', 'org.list'].sort(),
     );
     expect([...WRITE_TOOLS].sort()).toEqual(
-      ['memory.archive', 'memory.delete', 'memory.purge', 'memory.purge_expired', 'memory.restore', 'memory.write'].sort(),
+      // The org mutations likewise. Token permission is orthogonal to org ROLE
+      // and does not replace it — a `lk_rw_*` held by a viewer still cannot
+      // rename, because `lorekit_org_can` is still the only role gate.
+      [
+        'memory.archive', 'memory.delete', 'memory.purge', 'memory.purge_expired',
+        'memory.restore', 'memory.write',
+        'org.create', 'org.delete', 'org.rename',
+      ].sort(),
     );
   });
 });

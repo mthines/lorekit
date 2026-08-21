@@ -31,8 +31,14 @@ export const PURGE_RETENTION_DAYS_DEFAULT = 30;
 
 /**
  * The permission family a tool belongs to, mirroring `READ_TOOLS` /
- * `WRITE_TOOLS`. `null` for `org.*` tools, which are gated by auth tier and
- * org role rather than by token permission.
+ * `WRITE_TOOLS`.
+ *
+ * `null` means the operation is not gated by TOKEN permission at all. No
+ * catalogued tool is null today: `org.*` used to be, when those tools were
+ * JWT-only, and they are now gated like any other — read to list, write to
+ * mutate. Token permission stays orthogonal to org ROLE: a `lk_rw_*` held by a
+ * viewer still cannot rename an org, because `lorekit_org_can` remains the only
+ * role→capability source.
  */
 export type McpToolPermission = 'read' | 'write' | null;
 
@@ -106,7 +112,7 @@ export interface McpToolDoc {
   readonly description: string;
   /** Sent verbatim as the MCP `inputSchema`. */
   readonly inputSchema: JsonSchemaObject;
-  /** Token permission family. `null` for `org.*`. */
+  /** Token permission family. `null` only if not token-gated at all. */
   readonly permission: McpToolPermission;
   /** Auth tiers accepted. */
   readonly auth: McpToolAuth;
@@ -397,8 +403,8 @@ export const MCP_TOOLS = [
     name: 'org.create',
     description:
       'Create a new organization. You become its owner automatically. The slug must be globally unique and lowercase.',
-    permission: null,
-    auth: 'jwt-only',
+    permission: 'write',
+    auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'POST /orgs', handler: 'toolOrgCreate' },
     inputSchema: {
       type: 'object',
@@ -413,8 +419,8 @@ export const MCP_TOOLS = [
   {
     name: 'org.list',
     description: 'List all organizations you are a member of, with your role in each.',
-    permission: null,
-    auth: 'jwt-only',
+    permission: 'read',
+    auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'GET /orgs', handler: 'toolOrgList' },
     inputSchema: { type: 'object', properties: {} },
     returns: '`{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — roles: `owner`, `admin`, `member`, `viewer`.',
@@ -422,8 +428,8 @@ export const MCP_TOOLS = [
   {
     name: 'org.rename',
     description: "Rename an organization's display name. Requires admin or owner role.",
-    permission: null,
-    auth: 'jwt-only',
+    permission: 'write',
+    auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'PATCH /orgs/:slug', handler: 'toolOrgRename' },
     inputSchema: {
       type: 'object',
@@ -439,8 +445,8 @@ export const MCP_TOOLS = [
     name: 'org.delete',
     description:
       'Delete an organization. Requires owner role. Soft-deletes the org — all org lore is immediately hidden from reads. Unrecoverable via MCP.',
-    permission: null,
-    auth: 'jwt-only',
+    permission: 'write',
+    auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'DELETE /orgs/:slug', handler: 'toolOrgDelete' },
     inputSchema: {
       type: 'object',

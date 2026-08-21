@@ -29,6 +29,10 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   // with records that are not lore. Permission gating and the records-read
   // metric are different questions about the same family.
   'memory.scopes',
+  // `org.list` is a read like any other. It used to be ungated because the org
+  // tools were JWT-only; they now serve `lk_*` tokens, and listing the orgs you
+  // belong to is exactly the shape of thing a read token should be able to do.
+  'org.list',
 ]);
 
 /** Write-family tools — require `canWrite`. */
@@ -39,6 +43,14 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'memory.restore',
   'memory.purge',
   'memory.purge_expired',
+  // Org MUTATIONS need write permission. This is orthogonal to the caller's org
+  // ROLE and does not replace it: a `lk_rw_*` token held by a viewer still
+  // cannot rename or delete, because `lorekit_org_can` inside the SECURITY
+  // DEFINER RPCs remains the only role→capability source. Token permission says
+  // what the KEY may attempt; the role says what the PERSON may do.
+  'org.create',
+  'org.rename',
+  'org.delete',
 ]);
 
 /**

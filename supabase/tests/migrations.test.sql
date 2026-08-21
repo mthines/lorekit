@@ -7187,6 +7187,119 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- §86 — the MCP org tools under an api_key actor override
+-- ═════════════════════════════════════════════════════════════════════════
+-- The MCP `org.*` tools were JWT-only: their RPCs resolve the actor from
+-- `auth.uid()`, and the api_key tier reaches Postgres over a service-role
+-- connection where that is NULL, so every `lorekit_org_can(...)` denied. They
+-- now pass the token owner explicitly as `p_actor_user_id`, the same path
+-- `supabase/functions/orgs/` has used since 00041.
+--
+-- §50–§59 already prove the override itself. What this pins is the pair of
+-- properties the MCP surface newly depends on, and would break silently:
+--
+--   (1) the override is HONOURED on a service-role connection, so an api_key
+--       caller can act as its own token owner; and
+--   (2) it does NOT become an impersonation primitive — token permission is
+--       orthogonal to org ROLE, so an actor who is only a viewer is still
+--       denied a rename with LK002.
+--
+-- (2) is the one worth the test. Token permission is checked at the edge, org
+-- role only in the RPC, so a `lk_rw_*` token held by a viewer passes every
+-- check the edge can make. If the RPC's role gate ever stopped applying to the
+-- overridden actor, that token would silently gain admin powers.
+do $$
+declare
+  v_owner  uuid := '00000000-0000-0000-0000-0000000086a1';
+  v_viewer uuid := '00000000-0000-0000-0000-0000000086b2';
+  v_org    uuid;
+  v_name   text;
+  v_count  int;
+begin
+  insert into auth.users (id, email) values
+    (v_owner,  'org86-owner@test.local'),
+    (v_viewer, 'org86-viewer@test.local')
+  on conflict (id) do nothing;
+
+  -- ── (1) create, as a service-role caller naming its actor ────────────────
+  set local role service_role;
+
+  select lorekit_org_create(
+    p_slug          => 'org86',
+    p_name          => 'Org 86',
+    p_actor_user_id => v_owner) into v_org;
+  assert v_org is not null, '86-1: create must return the new org id';
+
+  select count(*) into v_count from org_members
+    where org_id = v_org and user_id = v_owner and role = 'owner';
+  assert v_count = 1, '86-1: the named actor must become the owner, not auth.uid()';
+
+  -- ── (2) rename, as the owner ─────────────────────────────────────────────
+  perform lorekit_org_rename(
+    p_org_id        => v_org,
+    p_name          => 'Org 86 renamed',
+    p_actor_user_id => v_owner);
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-2: the owner must be able to rename (name=%s)', v_name);
+
+  -- ── (3) a VIEWER actor is denied the same rename ─────────────────────────
+  -- The load-bearing case. Nothing about holding a write-capable TOKEN grants
+  -- an org role, and this is where that separation is enforced.
+  insert into org_members (org_id, user_id, role) values (v_org, v_viewer, 'viewer')
+    on conflict (org_id, user_id) do update set role = 'viewer';
+
+  begin
+    perform lorekit_org_rename(
+      p_org_id        => v_org,
+      p_name          => 'Org 86 hijacked',
+      p_actor_user_id => v_viewer);
+    assert false, '86-3: a viewer actor must NOT be able to rename the org';
+  exception
+    when others then
+      assert sqlerrm like '%LK002%',
+        format('86-3: expected an LK002 permission denial, got: %s', sqlerrm);
+  end;
+
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-3: the denied rename must not have taken effect (name=%s)', v_name);
+
+  -- ── (4) delete is a SOFT delete, and owner-only ──────────────────────────
+  begin
+    perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_viewer);
+    assert false, '86-4: a viewer actor must NOT be able to delete the org';
+  exception
+    when others then
+      assert sqlerrm like '%LK002%',
+        format('86-4: expected an LK002 permission denial, got: %s', sqlerrm);
+  end;
+
+  perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_owner);
+  select count(*) into v_count from orgs where id = v_org and deleted_at is not null;
+  assert v_count = 1,
+    '86-4: the owner delete must SOFT-delete (deleted_at set), matching what the MCP tool advertises';
+  select count(*) into v_count from orgs where id = v_org;
+  assert v_count = 1, '86-4: the row must still exist — a purge is a separate, owner-only step';
+
+  -- ── (5) a NULL actor still fails closed ──────────────────────────────────
+  -- The property 00041 was written around: no actor, no authority. An edge bug
+  -- that forgot to pass the token owner must deny rather than act as someone.
+  begin
+    perform lorekit_org_rename(
+      p_org_id        => v_org,
+      p_name          => 'Org 86 nulled',
+      p_actor_user_id => null);
+    assert false, '86-5: a NULL actor must not be able to rename';
+  exception
+    when others then null;  -- any denial is acceptable; acting is not
+  end;
+
+  reset role;
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
