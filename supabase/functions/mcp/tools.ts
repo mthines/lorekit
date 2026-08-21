@@ -23,7 +23,7 @@ import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope, type KeyRestriction } from '../_shared/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
-import { resolveKindHost } from '../_shared/schemas/tags.ts';
+import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';
 import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/outcome-signal.ts';
@@ -276,7 +276,9 @@ export async function toolList(
   span: Span,
   keyScoping?: KeyRestriction,
 ) {
-  const { scope: rawScope, tags, limit = 50, cursor: cursorParam, kind, host } = params;
+  const { scope: rawScope, tags: rawTags, limit = 50, cursor: cursorParam, kind, host } = params;
+  // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
+  const tags = toTagList(rawTags);
   if (!rawScope) throw new Error('scope is required');
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
@@ -332,7 +334,7 @@ export async function toolList(
       .order('id', { ascending: false })
       .limit(CANDIDATE_LIMIT);
     if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId), keyScoping);
-    if (tags?.length) rankQuery = rankQuery.overlaps('tags', tags);
+    if (tags.length) rankQuery = rankQuery.overlaps('tags', pgArrayLiteral(tags));
     // Taxonomy filters are applied BEFORE ranking, not after: the candidate
     // window is bounded at CANDIDATE_LIMIT, so filtering afterwards would rank
     // over a window that a prolific other bucket could have already filled.
@@ -406,7 +408,7 @@ export async function toolList(
     .order('id', { ascending: false })
     .limit(pageLimit + 1);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
-  if (tags?.length) query = query.overlaps('tags', tags);
+  if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (kind) query = query.eq('kind', kind);
   if (host) query = query.eq('host', host);
   // Apply cursor keyset predicate when a valid cursor is supplied.
@@ -512,7 +514,9 @@ export async function toolSearch(
   span: Span,
   keyScoping?: KeyRestriction,
 ) {
-  const { q, scopes, tags, limit = 20, cursor: cursorParam } = params;
+  const { q, scopes, tags: rawTags, limit = 20, cursor: cursorParam } = params;
+  // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
+  const tags = toTagList(rawTags);
   if (!q) throw new Error('q is required');
   const pageLimit = Math.min(limit, 100);
 
@@ -532,7 +536,7 @@ export async function toolSearch(
   // .or() calls, which PostgREST ANDs together — never merged into one
   // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
-  if (tags?.length) query = query.overlaps('tags', tags);
+  if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (scopes?.length) {
     const exactScopes: string[] = [];
     const likePatterns: string[] = [];
