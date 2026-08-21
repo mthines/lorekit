@@ -31,7 +31,7 @@
     "deno:check": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "for e in supabase/functions/*/index.ts; do echo \"== $e\"; deno check --no-lock \"$e\" || exit 1; done",
+        "command": "for e in supabase/functions/*/index.ts; do echo \"== $e\"; deno check --no-lock --node-modules-dir=none \"$e\" || exit 1; done",
         "cwd": "{workspaceRoot}"
       }
     },

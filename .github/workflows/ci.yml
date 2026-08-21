@@ -427,16 +427,27 @@ jobs:
         with:
           deno-version: v2.x
 
-      # `--no-lock`: there is no deno.json / deno.lock in the repo (edge
-      # functions are deliberately self-contained with `npm:` specifiers and no
-      # import map), and this job must not be the thing that introduces one.
+      # Two resolver flags, both load-bearing:
+      #
+      # `--node-modules-dir=none` — the repo root has a pnpm `package.json`, so
+      # Deno otherwise switches to node_modules resolution and fails every
+      # function with "Could not find a matching package for
+      # 'npm:@supabase/supabase-js@2' in the node_modules directory". That
+      # package is not a root dependency and should not become one: the deployed
+      # edge runtime resolves `npm:` specifiers from Deno's own cache with no
+      # node_modules at all, so this flag is what makes the check resolve the
+      # way production does.
+      #
+      # `--no-lock` — there is no deno.json / deno.lock (edge functions are
+      # deliberately self-contained with `npm:` specifiers and no import map),
+      # and this job must not be the thing that introduces one.
       - name: Typecheck every Edge Function
         run: |
           failed=""
           for entry in supabase/functions/*/index.ts; do
             fn="$(basename "$(dirname "$entry")")"
             echo "::group::deno check $fn"
-            if deno check --no-lock "$entry"; then
+            if deno check --no-lock --node-modules-dir=none "$entry"; then
               echo "✅ $fn"
             else
               echo "❌ $fn"
