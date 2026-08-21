@@ -52,10 +52,10 @@
   <text x="222" y="500" class="lbl" font-size="11.5">budget — fill 3000 chars, then stop</text>
 
   <rect x="60" y="522" width="300" height="120" rx="11" fill="#2a2010" stroke="#f5a623"/>
-  <text x="210" y="548" text-anchor="middle" class="k" font-size="13.5" font-weight="700" fill="#f5a623">LoreKit: 8 of 6,000 loaded</text>
+  <text x="210" y="548" text-anchor="middle" class="k" font-size="13.5" font-weight="700" fill="#f5a623">LoreKit: 8 of 6000 loaded</text>
   <line x1="80" y1="560" x2="340" y2="560" stroke="#f5a623" stroke-opacity="0.25"/>
   <text x="80" y="580" class="k" font-size="11" fill="#34d399">- (repo) supabase-rls::empty-array-is-not-no-rows</text>
   <text x="80" y="598" class="k" font-size="11" fill="#34d399">- (global) always-typecheck-before-done</text>
   <text x="80" y="616" class="lbl" font-size="11">…6 more, ranked &amp; de-duplicated</text>
-  <text x="80" y="634" class="k" font-size="10.5" fill="#f5a623">More lore: 5,992 more → memory.search</text>
+  <text x="80" y="634" class="k" font-size="9" fill="#f5a623">More lore: repo 4000 · global 2000 → memory.search</text>
 </svg>
