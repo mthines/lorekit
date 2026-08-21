@@ -645,6 +645,95 @@ ${c.bold('Examples')}
   npx @lorekit/cli migrate --from .lorekit --to remote        # preview the push
   npx @lorekit/cli migrate --from .lorekit --to remote --yes  # push local lore up
 `,
+  archive: `${c.bold('lorekit archive')} — hide a memory without losing it
+
+${c.bold('Usage')}
+  lorekit archive <scope::key>
+  lorekit archive <scope> <key>
+  lorekit archive --scope <scope> --key <key>
+
+Soft-archives one memory: it stops appearing in reads and in the hooks' injected
+context, but it is still there and ${c.cyan('lorekit restore')} brings it back. Reach for
+this rather than ${c.cyan('delete')} when a lesson has stopped being true — the record of
+having learned it is usually worth keeping.
+
+Addresses a memory the same three ways ${c.cyan('write')} / ${c.cyan('show')} do, and picks a store with
+the same precedence (remote when usable, else local; ${c.cyan('--remote')} / ${c.cyan('--local')} force it).
+
+${c.bold('Scoped API tokens')}
+Server-side this is scope-authorized: a token restricted to a scope may archive
+every writer's row in that scope, while an unscoped token may only archive its
+own. A no-match is reported as not-found rather than a silent success.
+
+${c.bold('Options')}
+      --scope <scope>     Name the scope explicitly
+      --key <key>         Name the key explicitly — for a key containing \`::\`
+      --remote / --local  Force a store instead of the usual precedence
+      --json              Machine-readable result
+`,
+
+  delete: `${c.bold('lorekit delete')} — archive a memory, or destroy it with --force ${c.dim('(alias: rm)')}
+
+${c.bold('Usage')}
+  lorekit delete <scope::key>            # soft-archive (reversible)
+  lorekit delete <scope::key> --force    # hard-delete (unrecoverable)
+
+Without ${c.cyan('--force')} this is exactly ${c.cyan('lorekit archive')} — the memory is hidden and
+restorable. With ${c.cyan('--force')} the row is gone and no restore can bring it back.
+
+${c.bold('Scoped API tokens')}
+Same scope authorization as ${c.cyan('archive')}: a scope-restricted token may act on any
+writer's row within its scopes, an unscoped one only on its own, and a 0-row
+result is reported as not-found rather than as success.
+
+${c.bold('Options')}
+      --force             Hard-delete instead of archiving. Unrecoverable
+      --scope <scope>     Name the scope explicitly
+      --key <key>         Name the key explicitly — for a key containing \`::\`
+      --remote / --local  Force a store instead of the usual precedence
+      --json              Machine-readable result
+`,
+
+  restore: `${c.bold('lorekit restore')} — bring an archived memory back
+
+${c.bold('Usage')}
+  lorekit restore <scope::key>
+  lorekit restore <scope> <key>
+
+Un-archives a memory so it appears in reads again. The counterpart to
+${c.cyan('archive')} (and to ${c.cyan('delete')} without ${c.cyan('--force')}). A memory that was hard-deleted
+cannot be restored — there is nothing left to restore.
+
+Restoring something that is already active is not an error; it reports that
+nothing changed.
+
+${c.bold('Options')}
+      --scope <scope>     Name the scope explicitly
+      --key <key>         Name the key explicitly — for a key containing \`::\`
+      --remote / --local  Force a store instead of the usual precedence
+      --json              Machine-readable result
+`,
+
+  bootstrap: `${c.bold('lorekit bootstrap')} — apply the LoreKit schema to your own Supabase database
+
+${c.bold('Usage')}
+  lorekit bootstrap [--yes]
+
+For BYOD ("bring your own database") only: creates the tables, functions and
+policies LoreKit needs in a Supabase project you control, so lore never leaves
+your infrastructure. You only need this if you are pointing the CLI at your own
+database via ${c.cyan('LOREKIT_STORAGE_URL')} / ${c.cyan('LOREKIT_STORAGE_ANON_KEY')} — the hosted
+service and the offline store both need nothing here.
+
+See ${c.cyan('docs/byod.md')} for the full setup, including which key to use and what the
+schema contains.
+
+${c.bold('Options')}
+  -y, --yes                Apply without prompting
+      --endpoint <url>     Target endpoint
+      --token <token>      Token for the target
+`,
+
   purge: `${c.bold('lorekit purge')} — permanently delete archived memories past a retention window
 
 ${c.bold('Usage')}
