@@ -93,8 +93,8 @@ belongs**, not a sandbox.
 
 ### Sandbox baseline — read before trusting a red gate
 
-Three facts about a fresh sandbox/container, each confirmed across three or more
-runs. They cost time every time they are rediscovered:
+Five facts about a fresh sandbox/container, each confirmed by direct observation
+rather than inferred. They cost time every time they are rediscovered:
 
 1. **Run `pnpm install` before the first `pnpm nx` command.** A fresh container's
    install is incomplete or absent. The signature is a cryptic
@@ -117,6 +117,23 @@ runs. They cost time every time they are rediscovered:
    before == N failures after"; any specific N goes stale. This takes ~40s and is
    the difference between reporting an inherited red and "fixing" something that
    was never broken.
+4. **`supabase start` is impossible (no Docker socket) but the SQL tests still
+   run.** `migrations.test.sql` — the only thing that exercises raw migration
+   logic — needs a database, not the Supabase stack. PostgreSQL 16 is installed
+   locally, so `initdb` a throwaway cluster, apply
+   `supabase/tests/bare-postgres-bootstrap.sql` (it supplies the `auth.*` claim
+   readers, `auth.users`/`auth.identities` and the three roles), apply
+   `supabase/migrations/*.sql` in order, then run the test file. Its runbook is
+   in its own header. Needs `apt-get install postgresql-16-pgvector` for
+   00060/00062. **A failure is strong evidence; a pass is not a substitute for
+   CI's `Integration smoke` job** — the bootstrap is a stand-in, not Supabase.
+   The test file is one transaction ending in `rollback`, so it is re-runnable
+   against the same database, which makes guard-biting an assertion cheap.
+5. **`deno check` cannot run here** — `deno.land` is blocked by the egress
+   policy, so `scripts/deno-check-functions.mjs` exits 1 with `spawnSync deno
+   ENOENT` (fails closed, correctly). The edge ratchet is CI-only from a
+   sandbox; write edge code accordingly and expect the baseline to be the thing
+   that catches you.
 
 ```bash
 # CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the
