@@ -71,10 +71,7 @@ export const COMMANDS = [
   { name: 'dedupe', run: dedupe, traced: true, strictFlags: true, native: 'near-duplicate detection across a scope' },
   { name: 'link', run: link, traced: true, strictFlags: true, native: 'builds a dashboard deep link', aliases: ['url'] },
   { name: 'migrate', run: migrate, traced: true, strictFlags: true, native: 'moves lore between local and remote stores' },
-  // Traced but NOT strict, which is the state it shipped in: it was absent from
-  // `HUMAN_COMMANDS` while present in the dispatch switch. Preserved verbatim
-  // here so this refactor changes no behaviour; corrected separately.
-  { name: 'bootstrap', run: bootstrap, traced: true, strictFlags: false, native: 'seeds a fresh store from a template' },
+  { name: 'bootstrap', run: bootstrap, traced: true, strictFlags: true, native: 'seeds a fresh store from a template' },
   { name: 'write', run: write, traced: true, strictFlags: true, tool: 'memory.write' },
   { name: 'archive', run: archive, traced: true, strictFlags: true, tool: 'memory.archive' },
   { name: 'delete', run: del, traced: true, strictFlags: true, tool: 'memory.delete', aliases: ['rm'] },
