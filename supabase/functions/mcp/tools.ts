@@ -763,12 +763,14 @@ export async function toolPurge(
 
 // ── Org management tools ────────────────────────────────────────────────────
 //
-// All org.* tools require a Supabase user JWT — they route through SECURITY
-// DEFINER RPCs that resolve the actor from auth.uid(). api_key auth provides
-// no session JWT so auth.uid() is null inside the RPCs; callers using api_key
-// Both auth tiers reach these handlers now. The dispatcher resolves the caller
-// and passes `userId` — null for a JWT caller (auth.uid() applies), the token
-// owner for an api_key caller (passed on as `p_actor_user_id`).
+// Both auth tiers reach these handlers. They route through SECURITY DEFINER
+// RPCs, which resolve the actor one of two ways: from `auth.uid()` on a JWT
+// connection, or from the explicit `p_actor_user_id` an api_key caller passes
+// (honoured only on a verified service_role connection — 00041). So the
+// dispatcher resolves the caller and passes `userId`: null for a JWT caller,
+// where auth.uid() applies, and the token's owner for an api_key caller.
+//
+// A NULL actor fails closed inside the RPCs rather than defaulting to anyone.
 
 /**
  * Resolve an org's UUID from its slug. Throws if the org does not exist, is
@@ -813,7 +815,14 @@ async function resolveOrgId(
 
   if (error) throw new Error((error as { message: string }).message);
   if (!row) throw new Error(`org not found: ${slug}`);
-  return (row as { org_id: string }).org_id;
+  // Routed through `unknown` rather than asserted directly, unlike the JWT
+  // branch above. `maybeSingle()` returns one row at runtime but the generated
+  // DB types describe it as an array, so `row as { org_id: string }` is a
+  // TS2352 ("neither type sufficiently overlaps") — which is exactly the
+  // `.single()`-vs-array debt the edge-typecheck baseline records. The
+  // neighbouring casts are grandfathered into that ceiling; a NEW line must not
+  // add to it, and the ratchet caught this one on its first run.
+  return (row as unknown as { org_id: string }).org_id;
 }
 
 /**
