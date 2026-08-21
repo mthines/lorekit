@@ -1,4 +1,39 @@
 {
-  "$comment": "PLACEHOLDER — real counts seeded from the first CI run.",
-  "functions": {}
+  "$comment": [
+    "Per-function `deno check` error ceilings for supabase/functions/**, enforced by",
+    "scripts/deno-check-functions.mjs and the `edge-typecheck` CI job.",
+    "",
+    "These numbers are DEBT, not a target. The edge tree went untypechecked for the",
+    "life of the project — no `deno check` anywhere, no covering tsconfig, no nx",
+    "target — so the first run over it surfaced 83 pre-existing errors. Blocking on",
+    "zero would have forced an unrelated auth/handler cleanup into whatever PR added",
+    "the gate; the ratchet instead writes the debt down and fails the moment a number",
+    "goes UP.",
+    "",
+    "A CEILING may only be LOWERED. If a run comes in under one of these, the job",
+    "prints the lower numbers and asks you to commit them, which is how the debt",
+    "shrinks. Raising one is never the right fix for a failing check: the change that",
+    "added the error is.",
+    "",
+    "`health` and `openapi` are already at 0 and must stay there.",
+    "",
+    "What the remaining errors are, so the next person does not have to re-derive it:",
+    "  - optional-handling gaps (`params.min_score`, `body.limit` possibly undefined)",
+    "    in memories/handlers/{relevant,search}.ts — these look like latent bugs",
+    "  - `never`-typed rows in _shared/api/auth.ts, which may mean the generated DB",
+    "    types are stale (`pnpm nx db:types supabase`)",
+    "  - `.single()`-vs-array casts repeated across the org handlers (`{id}[]` cast to",
+    "    `{id}`), 5+ occurrences of one copied line",
+    "  - postgrest version skew: `referencedTable` missing from the installed",
+    "    `.order()` option type",
+    "  - a fire-and-forget `.catch()` on a `PromiseLike<void>` in _shared/usage.ts"
+  ],
+  "functions": {
+    "blog": 8,
+    "health": 0,
+    "mcp": 34,
+    "memories": 26,
+    "openapi": 0,
+    "orgs": 15
+  }
 }
