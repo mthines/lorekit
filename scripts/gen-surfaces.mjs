@@ -161,11 +161,59 @@ export const PURGE_RETENTION_DAYS_DEFAULT = ${JSON.stringify(PURGE_RETENTION_DAY
 }
 
 /**
+ * The edge MCP dispatch maps.
+ *
+ * This is the one place generation is genuinely unavoidable: the map has to
+ * bind each op NAME to an imported FUNCTION, and the catalog is zero-import so
+ * it can only hold the name. The generated module does the importing.
+ *
+ * `satisfies Record<MemoryToolName, unknown>` is what makes this worth
+ * generating rather than asserting. It checks the KEY SET exactly — a missing op
+ * fails because `Record` requires every key, an extra one fails as an excess
+ * property — so catalog↔dispatch agreement becomes a compile error instead of a
+ * source-scraping regex. The value type stays `unknown` on purpose: the two
+ * families have different call signatures, and constraining them here would
+ * duplicate a contract that `tools.ts` already states.
+ */
+export function renderEdgeDispatch(catalog) {
+  const { MCP_TOOLS } = catalog;
+  const memory = MCP_TOOLS.filter((t) => t.name.startsWith('memory.'));
+  const org = MCP_TOOLS.filter((t) => t.name.startsWith('org.'));
+
+  const imports = MCP_TOOLS.map((t) => `  ${t.surfaces.handler},`).join('\n');
+  const entry = (t) => `  '${t.name}': ${t.surfaces.handler},`;
+
+  return `${BANNER}
+import {
+${imports}
+} from './tools.ts';
+import type { MemoryToolName, OrgToolName } from '../_shared/schemas/tool-catalog.ts';
+
+// memory.* tools — dispatched with (db, args, userId, span, keyScoping).
+export const MEMORY_TOOLS = {
+${memory.map(entry).join('\n')}
+} as const satisfies Record<MemoryToolName, unknown>;
+
+// org.* tools — dispatched with (db, args, span).
+export const ORG_TOOLS = {
+${org.map(entry).join('\n')}
+} as const satisfies Record<OrgToolName, unknown>;
+
+/** Every dispatchable name — the unknown-tool guard in \`tools/call\`. */
+export const ALL_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  ...Object.keys(MEMORY_TOOLS),
+  ...Object.keys(ORG_TOOLS),
+]);
+`;
+}
+
+/**
  * Every artifact this generator owns: where it goes and how it is rendered.
  * Exported so a spec can assert the set rather than rediscovering it.
  */
 export const GENERATED_TARGETS = [
   { path: 'packages/cli/src/surfaces.generated.mjs', render: renderCliSurfaces },
+  { path: 'supabase/functions/mcp/tool-dispatch.generated.ts', render: renderEdgeDispatch },
 ];
 
 async function main() {

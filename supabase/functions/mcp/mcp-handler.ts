@@ -9,24 +9,16 @@ import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
 import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
 import { OrgPermissionError } from './org-permissions.ts';
-import {
-  toolWrite,
-  toolRead,
-  toolList,
-  toolDelete,
-  toolSearch,
-  toolArchive,
-  toolListArchived,
-  toolRestore,
-  toolPurge,
-  toolPurgeExpired,
-  toolScopes,
-  toolOrgCreate,
-  toolOrgList,
-  toolOrgRename,
-  toolOrgDelete,
-  type Params,
-} from './tools.ts';
+import { type Params } from './tools.ts';
+// The dispatch maps are GENERATED from packages/schemas/src/tool-catalog.ts —
+// see tool-dispatch.generated.ts. They were hand-written here, which is why a
+// regex in tool-catalog-parity.spec.ts had to scrape this file to check them
+// against the catalog. Now `satisfies Record<MemoryToolName, unknown>` in the
+// generated module makes a missing or misspelled op a COMPILE error instead.
+//
+// Only the maps moved. Every decision below — the auth gate, the span bracket,
+// the try/catch, the usage events — stays here and stays hand-written.
+import { MEMORY_TOOLS, ORG_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
 import { type Span } from '../_shared/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
@@ -50,34 +42,6 @@ const CORRELATION_HEADER = 'x-lorekit-correlation-id';
  * and the header is cheap for a real client to send.
  */
 const CLIENT_HEADER = 'x-lorekit-client';
-
-// memory.* tools — dispatched with (db, args, userId, span)
-const MEMORY_TOOLS = {
-  'memory.write':         toolWrite,
-  'memory.read':          toolRead,
-  'memory.list':          toolList,
-  'memory.delete':        toolDelete,
-  'memory.search':        toolSearch,
-  'memory.archive':       toolArchive,
-  'memory.list_archived': toolListArchived,
-  'memory.restore':       toolRestore,
-  'memory.purge':         toolPurge,
-  'memory.purge_expired':  toolPurgeExpired,
-  'memory.scopes':        toolScopes,
-} as const;
-
-// org.* tools — dispatched with (db, args, span). They require JWT auth
-// (auth.uid() inside the SECURITY DEFINER RPCs); api_key callers are rejected
-// before dispatch (see the tools/call branch below).
-const ORG_TOOLS = {
-  'org.create': toolOrgCreate,
-  'org.list':   toolOrgList,
-  'org.rename': toolOrgRename,
-  'org.delete': toolOrgDelete,
-} as const;
-
-// All known tool names — used only for the unknown-tool guard in tools/call.
-const ALL_TOOL_NAMES = new Set<string>([...Object.keys(MEMORY_TOOLS), ...Object.keys(ORG_TOOLS)]);
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {

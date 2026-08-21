@@ -140,8 +140,12 @@ describe('gen-surfaces portability', () => {
     }
   });
 
-  it('imports nothing but node: builtins and the catalog', () => {
-    const source = readFileSync(path.join(repoRoot, generator), 'utf8');
+  it('imports nothing but node: builtins', () => {
+    // Template literals are stripped FIRST. The generator emits source, and
+    // that emitted source contains `from './tools.ts'` — scanning the raw file
+    // matched the imports it WRITES as though they were imports it HAS, which
+    // is a false positive that appeared the moment a second target was added.
+    const source = readFileSync(path.join(repoRoot, generator), 'utf8').replace(/`[\s\S]*?`/g, '``');
     const specifiers = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1] as string);
 
     // Anti-vacuity: if the match found nothing, the assertion below is empty.
