@@ -3,25 +3,10 @@
 import process from 'node:process';
 import { readFileSync } from 'node:fs';
 import { parseArgs, log, err, c } from '../src/util.mjs';
-import { install } from '../src/install.mjs';
-import { uninstall } from '../src/uninstall.mjs';
-import { doctor } from '../src/doctor.mjs';
-import { list } from '../src/list.mjs';
-import { search } from '../src/search.mjs';
-import { show } from '../src/show.mjs';
-import { write } from '../src/write.mjs';
-import { archive, del, restore } from '../src/remove.mjs';
-import { stats } from '../src/stats.mjs';
-import { scopes } from '../src/scopes.mjs';
-import { diff } from '../src/diff.mjs';
-import { tree } from '../src/tree.mjs';
-import { lint } from '../src/lint.mjs';
-import { dedupe } from '../src/dedupe.mjs';
-import { link } from '../src/link.mjs';
-import { hook } from '../src/hook.mjs';
-import { migrate } from '../src/migrate.mjs';
-import { bootstrap } from '../src/bootstrap.mjs';
-import { mcpServer } from '../src/mcp-server.mjs';
+// Commands, their handlers, aliases and dispatch properties all come from one
+// registry — see ../src/commands.mjs for why membership lives there and the
+// help prose stays here.
+import { COMMANDS_BY_NAME, STRICT_FLAG_COMMANDS, COMMAND_ALIASES } from '../src/commands.mjs';
 import { traceCommand } from '../src/telemetry.mjs';
 import { loadDotEnv } from '../src/dotenv.mjs';
 
@@ -693,19 +678,6 @@ const KNOWN_FLAGS = [
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
 ];
 
-// Commands that write to disk / talk to the network on a human's behalf. These
-// reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
-// never fail on a stray flag, and only ever receive flags we control).
-const HUMAN_COMMANDS = new Set([
-  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
-  'diff', 'tree', 'lint', 'dedupe', 'link', 'migrate', 'write',
-  'archive', 'delete', 'restore',
-]);
-
-// Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
-// and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link', rm: 'delete' };
-
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
   // environment — so telemetry config, tokens, and endpoints can come from a
@@ -730,17 +702,14 @@ async function main() {
     return 0;
   }
 
-  // `hook` is machine-facing: it must never print help/errors to stdout
-  // (that would corrupt the JSON the host parses). Handle it before the
-  // usage branch and always resolve to exit 0.
-  if (command === 'hook') {
-    return hook(args);
-  }
-
-  // `mcp` is machine-facing too: only JSON-RPC frames may reach stdout, so it
-  // must bypass the usage branch. It serves stdio until the client closes.
-  if (command === 'mcp') {
-    return mcpServer(args);
+  // Machine-facing commands (`hook`, `mcp`) own their stdout — a host's JSON
+  // contract and JSON-RPC frames respectively — so they must bypass the usage
+  // and version branches, which print. They are also deliberately UNTRACED:
+  // they fire on every agent event, and a span per event is a cost the caller
+  // never asked for. `machine` in the registry is the single statement of that.
+  const machineEntry = COMMANDS_BY_NAME.get(command);
+  if (machineEntry?.machine) {
+    return machineEntry.run(args);
   }
 
   if (args.version) {
@@ -755,61 +724,30 @@ async function main() {
 
   // Reject unrecognized flags on human-facing commands with an actionable
   // pointer, rather than silently ignoring a typo that would change behavior.
-  if (HUMAN_COMMANDS.has(command) && args._unknown.length > 0) {
+  if (STRICT_FLAG_COMMANDS.has(command) && args._unknown.length > 0) {
     const plural = args._unknown.length > 1 ? 's' : '';
     err(`${c.red(`Unknown option${plural}:`)} ${args._unknown.join(', ')}`);
     err(`Run ${c.cyan(`lorekit ${command} --help`)} to see valid options.`);
     return 1;
   }
 
-  // Human-facing commands are wrapped so we can see which commands people run
-  // (one OTel span + counter per invocation). `hook` and `mcp` are handled
-  // above and stay uninstrumented — they are machine-facing, fire on every
-  // agent event, and must keep stdout to their host protocol.
-  switch (command) {
-    case 'install':
-      return traceCommand('install', args, VERSION, () => install(args));
-    case 'uninstall':
-      return traceCommand('uninstall', args, VERSION, () => uninstall(args));
-    case 'doctor':
-      return traceCommand('doctor', args, VERSION, () => doctor(args));
-    case 'list':
-      return traceCommand('list', args, VERSION, () => list(args));
-    case 'search':
-      return traceCommand('search', args, VERSION, () => search(args));
-    case 'show':
-      return traceCommand('show', args, VERSION, () => show(args));
-    case 'stats':
-      return traceCommand('stats', args, VERSION, () => stats(args));
-    case 'scopes':
-      return traceCommand('scopes', args, VERSION, () => scopes(args));
-    case 'diff':
-      return traceCommand('diff', args, VERSION, () => diff(args));
-    case 'tree':
-      return traceCommand('tree', args, VERSION, () => tree(args));
-    case 'lint':
-      return traceCommand('lint', args, VERSION, () => lint(args));
-    case 'dedupe':
-      return traceCommand('dedupe', args, VERSION, () => dedupe(args));
-    case 'link':
-      return traceCommand('link', args, VERSION, () => link(args));
-    case 'migrate':
-      return traceCommand('migrate', args, VERSION, () => migrate(args));
-    case 'bootstrap':
-      return traceCommand('bootstrap', args, VERSION, () => bootstrap(args));
-    case 'write':
-      return traceCommand('write', args, VERSION, () => write(args));
-    case 'archive':
-      return traceCommand('archive', args, VERSION, () => archive(args));
-    case 'delete':
-      return traceCommand('delete', args, VERSION, () => del(args));
-    case 'restore':
-      return traceCommand('restore', args, VERSION, () => restore(args));
-    default:
-      err(`${c.red('Unknown command:')} ${command}\n`);
-      log(HELP);
-      return 1;
+  // Every remaining command is dispatched through `traceCommand`, so one OTel
+  // span and one counter are emitted per invocation without any command wiring
+  // its own — telemetry is INHERITED from this single call site. `hook` and
+  // `mcp` returned above and stay uninstrumented by design.
+  //
+  // This replaced nineteen identical `case` clauses whose only job was to
+  // repeat the command name three times. The registry already knows the name
+  // and the handler, so adding a command needs no edit here at all — which is
+  // what stops the dispatch list and the membership set drifting apart again.
+  const entry = COMMANDS_BY_NAME.get(command);
+  if (!entry) {
+    err(`${c.red('Unknown command:')} ${command}\n`);
+    log(HELP);
+    return 1;
   }
+
+  return traceCommand(entry.name, args, VERSION, () => entry.run(args));
 }
 
 main()
