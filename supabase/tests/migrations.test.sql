@@ -7216,87 +7216,114 @@ declare
   v_org    uuid;
   v_name   text;
   v_count  int;
+  v_denied_viewer_rename boolean := false;
+  v_denied_viewer_delete boolean := false;
+  v_denied_null_actor    boolean := false;
 begin
   insert into auth.users (id, email) values
     (v_owner,  'org86-owner@test.local'),
     (v_viewer, 'org86-viewer@test.local')
   on conflict (id) do nothing;
 
-  -- ── (1) create, as a service-role caller naming its actor ────────────────
+  -- ── (1)+(2) create and rename, as a service-role caller naming its actor ──
+  --
+  -- BOTH lines below are required, and the second is the load-bearing one.
+  -- `lorekit_org_actor` (00041) discriminates on `auth.role()`, which reads the
+  -- `role` claim out of `request.jwt.claims` — NOT the Postgres session role.
+  -- With only `set local role service_role`, the claim stays unset, auth.role()
+  -- is not 'service_role', the override is IGNORED, and the actor falls back to
+  -- a NULL auth.uid(). The first version of this section did exactly that and
+  -- died on `org_actor_unresolved` — which was the override failing closed
+  -- precisely as 00041 §4 designs it, so the harness was wrong, not the RPC.
   set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
 
   select lorekit_org_create(
     p_slug          => 'org86',
     p_name          => 'Org 86',
     p_actor_user_id => v_owner) into v_org;
-  assert v_org is not null, '86-1: create must return the new org id';
 
-  select count(*) into v_count from org_members
-    where org_id = v_org and user_id = v_owner and role = 'owner';
-  assert v_count = 1, '86-1: the named actor must become the owner, not auth.uid()';
-
-  -- ── (2) rename, as the owner ─────────────────────────────────────────────
   perform lorekit_org_rename(
     p_org_id        => v_org,
     p_name          => 'Org 86 renamed',
     p_actor_user_id => v_owner);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_org is not null, '86-1: create must return the new org id';
+  select count(*) into v_count from org_members
+    where org_id = v_org and user_id = v_owner and role = 'owner';
+  assert v_count = 1, '86-1: the named actor must become the owner, not auth.uid()';
   select name into v_name from orgs where id = v_org;
   assert v_name = 'Org 86 renamed',
     format('86-2: the owner must be able to rename (name=%s)', v_name);
 
-  -- ── (3) a VIEWER actor is denied the same rename ─────────────────────────
-  -- The load-bearing case. Nothing about holding a write-capable TOKEN grants
-  -- an org role, and this is where that separation is enforced.
+  -- Fixture, not part of the scenario: `org_members` carries a SELECT policy
+  -- and no INSERT policy at all (00022), so the viewer row is written here as
+  -- the migration role rather than leaning on service_role's BYPASSRLS.
   insert into org_members (org_id, user_id, role) values (v_org, v_viewer, 'viewer')
     on conflict (org_id, user_id) do update set role = 'viewer';
 
+  -- ── (3)(4)(5) the denials, and the owner's soft delete ───────────────────
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (3) The load-bearing case. Nothing about holding a write-capable TOKEN
+  -- grants an org role, and this is where that separation is enforced.
+  --
+  -- Each denial sets a flag and is asserted after the block rather than with an
+  -- `assert false` inside the `begin`: `assert` raises P0004, which `when
+  -- others` would catch and then re-report as "expected LK002, got <the
+  -- assertion's own message>" — a failure, but one that names the wrong cause.
   begin
     perform lorekit_org_rename(
       p_org_id        => v_org,
       p_name          => 'Org 86 hijacked',
       p_actor_user_id => v_viewer);
-    assert false, '86-3: a viewer actor must NOT be able to rename the org';
-  exception
-    when others then
-      assert sqlerrm like '%LK002%',
-        format('86-3: expected an LK002 permission denial, got: %s', sqlerrm);
-  end;
+  exception when sqlstate 'LK002' then v_denied_viewer_rename := true; end;
 
-  select name into v_name from orgs where id = v_org;
-  assert v_name = 'Org 86 renamed',
-    format('86-3: the denied rename must not have taken effect (name=%s)', v_name);
-
-  -- ── (4) delete is a SOFT delete, and owner-only ──────────────────────────
-  begin
-    perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_viewer);
-    assert false, '86-4: a viewer actor must NOT be able to delete the org';
-  exception
-    when others then
-      assert sqlerrm like '%LK002%',
-        format('86-4: expected an LK002 permission denial, got: %s', sqlerrm);
-  end;
-
-  perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_owner);
-  select count(*) into v_count from orgs where id = v_org and deleted_at is not null;
-  assert v_count = 1,
-    '86-4: the owner delete must SOFT-delete (deleted_at set), matching what the MCP tool advertises';
-  select count(*) into v_count from orgs where id = v_org;
-  assert v_count = 1, '86-4: the row must still exist — a purge is a separate, owner-only step';
-
-  -- ── (5) a NULL actor still fails closed ──────────────────────────────────
-  -- The property 00041 was written around: no actor, no authority. An edge bug
-  -- that forgot to pass the token owner must deny rather than act as someone.
+  -- (4) A NULL actor still fails closed — the property 00041 was written
+  -- around: no actor, no authority. An edge bug that forgot to pass the token
+  -- owner must deny rather than act as someone.
+  --
+  -- Ordered BEFORE the owner's delete deliberately, so the org is still live
+  -- and the denial can only be the actor. `lorekit_org_rename` checks the
+  -- capability first and has no deleted-org guard at all, so running this after
+  -- the soft delete would still pass — while no longer proving what it claims.
   begin
     perform lorekit_org_rename(
       p_org_id        => v_org,
       p_name          => 'Org 86 nulled',
       p_actor_user_id => null);
-    assert false, '86-5: a NULL actor must not be able to rename';
-  exception
-    when others then null;  -- any denial is acceptable; acting is not
-  end;
+  exception when sqlstate 'LK002' then v_denied_null_actor := true; end;
+
+  -- (5) delete is owner-only, and a SOFT delete.
+  begin
+    perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_viewer);
+  exception when sqlstate 'LK002' then v_denied_viewer_delete := true; end;
+
+  perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_owner);
 
   reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_denied_viewer_rename,
+    '86-3: a viewer actor must be denied the rename with LK002';
+  assert v_denied_null_actor,
+    '86-4: a NULL actor must not be able to rename';
+  assert v_denied_viewer_delete,
+    '86-5: a viewer actor must be denied the delete with LK002';
+
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-3/86-4: no denied rename may have taken effect (name=%s)', v_name);
+
+  select count(*) into v_count from orgs where id = v_org and deleted_at is not null;
+  assert v_count = 1,
+    '86-5: the owner delete must SOFT-delete (deleted_at set), matching what the MCP tool advertises';
+  select count(*) into v_count from orgs where id = v_org;
+  assert v_count = 1, '86-5: the row must still exist — a purge is a separate, owner-only step';
 end;
 $$;
 
