@@ -212,6 +212,32 @@ describe('the remote store speaks the documented REST contract', () => {
     assert.deepEqual(seen[1].opts.body, { retention_days: 90 });
   });
 
+  test('purge refuses an absent or non-integer window instead of defaulting', async () => {
+    // The failure mode this replaces: `{ retention_days: undefined }` is dropped
+    // by JSON.stringify, so a caller that forgot the window would silently
+    // hard-delete against the SERVER's default — a window nobody chose, on an
+    // irreversible account-wide sweep. Throwing names the mistake at the call
+    // site. Unreachable through the CLI (parseRetentionDays resolves first), so
+    // this pins the contract for the next caller.
+    const { createRemoteStore } = await import('../src/store/remote.mjs');
+    const store = createRemoteStore({ endpoint: 'https://example.test/functions/v1/mcp', token: 'lk_rw_x' });
+    let called = false;
+    store._rest = async () => { called = true; return { ok: true, data: { purged: 0 } }; };
+
+    for (const bad of [undefined, null, '30', 1.5, NaN]) {
+      await assert.rejects(
+        () => store.purge({ retentionDays: bad }),
+        /explicit integer retentionDays/,
+        `retentionDays=${JSON.stringify(bad)} must be refused`,
+      );
+    }
+    // No-argument call: the `= {}` default makes this a clean refusal rather
+    // than a destructuring TypeError.
+    await assert.rejects(() => store.purge(), /explicit integer retentionDays/);
+
+    assert.equal(called, false, 'a refused purge must not reach the network');
+  });
+
   test('purge-expired sends no body at all', async () => {
     // The asymmetry is real and worth pinning: `purge-expired` has no window to
     // name — the row set is every expired memory the caller owns.

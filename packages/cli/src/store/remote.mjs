@@ -535,7 +535,21 @@ class RemoteStore {
   // the server default apply". That branch was unreachable — the CLI resolves
   // the default before calling — so it was dead code guarded by a comment that
   // described behaviour the code did not have.
-  async purge({ retentionDays }) {
+  // Refuses an absent window LOUDLY rather than defaulting to one. `= {}` plus
+  // a bare pass-through would send `retention_days: undefined`, which
+  // JSON.stringify drops — so a caller that forgot the window would silently
+  // get the server's default and hard-delete against a window nobody chose.
+  // On an irreversible account-wide sweep that is the worst of the three
+  // options; throwing names the mistake at the call site instead. Unreachable
+  // today (`parseRetentionDays` resolves and validates before this is called),
+  // and cheap insurance for the day a second caller appears.
+  async purge({ retentionDays } = {}) {
+    if (!Number.isInteger(retentionDays)) {
+      throw new Error(
+        `purge requires an explicit integer retentionDays (got ${JSON.stringify(retentionDays)}); `
+        + 'an account-wide hard delete must never run against an unstated window.',
+      );
+    }
     const res = await this._rest('/memories/purge', {
       method: 'POST',
       body: { retention_days: retentionDays },
