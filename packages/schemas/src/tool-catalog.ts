@@ -39,6 +39,47 @@ export type McpToolPermission = 'read' | 'write' | null;
 /** Which auth tiers may call a tool. */
 export type McpToolAuth = 'token-or-jwt' | 'jwt-only';
 
+/**
+ * Which surfaces expose an operation, and how — the binding that makes this
+ * file the single origin of the *operation surface*, not just the MCP wire.
+ *
+ * Read `rest` as DOCUMENTATION of the binding, never as a projection to
+ * generate from. The mapping is many-to-one and not derivable: `GET /memories`
+ * and `POST /memories/list` are both `memory.list`, `POST /memories` and
+ * `PATCH /memories/:id` are both `memory.write`, and `DELETE /memories` splits
+ * into `memory.delete` vs `memory.archive` by the `?force` query parameter
+ * (resolved in `rest-tool-name.ts`'s code, not by a table lookup). Several REST
+ * routes deliberately have no operation here at all. Which operations exist is
+ * a curation decision about agent surface area; the HTTP routes are one way to
+ * reach them.
+ *
+ * `handler` is a NAME, never a function reference: this module is zero-import
+ * (see the file header), so it can only name the symbol. The generated dispatch
+ * module resolves the name to the real import, and a guard asserts every name
+ * here is exported from `supabase/functions/mcp/tools.ts`.
+ *
+ * The `*Exempt` fields exist so that *absence* from a surface is a declared,
+ * reviewable decision rather than a silent omission — which is how
+ * `memory.restore` came to be missing from the CLI's stdio server despite both
+ * stores supporting it.
+ */
+export interface SurfaceBinding {
+  /** Dispatched by the edge MCP handler (`supabase/functions/mcp/`). */
+  readonly mcp: boolean;
+  /** Canonical `lorekit` subcommand, or null when the CLI does not expose it. */
+  readonly cli: string | null;
+  /** Additional accepted command spellings, canonicalised before dispatch. */
+  readonly cliAliases?: readonly string[];
+  /** Representative REST route. Documentation of the binding — see above. */
+  readonly rest?: string | null;
+  /** Dispatch symbol NAME exported from `supabase/functions/mcp/tools.ts`. */
+  readonly handler: string;
+  /** Required when `cli` is null: why that is intentional. */
+  readonly cliExempt?: string;
+  /** Required when the CLI's local stdio MCP server does not dispatch it. */
+  readonly localMcpExempt?: string;
+}
+
 /** The subset of JSON Schema the tool inputs actually use. */
 export interface JsonSchemaProperty {
   readonly type: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object';
@@ -69,6 +110,8 @@ export interface McpToolDoc {
   readonly permission: McpToolPermission;
   /** Auth tiers accepted. */
   readonly auth: McpToolAuth;
+  /** Which surfaces expose this op, and the handler that backs it. */
+  readonly surfaces: SurfaceBinding;
   /** Docs-only: the shape a successful call returns. */
   readonly returns?: string;
   /** Docs-only: caveats worth a paragraph under the argument table. */
@@ -80,18 +123,35 @@ const key: JsonSchemaProperty = { type: 'string', description: 'Lesson identifie
 const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum entries to return.' };
 
 /**
+ * Why no `org.*` operation has a `lorekit <verb>` subcommand: org management
+ * reaches the CLI through the local stdio MCP server (`lorekit mcp`), which
+ * proxies to the REST `/orgs` routes. Stated once and shared by all four rather
+ * than repeated, so the four cannot drift into disagreeing about the reason.
+ */
+const ORG_CLI_EXEMPT = 'org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand';
+
+/**
  * Every tool the MCP server exposes, in the order `tools/list` reports them.
  *
- * Adding a tool means adding it here AND to the dispatch map in
- * `supabase/functions/mcp/mcp-handler.ts`; `tool-catalog-parity.spec.ts` fails
- * when the two disagree.
+ * Adding a tool means adding it here, with a `surfaces` binding, and adding the
+ * named handler to `supabase/functions/mcp/tools.ts`. The dispatch map, the
+ * CLI's generated surface artifact, and the docs all derive from this array —
+ * `surface-parity.spec.ts` fails when a surface is missed.
+ *
+ * `as const satisfies` rather than a `: readonly McpToolDoc[]` annotation: the
+ * annotation widens every `name` to `string`, which is what forced the dispatch
+ * map to be cross-checked by a source regex. Keeping the literal types makes
+ * `McpToolName` a real union, so a dispatch map keyed by it rejects a missing or
+ * misspelled entry at compile time instead. `satisfies` keeps the interface
+ * conformance check the annotation was providing.
  */
-export const MCP_TOOLS: readonly McpToolDoc[] = [
+export const MCP_TOOLS = [
   {
     name: 'memory.write',
     description: 'Store or update a lesson',
     permission: 'write',
     auth: 'token-or-jwt',
+    surfaces: { mcp: true, cli: 'write', rest: 'POST /', handler: 'toolWrite' },
     inputSchema: {
       type: 'object',
       required: ['scope', 'key', 'value'],
@@ -170,6 +230,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'Read a lesson by scope and key',
     permission: 'read',
     auth: 'token-or-jwt',
+    surfaces: { mcp: true, cli: 'show', rest: 'GET /:id', handler: 'toolRead' },
     inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
     returns: '`{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.',
   },
@@ -178,6 +239,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'List lessons for a scope',
     permission: 'read',
     auth: 'token-or-jwt',
+    surfaces: { mcp: true, cli: 'list', cliAliases: ['ls'], rest: 'GET /', handler: 'toolList' },
     inputSchema: {
       type: 'object',
       required: ['scope'],
@@ -200,6 +262,8 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
       'Soft-archive a lesson (default) or hard-delete it (force: true). Archived lessons are hidden from reads but can be restored.',
     permission: 'write',
     auth: 'token-or-jwt',
+    // `?force=true` is what tells this apart from `memory.archive` on the same route.
+    surfaces: { mcp: true, cli: 'delete', cliAliases: ['rm'], rest: 'DELETE /?force=true', handler: 'toolDelete' },
     inputSchema: {
       type: 'object',
       required: ['scope', 'key'],
@@ -222,6 +286,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'Full-text search across lessons',
     permission: 'read',
     auth: 'token-or-jwt',
+    surfaces: { mcp: true, cli: 'search', cliAliases: ['grep'], rest: 'POST /search', handler: 'toolSearch' },
     inputSchema: {
       type: 'object',
       required: ['q'],
@@ -244,6 +309,8 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'Soft-archive a lesson. Archived lessons are hidden from reads but can be restored via memory.restore.',
     permission: 'write',
     auth: 'token-or-jwt',
+    // Same route as `memory.delete`, distinguished by the ABSENCE of `?force=true`.
+    surfaces: { mcp: true, cli: 'archive', rest: 'DELETE /', handler: 'toolArchive' },
     inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
     returns: '`{ "archived": true }` if found and archived, `{ "archived": false }` if already archived or not found.',
   },
@@ -256,6 +323,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
       + 'read tool requires a scope up front, so this is the one that answers "what is there?".',
     permission: 'read',
     auth: 'token-or-jwt',
+    surfaces: { mcp: true, cli: 'scopes', rest: 'GET /scopes', handler: 'toolScopes' },
     inputSchema: { type: 'object', properties: {} },
     returns: '`{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first). `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.',
   },
@@ -264,6 +332,14 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'List archived (soft-deleted) lessons for a scope',
     permission: 'read',
     auth: 'token-or-jwt',
+    surfaces: {
+      mcp: true,
+      cli: null,
+      cliExempt: 'surfaced as a flag on an existing command — `lorekit list --archived` — not a command of its own',
+      rest: 'GET /?archived=true',
+      handler: 'toolListArchived',
+      localMcpExempt: 'reachable through memory.list\'s archived filter on the offline store',
+    },
     inputSchema: { type: 'object', required: ['scope'], properties: { scope, limit } },
     returns: '`{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`',
   },
@@ -272,6 +348,15 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'Restore an archived lesson back to active',
     permission: 'write',
     auth: 'token-or-jwt',
+    surfaces: {
+      mcp: true,
+      cli: 'restore',
+      rest: 'POST /restore',
+      handler: 'toolRestore',
+      // Not a real exemption — an unintentional omission this binding surfaced.
+      // Both stores implement restore, so nothing justified leaving it out.
+      localMcpExempt: 'NOT YET DISPATCHED — both stores back it; being wired up, do not treat as intentional',
+    },
     inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
     returns: '`{ "restored": true }` if restored, `{ "restored": false }` if already active or not found.',
   },
@@ -280,6 +365,14 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: `Permanently delete archived lessons older than retention_days (default ${PURGE_RETENTION_DAYS_DEFAULT}). Unrecoverable.`,
     permission: 'write',
     auth: 'token-or-jwt',
+    surfaces: {
+      mcp: true,
+      cli: null,
+      cliExempt: 'KNOWN GAP — no CLI command yet; being added',
+      rest: 'POST /purge',
+      handler: 'toolPurge',
+      localMcpExempt: 'account-wide sweep against server-side state; the offline store has no equivalent',
+    },
     inputSchema: {
       type: 'object',
       properties: {
@@ -299,6 +392,14 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'Permanently delete all TTL-expired memories for the current user. Unrecoverable.',
     permission: 'write',
     auth: 'token-or-jwt',
+    surfaces: {
+      mcp: true,
+      cli: null,
+      cliExempt: 'KNOWN GAP — no CLI command yet; being added',
+      rest: 'POST /purge-expired',
+      handler: 'toolPurgeExpired',
+      localMcpExempt: 'account-wide sweep against server-side state; the offline store has no equivalent',
+    },
     inputSchema: { type: 'object', properties: {} },
     returns: '`{ "purged": <count> }`',
   },
@@ -308,6 +409,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
       'Create a new organization. You become its owner automatically. The slug must be globally unique and lowercase.',
     permission: null,
     auth: 'jwt-only',
+    surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'POST /orgs', handler: 'toolOrgCreate' },
     inputSchema: {
       type: 'object',
       required: ['slug', 'name'],
@@ -323,6 +425,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: 'List all organizations you are a member of, with your role in each.',
     permission: null,
     auth: 'jwt-only',
+    surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'GET /orgs', handler: 'toolOrgList' },
     inputSchema: { type: 'object', properties: {} },
     returns: '`{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — roles: `owner`, `admin`, `member`, `viewer`.',
   },
@@ -331,6 +434,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     description: "Rename an organization's display name. Requires admin or owner role.",
     permission: null,
     auth: 'jwt-only',
+    surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'PATCH /orgs/:slug', handler: 'toolOrgRename' },
     inputSchema: {
       type: 'object',
       required: ['slug', 'name'],
@@ -347,6 +451,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
       'Delete an organization. Requires owner role. Soft-deletes the org — all org lore is immediately hidden from reads. Unrecoverable via MCP.',
     permission: null,
     auth: 'jwt-only',
+    surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'DELETE /orgs/:slug', handler: 'toolOrgDelete' },
     inputSchema: {
       type: 'object',
       required: ['slug'],
@@ -354,7 +459,19 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     },
     returns: '`{ "deleted": true, "slug": "<slug>" }`',
   },
-] as const;
+] as const satisfies readonly McpToolDoc[];
+
+/**
+ * Every operation name the catalog declares — a literal union, not `string`.
+ *
+ * This is what lets a dispatch map be typed `Record<MemoryToolName, Handler>`,
+ * so a missing entry is a compile error and a misspelled one an excess-property
+ * error. Splitting by prefix mirrors the two dispatch maps the MCP handler keeps
+ * (memory tools take a `userId`; org tools are role-gated inside their RPCs).
+ */
+export type McpToolName = (typeof MCP_TOOLS)[number]['name'];
+export type MemoryToolName = Extract<McpToolName, `memory.${string}`>;
+export type OrgToolName = Extract<McpToolName, `org.${string}`>;
 
 /** Every tool name the catalog declares, in wire order. */
 export const MCP_TOOL_NAMES: readonly string[] = MCP_TOOLS.map((t) => t.name);
