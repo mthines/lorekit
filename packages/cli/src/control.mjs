@@ -513,7 +513,7 @@ function projectDirFrom({ env, userConfig, repoConfig, root }) {
 // `store` override). Used by `migrate` so it works regardless of the active
 // mode. `home` is the per-user tier root; `project` is the opt-in repo tier.
 export function localStoreDirs(root = process.cwd(), env = process.env) {
-  const home = userConfigDir(env);
+  const home = homeRoot(env);
   const userConfig = readJson(path.join(home, 'config.json'));
   const repoConfig = readJson(path.join(root, '.lorekit.json'));
   return { home, project: projectDirFrom({ env, userConfig, repoConfig, root }) };
@@ -534,7 +534,7 @@ export function resolveDenies(root, { env = process.env } = {}) {
 
 // IO wrapper — load env + config files, derive the connection, then resolve.
 export function loadControl(root, { env = process.env } = {}) {
-  const home = userConfigDir(env);
+  const home = homeRoot(env);
   const userConfig = readJson(path.join(home, 'config.json'));
   const repoConfig = readJson(path.join(root, '.lorekit.json'));
   const conn = resolveProjectConnection(root, splitEndpoint);
@@ -545,9 +545,19 @@ export function loadControl(root, { env = process.env } = {}) {
   return resolveControl({ env, userConfig, repoConfig, connection, root, home });
 }
 
-// The per-user home tier root (also holds config.json): $LOREKIT_HOME, default
-// `~/.lorekit`. Moved from the old `~/.agent-memory` location.
-function userConfigDir(env) {
+/**
+ * The per-user home tier root (also holds config.json and telemetry-id.json):
+ * $LOREKIT_HOME, default `~/.lorekit`. Moved from the old `~/.agent-memory`
+ * location.
+ *
+ * Exported because `telemetry-identity.mjs` stores the install id in the same
+ * directory and must resolve it the SAME way. Re-deriving
+ * `LOREKIT_HOME || ~/.lorekit` there would put a second copy of this rule in
+ * the tree, and a drift between them would not fail loudly — it would mint a
+ * fresh "install" for a user who already had one, in a directory unrelated to
+ * their store.
+ */
+export function homeRoot(env = process.env) {
   return env.LOREKIT_HOME || path.join(os.homedir(), '.lorekit');
 }
 

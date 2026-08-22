@@ -23,6 +23,7 @@ import {
   resolveTelemetryTokenSource,
   probeTelemetryExport,
 } from './telemetry.mjs';
+import { describeIdentity } from './telemetry-identity.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl, HOOK_INSTRUCTION_EVENTS } from './control.mjs';
 import { createStore } from './store/index.mjs';
@@ -536,6 +537,23 @@ async function checkTelemetryExport(args, root, record) {
   }
 
   record('info', 'telemetry', `export on → ${config.endpoint} ${c.dim(`(credential from ${source})`)}`);
+
+  // What identity the exported telemetry carries, and where it lives. Reported
+  // because the id is otherwise invisible: it is minted silently on first run,
+  // and a user who wants to see or reset it needs the path. `describeIdentity`
+  // never mints, so running `doctor` cannot itself create the file — the line
+  // below reads "not yet minted" on a machine that has only ever run `doctor`.
+  const identity = describeIdentity();
+  const linked = identity.accountId
+    ? `account ${identity.accountId}`
+    : 'no account linked yet — any authenticated command links it';
+  record(
+    'info',
+    'telemetry',
+    identity.installId
+      ? `identity: install ${identity.installId} · ${linked} ${c.dim(`(${identity.file} — delete to reset)`)}`
+      : `identity: not yet minted ${c.dim(`(will be written to ${identity.file})`)}`,
+  );
 
   // The probe writes a real span to a real backend — only on explicit request.
   if (!required) return;

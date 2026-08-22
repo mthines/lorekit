@@ -180,9 +180,26 @@ jobs:
             exit 1
           fi
 
-      - name: Tag deploy in Dash0 (VCS resource attributes)
+      # `DEPLOYMENT_ENVIRONMENT` is what `_shared/otel.ts` reads to stamp
+      # `deployment.environment.name` on every edge span and metric. Set HERE,
+      # on every deploy, rather than by hand once: neither Supabase project has
+      # a `VERCEL_ENV` (that variable exists only in Vercel's build/runtime), so
+      # with the secret unset `resolveDeploymentEnv()` falls through to its
+      # `'local'` default — which is what BOTH projects reported, making preview
+      # and production edge traffic indistinguishable in Dash0. Re-asserting it
+      # per deploy also means a project restored from a snapshot, or one whose
+      # secrets were cleared, self-heals on the next promotion instead of
+      # silently going back to `local`.
+      #
+      # The value is `preview`, not `staging`: it matches the vocabulary the
+      # rest of the system already uses — this job's own GitHub environment, the
+      # web side's `VERCEL_ENV` mapping, and the bounded value list in
+      # docs/otel.md. A second spelling for the same environment would fragment
+      # every query that filters on it.
+      - name: Tag deploy in Dash0 (VCS + environment resource attributes)
         run: |
           supabase secrets set \
+            DEPLOYMENT_ENVIRONMENT="preview" \
             VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
             VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
             VCS_REF_HEAD_REVISION="${{ github.sha }}" \
@@ -600,9 +617,13 @@ jobs:
             exit 1
           fi
 
-      - name: Tag deploy in Dash0 (VCS resource attributes)
+      # See the preview job's twin of this step for why `DEPLOYMENT_ENVIRONMENT`
+      # is set on every deploy rather than once by hand. This is the production
+      # Supabase project, so it pins `production`.
+      - name: Tag deploy in Dash0 (VCS + environment resource attributes)
         run: |
           supabase secrets set \
+            DEPLOYMENT_ENVIRONMENT="production" \
             VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
             VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
             VCS_REF_HEAD_REVISION="${{ github.sha }}" \

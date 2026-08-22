@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.55.0](https://github.com/mthines/lorekit/compare/cli-v1.54.0...cli-v1.55.0) (2026-08-22)
+
+
+### Features
+
+* **telemetry:** make CLI runs and edge environments differentiable ([ade2bc4](https://github.com/mthines/lorekit/commit/ade2bc4db44520e9edfe2c6fcda5c246af92cbb4))
+* **telemetry:** make CLI runs and edge environments differentiable ([5ccae39](https://github.com/mthines/lorekit/commit/5ccae394230e7bb2dcf842a170364d858feecf41))
+
 ## [1.54.0](https://github.com/mthines/lorekit/compare/cli-v1.53.0...cli-v1.54.0) (2026-08-22)
 
 

@@ -379,21 +379,77 @@ The CLI is strictly zero-dependency, so — like the Edge Function — it emits
 OTLP/JSON directly over the global `fetch` (no `@opentelemetry/*` SDK). Each
 **human-facing** command produces one `INTERNAL` span named `lorekit.cli.<cmd>`
 plus one data point on the `lorekit.cli.invocations` counter, so the maintainers
-can see which commands people run. The machine-facing `hook` and `mcp` commands
-are **not** instrumented — they fire on every agent event and must keep stdout
-to their host protocol.
+can see which commands people run.
+
+The machine-facing `hook` and `mcp` commands are **metered but not traced**: they
+emit the counter data point alone, with no span, on a much tighter export budget
+(`METERED_TIMEOUT_MS`, 400 ms). They fire several times per agent turn and own
+stdout as their host's protocol, so a span each would be a firehose of
+near-identical traces and an awaited 1500 ms export on the agent's critical path
+— but leaving them silent meant the CLI's highest-volume traffic was the traffic
+nobody could see. The counter carries the same identity attributes the traced
+commands do; `meterCommand` starts the export before the command runs and awaits
+it after, so it overlaps the command's own work.
 
 Attributes on `lorekit.cli.*` spans + counter points (deliberately narrow — this
-runs on end-users' machines, so **no PII is ever attached**: no path, cwd, token,
-endpoint, repo, or scope string):
+runs on end-users' machines, so **no path, cwd, token, endpoint, repo, or scope
+string is ever attached**; see [Identity](#cli-identity) for the one
+account-linkable dimension and its opt-out):
 
 | Attribute | Example | Notes |
 |-----------|---------|-------|
-| `lorekit.cli.command` | `install` | Bounded: `install` \| `uninstall` \| `doctor` \| `list` \| `search` \| `show` \| `stats` \| `scopes` \| `diff` \| `tree` \| `lint` \| `dedupe` \| `link` \| `migrate` |
-| `lorekit.cli.outcome` | `ok` | `ok` \| `failure` \| `error` — `failure` is a command that RAN and reported a negative verdict (a failing `doctor` check, a `lint` finding); `error` is a crash |
+| `lorekit.cli.command` | `install` | Bounded: `install` \| `uninstall` \| `doctor` \| `list` \| `search` \| `show` \| `stats` \| `scopes` \| `diff` \| `tree` \| `lint` \| `dedupe` \| `link` \| `migrate` \| `hook` \| `mcp` (the last two on the counter only) |
+| `lorekit.cli.outcome` | `ok` | `ok` \| `failure` \| `error` — `failure` is a command that RAN and reported a negative verdict (a failing `doctor` check, a `lint` finding); `error` is a crash. Always `ok` on the metered path, which counts the invocation rather than its verdict |
 | `lorekit.cli.exit_code` | `0` | Command exit code |
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks`, `json`, `link` |
 | `lorekit.cli.hooks_mode` | `all` | `install` only. Bounded: `all` \| `read-only` \| `none` \| `custom` — which hook wiring the run resolved to (from the flag, the prompt, or the detected state). Counts the CHOICE, not the `--no-hooks` flag |
+| `user.id` | `a1b2…` / `install:9f3c…` | The LoreKit account once known, else the install id prefixed `install:` — see below |
+
+### CLI identity
+
+Before this existed, CLI telemetry was **unattributable by construction**: one
+span per command with a command name, a flag allow-list and the runtime/OS
+tuple, and nothing linking two runs. Server-side that gap does not exist (every
+authenticated call lands on an edge root span carrying `auth.user_id`, and
+`usage_events` records the same id), but a run that never leaves the machine —
+`--offline`, the two-tier local store, `lorekit hook` — makes no request at all,
+so 1000 local spans could equally be one user or a thousand.
+
+Two ids close it, and they answer different questions:
+
+| Attribute | Where | What it identifies |
+|-----------|-------|--------------------|
+| `service.instance.id` | resource | The **install**. Opaque, random, 32 hex chars, minted on first run. Same person on a laptop and in CI = two ids; two people in one container = one |
+| `user.id` | span + counter point | The **account** once known, else `install:<installId>`. Mirrors the browser RUM pattern (`anon:<uuid>` upgraded in place), so a backend folding `user.id` into unique-user analytics answers "how many people", while `service.instance.id` still tells installs apart underneath |
+
+The account id is learned, not configured: the edge REST router returns the
+caller's own id in an **`X-LoreKit-User-Id`** response header, `restFetch` reads
+it off any authenticated call the CLI was already making, and it is cached
+locally. That cache is what lets a later **offline** run report an account and
+join to server-side `auth.user_id` / `usage_events.user_id`.
+
+Both live in `$LOREKIT_HOME/telemetry-id.json` (default
+`~/.lorekit/telemetry-id.json`), beside the home-tier store. `lorekit doctor`
+prints the path and both values.
+
+Privacy invariants, enforced in `packages/cli/src/telemetry-identity.mjs`:
+
+- **Nothing is minted and no file is created while telemetry is disabled.** An
+  opted-out user never gets a tracking id written to their disk.
+- **The account cache only ever updates an existing file, never creates one.** An
+  opted-out user still receives the header on every authenticated response; the
+  refusal to create a file is what keeps it off their machine.
+- **The install id is random**, not derived from hostname, MAC, username or path
+  — so it says "these runs are one install" and nothing about who that is, and
+  deleting the file genuinely resets it.
+- **An id that cannot be persisted reports as no identity**, not as a fresh id
+  per run. A per-run id would inflate the distinct-install count to equal the
+  invocation count, which in the data is indistinguishable from that many real
+  installs.
+
+Cardinality: `user.id` rides on the counter as well as the span, so its series
+count scales with real users. That is inherent to differentiating them, and it is
+why no further identity dimension belongs on the metric.
 
 **`STATUS_CODE_ERROR` is reserved for a CRASH.** A command that ran to completion
 and exited non-zero — `doctor` finding a failing check, `lint` finding what it
@@ -407,8 +463,13 @@ never on the span status.
 
 **Opt-out / config:**
 
-- `LOREKIT_TELEMETRY=0` (or `off` / `false` / `no` / `disable`) disables export.
+- `LOREKIT_TELEMETRY=0` (or `off` / `false` / `no` / `disable`) disables export —
+  including minting or writing any identity file.
 - The cross-vendor `DO_NOT_TRACK=1` also disables it.
+- `telemetry.disabled: true` in `.lorekit.json` is the committed, team-level
+  opt-out (env always wins over it).
+- Deleting `$LOREKIT_HOME/telemetry-id.json` resets the install identity and
+  unlinks the account; the next enabled run mints a fresh install id.
 - Standard `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` override
   the baked-in defaults.
 - With no OTLP endpoint (or no auth for the default endpoint) resolvable, export
@@ -697,7 +758,33 @@ All signals carry these resource attributes:
 | `service.namespace` | `lorekit` |
 | `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI, the Node MCP server, and the edge (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI, the Node MCP server, and the edge (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. On the edge it is set per Supabase project by `deploy.yml` — see below. |
+
+### The edge's environment is set by the deploy pipeline, not inferred
+
+`resolveDeploymentEnv()` (`_shared/otel.ts`) reads `DEPLOYMENT_ENVIRONMENT`, then
+falls back to `VERCEL_ENV`, then to `'local'`. **A Supabase project has neither
+variable by default** — `VERCEL_ENV` exists only inside Vercel's build and
+runtime — so with nothing set, both the preview and the production Supabase
+projects reported `deployment.environment.name=local`, and edge traffic from the
+two was indistinguishable in Dash0.
+
+`deploy.yml` therefore sets the secret explicitly, in each half's *"Tag deploy in
+Dash0"* step: `preview` in the `deploy-preview` job, `production` in
+`deploy-production`. Set on **every** deploy rather than once by hand, so a
+project restored from a snapshot — or one whose secrets were cleared — self-heals
+on the next promotion instead of quietly reverting to `local`.
+
+The value is `preview`, not `staging`, to match the vocabulary already used by
+the GitHub environment names, the web side's `VERCEL_ENV` mapping, and the
+bounded list in the table above. A second spelling for one environment would
+fragment every query that filters on it.
+
+Setting the secret by hand (`supabase secrets set DEPLOYMENT_ENVIRONMENT=preview
+--project-ref …`) is still useful to make it take effect before the next deploy.
+It does not affect the smoke jobs: the per-request
+`X-LoreKit-Deployment-Environment: test` header takes precedence over the
+resource value, so smoke traffic stays tagged `test`.
 
 ### `web` never reports `production` from a dev server
 
