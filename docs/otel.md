@@ -261,6 +261,11 @@ construction — and `vcs.ref.head.revision` from git, which is what makes a run
 attributable to the commit it measured. Compare runs on `service.name=sweep`
 keyed by that revision.
 
+**Sandbox note:** Node's built-in `fetch` ignores `HTTPS_PROXY`, so in a cloud
+sandbox run the export with `NODE_USE_ENV_PROXY=1` — without it the POST goes
+direct and returns `403 Host not in allowlist` even for an allowlisted host. See
+the root CLAUDE.md sandbox baseline, point 6.
+
 Export reuses the CLI's `resolveTelemetryConfig`, so it honours the same token
 priority (`OTEL_EXPORTER_OTLP_HEADERS` > `LOREKIT_TELEMETRY_TOKEN` > baked-in),
 the same `Dash0-Dataset` routing, and the same opt-outs (`LOREKIT_TELEMETRY`,
