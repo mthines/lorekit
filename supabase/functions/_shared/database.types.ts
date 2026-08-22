@@ -56,6 +56,24 @@ export type Database = {
         }
         Relationships: []
       }
+      blog_post_likes: {
+        Row: {
+          likes: number
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          likes?: number
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          likes?: number
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       audit_log: {
         Row: {
           action: string

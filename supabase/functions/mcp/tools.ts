@@ -36,6 +36,7 @@ import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/t
 import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/outcome-signal.ts';
+import type { DbClient } from '../_shared/db-client.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -119,7 +120,7 @@ export type Params = Record<string, any>;
  */
 const memberOrgIdsCache = new WeakMap<object, Map<string, string[]>>();
 
-async function memberOrgIds(db: ReturnType<typeof createClient>, userId: string): Promise<string[]> {
+async function memberOrgIds(db: DbClient, userId: string): Promise<string[]> {
   // Retrieve or create the per-client cache map.
   let clientCache = memberOrgIdsCache.get(db as object);
   if (!clientCache) {
@@ -137,7 +138,7 @@ async function memberOrgIds(db: ReturnType<typeof createClient>, userId: string)
 }
 
 export async function toolWrite(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -257,7 +258,7 @@ export async function toolWrite(
 }
 
 export async function toolRead(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -279,7 +280,7 @@ export async function toolRead(
 }
 
 export async function toolList(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -448,7 +449,7 @@ export async function toolList(
  * With force: true: immediate hard-delete, unrecoverable.
  */
 export async function toolDelete(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -517,7 +518,7 @@ export async function toolDelete(
 }
 
 export async function toolSearch(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -585,7 +586,7 @@ export async function toolSearch(
 
 /** Soft-archive a memory by setting archived_at. */
 export async function toolArchive(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -637,7 +638,7 @@ export async function toolArchive(
 
 /** List archived memories for a scope. */
 export async function toolListArchived(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -667,7 +668,7 @@ export async function toolListArchived(
 
 /** Restore an archived memory by clearing archived_at. */
 export async function toolRestore(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -718,7 +719,7 @@ export async function toolRestore(
  * Calls the purge_archived_memories() Postgres RPC.
  */
 export async function toolPurge(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -737,12 +738,12 @@ export async function toolPurge(
 
   // Use createTracedClient so the RPC call appears as a child span in traces.
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc('purge_archived_memories', {
+  const { data, error } = await tracedDb.rpc<number>('purge_archived_memories', {
     p_user_id: userId,
     p_retention_days: retentionDays,
   });
   if (error) throw new Error(error.message);
-  const purged = (data as number) ?? 0;
+  const purged = data ?? 0;
   span.setAttributes({ 'lorekit.result.purged': purged });
   if (purged > 0) {
     // One summary event per purge run (D6) — the RPC returns only a count,
@@ -830,7 +831,7 @@ async function resolveOrgId(
  * Uses lorekit_org_create (00022_org_management_rpcs.sql).
  */
 export async function toolOrgCreate(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -842,7 +843,7 @@ export async function toolOrgCreate(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc('lorekit_org_create', { p_slug: slug, p_name: name, p_actor_user_id: userId })
+    .rpc<string>('lorekit_org_create', { p_slug: slug, p_name: name, p_actor_user_id: userId })
     .single();
 
   if (error) {
@@ -850,7 +851,7 @@ export async function toolOrgCreate(
     throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
   }
 
-  const orgId = data as string;
+  const orgId = data as string;  // non-null past the error guard above
   span.setAttributes({ 'lorekit.org.id': orgId });
   return { id: orgId, slug, name };
 }
@@ -860,7 +861,7 @@ export async function toolOrgCreate(
  * Reads from org_members (RLS-gated to the authenticated user).
  */
 export async function toolOrgList(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   _params: Params,
   userId: string | null,
   span: Span,
@@ -876,8 +877,17 @@ export async function toolOrgList(
   // explicit `user_id` predicate is what stands between this tool and listing
   // other people's orgs — it is not belt-and-braces on top of RLS, it IS the
   // only tenant boundary on that path.
+  // The row shape is stated explicitly because this `.select()` EMBEDS a joined
+  // table, which the schema-derived row type cannot describe: `from('org_members')`
+  // yields the plain `org_members` row, and that has no `orgs` property. This is
+  // the case `createTracedClient.from`'s second generic exists for — see its
+  // docblock. Everything else in the edge tree should take the derived row.
+  type OrgMembershipRow = {
+    role: string;
+    orgs: { id: string; slug: string; name: string; created_at: string } | null;
+  };
   let query = tracedDb
-    .from('org_members')
+    .from<'org_members', OrgMembershipRow>('org_members')
     .select('role, orgs(id, slug, name, created_at)')
     .order('created_at', { referencedTable: 'orgs', ascending: false });
   if (userId) query = query.eq('user_id', userId);
@@ -886,7 +896,7 @@ export async function toolOrgList(
   if (error) throw new Error((error as { message: string }).message);
 
   const entries = (data ?? []).map((row) => {
-    const org = row.orgs as { id: string; slug: string; name: string; created_at: string } | null;
+    const org = row.orgs;
     return {
       id: org?.id ?? null,
       slug: org?.slug ?? null,
@@ -905,7 +915,7 @@ export async function toolOrgList(
  * Uses lorekit_org_rename (00022_org_management_rpcs.sql).
  */
 export async function toolOrgRename(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -936,7 +946,7 @@ export async function toolOrgRename(
  * window — lorekit_org_purge (00025_safe_org_deletion.sql), SQL-only for now.
  */
 export async function toolOrgDelete(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: Params,
   userId: string | null,
   span: Span,
@@ -967,7 +977,7 @@ export async function toolOrgDelete(
  * Complementary to toolPurge (which removes archived rows).
  */
 export async function toolPurgeExpired(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   _params: Params,
   userId: string | null,
   span: Span,
@@ -983,11 +993,11 @@ export async function toolPurgeExpired(
   span.setAttributes({ 'lorekit.tool.name': 'memory.purge_expired' });
 
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc('purge_expired_memories', { p_user_id: userId });
+  const { data, error } = await tracedDb.rpc<number>('purge_expired_memories', { p_user_id: userId });
 
   if (error) throw new Error((error as { message: string }).message);
 
-  const purged = (data as number) ?? 0;
+  const purged = data ?? 0;
   span.setAttributes({ 'lorekit.result.purged_expired': purged });
 
   if (purged > 0) {
@@ -1032,7 +1042,7 @@ export async function toolPurgeExpired(
  * argument; the two surfaces answer identically by construction.
  */
 export async function toolScopes(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   _params: Params,
   userId: string | null,
   span: Span,

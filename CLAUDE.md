@@ -129,11 +129,18 @@ rather than inferred. They cost time every time they are rediscovered:
    CI's `Integration smoke` job** — the bootstrap is a stand-in, not Supabase.
    The test file is one transaction ending in `rollback`, so it is re-runnable
    against the same database, which makes guard-biting an assertion cheap.
-5. **`deno check` cannot run here** — `deno.land` is blocked by the egress
-   policy, so `scripts/deno-check-functions.mjs` exits 1 with `spawnSync deno
-   ENOENT` (fails closed, correctly). The edge ratchet is CI-only from a
-   sandbox; write edge code accordingly and expect the baseline to be the thing
-   that catches you.
+5. **`deno check` DOES run here — install it with `npm i -g deno`.** The
+   official installer fetches from `deno.land`, which the egress policy blocks,
+   and that made the ratchet look CI-only. npm is reachable, the `deno` package
+   ships the same binary, and the version it lands (2.9.5) satisfies the `v2.x`
+   CI pins and reproduces the committed baseline exactly. So
+   `node scripts/deno-check-functions.mjs` is a local gate, not a remote one —
+   which is how the 83 baselined errors were driven to 0 rather than guessed at.
+   Two traps if you script around it: `deno check` writes errors to stderr with
+   ANSI colour, so a `grep -cE '^TS[0-9]+'` counts **zero** on real failures
+   (strip ANSI first, and self-test the counter against a known-bad state); and
+   pass `--node-modules-dir=none` so `npm:` specifiers resolve from Deno's cache
+   the way production does, instead of the repo's pnpm `node_modules`.
 
 ```bash
 # CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the

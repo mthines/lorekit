@@ -4,6 +4,7 @@ import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { notFound, methodNotAllowed, internalError } from '../_shared/api/respond.ts';
 import { relativePath } from '../_shared/api/router.ts';
 import { handleGetLikes, handleAddLike } from './handlers/likes.ts';
+import type { Database } from '../_shared/database.types.ts';
 
 /**
  * blog — the PUBLIC blog like counter (`/blog/likes`).
@@ -37,7 +38,7 @@ Deno.serve(async (req) => {
     const rel = relativePath(new URL(req.url).pathname, 'blog');
     if (rel !== '/likes') return notFound('Route', cors);
 
-    const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    const db = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 

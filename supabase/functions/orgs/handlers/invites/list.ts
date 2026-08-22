@@ -22,7 +22,7 @@ export async function handleListInvites(
 
   // Resolve slug → org_id, then query org_invites directly (no list RPC).
   const { data: org, error: lookupErr } = await tracedDb
-    .from<{ id: string }>('orgs')
+    .from('orgs')
     .select('id')
     .eq('slug', slug)
     .is('deleted_at', null)
@@ -50,7 +50,7 @@ export async function handleListInvites(
   }
 
   const { data, error } = await tracedDb
-    .from<InviteRow>('org_invites')
+    .from('org_invites')
     .select('id,org_id,invitee_email,invitee_handle,role,created_at,expires_at')
     .eq('org_id', orgId)
     .order('created_at', { ascending: false });

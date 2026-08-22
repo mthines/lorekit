@@ -114,7 +114,7 @@ export async function handleRestore(
   if (!v.ok) return v.response;
   span.setAttributes({ 'lorekit.memory_id': v.data });
   let q: TracedQuery<MemoryRow> = tracedDb
-    .from<MemoryRow>('memories')
+    .from('memories')
     .update({ archived_at: null }, { count: 'exact' })
     .not('archived_at', 'is', null)
     .eq('id', v.data);

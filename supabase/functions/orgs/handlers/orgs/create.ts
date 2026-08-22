@@ -54,7 +54,7 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
   // unnoticed because the orgs smoke suite needs a JWT credential CI does not
   // set. `created_at` is server-generated, so it can only come from a read.
   const { data: org, error: readErr } = await tracedDb
-    .from<{ id: string; slug: string; name: string; created_at: string }>('orgs')
+    .from('orgs')
     .select('id,slug,name,created_at')
     .eq('id', orgId)
     .maybeSingle();

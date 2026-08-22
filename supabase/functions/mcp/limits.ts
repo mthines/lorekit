@@ -17,6 +17,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
+import type { DbClient } from '../_shared/db-client.ts';
 
 export type LimitErrorCode = 'memory_cap' | 'rate_limited';
 
@@ -80,7 +81,7 @@ export function translateCapError(err: unknown, limit?: number): unknown {
  * throttling; the cap trigger still protects storage during an outage.
  */
 export async function checkRateLimit(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   userId: string,
   span: Span,
   windowSeconds = 60,

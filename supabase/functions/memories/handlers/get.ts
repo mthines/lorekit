@@ -22,7 +22,7 @@ export async function handleGet(
 
   const tracedDb = createTracedClient(db, span);
   let q: TracedQuery<MemoryRow> = tracedDb
-    .from<MemoryRow>('memories')
+    .from('memories')
     .select(MEMORY_SELECT)
     .eq('id', v.data)
     .is('archived_at', null)
