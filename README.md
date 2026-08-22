@@ -241,7 +241,6 @@ package, see [DEVELOPMENT.md](./DEVELOPMENT.md).
 
 <img width="1820" height="1175" alt="image" src="https://github.com/user-attachments/assets/c3d8cc85-1101-4c74-8df1-1a3c2a83f95a" />
 
-
 ## License
 
 [MIT](./LICENSE) © LoreKit contributors.
