@@ -271,7 +271,7 @@ export const DEFAULT_RANK_WEIGHTS = Object.freeze({ recency: 1, salience: 1, rel
  *
  * This is the ONE deliberate asymmetry vs `normalizeRelevance` (which returns
  * 0 for absent / unreadable input). Mirrored byte-identically in
- * `packages/mcp-core/src/lesson-rank.ts` and its edge twin.
+ * `packages/mcp-core/src/ranking/lesson-rank.ts` and its edge twin.
  */
 export const COLD_START_OUTCOME_PRIOR = 0.5;
 
@@ -491,7 +491,7 @@ function seenCountFrom(entry) {
  * MMR λ (lambda) — weight given to relevance vs diversity in the MMR objective.
  * At 0.7 the selector favours relevance, with 0.3 of the budget for diversity.
  * Anchored to Carbonell & Goldstein (1998), the original MMR paper.
- * Mirrored byte-identically in the edge twin and `packages/mcp-core/src/lesson-rank.ts`.
+ * Mirrored byte-identically in the edge twin and `packages/mcp-core/src/ranking/lesson-rank.ts`.
  */
 export const MMR_LAMBDA = 0.7;
 

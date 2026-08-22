@@ -177,7 +177,7 @@ OpenAPI example (`packages/schemas/src/openapi/spec.ts:75`): both advertise more
 code delivers.
 
 Both filters are covered end-to-end in
-`packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters", against a live
+`packages/smoke-tests/src/memories-api.integration.spec.ts` → "list filters", against a live
 stack. That is deliberate: the Storybook MSW handler reimplements both, so it can only ever
 confirm itself — `handleList` threw on every `?tags=` request for a whole commit while that
 suite was green.
@@ -220,7 +220,7 @@ its own `<column>_mode` of `in` (default) or `nin`.
 
 `?expiring_within_days=N` (integer, 1–365) keeps only memories whose TTL runs out inside the
 window `(now, now + N days]`. The bounds come from the shared pure `expiringWindow`
-(`packages/mcp-core/src/expiring-window.ts` ↔ `_shared/expiring-window.ts`, drift-guarded by
+(`packages/mcp-core/src/limits/expiring-window.ts` ↔ `_shared/expiring-window.ts`, drift-guarded by
 `edge-parity.spec.ts`), never computed inline — the boundary rules below ARE the feature, and an
 off-by-one here does not throw, it shows a row that already expired.
 
@@ -616,7 +616,7 @@ they need a per-entry decision — reject the whole request, or drop the bad ent
 not been made yet. The MCP twin (`mcp/tools.ts`) validates each entry, so that is the
 precedent to reconcile against when it is.
 
-`safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope.ts` and
+`safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope/scope.ts` and
 `supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
 that file is excluded from `MIRRORS` because the two `validateScope` bodies deliberately
 differ. The wrapper delegates every grammar decision to whichever one is in scope, so the
@@ -694,7 +694,7 @@ NULL escape hatch `lorekit_memory_scopes` uses); there is no
 `applyRestTenantScope` call because there is no query to scope. `summary` and
 `by_scope_type` are computed by the pure `summarizeUsageRows` /
 `rollupByScopeType` (`_shared/usage-stats.ts`, mirror of
-`packages/mcp-core/src/usage-stats.ts`) from the SAME rows returned as `by_tool`,
+`packages/mcp-core/src/telemetry/usage-stats.ts`) from the SAME rows returned as `by_tool`,
 so the headline totals can never disagree with the detail. Window + correlation
 validation are the pure `parseUsageWindow` / `parseCorrelationId` in the same
 module; an inverted/malformed window is a `400`, and a **malformed

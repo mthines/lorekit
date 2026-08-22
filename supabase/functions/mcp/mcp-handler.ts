@@ -82,7 +82,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   // preamble (token + plan + rate-limit, ~319 ms) to be told the method is
   // wrong. `handleMcp` has exactly one caller, so a second copy here would be
   // dead code and a place for the two 405 responses to drift. The ordering is
-  // pinned by `packages/mcp-core/src/mcp-method-guard-ordering.spec.ts`.
+  // pinned by `packages/mcp-core/src/mcp-guards/mcp-method-guard-ordering.spec.ts`.
   //
   // The consequence for this function: `req.json()` below is only ever reached
   // on a POST, which is what makes the "Unexpected end of JSON input" parse

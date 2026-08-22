@@ -2,7 +2,7 @@
  * The time window behind `GET /memories?expiring_within_days=N` — "lore that is
  * about to expire".
  *
- * Self-contained Deno mirror of `packages/mcp-core/src/expiring-window.ts` — the
+ * Self-contained Deno mirror of `packages/mcp-core/src/limits/expiring-window.ts` — the
  * edge tree cannot cross-import the Node package. `edge-parity.spec.ts` compares
  * the two with comments stripped, so this file is free to say something
  * different here but must stay behaviourally identical below.

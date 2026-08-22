@@ -31,7 +31,7 @@ import { supabaseUrl } from '@/lib/supabase/config';
  * `@lorekit/schemas` / `@lorekit/core` dependency (the same reason
  * `lib/audit-actions.ts` re-declares the audit vocabulary). The authoritative
  * vocabulary is `USAGE_CLIENTS` / `DASHBOARD_CLIENT` in
- * `packages/mcp-core/src/usage-stats.ts`, and `usage-client-parity.spec.ts`
+ * `packages/mcp-core/src/telemetry/usage-stats.ts`, and `usage-client-parity.spec.ts`
  * fails if these two strings drift from it — which matters, because a
  * mismatched value is silently ignored by `parseUsageClient` and the dashboard
  * would quietly start counting its own reads again.

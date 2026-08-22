@@ -61,7 +61,7 @@ if (jwt) {
 
 console.log(`REST smoke → ${baseUrl} (${suites.join(', ')})`);
 
-const result = spawnSync('pnpm', ['nx', 'test', 'mcp-server', '--', '--run', ...suites], {
+const result = spawnSync('pnpm', ['nx', 'test', 'smoke-tests', '--', '--run', ...suites], {
   stdio: 'inherit',
   env: {
     ...process.env,

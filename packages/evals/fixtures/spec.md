@@ -79,7 +79,7 @@ credit memory with a warning it never gave.
 
 ## Validity oracle
 
-Validity is decided by `validateScope` from `packages/mcp-core/src/scope.ts` —
+Validity is decided by `validateScope` from `packages/mcp-core/src/scope/scope.ts` —
 the same function the product enforces — never by a copy. A vendored second
 validator would keep the grader passing while the product's rules moved, and
 every number the harness printed would silently become wrong.

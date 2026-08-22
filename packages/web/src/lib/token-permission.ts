@@ -1,6 +1,6 @@
 /**
  * Lightweight token-permission utilities for the web package.
- * Duplicated from packages/mcp-core/src/permissions.ts (the `tokenPrefixFor`
+ * Duplicated from packages/mcp-core/src/auth/permissions.ts (the `tokenPrefixFor`
  * derivation) to avoid pulling OTel/Supabase/tool-handler code into the
  * Next.js webpack bundle — the same convention as packages/web/src/lib/scope.ts.
  * Keep in sync with the canonical implementation in mcp-core.

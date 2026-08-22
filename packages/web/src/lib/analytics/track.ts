@@ -31,7 +31,7 @@
  * ids embed `scope::key` (user content + unbounded cardinality). `normalizeCommandId`
  * buckets those to `lore-lesson`, and we NEVER send a command's label or
  * description (lesson keys/scopes are user content). Attribute names use the
- * project's `lorekit.*` namespace, mirroring packages/mcp-core/src/telemetry.ts.
+ * project's `lorekit.*` namespace, mirroring packages/mcp-core/src/telemetry/telemetry.ts.
  */
 import { sendEvent } from '@dash0/sdk-web';
 

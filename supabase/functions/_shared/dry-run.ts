@@ -1,7 +1,7 @@
 /**
  * Dry-run request flag — the "safe explore" switch for the REST API.
  *
- * Self-contained mirror of `packages/mcp-core/src/dry-run.ts` (Deno cannot
+ * Self-contained mirror of `packages/mcp-core/src/limits/dry-run.ts` (Deno cannot
  * import the Node package). Keep the two in sync — `edge-parity.spec.ts` fails
  * the build if the executable source diverges.
  *

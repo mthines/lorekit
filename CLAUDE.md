@@ -14,15 +14,16 @@ lets humans browse, search, and manage those lessons.
 | Package | Path | Role |
 |---------|------|------|
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 10 tool handlers, OTel tracer/meter |
-| `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
 | `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI. `install`/`uninstall`/`doctor` (scaffold the `lorekit-memory`/`lorekit-setup`/`lorekit-groom` skills + MCP server + lifecycle hooks into `.claude`; connectivity/token/scope health checks); read commands `list`/`search`/`show`/`stats`/`scopes`/`diff`/`tree`/`lint`/`dedupe`/`link` (Offline + Remote split, `--json`/`--scope`); maintenance sweeps `purge`/`purge-expired` (remote-only, account-wide, irreversible — confirm-or-`--yes`, refused for a scoped key); `hook` (the shared hook engine behind the plugins); `mcp` (local stdio MCP server); `migrate`. Self-contained OTLP telemetry (`service.name=cli`). Full command reference: [`docs/cli.md`](./docs/cli.md) |
 
 | `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
+| `@lorekit/smoke-tests` | `packages/smoke-tests/` | Live-endpoint integration/smoke tests against the deployed Edge Functions (memories, orgs, MCP, BYOD) — no application code, self-skips when its env vars are absent |
 
-The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained).
-`packages/mcp-server/` is the Node.js variant for Fly.io with full OTel.
+The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained). There
+is no other MCP server implementation — a prior Node.js/Fly.io variant (`packages/mcp-server/`)
+was never deployed and has been removed.
 
 **Shared hook engine:** `lorekit hook --adapter <claude|cursor|codex> --event <name>` reads the host's
 JSON on stdin and injects lessons / a retrospective nudge on stdout, always exiting 0. Logic lives once
@@ -419,9 +420,8 @@ Write tools require write permission (`lk_rw_*` / `lk_wo_*`); read tools require
 permission (`lk_rw_*` / `lk_ro_*`). `lk_ro_*` is denied on write tools; `lk_wo_*` is denied
 on read tools — both with the standard `-32001` permission-denied error. The gating logic
 (`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) is a shared pure module,
-`packages/mcp-core/src/permissions.ts`, mirrored self-contained into
-`supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern) — the Node.js
-`mcp-server` has no API-token auth path today and is out of scope for this gating.
+`packages/mcp-core/src/auth/permissions.ts`, mirrored self-contained into
+`supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern).
 
 ---
 
@@ -455,14 +455,14 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 |------|---------|
 | `packages/schemas/src/tool-catalog.ts` | The single origin of the operation SURFACE — every tool's schema, `permission`, `auth`, and its `surfaces` binding (which of MCP/CLI/REST, under what name, backed by which handler, with a declared reason for each absence). Zero-import by construction; `gen-surfaces.mjs` projects the two consumers that cannot import it |
 | `packages/cli/src/commands.mjs` | The ONE CLI command registry — `bin/lorekit.mjs` derives dispatch, aliases, flag strictness, help and `traceCommand` wrapping from it |
-| `packages/mcp-core/src/scope.ts` | Canonical scope validation + wildcard expansion |
-| `packages/mcp-core/src/permissions.ts` | `READ_TOOLS`/`WRITE_TOOLS`, `toolRequires`, `tokenPrefixFor` — the `lk_rw_`/`lk_ro_`/`lk_wo_` prefix derivation + tool gating (mirrored to edge + web) |
-| `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit` — the origin of the "pure module mirrored self-contained into the edge function" pattern |
-| `packages/mcp-core/src/tenant-scope.ts` | `applyTenantScope` — the single widened tenant-visibility predicate (RLS side is `lorekit_member_org_ids()`) |
+| `packages/mcp-core/src/scope/scope.ts` | Canonical scope validation + wildcard expansion |
+| `packages/mcp-core/src/auth/permissions.ts` | `READ_TOOLS`/`WRITE_TOOLS`, `toolRequires`, `tokenPrefixFor` — the `lk_rw_`/`lk_ro_`/`lk_wo_` prefix derivation + tool gating (mirrored to edge + web) |
+| `packages/mcp-core/src/limits/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit` — the origin of the "pure module mirrored self-contained into the edge function" pattern |
+| `packages/mcp-core/src/auth/tenant-scope.ts` | `applyTenantScope` — the single widened tenant-visibility predicate (RLS side is `lorekit_member_org_ids()`) |
 | `supabase/functions/mcp/index.ts` | Self-contained Deno MCP server (production) |
 | `supabase/functions/_shared/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()`, and the ONE source of the OTLP resource attributes / endpoint / attribute encoding that both the span and metric exporters share |
-| `packages/mcp-core/src/io-ledger.ts` | `mergeBusyMs`/`attributeIoTime` — the self-time split behind `lorekit.self_time_ms` (mirrored to `_shared/`). Merged intervals, never summed |
-| `supabase/functions/_shared/audit.ts` (← `packages/mcp-core/src/audit.ts`) | THE single edge audit writer (MCP tools **and** REST handlers) |
+| `packages/mcp-core/src/telemetry/io-ledger.ts` | `mergeBusyMs`/`attributeIoTime` — the self-time split behind `lorekit.self_time_ms` (mirrored to `_shared/`). Merged intervals, never summed |
+| `supabase/functions/_shared/audit.ts` (← `packages/mcp-core/src/audit/audit.ts`) | THE single edge audit writer (MCP tools **and** REST handlers) |
 | `supabase/functions/_shared/usage.ts` | `recordUsageEvent` + `getUserPlanName` — the single edge usage-event writer |
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory-cap trigger (`enforce_memory_cap`) + rate-limit RPC (`lorekit_check_rate_limit`) + `user_limits`/`lorekit_get_limit` config source |

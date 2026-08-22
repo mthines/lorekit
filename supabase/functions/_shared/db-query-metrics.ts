@@ -1,4 +1,4 @@
-// Mirror of packages/mcp-core/src/db-query-metrics.ts, self-contained for the
+// Mirror of packages/mcp-core/src/telemetry/db-query-metrics.ts, self-contained for the
 // Deno edge tree (which cannot cross-import the Node package — same pattern as
 // io-ledger.ts and created-at.ts). Keep behaviourally identical to the mcp-core
 // copy; the vitest suite over that copy is the shared guard, and
