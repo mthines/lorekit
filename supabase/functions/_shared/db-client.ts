@@ -47,3 +47,25 @@ import type { Database } from './database.types.ts';
  * database call in the same module.
  */
 export type DbClient = SupabaseClient<Database>;
+
+/**
+ * Pass a REQUIRED-BUT-NULLABLE argument to a generated RPC signature.
+ *
+ * `supabase gen types` cannot express "required, and may be null". A SQL
+ * parameter declared `uuid` with no default becomes `p_x: string` in the
+ * generated Args, and the nullability is simply lost.
+ * `lorekit_installation_upsert.p_user_id` is exactly that case — 00037 spells
+ * it `p_user_id uuid, -- NULL → pending` — so both of its call sites must send
+ * an explicit NULL and both need a way to say so.
+ *
+ * USE THIS ONLY WHERE THE SQL PARAMETER HAS NO DEFAULT. Where a parameter is
+ * `default null`, the right answer is `?? undefined`: that omits the argument
+ * and lets the function apply its own default (see `_shared/usage.ts`, where
+ * all fifteen are `default null`). The two are not interchangeable, and getting
+ * them the wrong way round fails silently in opposite directions — `?? undefined`
+ * here would drop a required argument and break every pending installation,
+ * while this helper there would merely be noise.
+ */
+export function nullableRpcArg<T>(value: T | null): T {
+  return value as T;
+}

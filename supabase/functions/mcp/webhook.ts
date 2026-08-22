@@ -66,7 +66,7 @@ import {
   reconcileInstallation,
 } from './webhook-installation.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
-import type { DbClient } from '../_shared/db-client.ts';
+import { nullableRpcArg, type DbClient } from '../_shared/db-client.ts';
 import type { Database } from '../_shared/database.types.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
@@ -299,14 +299,7 @@ async function reconcileAppInstallation(
     p_github_account_id: githubAccountId,
     p_github_account_login: githubAccountLogin,
     p_account_type: accountType,
-    // `p_user_id` is `uuid` with NO DEFAULT (00037: "NULL -> pending"), so
-    // unlike the usage-event writer this one must send an explicit NULL —
-    // omitting it would be a missing-argument error, not a fallback to null.
-    // The generated Args type cannot express "required but nullable" and
-    // spells it `p_user_id: string`, so the null is cast here. Do NOT
-    // "simplify" this to `?? undefined` to match usage.ts: that would drop
-    // the argument and break every pending installation.
-    p_user_id: (verdict.kind === 'linked' ? verdict.userId : null) as unknown as string,
+    p_user_id: nullableRpcArg(verdict.kind === 'linked' ? verdict.userId : null),
     p_status: verdict.kind,
     p_repos: payloadRepos,
   });
