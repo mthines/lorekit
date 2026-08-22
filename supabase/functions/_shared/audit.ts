@@ -58,6 +58,7 @@
  * RLS), so their inserts succeed regardless of `user_id`.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { background } from './background.ts';
 import { AUDIT_ACTIONS } from './schemas/audit.ts';
 import type { AuditAction } from './schemas/audit.ts';
 import type { DbClient } from './db-client.ts';
@@ -126,14 +127,6 @@ export async function recordAudit(
   } catch (err) {
     console.error(`[recordAudit] unexpected error for action=${input.action}:`, (err as Error).message);
   }
-}
-
-interface WaitUntilHost { waitUntil(p: Promise<unknown>): void }
-
-/** The runtime's background-task hook, when it has one. */
-function background(): WaitUntilHost | null {
-  const rt = (globalThis as { EdgeRuntime?: unknown }).EdgeRuntime as WaitUntilHost | undefined;
-  return rt && typeof rt.waitUntil === 'function' ? rt : null;
 }
 
 /**

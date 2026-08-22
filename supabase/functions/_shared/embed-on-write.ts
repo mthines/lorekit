@@ -19,19 +19,13 @@
 // Every failure is swallowed after being recorded on the span. There is no
 // retry here: a retry on the write path is just a slower way to fail, and the
 // backfill already retries by construction (it selects on `embedding is null`).
+import { background } from './background.ts';
 import { createTracedClient } from './otel.ts';
 import type { Span } from './otel.ts';
 import type { DbClient } from './api/auth.ts';
 import { embeddingInput, isEmbeddable, toVectorLiteral, resolveEmbeddingConfig } from './embedding.ts';
 import { embedTexts } from './embedding-client.ts';
 
-interface WaitUntilHost { waitUntil(p: Promise<unknown>): void }
-
-/** The runtime's background-task hook, when it has one. */
-function background(): WaitUntilHost | null {
-  const rt = (globalThis as { EdgeRuntime?: unknown }).EdgeRuntime as WaitUntilHost | undefined;
-  return rt && typeof rt.waitUntil === 'function' ? rt : null;
-}
 
 /**
  * Queue an embedding for a memory that was just written.

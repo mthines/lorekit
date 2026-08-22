@@ -13,6 +13,7 @@
  * is fire-and-forget, `getUserPlanName` fails open to null.
  */
 
+import { background } from './background.ts';
 import { createTracedClient, type Span } from './otel.ts';
 import type { DbClient } from './db-client.ts';
 
@@ -116,14 +117,13 @@ export function recordUsageEvent(
     // parameter is `Promise<unknown>` and never accepted a `PromiseLike`.
   })).then(() => { /* fire-and-forget */ }, () => { /* swallow */ });
 
-  const edgeRuntime = (globalThis as {
-    EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
-  }).EdgeRuntime;
-  if (typeof edgeRuntime?.waitUntil === 'function') {
-    edgeRuntime.waitUntil(p);
-  } else {
-    void p;
-  }
+  // With no background hook the event is DROPPED, not awaited: plan-sizing
+  // analytics are best-effort by construction and must never delay the operation
+  // they measure. `audit.ts` makes the opposite call on the same hook, on
+  // purpose — see `background.ts` for why the three callers differ.
+  const host = background();
+  if (host) host.waitUntil(p);
+  else void p;
 }
 
 /**
