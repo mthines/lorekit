@@ -12,9 +12,18 @@
 //   • Opt-out honored: LOREKIT_TELEMETRY=0|off|false|no|disable, or the
 //     cross-vendor DO_NOT_TRACK=1, disables all export.
 //   • No PII is ever attached: only the command name, a bounded allow-list of
-//     boolean flags, the CLI/runtime/OS identity, and the outcome. Never a
-//     path, cwd, token, endpoint, repo, or scope string.
+//     boolean flags, the CLI/runtime/OS identity, the outcome, and the durable
+//     telemetry identity described below. Never a path, cwd, token, endpoint,
+//     repo, or scope string.
 //   • Disabled outright when no OTLP endpoint resolves.
+//
+// IDENTITY — runs are attributable, which they deliberately were not before.
+// `telemetry-identity.mjs` supplies an opaque, locally-minted install id
+// (`service.instance.id` on the resource) and, once any authenticated call has
+// taught the CLI which account it is, that account on `user.id`. Read that
+// module's header for the invariants; the one that constrains THIS file is that
+// nothing is minted while export is disabled, so `ensureInstallId` is only ever
+// called with an already-enabled config.
 //
 // The default endpoint + token below are baked into the published package and
 // are therefore public by design. The token MUST be Dash0 ingestion-only
@@ -26,6 +35,11 @@
 import process from 'node:process';
 import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
 import { readLorekitJson } from './config.mjs';
+import {
+  ensureIdentity,
+  identityAttributes,
+  identityResourceAttributes,
+} from './telemetry-identity.mjs';
 
 // ── Baked-in defaults (public by design) ──────────────────────────────────────
 // The endpoint is a committed default; the token is injected at publish time
@@ -231,7 +245,7 @@ export function resolveDeploymentEnvironment(env = process.env) {
   return value || undefined;
 }
 
-function resourceAttributes(version, env = process.env) {
+function resourceAttributes(version, env = process.env, identity = {}) {
   const attrs = [
     { key: 'service.name', value: { stringValue: 'cli' } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
@@ -243,6 +257,12 @@ function resourceAttributes(version, env = process.env) {
   ];
   const deploymentEnv = resolveDeploymentEnvironment(env);
   if (deploymentEnv) attrs.push({ key: 'deployment.environment.name', value: { stringValue: deploymentEnv } });
+  // `service.instance.id` — the install. Omitted entirely when there is no
+  // identity (opted out, or an unwritable home), never placeholdered: a
+  // constant stand-in would fold every such machine into one instance.
+  for (const [key, value] of Object.entries(identityResourceAttributes(identity))) {
+    attrs.push({ key, value: { stringValue: String(value) } });
+  }
   return attrs;
 }
 
@@ -332,11 +352,11 @@ export function commandAttributes({ command, args = {}, outcome, exitCode, extra
   return attrs;
 }
 
-export function buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId }) {
+export function buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId, identity }) {
   return {
     resourceSpans: [
       {
-        resource: { attributes: resourceAttributes(version) },
+        resource: { attributes: resourceAttributes(version, process.env, identity) },
         scopeSpans: [
           {
             scope: { name: 'cli', version: String(version) },
@@ -362,11 +382,11 @@ export function buildTracePayload({ version, name, attributes, startMs, endMs, s
   };
 }
 
-export function buildMetricsPayload({ version, attributes, startMs, endMs }) {
+export function buildMetricsPayload({ version, attributes, startMs, endMs, identity }) {
   return {
     resourceMetrics: [
       {
-        resource: { attributes: resourceAttributes(version) },
+        resource: { attributes: resourceAttributes(version, process.env, identity) },
         scopeMetrics: [
           {
             scope: { name: 'cli', version: String(version) },
@@ -396,6 +416,31 @@ export function buildMetricsPayload({ version, attributes, startMs, endMs }) {
   };
 }
 
+// ── Identity ──────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the durable telemetry identity for this run: the install id (minting
+ * and persisting one on first use) plus any account id a previous authenticated
+ * call cached.
+ *
+ * TOTAL and side-effect-free when export is off — `ensureInstallId` returns
+ * null for a disabled config without touching the disk, so the opt-out
+ * invariant holds here by delegation rather than by a second check that could
+ * drift from it.
+ *
+ * @param {{ enabled?: boolean }} config
+ * @returns {{ installId: string | null, accountId: string | null }}
+ */
+function resolveIdentity(config) {
+  try {
+    return ensureIdentity(config);
+  } catch {
+    // Identity is an enrichment, never a precondition. A failure here degrades
+    // to the pre-identity behaviour: telemetry still exports, unattributed.
+    return { installId: null, accountId: null };
+  }
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 async function post(url, headers, payload, timeoutMs) {
@@ -420,15 +465,70 @@ async function post(url, headers, payload, timeoutMs) {
  * can never delay or fail the CLI. Awaited before process exit (Node would
  * otherwise drop the in-flight request), but capped at timeoutMs.
  */
-export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId }, { timeoutMs = 1500 } = {}) {
+export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId, identity }, { timeoutMs = 1500 } = {}) {
   if (!config || !config.enabled) return;
-  const trace = buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId });
-  const metric = buildMetricsPayload({ version, attributes, startMs, endMs });
+  // `user.id` rides on BOTH payloads: on the span so a trace is attributable,
+  // and on the counter data point so "distinct users who ran `search`" is
+  // answerable without touching traces at all.
+  const identified = { ...attributes, ...identityAttributes(identity) };
+  const trace = buildTracePayload({ version, name, attributes: identified, startMs, endMs, status, statusMessage, traceId, spanId, identity });
+  const metric = buildMetricsPayload({ version, attributes: identified, startMs, endMs, identity });
   await Promise.all([
     post(`${config.endpoint}/v1/traces`, config.headers, trace, timeoutMs),
     post(`${config.endpoint}/v1/metrics`, config.headers, metric, timeoutMs),
   ]);
 }
+
+/**
+ * Export ONLY the invocation counter — no span — for the machine-facing
+ * commands (`hook`, `mcp`).
+ *
+ * These are the highest-volume entry points by a wide margin: `hook` fires on
+ * every agent turn, several times per turn. They were `traced: false` and so
+ * emitted nothing at all, which meant the identity work above would have
+ * differentiated users across the human-facing commands while the traffic that
+ * actually dominates stayed invisible.
+ *
+ * Metric-only, and on a much tighter budget than {@link exportInvocation}, for
+ * three reasons specific to this path:
+ *   • A span per hook invocation would be a firehose of near-identical traces
+ *     for no analytical gain over a counter — the question here is "how much,
+ *     by whom", not "what happened inside this one".
+ *   • `hook` and `mcp` own stdout as a machine contract (the host parses it),
+ *     and `traceCommand`'s 1500 ms export budget sits between the command
+ *     finishing and the process exiting. On a per-turn hook that is a latency
+ *     the user feels; {@link METERED_TIMEOUT_MS} is the cap that keeps it
+ *     imperceptible, accepting a dropped data point over a delayed agent.
+ *   • Nothing here is allowed to change the exit code or stdout, so every
+ *     failure path returns quietly.
+ *
+ * @param {object} config  resolved telemetry config
+ * @param {string} command  `hook` | `mcp`
+ * @param {string} version  CLI version
+ * @param {object} [extraAttrs]  bounded extra dimensions (e.g. the hook event)
+ */
+export async function countInvocation(config, command, version, extraAttrs = {}) {
+  if (!config || !config.enabled) return;
+  const identity = resolveIdentity(config);
+  const now = Date.now();
+  const attributes = {
+    ...commandAttributes({ command, outcome: CLI_OUTCOMES.OK, extraAttrs }),
+    ...identityAttributes(identity),
+  };
+  await post(
+    `${config.endpoint}/v1/metrics`,
+    config.headers,
+    buildMetricsPayload({ version, attributes, startMs: now, endMs: now, identity }),
+    METERED_TIMEOUT_MS,
+  );
+}
+
+/**
+ * The export budget for the metric-only machine-facing path. Deliberately much
+ * shorter than the 1500 ms default: this sits on the agent's per-turn critical
+ * path, so a slow collector must cost a data point, not a visible stall.
+ */
+export const METERED_TIMEOUT_MS = 400;
 
 /**
  * Send ONE synthetic span to the configured OTLP endpoint and report what the
@@ -552,6 +652,54 @@ function normalizeExitCode(result) {
 }
 
 /**
+ * Run a MACHINE-facing command (`hook`, `mcp`) and count the invocation —
+ * counter only, no span. Returns the command's exit code unchanged.
+ *
+ * The export is STARTED BEFORE the command runs and awaited after, so it
+ * overlaps the command's own work instead of being serialized behind it. That
+ * ordering is what makes this affordable on `hook`, which fires several times
+ * per agent turn: by the time there is anything to await, the POST has usually
+ * already completed, and {@link METERED_TIMEOUT_MS} caps the worst case.
+ *
+ * It also makes the count robust for `mcp`, which is a LONG-LIVED stdio server —
+ * `run()` does not return until the server exits, and a killed server would
+ * never have reported at all if the export waited for it. Since the counter
+ * reports the invocation rather than its outcome (a machine-facing command's
+ * verdict belongs to its stdout contract, which the host reads), there is
+ * nothing to learn by waiting.
+ *
+ * Nothing here can affect the command: the exit code is passed through
+ * untouched, and every telemetry failure is swallowed.
+ *
+ * @param {string} command  `hook` | `mcp`
+ * @param {string} version  CLI version
+ * @param {() => Promise<number>} run  the command handler
+ */
+export async function meterCommand(command, version, run) {
+  let config;
+  try {
+    config = resolveTelemetryConfig();
+  } catch {
+    config = { enabled: false };
+  }
+
+  // Fast path — no export configured. The overwhelmingly common case for these
+  // two commands (the baked-in token is absent in the source tree), so it must
+  // cost nothing at all: no identity read, no timer, no promise.
+  if (!config.enabled) return normalizeExitCode(await run());
+
+  // `.catch` attached IMMEDIATELY, before any await: an unawaited rejecting
+  // promise is an unhandled rejection, which on a machine-facing command would
+  // print to stderr and pollute a host's log.
+  const pending = countInvocation(config, command, version).catch(() => {});
+  try {
+    return normalizeExitCode(await run());
+  } finally {
+    await pending;
+  }
+}
+
+/**
  * Time a human-facing command, record its outcome, and export one span + one
  * counter point. Returns the command's exit code unchanged. Telemetry failures
  * are swallowed — the command result is never affected.
@@ -600,6 +748,14 @@ export async function traceCommand(command, args, version, run) {
       _activeSampled = false;
     }
   }
+
+  // Resolved once, before the command runs, so the export in `finally` cannot
+  // pay for a first-run mint on the crash path — and so a command that itself
+  // learns the account id (any remote call, via `restFetch`) does not race the
+  // read. A run that learns it for the first time reports `install:<id>` and the
+  // NEXT run reports the account; one deliberately-late run beats a mid-command
+  // re-read whose result depends on which subcommand happened to phone home.
+  const identity = resolveIdentity(config);
 
   const startMs = Date.now();
   let exitCode = 0;
@@ -673,6 +829,7 @@ export async function traceCommand(command, args, version, run) {
         statusMessage,
         traceId: _activeTraceId,
         spanId: _activeSpanId,
+        identity,
       });
     } catch {
       // never let telemetry break the CLI

@@ -26,6 +26,20 @@ export function buildRemoteUrl(endpoint, token) {
 
 let idCounter = 0;
 
+/**
+ * Response header naming the account the request authenticated as, set by the
+ * edge REST router for every non-service-role caller.
+ *
+ * The CLI's only way to know its own account id without a dedicated `/me`
+ * round-trip: it rides along on calls the CLI was making anyway. Cached by
+ * `RemoteStore._rest` so LOCAL, fully-offline runs can still report which
+ * account they belong to — see `telemetry-identity.mjs`.
+ *
+ * Kept in step with `CALLER_USER_ID_HEADER` in
+ * `supabase/functions/_shared/api/router.ts`.
+ */
+export const USER_ID_HEADER = 'x-lorekit-user-id';
+
 // Returns { ok, httpStatus, result, error, networkError }.
 //
 // `opts.traceparent` is an optional W3C traceparent header value (see
@@ -223,10 +237,20 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON body */ }
+    // The account this call authenticated as, as the server resolved it. Read on
+    // BOTH the success and failure paths: a 429 or a 404 is still an
+    // authenticated request, and rate-limited traffic is exactly when knowing
+    // whose it is matters most. Surfaced, not cached, here — `mcp.mjs` is in
+    // `control.mjs`'s import graph (`splitEndpoint`), and the identity module
+    // reads `homeRoot` from `control.mjs`, so importing it here would close an
+    // import cycle. `RemoteStore._rest` — the ONE caller of this function, so
+    // nothing is missed by doing it a layer out — does the caching.
+    const userId = res.headers?.get?.(USER_ID_HEADER) ?? null;
     if (!res.ok) {
       return {
         ok: false,
         httpStatus: res.status,
+        userId,
         // How long the server asked the caller to wait, in seconds, or null when
         // it did not say. Only a 429 carries one today (`tooManyRequests` sets
         // BOTH a `retryAfterSeconds` body field and the `Retry-After` header),
@@ -236,7 +260,7 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
         error: data?.error ? { message: data.error, code: data.code } : { code: res.status, message: text.slice(0, 200) || res.statusText },
       };
     }
-    return { ok: true, httpStatus: res.status, data };
+    return { ok: true, httpStatus: res.status, data, userId };
   } catch (e) {
     return { ok: false, networkError: String(e?.message ?? e) };
   } finally {

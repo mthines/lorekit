@@ -41,6 +41,27 @@ export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
  */
 export const CLIENT_HEADER = 'x-lorekit-client';
 
+/**
+ * Response header naming the account the request authenticated as — the
+ * caller's OWN id, echoed back to them.
+ *
+ * Set for every non-service-role caller (see the write site in `createRouter`).
+ * It exists for the CLI, whose telemetry runs on the user's machine and has no
+ * other way to learn its account: reading it off calls it was already making
+ * lets a later OFFLINE run — one that makes no request at all, so no edge span
+ * records `auth.user_id` — still report which account it belongs to. Without it,
+ * local-only CLI usage is unattributable by construction.
+ *
+ * Absent, never empty, for service-role: there is no human actor to name. Same
+ * posture as the `auth.user_id` span attribute.
+ *
+ * Kept in step with `USER_ID_HEADER` in `packages/cli/src/mcp.mjs`, and listed
+ * in `Access-Control-Expose-Headers` (`cors-origins.ts`) — a browser cannot read
+ * a response header that is not exposed, so omitting it there would make this
+ * invisible to the dashboard even though it is set.
+ */
+export const CALLER_USER_ID_HEADER = 'x-lorekit-user-id';
+
 export type Permission = 'read' | 'write' | 'jwt';
 
 export type RouteHandler = (
@@ -233,6 +254,22 @@ export function createRouter(routes: Route[], functionName: string) {
         const planName = planNamePromise ? await planNamePromise : null;
         if (planName) hs.setAttributes({ 'lorekit.plan': planName });
         hs.setAttributes({ 'http.response.status_code': res.status }).end();
+        // ── tell the caller which account it authenticated as ────────────────
+        //
+        // The CLI's only cheap route to its own account id. It has no `/me`
+        // call, and its telemetry runs on the user's machine where nothing else
+        // knows the account: without this, a local-only CLI run (offline store,
+        // `lorekit hook`) is unattributable, because it makes no request for the
+        // edge to record `auth.user_id` on. The CLI caches this value and stamps
+        // it on subsequent offline runs — see `packages/cli/src/store/remote.mjs`.
+        //
+        // Disclosing it is not a widening: this is the caller's OWN id, returned
+        // only to a request that already authenticated as them, and it is
+        // already what every row they can read is keyed by. Service-role gets
+        // nothing (`analyticsUserId` returns null — no human actor to name), so
+        // the header is absent rather than empty, matching how the same value is
+        // treated as a span attribute.
+        if (usageUserId !== null) res.headers.set(CALLER_USER_ID_HEADER, usageUserId);
         if (usageUserId !== null) {
           // Record count from the handler's own header — fail-safe to null.
           const resultCount = parseResultCountHeader(res.headers.get(RESULT_COUNT_HEADER));
