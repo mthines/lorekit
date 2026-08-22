@@ -104,6 +104,14 @@ verify_jwt = false
 [functions.blog]
 verify_jwt = false
 
+# Query-level profiling export (see functions/profiling). `verify_jwt = false`
+# like every other function — the gateway's JWT check would admit the anon key,
+# which is not the bar here: the handler itself requires the SERVICE-ROLE key
+# and refuses a user JWT and an `lk_*` token alike, because the counters it
+# reads are the whole cluster's rather than any one caller's.
+[functions.profiling]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
