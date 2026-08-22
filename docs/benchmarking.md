@@ -158,6 +158,29 @@ Env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, and
 optionally `LOREKIT_TELEMETRY_TOKEN` to export. A missing telemetry token
 degrades to "export skipped" and never fails the run.
 
+#### Environment secrets the workflow needs
+
+Both the `preview` and `production` GitHub Environments need all three. The
+workflow pre-checks them and fails with a **named** list, because "which secret"
+is the only useful question at that point.
+
+| Secret | Status | Where it comes from |
+|---|---|---|
+| `SUPABASE_PROJECT_REF` | already there — `deploy.yml` and `preview.yml` use it | the project's ref |
+| `SUPABASE_ANON_KEY` | already there — `deploy.yml` uses it | Supabase ▸ Project Settings ▸ API |
+| `SUPABASE_SERVICE_ROLE_KEY` | **must be added** | Supabase ▸ Project Settings ▸ API ▸ `service_role`, for the same project as the ref |
+
+`SUPABASE_URL` is **not** a secret — the workflow derives it as
+`https://${SUPABASE_PROJECT_REF}.supabase.co`, the way every other workflow here
+builds its URLs. Storing the project twice is two things to keep in sync, and
+the first dispatch of this workflow failed for exactly that reason: it asked for
+a `SUPABASE_URL` secret that had never existed in this repo.
+
+The service-role key is the one credential that genuinely cannot be avoided or
+weakened: provisioning and deleting users goes through the **Auth admin API**,
+and the `lorekit_db_query_stats()` snapshot is service-role-only. A `lk_rw_*`
+token cannot do either, so there is no lower-privilege version of this run.
+
 ### What a run does
 
 1. Provisions `--users` confirmed users through the Auth admin API and signs
@@ -278,6 +301,14 @@ on:
 - Stamp `X-LoreKit-Deployment-Environment: test` and a correlation id of
   `gh-run-<run_id>`, so the run filters apart in Dash0 and `?correlation_id=`
   scopes the usage read to it.
+- **Every `run:` block sets `set -euo pipefail`, and the `pipefail` is
+  load-bearing.** The drive step is `node scripts/load-test.mjs … | tee
+  load-report.txt`, and GitHub's default shell is `bash -e` — which takes a
+  pipeline's status from its **last** command. Without `pipefail` the step reads
+  `tee`'s success, so a load test that died mid-run reported **green**. The one
+  exception is the residue sweeper, which drops `-e` deliberately: a failed sweep
+  must not fail a good load test, so it captures the exit code and emits it as a
+  `::warning::` rather than swallowing it.
 
 ### Method
 
