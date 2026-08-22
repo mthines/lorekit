@@ -181,8 +181,14 @@ describe('REST audit coverage', () => {
     (_key, route) => {
       const file = must(must(importsByFn, route.fn, 'imports'), route.handler, 'handler file');
       const source = readFileSync(file, 'utf8');
+      // `recordAuditDeferred` counts: it IS `recordAudit`, with the insert moved
+      // off the response path via `EdgeRuntime.waitUntil` (and falling back to
+      // awaiting where that hook is absent, so no row is ever dropped). The
+      // gate's question is "does this mutating route audit at all", and both
+      // spellings answer yes — but the alternation is deliberately narrow, so a
+      // handler that audits NOTHING still fails, which is the point.
       expect(
-        /\brecordAudit\s*\(/.test(source),
+        /\brecordAudit(Deferred)?\s*\(/.test(source),
         `${route.method} ${route.routePath} → ${route.handler} (${path.relative(repoRoot, file)}) ` +
           'is a mutating route but never calls recordAudit. Wire it up, or add it to AUDIT_EXEMPT with a reason.',
       ).toBe(true);

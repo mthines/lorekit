@@ -58,6 +58,7 @@
  * RLS), so their inserts succeed regardless of `user_id`.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { background } from './background.ts';
 import { AUDIT_ACTIONS } from './schemas/audit.ts';
 import type { AuditAction } from './schemas/audit.ts';
 import type { DbClient } from './db-client.ts';
@@ -126,4 +127,47 @@ export async function recordAudit(
   } catch (err) {
     console.error(`[recordAudit] unexpected error for action=${input.action}:`, (err as Error).message);
   }
+}
+
+/**
+ * `recordAudit`, taken OFF the response path.
+ *
+ * WHY THIS EXISTS
+ * `recordAudit` is called after the primary operation has already committed,
+ * and it returns `void` and never throws — so no caller can act on its result.
+ * Awaiting it therefore bought nothing and cost a full edge→PostgREST round
+ * trip on every mutation's response path. In the 2026-08-22 load test
+ * (run 32588442998) a REST write's p50 was 1120 ms against ~534 ms for a read,
+ * while ALL server-side SQL in the window totalled 11.75 ms per request — so
+ * the write penalty was round trips, not queries, and this is one of them.
+ *
+ * WHY IT FALLS BACK TO AWAITING, unlike `embed-on-write.ts`
+ * That module deliberately SKIPS when `waitUntil` is unavailable, because a
+ * missing embedding is recovered by the backfill (`embedding is null`). An
+ * audit row has no backfill: it is the only record that the action happened,
+ * and D1 (see the module header) makes the app layer solely responsible for
+ * writing it. Dropping one to save latency would trade a durability guarantee
+ * for a performance one, so on a runtime with no hook this returns the real
+ * promise and the caller's `await` behaves exactly as it did before.
+ *
+ * Callers therefore keep writing `await recordAuditDeferred(…)`: on the edge
+ * the await resolves immediately and the insert completes in the background;
+ * anywhere else it is today's behaviour, unchanged.
+ *
+ * ONE BEHAVIOURAL CHANGE worth knowing: the audit row is no longer guaranteed
+ * to be visible by the time the mutation's response reaches the client. Nothing
+ * reads it that way — the Audit Logs UI and `GET /audit` are review surfaces,
+ * not read-after-write consumers — but a test that mutates and then immediately
+ * asserts on `audit_log` would become racy, and should poll rather than assume.
+ */
+export function recordAuditDeferred(
+  db: DbClient,
+  input: AuditEntryInput,
+  userId: string | null,
+): Promise<void> {
+  const p = recordAudit(db, input, userId);
+  const rt = background();
+  if (!rt) return p;
+  rt.waitUntil(p);
+  return Promise.resolve();
 }
