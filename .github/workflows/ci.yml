@@ -367,6 +367,18 @@ jobs:
       - name: Unit-test the sweep's OTLP payloads
         run: node --test scripts/sweep-telemetry.test.mjs
 
+      # The load test itself is dispatch-only (it provisions real users against a
+      # real project), but its logic is unit-tested here. Two of these guard
+      # things that are silently destructive rather than merely wrong: the
+      # cleanup sweeper's anchored email pattern and age floor decide which USER
+      # ACCOUNTS get deleted from a live project, and a permissive pattern there
+      # destroys real data.
+      - name: Unit-test the load test's logic
+        run: |
+          node --test scripts/load-test-lib.test.mjs
+          node --test scripts/load-telemetry.test.mjs
+          node --test scripts/load-test-cleanup.test.mjs
+
       - name: Check migration ordering against the base branch
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

@@ -11,7 +11,7 @@ things and knee for different reasons.
 | Needs the edge deployed | No — it is all SQL-level | Yes |
 | Repeatable against a shared environment | **No** — it permanently changes table size and index bloat | Yes — non-destructive |
 | Against production | **Never** | Possible, behind the approval gate |
-| Status | **Built** (`scripts/sweep-rows.mjs`) | **Designed, not built** |
+| Status | **Built** (`scripts/sweep-rows.mjs`) | **Built** (`scripts/load-test.mjs`) |
 
 A load test measures requests/sec; a per-user cap governs rows. Neither number
 tells you about the other, which is why the memory cap was settled with the
@@ -128,10 +128,75 @@ the daily smoke jobs carry that value too.
 
 ---
 
-## The load test — planned, not built
+## The load test
 
-Recorded here so the design is not re-derived, and so the constraints that shape
-it are not rediscovered the hard way.
+```bash
+# Dispatch it from the Actions UI (preferred — production runs need the gate):
+#   Actions ▸ Load test ▸ Run workflow ▸ target / rps / duration / users
+#
+# Or locally:
+SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… SUPABASE_ANON_KEY=… \
+  node scripts/load-test.mjs --target preview --rps 20 --duration 120 --users 5
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--target <preview\|production>` | **none** | Required. `production` must be typed in full |
+| `--rps <n>` | `20` | arrival rate |
+| `--duration <s>` | `60` | drive duration |
+| `--users <n>` | `5` | provisioned users, each with its own 120 rpm budget |
+| `--seed <n>` | `50` | lore rows seeded per user, so reads return rows |
+| `--dry-run` | off | build the OTLP payloads, send nothing |
+| `--keep-users` | off | skip cleanup — debugging only; leaves real rows behind |
+
+**There is deliberately no default target.** A load test writes real rows to a
+real deployment, so "forgot the flag" fails rather than picking something, and
+`prod` / `live` / `main` are all refused — `production` is spelled out or not
+accepted.
+
+Env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, and
+optionally `LOREKIT_TELEMETRY_TOKEN` to export. A missing telemetry token
+degrades to "export skipped" and never fails the run.
+
+### What a run does
+
+1. Provisions `--users` confirmed users through the Auth admin API and signs
+   each in for a JWT.
+2. Raises **`max_memories`** for them, and only that (see below).
+3. Seeds `--seed` lore rows per user, so reads measure a populated table.
+4. Snapshots `lorekit_db_query_stats()` through PostgREST with the service-role
+   key — the same RPC the `profiling` function reads.
+5. Drives the schedule, **open loop**.
+6. Snapshots again, diffs, reports, exports, and deletes the users in a
+   `finally` — deletion cascades to their memories and their `user_limits` row.
+
+A project without `pg_stat_statements` (or without migration `00074` deployed)
+still produces client-side percentiles; the attribution section simply says it
+is unavailable. A degraded run, not a failed one.
+
+### Reading the report
+
+- **`429` is a separate column from `err`.** A throttled request is the
+  guardrail working, and a run full of 429s exits **0**. Only 5xx and transport
+  failures set a non-zero exit.
+- **Percentiles cover successful requests only.** A 429 returns in microseconds
+  and a timeout returns after 30 s; folding either into the distribution moves
+  p95 for reasons unrelated to how fast the service is.
+- **Watch the achieved rate.** Below 90 % of requested, the script warns — and
+  that usually means *the runner* saturated, not the target.
+- **The per-statement delta is the real output.** It turns "p95 was 240 ms" into
+  "these three statements were 62 % of it".
+
+Telemetry: one `lorekit.load` root span (not one per request — 20 rps for two
+minutes is 2,400 spans of a synthetic client, and the per-request detail already
+exists server-side) plus four gauges, under `service.name=load`. The run's
+`lorekit.correlation_id` is the join key: the same value rides on every request
+as `X-LoreKit-Correlation-Id`, so `?correlation_id=` scopes the usage read and
+the server spans to that run.
+
+### Constraints that shape the design
+
+Recorded so they are not rediscovered the hard way.
 
 ### The rate limit decides the design
 
@@ -182,10 +247,11 @@ insert/update RLS on that table by design), and `user_limits.user_id` is
 `references auth.users on delete cascade`, so deleting a test user cleans up its
 override.
 
-### Workflow shape
+### The workflow
 
-A GitHub Actions workflow, because the target must be configurable between
-preview and production:
+`.github/workflows/load-test.yml`. Dispatch-only plus a weekly **preview** run —
+a scheduled trigger cannot reach production, because `inputs.target` is empty on
+a cron fire and falls back to `preview`.
 
 ```yaml
 on:
@@ -198,15 +264,17 @@ on:
   schedule: [{ cron: '25 5 * * 1' }]   # preview only — never prod on a timer
 ```
 
-- `environment: ${{ inputs.target }}` — production inherits the **existing
-  approval gate** `deploy.yml` already uses. That is a real guard; a typed
-  confirmation input is not.
+- `environment: ${{ inputs.target || 'preview' }}` — production inherits the
+  **existing approval gate** `deploy.yml` already uses. That is a real guard; a
+  typed confirmation input is not.
 - `concurrency: { group: load-${{ inputs.target }}, cancel-in-progress: false }`
   — matching `deploy.yml`'s posture, because a cancelled load test leaves rows.
-- Cleanup in `if: always()` through `scripts/smoke-cleanup.mjs`'s existing
-  guards. Reuse `seed-smoke-user.mjs` and the anchored name pattern rather than
-  inventing a data path — a load run creates orders of magnitude more rows than
-  a smoke test, and those guards are load-bearing.
+- Cleanup happens twice: the script deletes its users in a `finally`, and
+  `scripts/load-test-cleanup.mjs` runs `if: always()` as belt and braces for a
+  job killed hard enough to skip that. The sweeper carries three independent
+  guards — an **anchored** email pattern (not a prefix test), an age floor so it
+  cannot delete a concurrently running test's users, and fail-closed handling of
+  any user it cannot date.
 - Stamp `X-LoreKit-Deployment-Environment: test` and a correlation id of
   `gh-run-<run_id>`, so the run filters apart in Dash0 and `?correlation_id=`
   scopes the usage read to it.
@@ -223,6 +291,10 @@ on:
   counters are cumulative, so a raw top-N is dominated by history. The diff is
   the sharpest output a run can produce: "62 % of p95 was SQL, and here are the
   three statements."
+
+The unit tests run *before* provisioning, so a broken percentile or a
+mis-built schedule fails in seconds rather than after users exist against a real
+project. The report is uploaded as an artifact on every outcome.
 
 **Caveat worth stating up front:** a shared 2-core runner saturates before the
 target at any real concurrency, and network variance adds latency noise — so

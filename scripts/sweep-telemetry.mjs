@@ -46,59 +46,30 @@
  * benchmark ends up in the wrong dataset, or exporting when someone opted out.
  */
 
-import { spawnSync } from 'node:child_process';
-
 import { resolveTelemetryConfig, randHex } from '../packages/cli/src/telemetry.mjs';
+import {
+  SPAN_KIND_INTERNAL,
+  gauge,
+  gaugeMetric,
+  metricsEnvelope,
+  post,
+  spansEnvelope,
+  toOtlpAttributes,
+  toUnixNano,
+} from './otlp-export.mjs';
 
 const SERVICE_NAME = 'sweep';
 
-// OTLP span kinds. A benchmark harness calls nothing on anyone's behalf, so
-// every span here is INTERNAL.
-const SPAN_KIND_INTERNAL = 1;
-
-function toOtlpValue(v) {
-  if (typeof v === 'number') return Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v };
-  if (typeof v === 'boolean') return { boolValue: v };
-  return { stringValue: String(v) };
-}
-
-const toOtlpAttributes = (attrs) =>
-  Object.entries(attrs)
-    .filter(([, v]) => v !== undefined && v !== null)
-    .map(([key, value]) => ({ key, value: toOtlpValue(value) }));
-
-const toUnixNano = (ms) => `${Math.round(ms)}000000`;
-
-/** The commit a run measured. Absent outside a git checkout — omitted, never faked. */
-function gitRevision() {
-  const res = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
-  return res.status === 0 ? res.stdout.trim() : undefined;
-}
-
-function gitBranch() {
-  const res = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' });
-  const name = res.status === 0 ? res.stdout.trim() : '';
-  return name && name !== 'HEAD' ? name : undefined;
-}
-
-function resourceAttributes(meta) {
-  const revision = gitRevision();
-  const branch = gitBranch();
-  return toOtlpAttributes({
-    'service.name': SERVICE_NAME,
-    'service.namespace': 'lorekit',
-    'service.version': revision ?? 'unknown',
-    // Always `test`. A benchmark is synthetic by construction, and this is the
-    // one value the edge's own header allowlist admits for the same reason.
-    'deployment.environment.name': 'test',
-    'vcs.repository.name': 'mthines/lorekit',
-    'vcs.ref.head.revision': revision,
-    'vcs.ref.head.name': branch,
-    'vcs.ref.head.type': branch ? 'branch' : undefined,
-    'db.system': 'postgresql',
-    'db.version': meta.pg_version,
-  });
-}
+/**
+ * The sweep's own resource additions on top of the shared set.
+ *
+ * `db.version` belongs on the RESOURCE rather than a datapoint because it
+ * describes the whole run: every measurement came from that one server.
+ */
+const resourceExtra = (meta) => ({
+  'db.system': 'postgresql',
+  'db.version': meta.pg_version,
+});
 
 /**
  * Build the trace: a root span for the run, a child per rung.
@@ -177,30 +148,13 @@ function buildTracePayload({ meta, phases, plans, growth, config, runId }) {
   });
 
   return {
-    payload: {
-      resourceSpans: [{
-        resource: { attributes: resourceAttributes(meta) },
-        scopeSpans: [{
-          scope: { name: `lorekit-${SERVICE_NAME}`, version: '1.0.0' },
-          spans: [rootSpan, ...rungSpans],
-        }],
-      }],
-    },
+    payload: spansEnvelope(SERVICE_NAME, [rootSpan, ...rungSpans], resourceExtra(meta)),
     traceId,
   };
 }
 
-/** One gauge datapoint. */
-const gauge = (attributes, value, timeMs) => ({
-  attributes: toOtlpAttributes(attributes),
-  timeUnixNano: toUnixNano(timeMs),
-  asDouble: value,
-});
-
 function buildMetricsPayload({ meta, timings, growth, indexes, timeMs }) {
-  const metrics = [];
-
-  // Probe durations. Seconds, not milliseconds, to match every other duration
+  // Probe durations in SECONDS, not milliseconds, to match every other duration
   // LoreKit emits (`lorekit.tool.duration`, `lorekit.db.query.time`) — a
   // benchmark that reported ms would be the one series nobody could compare
   // against the rest.
@@ -215,80 +169,43 @@ function buildMetricsPayload({ meta, timings, growth, indexes, timeMs }) {
       Number(row.p95_ms) / 1000, timeMs,
     ));
   }
-  if (durationPoints.length) {
-    metrics.push({
+
+  const metrics = [
+    gaugeMetric({
       name: 'lorekit.sweep.probe.duration',
       unit: 's',
       description: 'Probe latency at a given focal-user row count.',
-      gauge: { dataPoints: durationPoints },
-    });
-  }
-
-  const growthPoints = growth
-    .filter((g) => g.growth_x !== null && g.growth_x !== undefined)
-    .map((g) => gauge({ probe: g.probe }, Number(g.growth_x), timeMs));
-  if (growthPoints.length) {
-    metrics.push({
+      points: durationPoints,
+    }),
+    gaugeMetric({
       name: 'lorekit.sweep.growth_factor',
       unit: '1',
       description: 'p50 at the largest rung divided by p50 at the smallest. ~1 is indexed.',
-      gauge: { dataPoints: growthPoints },
-    });
-  }
-
-  const indexPoints = indexes.map((i) => gauge({ index: i.index_name }, Number(i.bytes), timeMs));
-  if (indexPoints.length) {
-    metrics.push({
+      // A null growth factor (the upstream divide-by-zero guard) is DROPPED,
+      // not exported: NaN is either rejected by the ingress or silently lands
+      // as a zero on the chart.
+      points: growth
+        .filter((g) => g.growth_x !== null && g.growth_x !== undefined)
+        .map((g) => gauge({ probe: g.probe }, Number(g.growth_x), timeMs)),
+    }),
+    gaugeMetric({
       name: 'lorekit.sweep.index.bytes',
       unit: 'By',
       description: 'On-disk size per index on `memories` at the end of the run.',
-      gauge: { dataPoints: indexPoints },
-    });
-  }
-
-  metrics.push({
-    name: 'lorekit.sweep.rows',
-    unit: '1',
-    description: 'Row counts the run finished at.',
-    gauge: {
-      dataPoints: [
+      points: indexes.map((i) => gauge({ index: i.index_name }, Number(i.bytes), timeMs)),
+    }),
+    gaugeMetric({
+      name: 'lorekit.sweep.rows',
+      unit: '1',
+      description: 'Row counts the run finished at.',
+      points: [
         gauge({ kind: 'total' }, Number(meta.rows_total), timeMs),
         gauge({ kind: 'focal' }, Number(meta.focal_rows), timeMs),
       ],
-    },
-  });
+    }),
+  ];
 
-  return {
-    resourceMetrics: [{
-      resource: { attributes: resourceAttributes(meta) },
-      scopeMetrics: [{
-        scope: { name: `lorekit-${SERVICE_NAME}`, version: '1.0.0' },
-        metrics,
-      }],
-    }],
-  };
-}
-
-async function post(url, headers, payload, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      return { ok: false, error: `${res.status}${body ? ` ${body.slice(0, 200)}` : ''}` };
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: `${err.name}: ${err.message}` };
-  } finally {
-    clearTimeout(timer);
-  }
+  return metricsEnvelope(SERVICE_NAME, metrics, resourceExtra(meta));
 }
 
 /**

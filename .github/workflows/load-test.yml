@@ -1,0 +1,140 @@
+# Load test — drives the REST surface at a fixed arrival rate and attributes the
+# latency to specific SQL statements.
+#
+# WHY A WORKFLOW RATHER THAN A LOCAL SCRIPT
+# The target must be configurable between preview and production, and a
+# production run needs a human in the loop. GitHub Environments already give us
+# that: `deploy.yml` gates its production jobs on the `production` environment's
+# approval rules, and this reuses the same gate rather than inventing a
+# typed-confirmation input, which is not a real guard.
+#
+# WHAT THIS IS NOT
+# Not a per-PR check. It provisions real users, writes real rows and consumes
+# real Dash0 ingest quota, so it is dispatch-only plus a weekly PREVIEW run.
+# Production never fires on a timer — see the `schedule` note below.
+#
+# HONEST CAVEAT, stated here because it shapes how the output is read: a shared
+# 2-core runner saturates before the target at any real concurrency, and network
+# variance adds latency noise. Distrust the client-side percentiles; the numbers
+# to trust are `lorekit.self_time_ms`, `lorekit.io.wait_ms` and the
+# `lorekit.db.query.*` metrics, which are measured server-side and are robust to
+# a noisy client. The script prints a warning when the achieved rate falls below
+# 90 % of the requested one, which is the signal that the runner is the
+# bottleneck.
+#
+# Full design and method: docs/benchmarking.md.
+
+name: Load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which deployment to drive'
+        type: choice
+        options: [preview, production]
+        default: preview
+      rps:
+        description: 'Arrival rate (requests/sec)'
+        default: '20'
+      duration:
+        description: 'Drive duration (seconds)'
+        default: '120'
+      users:
+        description: 'Provisioned users — each carries its own 120 rpm budget'
+        default: '5'
+  schedule:
+    # Weekly, Mondays 05:25 UTC. Off the hour on purpose: GitHub queues :00
+    # schedules by many minutes. A scheduled run is ALWAYS preview — the target
+    # below falls back to preview when `inputs.target` is empty, which is the
+    # only state a cron trigger can produce, so production cannot be reached
+    # without a human dispatching it.
+    - cron: '25 5 * * 1'
+
+# Never cancel a run in flight. A cancelled load test leaves provisioned users
+# and their rows behind, and cleanup only happens if the job reaches its
+# `finally`. Same posture as deploy.yml.
+concurrency:
+  group: load-test-${{ inputs.target || 'preview' }}
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: Load test → ${{ inputs.target || 'preview' }}
+    runs-on: ubuntu-latest
+    # The gate. `production` inherits whatever approval rules that environment
+    # carries; `preview` runs freely.
+    environment: ${{ inputs.target || 'preview' }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Fail with a NAMED list rather than letting the script die on the first
+      # missing value — mirrors deploy.yml's secret pre-check, because "which
+      # secret" is the only question worth answering here.
+      - name: Check the environment's secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          missing=""
+          [ -n "$SUPABASE_URL" ]              || missing="$missing SUPABASE_URL"
+          [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] || missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -n "$SUPABASE_ANON_KEY" ]         || missing="$missing SUPABASE_ANON_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets for the '${{ inputs.target || 'preview' }}' environment:$missing. Add them under Settings ▸ Environments."
+            exit 1
+          fi
+
+      # The load test's own logic is unit-tested; run those first so a broken
+      # percentile or a mis-built schedule fails in seconds rather than after
+      # provisioning users against a real project.
+      - name: Unit-test the load-test logic
+        run: |
+          node --test scripts/load-test-lib.test.mjs
+          node --test scripts/load-telemetry.test.mjs
+
+      - name: Run the load test
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Absent → the run still prints its report and says the export was
+          # skipped. A missing telemetry token must not fail a load test.
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: |
+          node scripts/load-test.mjs \
+            --target "${{ inputs.target || 'preview' }}" \
+            --rps "${{ inputs.rps || '20' }}" \
+            --duration "${{ inputs.duration || '120' }}" \
+            --users "${{ inputs.users || '5' }}" \
+            | tee load-report.txt
+
+      # The report is the artefact worth keeping: the client percentiles and the
+      # per-statement delta, on a run whose Dash0 trace may be sampled away.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-report-${{ inputs.target || 'preview' }}-${{ github.run_id }}
+          path: load-report.txt
+          if-no-files-found: warn
+
+      # Belt and braces. The script deletes its users in a `finally`, so this
+      # only fires if the job was killed hard enough to skip that — a runner
+      # timeout or a cancellation. Residue is real rows in a real project.
+      - name: Sweep any residue
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/load-test-cleanup.mjs || echo "::warning::Residue sweep failed; check for loadtest-* users."
