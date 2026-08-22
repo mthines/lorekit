@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.55.1](https://github.com/mthines/lorekit/compare/cli-v1.55.0...cli-v1.55.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **web:** accept a memory UUID in ?lesson=, and say so in the CLI docs ([372e801](https://github.com/mthines/lorekit/commit/372e8012e51e959b2923e2aed339c6564d46a4fb))
+
 ## [1.55.0](https://github.com/mthines/lorekit/compare/cli-v1.54.0...cli-v1.55.0) (2026-08-22)
 
 
