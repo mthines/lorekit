@@ -501,6 +501,45 @@ begin
 end;
 $$;
 
+-- ── 13b. memory_write: org-scoped write succeeds under RLS for a real JWT
+-- caller, not just a superuser/service-role test harness (regression) ───────
+--
+-- Every prior org-write assertion above (§12) calls memory_write() directly
+-- as the test's own (superuser) role, which bypasses Row Level Security
+-- entirely — so it never exercised the path a real dashboard/user-session
+-- caller goes through. That gap hid a bug: the org-write branch inserts
+-- `user_id = null` for an org-owned row, and `rls_insert` (00001) only allows
+-- `user_id = auth.uid() or auth.role() = 'service_role'`. Without
+-- `security definer`, memory_write ran as the CALLER's role, so an
+-- `authenticated` JWT caller writing to an org got "new row violates row-level
+-- security policy for table memories" even though lorekit_org_can() already
+-- approved the write. This reproduces that path under `set local role
+-- authenticated` (the same technique as §1/§7/§8) and asserts it now succeeds.
+do $$
+declare
+  v_id uuid;
+  v_row memories%rowtype;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-rls-write-key', 'v1',
+                                        '{}'::text[], null, null, null, 'phase2-org');
+
+  reset role;
+
+  assert v_id is not null,
+    'memory_write: an org-scoped write from an authenticated JWT caller must not be rejected by RLS';
+
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id = '00000000-0000-0000-0000-0000000000f2',
+    format('memory_write org branch (RLS caller): org_id should be phase2-org, got %s', v_row.org_id);
+  assert v_row.user_id is null,
+    'memory_write org branch (RLS caller): user_id must be NULL on an org-owned row';
+end;
+$$;
+
 -- ── 14. Author attribution: created_by/updated_by + clobber preservation (AC-3) ─
 -- The whole test file runs inside one transaction, and now() is STABLE (frozen
 -- at transaction start) for its duration — pg_sleep() cannot make a later
