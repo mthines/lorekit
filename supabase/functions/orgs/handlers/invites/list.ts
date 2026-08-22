@@ -3,11 +3,8 @@ import { ok, notFound } from '../../../_shared/api/respond.ts';
 import { validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
-import type { Tables } from '../../../_shared/database.types.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { isOrgMember, hasOrgCapability } from '../../../_shared/api/tenant.ts';
-
-type InviteRow = Tables<'org_invites'>;
 
 export async function handleListInvites(
   _req: Request, auth: AuthContext, db: DbClient, span: Span,

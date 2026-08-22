@@ -21,7 +21,6 @@
  * decides what a member may do.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope, UserInputError } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';

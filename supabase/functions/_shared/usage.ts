@@ -13,7 +13,6 @@
  * is fire-and-forget, `getUserPlanName` fails open to null.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createTracedClient, type Span } from './otel.ts';
 import type { DbClient } from './db-client.ts';
 

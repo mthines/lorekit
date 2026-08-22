@@ -15,7 +15,6 @@
  * structured usage events for plan-sizing analytics.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import type { DbClient } from '../_shared/db-client.ts';
 

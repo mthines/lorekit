@@ -23,7 +23,6 @@
  *   VCS_REPOSITORY_NAME           e.g. mthines/lorekit
  */
 
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import type { Database } from './database.types.ts';
 import type { DbClient } from './db-client.ts';
 import { formatTraceparent, parseTraceparent } from './trace-context.ts';
@@ -651,8 +650,13 @@ function buildSql(s: QueryState): string {
  * Deliberately exposes ONLY awaiting: postgrest accepts no further filters
  * after a single-row modifier, so a fluent surface here would advertise calls
  * that cannot work.
+ *
+ * A type ALIAS rather than an empty `interface … extends PromiseLike<…>`,
+ * which `no-empty-interface` / `no-empty-object-type` reject — correctly, since
+ * the two forms are equivalent here and the alias says "this is exactly a
+ * thenable" without pretending to declare a new shape.
  */
-export interface TracedSingleQuery<T> extends PromiseLike<PostgrestResponse<T>> {}
+export type TracedSingleQuery<T> = PromiseLike<PostgrestResponse<T>>;
 
 /**
  * The result of a traced `.rpc()` call.
