@@ -206,6 +206,75 @@ Requires the `pg_stat_statements` extension (Supabase preloads it). It needs no
 new Dash0 credentials — the `profiling` function exports through the same
 `OTEL_EXPORTER_OTLP_*` secrets every other function already uses.
 
+### The row-scaling sweep
+
+Full runbook, flags and how to read the output: [benchmarking.md](./benchmarking.md).
+
+`scripts/sweep-rows.mjs` is the companion experiment to the metrics above, and
+it answers a different question. The query metrics tell you what production is
+doing *now*; the sweep tells you what it will do at 10× the rows — by growing
+one user to 100k and measuring the same probes at each rung.
+
+```bash
+pnpm nx sweep supabase                                   # defaults
+node scripts/sweep-rows.mjs --rungs 1000,5000,25000 --iterations 40
+node scripts/sweep-rows.mjs --database-url postgresql://…  # bring your own DB
+```
+
+Add `--dry-run` to build the payloads and write them to `$TMPDIR` without
+sending anything — useful when an ingress returns a bare `400`, or when the
+export target is unreachable, since it turns "the export failed" into a
+diffable artifact you can POST by hand.
+
+It boots a **throwaway** PostgreSQL cluster, applies
+`supabase/tests/bare-postgres-bootstrap.sql` plus every migration, and runs
+`supabase/tests/row-scaling-sweep.sql`. Throwaway because the sweep is a
+data-shape experiment: index bloat survives a delete, so it must never run
+against production and preferably not against a shared preview project.
+
+Local hardware is not Supabase hardware — the findings are the **shape** of the
+curve and the **EXPLAIN plans**, never the absolute milliseconds. What it found
+about the memory cap is in [limits.md](./limits.md#the-cap-is-also-a-write-cost-parameter).
+
+**Every run exports to Dash0**, so runs are comparable across commits rather
+than being a number in a terminal:
+
+| Signal | Name | Notes |
+|---|---|---|
+| Trace | `lorekit.sweep` + `lorekit.sweep.rung` | Real timestamps from `sweep_phases`. Deliberately no span per probe — a p50 over 25 repetitions is an aggregate, not an interval |
+| Gauge | `lorekit.sweep.probe.duration` (`s`) | `{probe, rows, quantile}` |
+| Gauge | `lorekit.sweep.growth_factor` (`1`) | `{probe}` — p50 at the top rung ÷ p50 at the bottom. **~1.0 is indexed**; tracking the row multiple is a linear scan |
+| Gauge | `lorekit.sweep.index.bytes` (`By`) | `{index}` — write amplification lives here |
+| Gauge | `lorekit.sweep.rows` (`1`) | `{kind: total\|focal}` |
+
+Gauges rather than sums because each is a measurement at a point in time (this
+run, this commit), not something that accumulates.
+
+The plan's top **scan** node rides on the rung span as `db.plan.node_type` —
+`Seq Scan` becoming `Index Only Scan` is the entire signal an index change is
+meant to produce, in one low-cardinality attribute rather than a diff of plan
+text. (It is the top *scan*, not the outermost node: every probe is a
+`count(*)`, so the outermost node is always `Aggregate` and would be constant.)
+
+Resource identity: `service.name=sweep` (its own component, so benchmark
+numbers never mix into `api`/`cli`/`web`/`mcp`),
+`deployment.environment.name=test` **always** — a benchmark is synthetic by
+construction — and `vcs.ref.head.revision` from git, which is what makes a run
+attributable to the commit it measured. Compare runs on `service.name=sweep`
+keyed by that revision.
+
+**Sandbox note:** Node's built-in `fetch` ignores `HTTPS_PROXY`, so in a cloud
+sandbox run the export with `NODE_USE_ENV_PROXY=1` — without it the POST goes
+direct and returns `403 Host not in allowlist` even for an allowlisted host. See
+the root CLAUDE.md sandbox baseline, point 6.
+
+Export reuses the CLI's `resolveTelemetryConfig`, so it honours the same token
+priority (`OTEL_EXPORTER_OTLP_HEADERS` > `LOREKIT_TELEMETRY_TOKEN` > baked-in),
+the same `Dash0-Dataset` routing, and the same opt-outs (`LOREKIT_TELEMETRY`,
+`DO_NOT_TRACK`). With no credential it prints `export skipped (no-credential)`
+and still shows the tables — the sweep never fails because telemetry could not
+be shipped.
+
 ### Checking it by hand
 
 ```bash

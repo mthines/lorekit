@@ -46,6 +46,7 @@ jobs:
       web_preview: ${{ steps.filter.outputs.web_preview }}
       preview_filter: ${{ steps.filter.outputs.preview_filter }}
       migrations: ${{ steps.filter.outputs.migrations }}
+      bench: ${{ steps.filter.outputs.bench }}
       deploy: ${{ steps.filter.outputs.deploy }}
     steps:
       - name: Checkout repository
@@ -159,6 +160,22 @@ jobs:
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Benchmark gate: the row-scaling sweep and the load test, and the
+          # pure modules their unit tests protect. Its own filter — naming its
+          # own scripts, the way `deploy` above names resolve-deploy-scope —
+          # because these tests previously rode along in `migration-order`,
+          # whose filter is migrations-only. A PR touching just
+          # `scripts/sweep-telemetry.mjs` therefore did not re-run the tests
+          # that guard it, and the coverage was silently decorative.
+          #
+          # `load-test-cleanup` earns its place here loudly: its guards decide
+          # which USER ACCOUNTS a sweep deletes from a live project, so a change
+          # to it that skips its tests is a change that can destroy real data.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/(sweep-rows|sweep-telemetry|load-test|load-test-lib|load-telemetry|load-test-cleanup|otlp-export)(\.test)?\.mjs|supabase/tests/row-scaling-sweep\.sql|\.github/workflows/(ci|load-test)\.yml)'; then
+            echo "bench=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bench=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── Typecheck + Test + Lint (only affected packages) ─────────────────────────
@@ -396,10 +413,55 @@ jobs:
       - name: Unit-test the remote-migration-drift classifier
         run: node --test scripts/check-remote-migration-drift.test.mjs
 
+
       - name: Check migration ordering against the base branch
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: node scripts/check-migration-order.mjs "$BASE"
+
+  # ── Benchmark harness logic — the sweep and the load test ────────────────────
+  #    Both harnesses are manual: the sweep grows a table to 100k rows, and the
+  #    load test provisions real users against a real project. Neither belongs on
+  #    a PR. Their PURE modules do, and for the same reason as the deploy-scope
+  #    resolver below: `scripts/**` is outside `nx affected`, so the `check` job
+  #    would never execute these.
+  #
+  #    Gated on its own `bench` filter rather than riding along in
+  #    `migration-order`, which is where these tests first landed. That filter is
+  #    migrations-only, so a PR touching just `scripts/sweep-telemetry.mjs` did
+  #    not re-run the tests protecting it — coverage that looked present and was
+  #    decorative.
+  #
+  #    Two of these guard behaviour that is silently DESTRUCTIVE rather than
+  #    merely wrong: the OTLP payload shapes fail as a remote 400 whose only
+  #    symptom is a dashboard that never gains a datapoint, and
+  #    `load-test-cleanup`'s anchored pattern and age floor decide which user
+  #    accounts a sweep deletes from a live project.
+  bench-tests:
+    name: Benchmark harness tests
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.bench == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Node's built-in runner, zero deps — these modules are dependency-free on
+      # purpose so they can run before any install.
+      - name: Unit-test the sweep's OTLP payloads
+        run: node --test scripts/sweep-telemetry.test.mjs
+
+      - name: Unit-test the load test's logic
+        run: |
+          node --test scripts/load-test-lib.test.mjs
+          node --test scripts/load-telemetry.test.mjs
+          node --test scripts/load-test-cleanup.test.mjs
 
   # ── Deploy-scope resolver — the decision that gates production ───────────────
   #    deploy.yml's `changes` job diffs each half (API / web) against the commit
@@ -741,7 +803,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, preview-filter, edge-typecheck]
+    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, preview-filter, bench-tests, edge-typecheck]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate

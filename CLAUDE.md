@@ -144,6 +144,21 @@ rather than inferred. They cost time every time they are rediscovered:
    (strip ANSI first, and self-test the counter against a known-bad state); and
    pass `--node-modules-dir=none` so `npm:` specifiers resolve from Deno's cache
    the way production does, instead of the repo's pnpm `node_modules`.
+6. **Node's built-in `fetch` ignores `HTTPS_PROXY` — run it with
+   `NODE_USE_ENV_PROXY=1`.** This bites anything in this repo that exports
+   telemetry over `fetch`: `scripts/sweep-rows.mjs`, the CLI's
+   `packages/cli/src/telemetry.mjs`, and the `_shared/otel.ts` exporters when
+   exercised locally. The symptom is a **`403 Host not in allowlist: <host>`**
+   *even for a host that IS allowlisted*, because without the variable undici
+   goes DIRECT and meets the network gateway's own, narrower allowlist instead
+   of the session proxy's. The tell is a discrepancy between clients: `curl`
+   reaches the host (it uses a `CONNECT` tunnel and so goes through the proxy)
+   while `node -e 'fetch(...)'` returns that 403. Confirmed on Node 22.22 —
+   `NODE_USE_ENV_PROXY=1 node …` turned the Dash0 sweep export from a 403 into
+   a real 2xx, and `curl -sS "$HTTPS_PROXY/__agentproxy/status"` lists the
+   recent denials with their reason. `/root/.ccr/README.md` documents this and
+   the other per-tool proxy accommodations. Never "fix" it by unsetting
+   `HTTPS_PROXY` or disabling TLS verification.
 
 ```bash
 # CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the

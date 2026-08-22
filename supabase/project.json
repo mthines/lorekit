@@ -36,6 +36,14 @@
       }
     },
 
+    "sweep": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node scripts/sweep-rows.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
     "db:push": {
       "executor": "nx:run-commands",
       "dependsOn": [
