@@ -40,7 +40,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -60,6 +60,7 @@ function parseArgs(argv) {
     pgbin: null,
     databaseUrl: null,
     keep: false,
+    dryRun: false,
   };
   const flags = {
     '--rungs': 'rungs',
@@ -73,6 +74,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--keep') { opts.keep = true; continue; }
+    if (arg === '--dry-run') { opts.dryRun = true; continue; }
     if (arg === '--help' || arg === '-h') { opts.help = true; continue; }
     const key = flags[arg];
     if (!key) die(`Unknown argument: ${arg}\nRun with --help for usage.`);
@@ -381,7 +383,22 @@ const report = await exportSweep(results, opts);
 if (!byo) stopCluster(pgbin, opts.port, { keep: opts.keep });
 
 console.log(`\n✓ Sweep completed in ${elapsed}s.`);
-if (report.exported) {
+if (report.dryRun) {
+  const dir = process.env.TMPDIR || '/tmp';
+  const traces = path.join(dir, 'sweep-otlp-traces.json');
+  const metrics = path.join(dir, 'sweep-otlp-metrics.json');
+  writeFileSync(traces, JSON.stringify(report.traces, null, 2));
+  writeFileSync(metrics, JSON.stringify(report.metrics, null, 2));
+  console.log(
+    `  Dry run — nothing was sent. Payloads written to:\n`
+    + `    ${traces}\n    ${metrics}\n\n`
+    + '  POST them yourself to check the ingress accepts the shape:\n'
+    + `    curl -i -X POST "$OTEL_EXPORTER_OTLP_ENDPOINT/v1/traces" \\\n`
+    + '      -H "Authorization: Bearer $DASH0_TOKEN" \\\n'
+    + '      -H "Content-Type: application/json" \\\n'
+    + `      --data @${traces}`,
+  );
+} else if (report.exported) {
   console.log(
     `  Exported to Dash0: ${report.spans} spans, ${report.datapoints} datapoints.\n`
     + `    run_id   ${report.runId}\n`

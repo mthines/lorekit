@@ -301,10 +301,40 @@ async function post(url, headers, payload, timeoutMs) {
  * @param {object} [env]    defaults to process.env
  */
 export async function exportSweep(results, config, env = process.env) {
+  const meta = Object.fromEntries((results.meta ?? []).map((r) => [r.key, r.value]));
+
+  // `--dry-run` builds the payloads and returns them WITHOUT resolving a
+  // credential or opening a socket. It exists because an OTLP rejection is a
+  // bare 400 from the ingress: being able to hand someone the exact bytes that
+  // were going to be sent turns "the export failed" into a diffable artifact.
+  // Deliberately before the config resolution, so it works with no token at
+  // all — which is the situation you are in when you most need it.
+  if (config.dryRun) {
+    const { payload: tracePayload } = buildTracePayload({
+      meta,
+      phases: results.phases ?? [],
+      plans: results.plans ?? [],
+      growth: results.growth ?? [],
+      config,
+      runId: `sweep-${randHex(6)}`,
+    });
+    return {
+      exported: false,
+      dryRun: true,
+      traces: tracePayload,
+      metrics: buildMetricsPayload({
+        meta,
+        timings: results.timings ?? [],
+        growth: results.growth ?? [],
+        indexes: results.indexes ?? [],
+        timeMs: Date.now(),
+      }),
+    };
+  }
+
   const cfg = resolveTelemetryConfig(env);
   if (!cfg.enabled) return { exported: false, reason: cfg.reason };
 
-  const meta = Object.fromEntries((results.meta ?? []).map((r) => [r.key, r.value]));
   const runId = `sweep-${randHex(6)}`;
   const timeMs = Date.now();
 

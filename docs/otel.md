@@ -219,6 +219,11 @@ node scripts/sweep-rows.mjs --rungs 1000,5000,25000 --iterations 40
 node scripts/sweep-rows.mjs --database-url postgresql://…  # bring your own DB
 ```
 
+Add `--dry-run` to build the payloads and write them to `$TMPDIR` without
+sending anything — useful when an ingress returns a bare `400`, or when the
+export target is unreachable, since it turns "the export failed" into a
+diffable artifact you can POST by hand.
+
 It boots a **throwaway** PostgreSQL cluster, applies
 `supabase/tests/bare-postgres-bootstrap.sql` plus every migration, and runs
 `supabase/tests/row-scaling-sweep.sql`. Throwaway because the sweep is a
