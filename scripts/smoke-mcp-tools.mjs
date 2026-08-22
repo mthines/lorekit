@@ -41,6 +41,27 @@
  * repo's standing rule that the write-heavy smokes run against preview only
  * (`.github/workflows/deploy.yml`).
  *
+ * ## Why this is NOT a ci.yml gate
+ *
+ * It was wired into ci.yml's integration job and reverted, and the reason is
+ * worth keeping: on the LOCAL stack there is no credential that gives this
+ * suite a usable identity.
+ *
+ * `mcp-handler.ts` passes `userId: null` to the tools for JWT auth on purpose
+ * ("RLS handles scoping"), so a JWT write is a NULL-`user_id` write at the tool
+ * layer — the same shape as a service-role write, and therefore the same
+ * documented local-only failure the integration job already calls out: the
+ * bundled older PostgREST cannot resolve the `UNIQUE NULLS NOT DISTINCT
+ * (user_id, scope, key)` upsert arbiter, so the row never lands and every read
+ * after it fails. Only an `lk_*` token threads a real user id, and the local
+ * stack has no `api_tokens` row to mint one from.
+ *
+ * So the gate lives on the deploy paths (`deploy.yml`'s smoke-preview and
+ * `preview.yml`'s smoke), where `LOREKIT_SMOKE_TOKEN` is a real credential
+ * against a real project. Adding a local run would need an `api_tokens` seed
+ * step first — the observation above is what makes that a known cost rather
+ * than a surprise.
+ *
  * ## Expectations come from the catalog
  *
  * The tool set, descriptions and input schemas are read from
@@ -784,6 +805,19 @@ known(
     );
   },
 );
+
+known('purge-unusable-on-the-jwt-tier', 'purge works for a dashboard-session caller', async () => {
+  // `tools/list` advertises `memory.purge` to every caller, but the JWT tier
+  // reaches `if (!userId) throw new Error('memory.purge requires a user_id')`
+  // (mcp/tools.ts) every time: `mcp-handler.ts` passes `userId: null` for JWT
+  // auth by design, so the two purge tools are unreachable from a dashboard
+  // session while working for an `lk_*` token. Observed on the local stack in
+  // CI; only a JWT run can see it, so the check states its own blindness rather
+  // than passing vacuously on an API token.
+  if (TIER !== 'user') skip('only a JWT caller reaches the null-userId path');
+  const r = await call('memory.purge', { retention_days: 365 });
+  ok(r.ok, `purge refused a JWT caller: ${JSON.stringify(r.error)}`);
+});
 
 known('key-length-unenforced', 'a key over the advertised 512 characters is refused', async () => {
   const key = 'k'.repeat(513);
