@@ -27,7 +27,7 @@
  * choice for many triggers sharing one selection.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { computeTooltipPosition } from '@/components/ui/Tooltip';
@@ -94,7 +94,17 @@ export function AnchoredTooltip({
   // dependency, not a convenience: the panel is only portaled once mounted, so
   // before that `panelRef.current` is null and the effect would measure nothing
   // and never re-run.
-  useEffect(() => {
+  //
+  // `useLayoutEffect`, because this runs BEFORE paint. Opening is safe either way
+  // — `pos` is null then, and the panel is held at `opacity-0` until it is placed
+  // — but MOVING is not: hovering from one bar to the next swaps `anchor` while
+  // the panel stays visible at `opacity-100`, so a post-paint effect shows the new
+  // content at the OLD bucket's coordinates for a frame. Across a 30-bar sparkbar
+  // that is a readout which visibly trails the cursor. Measuring in the layout
+  // phase commits the position in the same frame as the content it belongs to.
+  // (Bare, not an isomorphic wrapper: `Combobox`, `FilterMenu`, `FilterPill` and
+  // `FadeScroller` all measure this way.)
+  useLayoutEffect(() => {
     if (mounted && visible) reposition();
   }, [mounted, visible, reposition, children]);
 
