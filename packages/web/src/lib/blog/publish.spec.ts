@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPublished } from './publish';
+import { isPublished, draftsVisibleIn } from './publish';
 
 const NOW = new Date('2026-08-15T12:00:00Z');
 
@@ -27,5 +27,17 @@ describe('isPublished', () => {
   it('fails open on an unparseable date so a typo never buries a real post', () => {
     expect(isPublished('not-a-date', NOW)).toBe(true);
     expect(isPublished('', NOW)).toBe(true);
+  });
+});
+
+describe('draftsVisibleIn', () => {
+  it('hides drafts in production only', () => {
+    expect(draftsVisibleIn('production')).toBe(false);
+  });
+
+  it('shows drafts on preview, development, and local', () => {
+    expect(draftsVisibleIn('preview')).toBe(true);
+    expect(draftsVisibleIn('development')).toBe(true);
+    expect(draftsVisibleIn('local')).toBe(true);
   });
 });
