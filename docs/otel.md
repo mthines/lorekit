@@ -208,6 +208,8 @@ new Dash0 credentials — the `profiling` function exports through the same
 
 ### The row-scaling sweep
 
+Full runbook, flags and how to read the output: [benchmarking.md](./benchmarking.md).
+
 `scripts/sweep-rows.mjs` is the companion experiment to the metrics above, and
 it answers a different question. The query metrics tell you what production is
 doing *now*; the sweep tells you what it will do at 10× the rows — by growing

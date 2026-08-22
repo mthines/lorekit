@@ -111,8 +111,10 @@ memories where … limit v_limit)`), which stops counting at the ceiling instead
 of scanning everything. Re-run the sweep after either to confirm the plan
 becomes an `Index Only Scan` before moving the number.
 
-Run it with `pnpm nx sweep supabase` — see
-[otel.md](./otel.md#the-row-scaling-sweep) for the telemetry it emits.
+Run it with `pnpm nx sweep supabase`. The experiment itself — runbook, flags,
+what it isolates and what it does not — is in
+[benchmarking.md](./benchmarking.md); the telemetry each run emits is in
+[otel.md](./otel.md#the-row-scaling-sweep).
 
 ## Rate limiting
 
