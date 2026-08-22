@@ -10,7 +10,7 @@ import { COMMANDS_BY_NAME, STRICT_FLAG_COMMANDS, COMMAND_ALIASES } from '../src/
 // Catalog-derived, so the default this help PROMISES is the one the server
 // applies — see src/surfaces.generated.mjs.
 import { PURGE_RETENTION_DAYS_DEFAULT } from '../src/surfaces.generated.mjs';
-import { traceCommand } from '../src/telemetry.mjs';
+import { traceCommand, meterCommand } from '../src/telemetry.mjs';
 import { loadDotEnv } from '../src/dotenv.mjs';
 
 // Read the version from package.json so it always matches the published
@@ -863,12 +863,23 @@ async function main() {
 
   // Machine-facing commands (`hook`, `mcp`) own their stdout — a host's JSON
   // contract and JSON-RPC frames respectively — so they must bypass the usage
-  // and version branches, which print. They are also deliberately UNTRACED:
-  // they fire on every agent event, and a span per event is a cost the caller
-  // never asked for. `machine` in the registry is the single statement of that.
+  // and version branches, which print. `machine` in the registry is the single
+  // statement of that.
+  //
+  // They stay UNTRACED — a span per agent event is a firehose of near-identical
+  // traces, and these fire several times per turn — but they are no longer
+  // SILENT. `meterCommand` emits the invocation COUNTER only, carrying the same
+  // identity attributes the traced commands do, on a much tighter export budget
+  // (see `METERED_TIMEOUT_MS`). Without it the durable telemetry identity would
+  // differentiate users across `list`/`search`/`stats` while the traffic that
+  // actually dominates — the hooks on every turn — stayed invisible.
+  //
+  // The command runs FIRST and its exit code is returned unchanged: the host's
+  // stdout contract is written by `run` before any export is attempted, and a
+  // telemetry failure can neither alter the exit code nor corrupt the frame.
   const machineEntry = COMMANDS_BY_NAME.get(command);
   if (machineEntry?.machine) {
-    return machineEntry.run(args);
+    return meterCommand(machineEntry.name, VERSION, () => machineEntry.run(args));
   }
 
   if (args.version) {

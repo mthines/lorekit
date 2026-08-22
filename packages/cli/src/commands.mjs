@@ -25,6 +25,13 @@
 // event, and own their stdout (a host's JSON contract / JSON-RPC frames), so a
 // span's cost and an error message's bytes are both unacceptable there. They are
 // marked `machine` and dispatched before the usage branches.
+//
+// `traced: false` does NOT mean unmeasured. The dispatcher routes `machine`
+// commands through `meterCommand`, which emits the invocation COUNTER (with the
+// same identity attributes the traced commands carry) and no span, on a tighter
+// export budget. These two are the highest-volume entry points in the CLI, so
+// leaving them entirely silent meant the usage that dominates was the usage
+// nobody could see — a span each is still the wrong trade, a counter is not.
 
 import { install } from './install.mjs';
 import { uninstall } from './uninstall.mjs';

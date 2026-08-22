@@ -25,6 +25,10 @@ jobs:
   #    `code`   — any non-docs file touched → gates the `check` job.
   #    `api`    — API/backend paths → gates the (expensive) `integration` job.
   #    `plugin` — Claude-plugin paths → gates the `plugin` smoke job.
+  #    `web`    — dashboard paths (broad) → gates the `web-test` Storybook job.
+  #    `web_preview` — the narrower, Vercel-quota-metered subset → gates
+  #               `web-preview`. Two filters, not one, because the test job is
+  #               free CI compute and the preview is a metered deployment.
   #    `deploy` — the deploy pipeline + its scope resolver → gates `deploy-scope`.
   #
   #    A skipped required check is treated as passing by branch protection, so
@@ -39,6 +43,8 @@ jobs:
       api: ${{ steps.filter.outputs.api }}
       plugin: ${{ steps.filter.outputs.plugin }}
       web: ${{ steps.filter.outputs.web }}
+      web_preview: ${{ steps.filter.outputs.web_preview }}
+      preview_filter: ${{ steps.filter.outputs.preview_filter }}
       migrations: ${{ steps.filter.outputs.migrations }}
       deploy: ${{ steps.filter.outputs.deploy }}
     steps:
@@ -86,23 +92,51 @@ jobs:
           else
             echo "plugin=false" >> "$GITHUB_OUTPUT"
           fi
-          # Web gate: the Next.js dashboard, the workspace packages it compiles
-          # in, plus the workspace files that change how it installs or is
-          # configured. Drives the Storybook interaction + visual-regression job
-          # so it never boots a browser on unrelated PRs, and the Vercel preview.
+          # Web TEST gate: the Next.js dashboard, the workspace packages it
+          # compiles in, plus the workspace files that change how it installs or
+          # is configured. Drives the Storybook interaction + visual-regression
+          # job so it never boots a browser on unrelated PRs.
           #
           # `packages/schemas/` belongs here because packages/web declares
           # `@lorekit/schemas` as a `workspace:*` dependency and imports it
           # throughout src/ — a schemas-only change alters the built dashboard,
-          # so omitting it silently skipped BOTH the visual tests and the preview.
+          # so omitting it silently skipped the visual tests.
           #
-          # COPY of web-preview-deploy.yml's `web-path-filter` default (that is
-          # the canonical definition, and it must stay an ERE so it works both
-          # here under `grep -E` and there under a JS `RegExp`). Keep in sync.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/actions/vercel-preview-deploy/|\.github/workflows/(ci|web-preview|web-preview-deploy)\.yml)'; then
+          # Deliberately BROADER than the `web_preview` gate below: this job is
+          # free CI compute, so it should be jumpy — `pnpm-lock.yaml` moves the
+          # rendered output whenever a dep bump reaches the dashboard, and that
+          # is precisely what the visual baselines are for. `ci.yml` is here for
+          # the same reason as in every sibling gate: so an edit to this job runs
+          # the job.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github/workflows/ci\.yml$)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Web PREVIEW gate: a Vercel deployment, metered against a per-day
+          # quota, so this asks the narrower question — can this change alter
+          # what the deployed dashboard looks like, or how it gets deployed?
+          #
+          # COPY of scripts/web-preview-filter.mjs (the canonical definition,
+          # which documents why `ci.yml` and `pnpm-lock.yaml` are NOT on it) and
+          # of web-preview-deploy.yml's `web-path-filter` default. This job stays
+          # dependency-free like its siblings, so the string is duplicated and
+          # held in place by scripts/web-preview-filter.test.mjs — which fails
+          # when any of the three drifts.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'; then
+            echo "web_preview=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web_preview=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Preview-filter gate: the canonical filter module, its test, and the
+          # two workflows that carry a copy of the ERE — the test asserts all
+          # three agree, so it must run when ANY of them moves.
+          # `scripts/web-preview-filter` (no extension) matches both the module
+          # and its `.test.mjs`, same trick as the migration guards above.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/web-preview-filter|\.github/workflows/(ci|web-preview-deploy)\.yml$)'; then
+            echo "preview_filter=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "preview_filter=false" >> "$GITHUB_OUTPUT"
           fi
           # Migration-order gate: run when a migration is added/changed, or when
           # the guard/CI itself changes (so the guard is exercised on its own PR).
@@ -281,11 +315,16 @@ jobs:
   #    integration deployed a preview on EVERY PR/branch push — even docs- or
   #    backend-only ones — and each deployment counts against the Vercel Hobby
   #    quota even when the dashboard's Ignored Build Step skips the actual build.
-  #    Here the preview is gated on the `web` path filter, so a PR with no web
-  #    changes creates no Vercel deployment at all. The reusable workflow ALSO
-  #    skips redeploying when a new commit changed no web file SINCE this PR's
-  #    last preview, so a burst of non-web commits on a web PR spends one
+  #    Here the preview is gated on the `web_preview` path filter, so a PR with
+  #    no web changes creates no Vercel deployment at all. The reusable workflow
+  #    ALSO skips redeploying when a new commit changed no web file SINCE this
+  #    PR's last preview, so a burst of non-web commits on a web PR spends one
   #    deployment, not one per push.
+  #
+  #    `web_preview`, NOT the broader `web` that gates the Storybook job: that
+  #    one includes `ci.yml` and `pnpm-lock.yaml`, so every unrelated CI edit and
+  #    every dependency bump anywhere in the monorepo used to spend a deployment
+  #    on a dashboard nobody changed. See scripts/web-preview-filter.mjs.
   #
   #    The whole job body now lives in .github/workflows/web-preview-deploy.yml
   #    so the `/web-preview` command workflow can run the exact same flow. This
@@ -303,7 +342,7 @@ jobs:
   web-preview:
     name: Web — Vercel preview (changed)
     needs: [changes]
-    if: needs.changes.outputs.web == 'true'
+    if: needs.changes.outputs.web_preview == 'true'
     uses: ./.github/workflows/web-preview-deploy.yml
     permissions:
       contents: read
@@ -390,6 +429,40 @@ jobs:
       # node's built-in runner, zero deps — no install step needed.
       - name: Unit-test the deploy-scope resolver
         run: node --test scripts/resolve-deploy-scope.test.mjs
+
+  # ── Web-preview filter — the decision that spends Vercel quota ───────────────
+  #    The filter deciding whether a push deploys a dashboard preview exists in
+  #    THREE places: the canonical `scripts/web-preview-filter.mjs`, the
+  #    `changes` job's `web_preview` grep above, and web-preview-deploy.yml's
+  #    `web-path-filter` default. Neither workflow can import the module (one
+  #    runs before any toolchain setup, the other before its checkout), so the
+  #    copies are held in place by this test instead — it reads both YAML files
+  #    and fails on drift, and cross-checks `grep -E` against the JS `RegExp`
+  #    since the one ERE is consumed by both engines.
+  #
+  #    Drift is silent in both directions: too broad and every unrelated CI edit
+  #    burns a deployment from the daily quota (it did — that is why the filter
+  #    moved here), too narrow and a dashboard change ships with no preview to
+  #    review. Same reason as `deploy-scope` above: `scripts/**` is outside
+  #    `nx affected`, so the `check` job would never run this.
+  preview-filter:
+    name: Web-preview filter (unit)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.preview_filter == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Unit-test the web-preview path filter
+        run: node --test scripts/web-preview-filter.test.mjs
 
   # ── Edge typecheck — `deno check` over every Edge Function, ratcheted ────────
   #    Until this job existed, `supabase/functions/**` was typechecked by
@@ -668,7 +741,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, edge-typecheck]
+    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, preview-filter, edge-typecheck]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate

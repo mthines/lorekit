@@ -117,7 +117,8 @@ pnpm nx test mcp-core                            # needs supabase start
 > `git.deploymentEnabled = false`), so Vercel deploys nothing on a Git push —
 > the `deploy.yml` pipeline promotes the dashboard to production in lockstep
 > with the API, and `ci.yml`'s `web-preview` job deploys PR previews, gated on
-> the `web` path filter so a PR with no web changes spends no quota. See
+> the `web_preview` path filter (`scripts/web-preview-filter.mjs`) so a PR with
+> no dashboard change spends no quota. See
 > [docs/deployment.md](./docs/deployment.md).
 
 ---

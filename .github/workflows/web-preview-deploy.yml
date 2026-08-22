@@ -50,18 +50,19 @@ on:
         type: boolean
       web-path-filter:
         description: >-
-          CANONICAL extended-regex of paths whose change requires a new preview.
-          Written as an ERE so the same string works in `grep -E` and in a JS
-          `RegExp` — ci.yml's `changes` job keeps a copy for its coarse gate;
-          keep the two in sync.
+          Extended-regex of paths whose change requires a new preview. Written
+          as an ERE so the same string works in `grep -E` and in a JS `RegExp`.
 
-          `packages/schemas/` is here because packages/web declares
-          `@lorekit/schemas` as a `workspace:*` dependency and imports it
-          throughout src/, so a schemas-only change DOES change the built
-          dashboard.
+          The CANONICAL definition — with the rationale for every path on it and
+          the two notable ones off it (`ci.yml`, `pnpm-lock.yaml`) — is
+          `scripts/web-preview-filter.mjs`. This default and ci.yml's
+          `web_preview` grep are copies of that string, held to it by
+          `scripts/web-preview-filter.test.mjs` rather than by discipline;
+          neither consumer can import the module (this step runs before the
+          checkout, that job runs before any toolchain setup).
         required: false
         type: string
-        default: '^(packages/web/|packages/schemas/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(ci|web-preview|web-preview-deploy)\.yml$)'
+        default: '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'
     secrets:
       # Not `required: true`: on a fork PR these resolve to empty strings, and
       # the guard below turns that into an announced skip rather than a red X.
