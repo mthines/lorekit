@@ -67,7 +67,7 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by the `web-test` (Storybook) and `web-preview` (Vercel preview deploy) jobs, both gated on the `web` path filter so a PR with no web changes deploys nothing and spends no Vercel quota. |
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by the `web-test` (Storybook) job, gated on the `web` path filter, and the `web-preview` (Vercel preview deploy) job, gated on the narrower `web_preview` filter so a PR with no dashboard change deploys nothing and spends no Vercel quota ([why the two differ](#what-counts-as-preview-relevant)). |
 | `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit** — Supabase (migrations + Edge Functions) **and** the Vercel web dashboard, in lockstep. No test re-run — preview-first promotion only. |
 | `.github/workflows/web-preview-deploy.yml` | `workflow_call` (reusable) | **The dashboard preview flow itself**, called by the two workflows below. Owns the fork-secret guard, the incremental "is a redeploy needed?" decision, the PR-head checkout, and the sticky preview comment. See [Dashboard previews](#dashboard-previews-on-a-pr). |
 | `.github/workflows/web-preview.yml` | `/web-preview` comment, `workflow_dispatch` | **Deploy a dashboard preview on demand** for one PR, forcing past the incremental skip. See [Forcing a preview](#forcing-a-preview-web-preview). |
@@ -120,23 +120,56 @@ the same comment — only the decision to deploy differs. The build itself is th
 **Two gates decide whether a push spends a deployment** (the Vercel Hobby plan
 allows 100/day):
 
-1. The `changes` job's `web` path filter — no web-relevant file in the PR at
-   all ⇒ the job never runs.
-2. The reusable workflow's *incremental* check — a web-relevant file changed in
-   the PR, but nothing web-relevant changed **since this PR's last preview**
-   (diffed against the SHA recorded in the sticky comment's marker) ⇒ skip. So a
-   burst of backend-only commits on a web PR spends one deployment, not one per
-   push. It fails safe to deploying on any doubt: no prior preview, a
+1. The `changes` job's `web_preview` path filter — no preview-relevant file in
+   the PR at all ⇒ the job never runs.
+2. The reusable workflow's *incremental* check — a preview-relevant file changed
+   in the PR, but nothing preview-relevant changed **since this PR's last
+   preview** (diffed against the SHA recorded in the sticky comment's marker) ⇒
+   skip. So a burst of backend-only commits on a web PR spends one deployment,
+   not one per push. It fails safe to deploying on any doubt: no prior preview, a
    rebase/force-push, a >300-file diff, or an API error.
 
-Both gates read the same path list. The canonical copy is the
-`web-path-filter` input default in `web-preview-deploy.yml`; the `changes` job
-in `ci.yml` carries a duplicate for its coarse gate, written as an extended
-regex so the one string works under both `grep -E` and a JS `RegExp`. **Keep
-the two in sync.** The list covers `packages/web/`, `packages/schemas/`
-(a `workspace:*` dependency the dashboard compiles in — omitting it silently
-skips both the preview *and* the Storybook visual tests), `package.json`,
-`pnpm-lock.yaml`, `nx.json`, the composite action, and these workflow files.
+#### What counts as preview-relevant
+
+The filter answers one question: *can this file change what the deployed
+dashboard looks like, or how it gets deployed?* It covers `packages/web/`,
+`packages/schemas/` (a `workspace:*` dependency the dashboard compiles in), the
+**root** `package.json` (pnpm overrides reach into the dashboard's dependency
+graph), `nx.json`, the `vercel-preview-deploy` composite action, and
+`web-preview.yml` / `web-preview-deploy.yml`.
+
+Two paths are deliberately **off** it, because both were spending deployments on
+a dashboard nobody had changed:
+
+- **`.github/workflows/ci.yml`.** Every *other* gate in that file includes
+  itself, so the guard runs on its own PR — but for this gate that means any
+  unrelated CI edit (a new test step, a cache key, another job entirely) costs a
+  deployment. The `web-preview` job's own wiring does live in `ci.yml`, so when
+  you change *that*, force a preview with `/web-preview` to watch it run.
+- **`pnpm-lock.yaml`.** It moves on every dependency change anywhere in the
+  monorepo. The bumps that reach the dashboard also touch
+  `packages/web/package.json`, `packages/schemas/`, or the root manifest — all
+  listed above — so the lockfile adds no signal, only deployments.
+
+Both are still in the **broader `web` filter** that gates the Storybook
+interaction + visual-regression job. That distinction is the point: `web-test` is
+free CI compute and should be jumpy (a dep bump *can* move a pixel, and the
+baselines exist to catch it), while a preview is metered.
+
+The canonical filter — with the rationale for each path — is
+[`scripts/web-preview-filter.mjs`](../scripts/web-preview-filter.mjs). It is
+written as an extended regex so the one string works under both `grep -E`
+(`ci.yml`) and a JS `RegExp` (the github-script step, which runs *before* its
+checkout and so cannot import the module). Neither consumer can import it, so
+both carry a copy and `scripts/web-preview-filter.test.mjs` holds them to it:
+the `preview-filter` CI job fails on drift in either copy, and cross-checks that
+`grep -E` and `RegExp` agree on every case.
+
+To ask why a specific PR did or didn't get a preview:
+
+```bash
+git diff --name-only main... | xargs node scripts/web-preview-filter.mjs
+```
 
 ### Forcing a preview (`/web-preview`)
 
