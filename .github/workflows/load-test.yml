@@ -22,6 +22,24 @@
 # 90 % of the requested one, which is the signal that the runner is the
 # bottleneck.
 #
+# ENVIRONMENT SECRETS (`preview` and `production` each need all three)
+#   SUPABASE_PROJECT_REF       — already present; deploy.yml and preview.yml use
+#                                it. The project URL is DERIVED from it below
+#                                rather than stored again: a second secret
+#                                holding the same project is a second thing to
+#                                get out of sync, and every other workflow in
+#                                this repo already builds its URLs this way.
+#   SUPABASE_ANON_KEY          — already present; signing a provisioned user in
+#                                uses the anon key.
+#   SUPABASE_SERVICE_ROLE_KEY  — NEW, and the one thing here that cannot be
+#                                derived. Provisioning and deleting users goes
+#                                through the Auth admin API, and the
+#                                `lorekit_db_query_stats()` snapshot is
+#                                service-role-only, so a weaker credential
+#                                cannot run this workflow at all. Copy it from
+#                                Supabase ▸ Project Settings ▸ API ▸ `service_role`
+#                                for the SAME project as SUPABASE_PROJECT_REF.
+#
 # Full design and method: docs/benchmarking.md.
 
 name: Load test
@@ -69,8 +87,21 @@ jobs:
       contents: read
     timeout-minutes: 30
 
+    # Derived ONCE for the whole job, so the pre-check, the run and the sweeper
+    # cannot disagree about which project they are pointing at. `SUPABASE_URL` is
+    # the script's env contract (a plain URL is the right local interface); the
+    # workflow's job is to build it from the ref this repo already stores.
+    #
+    # Only the two NON-secret values live at job scope. The keys stay on the
+    # steps that actually need them, so `checkout` and `setup-node` never see a
+    # service-role credential.
+    env:
+      SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
+      TARGET: ${{ inputs.target || 'preview' }}
+
     steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -80,40 +111,59 @@ jobs:
       # Fail with a NAMED list rather than letting the script die on the first
       # missing value — mirrors deploy.yml's secret pre-check, because "which
       # secret" is the only question worth answering here.
+      #
+      # SUPABASE_PROJECT_REF is checked directly rather than through the derived
+      # SUPABASE_URL: with the ref unset the URL still interpolates to the
+      # syntactically valid `https://.supabase.co`, so a non-empty check on the
+      # URL would pass and the failure would resurface much later as a DNS error
+      # naming no secret at all.
       - name: Check the environment's secrets
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          set -euo pipefail
           missing=""
-          [ -n "$SUPABASE_URL" ]              || missing="$missing SUPABASE_URL"
+          [ -n "$SUPABASE_PROJECT_REF" ]      || missing="$missing SUPABASE_PROJECT_REF"
           [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] || missing="$missing SUPABASE_SERVICE_ROLE_KEY"
           [ -n "$SUPABASE_ANON_KEY" ]         || missing="$missing SUPABASE_ANON_KEY"
           if [ -n "$missing" ]; then
-            echo "::error::Missing secrets for the '${{ inputs.target || 'preview' }}' environment:$missing. Add them under Settings ▸ Environments."
+            echo "::error::Missing secrets for the '$TARGET' environment:$missing. Add them under Settings ▸ Environments ▸ $TARGET. SUPABASE_SERVICE_ROLE_KEY comes from Supabase ▸ Project Settings ▸ API ▸ service_role, for the same project as SUPABASE_PROJECT_REF; the other two are already used by deploy.yml."
             exit 1
           fi
+          # Deliberately NOT echoing the resolved project ref. It is stored as a
+          # secret, so Actions masks it and the line would read `project: ***` —
+          # worse than nothing, because it looks like a diagnostic. The job name
+          # (`Load test → <target>`) plus the `environment:` on the run page are
+          # what identify which deployment was driven. The same masking applies
+          # to the script's own `(https://***.supabase.co)` banner line.
+          echo "Secrets present for '$TARGET'."
 
       # The load test's own logic is unit-tested; run those first so a broken
       # percentile or a mis-built schedule fails in seconds rather than after
       # provisioning users against a real project.
       - name: Unit-test the load-test logic
         run: |
+          set -euo pipefail
           node --test scripts/load-test-lib.test.mjs
           node --test scripts/load-telemetry.test.mjs
 
       - name: Run the load test
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           # Absent → the run still prints its report and says the export was
           # skipped. A missing telemetry token must not fail a load test.
           LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
         run: |
+          # `pipefail` is load-bearing, not boilerplate: GitHub's default shell
+          # is `bash -e`, which takes a pipeline's exit status from its LAST
+          # command. Without this, `node … | tee` reports tee's success and a
+          # load test that died mid-run would have gone GREEN.
+          set -euo pipefail
           node scripts/load-test.mjs \
-            --target "${{ inputs.target || 'preview' }}" \
+            --target "$TARGET" \
             --rps "${{ inputs.rps || '20' }}" \
             --duration "${{ inputs.duration || '120' }}" \
             --users "${{ inputs.users || '5' }}" \
@@ -121,9 +171,16 @@ jobs:
 
       # The report is the artefact worth keeping: the client percentiles and the
       # per-statement delta, on a run whose Dash0 trace may be sampled away.
+      # (The same text is `tee`-d to the log above — the artefact is for
+      # diffing two runs, not for reading this one.)
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@v4
+        # v6, not v5: run 32580068106 warned that this action targets Node 20 and
+        # is being force-run on Node 24. `v5` is STILL `using: node20` — only v6
+        # declares node24 — so v5 would not have cleared the deprecation. Same
+        # three inputs in both. This workflow is the repo's only upload-artifact
+        # caller, so the bump is local.
+        uses: actions/upload-artifact@v6
         with:
           name: load-report-${{ inputs.target || 'preview' }}-${{ github.run_id }}
           path: load-report.txt
@@ -132,9 +189,16 @@ jobs:
       # Belt and braces. The script deletes its users in a `finally`, so this
       # only fires if the job was killed hard enough to skip that — a runner
       # timeout or a cancellation. Residue is real rows in a real project.
+      #
+      # Deliberately not `-e`: a failed sweep must not turn a green load test
+      # red, but it must say so with the exit code rather than swallowing it.
       - name: Sweep any residue
         if: always()
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: node scripts/load-test-cleanup.mjs || echo "::warning::Residue sweep failed; check for loadtest-* users."
+        run: |
+          set -uo pipefail
+          node scripts/load-test-cleanup.mjs && rc=0 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::Residue sweep exited $rc; check the '$TARGET' project for leftover loadtest-* users."
+          fi
