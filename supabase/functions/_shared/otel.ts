@@ -27,6 +27,7 @@ import type { Database } from './database.types.ts';
 import type { DbClient } from './db-client.ts';
 import { formatTraceparent, parseTraceparent } from './trace-context.ts';
 import { attributeIoTime, type IoInterval } from './io-ledger.ts';
+import { translateDbError } from './api/errors.ts';
 
 /** PostgREST error shape returned by @supabase/supabase-js. */
 type PostgrestError = { message: string; details?: string | null; hint?: string | null; code?: string };
@@ -698,6 +699,31 @@ function stampIoAttribution(span: Span, batch: ExportBatch): void {
 
 // ── createTracedClient — automatic DB spans ───────────────────────────────────
 
+/**
+ * True for a Postgrest/Postgres error the app layer treats as a well-known,
+ * caller-addressable outcome rather than a server-side fault.
+ *
+ * Two sources feed this:
+ *  - `translateDbError` already maps a closed set of SQLSTATEs (`LK001`
+ *    memory cap, `LK002` org permission denial, `23505` conflict) to a
+ *    specific 4xx/429 `RestError` — a non-null result means some handler
+ *    will surface this to the caller as an intentional response, not a 500.
+ *  - `unknown_org` (Postgres `P0001`, raised by `memory_delete` /
+ *    `memory_write`) has no `translateDbError` entry (see the callers'
+ *    docblocks) but is equally caller-addressable — a slug that does not
+ *    resolve, mapped to a 404 at the call site.
+ *
+ * Kept in `otel.ts` rather than folded into `translateDbError` itself: the
+ * latter's return value is an HTTP mapping construct callers use to build a
+ * `Response`, while this is a tracing-only classification consulted before
+ * any handler has run — conflating the two would make `translateDbError`
+ * responsible for a concern (span status) none of its callers asked it for.
+ */
+function isExpectedDbError(error: { code?: string; message?: string }): boolean {
+  if (translateDbError(error)) return true;
+  return typeof error.message === 'string' && error.message.includes('unknown_org');
+}
+
 type Op = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'UPSERT' | 'RPC';
 
 interface QueryState {
@@ -946,6 +972,17 @@ export class TracedQuery<T = Record<string, unknown>> {
           if (result.error.code === 'PGRST116') {
             // .single() no rows — expected, not an error
             dbSpan.setAttributes({ 'db.no_rows': true });
+          } else if (isExpectedDbError(result.error)) {
+            // A well-known, caller-addressable outcome (memory cap, org
+            // permission denial, unique-constraint conflict, an RPC-raised
+            // "unknown_org") that the handler above maps to a specific 4xx —
+            // per the OTel semantic conventions (see `Span.clientError`'s
+            // docblock), a server span should carry status=ERROR only for
+            // server-side faults, not for errors caused by the caller's
+            // input. Marking these ERROR inflated error-rate alerts with
+            // requests the API was handling correctly (e.g. DELETE on a
+            // nonexistent org resolving to a clean 404).
+            dbSpan.clientError(`PostgrestError: ${result.error.message}`);
           } else {
             dbSpan.error(`PostgrestError: ${result.error.message}`);
           }
