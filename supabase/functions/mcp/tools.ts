@@ -144,8 +144,8 @@ export async function toolWrite(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
-  if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
-  if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
+  if (!rawScope || !key || !value) throw new UserInputError('scope, key, and value are required');
+  if (value.length > MAX_VALUE_BYTES) throw new UserInputError(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
   // Optional creation-date override (migration use case). Validates + rejects
   // future dates; null when omitted so the DB applies its now() default.
@@ -264,7 +264,7 @@ export async function toolRead(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
-  if (!rawScope || !key) throw new Error('scope and key are required');
+  if (!rawScope || !key) throw new UserInputError('scope and key are required');
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
@@ -288,7 +288,7 @@ export async function toolList(
   const { scope: rawScope, tags: rawTags, limit = 50, cursor: cursorParam, kind, host } = params;
   // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
   const tags = toTagList(rawTags);
-  if (!rawScope) throw new Error('scope is required');
+  if (!rawScope) throw new UserInputError('scope is required');
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
 
@@ -455,7 +455,7 @@ export async function toolDelete(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key, force = false, org } = params;
-  if (!rawScope || !key) throw new Error('scope and key are required');
+  if (!rawScope || !key) throw new UserInputError('scope and key are required');
   const scope = validateScope(rawScope);
 
   span.setAttributes({
@@ -526,7 +526,7 @@ export async function toolSearch(
   const { q, scopes, tags: rawTags, limit = 20, cursor: cursorParam } = params;
   // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
   const tags = toTagList(rawTags);
-  if (!q) throw new Error('q is required');
+  if (!q) throw new UserInputError('q is required');
   const pageLimit = Math.min(limit, 100);
 
   span.setAttributes({ 'lorekit.search.query': q });
@@ -598,7 +598,7 @@ export async function toolArchive(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
-  if (!rawScope || !key) throw new Error('scope and key are required');
+  if (!rawScope || !key) throw new UserInputError('scope and key are required');
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
@@ -644,7 +644,7 @@ export async function toolListArchived(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, limit = 50 } = params;
-  if (!rawScope) throw new Error('scope is required');
+  if (!rawScope) throw new UserInputError('scope is required');
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope });
@@ -678,7 +678,7 @@ export async function toolRestore(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
-  if (!rawScope || !key) throw new Error('scope and key are required');
+  if (!rawScope || !key) throw new UserInputError('scope and key are required');
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
@@ -728,7 +728,7 @@ export async function toolPurge(
   _keyScoping?: KeyRestriction,
 ) {
   const retentionDays = Math.min(Math.max(Number(params.retention_days ?? PURGE_RETENTION_DAYS_DEFAULT), 1), 365);
-  if (!userId) throw new Error('memory.purge requires a user_id');
+  if (!userId) throw new UserInputError('memory.purge requires a user_id');
 
   span.setAttributes({
     'lorekit.purge.retention_days': retentionDays,
@@ -800,7 +800,7 @@ async function resolveOrgId(
       .maybeSingle();
 
     if (error) throw new Error((error as { message: string }).message);
-    if (!org) throw new Error(`org not found: ${slug}`);
+    if (!org) throw new UserInputError(`org not found: ${slug}`);
     return (org as { id: string }).id;
   }
 
@@ -814,7 +814,7 @@ async function resolveOrgId(
     .maybeSingle();
 
   if (error) throw new Error((error as { message: string }).message);
-  if (!row) throw new Error(`org not found: ${slug}`);
+  if (!row) throw new UserInputError(`org not found: ${slug}`);
   // Routed through `unknown` rather than asserted directly, unlike the JWT
   // branch above. `maybeSingle()` returns one row at runtime but the generated
   // DB types describe it as an array, so `row as { org_id: string }` is a
@@ -836,7 +836,7 @@ export async function toolOrgCreate(
   span: Span,
 ) {
   const { slug, name } = params;
-  if (!slug || !name) throw new Error('slug and name are required');
+  if (!slug || !name) throw new UserInputError('slug and name are required');
 
   span.setAttributes({ 'lorekit.org.slug': slug });
 
@@ -920,7 +920,7 @@ export async function toolOrgRename(
   span: Span,
 ) {
   const { slug, name } = params;
-  if (!slug || !name) throw new Error('slug and name are required');
+  if (!slug || !name) throw new UserInputError('slug and name are required');
 
   span.setAttributes({ 'lorekit.org.slug': slug });
 
@@ -951,7 +951,7 @@ export async function toolOrgDelete(
   span: Span,
 ) {
   const { slug } = params;
-  if (!slug) throw new Error('slug is required');
+  if (!slug) throw new UserInputError('slug is required');
 
   span.setAttributes({ 'lorekit.org.slug': slug });
 
@@ -986,7 +986,7 @@ export async function toolPurgeExpired(
   _keyScoping?: KeyRestriction,
 ) {
   if (!userId) {
-    throw new Error('memory.purge_expired requires a user_id');
+    throw new UserInputError('memory.purge_expired requires a user_id');
   }
 
   span.setAttributes({ 'lorekit.tool.name': 'memory.purge_expired' });
