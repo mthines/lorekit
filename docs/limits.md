@@ -42,6 +42,78 @@ When a write would exceed the cap, the DB raises a custom error (SQLSTATE
 > delete unused memories, or upgrade your plan — see
 > https://lorekit.io (or contact support) to increase it."
 
+### The cap is also a WRITE-COST parameter
+
+Raising it is not free, and not for the reason you would expect. The trigger
+does this on **every** insert:
+
+```sql
+select count(*) into v_count
+  from memories
+ where user_id = new.user_id
+   and archived_at is null;
+```
+
+So enforcement is **O(rows that user already has)**, paid per write. And no
+index covers that predicate on the personal branch:
+
+| Index | Definition | Serves the count? |
+|-------|-----------|-------------------|
+| `memories_archived_at_idx` | `(archived_at) WHERE archived_at IS NOT NULL` | No — the **inverse** predicate |
+| `memories_org_id_active_idx` | `(org_id) WHERE archived_at IS NULL` | Only the **org** branch |
+| `memories_user_idx` | `(user_id)` | Partially — then a heap filter per row |
+
+`00035_memory_count.sql`'s comment ("reuses `memories_user_idx` + the
+`archived_at IS NULL` partial index") reads as more reassuring than it is: the
+only active partial index is org-keyed. `lorekit_memory_count()` pays the same
+cost on every `/settings/plan` page load.
+
+**Measured** by `supabase/tests/row-scaling-sweep.sql` on PostgreSQL 16 (local
+hardware — read the shape, not the milliseconds):
+
+| Focal-user rows | `cap_count` p50 | `insert` p50 (trigger ON) | `insert` p50 (trigger OFF) |
+|---|---|---|---|
+| 1,000 | 0.25 ms | 0.49 ms | 0.17 ms |
+| 5,000 | 0.99 ms | 1.27 ms | 0.15 ms |
+| 25,000 | 4.76 ms | 5.07 ms | 0.14 ms |
+| 100,000 | **43.6 ms** | **43.6 ms** | 0.15 ms |
+
+Three conclusions, and one prediction that turned out **wrong**:
+
+1. **The cap trigger is essentially the entire write cost** once a user has any
+   volume. At 100k rows an insert takes 43.6 ms, of which ~43.6 ms is the count.
+2. **Index maintenance is flat** — `insert (trigger OFF)` does not move across a
+   100× row increase, despite 21 indexes on `memories` including three GIN
+   (`fts`, `key_trgm`, `value_trgm`). The predicted GIN write amplification is
+   not there at this scale. (`memories_value_trgm_idx` is still the largest
+   index by far — ~56 % of all index bytes — but its *maintenance* cost per row
+   is constant.)
+3. **Reads are fine.** FTS 1.1×, keyset 2.8×, point read 3.3×, scope list 0.7×
+   across the same 100× growth.
+
+The **org branch is the control, and it is flat**: 0.012 ms → 0.039 ms, an
+`Index Only Scan` touching 2 buffers, because it has its partial index. That is
+what makes the missing personal index the cause rather than table size.
+
+The plan on the personal branch varies with selectivity — `Seq Scan` when the
+user dominates the table, `Bitmap Heap Scan` or `Index Scan` when diluted — but
+the **shape is O(rows-per-user) either way**.
+
+**So: 5000 is a defensible ceiling as it stands** (≈1 ms of enforcement per
+write), and the cheap fix before raising it is one index:
+
+```sql
+create index memories_user_active_idx on memories (user_id) where archived_at is null;
+```
+
+Bounding the scan is a second option (`select count(*) from (select 1 from
+memories where … limit v_limit)`), which stops counting at the ceiling instead
+of scanning everything. Re-run the sweep after either to confirm the plan
+becomes an `Index Only Scan` before moving the number.
+
+Run it with `pnpm nx sweep supabase` — see
+[otel.md](./otel.md#the-row-scaling-sweep) for the telemetry it emits.
+
 ## Rate limiting
 
 Each user is limited to **120 requests per minute** by default, across every

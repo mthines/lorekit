@@ -357,6 +357,16 @@ jobs:
       - name: Unit-test the remote-migration-drift classifier
         run: node --test scripts/check-remote-migration-drift.test.mjs
 
+      # The row-scaling sweep itself is a MANUAL experiment and deliberately does
+      # not run here — it grows a table to 100k rows to find where per-user cost
+      # bends, which is not something to do on every PR. But its OTLP exporter is
+      # unit-tested, because that failure mode is silent and remote: a malformed
+      # payload is a 400 from the ingress, and the only symptom is a dashboard
+      # that never gains a datapoint on a script run rarely enough that nobody
+      # would notice for weeks.
+      - name: Unit-test the sweep's OTLP payloads
+        run: node --test scripts/sweep-telemetry.test.mjs
+
       - name: Check migration ordering against the base branch
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
