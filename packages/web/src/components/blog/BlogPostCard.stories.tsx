@@ -14,6 +14,7 @@ const POST: PostMeta = {
   tags: ['self-healing', 'self-improving', 'agents'],
   order: 1,
   keywords: [],
+  isDraft: false,
 };
 
 const meta: Meta<typeof BlogPostCard> = {
@@ -35,6 +36,17 @@ type Story = StoryObj<typeof BlogPostCard>;
 
 /** Visual-regression story: the card as it appears on the `/blog` index. */
 export const Default: Story = {};
+
+/**
+ * A future-dated draft — shows the "Not yet live" badge (preview/dev only).
+ * Snapshot disabled: no committed baseline ships with this story, so it stays
+ * out of visual regression until someone generates one with `-u`. It still
+ * renders in Storybook for manual review and keeps the `PostMeta` type honest.
+ */
+export const Draft: Story = {
+  args: { post: { ...POST, isDraft: true } },
+  parameters: { chromatic: { disableSnapshot: true } },
+};
 
 // Keeps the `StoryObj<typeof BlogPostCard>` type so a `PostMeta` change breaks
 // this file at compile time.

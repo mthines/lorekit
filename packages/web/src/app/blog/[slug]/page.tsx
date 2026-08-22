@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { MDXRemote } from 'next-mdx-remote/rsc';
-import { getAllPosts, getPost } from '@/lib/blog/content';
+import { getAllPosts, getPost, draftsVisible } from '@/lib/blog/content';
 import { blogMdxComponents } from '@/components/blog/mdx-components';
 import { blogMdxOptions } from '@/lib/blog/mdx-render-options';
 import { BlogProse } from '@/components/blog/BlogProse';
@@ -12,6 +12,7 @@ import { MobileTableOfContents } from '@/components/blog/MobileTableOfContents';
 import { ReadingProgress } from '@/components/blog/ReadingProgress';
 import { PostLikes } from '@/components/blog/PostLikes';
 import { BlogPostCta } from '@/components/blog/BlogPostCta';
+import { DraftNotice } from '@/components/blog/DraftNotice';
 import { ReadingTelemetry } from '@/components/content/ReadingTelemetry';
 import { formatPostDate, readingLabel } from '@/lib/blog/format';
 
@@ -41,6 +42,10 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
   const { slug } = await params;
   const post = getPost(slug);
   if (!post) notFound();
+  // Defence in depth: a draft is already absent from `generateStaticParams` in
+  // production (so it 404s via `dynamicParams = false`), but guard here too so a
+  // future direct caller can never render one outside preview/dev.
+  if (post.isDraft && !draftsVisible()) notFound();
 
   return (
     <>
@@ -62,6 +67,8 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
             <ArrowLeft className="size-4" aria-hidden />
             All posts
           </Link>
+
+          {post.isDraft && <DraftNotice date={post.date} />}
 
           <header className="mb-8 border-b border-[var(--color-border)] pb-8">
             <h1 className="text-2xl font-bold leading-tight tracking-tight text-[var(--color-content-primary)] sm:text-3xl">

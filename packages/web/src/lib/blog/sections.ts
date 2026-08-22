@@ -5,9 +5,10 @@
  * `src/content/blog/<id>.mdx` file (with matching frontmatter) AND adding its
  * entry here. The drift guard `sections.spec.ts` fails if the two disagree.
  *
- * `id` is the URL slug and the MDX filename stem. Order here is the LISTING order
- * on `/blog` (newest first); the post's own `date` frontmatter is the displayed
- * date, and `order` frontmatter must agree with this array's index.
+ * `id` is the URL slug and the MDX filename stem. The `/blog` index sorts posts
+ * by their `date` frontmatter (newest first — see `getAllPosts`); `order` here is
+ * the registry's own stable index, which the post's `order` frontmatter must
+ * agree with (`sections.spec.ts` guards the drift).
  */
 export interface BlogSection {
   /** URL slug and MDX filename stem. */

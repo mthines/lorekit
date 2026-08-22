@@ -25,3 +25,17 @@ export function isPublished(dateStr: string, now: Date = new Date()): boolean {
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   return postDay <= today;
 }
+
+/**
+ * Whether unpublished drafts (future-dated posts) are LISTED and reachable in a
+ * given deployment environment. They are everywhere EXCEPT production, so a
+ * finished post can be read and shared on a Vercel **preview** deployment while
+ * staying hidden — and 404 — in prod. The caller resolves the environment with
+ * the shared `resolveDeploymentEnvironment` (which cross-checks `VERCEL_ENV`
+ * against `NODE_ENV`, so a stray `VERCEL_ENV=production` on a dev machine can't
+ * accidentally hide drafts locally, nor a preview build accidentally show them
+ * in prod).
+ */
+export function draftsVisibleIn(deploymentEnv: string): boolean {
+  return deploymentEnv !== 'production';
+}

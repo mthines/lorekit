@@ -17,6 +17,11 @@ export function BlogPostCard({ post }: { post: PostMeta }) {
       className="group block rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/40 p-5 transition-colors duration-200 hover:border-[var(--color-accent)]/50 hover:bg-[var(--color-bg-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] sm:p-6"
     >
       <div className="flex items-center gap-2 font-mono text-xs text-[var(--color-content-tertiary)]">
+        {post.isDraft && (
+          <span className="rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-accent)]">
+            Not yet live
+          </span>
+        )}
         <time dateTime={post.date}>{formatPostDate(post.date)}</time>
         <span aria-hidden>·</span>
         <span>{readingLabel(post.readingMinutes)}</span>
