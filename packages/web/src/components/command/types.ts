@@ -104,6 +104,17 @@ export interface Command {
    * recent) or changes too fast for a point-in-time snapshot to stay correct.
    */
   search?: CommandSearch;
+  /**
+   * Only meaningful alongside `search`, and only at the ROOT level. When the
+   * root's normal label/description/group filter comes up empty for a
+   * non-empty query, the palette falls back to THIS command's `search`
+   * in-place — no drilling in, no extra keystroke, no breadcrumb — so pasting
+   * a value that matches nothing by label (a full memory key, say) still
+   * finds something without first navigating into the command manually.
+   * At most one root command should set this; if several do, the first one
+   * registered wins.
+   */
+  fallbackSearch?: boolean;
 }
 
 /** One frame in the navigation stack — the palette supports nesting. */

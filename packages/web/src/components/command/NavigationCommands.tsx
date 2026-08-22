@@ -82,6 +82,10 @@ function lessonToCommand(lesson: LessonEntry, openLessonById: (ref: { scope: str
     id: `lore-lesson-${lesson.scope}::${lesson.key}`,
     label: `${lesson.scope} · ${lesson.key}`,
     description: lesson.scope,
+    // Labelled so a root-level fallback match (see `fallbackSearch` on the
+    // command below) renders under its own "Lore" separator rather than as an
+    // ungrouped run mixed visually with whatever else is on screen.
+    group: 'Lore',
     onSelect: () => openLessonById({ scope: lesson.scope, key: lesson.key }, lesson),
   };
 }
@@ -112,12 +116,21 @@ function LoreCommands() {
             id: 'lore-no-lessons',
             label: query.trim() ? `No lessons match "${query.trim()}"` : 'No lessons found',
             description: 'Visit the Lore Explorer to add some.',
+            group: 'Lore',
             onSelect: () => router.push('/lore'),
           },
         ];
       }
       return lessons.map((lesson) => lessonToCommand(lesson, openLessonById));
     },
+    // Lets a memory key pasted at the ROOT palette (before drilling into
+    // "Open Lesson…" at all) resolve directly: when nothing at the root
+    // matches by label, the palette falls back to running THIS search
+    // in-place. A pasted `scope::key` identifier never matches a root
+    // command's label/description/group, so without this the user would have
+    // to know to open "Open Lesson…" first — defeating the point of being
+    // able to paste the key from the very start.
+    fallbackSearch: true,
   });
 
   return null;
