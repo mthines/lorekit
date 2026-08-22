@@ -55,7 +55,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { sanitizeOrigin } from '../_shared/origin.ts';
 import { traceRequest, type Span } from '../_shared/otel.ts';
-import { toolWrite } from './tools.ts';
+import { toolDelete, toolWrite } from './tools.ts';
 import {
   selectWebhookSecrets,
   type WebhookSecretRow,
@@ -92,7 +92,7 @@ const SUPPORTED_EVENTS = new Set([
 // ── Signal-quality helpers (inlined — Deno edge functions are self-contained) ─
 // Keep in sync with packages/mcp-server/src/webhooks/signal-filter.ts
 
-type WebhookTier = 'WRITE' | 'SKIP';
+type WebhookTier = 'WRITE' | 'PURGE' | 'SKIP';
 
 const BOT_NOISE_PATTERNS: readonly RegExp[] = [
   /^(Build|Deploy|Test|CI|Checks?) (passed|failed|succeeded|completed)/i,
@@ -106,7 +106,35 @@ function classifyWebhookAction(event: string, action: string): WebhookTier {
   if (event === 'pull_request_review' && action === 'submitted') return 'WRITE';
   if (event === 'pull_request_review_comment' && action === 'created') return 'WRITE';
   if (event === 'issue_comment' && action === 'created') return 'WRITE';
+  if (event === 'pull_request' && action === 'closed') return 'PURGE';
   return 'SKIP';
+}
+
+/**
+ * The per-PR state record a merged pull_request retires, or null when this
+ * delivery retires nothing. Mirror of prStatePurgeTarget in
+ * packages/mcp-server/src/webhooks/signal-filter.ts — keep both in sync.
+ *
+ * A close WITHOUT a merge returns null: the PR can be reopened and reviewed
+ * again, and its carried findings are still wanted then. A missing field also
+ * returns null rather than widening to a prefix delete.
+ */
+function prStatePurgeTarget(
+  event: string,
+  action: string,
+  payload: Record<string, any>,
+): { scope: string; key: string } | null {
+  if (classifyWebhookAction(event, action) !== 'PURGE') return null;
+
+  const pr = payload['pull_request'];
+  if (pr?.['merged'] !== true) return null;
+
+  const repo = payload['repository']?.['full_name'];
+  const head = pr['head']?.['ref'];
+  const num = pr['number'];
+  if (!repo || !head || typeof num !== 'number') return null;
+
+  return { scope: `branch::${repo}::${head}`, key: `ci-state::pr-review-${num}` };
 }
 
 function isSignalWorthy(body: string): boolean {
@@ -434,6 +462,17 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     return new Response('OK', { status: 200 });
   }
 
+  // A closed pull_request writes nothing: a merged PR retires the per-PR state
+  // record `pr-reviewer` keeps, and archiving it here makes the cleanup
+  // immediate instead of waiting out the record's own 7-day TTL. Handled beside
+  // the installation branch rather than inside the candidate-write path below,
+  // because it is a different kind of delivery — and `pull_request` is
+  // deliberately NOT added to SUPPORTED_EVENTS, which gates comment events.
+  if (classifyWebhookAction(event, earlyPayload['action'] ?? 'unknown') === 'PURGE') {
+    await purgePrStateRecord(db, event, earlyPayload, span);
+    return new Response('OK', { status: 200 });
+  }
+
   // Report unsupported event types so they are visible in Dash0 rather than
   // silently discarded. We still return 200 OK — GitHub retries on 4xx/5xx
   // which would flood the delivery log for every push, star, etc.
@@ -546,6 +585,85 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     });
     span.error(`${e.name}: ${e.message}`);
     return new Response('Internal Server Error', { status: 500 });
+  }
+}
+
+/**
+ * Archive the per-PR state record a merged pull request retires.
+ *
+ * Best-effort by design. The record carries a 7-day TTL refreshed on every
+ * write, so it already expires a week after the PR goes quiet — nothing here is
+ * required for correctness, and every failure path returns quietly rather than
+ * turning a delivery GitHub would retry into a 500.
+ *
+ * Ownership is the load-bearing part. A webhook is anonymous, and `memory_delete`
+ * resolves the actor from the user id it is handed; passing none would leave the
+ * archive unattributed. So the owner comes from the App installation —
+ * `github_installations` maps `installation_id -> user_id`, and only once a login
+ * has linked it (`status = 'linked'`; a fresh install sits at `'pending'` with a
+ * NULL user_id). No linked owner means no purge, and the TTL collects the record
+ * exactly as it would have.
+ */
+async function purgePrStateRecord(
+  db: ReturnType<typeof createClient>,
+  event: string,
+  payload: Record<string, any>,
+  span: Span,
+): Promise<void> {
+  try {
+    const target = prStatePurgeTarget(event, payload['action'] ?? 'unknown', payload);
+    if (!target) {
+      span.setAttributes({ 'lorekit.purge.skip_reason': 'not_a_merged_pull_request' });
+      return;
+    }
+
+    // Same guard the candidate-write path applies before a repo name reaches a
+    // DB filter.
+    const repo = payload['repository']?.['full_name'];
+    if (typeof repo !== 'string' || !SAFE_FULL_NAME.test(repo.toLowerCase())) {
+      span.setAttributes({ 'lorekit.purge.skip_reason': 'implausible_repo_full_name' });
+      return;
+    }
+
+    const installationId = payload['installation']?.['id'];
+    if (!installationId) {
+      span.setAttributes({ 'lorekit.purge.skip_reason': 'no_installation_in_payload' });
+      return;
+    }
+
+    const { data, error } = await db
+      .from('github_installations')
+      .select('user_id')
+      .eq('installation_id', installationId)
+      .eq('status', 'linked')
+      .maybeSingle();
+
+    const userId = (data as { user_id?: string | null } | null)?.user_id ?? null;
+    if (error || !userId) {
+      span.setAttributes({
+        'lorekit.purge.skip_reason': error
+          ? 'installation_lookup_failed'
+          : 'installation_not_linked_to_a_user',
+      });
+      return;
+    }
+
+    // force: false — soft-archive. The row is hidden from reads, so pr-reviewer's
+    // next run takes its first-run path (the intended outcome), and the retention
+    // job hard-deletes it later. An irreversible delete driven by an inbound
+    // webhook buys nothing.
+    await toolDelete(db, { scope: target.scope, key: target.key, force: false }, userId, span);
+    span.setAttributes({
+      'lorekit.scope': target.scope,
+      'lorekit.key': target.key,
+      'lorekit.purge.archived': true,
+    });
+  } catch (err) {
+    const e = err as Error;
+    span.setAttributes({
+      'lorekit.purge.error.type': e.name,
+      'lorekit.purge.error.message': e.message,
+    });
   }
 }
 

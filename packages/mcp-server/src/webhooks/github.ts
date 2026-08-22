@@ -4,6 +4,11 @@
  * pull_request_review_thread, and issue_comment events.
  * Creates a candidate memory entry tagged source::pr-webhook.
  *
+ * Also listens for `pull_request` closed, which writes nothing: a merged PR
+ * retires the per-PR state record `pr-reviewer` keeps, and this archives it so
+ * the record goes at merge rather than seven days later. See handlePrStatePurge
+ * for why that purge is best-effort by design.
+ *
  * Two signal-quality gates are applied before every write:
  *   1. classifyWebhookAction — only 'created', 'submitted', and 'resolved'
  *      actions carry durable signal; edits, deletes, dismissals are skipped.
@@ -17,9 +22,10 @@
  *
  * Per otel-instrumentation skills: spans on all operations.
  */
-import { SpanStatusCode } from '@opentelemetry/api';
+import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import {
   createServiceClient,
+  deleteMemory,
   getTracer,
   sanitizeOrigin,
   webhookSignalTier,
@@ -29,7 +35,8 @@ import {
 } from '@lorekit/core';
 import { logger } from '../logger.js';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { classifyWebhookAction, isSignalWorthy } from './signal-filter.js';
+import { classifyWebhookAction, isSignalWorthy, prStatePurgeTarget } from './signal-filter.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Read lazily (not as module-level consts) so tests that set process.env in
 // beforeEach — after this module has already been imported — see the value
@@ -55,6 +62,83 @@ function verifyHmac(body: string, signature: string | null): boolean {
   }
 }
 
+/**
+ * Archive the per-PR state record a merged pull request retires.
+ *
+ * `pr-reviewer` (mthines/agent-skills) keeps one state record per PR holding its
+ * delta baseline, run-mode history, open threads and carried findings. The
+ * record carries a 7-day TTL refreshed on every write, so it already expires a
+ * week after the PR goes quiet — **nothing here is required for correctness.**
+ * This makes the cleanup immediate instead of eventual, because a merged PR's
+ * delta state is dead the moment it merges.
+ *
+ * That is why every failure path below returns quietly. The TTL is the
+ * mechanism; this is an accelerant, and an accelerant must never turn a
+ * successful delivery into a 500 that GitHub then retries.
+ *
+ * **Ownership is the load-bearing part.** `deleteMemory` only adds `user_id` to
+ * its match filter when a user id is passed; with `null` it matches on
+ * (scope, key) alone, and since that pair is unique *per user*, a null-owner
+ * archive would hit every account holding a record at the same coordinates. A
+ * webhook is anonymous, so the owner is resolved from the App installation:
+ * `github_installations` maps `installation_id → user_id`, and only once a login
+ * has linked it (`status = 'linked'`; a fresh install sits at `'pending'` with a
+ * NULL user_id). No linked owner ⇒ no purge, and the TTL collects the record as
+ * it would have anyway. Deleting on behalf of an account we cannot name is not
+ * a degraded version of this feature; it is a different, worse one.
+ */
+async function handlePrStatePurge(
+  db: SupabaseClient,
+  event: string,
+  action: string,
+  payload: Record<string, unknown>,
+  span: Span,
+): Promise<void> {
+  const target = prStatePurgeTarget(event, action, payload as Parameters<typeof prStatePurgeTarget>[2]);
+  if (!target) {
+    span.addEvent('webhook.purge.skipped', { reason: 'not_a_merged_pull_request' });
+    return;
+  }
+
+  const installationId = (payload['installation'] as { id?: number } | undefined)?.id;
+  if (!installationId) {
+    // A legacy repo-level webhook carries no installation, so there is no owner
+    // to attribute the archive to. Left to the TTL.
+    span.addEvent('webhook.purge.skipped', { reason: 'no_installation_in_payload' });
+    return;
+  }
+
+  const { data, error } = await db
+    .from('github_installations')
+    .select('user_id')
+    .eq('installation_id', installationId)
+    .eq('status', 'linked')
+    .maybeSingle();
+
+  const userId = (data as { user_id?: string | null } | null)?.user_id ?? null;
+  if (error || !userId) {
+    span.addEvent('webhook.purge.skipped', {
+      reason: error ? 'installation_lookup_failed' : 'installation_not_linked_to_a_user',
+    });
+    return;
+  }
+
+  span.setAttribute('lorekit.scope', target.scope);
+  span.setAttribute('lorekit.key', target.key);
+
+  // force: false — soft-archive. The row is hidden from reads (so pr-reviewer's
+  // next run takes its first-run path, which is the intended outcome) and the
+  // retention job hard-deletes it later. An irreversible delete driven by an
+  // inbound webhook buys nothing here.
+  const result = await deleteMemory(db, { scope: target.scope, key: target.key, force: false }, userId);
+
+  span.addEvent('webhook.purge.done', { archived: result.archived, deleted: result.deleted });
+  logger.info(
+    { scope: target.scope, key: target.key, archived: result.archived },
+    'lorekit.webhook.pr_state_purged',
+  );
+}
+
 export async function handleGitHubWebhook(req: Request): Promise<Response> {
   const tracer = getTracer();
 
@@ -76,6 +160,25 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
       const payload = JSON.parse(body) as Record<string, unknown>;
       const action = (payload['action'] as string) ?? 'unknown';
       span.setAttribute('lorekit.webhook.action', action);
+
+      // A merged pull_request retires per-PR state and writes nothing, so it
+      // is handled before the write pipeline and returns early. It is checked
+      // BEFORE the SKIP gate on purpose: PURGE is its own tier precisely so a
+      // purge delivery is never silently classified as noise.
+      if (classifyWebhookAction(event, action) === 'PURGE') {
+        const db = createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
+        try {
+          await handlePrStatePurge(db, event, action, payload, span);
+        } catch (purgeErr) {
+          // Swallowed with the reason recorded: the TTL is the real mechanism
+          // (see handlePrStatePurge), and a 500 here makes GitHub retry a
+          // delivery that had nothing to deliver.
+          const pe = purgeErr as Error;
+          span.addEvent('webhook.purge.failed', { 'exception.type': pe.name, 'exception.message': pe.message });
+          logger.warn({ 'exception.type': pe.name, 'exception.message': pe.message }, 'lorekit.webhook.purge_failed');
+        }
+        return new Response('OK', { status: 200 });
+      }
 
       // Layer 1 — action-tier gate: skip edits, deletes, dismissals, etc.
       if (classifyWebhookAction(event, action) === 'SKIP') {

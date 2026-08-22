@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHmac } from 'crypto';
 import { handleGitHubWebhook } from './github.js';
-import { webhookTtlDays, write } from '@lorekit/core';
+import { deleteMemory, webhookTtlDays, write } from '@lorekit/core';
 import { classifyWebhookAction } from './signal-filter.js';
 
 // Mock @lorekit/core write to avoid needing a real DB
@@ -9,10 +9,27 @@ vi.mock('@lorekit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@lorekit/core')>();
   return {
     ...actual,
-    createServiceClient: vi.fn(() => ({})),
+    createServiceClient: vi.fn(() => makeDbStub()),
     write: vi.fn().mockResolvedValue({ id: 'mock-id', created_at: new Date().toISOString() }),
+    deleteMemory: vi.fn().mockResolvedValue({ deleted: false, archived: true }),
   };
 });
+
+// The installation row the github_installations lookup resolves to. Mutated per
+// test; `null` models "no linked row" (a pending install, or none at all).
+let installationRow: { user_id: string | null } | null = { user_id: 'owner-uuid' };
+let installationError: { message: string } | null = null;
+
+// Minimal chainable stand-in for the one query handlePrStatePurge makes:
+// .from(...).select(...).eq(...).eq(...).maybeSingle()
+function makeDbStub() {
+  const chain = {
+    select: () => chain,
+    eq: () => chain,
+    maybeSingle: async () => ({ data: installationRow, error: installationError }),
+  };
+  return { from: () => chain };
+}
 
 const WEBHOOK_SECRET = 'test-secret';
 
@@ -341,5 +358,112 @@ describe('handleGitHubWebhook', () => {
         tags: expect.arrayContaining(['event::issue_comment']),
       }),
     );
+  });
+
+  // ── pull_request closed → per-PR state purge ───────────────────────────────
+  //
+  // The purge is an accelerant on pr-reviewer's 7-day TTL, not a mechanism
+  // anything depends on, so every one of these asserts a 200 as well: a purge
+  // that cannot happen must never turn a delivery into a retryable failure.
+
+  describe('pull_request closed', () => {
+    const mergedPayload = (over: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        action: 'closed',
+        repository: { full_name: 'mthines/agent-skills' },
+        pull_request: { number: 123, merged: true, head: { ref: 'feat/x' } },
+        installation: { id: 42 },
+        ...over,
+      });
+
+    beforeEach(() => {
+      installationRow = { user_id: 'owner-uuid' };
+      installationError = null;
+    });
+
+    it('archives the PR-state record, attributed to the installation owner', async () => {
+      const res = await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(res.status).toBe(200);
+      expect(deleteMemory).toHaveBeenCalledTimes(1);
+      // The third argument is load-bearing: deleteMemory only filters on user_id
+      // when one is passed, so a null there would archive every account's record
+      // at the same (scope, key).
+      expect(deleteMemory).toHaveBeenCalledWith(
+        expect.anything(),
+        { scope: 'branch::mthines/agent-skills::feat/x', key: 'ci-state::pr-review-123', force: false },
+        'owner-uuid',
+      );
+    });
+
+    it('never writes a memory for a close', async () => {
+      await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('soft-archives rather than hard-deleting', async () => {
+      await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(deleteMemory).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ force: false }),
+        expect.anything(),
+      );
+    });
+
+    it('does nothing for a close without a merge', async () => {
+      const res = await handleGitHubWebhook(
+        makeSignedRequest('pull_request', mergedPayload({
+          pull_request: { number: 123, merged: false, head: { ref: 'feat/x' } },
+        })),
+      );
+      expect(res.status).toBe(200);
+      expect(deleteMemory).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the delivery carries no installation', async () => {
+      const res = await handleGitHubWebhook(
+        makeSignedRequest('pull_request', mergedPayload({ installation: undefined })),
+      );
+      expect(res.status).toBe(200);
+      expect(deleteMemory).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the installation is not linked to a user', async () => {
+      installationRow = { user_id: null };
+      const res = await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(res.status).toBe(200);
+      expect(deleteMemory).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when there is no installation row at all', async () => {
+      installationRow = null;
+      const res = await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(res.status).toBe(200);
+      expect(deleteMemory).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the installation lookup errors', async () => {
+      installationError = { message: 'connection reset' };
+      const res = await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(res.status).toBe(200);
+      expect(deleteMemory).not.toHaveBeenCalled();
+    });
+
+    it('returns 200 even when the archive itself throws', async () => {
+      vi.mocked(deleteMemory).mockRejectedValueOnce(new Error('db exploded'));
+      const res = await handleGitHubWebhook(makeSignedRequest('pull_request', mergedPayload()));
+      expect(res.status).toBe(200);
+    });
+
+    it('ignores non-closed pull_request actions', async () => {
+      for (const action of ['opened', 'synchronize', 'reopened']) {
+        vi.clearAllMocks();
+        const res = await handleGitHubWebhook(
+          makeSignedRequest('pull_request', mergedPayload({ action })),
+        );
+        expect(res.status).toBe(200);
+        expect(deleteMemory).not.toHaveBeenCalled();
+        expect(write).not.toHaveBeenCalled();
+      }
+    });
   });
 });
