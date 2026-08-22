@@ -11,7 +11,7 @@ import { translateDbError } from '../../_shared/api/errors.ts';
 import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
 import { parseOrigin, OriginError } from '../../_shared/origin.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
-import { recordAudit } from '../../_shared/audit.ts';
+import { recordAuditDeferred } from '../../_shared/audit.ts';
 import { embedOnWrite } from '../../_shared/embed-on-write.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
@@ -180,7 +180,15 @@ export async function handleCreate(
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.
   // recordAudit never throws, so a failed audit cannot fail the request.
-  await recordAudit(
+  //
+  // DEFERRED, so the insert is not a round trip on the response path: its
+  // result is `void` and unactionable, and the write it records has already
+  // committed. On the edge the await below resolves immediately and the insert
+  // finishes under `EdgeRuntime.waitUntil`; on a runtime without that hook it
+  // degrades to the awaited behaviour rather than dropping the row. See
+  // `_shared/audit.ts` → `recordAuditDeferred` for why that fallback differs
+  // from `embed-on-write.ts`'s deliberate skip.
+  await recordAuditDeferred(
     db,
     {
       action: row.inserted === false ? 'memory.update' : 'memory.create',

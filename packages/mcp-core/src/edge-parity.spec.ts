@@ -59,10 +59,13 @@ function executableSource(file: string): string {
 // supabase/functions/_shared/audit.ts) but is deliberately ABSENT here: like
 // limits.ts, the edge copy is not import-free — it types the client as
 // `ReturnType<typeof createClient>` off an `npm:` specifier where mcp-core
-// types it as an imported `SupabaseClient`. Those two lines are the only
-// executable difference, but they are a real one, so a whole-file comparison
-// does not apply. buildAuditEntry/recordAudit are covered by audit.spec.ts on
-// the mcp-core copy.
+// types it as an imported `SupabaseClient`, so a whole-file comparison does not
+// apply. The edge copy additionally carries `recordAuditDeferred`, which hands
+// the insert to `EdgeRuntime.waitUntil` to keep it off the response path — a
+// runtime API that exists only on the edge and so has no mcp-core counterpart
+// to compare against. `buildAuditEntry` (the part that MUST stay
+// byte-consistent) and `recordAudit` are covered by audit.spec.ts on the
+// mcp-core copy.
 const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['auth-token.ts', 'mcp/auth-token.ts'],
   ['created-at.ts', '_shared/created-at.ts'],
