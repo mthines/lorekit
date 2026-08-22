@@ -3,24 +3,27 @@
 /**
  * DocsSessionCommands
  *
- * Makes the public `/docs` command palette feel connected to the app: when the
- * visitor is SIGNED IN, it registers the "Navigate" group (Go to Overview /
- * Lore Explorer / Settings) so they can jump back into the app from the docs.
- * When signed out, it registers nothing and the palette shows only "Docs".
+ * Makes a PUBLIC command palette feel connected to the app: when the visitor is
+ * SIGNED IN, it registers the "Navigate" group (Go to Overview / Lore Explorer
+ * / Settings) so they can jump back into the app. When signed out, it registers
+ * nothing and the palette shows only that surface's own group.
+ *
+ * Mounted on both public surfaces that have a palette — the `/docs` layout and
+ * the `/blog` layout — so the name is historical: it is not `/docs`-only.
  *
  * The session check mirrors `DocsAuthCta` (a browser `getSession()` in a
- * `useEffect`) so the rest of the `/docs` layout stays statically rendered.
+ * `useEffect`) so the rest of the layout stays statically rendered.
  *
  * The "Navigate" commands mirror the dashboard's `NavigationCommands` EXACTLY
  * (labels, icons, shortcuts, destinations) but are standalone — importing
  * `NavigationCommands` would pull in auth-only providers (`useLoreData`,
- * `useMemorySidebar`) that don't exist on the public docs. Command ids are
+ * `useMemorySidebar`) that don't exist on a public surface. Command ids are
  * prefixed `docs-nav-*` so they never collide with the dashboard's `nav-*` ids.
  *
  * Conditional RENDERING of the hook-calling child components is correct here:
  * each child calls `useCommand` unconditionally at a stable hook position, and
  * whether the child is mounted at all is what gates registration. Mount this
- * once inside `CommandPaletteProvider` (done in the docs layout).
+ * once inside `CommandPaletteProvider` (done in the docs and blog layouts).
  */
 
 import { useEffect, useState } from 'react';

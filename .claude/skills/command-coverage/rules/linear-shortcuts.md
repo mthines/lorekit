@@ -61,10 +61,16 @@ Extend the existing set; keep letters mnemonic and collision-free.
 | `g e` | Lore Explorer         | taken             |
 | `g s` | Settings              | taken             |
 | `g g` | Docs                  | taken             |
-| `g p` | Settings → Plan       | free (suggested)  |
-| `g k` | Settings → API keys   | free (suggested)  |
-| `g i` | Settings → Integrations | free (suggested) |
-| `g a` | Settings → Audit logs | free (suggested)  |
+| `g p` | Settings → Plan       | free — **reserved, not suggested** |
+| `g k` | Settings → API keys   | free — **reserved, not suggested** |
+| `g i` | Settings → Integrations | free — **reserved, not suggested** |
+| `g a` | Settings → Audit logs | free — **reserved, not suggested** |
+
+The last four rows are **not proposals.** A deep settings page is `Occasional`
+by the frequency rubric below, so it fails the shortcut test and is
+**palette-only**. They are listed only so the letters are recorded as spoken
+for, in case one of those pages ever becomes a hot path. Do not propose them
+from this table — run the shortcut test first, every time; the test wins.
 
 Confirm "free" against the LIVE registry every run — the baseline table in
 [`../references/palette-api.md`](../references/palette-api.md) can lag.

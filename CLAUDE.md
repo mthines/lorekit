@@ -110,8 +110,11 @@ rather than inferred. They cost time every time they are rediscovered:
    never arrives. The failing SET GROWS as new tests land on that surface, so
    **never pattern-match on a remembered count** — see point 3. (Writing a new
    test for this surface? Target the local on-disk store via `LOREKIT_HOME` +
-   `LOREKIT_MODE=local` instead of a mock REST server.) Web lint is separately
-   ~47 pre-existing `no-non-null-assertion` **warnings, 0 errors** — not yours.
+   `LOREKIT_MODE=local` instead of a mock REST server.) Web lint separately
+   reports dozens of pre-existing `no-non-null-assertion` **warnings, 0 errors** —
+   not yours. The count drifts upward as tests land (it was recorded as ~47 and
+   measured 59 later), so establish it with `git stash -u` like any other red;
+   what CI gates on is the **0 errors**.
 3. **Prove a failure pre-existing with `git stash -u`, not from memory.** Stash,
    re-run the same command, compare. The assertion that holds is "N failures
    before == N failures after"; any specific N goes stale. This takes ~40s and is
@@ -429,7 +432,7 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 
 ## Key files
 
-The full annotated index (133 files, grouped by subsystem) lives in
+The full annotated index (139 files, grouped by subsystem) lives in
 [`docs/key-files.md`](./docs/key-files.md) — read it when you need to locate a
 specific handler, migration, or pure module. The load-bearing "start here" files:
 
@@ -451,7 +454,7 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `packages/web/src/lib/filters.ts` | Pure model for the Lore Explorer filter bar (OR within a dimension, AND across; `filtersToBody` is the wire seam the Explorer uses, `filtersToQueryParams` the GET encoding kept for query-string callers) |
 | `packages/web/src/lib/dash0-rum.ts` | The SINGLE browser RUM init path for `@dash0/sdk-web` (init guard, endpoint validator, identity) |
 
-See [`docs/key-files.md`](./docs/key-files.md) for the remaining ~118 files:
+See [`docs/key-files.md`](./docs/key-files.md) for the remaining ~124 files:
 all migrations, the `_shared`/`mcp-core` pure modules and their edge mirrors,
 the auth/org/invite/scope-binding surfaces, and the Explorer/Settings UI.
 
@@ -498,7 +501,9 @@ their rationale inline. **Do not relitigate these.**
 - **MCP server endpoint is a static production URL** — always write `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp` in user-facing content, never a `<ref>` / `<project-ref>` placeholder. [rationale](./docs/decisions.md#mcp-server-endpoint-is-a-static-production-url)
 - **Lore Explorer filters through ONE two-level command menu + pills** — never one picker per dimension, never client-side narrowing; OR within a dimension, AND across; all dimensions filtered server-side; facets are their own drill-down query. [rationale](./docs/decisions.md#lore-explorer-filters-through-one-two-level-command-menu)
 - **The Explorer's Activity panel has a DISPLAY default (24h), separate from the list's (all time)** — substituted for an absent `?range=`, never written back; `RangePicker` emits `{preset:'all'}` (not `null`) so "chose All" and "has not chosen" stay two values. [rationale](./docs/decisions.md#the-explorers-activity-panel-has-a-display-default-separate-from-the-lists)
-- **Dashboard figures COUNT to a new value** (`AnimatedNumber`) — a change indicator, not decoration; two nodes (visible + `sr-only`), so read the `.sr-only` half, never `textContent`; honours `MotionConfig reducedMotion="always"` on top of the device preference, which is what makes the visual baselines deterministic. [rationale](./docs/decisions.md#dashboard-figures-count-to-a-new-value)
+- **The Explorer's Activity panel shows ONE body at a time and remembers your disclosure** — a `SegmentedControl` (Stat charts / Heatmap) where the `Activity · <scope>` label was; the expanded `heatmap` view is the calendar ALONE — the stat grid is absent there, because keeping it above the calendar rebuilt the stacked layout the toggle exists to remove — while COLLAPSED keeps the four numbers on every view (two-up at a compact density, ~250px on a phone, bounded by a test); opens EXPANDED, and the disclosure + view choice persist to `localStorage` via `useSyncExternalStore` where `null` means "no client store consulted yet" (never the same as `''`) — consumers render the COLLAPSED state while unresolved so an expanded→collapsed flash is unreachable. Never move these to the URL; never re-seed them from a `useState` initializer. [rationale](./docs/decisions.md#the-activity-panel-shows-one-body-at-a-time-and-remembers-your-disclosure)
+- **Chart bucket readouts are PORTALED, one per chart** — `AnchoredTooltip` reuses `Tooltip`'s pure `computeTooltipPosition` and takes an `anchor: Element`, because an in-flow panel is clipped by `CollapsibleStatCard`'s `overflow:hidden` reveal region and one `Tooltip` per bucket would be 364 portals. The heatmap's native `title` is gone; its `aria-label` is not. [rationale](./docs/decisions.md#chart-bucket-readouts-are-portaled-and-there-is-one-per-chart)
+- **Dashboard figures COUNT to a new value** (`AnimatedNumber`) — a change indicator, not decoration; two nodes (visible + `sr-only`), so read the `.sr-only` half, never `textContent`; honours `MotionConfig reducedMotion="always"` on top of the device preference, which is what makes the visual baselines deterministic. The `TrendChip` delta uses the same two-node pattern, but ONLY when it abbreviates a large percentage (`+8.8K%`). [rationale](./docs/decisions.md#dashboard-figures-count-to-a-new-value)
 - **Mobile transient selection surfaces use the `BottomSheet` primitive** — never an anchored popover on the phone breakpoint; share ONE body between desktop popover and sheet (`FilterMenu` is the reference). [rationale](./docs/decisions.md#mobile-transient-selection-surfaces-use-the-bottomsheet-primitive)
 - `::` separator avoids collision with `/` in repo paths and `:` in branch names
 - `lk_rw_` prefix encodes permission visibly in config files

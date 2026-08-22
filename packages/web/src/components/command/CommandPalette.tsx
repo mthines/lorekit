@@ -128,7 +128,7 @@ function CommandRow({
           : 'text-[var(--color-content-primary)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
     >
-      {/* Icon — vertically centered across the row (single- and two-line) */}
+      {/* Icon — vertically centered in the single-line row */}
       {command.icon && (
         <span
           className={[
@@ -179,7 +179,20 @@ function CommandRow({
 
 // ── Main palette component ────────────────────────────────────────────────────
 
-export function CommandPalette() {
+export interface CommandPaletteProps {
+  /**
+   * Portal target. Defaults to `document.body` (the app case).
+   *
+   * Storybook passes a positioned frame element here: the visual-regression
+   * hook screenshots `#storybook-root`, so an overlay portalled to `<body>`
+   * would snapshot an empty root. When contained, the backdrop switches from
+   * `fixed` to `absolute` so it fills the frame rather than the viewport —
+   * the same contract as `BottomSheet`'s `container`.
+   */
+  container?: HTMLElement | null;
+}
+
+export function CommandPalette({ container }: CommandPaletteProps = {}) {
   const { open, currentFrame, stack, closePalette, activateCommand, popFrame } =
     useCommandPalette();
 
@@ -281,8 +294,18 @@ export function CommandPalette() {
     // Full-screen backdrop that also flex-centers the panel. Portalled to
     // <body> so no transformed / contained ancestor can trap the fixed panel in
     // a narrow containing block (which had pinned it to the sidebar column).
+    // When `container` is supplied the frame IS the viewport, so the backdrop
+    // is absolute within it instead.
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[15vh] backdrop-blur-sm"
+      className={[
+        'inset-0 z-50 flex justify-center bg-black/60 p-4 backdrop-blur-sm',
+        // `position` is not the only way this element reaches the viewport:
+        // `15vh` measures the viewport too, so in contained mode it would track
+        // the Storybook iframe rather than the frame. Contained mode centres
+        // instead — container-relative by construction, and deterministic for
+        // the screenshot at any iframe size.
+        container ? 'absolute items-center' : 'fixed items-start pt-[15vh]',
+      ].join(' ')}
       onClick={closePalette}
     >
       {/* Palette panel */}
@@ -363,8 +386,9 @@ export function CommandPalette() {
             className="flex-1 bg-transparent text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] !outline-none !focus:outline-none"
           />
 
-          {/* Keyboard hint */}
-          <kbd className="shrink-0 text-[10px] font-mono text-[var(--color-content-tertiary)] border border-[var(--color-border-subtle)] rounded px-1 py-0.5">
+          {/* Keyboard hint — same cap recipe as the footer hints below (UI
+              sans, hairline, subtle fill) so every chrome-level cap matches. */}
+          <kbd className="shrink-0 rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1 text-[10px] text-[var(--color-content-tertiary)]">
             esc
           </kbd>
         </div>
@@ -451,6 +475,6 @@ export function CommandPalette() {
         </div>
       </div>
     </div>,
-    document.body,
+    container ?? document.body,
   );
 }

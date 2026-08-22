@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { within } from 'storybook/test';
 import {
   Rocket,
   HardDrive,
@@ -26,8 +27,9 @@ import type { Command } from './types';
  * {@link CommandPaletteProvider} context, a set of registered commands, and
  * `open === true`. The `PaletteHarness` decorator wires all three — it mounts
  * sample commands (mirroring the real Docs / Navigate / Lore groups, with the
- * same icons + descriptions + `g→` shortcuts) and force-opens the palette on
- * mount so the snapshot captures the populated list.
+ * same icons + descriptions + `g→` shortcuts — descriptions feed the search
+ * index, they are not rendered per row) and force-opens the palette on mount so
+ * the snapshot captures the populated list.
  *
  * The interactive behaviour (search, arrow-key selection, nested drill-in) is
  * the palette's own concern and is covered by the provider's chord engine; these
@@ -87,12 +89,37 @@ function OpenOnMount() {
   return null;
 }
 
+/**
+ * A positioned frame that stands in for the viewport.
+ *
+ * The palette portals its backdrop out of the React tree, so a story that let
+ * it default to `document.body` would render OUTSIDE `#storybook-root` — which
+ * is exactly what the visual-regression hook screenshots, leaving an empty
+ * baseline. Passing the frame as `container` keeps the overlay inside the story
+ * root, the same trick `BottomSheet.stories.tsx` uses.
+ */
+function ViewportFrame({
+  children,
+}: {
+  children: (frame: HTMLElement) => React.ReactNode;
+}) {
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null);
+  return (
+    <div
+      ref={setFrame}
+      className="relative h-[640px] w-[960px] overflow-hidden bg-[var(--color-bg)]"
+    >
+      {frame && children(frame)}
+    </div>
+  );
+}
+
 function PaletteHarness() {
   return (
     <CommandPaletteProvider>
       <SampleCommands />
       <OpenOnMount />
-      <CommandPalette />
+      <ViewportFrame>{(frame) => <CommandPalette container={frame} />}</ViewportFrame>
     </CommandPaletteProvider>
   );
 }
@@ -108,9 +135,16 @@ type Story = StoryObj<typeof CommandPalette>;
 
 /**
  * The resting palette, opened at the root level with representative commands —
- * the Docs group (icon + label + description two-liners) above the Navigate
+ * the Docs group (single-line, icon + label rows) above the Navigate
  * group (label + `g→` shortcut), with the first row selected.
  */
 export const Default: Story = {
   render: () => <PaletteHarness />,
+  // The harness opens the palette from a `requestAnimationFrame`, so without a
+  // `play` the visual-regression `afterEach` (which runs right after `play`)
+  // could screenshot before the dialog mounts. Awaiting the dialog makes the
+  // snapshot deterministic instead of relying on frame timing.
+  play: async ({ canvasElement }) => {
+    await within(canvasElement).findByRole('dialog', { name: 'Command Palette' });
+  },
 };

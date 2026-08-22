@@ -39,13 +39,14 @@ API and hook-position rules before writing anything.
 | Dashboard navigation              | `components/command/NavigationCommands.tsx`   | a `useCommand` in the component  |
 | Dashboard action (feature-local)  | the feature component (e.g. `LoreExplorer`)   | a small child component + `useCommand` |
 | Docs page navigation              | derived from `DOCS_SECTIONS` — table-driven   | usually **no new code**          |
-| Docs "Navigate" (signed-in)       | `components/docs/DocsSessionCommands.tsx`     | mirror the dashboard binding     |
+| Blog post navigation              | derived from `BLOG_SECTIONS` — table-driven   | usually **no new code**          |
+| Docs / blog "Navigate" (signed-in)| `components/docs/DocsSessionCommands.tsx`     | mirror the dashboard binding; mounted in both layouts |
 
 ## Rules for the written code
 
-- **Table-driven first.** If the gap is a route already in `DOCS_SECTIONS` or
-  `SETTINGS_SECTIONS`, fix the drift by registering FROM the table (the
-  `DocsCommandItem` map pattern), not by hand-adding one command.
+- **Table-driven first.** If the gap is a route already in `DOCS_SECTIONS`,
+  `SETTINGS_SECTIONS`, or `BLOG_SECTIONS`, fix the drift by registering FROM
+  the table (the `DocsCommandItem` map pattern), not by hand-adding one command.
 - **Hook position.** Never call `useCommand` inside a `.map()` — wrap each
   list item in its own component. Straight (non-list) registrations go inline.
 - **id + prefix.** Follow the id-prefix scheme (`nav-*`, `settings-*`,

@@ -21,10 +21,28 @@
  * cell grid's height rather than a stack of fixed-height spans: at a fluid cell
  * size there is no pixel to hard-code, so the labels have to be divided out of
  * the same box the cells produced.
+ *
+ * ## The day readout is a PORTALED tooltip, not `title`
+ *
+ * Each cell used to carry a native `title`. A native tooltip cannot be clipped,
+ * which is why this was never the visibly-broken case — but it also cannot be
+ * styled, appears after a browser-owned delay of about a second, never appears on
+ * keyboard focus, and reads a different sentence from the one the sparkbars show
+ * for the same kind of fact. One {@link AnchoredTooltip} for the whole grid fixes
+ * all four: it is the app's own panel, it is instant, it follows focus as well as
+ * hover, and it is the same component the stat cards' charts use. It is portaled
+ * to `<body>` for the same reason they are — this grid renders inside the Activity
+ * panel's `overflow: hidden` reveal region, so an in-flow panel WOULD be clipped
+ * here once it grew beyond a cell.
+ *
+ * The cells keep their `aria-label` (the assistive-tech path, which already said
+ * the date and the count), so dropping `title` costs a screen-reader user nothing.
  */
 
-import { useMemo } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
+
+import { AnchoredTooltip } from '@/components/ui/AnchoredTooltip';
 
 interface DayData {
   date: string; // YYYY-MM-DD
@@ -108,6 +126,17 @@ function labelSpan(col: number, weeks: number): number {
 const DAYS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+/**
+ * The readout's sentence for one day.
+ *
+ * Exported and pure so the wording has one source: the cells' `aria-label` and
+ * the visible panel must agree, or a screen-reader user and a sighted user are
+ * told different things about the same square.
+ */
+export function dayReadout(count: number): string {
+  return `${count} memor${count === 1 ? 'y' : 'ies'}`;
+}
+
 function getIntensity(count: number, max: number): 0 | 1 | 2 | 3 | 4 {
   if (count === 0) return 0;
   const ratio = count / Math.max(max, 1);
@@ -135,6 +164,19 @@ export function ContributionHeatmap({
   // cells on entry — skipping this gate causes discomfort for motion-sensitive
   // users. When reduceMotion is true, cells appear instantly (no scale/fade).
   const reduceMotion = useReducedMotion();
+  // The hovered/focused day, held as the CELL ELEMENT plus its facts. The element
+  // (not a rect) because a `fixed` panel is positioned in viewport coordinates, so
+  // any scroll invalidates a rect measured once — the tooltip re-measures from the
+  // element instead. One piece of state for up to 364 cells: one portal, one
+  // subscription, one panel.
+  const [activeCell, setActiveCell] = useState<{
+    el: HTMLElement;
+    date: string;
+    count: number;
+  } | null>(null);
+  const dismiss = useCallback(() => setActiveCell(null), []);
+  const id = useId();
+  const readoutId = `heatmap-readout-${id.replace(/:/g, '')}`;
 
   const { grid, monthLabels, maxCount } = useMemo(() => {
     const today = new Date();
@@ -254,6 +296,7 @@ export function ContributionHeatmap({
             const intensity = getIntensity(count, maxCount);
             const inRange =
               !!selectedRange && date >= selectedRange.from && date <= selectedRange.to;
+            const isActive = activeCell?.date === date;
             return (
               <motion.button
                 key={date}
@@ -267,7 +310,15 @@ export function ContributionHeatmap({
                     ? { duration: 0 }
                     : { delay: week * 0.008, duration: 0.2, ease: [0.16, 1, 0.3, 1] }
                 }
-                title={count > 0 ? `${count} memor${count > 1 ? 'ies' : 'y'} on ${date}` : date}
+                // Hover AND focus open the readout, so it is reachable without a
+                // pointer. `currentTarget` is the anchor the portaled panel measures.
+                onPointerEnter={(e) =>
+                  setActiveCell({ el: e.currentTarget as HTMLElement, date, count })
+                }
+                onPointerLeave={() => setActiveCell((a) => (a?.date === date ? null : a))}
+                onFocus={(e) => setActiveCell({ el: e.currentTarget, date, count })}
+                onBlur={() => setActiveCell((a) => (a?.date === date ? null : a))}
+                aria-describedby={isActive ? readoutId : undefined}
                 className={[
                   // Height follows width, which is the whole responsive trick —
                   // the row heights, and so the chart's total height, are
@@ -279,13 +330,34 @@ export function ContributionHeatmap({
                     : '',
                   inRange ? 'ring-1 ring-inset ring-[var(--color-accent)]' : '',
                 ].join(' ')}
-                aria-label={`${date}: ${count} memor${count === 1 ? 'y' : 'ies'}${inRange ? ' (selected)' : ''}`}
+                aria-label={`${date}: ${dayReadout(count)}${inRange ? ' (selected)' : ''}`}
                 aria-pressed={onSelectDate ? inRange : undefined}
               />
             );
           })}
         </div>
       </div>
+
+      {/* ONE readout for the whole grid, portaled to <body> so it escapes the
+          Activity panel's `overflow: hidden` reveal region. */}
+      <AnchoredTooltip
+        id={readoutId}
+        anchor={activeCell?.el ?? null}
+        open={activeCell !== null}
+        onDismiss={dismiss}
+        side="top"
+      >
+        {activeCell && (
+          <>
+            <span className="font-semibold tabular-nums text-[var(--color-content-primary)]">
+              {dayReadout(activeCell.count)}
+            </span>{' '}
+            <span className="font-mono text-[var(--color-content-tertiary)]">
+              {activeCell.date}
+            </span>
+          </>
+        )}
+      </AnchoredTooltip>
 
       {/* Legend — the scale runs from 0 memories (empty) to the busiest day.
           Its swatches stay a fixed 9px: they are a KEY, read next to 10px text,

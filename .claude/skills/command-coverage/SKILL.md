@@ -12,7 +12,7 @@ description: >
   shortcut coverage", "audit the command palette", "are these actions in the
   palette", "wire up keyboard shortcuts", "command palette parity",
   "/command-coverage".
-argument-hint: '[audit|apply] [--scope dashboard|docs|all]'
+argument-hint: '[audit|apply] [--scope dashboard|docs|blog|all]'
 license: MIT
 metadata:
   author: mthines
@@ -62,7 +62,8 @@ Parse `$ARGUMENTS`. First token selects the mode; `--scope` narrows the crawl.
 | `apply` |         | "wire up", "fix the gaps", "apply", or `$ARGUMENTS` starts `apply`. |
 
 `--scope` (default `all`): `dashboard` (routes + actions behind auth),
-`docs` (the public `/docs` palette), or `all`.
+`docs` (the public `/docs` palette), `blog` (the public `/blog` palette), or
+`all`.
 
 State the detected mode and scope in one line before continuing:
 
@@ -117,13 +118,14 @@ Emit one coverage matrix, then the recommendations. Group by surface scope.
 ```text
 ## Coverage — dashboard
 
-| Target / action        | Route / trigger  | Palette | Shortcut | Gap  | Proposed shortcut | Proposed palette      | Prio |
-| ---------------------- | ---------------- | ------- | -------- | ---- | ----------------- | --------------------- | ---- |
-| Overview               | /overview        | ✅ nav-overview | ✅ g o | —    | —                 | —                     | —    |
-| Lore Explorer          | /lore            | ✅ nav-explorer | ✅ g e | —    | —                 | —                     | —    |
-| Filter (Explorer)      | FilterMenu open  | ❌      | ❌       | both | `f`               | "Filter lore…" (Lore) | P1   |
-| Focus search (Explorer)| search input     | ❌      | ❌       | both | `/`               | "Search lore…" (Lore) | P1   |
-| Keyboard help          | (none)           | ❌      | ❌       | both | `?`               | "Keyboard shortcuts…" | P3   |
+| Target / action        | Route / trigger  | Palette | Shortcut | Warrants shortcut? | Gap  | Proposed shortcut | Proposed palette      | Prio |
+| ---------------------- | ---------------- | ------- | -------- | ------------------ | ---- | ----------------- | --------------------- | ---- |
+| Overview               | /overview        | ✅ nav-overview | ✅ g o | yes            | —    | —                 | —                     | —    |
+| Lore Explorer          | /lore            | ✅ nav-explorer | ✅ g e | yes            | —    | —                 | —                     | —    |
+| Settings → Plan        | /settings/plan   | ✅ settings-plan | ❌   | no — occasional | —    | —                 | —                     | —    |
+| Filter (Explorer)      | FilterMenu open  | ❌      | ❌       | yes                | both | `f`               | "Filter lore…" (Lore) | P1   |
+| Focus search (Explorer)| search input     | ❌      | ❌       | yes                | both | `/`               | "Search lore…" (Lore) | P1   |
+| Keyboard help          | (none)           | ❌      | ❌       | yes                | both | `?`               | "Keyboard shortcuts…" | P3   |
 ```
 
 Rules for the matrix:
@@ -170,9 +172,9 @@ Rules for the matrix:
 2. **Follow Linear, do not invent.** `g` prefix is reserved for navigation;
    single letters (F, L, C, …) are context actions; ⌘K opens the palette.
    Reuse the repo's existing bindings before adding new ones.
-3. **Table-driven truth.** Navigation is already driven by `DOCS_SECTIONS`
-   and `SETTINGS_SECTIONS`; register from those tables, never a hand-copied
-   list that can drift.
+3. **Table-driven truth.** Navigation is already driven by `DOCS_SECTIONS`,
+   `SETTINGS_SECTIONS`, and `BLOG_SECTIONS`; register from those tables, never
+   a hand-copied list that can drift.
 4. **Never wire blind.** `apply` only writes after the `audit` matrix and a
    `confidence ≥ 90%` gate; show the diff and get explicit user confirmation.
 5. **Compound the approach.** Read LoreKit at the start, write decisions and

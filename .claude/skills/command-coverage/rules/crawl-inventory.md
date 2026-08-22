@@ -49,7 +49,7 @@ layout (as `docs/layout.tsx` already does), not to add one command.
 | App routes (ALL)  | `find packages/web/src/app -name page.tsx \| sort`                    |
 | Settings sections | read `SETTINGS_SECTIONS` in `components/settings/sections.ts`         |
 | Docs sections     | read `DOCS_SECTIONS` in `lib/docs/sections.ts`                        |
-| Blog posts        | read `BLOG_SLUGS` in `lib/blog/sections.ts` (table-driven, like docs)  |
+| Blog posts        | read `BLOG_SECTIONS` in `lib/blog/sections.ts` (table-driven, like docs) |
 
 Crawl **every** `app/**/page.tsx`, not just the authenticated `(dashboard)`
 subtree — the public content surfaces (`/blog`, `/blog/[slug]`, `/learn`,
@@ -110,6 +110,7 @@ or action:
 | Trigger    | route, or the component/handler for an action             |
 | Palette    | the registering `id`, or `❌`                             |
 | Shortcut   | the key sequence, or `❌`                                 |
+| Warrants shortcut? | `yes` / `no — occasional` / `no — destructive` / `contextual` — the shortcut-test verdict, so a palette-only row reads as a decision |
 | Gap        | `—` / `palette` / `shortcut` / `both`                    |
 
 ## Step 5 — Flag drift (stronger than a gap)

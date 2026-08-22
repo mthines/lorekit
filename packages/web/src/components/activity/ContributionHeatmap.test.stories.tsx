@@ -51,6 +51,21 @@ type Story = StoryObj<typeof Harness>;
 const cells = (canvasElement: HTMLElement) =>
   Array.from(canvasElement.querySelectorAll('button[aria-label*="memor"]'));
 
+/**
+ * One day cell and its accessible name, by index.
+ *
+ * Throws rather than asserting non-null so a grid that rendered fewer cells than
+ * the span asked for fails with a sentence saying so, instead of a `null` deref
+ * three assertions later.
+ */
+function cellAt(canvasElement: HTMLElement, index: number): { el: HTMLElement; label: string } {
+  const el = cells(canvasElement)[index];
+  if (!el) throw new Error(`No day cell at index ${index} — the grid rendered too few cells`);
+  const label = el.getAttribute('aria-label');
+  if (!label) throw new Error(`The day cell at index ${index} has no accessible name`);
+  return { el: el as HTMLElement, label };
+}
+
 export const FillsItsContainerAtAnyWidth: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
@@ -87,7 +102,7 @@ export const FillsItsContainerAtAnyWidth: Story = {
     });
 
     await step('the cells are square, so the calendar still reads as a grid', async () => {
-      const { width, height } = cells(canvasElement)[0]!.getBoundingClientRect();
+      const { width, height } = cellAt(canvasElement, 0).el.getBoundingClientRect();
       await expect(Math.abs(width - height)).toBeLessThan(1.5);
     });
   },
@@ -131,7 +146,7 @@ export const ShrinksToAPhoneWidthWithoutOverflowing: Story = {
 export const CellsGrowWithTheContainer: Story = {
   play: async ({ canvasElement, step }) => {
     await step('a 13-week span in a 900px panel gives a comfortably large cell', async () => {
-      const { width } = cells(canvasElement)[0]!.getBoundingClientRect();
+      const { width } = cellAt(canvasElement, 0).el.getBoundingClientRect();
       // The old fixed cell was 9px. Anything at or below that means the fluid
       // grid silently stopped working.
       await expect(width).toBeGreaterThan(20);
@@ -205,15 +220,106 @@ export const MonthLabelsNeverOverflowTheGrid: Story = {
 export const ClickingADaySelectsIt: Story = {
   play: async ({ canvasElement, args, step }) => {
     await step('each cell is a button naming its date and count', async () => {
-      const first = cells(canvasElement)[0]!;
+      const { el: first } = cellAt(canvasElement, 0);
       await expect(first).toHaveAttribute('aria-label', expect.stringMatching(/^\d{4}-\d{2}-\d{2}: \d+ memor/));
     });
 
     await step('clicking one reports its day', async () => {
-      const target = cells(canvasElement)[10]!;
-      const day = target.getAttribute('aria-label')!.slice(0, 10);
+      const { el: target, label } = cellAt(canvasElement, 10);
+      const day = label.slice(0, 10);
       await userEvent.click(target);
       await expect(args.onSelectDate).toHaveBeenCalledWith(day);
+    });
+  },
+};
+
+/**
+ * The day readout, which replaced the native `title` attribute.
+ *
+ * Two properties, and the second is the one that matters: it appears on FOCUS as
+ * well as hover (a native `title` never did, so the counts were pointer-only),
+ * and it is PORTALED to `<body>`. The portal is not decorative — this grid renders
+ * inside the Activity panel's `overflow: hidden` reveal region, so an in-flow
+ * panel would be clipped there exactly as the sparkbars' readout was.
+ */
+export const DayReadoutIsPortaledAndFollowsFocus: Story = {
+  play: async ({ canvasElement, step }) => {
+    const body = within(document.body);
+    const { el: target, label } = cellAt(canvasElement, 10);
+    const day = label.slice(0, 10);
+
+    await step('the native title is gone — one tooltip per element, not two', async () => {
+      await expect(target.hasAttribute('title')).toBe(false);
+    });
+
+    await step('nothing is shown until a day is hovered', async () => {
+      await expect(body.queryByRole('tooltip')).toBeNull();
+    });
+
+    await step('hovering shows the count and the date', async () => {
+      await userEvent.hover(target);
+      await waitFor(async () => {
+        const tooltip = body.getByRole('tooltip');
+        await expect(tooltip.textContent).toContain(day);
+        await expect(tooltip.textContent).toMatch(/\d+ memor/);
+      });
+    });
+
+    await step('and it lives outside the grid, so nothing can clip it', async () => {
+      const tooltip = body.getByRole('tooltip');
+      await expect(tooltip.parentElement).toBe(document.body);
+      await expect(canvasElement.contains(tooltip)).toBe(false);
+      await expect(getComputedStyle(tooltip).position).toBe('fixed');
+    });
+
+    await step('unhovering closes it', async () => {
+      await userEvent.unhover(target);
+      await waitFor(async () => {
+        await expect(body.queryByRole('tooltip')).toBeNull();
+      });
+    });
+
+    await step('keyboard focus opens it too', async () => {
+      target.focus();
+      await expect(target).toHaveFocus();
+      await waitFor(async () => {
+        await expect(body.getByRole('tooltip').textContent).toContain(day);
+      });
+      // …and the cell points at it, so a screen reader announces the readout as
+      // the description of the button it is on.
+      await expect(target.getAttribute('aria-describedby')).toBeTruthy();
+    });
+
+    await step('Escape closes it without moving focus', async () => {
+      await userEvent.keyboard('{Escape}');
+      await waitFor(async () => {
+        await expect(body.queryByRole('tooltip')).toBeNull();
+      });
+      await expect(target).toHaveFocus();
+    });
+  },
+};
+
+/**
+ * The readout and the accessible name must tell the same story about a square —
+ * they are the sighted and the assistive readings of one fact, and they used to
+ * be two independently written sentences ("3 memories on 2026-06-10" in `title`,
+ * "2026-06-10: 3 memories" in `aria-label`), which is how they drift.
+ */
+export const ReadoutAndAccessibleNameAgree: Story = {
+  play: async ({ canvasElement }) => {
+    const body = within(document.body);
+    const { el: target, label } = cellAt(canvasElement, 10);
+    const [day, count] = label.split(': ');
+    if (!count) throw new Error(`Unexpected accessible name shape: ${label}`);
+
+    await userEvent.hover(target);
+    await waitFor(async () => {
+      const text = body.getByRole('tooltip').textContent ?? '';
+      await expect(text).toContain(day);
+      // `count` is "N memories"; the label may also carry " (selected)", which
+      // the readout does not, so the containment is one-directional on purpose.
+      await expect(text).toContain(count.replace(' (selected)', ''));
     });
   },
 };
