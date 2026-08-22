@@ -74,5 +74,7 @@ export function useCommand(command: Command): void {
     command.group,
     command.onSelect,
     command.children,
+    command.search,
+    command.fallbackSearch,
   ]);
 }

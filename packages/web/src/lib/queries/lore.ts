@@ -17,6 +17,7 @@ import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type Me
 import type { AbsoluteRange } from '@/lib/time-range';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
+import { parseScopeKeyQuery } from '@/lib/scope-key-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import {
   activityRequest,
@@ -331,6 +332,59 @@ export function useLessonByRef(ref: { scope: string; key: string } | null) {
     staleTime: 90_000,
     retry: retryUnlessSignedOut,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Live search — backs the command palette's "Open Lesson…" search-as-you-type,
+// which has to reach beyond `useLoreData`'s 20-most-recent cache to any memory
+// by (a prefix of) its full `scope::key` identifier.
+// ---------------------------------------------------------------------------
+
+/** The command palette caps its live search results at this many rows. */
+export const MEMORY_SEARCH_LIMIT = 50;
+
+/**
+ * Resolve a pasted or partially-typed `scope::key` string (or a plain
+ * substring) to the matching active lessons, capped at
+ * {@link MEMORY_SEARCH_LIMIT}.
+ *
+ * `raw` parses two ways, tried in order:
+ * 1. {@link parseScopeKeyQuery} — a recognized scope prefix (`repo::owner/repo`,
+ *    `project::name`, `branch::owner/repo::branch`, `global`) followed by `::`
+ *    and a key or key prefix. Matched server-side as an EXACT `scope` plus a
+ *    `key_prefix` ILIKE, so `repo::mthines/lorekit::sandbox-lessons::lorekit-mcp-`
+ *    resolves every key starting with that prefix in that one scope.
+ * 2. Otherwise, `raw` is sent as `q` — the substring match against `key` OR
+ *    `value` that already backs the Lore Explorer's search box — so a plain
+ *    word still finds something even without the `::` grammar.
+ *
+ * Returns `[]` (never throws) when the caller has no session, so an
+ * unauthenticated render of the palette sees an empty result instead of an
+ * unhandled rejection — the same shape a "no matches" query would return.
+ */
+export async function searchLessonsByQuery(
+  raw: string,
+  signal?: AbortSignal,
+): Promise<LessonEntry[]> {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  let token: string;
+  try {
+    token = await requireBrowserToken();
+  } catch {
+    return [];
+  }
+
+  const scopeKey = parseScopeKeyQuery(trimmed);
+  const page = await listMemoriesRequest(
+    token,
+    scopeKey
+      ? { scope: scopeKey.scope, key_prefix: scopeKey.keyPrefix || undefined, limit: MEMORY_SEARCH_LIMIT }
+      : { q: trimmed, limit: MEMORY_SEARCH_LIMIT },
+    signal,
+  );
+  return page.entries.map(lessonFromMemoryEntry);
 }
 
 // ---------------------------------------------------------------------------

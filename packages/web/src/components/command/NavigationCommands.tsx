@@ -26,8 +26,12 @@
  * reference. The docs pages are also full-text searchable at `/docs`.
  *
  * ### Lore
- * "Open Lesson…" — async nested list of the 20 most-recent memories;
- * selecting one opens it in the lesson detail sidebar.
+ * "Open Lesson…" — opens with the 20 most-recent memories; typing live-
+ * searches EVERY memory by (a prefix of) its full `scope::key` identifier —
+ * e.g. pasting `repo::mthines/lorekit::sandbox-lessons::lorekit-mcp-` matches
+ * every key that starts with `lorekit-mcp-` in that scope — or by a plain
+ * substring, capped at 50 results. Selecting one opens it in the lesson
+ * detail sidebar.
  */
 
 import { useRouter } from 'next/navigation';
@@ -47,9 +51,11 @@ import {
 } from 'lucide-react';
 import { useCommand } from './useCommand';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
-import { useLoreData } from '@/lib/queries/lore';
+import { useLoreData, searchLessonsByQuery } from '@/lib/queries/lore';
 import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
+import type { LessonEntry } from '@/components/lore/LessonCard';
+import type { Command } from './types';
 
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
@@ -58,6 +64,31 @@ import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 // MemorySidebarProvider in the dashboard layout precisely so useMemorySidebar()
 // here resolves — the command registry itself still comes from the ancestor
 // CommandPaletteProvider.
+
+/**
+ * Rows are label-only (see `CommandRow`), so the scope has to live IN the
+ * label: a key is only unique WITHIN a scope, and the same key in two scopes
+ * would otherwise render two identical, unpickable rows. Scope leads because
+ * the row truncates from the end — the disambiguator must survive truncation.
+ *
+ * `onSelect` passes the already-fetched `lesson` through to `openLessonById`
+ * so opening a search result never triggers a second, redundant fetch by ref
+ * (see that function's doc on why only callers with the row in hand can skip
+ * it — the palette is exactly the caller `useLessonByRef`'s cache-miss path
+ * exists for otherwise).
+ */
+function lessonToCommand(lesson: LessonEntry, openLessonById: (ref: { scope: string; key: string }, lesson: LessonEntry) => void): Command {
+  return {
+    id: `lore-lesson-${lesson.scope}::${lesson.key}`,
+    label: `${lesson.scope} · ${lesson.key}`,
+    description: lesson.scope,
+    // Labelled so a root-level fallback match (see `fallbackSearch` on the
+    // command below) renders under its own "Lore" separator rather than as an
+    // ungrouped run mixed visually with whatever else is on screen.
+    group: 'Lore',
+    onSelect: () => openLessonById({ scope: lesson.scope, key: lesson.key }, lesson),
+  };
+}
 
 function LoreCommands() {
   const router = useRouter();
@@ -69,33 +100,37 @@ function LoreCommands() {
     label: 'Open Lesson…',
     icon: <Library className="size-4" />,
     group: 'Lore',
-    // Async children: resolves the 20 most-recent lessons at open time so the
-    // list is always fresh without blocking the palette open.
-    children: async () => {
-      const lessons = data?.lessons?.slice(0, 20) ?? [];
+    // Live search: the empty query (palette just opened) shows the 20
+    // most-recent memories from the already-loaded `useLoreData` cache — no
+    // extra request. Any typed query re-queries the server directly (paste a
+    // full or partial `scope::key` identifier, or a plain word), capped at
+    // MEMORY_SEARCH_LIMIT, so this reaches every memory, not just the recent
+    // window.
+    search: async (query) => {
+      const lessons = query.trim()
+        ? await searchLessonsByQuery(query)
+        : (data?.lessons?.slice(0, 20) ?? []);
       if (lessons.length === 0) {
         return [
           {
             id: 'lore-no-lessons',
-            label: 'No lessons found',
+            label: query.trim() ? `No lessons match "${query.trim()}"` : 'No lessons found',
             description: 'Visit the Lore Explorer to add some.',
+            group: 'Lore',
             onSelect: () => router.push('/lore'),
           },
         ];
       }
-      // Rows are label-only (see CommandRow), so the scope has to live IN the
-      // label: a key is only unique WITHIN a scope, and the same key in two
-      // scopes would otherwise render two identical, unpickable rows. Scope
-      // leads because the row truncates from the end — the disambiguator must
-      // survive truncation.
-      return lessons.map((lesson) => ({
-        id: `lore-lesson-${lesson.scope}::${lesson.key}`,
-        label: `${lesson.scope} · ${lesson.key}`,
-        description: lesson.scope,
-        onSelect: () =>
-          openLessonById({ scope: lesson.scope, key: lesson.key }),
-      }));
+      return lessons.map((lesson) => lessonToCommand(lesson, openLessonById));
     },
+    // Lets a memory key pasted at the ROOT palette (before drilling into
+    // "Open Lesson…" at all) resolve directly: when nothing at the root
+    // matches by label, the palette falls back to running THIS search
+    // in-place. A pasted `scope::key` identifier never matches a root
+    // command's label/description/group, so without this the user would have
+    // to know to open "Open Lesson…" first — defeating the point of being
+    // able to paste the key from the very start.
+    fallbackSearch: true,
   });
 
   return null;

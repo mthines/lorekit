@@ -12,6 +12,12 @@
  *   navigating with arrows (Linear-style).
  * - Nested breadcrumb showing the parent command label when drilling.
  * - Escape / Backspace (on empty search) pops back or closes.
+ * - Live re-query (`Command.search`) for a nested level too large to
+ *   prefetch, debounced per keystroke — and, at the root only, an automatic
+ *   fallback to one designated `search` command (`Command.fallbackSearch`)
+ *   whenever the root's own label filter comes up empty, so typing something
+ *   that matches nothing by label still finds a result without drilling in
+ *   first.
  *
  * Rendered once at the dashboard layout root (inside `CommandPaletteProvider`),
  * so it overlays every page.
@@ -22,7 +28,7 @@ import { createPortal } from 'react-dom';
 import { ChevronRight, Loader2, ArrowLeft, Search } from 'lucide-react';
 import { useCommandPalette } from './CommandPaletteProvider';
 import { formatShortcut } from './shortcut';
-import type { Command } from './types';
+import type { Command, CommandSearch } from './types';
 
 // ── Search / filter ───────────────────────────────────────────────────────────
 
@@ -161,8 +167,10 @@ function CommandRow({
         />
       )}
 
-      {/* Chevron for commands with children */}
-      {command.children && (
+      {/* Chevron for commands that drill into a nested level — a static
+          `children` list or a live `search` (e.g. "Open Lesson…"), which is
+          just as much a nested level even though nothing is prefetched. */}
+      {(command.children || command.search) && (
         <ChevronRight
           className={[
             'size-3.5 shrink-0',
@@ -200,21 +208,119 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Live-search state: results from an active search's debounced re-query
+  // (either a genuine `search` frame, or the root fallback below). `null`
+  // means "no re-query has resolved yet for this activation" — a `search`
+  // frame's own `commands` (the empty-query seed `activateCommand` fetched)
+  // render instead, so drilling into one is never a blank flash.
+  const [liveResults, setLiveResults] = useState<Command[] | null>(null);
+  const [liveSearching, setLiveSearching] = useState(false);
+
   // Reset state and re-focus input when palette opens or the frame changes
   // (drilling into a nested level).
   useEffect(() => {
     if (open) {
       setQuery('');
       setSelectedIndex(0);
+      setLiveResults(null);
+      setLiveSearching(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open, currentFrame]);
 
-  // Filtered commands for the current frame.
-  const filtered = useMemo(() => {
+  // The root frame's ordinary label/description/group filter — computed
+  // unconditionally (not just at the root) because the fallback check below
+  // needs to know whether it came up empty.
+  const labelFiltered = useMemo(() => {
     if (!currentFrame) return [];
     return currentFrame.commands.filter((c) => matchesSearch(c, query));
   }, [currentFrame, query]);
+
+  // The command backing the root-level fallback (see `fallbackSearch` on
+  // `Command`), or null when the current frame isn't root or none is
+  // registered. Memoized on the frame/stack rather than on `query`, so its
+  // identity survives keystrokes and the debounce effect below doesn't reset
+  // every render.
+  const rootFallbackCommand = useMemo(() => {
+    if (!currentFrame || stack.length !== 1) return null;
+    return currentFrame.commands.find((c) => c.fallbackSearch && c.search) ?? null;
+  }, [currentFrame, stack.length]);
+
+  // What is actually driving the list right now: a genuine `search` frame
+  // (drilled into), or — only at the root, only once the ordinary label
+  // filter has come up empty for a non-empty query — the fallback command's
+  // `search`, invoked IN PLACE without drilling in. `key` identifies which of
+  // the two (and which command) so the effect below can tell "still the same
+  // active search, new query" apart from "switched to a different one",
+  // without depending on the `fn` closure's own identity.
+  const activeSearch = useMemo((): { key: string; fn: CommandSearch } | null => {
+    if (currentFrame?.search) {
+      return { key: `frame:${currentFrame.parentCommand?.id ?? ''}`, fn: currentFrame.search };
+    }
+    if (rootFallbackCommand?.search && query.trim() !== '' && labelFiltered.length === 0) {
+      return { key: `fallback:${rootFallbackCommand.id}`, fn: rootFallbackCommand.search };
+    }
+    return null;
+  }, [currentFrame, rootFallbackCommand, query, labelFiltered]);
+
+  // Clear stale results when switching which search is active (e.g. the root
+  // fallback engaging or disengaging) — otherwise the OLD active search's
+  // results would render for one frame before the new query resolves.
+  // Deliberately keyed on `activeSearch?.key` alone, not `query`: within the
+  // same activation, the previous results should stay on screen (no blank
+  // flash) until the next debounced fetch resolves.
+  const activeSearchKey = activeSearch?.key ?? null;
+  useEffect(() => {
+    setLiveResults(null);
+    setLiveSearching(false);
+  }, [activeSearchKey]);
+
+  // Debounced re-query for the active search. Skipped on a `search` frame's
+  // very first render (empty query, no results yet) because `activateCommand`
+  // already fetched that exact call — re-firing it here would double the
+  // request. The root fallback has no such prefetch (`activeSearch` is only
+  // ever non-null for it once `query` is non-empty), so it always fetches.
+  useEffect(() => {
+    if (!activeSearch) return;
+    if (query === '' && liveResults === null) return;
+    const { fn } = activeSearch;
+    let cancelled = false;
+    setLiveSearching(true);
+    const handle = setTimeout(() => {
+      Promise.resolve(fn(query))
+        .then((results) => {
+          if (cancelled) return;
+          setLiveResults(results);
+          setSelectedIndex(0);
+        })
+        .catch(() => {
+          if (!cancelled) setLiveResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLiveSearching(false);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, activeSearch]);
+
+  // Filtered commands for the current frame. An active search's results are
+  // already server-filtered by its own query, so `matchesSearch` — a
+  // client-side label/description/group substring check — is skipped for it;
+  // applying it on top would silently drop rows whose label doesn't literally
+  // contain the typed text (e.g. a scope-prefix match). A `search` frame with
+  // no live results YET falls back to its own empty-query seed
+  // (`currentFrame.commands`); the root fallback has no such seed, so it
+  // renders nothing (and the loading spinner below) until the first fetch
+  // resolves.
+  const filtered = useMemo(() => {
+    if (!currentFrame) return [];
+    if (activeSearch) return liveResults ?? (currentFrame.search ? currentFrame.commands : []);
+    return labelFiltered;
+  }, [currentFrame, activeSearch, liveResults, labelFiltered]);
 
   const grouped = useMemo(() => groupCommands(filtered), [filtered]);
 
@@ -400,10 +506,10 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
           aria-label={frameTitle}
           className="max-h-80 overflow-y-auto p-1.5"
         >
-          {currentFrame?.loading ? (
+          {currentFrame?.loading || (liveSearching && filtered.length === 0) ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-content-tertiary)]">
               <Loader2 className="size-4 animate-spin" aria-hidden />
-              Loading…
+              {liveSearching ? 'Searching…' : 'Loading…'}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-[var(--color-content-tertiary)]">
