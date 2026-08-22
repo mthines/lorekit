@@ -46,9 +46,19 @@ async function mintAppJwt(): Promise<string | null> {
     const now = Math.floor(Date.now() / 1000);
     const claims = { iat: now - 30, exp: now + 540, iss: GITHUB_APP_ID };
     const signingInput = encodeSigningInput({ alg: 'RS256', typ: 'JWT' }, claims);
+    // `toPkcs8Der` returns a `Uint8Array`, whose backing store TypeScript models
+    // as `ArrayBufferLike` (it could be a SharedArrayBuffer). `importKey` wants
+    // a `BufferSource` over a plain `ArrayBuffer`, so the two do not match.
+    // Copying into a freshly allocated ArrayBuffer satisfies it with the same
+    // bytes, and does so HERE: `github-app-jwt.ts` is byte-mirrored from
+    // packages/mcp-core and cannot change its return type without diverging.
+    const der = toPkcs8Der(GITHUB_APP_PRIVATE_KEY);
+    const derBuffer = new ArrayBuffer(der.byteLength);
+    new Uint8Array(derBuffer).set(der);
+
     const key = await crypto.subtle.importKey(
       'pkcs8',
-      toPkcs8Der(GITHUB_APP_PRIVATE_KEY),
+      derBuffer,
       { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
       false,
       ['sign'],

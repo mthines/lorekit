@@ -61,6 +61,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { AUDIT_ACTIONS } from './schemas/audit.ts';
 import type { AuditAction } from './schemas/audit.ts';
 import type { DbClient } from './db-client.ts';
+import type { Json } from './database.types.ts';
 
 export { AUDIT_ACTIONS };
 export type { AuditAction };
@@ -109,7 +110,16 @@ export async function recordAudit(
 ): Promise<void> {
   try {
     const row = buildAuditEntry(input);
-    const { error } = await db.from('audit_log').insert({ ...row, user_id: userId });
+    const { error } = await db.from('audit_log').insert({
+      ...row,
+      user_id: userId,
+      // `AuditRow.metadata` is `Record<string, unknown> | null` — the CALLER's
+      // shape, shared with packages/mcp-core/src/audit.ts — while the generated
+      // Insert type wants `Json`. The value is JSON-serialisable by contract (it
+      // goes straight into a jsonb column), so state that here rather than
+      // widening AuditRow, which should keep describing what callers may pass.
+      metadata: row.metadata as Json,
+    });
     if (error) {
       console.error(`[recordAudit] insert failed for action=${input.action}:`, error.message);
     }

@@ -299,7 +299,14 @@ async function reconcileAppInstallation(
     p_github_account_id: githubAccountId,
     p_github_account_login: githubAccountLogin,
     p_account_type: accountType,
-    p_user_id: verdict.kind === 'linked' ? verdict.userId : null,
+    // `p_user_id` is `uuid` with NO DEFAULT (00037: "NULL -> pending"), so
+    // unlike the usage-event writer this one must send an explicit NULL —
+    // omitting it would be a missing-argument error, not a fallback to null.
+    // The generated Args type cannot express "required but nullable" and
+    // spells it `p_user_id: string`, so the null is cast here. Do NOT
+    // "simplify" this to `?? undefined` to match usage.ts: that would drop
+    // the argument and break every pending installation.
+    p_user_id: (verdict.kind === 'linked' ? verdict.userId : null) as unknown as string,
     p_status: verdict.kind,
     p_repos: payloadRepos,
   });
@@ -323,7 +330,17 @@ async function verifyHmac(
   bodyBytes: ArrayBuffer,
   signature: string | null,
   secret: string,
-  secretSource: WebhookSecretSource,
+  /**
+   * `'app'` is a real source — the single-secret GitHub App path — and
+   * `resolveSecrets` above has always returned `WebhookSecretSource | 'app'`.
+   * Only this parameter was narrower, so every App-event verification was a
+   * type error that the untyped client had been absorbing.
+   *
+   * Widened here at the consumer rather than in `WebhookSecretSource` itself:
+   * that type is byte-mirrored from `packages/mcp-core/src/webhook-secret-select.ts`
+   * and enumerates the SECRET-SELECTION outcomes, which `'app'` is not one of.
+   */
+  secretSource: WebhookSecretSource | 'app',
 ): Promise<{ ok: boolean; secretConfigured: boolean; signaturePresent: boolean; secretSource: string; failReason?: string }> {
   const secretConfigured = secret.length > 0;
   const signaturePresent = !!signature && signature.length > 0;

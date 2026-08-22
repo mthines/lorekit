@@ -654,6 +654,30 @@ function buildSql(s: QueryState): string {
  */
 export interface TracedSingleQuery<T> extends PromiseLike<PostgrestResponse<T>> {}
 
+/**
+ * The result of a traced `.rpc()` call.
+ *
+ * An RPC resolves to the FUNCTION'S RETURN VALUE, which is a scalar for
+ * `lorekit_org_create` (uuid) and `purge_expired_memories` (count) and a set for
+ * `lorekit_member_org_ids`. `TracedQuery.then` resolves to
+ * `PostgrestResponse<T[]>` — correct for a table select, wrong for every scalar
+ * RPC, which is why three call sites carried a `data as number` / `data as
+ * string` cast that could not typecheck once rows were real.
+ *
+ * `T` is therefore the WHOLE result, not a row: pass `number` for a counter,
+ * `string` for an id, and leave the default for a set-returning function.
+ */
+export interface TracedRpcQuery<T> extends PromiseLike<PostgrestResponse<T>> {
+  /**
+   * Narrow a set-returning RPC to its first row.
+   *
+   * Unwraps the element type, so the default `Record<string, unknown>[]` gives
+   * one `Record<string, unknown>` — not the array again, which is what a plain
+   * `TracedSingleQuery<T>` here would have meant.
+   */
+  single(): TracedSingleQuery<T extends readonly (infer E)[] ? E : T>;
+}
+
 export class TracedQuery<T = Record<string, unknown>> {
   constructor(private state: QueryState, private parent: Span) {}
 
@@ -714,7 +738,16 @@ export class TracedQuery<T = Record<string, unknown>> {
   }
 
   // ── ordering & pagination ─────────────────────────────────────────────────
-  order(col: string, opts?: { ascending?: boolean }): this {
+  /**
+   * `referencedTable` orders by a column of an EMBEDDED table
+   * (`.select('…, orgs(*)').order('created_at', { referencedTable: 'orgs' })`).
+   * It was missing from this signature while two call sites already passed it —
+   * `mcp/tools.ts`'s org list and `orgs/handlers/orgs/list.ts` — so both were
+   * type errors that the untyped client had been absorbing. The option is real
+   * and is forwarded unchanged to postgrest; only the wrapper's declaration was
+   * behind. (`or()` below already accepted it.)
+   */
+  order(col: string, opts?: { ascending?: boolean; referencedTable?: string }): this {
     this.state.orderBy = `${col} ${opts?.ascending === false ? 'DESC' : 'ASC'}`;
     this.state.qb = this.state.qb.order(col, opts);
     return this;
@@ -869,12 +902,15 @@ export function createTracedClient(supabase: DbClient, parentSpan: Span) {
         parentSpan,
       );
     },
-    rpc<T = Record<string, unknown>>(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedQuery<T> {
+    rpc<T = Record<string, unknown>[]>(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedRpcQuery<T> {
       return new TracedQuery<T>(
         // deno-lint-ignore no-explicit-any -- SupabaseClient.rpc() generic overload isn't publicly typed; cast is safe
         { table: fn, op: 'RPC', columns: '', filters: [], qb: (supabase as any).rpc(fn, args, opts) },
         parentSpan,
-      );
+        // Same object, narrower promise: `TracedQuery.then` yields `T[]`, and an
+        // RPC yields `T`. Only the result shape differs, which the class's own
+        // generic cannot express.
+      ) as unknown as TracedRpcQuery<T>;
     },
   };
 }

@@ -738,12 +738,12 @@ export async function toolPurge(
 
   // Use createTracedClient so the RPC call appears as a child span in traces.
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc('purge_archived_memories', {
+  const { data, error } = await tracedDb.rpc<number>('purge_archived_memories', {
     p_user_id: userId,
     p_retention_days: retentionDays,
   });
   if (error) throw new Error(error.message);
-  const purged = (data as number) ?? 0;
+  const purged = data ?? 0;
   span.setAttributes({ 'lorekit.result.purged': purged });
   if (purged > 0) {
     // One summary event per purge run (D6) — the RPC returns only a count,
@@ -843,7 +843,7 @@ export async function toolOrgCreate(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc('lorekit_org_create', { p_slug: slug, p_name: name, p_actor_user_id: userId })
+    .rpc<string>('lorekit_org_create', { p_slug: slug, p_name: name, p_actor_user_id: userId })
     .single();
 
   if (error) {
@@ -851,7 +851,7 @@ export async function toolOrgCreate(
     throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
   }
 
-  const orgId = data as string;
+  const orgId = data as string;  // non-null past the error guard above
   span.setAttributes({ 'lorekit.org.id': orgId });
   return { id: orgId, slug, name };
 }
@@ -877,8 +877,17 @@ export async function toolOrgList(
   // explicit `user_id` predicate is what stands between this tool and listing
   // other people's orgs — it is not belt-and-braces on top of RLS, it IS the
   // only tenant boundary on that path.
+  // The row shape is stated explicitly because this `.select()` EMBEDS a joined
+  // table, which the schema-derived row type cannot describe: `from('org_members')`
+  // yields the plain `org_members` row, and that has no `orgs` property. This is
+  // the case `createTracedClient.from`'s second generic exists for — see its
+  // docblock. Everything else in the edge tree should take the derived row.
+  type OrgMembershipRow = {
+    role: string;
+    orgs: { id: string; slug: string; name: string; created_at: string } | null;
+  };
   let query = tracedDb
-    .from('org_members')
+    .from<'org_members', OrgMembershipRow>('org_members')
     .select('role, orgs(id, slug, name, created_at)')
     .order('created_at', { referencedTable: 'orgs', ascending: false });
   if (userId) query = query.eq('user_id', userId);
@@ -887,7 +896,7 @@ export async function toolOrgList(
   if (error) throw new Error((error as { message: string }).message);
 
   const entries = (data ?? []).map((row) => {
-    const org = row.orgs as { id: string; slug: string; name: string; created_at: string } | null;
+    const org = row.orgs;
     return {
       id: org?.id ?? null,
       slug: org?.slug ?? null,
@@ -984,11 +993,11 @@ export async function toolPurgeExpired(
   span.setAttributes({ 'lorekit.tool.name': 'memory.purge_expired' });
 
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc('purge_expired_memories', { p_user_id: userId });
+  const { data, error } = await tracedDb.rpc<number>('purge_expired_memories', { p_user_id: userId });
 
   if (error) throw new Error((error as { message: string }).message);
 
-  const purged = (data as number) ?? 0;
+  const purged = data ?? 0;
   span.setAttributes({ 'lorekit.result.purged_expired': purged });
 
   if (purged > 0) {
