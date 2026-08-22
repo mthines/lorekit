@@ -15,7 +15,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotionConfig } from 'motion/react';
 import { Info, Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
@@ -160,9 +160,26 @@ export function StatCard({
       <TrendChip changePct={trend.changePct} title={trendTitle} />
     ) : null;
 
+  // A collapsed card is a DENSER card, not just a shorter one. Folding the
+  // evidence away still left four tiles at full type scale filling about half a
+  // phone's viewport before the first memory — so the compact state also drops the
+  // icon box and the headline a step. Expanded is untouched, and so is every
+  // non-collapsible caller (the Overview).
+  //
+  // This is the one property the two densities do NOT share: an earlier revision
+  // promised the icon, number and label "never move" between them. Size is what
+  // buys the space the folded state exists for, and the swap is instant rather
+  // than animated, so it reads as a density change rather than a shift.
+  const compact = collapsible && collapsed;
+
   const iconBox = (
-    <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-      <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
+    <div
+      className={`flex ${compact ? 'size-7' : 'size-9'} shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]`}
+    >
+      <Icon
+        className={`${compact ? 'size-3.5' : 'size-4'} text-[var(--color-accent)]`}
+        aria-hidden
+      />
     </div>
   );
 
@@ -175,7 +192,11 @@ export function StatCard({
   // on its own. It COUNTS to a new value rather than swapping: see AnimatedNumber
   // for why that is a change indicator.
   const numberEl = (
-    <p className="text-2xl font-bold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-3xl">
+    <p
+      className={`font-bold leading-tight tabular-nums text-[var(--color-content-primary)] ${
+        compact ? 'text-lg sm:text-xl' : 'text-2xl sm:text-3xl'
+      }`}
+    >
       <AnimatedNumber value={value} />
     </p>
   );
@@ -210,7 +231,9 @@ export function StatCard({
   // label beneath, so a card is barely taller than the number itself. Expanding
   // UNFOLDS the evidence in one motion: the trend chip fades in beside the number
   // (no vertical shift), and the caption + full-width sparkbar grow their own
-  // height below. The icon, number and label never move.
+  // height below. The icon, number and label are never REMOUNTED — they step down
+  // a size in the compact state (see `compact` above), which is what makes the
+  // folded grid a summary line rather than four full-scale tiles.
   if (collapsible) {
     return (
       <CollapsibleStatCard
@@ -280,7 +303,12 @@ function CollapsibleStatCard({
   sparkbar: ReactNode;
   collapsed: boolean;
 }) {
-  const reduceMotion = useReducedMotion();
+  // `useReducedMotionConfig`, not `useReducedMotion`: only the former consults
+  // `MotionConfigContext`, which is how Storybook's preview collapses motion for
+  // deterministic baselines. These reveals gate an AnimatePresence UNMOUNT, so
+  // with the device-only hook a story asserting "the evidence is gone" was racing
+  // a real 200ms exit instead of observing a settled DOM.
+  const reduceMotion = useReducedMotionConfig();
 
   // Height reveal for the pieces that grow the card downward (caption, sparkbar).
   // `overflow:hidden` is what lets an auto-height animation run; reduced motion
@@ -306,10 +334,12 @@ function CollapsibleStatCard({
     // `data-stat-card`: the same stable test hook the plain card carries.
     <div
       data-stat-card
-      className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
+      className={`flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] ${
+        collapsed ? 'p-3' : 'p-4'
+      }`}
     >
       {/* Icon left of the number; number + label stacked to its right. */}
-      <div className="flex items-start gap-3">
+      <div className={`flex items-start ${collapsed ? 'gap-2' : 'gap-3'}`}>
         {iconBox}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">

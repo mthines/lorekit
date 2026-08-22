@@ -41,10 +41,15 @@
  * stop collapsing things. Here the ANSWER stays visible and only the EVIDENCE
  * (trends, sparkbars, the heatmap) folds away.
  *
- * That is also why the stat grid is OUTSIDE the disclosure and the view toggle
- * only decides what the disclosure contains: on `charts` the cards unfold their
- * own evidence in place, and on `heatmap` they stay compact while the calendar
- * unfolds beneath them. Either way the four numbers are on screen.
+ * That is also why the stat grid is OUTSIDE the disclosure: on `charts` the cards
+ * unfold their own evidence in place, and COLLAPSED they hold the four numbers on
+ * every view. So folding never costs you the answer.
+ *
+ * The expanded `heatmap` view is the one place the grid is absent rather than
+ * compact. Keeping it there made the panel taller than the stacked layout this
+ * change exists to remove — the same two-charts-in-one-card problem, one view
+ * over. Picking Heatmap is a request to see the calendar, so the calendar is what
+ * it shows; the numbers are one chevron away.
  *
  * ## It opens EXPANDED, and remembers if you disagree
  *
@@ -76,7 +81,7 @@
  * collapse to an instant swap, per the repo's motion rule.
  */
 
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotionConfig } from 'motion/react';
 import { ChevronDown } from 'lucide-react';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ExplorerStats } from '@/components/lore/ExplorerStats';
@@ -200,7 +205,14 @@ export function ExplorerInsights({
   const open = resolved && parseBooleanPreference(openPref.raw, DEFAULT_INSIGHTS_OPEN);
   const view = parseEnumPreference(viewPref.raw, INSIGHTS_VIEWS, DEFAULT_INSIGHTS_VIEW);
 
-  const reduceMotion = useReducedMotion();
+  // `useReducedMotionConfig`, NOT `useReducedMotion`: the latter reads only the
+  // device media query and ignores `MotionConfigContext`, so a surrounding
+  // `MotionConfig reducedMotion="always"` could not reach it. Storybook's preview
+  // sets exactly that to collapse motion for deterministic baselines, and this
+  // panel's exit animations gate an UNMOUNT (AnimatePresence) — so with the wrong
+  // hook the story environment still ran a real 200ms exit, and "the heatmap is
+  // gone" became a race against it rather than a fact.
+  const reduceMotion = useReducedMotionConfig();
   const isMobile = useIsMobile();
   const heatmapWeeks = isMobile ? HEATMAP_WEEKS.mobile : HEATMAP_WEEKS.desktop;
   // The one substitution: an untouched `?range=` shows 24h HERE without
@@ -278,19 +290,26 @@ export function ExplorerInsights({
           </div>
         </div>
 
-        {/* ONE persistent grid at two densities — compact folds each card's
-            evidence away, expanded unfolds it. The card is never remounted, so
-            the numbers stay put and the expand reads as one motion. It unfolds
-            only on the `charts` view: on `heatmap` the cards are the summary the
-            calendar is read against, so they stay compact. */}
-        <ExplorerStats
-          scope={scope}
-          filters={filters}
-          range={shownRange}
-          scopeLabel={scopeLabel}
-          expanded={open && view === 'charts'}
-          nowIso={nowIso}
-        />
+        {/* ONE grid at two densities — compact folds each card's evidence away,
+            expanded unfolds it. The card is never remounted between those two, so
+            the numbers stay put and the expand reads as one motion.
+
+            It is absent entirely on the EXPANDED heatmap view: picking Heatmap is
+            a request to see the calendar, and leaving the cards above it made the
+            panel taller than the layout it replaced — the stack this change
+            exists to remove, reintroduced one view over. Collapsing still keeps
+            the four numbers on every view: that is the panel's summary line, and
+            it is what makes a folded panel worth having. */}
+        {!showHeatmap && (
+          <ExplorerStats
+            scope={scope}
+            filters={filters}
+            range={shownRange}
+            scopeLabel={scopeLabel}
+            expanded={open && view === 'charts'}
+            nowIso={nowIso}
+          />
+        )}
       </div>
 
       {/* Mounted only once the stored preference is known, so the very first

@@ -181,10 +181,11 @@ export const Collapsed: Story = {
  * The HEATMAP view, reached the way a reader reaches it.
  *
  * The other half of the view toggle, and the state that replaced the old stacked
- * layout: the calendar gets the panel to itself while the four cards stay compact
- * above it as the summary it is read against. A play function switches the view
- * before the screenshot so the baseline captures the real thing rather than a
- * prop-forced approximation.
+ * layout: the calendar gets the panel entirely to itself. The four cards are not
+ * merely folded here — they are absent, because keeping them above the calendar
+ * rebuilt the two-charts-in-one-card stack this panel exists to remove. A play
+ * function switches the view before the screenshot so the baseline captures the
+ * real thing rather than a prop-forced approximation.
  */
 export const HeatmapView: Story = {
   args: Default.args,

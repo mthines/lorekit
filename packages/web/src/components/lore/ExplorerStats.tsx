@@ -262,11 +262,22 @@ export function ExplorerStats({
   // full cards into a ~370px column. Sized to the panel, the grid goes four-up
   // only once the panel can seat four cards and their sparkbars without cramping
   // (~768px), and stays two-up below that.
+  // Columns key off the panel's width AND its density. A COLLAPSED card is a
+  // number with a label under it, so it seats two-up even on the narrowest phone
+  // — which is the whole point of the folded state: a summary LINE, not a screen
+  // of four stacked tiles. Four one-up cards ran to about half a phone's viewport;
+  // two-up at the tighter collapsed padding is roughly a quarter of it.
+  //
+  // Expanded, each card carries a full-width sparkbar and its caption, so the
+  // one-up arm below ~384px comes back — two of those side by side crush the
+  // number, which is what that breakpoint was always for.
+  const columns = expanded
+    ? 'grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4'
+    : 'grid-cols-2 gap-2 @3xl:grid-cols-4';
+
   return (
     <div
-      // One-up below ~384px (a small phone, where two cards would crush the
-      // number), two-up from there, four-up once the panel can seat four.
-      className={`grid grid-cols-1 gap-3 transition-opacity duration-150 @sm:grid-cols-2 @3xl:grid-cols-4 ${dim}`}
+      className={`grid transition-opacity duration-150 ${columns} ${dim}`}
       aria-busy={isFetching || isLoading}
     >
       {cards.map(({ id, ...card }) => (

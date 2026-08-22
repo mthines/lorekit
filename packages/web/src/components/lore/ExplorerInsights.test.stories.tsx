@@ -362,6 +362,64 @@ export const CollapsedStillShowsTheNumbers: Story = {
 };
 
 /**
+ * The collapsed panel is a SUMMARY LINE on a phone, not a screen of tiles.
+ *
+ * Folding used to leave four full-scale cards stacked ONE-up below ~384px, running
+ * to roughly half a phone's viewport before the first memory — so collapsing bought
+ * far less room than it appeared to. Two-up at the compact density (`StatCard`'s
+ * `compact`) is what fixed it, and this is the bound that keeps it fixed.
+ *
+ * The budget is stated in CSS pixels rather than as a fraction of the viewport,
+ * because the browser runner's iframe is not a phone: 260px sits comfortably under
+ * 30% of the ~915px viewport this was measured against, while staying loose enough
+ * to survive a font-metric difference. It is a REGRESSION bound — the failure it
+ * exists to catch is a return to the ~450px one-up stack, not a 10px drift.
+ */
+export const CollapsedPanelFitsAPhone: Story = {
+  // A phone's content column. The harness's own `maxWidth` cannot exceed its
+  // parent, so the panel lays out at phone width inside the desktop-sized runner.
+  render: (args) => (
+    <div style={{ width: '23rem' }}>
+      <Harness {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const panel = canvas.getByLabelText(/activity for the current selection/i);
+
+    await step('collapse it the way a reader does', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /hide activity detail/i }));
+      await waitFor(async () => {
+        await expect(canvas.queryAllByRole('img')).toHaveLength(0);
+      });
+    });
+
+    await step('the whole panel fits the phone budget', async () => {
+      // Settle the fold FIRST. A rect read mid-transition is SHORTER than the
+      // resting panel, so measuring during the animation can only manufacture a
+      // false pass — the same trap the heatmap width assertion hit before.
+      await waitFor(async () => {
+        const before = panel.getBoundingClientRect().height;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        await expect(panel.getBoundingClientRect().height).toBe(before);
+      });
+      await expect(panel.getBoundingClientRect().height).toBeLessThanOrEqual(260);
+    });
+
+    await step('and it still carries all four numbers', async () => {
+      for (const label of [
+        'Memories written',
+        'Memories read',
+        'Scopes active',
+        'Memories archived',
+      ]) {
+        await expect(canvas.getByText(label)).toBeInTheDocument();
+      }
+    });
+  },
+};
+
+/**
  * The view toggle: the panel's two bodies, one at a time.
  *
  * The regression it guards is the layout this change exists to remove — four stat
@@ -403,22 +461,30 @@ export const ViewToggleSwapsChartsAndHeatmap: Story = {
       await expect(canvas.queryByLabelText(/contribution heatmap/i)).toBeNull();
     });
 
-    await step('heatmap view: the calendar, and NO sparkbars', async () => {
+    await step('heatmap view: ONLY the calendar — no cards, no sparkbars', async () => {
       await userEvent.click(toggle.getByRole('radio', { name: /heatmap/i }));
       await waitFor(async () => {
         await expect(canvas.getByText(/last \d+ weeks/i)).toBeInTheDocument();
         await expect(canvas.getByLabelText(/contribution heatmap/i)).toBeInTheDocument();
       });
-      // The cards stay COMPACT on this view — they are the summary the calendar
-      // is read against, so their own evidence stays folded. Under `waitFor`
-      // because the sparkbars leave through an AnimatePresence exit, so they are
-      // still mounted for a frame after the click.
+      // Picking Heatmap shows the calendar and nothing else. Leaving the four
+      // cards stacked above it rebuilt the very layout this panel exists to
+      // remove, so their absence is the assertion — not merely that their
+      // evidence folded. Under `waitFor` because they leave through an
+      // AnimatePresence exit and are still mounted for a frame after the click.
       await waitFor(async () => {
+        await expect(canvasElement.querySelectorAll('[data-stat-card]')).toHaveLength(0);
         await expect(canvas.queryAllByRole('img')).toHaveLength(0);
       });
     });
 
-    await step('the four numbers survive both views', async () => {
+    await step('the four numbers are one chevron away, never lost', async () => {
+      // Folding must not cost the answer on ANY view: collapsing out of the
+      // heatmap brings the summary line back rather than emptying the panel.
+      await userEvent.click(canvas.getByRole('button', { name: /hide activity detail/i }));
+      await waitFor(async () => {
+        await expect(canvas.queryByLabelText(/contribution heatmap/i)).toBeNull();
+      });
       for (const label of [
         'Memories written',
         'Memories read',
@@ -427,7 +493,13 @@ export const ViewToggleSwapsChartsAndHeatmap: Story = {
       ]) {
         await expect(canvas.getByText(label)).toBeInTheDocument();
       }
-      await expect(await headline(canvas, 'Memories written')).toBeGreaterThan(0);
+      // Under `waitFor`: the grid is absent on the expanded heatmap view, so
+      // collapsing REMOUNTS it and each figure counts up from 0 (AnimatedNumber).
+      // Reading the headline on the first frame after a mount is a race that only
+      // ever resolves to 0 — the same reason the expanded step above waits.
+      await waitFor(async () => {
+        await expect(await headline(canvas, 'Memories written')).toBeGreaterThan(0);
+      });
     });
 
     await step('switching back restores the charts and drops the calendar', async () => {
