@@ -119,6 +119,28 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 
   const activateCommand = useCallback(
     async (command: Command, source: CommandSource = 'palette'): Promise<void> => {
+      // `search` wins over `children` (see the field's doc in types.ts) — push
+      // a live frame and seed it with the empty-query result, exactly like the
+      // default children list a `children` command would show at rest.
+      if (command.search) {
+        const loadingFrame: PaletteFrame = {
+          parentCommand: command,
+          commands: [],
+          loading: true,
+          search: command.search,
+        };
+        setStack((prev) => [...prev, loadingFrame]);
+        try {
+          const initial = await command.search('');
+          setStack((prev) => [
+            ...prev.slice(0, -1),
+            { parentCommand: command, commands: initial, loading: false, search: command.search },
+          ]);
+        } catch {
+          setStack((prev) => prev.slice(0, -1));
+        }
+        return;
+      }
       if (command.children) {
         if (typeof command.children === 'function') {
           // Push a loading frame immediately for perceived responsiveness.

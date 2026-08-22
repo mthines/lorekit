@@ -200,21 +200,65 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Live-search state: results from a `search` frame's debounced re-query.
+  // `null` means "no re-query has resolved yet for this frame" — the frame's
+  // own `commands` (the empty-query seed `activateCommand` fetched) render
+  // instead, so opening a search frame is never a blank flash.
+  const [liveResults, setLiveResults] = useState<Command[] | null>(null);
+  const [liveSearching, setLiveSearching] = useState(false);
+
   // Reset state and re-focus input when palette opens or the frame changes
   // (drilling into a nested level).
   useEffect(() => {
     if (open) {
       setQuery('');
       setSelectedIndex(0);
+      setLiveResults(null);
+      setLiveSearching(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open, currentFrame]);
 
-  // Filtered commands for the current frame.
+  // Debounced re-query for `search` frames. Skipped on the very first render
+  // of a frame (empty query, no results yet) because `activateCommand` already
+  // fetched that exact call — re-firing it here would double the request.
+  useEffect(() => {
+    if (!currentFrame?.search) return;
+    if (query === '' && liveResults === null) return;
+    const search = currentFrame.search;
+    let cancelled = false;
+    setLiveSearching(true);
+    const handle = setTimeout(() => {
+      Promise.resolve(search(query))
+        .then((results) => {
+          if (cancelled) return;
+          setLiveResults(results);
+          setSelectedIndex(0);
+        })
+        .catch(() => {
+          if (!cancelled) setLiveResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLiveSearching(false);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, currentFrame]);
+
+  // Filtered commands for the current frame. A `search` frame's results are
+  // already server-filtered by its own query, so `matchesSearch` — a
+  // client-side label/description/group substring check — is skipped for it;
+  // applying it on top would silently drop rows whose label doesn't literally
+  // contain the typed text (e.g. a scope-prefix match).
   const filtered = useMemo(() => {
     if (!currentFrame) return [];
+    if (currentFrame.search) return liveResults ?? currentFrame.commands;
     return currentFrame.commands.filter((c) => matchesSearch(c, query));
-  }, [currentFrame, query]);
+  }, [currentFrame, query, liveResults]);
 
   const grouped = useMemo(() => groupCommands(filtered), [filtered]);
 
@@ -400,10 +444,10 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
           aria-label={frameTitle}
           className="max-h-80 overflow-y-auto p-1.5"
         >
-          {currentFrame?.loading ? (
+          {currentFrame?.loading || (liveSearching && filtered.length === 0) ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-content-tertiary)]">
               <Loader2 className="size-4 animate-spin" aria-hidden />
-              Loading…
+              {liveSearching ? 'Searching…' : 'Loading…'}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-[var(--color-content-tertiary)]">
