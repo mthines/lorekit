@@ -181,8 +181,13 @@ describe('corsResponseHeaders', () => {
         'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id',
       );
       // Without this a browser cannot read the server span's traceparent, which
-      // is what links client-side RUM to the server trace.
-      expect(headers['Access-Control-Expose-Headers']).toBe('traceparent, X-LoreKit-Dry-Run');
+      // is what links client-side RUM to the server trace. `X-LoreKit-User-Id`
+      // is here for the same structural reason: the router sets it on every
+      // authenticated response, and an unexposed header is unreadable — so
+      // dropping it here would silently hide a value that IS being sent.
+      expect(headers['Access-Control-Expose-Headers']).toBe(
+        'traceparent, X-LoreKit-Dry-Run, X-LoreKit-User-Id',
+      );
       expect(headers['Access-Control-Max-Age']).toBe('86400');
       // Access-Control-Allow-Origin is origin-dependent, so the response MUST
       // declare it varies by Origin — otherwise a shared cache can serve one

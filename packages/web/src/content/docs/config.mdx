@@ -210,6 +210,31 @@ gate when you route LoreKit telemetry to your own backend.
 npx @lorekit/cli doctor --telemetry
 ```
 
+### What usage telemetry identifies
+
+When export is on, the CLI stores two ids in `~/.lorekit/telemetry-id.json` (or
+`$LOREKIT_HOME/telemetry-id.json`) so separate runs can be recognised as coming
+from one place rather than from a thousand anonymous ones:
+
+| Id | What it is |
+|----|-----------|
+| Install id | 32 random hex characters, generated on first run. Not derived from your hostname, username, MAC address or any path — so it identifies the install and nothing about who you are. Reported as `service.instance.id` |
+| Account id | Your LoreKit account UUID, only once the CLI has made an authenticated call and learned it from the response. Reported as `user.id`; before that, `user.id` is your install id prefixed `install:` |
+
+The account id is what lets purely local, offline usage be attributed to an
+account at all — an offline command makes no request, so nothing server-side sees
+it.
+
+`doctor` prints the file path and both values. **Delete the file to reset your
+identity**; the next run with telemetry enabled generates a new install id and
+re-learns the account on your next authenticated call.
+
+Nothing is written while telemetry is disabled — no id is generated and the file
+is never created. If you have opted out, the account id is not recorded either,
+even though the server still returns it on your authenticated requests. Command
+telemetry never includes a path, working directory, token, endpoint, repo name or
+scope string.
+
 <TutorialCallout variant="tip">
 
 Tokens never belong in `.lorekit.json` — it is meant to be committed. Keep the `lk_rw_…` token in your agent's `.mcp.json` (gitignored) or the `LOREKIT_TOKEN` env var. See the [Getting started](/docs/setup) guide for the connection setup.

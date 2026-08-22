@@ -19,6 +19,7 @@
 // no longer a transport for this store.
 // Zero-dependency.
 import { restFetch, mcpToRestBase } from '../mcp.mjs';
+import { rememberAccountId } from '../telemetry-identity.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
 import { withReadFields } from './entry-fields.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
@@ -139,7 +140,26 @@ class RemoteStore {
 
   async _rest(path, opts = {}) {
     if (!this.usable()) return { ok: false, unusable: true };
-    return restFetch(this.restBase, this.token, path, { ...opts, traceparent: this._tp() });
+    const res = await restFetch(this.restBase, this.token, path, { ...opts, traceparent: this._tp() });
+    // Learn (and persist) which account this token belongs to, from the
+    // `X-LoreKit-User-Id` header the edge sets on every authenticated response.
+    // This is the ONE choke point for the CLI's remote traffic, so a single call
+    // site covers every command.
+    //
+    // Why cache it at all, when the server already knows: a run that never
+    // leaves the machine (`--offline`, the local two-tier store, `lorekit hook`)
+    // makes no request, so there is no server-side span to carry `auth.user_id`.
+    // Persisting it here is what lets THOSE runs report an account and join to
+    // server-side `usage_events` / `auth.user_id`.
+    //
+    // `rememberAccountId` is total, is a no-op when the value is unchanged, and
+    // never creates the identity file — so a user who opted out of telemetry
+    // gets nothing written even though they still receive the header. Guarded
+    // anyway so a store operation can never fail on a telemetry concern.
+    try {
+      rememberAccountId(res?.userId);
+    } catch { /* identity is an enrichment, never a precondition */ }
+    return res;
   }
 
   // ── Memory operations → REST ──────────────────────────────────────────────

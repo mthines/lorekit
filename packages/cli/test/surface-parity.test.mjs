@@ -207,15 +207,28 @@ describe('telemetry is inherited, not per-command', () => {
     assert.match(binSource, /return traceCommand\(entry\.name, args, VERSION, \(\) => entry\.run\(args\)\)/);
   });
 
-  test('the machine-facing commands stay untraced and return first', () => {
+  test('the machine-facing commands stay untraced, but are metered', () => {
     // The negative assertion is the half that discriminates: `hook` and `mcp`
-    // fire on every agent event and own their stdout, so a span per event is a
+    // fire on every agent event and own their stdout, so a SPAN per event is a
     // cost their caller never asked for. If a table ever swept them into the
     // traced set, only this notices.
+    //
+    // Untraced is not unmeasured, though: they go through `meterCommand`, which
+    // emits the invocation counter alone. Both halves are asserted, because
+    // either one alone permits the mistake the other catches — dropping the
+    // meter makes the CLI's highest-volume traffic invisible again, and reaching
+    // for `traceCommand` here puts an awaited 1500 ms export on every agent turn.
     const machine = registry.filter((e) => e.machine);
     assert.deepEqual(machine.map((e) => e.name).sort(), ['hook', 'mcp']);
     for (const entry of machine) assert.equal(entry.traced, false, `${entry.name} must stay untraced`);
-    assert.match(binSource, /if \(machineEntry\?\.machine\) \{\s*\n\s*return machineEntry\.run\(args\);/);
+    assert.match(
+      binSource,
+      /if \(machineEntry\?\.machine\) \{\s*\n\s*return meterCommand\(machineEntry\.name, VERSION, \(\) => machineEntry\.run\(args\)\);/,
+    );
+    // Exactly one metered call site, for the same reason there is exactly one
+    // traced one: a second wrapper is a second place for the budget to drift.
+    const metered = binSource.match(/meterCommand\(/g) ?? [];
+    assert.equal(metered.length, 1, `expected 1 meterCommand call site, found ${metered.length}`);
   });
 
   test('every other command is traced', () => {
