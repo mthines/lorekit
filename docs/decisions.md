@@ -188,6 +188,83 @@ Picking a view while folded also EXPANDS, because otherwise the segment lights u
 
 Two consequences worth knowing before touching it. **The element renders two nodes**, a visible `aria-hidden` half the tween owns and a `sr-only` half carrying the settled value — a single node would expose whatever intermediate number assistive tech happened to read, so any test or caller reading a figure must read the `.sr-only` half, never `textContent` (which concatenates both). And **it honours `MotionConfig`'s `reducedMotion="always"` as well as the device preference**, deliberately NOT Motion's exact precedence: `MotionConfigContext` defaults to `'never'` with no provider mounted and this app has no root `MotionConfig`, so honouring `'never'` would let a default override a real user preference. `'always'` can force reduction; nothing can force motion on. That is also what makes the committed visual baselines deterministic — `.storybook/preview.tsx` sets `reducedMotion="always"`, so a story is screenshotted at the settled value instead of mid-count.
 
+## Profiling is SQL-level, because there is no host to profile
+
+**Dash0 profiling cannot be enabled for the Supabase apps, and the substitute is
+two things that measure the same question.** Do not re-open this as "add the
+profiler" — the blocker is architectural, not configuration.
+
+Dash0 collects profiles with a **host-level eBPF agent** (the OpenTelemetry eBPF
+profiler, deployed by the Dash0 Kubernetes operator). Every LoreKit runtime is
+managed serverless: Supabase Edge Functions on managed Deno isolates, the
+dashboard on Vercel. There is no node, no DaemonSet, no privileged sidecar — the
+repo has no `Dockerfile`, no `fly.toml` and no k8s manifest, and `deploy.yml`
+only runs `supabase functions deploy` plus a Vercel deploy. Supabase's edge
+runtime additionally exposes no userland V8 profiler to sample from.
+
+The in-process route does not exist yet either. OTLP **profiles** reached public
+Alpha in March 2026, the SIG says it should not be used for critical production
+workloads, and the JS SDK has no profiles exporter
+([opentelemetry-js#6500](https://github.com/open-telemetry/opentelemetry-js/issues/6500));
+there is no Deno equivalent at all. Hand-rolling one would mean writing the
+profiles proto's string-dictionary encoding against an Alpha spec with no
+profiler feeding it.
+
+It would also answer little. These handlers are **I/O-bound**, so a sampled stack
+is mostly "awaiting fetch", and `createTracedClient` already opens a CLIENT span
+per round-trip — the trace waterfall already attributes request time to specific
+queries, which is strictly better than a profile for this workload.
+
+So the question "where does the time go" is answered twice, from the two places
+that can actually see it:
+
+1. **Self-time attribution** (`lorekit.io.wait_ms` / `lorekit.io.calls` /
+   `lorekit.self_time_ms`, stamped by `traceRequest` on every root span). The
+   residue of the request duration that no child span explains. Fed by span
+   KIND, so any `SPAN_KIND_CLIENT` span counts and a new traced client needs no
+   wiring. The intervals are **merged, not summed** (`io-ledger.ts`): handlers
+   issue concurrent queries, and summing two overlapping 40 ms calls claims 80 ms
+   of wait in a request that waited 40, driving self time negative on exactly the
+   concurrent requests worth investigating. Do not "simplify" the merge into a
+   sum.
+2. **Query-level profiling** — `pg_stat_statements` → three cumulative sums →
+   Dash0 (`00074`, `functions/profiling/`). Server-side cost per statement
+   SHAPE, aggregated across every caller: the one thing per-request CLIENT spans
+   cannot see, because they time each round-trip from the caller's side, one
+   request at a time.
+
+Four sub-decisions inside (2), each of which looks like an arbitrary choice and
+is not:
+
+- **Cumulative, not deltas.** The counters are already cumulative since
+  `stats_reset`, so they ship that way with the reset as
+  `startTimeUnixNano` — Dash0 owns `rate()` AND reset detection. Differencing
+  here would mean persisting the previous snapshot and re-implementing reset
+  detection in a new place. It also makes a dropped scrape cost resolution
+  rather than data, which is why the cron poke is fire-and-forget.
+- **Routed through an Edge Function, not posted from Postgres.** pg_net could
+  POST OTLP directly, but the DB has no access to the resource attributes
+  (`service.*`, `deployment.environment.name`, `vcs.*`) that `otel.ts` resolves,
+  so it would need a SECOND OTLP payload builder — and a metric on a different
+  resource than the spans beside it silently stops correlating. The function also
+  already holds the Dash0 credentials, so this adds no new secret surface for
+  them.
+- **Off by default, gated on two Vault secrets.** The migration ships the reader,
+  the exporter and an every-minute cron job, but the exporter returns `disabled`
+  and posts nothing until `lorekit_profiling_url` and `lorekit_profiling_key`
+  exist — the embeddings posture ([embeddings.md](./embeddings.md)). The gate is
+  in ONE place, so enabling it is two `vault.create_secret` calls, not a
+  migration re-run or a schedule edit.
+- **Service-role only, top-N capped in the RPC.** The rows are cross-tenant query
+  shapes, so an `lk_ro_*` read token is refused alongside a user JWT, and the
+  function is deliberately absent from `openapi` and from `createRouter` (a cron
+  poke is not a tenant request and must not land in `usage_events`). The 200-row
+  cap lives inside `lorekit_db_query_stats` because every row is a metric SERIES
+  per measure — cardinality must not be a caller's choice.
+
+The one component that COULD be truly profiled is `packages/mcp-server/`, if it
+were ever deployed to a VM or Kubernetes where the eBPF profiler can attach.
+Nothing deploys it today, and giving it a deploy target is a separate decision.
 ## MCP org tools serve `lk_*` tokens, on the same actor override REST uses
 
 **The MCP `org.*` tools accept API tokens, and the two surfaces stopped disagreeing about who may manage an org.** They were JWT-only for a real reason — their handlers called the org RPCs without naming an actor, and those RPCs derive one from `auth.uid()`, which is NULL on the service-role connection an api_key caller gets, so every `lorekit_org_can(...)` denied. `00041_org_actor_override.sql` fixed the underlying problem by giving the eight org RPCs a trailing `p_actor_user_id` honoured **only** on a verified `service_role` connection, and the REST `/orgs` routes have served tokens through it since. MCP was simply left behind, and `docs/mcp-tools.md` told readers to prefer REST "when you are authenticating with an API token" — a workaround documented as a recommendation.

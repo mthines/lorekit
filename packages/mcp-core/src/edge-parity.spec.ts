@@ -121,6 +121,18 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // `mcp/` directory. A second copy is exactly how the REST half shipped
   // ungated while the docs claimed it was refused.
   ['account-wide-tools.ts', '_shared/account-wide-tools.ts'],
+  // The self-time / IO-wait split stamped on every root request span. Mirrored
+  // because `traceRequest` (Deno) is the only caller and cannot cross-import
+  // mcp-core; guarded here because the interval MERGE is the whole point — a
+  // copy that drifts back to summing overlapping calls reports negative self
+  // time on exactly the concurrent requests worth profiling.
+  ['io-ledger.ts', '_shared/io-ledger.ts'],
+  // pg_stat_statements rows → OTel cumulative sums, for the `profiling`
+  // function. Mirrored for the io-ledger.ts reason; guarded here because the
+  // ms→s conversion and the epoch fallback for an unreset counter are both
+  // silent when wrong — a drifted copy exports plausible numbers that are off
+  // by 1000x or collapse into an unrateable zero-length series.
+  ['db-query-metrics.ts', '_shared/db-query-metrics.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

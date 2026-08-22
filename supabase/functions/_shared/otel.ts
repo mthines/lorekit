@@ -26,6 +26,7 @@
 import type { Database } from './database.types.ts';
 import type { DbClient } from './db-client.ts';
 import { formatTraceparent, parseTraceparent } from './trace-context.ts';
+import { attributeIoTime, type IoInterval } from './io-ledger.ts';
 
 /** PostgREST error shape returned by @supabase/supabase-js. */
 type PostgrestError = { message: string; details?: string | null; hint?: string | null; code?: string };
@@ -46,7 +47,14 @@ declare global {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-function getOtlpConfig(): { endpoint: string; headers: Record<string, string> } | null {
+/**
+ * Resolve the Dash0 OTLP endpoint and headers, or `null` when export is not
+ * configured (local development). Exported so the metric exporter
+ * (`otlp-metrics.ts`) resolves its destination and dataset routing through the
+ * SAME rules as the span exporter — including the `Dash0-Dataset` precedence
+ * below, which is easy to get subtly wrong in a second copy.
+ */
+export function getOtlpConfig(): { endpoint: string; headers: Record<string, string> } | null {
   const endpoint = Deno.env.get('OTEL_EXPORTER_OTLP_ENDPOINT');
   if (!endpoint) return null;
 
@@ -184,7 +192,13 @@ interface SpanPayload {
   statusMessage?: string;
 }
 
-function toOtlpValue(v: string | number | boolean) {
+/**
+ * Encode a scalar as an OTLP `AnyValue`. Shared with the metric exporter so
+ * span attributes and metric datapoint attributes encode identically —
+ * notably the integer/double split, which decides whether Dash0 reads a value
+ * as a whole number or a float.
+ */
+export function toOtlpValue(v: string | number | boolean) {
   if (typeof v === 'number') return Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v };
   if (typeof v === 'boolean') return { boolValue: v };
   return { stringValue: String(v) };
@@ -215,33 +229,48 @@ function resolveDeploymentEnv(): string {
   return 'local';
 }
 
-export function buildOtlpPayload(
-  spans: SpanPayload[],
+/**
+ * The one logical service name every Supabase Edge Function reports.
+ *
+ * Every Supabase Edge Function is ONE logical service: `api`. The individual
+ * functions (memories, orgs, openapi, mcp, health, profiling) are operations on
+ * it, not separate services — they share a deployment, a database and a
+ * lifecycle, and splitting them would fragment the service map for no
+ * analytical gain.
+ *
+ * This is a build-time constant on purpose. It used to be a per-function
+ * `SERVICE_NAME` Supabase secret, which could not work: Supabase secrets are
+ * project-wide, not per-function, so a single value could never name five
+ * functions. Functions that went unconfigured silently fell back to a shared
+ * name anyway. The env var is still honoured as an escape hatch, but nothing
+ * needs to set it.
+ *
+ * Distinguish functions and operations with `faas.name` and the span name
+ * (`lorekit.memories`, `lorekit.mcp`, …), both set by `traceRequest`.
+ */
+export function resolveServiceName(): string {
+  return Deno.env.get('SERVICE_NAME') ?? 'api';
+}
+
+/**
+ * The OTLP `resource.attributes` array every signal this file exports carries.
+ *
+ * Shared by the trace payload and the metric payload (`otlp-metrics.ts`) so the
+ * two cannot describe the same isolate differently. A second copy of this list
+ * is how a metric ends up on a resource Dash0 treats as a DIFFERENT service
+ * from the spans beside it — the signals stop correlating and nothing errors.
+ */
+export function buildResourceAttributes(
   opts: { environmentOverride?: string } = {},
-): unknown {
+): Array<{ key: string; value: { stringValue: string } }> {
   // Build vcs.* resource attributes once per payload (they are constant for
   // the lifetime of the isolate — resolved from Supabase secrets at startup).
   const vcsAttrs = getVcsResourceAttributes();
 
   const serviceVersion = Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA') ?? 'unknown';
 
-  // Every Supabase Edge Function is ONE logical service: `api`. The individual
-  // functions (memories, orgs, openapi, mcp, health) are operations on it, not
-  // separate services — they share a deployment, a database and a lifecycle,
-  // and splitting them would fragment the service map for no analytical gain.
-  //
-  // This is a build-time constant on purpose. It used to be a per-function
-  // `SERVICE_NAME` Supabase secret, which could not work: Supabase secrets are
-  // project-wide, not per-function, so a single value could never name five
-  // functions. Functions that went unconfigured silently fell back to a shared
-  // name anyway. The env var is still honoured as an escape hatch, but nothing
-  // needs to set it.
-  //
-  // Distinguish functions and operations with `faas.name` and the span name
-  // (`lorekit.memories`, `lorekit.mcp`, …), both set by `traceRequest`.
-  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'api';
-  const resourceAttributes = [
-    { key: 'service.name', value: { stringValue: serviceName } },
+  return [
+    { key: 'service.name', value: { stringValue: resolveServiceName() } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: serviceVersion } },
     // A caller-supplied override (a smoke run's `test`) wins over the isolate's
@@ -253,6 +282,14 @@ export function buildOtlpPayload(
       value: { stringValue: value },
     })),
   ];
+}
+
+export function buildOtlpPayload(
+  spans: SpanPayload[],
+  opts: { environmentOverride?: string } = {},
+): unknown {
+  const serviceName = resolveServiceName();
+  const resourceAttributes = buildResourceAttributes(opts);
 
   return {
     resourceSpans: [{
@@ -291,7 +328,26 @@ export class ExportBatch {
    */
   environmentOverride?: string;
 
+  /**
+   * Wall-clock intervals of the outbound (CLIENT) calls made during this
+   * request, for the self-time attribution `traceRequest` stamps on the root
+   * span. Request-scoped, exactly like the span list: a batch IS one request,
+   * so a background task's `detachedChild` batch keeps its own ledger and its
+   * I/O never lands on the request that spawned it.
+   *
+   * Deliberately NOT drained by `flush()`. The spans are drained because they
+   * have been posted and re-posting would duplicate them; the ledger is read
+   * once by `traceRequest` BEFORE the flush and is never exported on its own.
+   */
+  private ioIntervals: IoInterval[] = [];
+
   add(span: SpanPayload): void { this.spans.push(span); }
+
+  /** Record one outbound call's interval. Called by `Span.end()` on CLIENT spans. */
+  recordIo(interval: IoInterval): void { this.ioIntervals.push(interval); }
+
+  /** The outbound-call intervals recorded so far. */
+  get io(): readonly IoInterval[] { return this.ioIntervals; }
 
   /**
    * Remove and return the collected spans. Used by the offline correlated-trace
@@ -453,18 +509,33 @@ export class Span {
     return this;
   }
 
+  /** Wall-clock ms since this span started. */
+  get elapsedMs(): number {
+    return Date.now() - this.startMs;
+  }
+
   /** End the span and add it to the batch. */
   end(): void {
+    const endMs = Date.now();
     this.batch.add({
       ctx: this.ctx,
       name: this.name,
       kind: this.kind,
       startMs: this.startMs,
-      endMs: Date.now(),
+      endMs,
       attributes: this.attributes,
       status: this.status,
       statusMessage: this.statusMessage,
     });
+    // Every CLIENT span IS an outbound call — that is what the kind means — so
+    // the ledger is fed here rather than at each call site. A new traced
+    // client, or a hand-rolled `child(..., SPAN_KIND_CLIENT)` around a `fetch`
+    // to the embedding provider, is attributed without touching this file;
+    // that is the whole reason the hook lives on `kind` and not in
+    // `TracedQuery`.
+    if (this.kind === SPAN_KIND_CLIENT) {
+      this.batch.recordIo({ startMs: this.startMs, endMs });
+    }
   }
 }
 
@@ -503,8 +574,14 @@ const HEADER_ENV_ALLOWLIST = new Set(['test']);
  * in the allowlist. Unlike a resource attribute the isolate fixes at boot, this
  * is applied per request batch (each request flushes its own ExportBatch), which
  * is what lets a smoke request against a production deployment report `test`.
+ *
+ * Exported so a signal that does NOT travel on the span batch can honour the
+ * same header through the same allowlist — today the `profiling` function's
+ * metric export. A second reading of that header would be a second place for
+ * the allowlist to drift, and the whole point of the allowlist is that a caller
+ * can only ever mark itself synthetic.
  */
-function resolveEnvironmentOverride(req: Request): string | undefined {
+export function resolveEnvironmentOverride(req: Request): string | undefined {
   const raw = req.headers.get('x-lorekit-deployment-environment');
   if (!raw) return undefined;
   const t = raw.trim().toLowerCase();
@@ -585,9 +662,38 @@ export async function traceRequest<T extends Response>(
     span.error(`${(err as Error).name}: ${(err as Error).message}`);
     throw err;
   } finally {
+    // Stamped BEFORE end() — attributes set after a span is added to the batch
+    // are never exported. Runs on the error path too: a request that failed
+    // slowly is precisely when the split between waiting and working matters.
+    stampIoAttribution(span, batch);
     span.end();
     batch.flush(); // fire-and-forget after response
   }
+}
+
+/**
+ * Attribute the root span's duration to outbound waiting vs our own code — the
+ * closest thing to a profile a managed Deno isolate can produce.
+ *
+ * See `io-ledger.ts` for why this exists and why the intervals are merged
+ * rather than summed. The three attributes are NUMERIC measures, not
+ * dimensions, so they add no cardinality to any aggregation over the span —
+ * which is what makes it safe to stamp them on every single request rather than
+ * on a sampled subset.
+ */
+function stampIoAttribution(span: Span, batch: ExportBatch): void {
+  const { waitMs, selfMs, calls } = attributeIoTime(span.elapsedMs, batch.io);
+  span.setAttributes({
+    // Time inside this request during which at least one outbound call was in
+    // flight. Concurrent calls count once.
+    'lorekit.io.wait_ms': waitMs,
+    // How many outbound calls were made. Summed, not merged — this is what
+    // tells an N+1 (many short calls) apart from one slow query.
+    'lorekit.io.calls': calls,
+    // The residue: request duration no child span accounts for. Scope
+    // expansion, payload building, JSON, runtime overhead.
+    'lorekit.self_time_ms': selfMs,
+  });
 }
 
 // ── createTracedClient — automatic DB spans ───────────────────────────────────

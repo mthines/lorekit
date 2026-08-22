@@ -7226,6 +7226,77 @@ begin
 end;
 $$;
 
+-- ── 00074: query-profiling reader is bounded and operator-only ──────────────
+-- `lorekit_db_query_stats()` reads pg_stat_statements — the whole cluster's
+-- query shapes, every tenant's workload aggregated. Two properties matter and
+-- neither is visible from the app layer: it must be unreachable by `anon` and
+-- `authenticated` (PostgREST exposes ANY function they can execute, so a missing
+-- revoke silently publishes a cross-tenant view), and it must never raise, since
+-- an observability read that can fail is a request that can fail.
+do $$
+declare
+  v_count  int;
+  v_rows   int;
+  v_status text;
+begin
+  -- (1) The function exists with the expected arity, and is SECURITY DEFINER.
+  select count(*) into v_count
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_db_query_stats' and p.prosecdef;
+  assert v_count = 1,
+    format('PROF-1: lorekit_db_query_stats must exist exactly once as SECURITY DEFINER (found %s)', v_count);
+
+  -- (2) NOT executable by the two PostgREST-facing roles. `create function`
+  --     grants EXECUTE to PUBLIC by default, so this asserts the revoke landed
+  --     rather than asserting a default.
+  assert not has_function_privilege('anon', 'lorekit_db_query_stats(integer)', 'execute'),
+    'PROF-2: anon must NOT be able to execute lorekit_db_query_stats';
+  assert not has_function_privilege('authenticated', 'lorekit_db_query_stats(integer)', 'execute'),
+    'PROF-2: authenticated must NOT be able to execute lorekit_db_query_stats';
+  assert has_function_privilege('service_role', 'lorekit_db_query_stats(integer)', 'execute'),
+    'PROF-2: service_role MUST be able to execute lorekit_db_query_stats';
+
+  -- (3) It returns without raising whether or not pg_stat_statements is
+  --     installed. On a local stack the extension is usually absent, which is
+  --     precisely the path that must yield zero rows instead of an error — the
+  --     dynamic-SQL + exception guard in 00074.
+  select count(*) into v_rows from lorekit_db_query_stats(5);
+  assert v_rows >= 0, 'PROF-3: the reader must return a row count, not raise';
+
+  -- (4) The row cap is enforced INSIDE the function, so a caller cannot ask for
+  --     unbounded metric cardinality. Only assertable when the extension is
+  --     present and actually has more rows than the cap.
+  if exists (select 1 from pg_extension where extname = 'pg_stat_statements') then
+    select count(*) into v_rows from lorekit_db_query_stats(1000);
+    assert v_rows <= 200,
+      format('PROF-4: p_limit must be capped at 200 regardless of the request (got %s rows)', v_rows);
+    -- A null or absurd limit must not bypass the cap either.
+    select count(*) into v_rows from lorekit_db_query_stats(null);
+    assert v_rows <= 200, format('PROF-4: a null p_limit must fall back to the default (got %s rows)', v_rows);
+  end if;
+
+  -- (5) The scheduled exporter is inert until an operator provisions the two
+  --     Vault secrets. This asserts the OFF-BY-DEFAULT posture: applying the
+  --     migration must not start sending anything anywhere. Gated on the
+  --     secrets actually being absent so the assertion states the real
+  --     invariant ("no secrets ⇒ no post") rather than assuming the
+  --     environment it runs in.
+  if to_regclass('vault.decrypted_secrets') is null
+     or not exists (select 1 from vault.decrypted_secrets
+                     where name in ('lorekit_profiling_url', 'lorekit_profiling_key'))
+  then
+    select lorekit_export_db_query_stats() into v_status;
+    assert v_status ~ '^(disabled|skipped)',
+      format('PROF-5: the exporter must be inert without vault secrets, got %s', v_status);
+  end if;
+
+  assert not has_function_privilege('anon', 'lorekit_export_db_query_stats()', 'execute'),
+    'PROF-5: anon must NOT be able to trigger the exporter';
+  assert not has_function_privilege('authenticated', 'lorekit_export_db_query_stats()', 'execute'),
+    'PROF-5: authenticated must NOT be able to trigger the exporter';
+end;
+$$;
+
 -- ═════════════════════════════════════════════════════════════════════════
 -- §86 — the MCP org tools under an api_key actor override
 -- ═════════════════════════════════════════════════════════════════════════

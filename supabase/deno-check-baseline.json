@@ -43,6 +43,7 @@
     "mcp": 0,
     "memories": 0,
     "openapi": 0,
-    "orgs": 0
+    "orgs": 0,
+    "profiling": 0
   }
 }

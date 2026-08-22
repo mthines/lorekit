@@ -287,3 +287,120 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
     expect(otel).toMatch(/HEADER_ENV_ALLOWLIST\s*=\s*new Set\(\['test'\]\)/);
   });
 });
+
+describe('self-time attribution — the edge stand-in for a CPU profile', () => {
+  // No profiler can be attached to a managed Deno isolate, so the root span
+  // carries the next best thing: how much of the request no child span
+  // explains. The numbers are only meaningful if the wiring below holds, and
+  // every one of these failures is SILENT — a plausible number that is wrong.
+  const otel = () => read('supabase/functions/_shared/otel.ts');
+
+  it('stamps the three measures on every root request span', () => {
+    const src = otel();
+    for (const attr of ['lorekit.io.wait_ms', 'lorekit.io.calls', 'lorekit.self_time_ms']) {
+      expect(src, `traceRequest must stamp ${attr}`).toContain(`'${attr}'`);
+    }
+  });
+
+  it('stamps BEFORE ending the span, or the attributes are never exported', () => {
+    // `Span.end()` pushes the payload into the batch; attributes set afterwards
+    // land on an object nothing reads again.
+    const src = otel();
+    const stamp = src.indexOf('stampIoAttribution(span, batch)');
+    const end = src.indexOf('span.end();\n    batch.flush()');
+    expect(stamp).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(-1);
+    expect(stamp).toBeLessThan(end);
+  });
+
+  it('derives the split from the mirrored ledger, never an inline sum', () => {
+    // Summing overlapping CLIENT spans double-counts concurrent queries and
+    // drives self time negative — the bug io-ledger.ts exists to prevent, and
+    // the reason the merge lives in a tested module rather than here.
+    expect(otel()).toMatch(/import \{ attributeIoTime.*\} from '\.\/io-ledger\.ts'/);
+  });
+
+  it('feeds the ledger from the span KIND, so any outbound call counts', () => {
+    // Hooked on `kind === CLIENT` in `end()` rather than inside TracedQuery, so
+    // a hand-rolled CLIENT span around a `fetch` is attributed for free.
+    const src = otel();
+    expect(src).toMatch(/if \(this\.kind === SPAN_KIND_CLIENT\) \{\s*\n\s*this\.batch\.recordIo\(/);
+  });
+
+  it('keeps the ledger request-scoped by living on the ExportBatch', () => {
+    // A background task's `detachedChild` gets its own batch, so work that
+    // outlives the response cannot land on the request that spawned it.
+    expect(otel()).toMatch(/recordIo\(interval: IoInterval\): void/);
+  });
+});
+
+describe('OTLP metric export shares the trace exporter’s resource', () => {
+  // Spans and metrics leaving the same isolate must describe the SAME resource,
+  // or Dash0 files them under two services and they silently stop correlating.
+  const metrics = () => read('supabase/functions/_shared/otlp-metrics.ts');
+
+  it('imports the resource, endpoint and encoding from the span exporter', () => {
+    const src = metrics();
+    for (const symbol of ['buildResourceAttributes', 'getOtlpConfig', 'resolveServiceName', 'toOtlpValue']) {
+      expect(src, `otlp-metrics.ts must reuse ${symbol}`).toContain(symbol);
+    }
+    expect(src).toMatch(/from '\.\/otel\.ts'/);
+  });
+
+  it('declares no service identity of its own', () => {
+    // A second declaration is exactly how a metric ends up on a resource that
+    // is not the spans' resource.
+    const src = metrics();
+    expect(src).not.toMatch(/'service\.name'/);
+    expect(src).not.toMatch(/'service\.namespace'/);
+  });
+
+  it('posts metrics to /v1/metrics and spans to /v1/traces', () => {
+    expect(metrics()).toMatch(/\/v1\/metrics/);
+    expect(read('supabase/functions/_shared/otel.ts')).toMatch(/\/v1\/traces/);
+  });
+
+  it('emits CUMULATIVE monotonic sums, so the backend owns rate() and resets', () => {
+    const src = metrics();
+    expect(src).toMatch(/AGGREGATION_TEMPORALITY_CUMULATIVE = 2/);
+    expect(src).toMatch(/isMonotonic: true/);
+    // startTimeUnixNano carries the stats_reset, which is what lets a reset read
+    // as a new series instead of as negative traffic.
+    expect(src).toMatch(/startTimeUnixNano/);
+  });
+
+  it('renders int64 datapoints as JSON STRINGS, per proto3', () => {
+    // A bare number here is the classic OTLP/JSON rejection — a silent 400.
+    expect(metrics()).toMatch(/asInt: String\(/);
+  });
+
+  it('reports export failure instead of swallowing it', () => {
+    // The span flush swallows, correctly: it is a side effect of serving a
+    // request. Here the export IS the request, so a swallowed failure means a
+    // cron job answering 200 while nothing reaches Dash0.
+    const src = metrics();
+    expect(src).toMatch(/exported: false/);
+    expect(src).toMatch(/error: `OTLP metrics export failed/);
+  });
+});
+
+describe('the profiling function is an operator surface, not a tenant one', () => {
+  const profiling = () => read('supabase/functions/profiling/index.ts');
+
+  it('refuses anything that is not the service-role key', () => {
+    // pg_stat_statements aggregates query shapes across every caller, so a
+    // read-capable tenant token (`lk_ro_*`) must not reach it either.
+    expect(profiling()).toMatch(/resolved\.auth\.type !== 'service'/);
+  });
+
+  it('names its root span so faas.name derives to `profiling` for free', () => {
+    expect(profiling()).toMatch(/traceRequest\(req, 'lorekit\.profiling'/);
+  });
+
+  it('maps rows through the mirrored pure module, not inline arithmetic', () => {
+    // The ms→s conversion is the one unit change in the pipeline; it belongs
+    // where vitest can see it.
+    expect(profiling()).toMatch(/buildDbQueryMetrics/);
+    expect(profiling()).not.toMatch(/\/ 1000/);
+  });
+});
