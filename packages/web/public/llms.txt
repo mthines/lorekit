@@ -147,8 +147,10 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | `memory.restore` | ✓ | ✗ | ✓ |
 | `memory.purge` | ✓ | ✗ | ✓ |
 | `memory.purge_expired` | ✓ | ✗ | ✓ |
-
-`org.*` tools require a Supabase user JWT (dashboard session) — not available via `lk_*` tokens.
+| `org.create` | ✓ | ✗ | ✓ |
+| `org.list` | ✓ | ✓ | ✗ |
+| `org.rename` | ✓ | ✗ | ✓ |
+| `org.delete` | ✓ | ✗ | ✓ |
 
 ## Scope format
 
@@ -382,7 +384,7 @@ Create a new organization. You become its owner automatically. The slug must be 
 | `slug` | ✓ | string | Unique lowercase org identifier, e.g. "my-team" |
 | `name` | ✓ | string | Human-readable display name |
 
-Requires a dashboard session JWT — not available via `lk_*` tokens.
+Requires **write** permission.
 
 Returns: `{ "id", "slug", "name" }`
 
@@ -394,7 +396,7 @@ List all organizations you are a member of, with your role in each.
 
 No arguments.
 
-Requires a dashboard session JWT — not available via `lk_*` tokens.
+Requires **read** permission.
 
 Returns: `{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — roles: `owner`, `admin`, `member`, `viewer`.
 
@@ -409,7 +411,7 @@ Rename an organization's display name. Requires admin or owner role.
 | `slug` | ✓ | string | The org slug to update |
 | `name` | ✓ | string | New display name |
 
-Requires a dashboard session JWT — not available via `lk_*` tokens.
+Requires **write** permission.
 
 Returns: `{ "id", "slug", "name" }`
 
@@ -423,7 +425,7 @@ Delete an organization. Requires owner role. Soft-deletes the org — all org lo
 |----------|----------|------|-------------|
 | `slug` | ✓ | string | The org slug to delete |
 
-Requires a dashboard session JWT — not available via `lk_*` tokens.
+Requires **write** permission.
 
 Returns: `{ "deleted": true, "slug": "<slug>" }`
 

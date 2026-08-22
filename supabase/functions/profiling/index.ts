@@ -22,7 +22,7 @@
  * the cluster, not a caller's own data.
  *
  * Normally driven every minute by the `lorekit-export-db-query-stats` pg_cron
- * job (supabase/migrations/00073_db_query_stats.sql), which is inert until an
+ * job (supabase/migrations/00074_db_query_stats.sql), which is inert until an
  * operator provisions the two Vault secrets. Curl it directly with the
  * service-role key to check the pipeline by hand.
  *
@@ -84,8 +84,12 @@ Deno.serve((req: Request) =>
     // Through the traced client so the scrape's own DB round-trip gets a CLIENT
     // span like any other — which also feeds it to the self-time attribution,
     // so this function is measured by the same instrument it serves.
+    // `rpc<T>` types the WHOLE return value, not one row (`TracedRpcQuery<T>`
+    // resolves to `PostgrestResponse<T>`), so a set-returning function is
+    // `DbQueryStatRow[]`. Passing the bare row type here would compile and then
+    // hand `buildDbQueryMetrics` a single object where it expects an array.
     const { data, error } = await createTracedClient(resolved.db, span)
-      .rpc<DbQueryStatRow>('lorekit_db_query_stats', { p_limit: limit });
+      .rpc<DbQueryStatRow[]>('lorekit_db_query_stats', { p_limit: limit });
 
     if (error) {
       span.error(`ProfilingReadFailed: ${error.message}`);

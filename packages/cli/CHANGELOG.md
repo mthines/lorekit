@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.54.0](https://github.com/mthines/lorekit/compare/cli-v1.53.0...cli-v1.54.0) (2026-08-22)
+
+
+### Features
+
+* **cli:** add purge and purge-expired ([b3ccc09](https://github.com/mthines/lorekit/commit/b3ccc09cc6385103c1698b568bf9e93e79ca7a69))
+* make the tool catalog the single origin of the operation surface ([b0ca42b](https://github.com/mthines/lorekit/commit/b0ca42b4f3e4f431eb8128231c74a30193e35226))
+* **scripts:** add the gen-surfaces generator + freshness gate ([6131a00](https://github.com/mthines/lorekit/commit/6131a0007c1dae4bb6733a88ca0dab1498934e37))
+
+
+### Bug Fixes
+
+* **cli:** always send an explicit retention window on purge ([83bc001](https://github.com/mthines/lorekit/commit/83bc0011ad0b70757e934d2f4296067ee36df97f))
+* **cli:** dispatch memory.restore on the local stdio MCP server ([000e63c](https://github.com/mthines/lorekit/commit/000e63c6621e5407e3267205c6e3b9abd02b43aa))
+* **cli:** drive the stdio advertisement from the dispatch keys ([18eed19](https://github.com/mthines/lorekit/commit/18eed198b870933167775a43541ac7f24a2d95a5))
+* **cli:** refuse a purge with no retention window, loudly ([ca159fd](https://github.com/mthines/lorekit/commit/ca159fd67efaa00db3d45e9d20564311128e6a40))
+* **cli:** reject unknown flags on lorekit bootstrap ([9b191db](https://github.com/mthines/lorekit/commit/9b191db6e96a8ffeb55b0de830fbaccb7775661b))
+
 ## [1.53.0](https://github.com/mthines/lorekit/compare/cli-v1.52.3...cli-v1.53.0) (2026-08-21)
 
 

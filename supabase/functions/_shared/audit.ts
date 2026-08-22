@@ -17,7 +17,7 @@
  * NOTE: the two copies are NOT whole-file comparable by
  * `packages/mcp-core/src/edge-parity.spec.ts` — they differ in their client
  * typing (`SupabaseClient` from the bare `@supabase/supabase-js` import in
- * mcp-core vs `ReturnType<typeof createClient>` off the `npm:` specifier
+ * mcp-core vs `DbClient` off the `npm:` specifier
  * here), which is precisely the Node/Deno import split the mirror exists for.
  *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
@@ -60,6 +60,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { AUDIT_ACTIONS } from './schemas/audit.ts';
 import type { AuditAction } from './schemas/audit.ts';
+import type { DbClient } from './db-client.ts';
+import type { Json } from './database.types.ts';
 
 export { AUDIT_ACTIONS };
 export type { AuditAction };
@@ -102,13 +104,22 @@ export function buildAuditEntry(input: AuditEntryInput): AuditRow {
  * console.error for observability, not rethrown.
  */
 export async function recordAudit(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   input: AuditEntryInput,
   userId: string | null,
 ): Promise<void> {
   try {
     const row = buildAuditEntry(input);
-    const { error } = await db.from('audit_log').insert({ ...row, user_id: userId });
+    const { error } = await db.from('audit_log').insert({
+      ...row,
+      user_id: userId,
+      // `AuditRow.metadata` is `Record<string, unknown> | null` — the CALLER's
+      // shape, shared with packages/mcp-core/src/audit.ts — while the generated
+      // Insert type wants `Json`. The value is JSON-serialisable by contract (it
+      // goes straight into a jsonb column), so state that here rather than
+      // widening AuditRow, which should keep describing what callers may pass.
+      metadata: row.metadata as Json,
+    });
     if (error) {
       console.error(`[recordAudit] insert failed for action=${input.action}:`, error.message);
     }

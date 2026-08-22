@@ -1,6 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { Span } from '../otel.ts';
 import { normalizeKeyRestriction, type KeyRestriction } from '../tenant-scope.ts';
+import type { DbClient } from '../db-client.ts';
+import type { Database } from '../database.types.ts';
 
 export interface AuthContext {
   type: 'user' | 'service' | 'api_key';
@@ -16,7 +18,12 @@ export interface AuthContext {
   keyScoping?: KeyRestriction;
 }
 
-export type DbClient = ReturnType<typeof createClient>;
+/**
+ * Re-exported so every existing importer of `DbClient` from this module keeps
+ * working. The canonical declaration is `_shared/db-client.ts` — see its
+ * docblock for why the typed client lives in its own file rather than here.
+ */
+export type { DbClient };
 
 export interface ResolvedAuth { auth: AuthContext; db: DbClient; }
 
@@ -29,9 +36,9 @@ async function sha256(t: string): Promise<string> {
   return Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2,'0')).join('');
 }
 
-function svcClient(): DbClient { return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }); }
+function svcClient(): DbClient { return createClient<Database>(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }); }
 function userClient(jwt: string): DbClient {
-  return createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${jwt}` } } });
+  return createClient<Database>(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${jwt}` } } });
 }
 
 /**
@@ -70,7 +77,7 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     };
   }
 
-  const anonDb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  const anonDb = createClient<Database>(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: { user }, error } = await anonDb.auth.getUser(token);
   if (error || !user) { span.clientError('invalid_jwt').end(); return null; }
   span.setAttributes({ 'auth.type': 'user', 'auth.outcome': 'ok', 'auth.user_id': user.id }).end();

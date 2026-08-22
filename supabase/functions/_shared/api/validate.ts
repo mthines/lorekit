@@ -14,7 +14,28 @@ function fmtErrors(err: z.ZodError): Record<string, string[]> {
   return out;
 }
 
-export async function validateBody<T>(req: Request, schema: z.ZodType<T>, cors: Record<string, string> = {}): Promise<ValidationResult<T>> {
+/**
+ * ── Why these are `<S extends z.ZodTypeAny>` and not `<T>(schema: z.ZodType<T>)`
+ *
+ * A zod schema has TWO types: its INPUT (what `safeParse` accepts) and its
+ * OUTPUT (what it produces). `.default(x)` is precisely the case where they
+ * differ — input allows the field to be absent, output guarantees a value.
+ *
+ * `z.ZodType<T>` declares only one, defaulting `Input = Output`, so inference
+ * against a schema whose input and output disagree could bind `T` to the INPUT
+ * shape. Every defaulted field then looked OPTIONAL to callers: `sort`,
+ * `archived`, `limit`, `tags_mode`, `bucket` and friends came back as
+ * `X | undefined` even though `safeParse` had just filled them in.
+ *
+ * That is not a cosmetic complaint. It made ~14 of the errors this branch
+ * removes, and every one of them was the type system correctly reporting that
+ * the handler's own `ListParams`/`ActivityParams` interface disagreed with what
+ * the validator claimed to return. Binding `S` and projecting `z.output<S>`
+ * states the real contract: what you get back is what the schema PRODUCES.
+ *
+ * Runtime behaviour is unchanged — `safeParse` already applied the defaults.
+ */
+export async function validateBody<S extends z.ZodTypeAny>(req: Request, schema: S, cors: Record<string, string> = {}): Promise<ValidationResult<z.output<S>>> {
   let raw: unknown;
   try { raw = await req.json(); }
   catch { return { ok: false, response: badRequest('Request body must be valid JSON', undefined, cors) }; }
@@ -31,7 +52,7 @@ export async function validateBody<T>(req: Request, schema: z.ZodType<T>, cors: 
  * throws on an empty payload, so validateBody would answer 400 "Request body
  * must be valid JSON". A body that is present but malformed is still a 400.
  */
-export async function validateOptionalBody<T>(req: Request, schema: z.ZodType<T>, cors: Record<string, string> = {}): Promise<ValidationResult<T>> {
+export async function validateOptionalBody<S extends z.ZodTypeAny>(req: Request, schema: S, cors: Record<string, string> = {}): Promise<ValidationResult<z.output<S>>> {
   const text = (await req.text()).trim();
   let raw: unknown = {};
   if (text) {
@@ -43,7 +64,7 @@ export async function validateOptionalBody<T>(req: Request, schema: z.ZodType<T>
   return { ok: true, data: r.data };
 }
 
-export function validateQuery<T>(req: Request, schema: z.ZodType<T>, cors: Record<string, string> = {}): ValidationResult<T> {
+export function validateQuery<S extends z.ZodTypeAny>(req: Request, schema: S, cors: Record<string, string> = {}): ValidationResult<z.output<S>> {
   const url = new URL(req.url);
   const raw = Object.fromEntries(url.searchParams.entries());
   const r = schema.safeParse(raw);

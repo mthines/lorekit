@@ -66,6 +66,8 @@ import {
   reconcileInstallation,
 } from './webhook-installation.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
+import { nullableRpcArg, type DbClient } from '../_shared/db-client.ts';
+import type { Database } from '../_shared/database.types.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
 const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
@@ -149,7 +151,7 @@ const INSTALLATION_EVENTS = new Set([
  * reaches a PostgREST filter unescaped.
  */
 async function resolveSecrets(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   fullName: string | undefined,
   event: string,
 ): Promise<{ secrets: string[]; source: WebhookSecretSource | 'app'; matchedRepo: string | null; isAppEvent: boolean }> {
@@ -206,7 +208,7 @@ async function resolveSecrets(
  *
  */
 async function reconcileAppInstallation(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   event: string,
   // deno-lint-ignore no-explicit-any
   payload: Record<string, any>,
@@ -297,7 +299,7 @@ async function reconcileAppInstallation(
     p_github_account_id: githubAccountId,
     p_github_account_login: githubAccountLogin,
     p_account_type: accountType,
-    p_user_id: verdict.kind === 'linked' ? verdict.userId : null,
+    p_user_id: nullableRpcArg(verdict.kind === 'linked' ? verdict.userId : null),
     p_status: verdict.kind,
     p_repos: payloadRepos,
   });
@@ -321,7 +323,17 @@ async function verifyHmac(
   bodyBytes: ArrayBuffer,
   signature: string | null,
   secret: string,
-  secretSource: WebhookSecretSource,
+  /**
+   * `'app'` is a real source — the single-secret GitHub App path — and
+   * `resolveSecrets` above has always returned `WebhookSecretSource | 'app'`.
+   * Only this parameter was narrower, so every App-event verification was a
+   * type error that the untyped client had been absorbing.
+   *
+   * Widened here at the consumer rather than in `WebhookSecretSource` itself:
+   * that type is byte-mirrored from `packages/mcp-core/src/webhook-secret-select.ts`
+   * and enumerates the SECRET-SELECTION outcomes, which `'app'` is not one of.
+   */
+  secretSource: WebhookSecretSource | 'app',
 ): Promise<{ ok: boolean; secretConfigured: boolean; signaturePresent: boolean; secretSource: string; failReason?: string }> {
   const secretConfigured = secret.length > 0;
   const signaturePresent = !!signature && signature.length > 0;
@@ -377,7 +389,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
   const fullNameRaw = earlyPayload['repository']?.full_name as string | undefined;
   const fullName = fullNameRaw?.toLowerCase();
 
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  const db = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 

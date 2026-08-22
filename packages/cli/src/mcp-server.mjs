@@ -31,191 +31,17 @@ import { createRemoteStore } from './store/remote.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
 import { readScopeInventory } from './store/scope-inventory.mjs';
 import { inferKindHostFromTags } from './lessons-view.mjs';
+// Generated from packages/schemas/src/tool-catalog.ts — the same declaration the
+// hosted MCP server renders `tools/list` from. Committed and zero-dep because
+// this is a published package that cannot import the workspace schemas.
+import { MCP_TOOL_DEFS, MCP_TOOL_NAMES } from './surfaces.generated.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
 
-// Tool advertisements — names + input schemas mirror the production MCP server
-// (supabase/functions/mcp/mcp-handler.ts) so a client sees the same contract
-// whether it points at the hosted endpoint or this local server.
-export const MEMORY_TOOL_DEFS = [
-  {
-    name: 'memory.write',
-    description: 'Store or update a memory',
-    inputSchema: {
-      type: 'object',
-      required: ['scope', 'key', 'value'],
-      properties: {
-        scope: { type: 'string' },
-        key: { type: 'string' },
-        value: { type: 'string' },
-        tags: { type: 'array', items: { type: 'string' } },
-        source_agent: { type: 'string' },
-        trigger: { type: 'string' },
-        created_at: {
-          type: 'string',
-          format: 'date-time',
-          description:
-            'Optional ISO 8601 creation date for migrating a pre-existing memory. Rejected if invalid or in the future. Applies only when the memory is first created.',
-        },
-        ttl_days: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 365,
-          description:
-            'Optional time-to-live in days (1–365). The memory auto-expires that many days after this write and is then hidden from reads.',
-        },
-        clear_ttl: {
-          type: 'boolean',
-          description:
-            'Remove any existing expiry, making the memory permanent again. Takes precedence over ttl_days when both are supplied.',
-        },
-        origin_repo: {
-          type: 'string',
-          description:
-            'Provenance: the owner/name of the repository this memory was recorded from. Derived from the working directory when omitted.',
-        },
-        origin_branch: {
-          type: 'string',
-          description:
-            'Provenance: the git branch this memory was recorded from. Derived from the working directory when omitted.',
-        },
-        origin_commit: {
-          type: 'string',
-          description:
-            'Provenance: the commit SHA checked out when this memory was recorded. Derived from the working directory when omitted.',
-        },
-        origin_pr: {
-          type: 'integer',
-          minimum: 1,
-          description:
-            'Provenance: the pull request number this memory came out of. Pass it when you know it — the server can only infer it from CI environment variables.',
-        },
-      },
-    },
-  },
-  {
-    name: 'memory.read',
-    description: 'Read a memory by scope and key',
-    inputSchema: { type: 'object', required: ['scope', 'key'] },
-  },
-  {
-    name: 'memory.list',
-    description: 'List memories for a scope',
-    inputSchema: {
-      type: 'object',
-      required: ['scope'],
-      properties: {
-        scope: { type: 'string' },
-        tags: { type: 'array', items: { type: 'string' } },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
-        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page. Ignored when kind or host is set — a taxonomy-filtered list is a single bounded page (nextCursor is always null); raise limit rather than paginating.' },
-        kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family. Narrowed server-side against the remote store; post-filtered client-side against the local store, whose rows carry no kind/host columns and are classified from their loop:: tag.' },
-        host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`. Same server-side/client-side split as kind.' },
-        view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'summary omits each entry\'s value and returns value_bytes + a 200-character preview instead.' },
-      },
-    },
-  },
-  {
-    name: 'memory.search',
-    description: 'Keyword search across memories',
-    inputSchema: {
-      type: 'object',
-      required: ['q'],
-      properties: {
-        q: { type: 'string' },
-        scopes: { type: 'array', items: { type: 'string' } },
-        tags: { type: 'array', items: { type: 'string' } },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
-      },
-    },
-  },
-  {
-    name: 'memory.delete',
-    description:
-      'Soft-archive a memory (default) or hard-delete it (force: true). ' +
-      'Archived memories are hidden from reads but can be restored.',
-    inputSchema: {
-      type: 'object',
-      required: ['scope', 'key'],
-      properties: {
-        scope: { type: 'string' },
-        key: { type: 'string' },
-        force: { type: 'boolean' },
-      },
-    },
-  },
-  {
-    name: 'memory.archive',
-    description: 'Soft-archive a memory. Hidden from reads but restorable.',
-    inputSchema: { type: 'object', required: ['scope', 'key'] },
-  },
-  {
-    name: 'memory.scopes',
-    // The description tells the model WHEN to reach for this, not just what it
-    // returns: every other read tool needs a scope named up front, so this is
-    // the one that answers "what is there?" before you can ask "what is in it?".
-    description:
-      'List every scope in the store with how many active memories it holds — '
-      + 'the inventory to consult when you do not already know which scope to read. '
-      + 'Takes no arguments and is store-wide, NOT limited to the current directory.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-];
-
-// Org tools — always advertised regardless of memory mode. They always route
-// through the remote MCP endpoint because org management requires JWT auth
-// (SECURITY DEFINER RPCs resolve actor via auth.uid(), never a passed user_id).
-export const ORG_TOOL_DEFS = [
-  {
-    name: 'org.create',
-    description:
-      'Create a new organization. You become its owner automatically. ' +
-      'The slug must be globally unique and lowercase (letters, digits, hyphens).',
-    inputSchema: {
-      type: 'object',
-      required: ['slug', 'name'],
-      properties: {
-        slug: { type: 'string', description: 'Unique lowercase identifier, e.g. "my-team"' },
-        name: { type: 'string', description: 'Human-readable display name' },
-      },
-    },
-  },
-  {
-    name: 'org.list',
-    description: 'List all organizations you are a member of, with your role in each.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'org.rename',
-    description: 'Rename an organization\'s display name. Requires admin or owner role.',
-    inputSchema: {
-      type: 'object',
-      required: ['slug', 'name'],
-      properties: {
-        slug: { type: 'string', description: 'The org slug to update' },
-        name: { type: 'string', description: 'New display name' },
-      },
-    },
-  },
-  {
-    name: 'org.delete',
-    description:
-      'Permanently delete an organization. Requires owner role. ' +
-      'All org-owned memories and memberships are cascade-deleted. Unrecoverable.',
-    inputSchema: {
-      type: 'object',
-      required: ['slug'],
-      properties: {
-        slug: { type: 'string', description: 'The org slug to delete' },
-      },
-    },
-  },
-];
-
-// Legacy alias kept so existing code that imports TOOL_DEFS still compiles.
-export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
+// Tool advertisements are DERIVED from the canonical catalog rather than
+// restated here — see the derivation below the dispatch maps, which is where
+// the set of dispatchable ops is known.
 
 /** Characters of `value` echoed in a `view: "summary"` entry's `preview`. */
 export const LIST_PREVIEW_CHARS = 200;
@@ -398,6 +224,12 @@ const MEMORY_DISPATCH = {
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),
+  // The counterpart to archive. Both stores have implemented `restore` all
+  // along (local.mjs, remote.mjs, and the two-tier store that fronts them), so
+  // its absence here left an agent able to archive a lesson through this server
+  // but not undo it — with no stated reason. Surfaced by giving the catalog a
+  // `localMcpExempt` field and finding this op had no honest reason to fill it.
+  'memory.restore': (store, a) => store.restore(a),
   'memory.scopes': (store) => listScopes(store),
 };
 
@@ -491,6 +323,61 @@ const ORG_DISPATCH = {
   'org.rename': (remote, a) => remote.orgRename(a),
   'org.delete': (remote, a) => remote.orgDelete(a),
 };
+
+// ── Tool advertisements, derived ─────────────────────────────────────────────
+// These used to be ~180 lines of hand-written `name` + `description` +
+// `inputSchema` literals — a THIRD copy of the tool list, after the catalog and
+// the edge handler, that nothing cross-checked. It had already drifted: the
+// descriptions said "memory" where the catalog says "lesson", most properties
+// carried no description at all, and `org.delete` claimed org lore was
+// "cascade-deleted. Unrecoverable." when the edge in fact SOFT-deletes it.
+//
+// Deriving from the same projection the hosted server advertises (`wireTools()`)
+// makes the local and hosted contracts identical by construction, which was the
+// stated intent of the copy all along.
+//
+// Advertise only what we can actually DISPATCH: the dispatch maps are the
+// hand-written half (a name cannot become a function by itself), so they decide
+// membership and the catalog supplies the content. An op the catalog declares
+// but this server does not back carries a `localMcpExempt` reason there.
+const CATALOG_DEFS_BY_NAME = new Map(MCP_TOOL_DEFS.map((def) => [def.name, def]));
+
+/** Catalog order, so the advertisement lists ops the way `tools/list` does. */
+const CATALOG_ORDER = new Map(MCP_TOOL_NAMES.map((name, index) => [name, index]));
+
+/**
+ * Resolve dispatchable names to their catalog advertisement, in catalog order.
+ *
+ * Driven by the DISPATCH keys, not by the catalog. Iterating the catalog and
+ * filtering to what is dispatchable reads more naturally and is wrong: every
+ * name would then be a catalog name by construction, so the check below could
+ * never fire, and the case it exists for — a dispatch key the catalog does not
+ * declare — would instead be SILENTLY DROPPED from `tools/list` while
+ * `tools/call` went on serving it. An op that is served but not advertised is
+ * precisely the drift this file stopped hand-maintaining its defs to avoid.
+ *
+ * Exported so the failure is directly testable; nothing else calls it.
+ */
+export function advertise(dispatch) {
+  return Object.keys(dispatch)
+    .map((name) => {
+      const def = CATALOG_DEFS_BY_NAME.get(name);
+      if (!def) {
+        throw new Error(
+          `mcp-server dispatches "${name}", which the tool catalog does not declare. `
+          + 'Add it to packages/schemas/src/tool-catalog.ts (and regenerate: node scripts/gen-surfaces.mjs).',
+        );
+      }
+      return def;
+    })
+    .sort((a, b) => CATALOG_ORDER.get(a.name) - CATALOG_ORDER.get(b.name));
+}
+
+export const MEMORY_TOOL_DEFS = advertise(MEMORY_DISPATCH);
+export const ORG_TOOL_DEFS = advertise(ORG_DISPATCH);
+
+// Legacy alias kept so existing code that imports TOOL_DEFS still compiles.
+export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
 
 function reply(id, result) {
   return { jsonrpc: '2.0', id, result };

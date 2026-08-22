@@ -188,7 +188,7 @@ than trusted to the caller.
 ### Turning it on
 
 **Off by default** — the same posture as the embedding pipeline
-([embeddings.md](./embeddings.md)). Migration `00073` ships the reader, the
+([embeddings.md](./embeddings.md)). Migration `00074` ships the reader, the
 exporter and the cron schedule, but the exporter returns `disabled` and posts
 nothing until an operator provisions two Vault secrets:
 

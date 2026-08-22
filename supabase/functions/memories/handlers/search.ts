@@ -27,7 +27,7 @@ export async function handleSearch(
   const tracedDb = createTracedClient(db, span);
 
   let q: TracedQuery<MemoryRow> = tracedDb
-    .from<MemoryRow>('memories')
+    .from('memories')
     .select(MEMORY_SELECT)
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')

@@ -1,12 +1,34 @@
 # MCP Tools Reference
 
-LoreKit exposes ten `memory.*` tools and four `org.*` tools via the MCP protocol.
+LoreKit exposes eleven `memory.*` tools and four `org.*` tools via the MCP protocol.
 
-`memory.*` tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
+Every tool requires a valid API token or a dashboard session (see
+[api-tokens.md](./api-tokens.md)), and every tool is gated by **token
+permission**: read tools need `lk_rw_*` or `lk_ro_*`, write tools need `lk_rw_*`
+or `lk_wo_*`.
 
-`org.*` **MCP** tools require a **Supabase user JWT** (browser/dashboard session) — they are not available via `lk_*` API tokens, because these tool handlers call the org management RPCs without naming an actor, and those RPCs then derive it from `auth.uid()` inside `SECURITY DEFINER` functions (NULL on the service-role connection an API token gets).
+`org.*` tools accept `lk_*` tokens as well as a dashboard JWT. They used to be
+JWT-only, because their handlers called the org RPCs without naming an actor and
+those RPCs derive one from `auth.uid()` — NULL on the service-role connection an
+API token gets. They now pass the token owner explicitly as `p_actor_user_id`,
+the same path the REST `/orgs` routes have used since
+`supabase/migrations/00041_org_actor_override.sql`, which the RPCs honour **only**
+on a verified service-role connection. So MCP and REST no longer disagree about
+who may manage an org, and there is no reason to prefer one over the other for
+authentication reasons.
 
-**The REST `orgs` endpoints do accept `lk_*` tokens**, as of `supabase/migrations/00041_org_actor_override.sql` — the handlers there pass the token owner explicitly as `p_actor_user_id`, which the RPCs honour only on a verified service-role connection. Prefer `GET/POST/PATCH/DELETE /functions/v1/orgs` over these MCP tools when you are authenticating with an API token. Bringing the MCP `org.*` tools onto the same path is a follow-up.
+**Token permission is not an org role.** `org.list` needs read permission and
+the three mutations need write, but that only says what the KEY may attempt.
+What the PERSON may do is still decided by `lorekit_org_can` inside the RPCs: a
+`lk_rw_*` token held by a viewer passes the permission gate and is then denied
+the rename, with `LK002`. The two gates are independent and both apply.
+
+**Analytics reads are REST-only on purpose.** `GET /memories/usage`, `/tags`,
+`/facets`, `/activity` and `/read-activity` have no MCP tool and no CLI command.
+They power the dashboard's charts and drill-downs; they are not agent
+primitives, and five extra entries in `tools/list` is context every session pays
+for. See [decisions.md](./decisions.md). `/relevant` is the exception that is
+already covered — `memory.list order=rank` answers the same question.
 
 **Endpoint:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
 

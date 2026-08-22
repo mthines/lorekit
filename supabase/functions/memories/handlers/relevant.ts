@@ -118,7 +118,7 @@ export async function handleRelevant(
   const tracedDb = createTracedClient(db, span);
 
   let q: TracedQuery<MemoryRow> = tracedDb
-    .from<MemoryRow>('memories')
+    .from('memories')
     .select(RELEVANT_SELECT)
     // Active lore only — the same partition every read path applies. An
     // archived or expired lesson is not a candidate for "what should I read".

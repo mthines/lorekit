@@ -240,3 +240,75 @@ describe('every raw org-table read is membership-checked', () => {
     },
   );
 });
+
+/**
+ * The same two properties, for the MCP org tools.
+ *
+ * The scan above walks `supabase/functions/orgs/handlers/` only, because when it
+ * was written the MCP `org.*` tools were JWT-only and could legitimately lean on
+ * `auth.uid()` and RLS. They now serve `lk_*` tokens on the same actor-override
+ * path the REST routes use, so both failure modes apply to them too — and the
+ * second one, a service-role read with no tenant predicate, is a cross-tenant
+ * leak rather than a degraded feature.
+ *
+ * Kept as a separate describe rather than folded into the directory walk above:
+ * `mcp/tools.ts` is ONE file holding both memory and org handlers, so it cannot
+ * be scanned per-file the way the REST handlers are. The assertions are the same
+ * two questions asked of a narrower slice.
+ */
+describe('the MCP org tools pass an actor and scope their raw reads', () => {
+  const toolsPath = path.join(repoRoot, 'supabase', 'functions', 'mcp', 'tools.ts');
+  const source = readFileSync(toolsPath, 'utf8');
+
+  /** The org half of the file: from the org section marker to end. */
+  const orgSection = source.slice(source.indexOf('async function resolveOrgId'));
+
+  it('finds the org section (anti-vacuity)', () => {
+    // Every assertion below slices this. A marker rename would otherwise make
+    // the whole describe pass by scanning an empty string.
+    expect(orgSection.length).toBeGreaterThan(500);
+    expect(orgSection).toContain('toolOrgCreate');
+    expect(orgSection).toContain('toolOrgDelete');
+  });
+
+  it('passes p_actor_user_id to every org RPC it calls', () => {
+    const calls = [...orgSection.matchAll(RPC_PATTERN)];
+    // Four RPCs: create, rename, delete — plus the pattern also catches none
+    // beyond those, so the floor doubles as an anti-vacuity check.
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const match of calls) {
+      const fn = match[1] as string;
+      if (fn in ACTOR_EXEMPT_RPCS) continue;
+      const call = sliceCall(orgSection, orgSection.indexOf('(', match.index ?? 0));
+      expect(call, `${fn} in mcp/tools.ts must pass p_actor_user_id`).toContain('p_actor_user_id');
+    }
+  });
+
+  it('narrows every raw org-table read by the caller user_id', () => {
+    // `toolOrgList` reads `org_members` and `resolveOrgId` reads through it.
+    // On the api_key path the client is service-role, so RLS applies to
+    // NEITHER — these predicates are the only tenant boundary. Without them
+    // `toolOrgList` returns every membership row in the database and
+    // `resolveOrgId` answers for any org whose slug you can guess.
+    const rawReads = [...orgSection.matchAll(/\.from\(\s*'(orgs|org_members|org_invites)'\s*\)/g)];
+    expect(rawReads.length).toBeGreaterThanOrEqual(2);
+
+    // Each raw read must be followed, within its statement, by a user_id
+    // predicate — or be on the JWT-only branch, which is RLS-scoped and says so.
+    for (const match of rawReads) {
+      const statement = orgSection.slice(match.index ?? 0, (match.index ?? 0) + 600);
+      const scoped = /\.eq\('user_id', userId\)/.test(statement)
+        || /if \(userId\) query = query\.eq\('user_id', userId\)/.test(statement)
+        || /JWT path: unchanged, RLS-scoped/.test(orgSection.slice(Math.max(0, (match.index ?? 0) - 400), match.index ?? 0));
+      expect(scoped, `raw read of ${match[1]} in mcp/tools.ts is not narrowed by user_id`).toBe(true);
+    }
+  });
+
+  it('resolves a slug through membership rather than a bare orgs lookup', () => {
+    // The specific hole: `from('orgs').eq('slug', …)` on a service-role client
+    // is an existence oracle for any guessable slug, answered BEFORE any RPC
+    // can deny. The api_key branch must join through org_members.
+    expect(orgSection).toMatch(/\.from\('org_members'\)[\s\S]{0,300}orgs!inner/);
+    expect(orgSection).toMatch(/\.eq\('user_id', userId\)[\s\S]{0,200}\.eq\('orgs\.slug', slug\)/);
+  });
+});

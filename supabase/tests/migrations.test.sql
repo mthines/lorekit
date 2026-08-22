@@ -501,6 +501,45 @@ begin
 end;
 $$;
 
+-- ── 13b. memory_write: org-scoped write succeeds under RLS for a real JWT
+-- caller, not just a superuser/service-role test harness (regression) ───────
+--
+-- Every prior org-write assertion above (§12) calls memory_write() directly
+-- as the test's own (superuser) role, which bypasses Row Level Security
+-- entirely — so it never exercised the path a real dashboard/user-session
+-- caller goes through. That gap hid a bug: the org-write branch inserts
+-- `user_id = null` for an org-owned row, and `rls_insert` (00001) only allows
+-- `user_id = auth.uid() or auth.role() = 'service_role'`. Without
+-- `security definer`, memory_write ran as the CALLER's role, so an
+-- `authenticated` JWT caller writing to an org got "new row violates row-level
+-- security policy for table memories" even though lorekit_org_can() already
+-- approved the write. This reproduces that path under `set local role
+-- authenticated` (the same technique as §1/§7/§8) and asserts it now succeeds.
+do $$
+declare
+  v_id uuid;
+  v_row memories%rowtype;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-rls-write-key', 'v1',
+                                        '{}'::text[], null, null, null, 'phase2-org');
+
+  reset role;
+
+  assert v_id is not null,
+    'memory_write: an org-scoped write from an authenticated JWT caller must not be rejected by RLS';
+
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id = '00000000-0000-0000-0000-0000000000f2',
+    format('memory_write org branch (RLS caller): org_id should be phase2-org, got %s', v_row.org_id);
+  assert v_row.user_id is null,
+    'memory_write org branch (RLS caller): user_id must be NULL on an org-owned row';
+end;
+$$;
+
 -- ── 14. Author attribution: created_by/updated_by + clobber preservation (AC-3) ─
 -- The whole test file runs inside one transaction, and now() is STABLE (frozen
 -- at transaction start) for its duration — pg_sleep() cannot make a later
@@ -7187,7 +7226,7 @@ begin
 end;
 $$;
 
--- ── 00073: query-profiling reader is bounded and operator-only ──────────────
+-- ── 00074: query-profiling reader is bounded and operator-only ──────────────
 -- `lorekit_db_query_stats()` reads pg_stat_statements — the whole cluster's
 -- query shapes, every tenant's workload aggregated. Two properties matter and
 -- neither is visible from the app layer: it must be unreachable by `anon` and
@@ -7220,7 +7259,7 @@ begin
   -- (3) It returns without raising whether or not pg_stat_statements is
   --     installed. On a local stack the extension is usually absent, which is
   --     precisely the path that must yield zero rows instead of an error — the
-  --     dynamic-SQL + exception guard in 00073.
+  --     dynamic-SQL + exception guard in 00074.
   select count(*) into v_rows from lorekit_db_query_stats(5);
   assert v_rows >= 0, 'PROF-3: the reader must return a row count, not raise';
 
@@ -7255,6 +7294,146 @@ begin
     'PROF-5: anon must NOT be able to trigger the exporter';
   assert not has_function_privilege('authenticated', 'lorekit_export_db_query_stats()', 'execute'),
     'PROF-5: authenticated must NOT be able to trigger the exporter';
+end;
+$$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- §86 — the MCP org tools under an api_key actor override
+-- ═════════════════════════════════════════════════════════════════════════
+-- The MCP `org.*` tools were JWT-only: their RPCs resolve the actor from
+-- `auth.uid()`, and the api_key tier reaches Postgres over a service-role
+-- connection where that is NULL, so every `lorekit_org_can(...)` denied. They
+-- now pass the token owner explicitly as `p_actor_user_id`, the same path
+-- `supabase/functions/orgs/` has used since 00041.
+--
+-- §50–§59 already prove the override itself. What this pins is the pair of
+-- properties the MCP surface newly depends on, and would break silently:
+--
+--   (1) the override is HONOURED on a service-role connection, so an api_key
+--       caller can act as its own token owner; and
+--   (2) it does NOT become an impersonation primitive — token permission is
+--       orthogonal to org ROLE, so an actor who is only a viewer is still
+--       denied a rename with LK002.
+--
+-- (2) is the one worth the test. Token permission is checked at the edge, org
+-- role only in the RPC, so a `lk_rw_*` token held by a viewer passes every
+-- check the edge can make. If the RPC's role gate ever stopped applying to the
+-- overridden actor, that token would silently gain admin powers.
+do $$
+declare
+  v_owner  uuid := '00000000-0000-0000-0000-0000000086a1';
+  v_viewer uuid := '00000000-0000-0000-0000-0000000086b2';
+  v_org    uuid;
+  v_name   text;
+  v_count  int;
+  v_denied_viewer_rename boolean := false;
+  v_denied_viewer_delete boolean := false;
+  v_denied_null_actor    boolean := false;
+begin
+  insert into auth.users (id, email) values
+    (v_owner,  'org86-owner@test.local'),
+    (v_viewer, 'org86-viewer@test.local')
+  on conflict (id) do nothing;
+
+  -- ── (1)+(2) create and rename, as a service-role caller naming its actor ──
+  --
+  -- BOTH lines below are required, and the second is the load-bearing one.
+  -- `lorekit_org_actor` (00041) discriminates on `auth.role()`, which reads the
+  -- `role` claim out of `request.jwt.claims` — NOT the Postgres session role.
+  -- With only `set local role service_role`, the claim stays unset, auth.role()
+  -- is not 'service_role', the override is IGNORED, and the actor falls back to
+  -- a NULL auth.uid(). The first version of this section did exactly that and
+  -- died on `org_actor_unresolved` — which was the override failing closed
+  -- precisely as 00041 §4 designs it, so the harness was wrong, not the RPC.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select lorekit_org_create(
+    p_slug          => 'org86',
+    p_name          => 'Org 86',
+    p_actor_user_id => v_owner) into v_org;
+
+  perform lorekit_org_rename(
+    p_org_id        => v_org,
+    p_name          => 'Org 86 renamed',
+    p_actor_user_id => v_owner);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_org is not null, '86-1: create must return the new org id';
+  select count(*) into v_count from org_members
+    where org_id = v_org and user_id = v_owner and role = 'owner';
+  assert v_count = 1, '86-1: the named actor must become the owner, not auth.uid()';
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-2: the owner must be able to rename (name=%s)', v_name);
+
+  -- Fixture, not part of the scenario: `org_members` carries a SELECT policy
+  -- and no INSERT policy at all (00022), so the viewer row is written here as
+  -- the migration role rather than leaning on service_role's BYPASSRLS.
+  insert into org_members (org_id, user_id, role) values (v_org, v_viewer, 'viewer')
+    on conflict (org_id, user_id) do update set role = 'viewer';
+
+  -- ── (3)(4)(5) the denials, and the owner's soft delete ───────────────────
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (3) The load-bearing case. Nothing about holding a write-capable TOKEN
+  -- grants an org role, and this is where that separation is enforced.
+  --
+  -- Each denial sets a flag and is asserted after the block rather than with an
+  -- `assert false` inside the `begin`: `assert` raises P0004, which `when
+  -- others` would catch and then re-report as "expected LK002, got <the
+  -- assertion's own message>" — a failure, but one that names the wrong cause.
+  begin
+    perform lorekit_org_rename(
+      p_org_id        => v_org,
+      p_name          => 'Org 86 hijacked',
+      p_actor_user_id => v_viewer);
+  exception when sqlstate 'LK002' then v_denied_viewer_rename := true; end;
+
+  -- (4) A NULL actor still fails closed — the property 00041 was written
+  -- around: no actor, no authority. An edge bug that forgot to pass the token
+  -- owner must deny rather than act as someone.
+  --
+  -- Ordered BEFORE the owner's delete deliberately, so the org is still live
+  -- and the denial can only be the actor. `lorekit_org_rename` checks the
+  -- capability first and has no deleted-org guard at all, so running this after
+  -- the soft delete would still pass — while no longer proving what it claims.
+  begin
+    perform lorekit_org_rename(
+      p_org_id        => v_org,
+      p_name          => 'Org 86 nulled',
+      p_actor_user_id => null);
+  exception when sqlstate 'LK002' then v_denied_null_actor := true; end;
+
+  -- (5) delete is owner-only, and a SOFT delete.
+  begin
+    perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_viewer);
+  exception when sqlstate 'LK002' then v_denied_viewer_delete := true; end;
+
+  perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_owner);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_denied_viewer_rename,
+    '86-3: a viewer actor must be denied the rename with LK002';
+  assert v_denied_null_actor,
+    '86-4: a NULL actor must not be able to rename';
+  assert v_denied_viewer_delete,
+    '86-5: a viewer actor must be denied the delete with LK002';
+
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-3/86-4: no denied rename may have taken effect (name=%s)', v_name);
+
+  select count(*) into v_count from orgs where id = v_org and deleted_at is not null;
+  assert v_count = 1,
+    '86-5: the owner delete must SOFT-delete (deleted_at set), matching what the MCP tool advertises';
+  select count(*) into v_count from orgs where id = v_org;
+  assert v_count = 1, '86-5: the row must still exist — a purge is a separate, owner-only step';
 end;
 $$;
 

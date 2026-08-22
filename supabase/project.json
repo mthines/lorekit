@@ -28,6 +28,14 @@
       }
     },
 
+    "deno:check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node scripts/deno-check-functions.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
     "db:push": {
       "executor": "nx:run-commands",
       "dependsOn": [

@@ -13,8 +13,8 @@
  * is fire-and-forget, `getUserPlanName` fails open to null.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createTracedClient, type Span } from './otel.ts';
+import type { DbClient } from './db-client.ts';
 
 export interface UsageEventParams {
   userId: string | null;
@@ -69,32 +69,52 @@ export interface UsageEventParams {
  * Handed to EdgeRuntime.waitUntil so the event lands before the isolate dies.
  */
 export function recordUsageEvent(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   params: UsageEventParams,
 ): void {
-  const p = db.rpc('lorekit_record_usage_event', {
-    p_user_id:     params.userId,
-    p_org_id:      params.orgId ?? null,
-    p_plan_name:   params.planName ?? null,
+  // ── Why `?? undefined` and not `?? null` ────────────────────────────────
+  // Every parameter of `lorekit_record_usage_event` is declared `default null`
+  // (00034, widened by 00044/00054/00056/00058), so the generated Args type
+  // spells them `p_x?: string` — OPTIONAL, not nullable. An explicit `null` is
+  // therefore not assignable, and this was 36 of the type errors this branch
+  // set out to remove (9 lines × the 4 functions that reach this module).
+  //
+  // Omitting a key and passing NULL are equivalent HERE, and only because every
+  // default is null: `undefined` is dropped by JSON.stringify, PostgREST omits
+  // the argument, and the function applies its own default, which is null. If a
+  // parameter ever gains a non-null default, this mapping silently changes
+  // meaning — pass that one explicitly rather than letting it fall through.
+  const p = Promise.resolve(db.rpc('lorekit_record_usage_event', {
+    p_user_id:     params.userId ?? undefined,
+    p_org_id:      params.orgId ?? undefined,
+    p_plan_name:   params.planName ?? undefined,
     p_tool_name:   params.toolName,
-    p_scope_type:  params.scopeType ?? null,
+    p_scope_type:  params.scopeType ?? undefined,
     p_auth_type:   params.authType,
     p_outcome:     params.outcome,
-    p_duration_ms: params.durationMs ?? null,
-    p_memory_count: params.memoryCount ?? null,
-    p_result_count: params.resultCount ?? null,
-    p_correlation_id: params.correlationId ?? null,
-    p_client:      params.client ?? null,
-    p_scope:       params.scope ?? null,
+    p_duration_ms: params.durationMs ?? undefined,
+    p_memory_count: params.memoryCount ?? undefined,
+    p_result_count: params.resultCount ?? undefined,
+    p_correlation_id: params.correlationId ?? undefined,
+    p_client:      params.client ?? undefined,
+    p_scope:       params.scope ?? undefined,
     // `kind`/`host` have been on `UsageEventParams` and on the writer RPC since
     // 00056, and the MCP handler has been resolving and passing them all along —
     // but they were never in this payload, so the RPC used its defaults and
     // every `usage_events.kind` / `.host` in the table is NULL. The columns were
     // dead the whole time, silently, because a telemetry write that drops a
     // dimension looks exactly like a telemetry write that succeeds.
-    p_kind:        params.kind ?? null,
-    p_host:        params.host ?? null,
-  }).then(() => { /* fire-and-forget */ }).catch(() => { /* swallow */ });
+    p_kind:        params.kind ?? undefined,
+    p_host:        params.host ?? undefined,
+    // `db.rpc(...)` is a THENABLE, not a Promise: its declared type is
+    // `PromiseLike`, which has `.then` and no `.catch` — so the old
+    // `.then(…).catch(…)` chain did not typecheck (4 more of the errors, again
+    // one per reaching function). It did not misbehave, because postgrest-js
+    // returns a real Promise at runtime, but the code was relying on that
+    // rather than stating it. `Promise.resolve()` adopts the thenable, which
+    // makes the type honest AND satisfies `EdgeRuntime.waitUntil`, whose
+    // parameter is `Promise<unknown>` and never accepted a `PromiseLike`.
+  })).then(() => { /* fire-and-forget */ }, () => { /* swallow */ });
 
   const edgeRuntime = (globalThis as {
     EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
@@ -123,7 +143,7 @@ export function recordUsageEvent(
  * a name.
  */
 export async function getUserPlanName(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   userId: string,
   parentSpan?: Span,
 ): Promise<string | null> {

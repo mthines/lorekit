@@ -12,7 +12,7 @@ import { serializeFilterGroup } from '../schemas/filter.ts';
  * so one call per conjunct reproduces the tree.
  *
  * Usage:
- *   let q = db.from<MemoryRow>('memories').select('...');
+ *   let q = db.from('memories').select('...');
  *   q = applyFilter(q, body.filter);
  */
 export function applyFilter<Q extends { or(f: string): Q }>(
