@@ -37,8 +37,13 @@ import { sendEvent } from '@dash0/sdk-web';
 
 import { dwellBucket, type ContentType, type ScrollMilestone } from './reading';
 
-/** How the palette was opened. */
-export type PaletteTrigger = 'shortcut' | 'button';
+/**
+ * How the palette was opened. `button` is the desktop `⌘K` chip in the header;
+ * `fab` is the docked disc in the mobile tab bar. They are kept apart because
+ * the whole point of the FAB is that the header chip was unreachable on a
+ * phone — collapsing both to `button` would hide whether that is true.
+ */
+export type PaletteTrigger = 'shortcut' | 'button' | 'fab';
 
 /** How a command was executed. */
 export type CommandSource = 'palette' | 'shortcut';

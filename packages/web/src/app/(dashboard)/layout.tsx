@@ -111,7 +111,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
                   the viewport height, so tall pages overflowed it and the footer
                   floated on top of the content instead of scrolling after it.
                 */}
-                <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
+                {/*
+                  The mobile bottom padding clears the fixed tab bar AND the
+                  home-indicator inset the bar itself pads with — without the
+                  `env()` term, the last row of content sits under the bar on a
+                  notched phone.
+                */}
+                <main className="flex-1 overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
                   <div className="flex min-h-full flex-col">
                     <div className="grow">{children}</div>
                     <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
