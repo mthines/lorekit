@@ -45,6 +45,7 @@ import {
   DEFAULT_MIX,
   buildOpSequence,
   buildSchedule,
+  checkServiceCredential,
   dbShare,
   diffQueryStats,
   resolveTarget,
@@ -386,6 +387,14 @@ if (!supabaseUrl) die('SUPABASE_URL is required.');
 if (!serviceKey) die('SUPABASE_SERVICE_ROLE_KEY is required — provisioning users needs the Auth admin API.');
 if (!anonKey) die('SUPABASE_ANON_KEY is required — signing a user in uses the anon key.');
 
+// Settle what can be settled offline. Supabase answers "wrong project", "anon
+// key in the service slot" and "revoked key" with the same
+// `401 {"message":"Invalid API key"}`, so a live 401 does not say which — and
+// finding out costs a CI round-trip that provisions nothing.
+const cred = checkServiceCredential({ serviceKey, anonKey, supabaseUrl });
+for (const w of cred.warnings) log(`  ! ${w}`);
+if (cred.errors.length) die(`credential check failed:\n  - ${cred.errors.join('\n  - ')}`);
+
 const run = {
   target,
   rps: Number(opts.rps),
@@ -418,7 +427,23 @@ if (target === 'production') {
 let users = [];
 try {
   log(`\n▸ Provisioning ${run.users} users`);
-  users = await provisionUsers({ supabaseUrl, serviceKey, anonKey, count: run.users, runId });
+  try {
+    users = await provisionUsers({ supabaseUrl, serviceKey, anonKey, count: run.users, runId });
+  } catch (err) {
+    // The pre-flight above already ruled out the two decidable causes of a 401
+    // (wrong project, wrong role). If one still arrives, the remaining causes
+    // are both invisible from here — so name them rather than leaving the
+    // operator with Supabase's "Double check your … API key" hint, which points
+    // at the key's FORMAT and is the one thing that is not wrong.
+    if (/→ 401\b/.test(err?.message ?? '') && cred.errors.length === 0) {
+      log('\n  The credential pre-flight passed, so the key is the right role for the right');
+      log('  project. A 401 here leaves two causes, neither visible offline:');
+      log('    1. The key was rotated or revoked — re-copy it from Project Settings ▸ API.');
+      log('    2. Legacy API keys are DISABLED on this project, which rejects a legacy');
+      log('       `service_role` JWT as "Invalid API key". Use the `sb_secret_…` key instead.');
+    }
+    throw err;
+  }
 
   log(`▸ Seeding ${opts.seed} lore rows per user`);
   const seeded = await seedLore({ endpoint, users, perUser: Number(opts.seed), runId, headers });

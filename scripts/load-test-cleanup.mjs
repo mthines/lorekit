@@ -30,6 +30,8 @@
  *   … --dry-run           # list what WOULD be deleted
  */
 
+import { checkServiceCredential } from './load-test-lib.mjs';
+
 /**
  * The one pattern that decides what is ours to touch.
  *
@@ -96,6 +98,12 @@ if (isMain) {
     const res = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=200`, { headers: admin });
     if (!res.ok) {
       console.error(`✗ listing users failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+      // A 401 here reads as a bad key but is usually a MISMATCHED one, so say
+      // which before exiting — the sweeper runs `if: always()`, so this is
+      // often the only place the operator sees the credential explained.
+      for (const e of checkServiceCredential({ serviceKey, anonKey: '', supabaseUrl }).errors) {
+        console.error(`  → ${e}`);
+      }
       process.exit(1);
     }
     const body = await res.json();

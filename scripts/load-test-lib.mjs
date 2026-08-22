@@ -228,3 +228,110 @@ export function dbShare(results, queryDiff) {
   if (clientMs <= 0) return null;
   return { clientMs, dbMs, ratio: dbMs / clientMs };
 }
+
+// ── credential pre-flight ────────────────────────────────────────────────────
+
+/**
+ * Classify a Supabase API key WITHOUT calling anything.
+ *
+ * Supabase has two generations of key, and both are live on a project during
+ * migration, so the dashboard offers both and picking the wrong one is easy:
+ *
+ *   * legacy — a JWT (`eyJ…`) whose payload carries `role` (`anon` /
+ *     `service_role`) and `ref` (the project it belongs to).
+ *   * current — an opaque `sb_publishable_…` (replaces `anon`) or
+ *     `sb_secret_…` (replaces `service_role`). Nothing is decodable.
+ *
+ * The point of decoding rather than just trying the request: Supabase answers
+ * every one of "wrong project", "anon key in the service slot" and "key
+ * revoked" with the same `401 {"message":"Invalid API key"}`. That is a true
+ * statement and a useless diagnostic — it cost a CI round-trip to learn
+ * nothing. A legacy JWT is base64 and self-describing, so which of those it is
+ * can be settled locally, before the first byte goes out.
+ *
+ * Never throws and never returns the key. `format: 'unknown'` is the honest
+ * answer for anything unrecognised — a self-hosted or future key shape must not
+ * be reported as invalid.
+ */
+export function describeSupabaseKey(key) {
+  const raw = (key ?? '').trim();
+  if (!raw) return { format: 'absent' };
+  if (raw.startsWith('sb_secret_')) return { format: 'new-secret', privileged: true };
+  if (raw.startsWith('sb_publishable_')) return { format: 'new-publishable', privileged: false };
+
+  const parts = raw.split('.');
+  if (parts.length !== 3) return { format: 'unknown' };
+  try {
+    // Base64URL, and JWT payloads are unpadded — Buffer needs the padding back.
+    const pad = '='.repeat((4 - (parts[1].length % 4)) % 4);
+    const claims = JSON.parse(Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64').toString('utf8'));
+    const role = typeof claims.role === 'string' ? claims.role : undefined;
+    return {
+      format: 'legacy-jwt',
+      role,
+      ref: typeof claims.ref === 'string' ? claims.ref : undefined,
+      privileged: role === 'service_role',
+    };
+  } catch {
+    return { format: 'unknown' };
+  }
+}
+
+/** The project ref in a hosted Supabase URL, or undefined for anything else. */
+export function projectRefFromUrl(url) {
+  const m = /^https?:\/\/([a-z0-9-]+)\.supabase\.(?:co|in)$/i.exec((url ?? '').trim().replace(/\/+$/, ''));
+  return m ? m[1].toLowerCase() : undefined;
+}
+
+/**
+ * Pre-flight the service-role credential against the URL it will be used on.
+ *
+ * Returns `{ errors, warnings }`. The split matters: an error is something that
+ * CANNOT work and is worth refusing before provisioning users against a real
+ * project; a warning is something merely unverifiable. An opaque `sb_secret_…`
+ * key is entirely unverifiable offline, and that is fine — it must pass.
+ *
+ * Deliberately conservative. A check that rejects a valid configuration is
+ * worse than the 401 it replaces, because the 401 at least came from the
+ * authority on the question.
+ */
+export function checkServiceCredential({ serviceKey, anonKey, supabaseUrl }) {
+  const errors = [];
+  const warnings = [];
+  const svc = describeSupabaseKey(serviceKey);
+  const anon = describeSupabaseKey(anonKey);
+  const urlRef = projectRefFromUrl(supabaseUrl);
+
+  // Unmistakable: a key that is documented as browser-safe cannot create users.
+  if (svc.format === 'new-publishable') {
+    errors.push('SUPABASE_SERVICE_ROLE_KEY holds a `sb_publishable_…` key. That is the browser-safe key (the `anon` replacement) and cannot reach /auth/v1/admin. Use the `sb_secret_…` key, or the legacy `service_role` JWT.');
+  }
+  if (svc.format === 'legacy-jwt' && svc.role && svc.role !== 'service_role') {
+    errors.push(`SUPABASE_SERVICE_ROLE_KEY holds a legacy JWT with role "${svc.role}", not "service_role". Copy the service_role key (Project Settings ▸ API), not the anon one.`);
+  }
+  // Both refs known and different: the key is valid, for another project. This
+  // is the failure that reads as "Invalid API key" and sends you hunting the
+  // key format when the key was never the problem.
+  if (svc.format === 'legacy-jwt' && svc.ref && urlRef && svc.ref !== urlRef) {
+    errors.push(`SUPABASE_SERVICE_ROLE_KEY belongs to project "${svc.ref}" but the target URL is project "${urlRef}". Copy the service_role key from the SAME project the ref points at — Supabase reports this as "Invalid API key", which looks like a bad key rather than a mismatched one.`);
+  }
+  if (anon.format === 'legacy-jwt' && anon.ref && urlRef && anon.ref !== urlRef) {
+    errors.push(`SUPABASE_ANON_KEY belongs to project "${anon.ref}" but the target URL is project "${urlRef}".`);
+  }
+  if (anon.privileged === true) {
+    errors.push('SUPABASE_ANON_KEY holds a privileged key (service_role / sb_secret). The keys look swapped.');
+  }
+
+  // Unverifiable rather than wrong — say so once and continue.
+  if (svc.format === 'new-secret') {
+    warnings.push('SUPABASE_SERVICE_ROLE_KEY is an opaque `sb_secret_…` key, so its project and role cannot be checked offline. A 401 from here means it is revoked, disabled, or from another project.');
+  }
+  if (svc.format === 'unknown') {
+    warnings.push('SUPABASE_SERVICE_ROLE_KEY is in an unrecognised format — neither a JWT nor an `sb_*` key. Continuing, but check it was pasted whole.');
+  }
+  if (svc.format === 'legacy-jwt' && !svc.ref) {
+    warnings.push('SUPABASE_SERVICE_ROLE_KEY is a legacy JWT with no `ref` claim, so it cannot be matched to the target project.');
+  }
+
+  return { errors, warnings };
+}

@@ -5,9 +5,12 @@ import {
   DEFAULT_MIX,
   buildOpSequence,
   buildSchedule,
+  checkServiceCredential,
   dbShare,
+  describeSupabaseKey,
   diffQueryStats,
   percentile,
+  projectRefFromUrl,
   resolveTarget,
   summarize,
   totals,
@@ -258,4 +261,120 @@ test('a ratio above 1 is legal — that is what concurrency looks like', () => {
 test('no successful requests yields null rather than a divide by zero', () => {
   assert.equal(dbShare([{ op: 'x', status: 500, ms: 10 }], [{ totalMs: 5 }]), null);
   assert.equal(dbShare([], []), null);
+});
+
+// ── credential pre-flight ────────────────────────────────────────────────────
+
+/**
+ * These exist because of a real CI round-trip: run 32582427757 provisioned
+ * nothing and died on
+ *   POST /auth/v1/admin/users → 401 {"message":"Invalid API key"}
+ * which is the SAME response Supabase gives for a key from another project, an
+ * anon key in the service slot, and a revoked key. The 401 is true and useless;
+ * a legacy JWT is self-describing, so the distinction is decidable offline.
+ */
+
+/** Mint a legacy-shaped JWT. Only the payload is read, so the parts around it need not verify. */
+const legacyKey = (claims) =>
+  ['eyJhbGciOiJIUzI1NiJ9', Buffer.from(JSON.stringify(claims)).toString('base64url'), 'sig'].join('.');
+
+test('a legacy JWT is decoded to its role and project ref', () => {
+  const d = describeSupabaseKey(legacyKey({ role: 'service_role', ref: 'abcdefghijklmnopqrst' }));
+  assert.equal(d.format, 'legacy-jwt');
+  assert.equal(d.role, 'service_role');
+  assert.equal(d.ref, 'abcdefghijklmnopqrst');
+  assert.equal(d.privileged, true);
+});
+
+test('the two current key formats are told apart by privilege', () => {
+  assert.deepEqual(describeSupabaseKey('sb_secret_abc123'), { format: 'new-secret', privileged: true });
+  assert.deepEqual(describeSupabaseKey('sb_publishable_abc123'), { format: 'new-publishable', privileged: false });
+});
+
+test('an unrecognised key is `unknown`, never invalid', () => {
+  // A self-hosted or future key shape must not be reported as broken.
+  assert.equal(describeSupabaseKey('some-opaque-thing').format, 'unknown');
+  assert.equal(describeSupabaseKey('a.b.c').format, 'unknown'); // 3 parts, undecodable payload
+  assert.equal(describeSupabaseKey('').format, 'absent');
+  assert.equal(describeSupabaseKey(undefined).format, 'absent');
+});
+
+test('a project ref is read from a hosted URL only', () => {
+  assert.equal(projectRefFromUrl('https://pqokxlhvnosogizsjztg.supabase.co'), 'pqokxlhvnosogizsjztg');
+  assert.equal(projectRefFromUrl('https://pqokxlhvnosogizsjztg.supabase.co/'), 'pqokxlhvnosogizsjztg');
+  // Self-hosted: unknown rather than guessed, so no mismatch is ever asserted.
+  assert.equal(projectRefFromUrl('http://localhost:54321'), undefined);
+  assert.equal(projectRefFromUrl('https://supabase.example.com'), undefined);
+});
+
+test('a valid service_role JWT for the right project passes clean', () => {
+  const r = checkServiceCredential({
+    serviceKey: legacyKey({ role: 'service_role', ref: 'projectone' }),
+    anonKey: legacyKey({ role: 'anon', ref: 'projectone' }),
+    supabaseUrl: 'https://projectone.supabase.co',
+  });
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.warnings, []);
+});
+
+test('a key from ANOTHER project is named as a mismatch, not a bad key', () => {
+  const r = checkServiceCredential({
+    serviceKey: legacyKey({ role: 'service_role', ref: 'production' }),
+    anonKey: legacyKey({ role: 'anon', ref: 'previewproj' }),
+    supabaseUrl: 'https://previewproj.supabase.co',
+  });
+  assert.equal(r.errors.length, 1);
+  assert.match(r.errors[0], /belongs to project "production".*is project "previewproj"/);
+});
+
+test('an anon key in the service slot is rejected by role', () => {
+  const r = checkServiceCredential({
+    serviceKey: legacyKey({ role: 'anon', ref: 'projectone' }),
+    anonKey: legacyKey({ role: 'anon', ref: 'projectone' }),
+    supabaseUrl: 'https://projectone.supabase.co',
+  });
+  assert.equal(r.errors.length, 1);
+  assert.match(r.errors[0], /role "anon", not "service_role"/);
+});
+
+test('a publishable key in the service slot is rejected by format', () => {
+  const r = checkServiceCredential({
+    serviceKey: 'sb_publishable_xyz',
+    anonKey: 'sb_publishable_xyz',
+    supabaseUrl: 'https://projectone.supabase.co',
+  });
+  assert.equal(r.errors.length, 1);
+  assert.match(r.errors[0], /browser-safe key/);
+});
+
+test('swapped keys are caught even when both are for the right project', () => {
+  const r = checkServiceCredential({
+    serviceKey: legacyKey({ role: 'anon', ref: 'projectone' }),
+    anonKey: legacyKey({ role: 'service_role', ref: 'projectone' }),
+    supabaseUrl: 'https://projectone.supabase.co',
+  });
+  assert.equal(r.errors.length, 2); // wrong role in service slot AND privileged anon
+  assert.ok(r.errors.some((e) => /privileged key/.test(e)));
+});
+
+test('an opaque secret key WARNS but never blocks — it cannot be checked offline', () => {
+  const r = checkServiceCredential({
+    serviceKey: 'sb_secret_xyz',
+    anonKey: 'sb_publishable_xyz',
+    supabaseUrl: 'https://projectone.supabase.co',
+  });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0], /cannot be checked offline/);
+});
+
+test('a self-hosted URL asserts no mismatch', () => {
+  // The ref is unknowable from the URL, so a ref-bearing key must not be
+  // reported as belonging to the wrong project.
+  const r = checkServiceCredential({
+    serviceKey: legacyKey({ role: 'service_role', ref: 'anything' }),
+    anonKey: legacyKey({ role: 'anon', ref: 'anything' }),
+    supabaseUrl: 'http://localhost:54321',
+  });
+  assert.deepEqual(r.errors, []);
 });
