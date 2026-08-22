@@ -181,6 +181,45 @@ weakened: provisioning and deleting users goes through the **Auth admin API**,
 and the `lorekit_db_query_stats()` snapshot is service-role-only. A `lk_rw_*`
 token cannot do either, so there is no lower-privilege version of this run.
 
+#### Legacy `service_role` JWT or the new `sb_secret_…` key?
+
+Supabase has two key generations, and both are offered in the dashboard during
+migration. **Either works here** — the scripts send the key in *both* the
+`apikey` header and `Authorization: Bearer`, which is the shape both generations
+accept — so the key TYPE is not what a `401` is telling you.
+
+| If legacy keys are… | Use |
+|---|---|
+| still enabled (the default) | either the legacy `service_role` JWT or `sb_secret_…` |
+| **disabled** on the project | `sb_secret_…` only — a legacy JWT then returns `Invalid API key` |
+
+Never `sb_publishable_…` or the `anon` JWT: those are the browser-safe keys and
+cannot reach `/auth/v1/admin`.
+
+#### Reading a `401 {"message":"Invalid API key"}`
+
+Supabase returns that same body for **four** different mistakes, so the response
+alone does not identify which. Three of them are not about the key's format at
+all, which is what makes the built-in hint ("Double check your `anon` or
+`service_role` API key") misleading — it points at the one thing that is usually
+fine.
+
+`checkServiceCredential()` in `scripts/load-test-lib.mjs` decides the two
+decidable ones **offline**, before the first request, by decoding the JWT's
+`role` and `ref` claims:
+
+| Cause | How it is caught |
+|---|---|
+| key is for **another project** | `ref` claim vs the URL's subdomain — the likeliest cause after any change to how the URL is derived |
+| **anon key in the service slot** (or the two swapped) | `role` claim |
+| key **revoked / rotated** | not decidable offline — reported after the 401 |
+| **legacy keys disabled** on the project | not decidable offline — reported after the 401 |
+
+An opaque `sb_secret_…` key carries no claims, so it warns ("cannot be checked
+offline") and always proceeds — a check that rejects a valid configuration is
+worse than the 401 it replaces. Self-hosted URLs yield no project ref, so no
+mismatch is ever asserted against them.
+
 ### What a run does
 
 1. Provisions `--users` confirmed users through the Auth admin API and signs
