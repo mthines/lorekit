@@ -1,7 +1,7 @@
 /**
  * Pure validator for a bare `owner/name` GitHub repository identifier, used
  * for per-repo webhook secrets. Aligned with the `repo::owner/name` segment
- * rules in packages/mcp-core/src/scope.ts (single source of truth for what
+ * rules in packages/mcp-core/src/scope/scope.ts (single source of truth for what
  * a valid owner/name looks like), but exposed as a standalone function since
  * no bare (non-scope-prefixed) validator existed.
  */

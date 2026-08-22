@@ -1,5 +1,5 @@
 /**
- * StorageAdapter — Deno edge function mirror of packages/mcp-core/src/storage-adapter.ts
+ * StorageAdapter — Deno edge function mirror of packages/mcp-core/src/db/storage-adapter.ts
  *
  * Self-contained (no cross-package imports). Keep in sync with the Node.js
  * source when either changes (the limits.ts / auth-token.ts pattern).

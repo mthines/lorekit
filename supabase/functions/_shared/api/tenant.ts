@@ -10,7 +10,7 @@
  * supabase/functions/_shared/tenant-scope.ts (shared with the MCP surface); what
  * lives here is the REST-specific plumbing around it — the org-id RPC with its
  * span, and the auth-tier predicates. It used to duplicate
- * packages/mcp-core/src/tenant-scope.ts but is specific to the REST shared
+ * packages/mcp-core/src/auth/tenant-scope.ts but is specific to the REST shared
  * API (different import chain, different span naming).
  */
 import { createTracedClient } from '../otel.ts';

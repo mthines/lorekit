@@ -5,7 +5,7 @@
  * one-line edit here, not a scattered set of if/else branches (mirrors the
  * `scope-meta.ts` single-record pattern).
  *
- * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit.ts`
+ * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit/audit.ts`
  * (and its self-contained edge copy) — the web package has no dependency on
  * `@lorekit/core` (same reason `lib/scope.ts` re-declares a lightweight copy
  * of `scopeType`), so the action literals are re-declared here rather than

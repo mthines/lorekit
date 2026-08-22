@@ -118,7 +118,7 @@ export function relativePath(pathname: string, functionName: string): string {
  *
  * The CLASSIFICATION is the pure, unit-tested `classifyResponseOutcome`
  * (`_shared/rest-response-outcome.ts`, mirror of
- * `packages/mcp-core/src/rest-response-outcome.ts`) — see that module for the
+ * `packages/mcp-core/src/rest/rest-response-outcome.ts`) — see that module for the
  * full status→outcome mapping and why 429 is the one case needing the body.
  * Only the I/O stays here: the response is cloned on that rare path alone, and
  * never on the response actually returned to the caller. A body that is

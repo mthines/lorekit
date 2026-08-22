@@ -1,5 +1,5 @@
 // Zero-dependency mirror of the created_at validation used by the hosted MCP
-// server (packages/mcp-core/src/created-at.ts). Keeps the local `lorekit mcp`
+// server (packages/mcp-core/src/limits/created-at.ts). Keeps the local `lorekit mcp`
 // stdio server's memory.write contract identical to the remote one: an optional
 // ISO 8601 creation-date override, rejected when invalid or future-dated.
 

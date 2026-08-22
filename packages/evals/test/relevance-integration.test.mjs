@@ -16,7 +16,7 @@ import {
 //
 // Reached through the PACKAGE specifier, not a `../../web/…` relative path, and
 // declared as a devDependency in this package's package.json — the same
-// convention cross-package-imports.test.mjs uses for `@lorekit/core/src/scope.ts`.
+// convention cross-package-imports.test.mjs uses for `@lorekit/core/src/scope/scope.ts`.
 // The edge is real either way (the module pulls in `msw`); declaring it keeps it
 // visible to the workspace graph instead of smuggling it past the manifest.
 import { MEMORY_ROWS } from "@lorekit/web/src/mocks/memories.ts";

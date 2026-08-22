@@ -51,7 +51,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
-import { formatTraceparent, parseTraceparent } from '../packages/mcp-core/src/trace-context.ts';
+import { formatTraceparent, parseTraceparent } from '../packages/mcp-core/src/telemetry/trace-context.ts';
 import {
   Span,
   ExportBatch,

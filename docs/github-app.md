@@ -83,7 +83,7 @@ produce exactly one row.
 ## Pure helpers (`webhook-installation.ts`)
 
 Three side-effect-free functions, tested in
-`packages/mcp-core/src/webhook-installation.spec.ts` with no GitHub calls:
+`packages/mcp-core/src/webhook/webhook-installation.spec.ts` with no GitHub calls:
 
 | Function | What it does |
 | -------- | ------------ |
@@ -94,7 +94,7 @@ Three side-effect-free functions, tested in
 The edge function mirrors these byte-for-byte in
 `supabase/functions/mcp/webhook-installation.ts` (same pattern as
 `webhook-secret-select.ts` / `limits.ts`).  The drift guard lives in
-`packages/mcp-core/src/edge-parity.spec.ts`.
+`packages/mcp-core/src/edge/edge-parity.spec.ts`.
 
 ---
 
@@ -272,10 +272,10 @@ credentials set**:
 
 | Test | File | What it covers |
 | ---- | ---- | -------------- |
-| `mapInstallationEvent` variants | `packages/mcp-core/src/webhook-installation.spec.ts` | AC-2, AC-9 |
+| `mapInstallationEvent` variants | `packages/mcp-core/src/webhook/webhook-installation.spec.ts` | AC-2, AC-9 |
 | `reconcileInstallation` pending / linked | same | AC-4, AC-5, AC-9 |
 | `buildInstallationTokenClaims` | same | AC-9 |
-| edge↔mcp-core byte-parity | `packages/mcp-core/src/edge-parity.spec.ts` | AC-11 |
+| edge↔mcp-core byte-parity | `packages/mcp-core/src/edge/edge-parity.spec.ts` | AC-11 |
 | Idempotent double-apply | `supabase/tests/migrations.test.sql` §38 | AC-7 |
 | pending→linked transition | same §39 | AC-4, AC-5 |
 | No regression to pending | same §40 | AC-7 |

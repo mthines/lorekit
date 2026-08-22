@@ -1,0 +1,8 @@
+{
+  "name": "smoke-tests",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/smoke-tests/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {}
+}

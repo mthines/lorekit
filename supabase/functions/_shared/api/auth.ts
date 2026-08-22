@@ -130,7 +130,7 @@ export function isJwtAuth(auth: AuthContext): boolean {
  * that should converge on this rule — not the reverse.
  *
  * The rule itself lives in the pure, unit-tested `_shared/rest-audit-actor.ts`
- * (mirror of `packages/mcp-core/src/rest-audit-actor.ts`), re-exported here so
+ * (mirror of `packages/mcp-core/src/audit/rest-audit-actor.ts`), re-exported here so
  * every existing `import { auditUserId } from '…/api/auth.ts'` is unchanged.
  */
 export { auditUserId } from '../rest-audit-actor.ts';
@@ -172,7 +172,7 @@ export function usageAuthType(auth: AuthContext): 'api_key' | 'jwt' | 'service' 
  * This exists as ONE helper rather than an inlined `auth.userId ?? null` at each
  * call site so a new org handler cannot quietly forget it (the omission is
  * invisible under JWT auth and only breaks the api_key tier). Enforced by
- * `packages/mcp-core/src/org-actor-usage.spec.ts`.
+ * `packages/mcp-core/src/auth/org-actor-usage.spec.ts`.
  */
 export function actorUserId(auth: AuthContext): string | null {
   return auth.userId ?? null;

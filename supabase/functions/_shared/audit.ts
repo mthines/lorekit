@@ -15,7 +15,7 @@
  * the logic rather than importing it. Keep buildAuditEntry's body
  * byte-consistent with that copy; the vitest suite over it is the shared guard.
  * NOTE: the two copies are NOT whole-file comparable by
- * `packages/mcp-core/src/edge-parity.spec.ts` — they differ in their client
+ * `packages/mcp-core/src/edge/edge-parity.spec.ts` — they differ in their client
  * typing (`SupabaseClient` from the bare `@supabase/supabase-js` import in
  * mcp-core vs `DbClient` off the `npm:` specifier
  * here), which is precisely the Node/Deno import split the mirror exists for.
@@ -115,7 +115,7 @@ export async function recordAudit(
       ...row,
       user_id: userId,
       // `AuditRow.metadata` is `Record<string, unknown> | null` — the CALLER's
-      // shape, shared with packages/mcp-core/src/audit.ts — while the generated
+      // shape, shared with packages/mcp-core/src/audit/audit.ts — while the generated
       // Insert type wants `Json`. The value is JSON-serialisable by contract (it
       // goes straight into a jsonb column), so state that here rather than
       // widening AuditRow, which should keep describing what callers may pass.

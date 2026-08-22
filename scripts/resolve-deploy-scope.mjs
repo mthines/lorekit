@@ -64,7 +64,7 @@ import { execFileSync } from 'node:child_process';
  * mint both markers.
  */
 export const API_PATHS =
-  /^(packages\/mcp-core\/|packages\/mcp-server\/|packages\/schemas\/|supabase\/functions\/|supabase\/migrations\/|supabase\/tests\/|supabase\/config\.toml|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/resolve-deploy-scope\.mjs|\.github\/workflows\/deploy\.yml)/;
+  /^(packages\/mcp-core\/|packages\/schemas\/|supabase\/functions\/|supabase\/migrations\/|supabase\/tests\/|supabase\/config\.toml|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/resolve-deploy-scope\.mjs|\.github\/workflows\/deploy\.yml)/;
 
 export const WEB_PATHS =
   /^(packages\/web\/|packages\/schemas\/|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/resolve-deploy-scope\.mjs|\.github\/actions\/vercel-preview-deploy\/|\.github\/workflows\/deploy\.yml)/;

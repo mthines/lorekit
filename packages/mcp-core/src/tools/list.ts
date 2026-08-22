@@ -1,8 +1,8 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
+import { ScopeSchema, scopeType } from '../scope/scope.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
 
 /** Characters of `value` echoed in a `view: "summary"` entry's `preview`. */
 export const LIST_PREVIEW_CHARS = 200;

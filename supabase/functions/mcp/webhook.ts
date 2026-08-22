@@ -4,8 +4,7 @@
  * pull_request_review_thread, and issue_comment events and creates
  * candidate memory entries tagged source::pr-webhook.
  *
- * Two signal-quality gates applied before every write (mirrored from
- * packages/mcp-server/src/webhooks/signal-filter.ts — keep in sync):
+ * Two signal-quality gates applied before every write:
  *   1. classifyWebhookAction — only 'created', 'submitted', and 'resolved'
  *      actions carry durable signal; edits, deletes, dismissals are skipped.
  *   2. isSignalWorthy — rejects short bodies, bot noise, and code-only blocks.
@@ -92,7 +91,6 @@ const SUPPORTED_EVENTS = new Set([
 ]);
 
 // ── Signal-quality helpers (inlined — Deno edge functions are self-contained) ─
-// Keep in sync with packages/mcp-server/src/webhooks/signal-filter.ts
 
 type WebhookTier = 'WRITE' | 'SKIP';
 
@@ -330,7 +328,7 @@ async function verifyHmac(
    * type error that the untyped client had been absorbing.
    *
    * Widened here at the consumer rather than in `WebhookSecretSource` itself:
-   * that type is byte-mirrored from `packages/mcp-core/src/webhook-secret-select.ts`
+   * that type is byte-mirrored from `packages/mcp-core/src/webhook/webhook-secret-select.ts`
    * and enumerates the SECRET-SELECTION outcomes, which `'app'` is not one of.
    */
   secretSource: WebhookSecretSource | 'app',

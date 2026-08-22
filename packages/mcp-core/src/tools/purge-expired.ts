@@ -1,7 +1,7 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
-import { recordAudit } from '../audit.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
+import { recordAudit } from '../audit/audit.js';
 
 /**
  * Hard-delete active memories whose expires_at is in the past.

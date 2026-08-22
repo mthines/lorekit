@@ -1,6 +1,6 @@
-export * from './scope.js';
-export * from './db.js';
-export * from './telemetry.js';
+export * from './scope/scope.js';
+export * from './db/db.js';
+export * from './telemetry/telemetry.js';
 export { write, WriteInputSchema, type WriteInput } from './tools/write.js';
 export { read, ReadInputSchema, type ReadInput, type ReadResult } from './tools/read.js';
 export { list, ListInputSchema, type ListInput, type ListEntry } from './tools/list.js';
@@ -29,14 +29,14 @@ export {
   rateLimitMessage,
   translateCapError,
   checkRateLimit,
-} from './limits.js';
+} from './limits/limits.js';
 export {
   type Permission,
   READ_TOOLS,
   WRITE_TOOLS,
   toolRequires,
   tokenPrefixFor,
-} from './permissions.js';
+} from './auth/permissions.js';
 export {
   AUDIT_ACTIONS,
   type AuditAction,
@@ -44,25 +44,25 @@ export {
   type AuditRow,
   buildAuditEntry,
   recordAudit,
-} from './audit.js';
+} from './audit/audit.js';
 export { purgeExpired } from './tools/purge-expired.js';
-export { parseTtlDays, TtlError, TTL_MIN_DAYS, TTL_MAX_DAYS } from './ttl.js';
+export { parseTtlDays, TtlError, TTL_MIN_DAYS, TTL_MAX_DAYS } from './limits/ttl.js';
 export {
   WEBHOOK_TTL_DAYS_BY_TIER,
   webhookSignalTier,
   webhookTtlDays,
   type WebhookSignalTier,
-} from './ttl-defaults.js';
+} from './limits/ttl-defaults.js';
 export {
   parseOrigin,
   sanitizeOrigin,
   OriginError,
   type MemoryOrigin,
   type OriginInput,
-} from './origin.js';
+} from './provenance/origin.js';
 export {
   type StorageAdapter,
   createHostedAdapter,
   createBYODAdapter,
   resolveStorageAdapter,
-} from './storage-adapter.js';
+} from './db/storage-adapter.js';

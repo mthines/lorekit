@@ -8,7 +8,7 @@
  * re-derives membership itself, so the predicate can never drift from the
  * SQL side (Requirement R2: exactly one enforced place).
  *
- * Mirror of packages/mcp-core/src/tenant-scope.ts, self-contained for the Deno
+ * Mirror of packages/mcp-core/src/auth/tenant-scope.ts, self-contained for the Deno
  * edge tree (which cannot cross-import the Node package — same pattern as
  * created-at.ts and webhook-secret-select.ts). It lives in `_shared/` rather
  * than `mcp/` because BOTH edge surfaces import this one copy: the MCP tools
