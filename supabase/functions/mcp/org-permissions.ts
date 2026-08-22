@@ -17,6 +17,9 @@
 /** Custom SQLSTATE raised by memory_write / memory_delete on an org-permission denial. */
 export const ORG_PERMISSION_SQLSTATE = 'LK002';
 
+/** Message prefix every memory/org RPC raises when the caller names a non-existent org slug. */
+const UNKNOWN_ORG_PREFIX = 'unknown_org: ';
+
 /** Actionable error surfaced to the caller when an org write/delete is denied by role. */
 export class OrgPermissionError extends Error {
   code: 'org_permission_denied';
@@ -29,20 +32,42 @@ export class OrgPermissionError extends Error {
 }
 
 /**
- * Translate a DB error into an actionable OrgPermissionError when it was
+ * Actionable error surfaced when the caller names an org slug that does not
+ * resolve. Caller-caused (a typo'd or stale `org` argument) — the service
+ * handled the request correctly, so this is NOT a server-side fault.
+ */
+export class UnknownOrgError extends Error {
+  code: 'unknown_org';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnknownOrgError';
+    this.code = 'unknown_org';
+  }
+}
+
+/**
+ * Translate a DB error into an actionable, client-caused error when it was
  * raised by memory_write / memory_delete's org-authorization check
- * (SQLSTATE 'LK002'). Any other error is returned unchanged so callers can
- * rethrow/wrap it as before.
+ * (SQLSTATE 'LK002' -> OrgPermissionError) or by any org-resolving RPC's
+ * unknown-slug guard (message prefix 'unknown_org: ' -> UnknownOrgError).
+ * Any other error is returned unchanged so callers can rethrow/wrap it as
+ * before.
  */
 export function translateOrgPermissionError(err: unknown): unknown {
   const code = (err as { code?: string } | null | undefined)?.code;
-  if (code !== ORG_PERMISSION_SQLSTATE) return err;
+  const rawMessage = (err as { message?: string } | null | undefined)?.message;
 
-  const message =
-    (err as { message?: string } | null | undefined)?.message ??
-    'org_permission_denied: you do not have the required role in this org';
+  if (code === ORG_PERMISSION_SQLSTATE) {
+    const message = rawMessage ?? 'org_permission_denied: you do not have the required role in this org';
+    return new OrgPermissionError(
+      `You don't have permission to do that in this org (${message}). Ask an org admin/owner to change your role.`,
+    );
+  }
 
-  return new OrgPermissionError(
-    `You don't have permission to do that in this org (${message}). Ask an org admin/owner to change your role.`,
-  );
+  if (rawMessage?.startsWith(UNKNOWN_ORG_PREFIX)) {
+    return new UnknownOrgError(rawMessage);
+  }
+
+  return err;
 }

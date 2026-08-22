@@ -8,7 +8,9 @@ import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
 import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
-import { OrgPermissionError } from './org-permissions.ts';
+import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
+import { TtlError } from './ttl.ts';
+import { CreatedAtError } from '../_shared/created-at.ts';
 import { type Params } from './tools.ts';
 // The dispatch maps are GENERATED from packages/schemas/src/tool-catalog.ts —
 // see tool-dispatch.generated.ts. They were hand-written here, which is why a
@@ -339,11 +341,18 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       const durationMs = Date.now() - toolStartMs;
       toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
 
-      // UserInputError (bad scope, missing required arg) and OrgPermissionError
-      // (insufficient role) are client-caused — the server handled them correctly.
-      // Use clientError() so spans are NOT marked ERROR (OTel: server spans are
-      // ERROR only for 5xx / server-side faults, not 4xx client errors).
-      const isClientError = err instanceof UserInputError || err instanceof OrgPermissionError;
+      // UserInputError (bad scope, missing required arg), OrgPermissionError
+      // (insufficient role), UnknownOrgError (org slug does not resolve),
+      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), and CreatedAtError
+      // (invalid/future created_at override) are all client-caused — the
+      // server handled them correctly. Use clientError() so spans are NOT
+      // marked ERROR (OTel: server spans are ERROR only for 5xx / server-side
+      // faults, not 4xx client errors).
+      const isClientError = err instanceof UserInputError
+        || err instanceof OrgPermissionError
+        || err instanceof UnknownOrgError
+        || err instanceof TtlError
+        || err instanceof CreatedAtError;
       if (isClientError) {
         toolSpan.clientError(msg).end();
         span.clientError(msg);
