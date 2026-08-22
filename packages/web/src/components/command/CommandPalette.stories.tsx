@@ -100,29 +100,43 @@ function OpenOnMount() {
  */
 function ViewportFrame({
   children,
+  className = 'h-[640px] w-[960px]',
 }: {
   children: (frame: HTMLElement) => React.ReactNode;
+  className?: string;
 }) {
   const [frame, setFrame] = useState<HTMLDivElement | null>(null);
   return (
     <div
       ref={setFrame}
-      className="relative h-[640px] w-[960px] overflow-hidden bg-[var(--color-bg)]"
+      className={`relative overflow-hidden bg-[var(--color-bg)] ${className}`}
     >
       {frame && children(frame)}
     </div>
   );
 }
 
-function PaletteHarness() {
+function PaletteHarness({ frameClassName }: { frameClassName?: string }) {
   return (
     <CommandPaletteProvider>
       <SampleCommands />
       <OpenOnMount />
-      <ViewportFrame>{(frame) => <CommandPalette container={frame} />}</ViewportFrame>
+      <ViewportFrame {...(frameClassName ? { className: frameClassName } : {})}>
+        {(frame) => <CommandPalette container={frame} />}
+      </ViewportFrame>
     </CommandPaletteProvider>
   );
 }
+
+// A phone viewport with the virtual keyboard up: 390px wide and only ~420px of
+// height left. This is the case the palette used to fail — the panel was the sum
+// of its parts, so the command list and the footer hint fell under the keyboard
+// with no way to scroll to them.
+//
+// Deliberately NOT exported: Storybook turns every named export of a
+// `*.stories.tsx` file into a story, so an exported constant renders as an empty
+// one and fails the run.
+const PHONE_WITH_KEYBOARD_FRAME = 'h-[420px] w-[390px]';
 
 const meta: Meta<typeof CommandPalette> = {
   title: 'Command/CommandPalette',
@@ -144,6 +158,20 @@ export const Default: Story = {
   // `play` the visual-regression `afterEach` (which runs right after `play`)
   // could screenshot before the dialog mounts. Awaiting the dialog makes the
   // snapshot deterministic instead of relying on frame timing.
+  play: async ({ canvasElement }) => {
+    await within(canvasElement).findByRole('dialog', { name: 'Command Palette' });
+  },
+};
+
+/**
+ * The same palette in a phone-sized viewport with the keyboard up. The panel
+ * shrinks to fit rather than overflowing: the search field keeps its full
+ * height, the list absorbs the deficit and scrolls, and the footer hint stays
+ * on screen. `CommandPalette.test.stories.tsx` asserts that geometry; this
+ * baseline is what catches it turning ugly.
+ */
+export const PhoneWithKeyboard: Story = {
+  render: () => <PaletteHarness frameClassName={PHONE_WITH_KEYBOARD_FRAME} />,
   play: async ({ canvasElement }) => {
     await within(canvasElement).findByRole('dialog', { name: 'Command Palette' });
   },

@@ -410,7 +410,16 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
         // the Storybook iframe rather than the frame. Contained mode centres
         // instead — container-relative by construction, and deterministic for
         // the screenshot at any iframe size.
-        container ? 'absolute items-center' : 'fixed items-start pt-[15vh]',
+        //
+        // The `15vh` drop is DESKTOP-ONLY. On a phone the virtual keyboard opens
+        // the moment the palette does (the search input takes focus on mount)
+        // and eats roughly half the screen, while `vh` and `dvh` both keep
+        // measuring the full viewport — Chrome's default `interactive-widget`
+        // resizes the *visual* viewport, not the layout one, so a `fixed`
+        // overlay still spans behind the keyboard. 15vh of that budget spent on
+        // empty space above the panel is what pushed the command list under the
+        // keyboard. The base `p-4` supplies the mobile offset instead.
+        container ? 'absolute items-center' : 'fixed items-start sm:pt-[15vh]',
       ].join(' ')}
       onClick={closePalette}
     >
@@ -419,7 +428,14 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
         role="dialog"
         aria-modal
         aria-label="Command Palette"
-        className="w-full max-w-xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
+        // `max-h-full flex-col` + a shrinkable list is what keeps the panel
+        // inside whatever height it is actually given: `max-height: 100%`
+        // resolves against the backdrop's CONTENT box, so it already nets out
+        // the padding above. Without it the panel is the sum of its parts and
+        // simply overflows a short viewport (phone landscape, a small phone with
+        // the keyboard up) with the footer and the last rows unreachable —
+        // `overflow-hidden` clips them rather than scrolling them.
+        className="flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
         // Clicks inside the panel must not bubble to the backdrop's close handler.
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => {
@@ -431,8 +447,10 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
           if (e.target !== inputRef.current) e.preventDefault();
         }}
       >
-        {/* Header: breadcrumb + search */}
-        <div className="flex items-center gap-2 px-3 py-2.5">
+        {/* Header: breadcrumb + search. `shrink-0` here and on the footer so the
+            LIST absorbs the whole deficit when the panel is height-capped —
+            otherwise flexbox shrinks all three and crushes the search field. */}
+        <div className="flex shrink-0 items-center gap-2 px-3 py-2.5">
           {/* Back button when nested */}
           {isNested && (
             <button
@@ -504,7 +522,11 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
           id="command-palette-list"
           role="listbox"
           aria-label={frameTitle}
-          className="max-h-80 overflow-y-auto p-1.5"
+          // `min-h-0` is what LETS this shrink below its content height — a flex
+          // item's default `min-height: auto` floors it at the content size, so
+          // the panel's `max-h-full` would be ignored and the overflow would
+          // land on the footer instead of scrolling here.
+          className="min-h-0 max-h-80 overflow-y-auto p-1.5"
         >
           {currentFrame?.loading || (liveSearching && filtered.length === 0) ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-content-tertiary)]">
@@ -549,7 +571,7 @@ export function CommandPalette({ container }: CommandPaletteProps = {}) {
         </div>
 
         {/* Footer hint */}
-        <div className="flex items-center justify-between border-t border-[var(--color-border-subtle)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
+        <div className="flex shrink-0 items-center justify-between border-t border-[var(--color-border-subtle)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
           <span className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
