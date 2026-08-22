@@ -4,7 +4,7 @@
 |----------|----------|----------------|
 | [architecture.md](./architecture.md) | All | System diagram, package map, auth tiers, data model |
 | [decisions.md](./decisions.md) | All | Key architectural decisions (do not relitigate) — full rationale behind the CLAUDE.md index |
-| [key-files.md](./key-files.md) | Developers | Annotated file index (~124 files) — the full-detail version of the CLAUDE.md "Key files" pointer |
+| [key-files.md](./key-files.md) | Developers | Annotated file index (~130 files) — the full-detail version of the CLAUDE.md "Key files" pointer |
 | [cli.md](./cli.md) | Developers | `@lorekit/cli` command reference (install/doctor/read commands/hook/mcp) |
 | [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 10 MCP tools with request/response examples |
 | [scope-format.md](./scope-format.md) | Agents + developers | Canonical scope string spec and resolution strategy |

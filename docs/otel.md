@@ -6,12 +6,19 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 
 | Layer | SDK | Signals |
 |-------|-----|---------|
-| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement |
+| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
 | Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
 | CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link` / `migrate`) |
 
 All signals carry `service.namespace=lorekit` so you can filter the full stack in one Dash0 query.
+
+> **Profiles are not among the signals, and cannot be.** Dash0 collects profiles
+> with a host-level eBPF agent and LoreKit has no host to run one on. What
+> replaces it: [self-time attribution](#self-time-attribution-every-root-request-span)
+> per request, and [query-level profiling](#query-level-profiling) from
+> `pg_stat_statements`. The full reasoning is in that second section — read it
+> before proposing a profiler.
 
 > For how the four services correlate into one trace (W3C `traceparent`
 > propagation), a review of telemetry quality against the OTel semantic
@@ -53,6 +60,181 @@ Rate-limit attributes on the root `lorekit.mcp` span:
 | `rate_limit.allowed` | `true` | Whether the request was allowed |
 | `rate_limit.current_count` | `47` | Current window request count |
 | `rate_limit.limit_value` | `120` | Effective RPM limit |
+
+### Self-time attribution (every root request span)
+
+`traceRequest` splits each request's duration into time spent waiting on
+something else and time spent in our own code. Stamped on **every** root span of
+**every** edge function — these are numeric measures, not dimensions, so they add
+no cardinality and need no sampling.
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `lorekit.io.wait_ms` | `38` | Wall-clock ms with at least one outbound (CLIENT) call in flight. Concurrent calls count **once** |
+| `lorekit.io.calls` | `3` | How many outbound calls were made. Summed, not merged — this is what separates an N+1 from one slow query |
+| `lorekit.self_time_ms` | `7` | Request duration no child span accounts for: scope expansion, payload building, JSON, runtime overhead |
+
+This is the closest thing to a CPU profile a Supabase Edge Function can produce
+— see [Query-level profiling](#query-level-profiling) for why an actual profiler
+is not an option. Any span with `kind = CLIENT` feeds the ledger, so a
+hand-rolled `span.child(..., SPAN_KIND_CLIENT)` around a `fetch` is attributed
+without touching the helper.
+
+The intervals are **merged, not summed**, and that is the whole subtlety.
+Handlers issue concurrent queries (`Promise.all`); adding two 40 ms queries that
+ran side by side would claim 80 ms of wait in a request that waited 40, and the
+self time computed from it would go negative — reading as "instant" on exactly
+the requests worth investigating. The merge lives in the pure
+`packages/mcp-core/src/io-ledger.ts` (mirrored to `_shared/`) so it is unit
+tested rather than only observable as a wrong number on a chart.
+
+Useful queries:
+
+- `lorekit.self_time_ms` high with `lorekit.io.calls` low → our code is the cost.
+- `lorekit.io.calls` high with each DB span short → an N+1; look at the child spans.
+- `lorekit.io.wait_ms` ≈ the span duration → we are purely waiting on Postgres;
+  go to the query metrics below.
+
+---
+
+## Query-level profiling
+
+### Why there is no CPU profiler
+
+Dash0 collects profiles with a **host-level eBPF agent** (the OpenTelemetry eBPF
+profiler, deployed by the Dash0 Kubernetes operator). LoreKit has no host to run
+one on: every runtime is managed serverless — Supabase Edge Functions on managed
+Deno isolates, the dashboard on Vercel. There is no node, no DaemonSet, and no
+privileged sidecar. Supabase's edge runtime also exposes no userland V8 profiler
+to sample from.
+
+The in-process alternative does not exist yet either: OTLP **profiles** reached
+public Alpha in March 2026, the SIG states it should not be used for critical
+production workloads, and the JS SDK has no profiles exporter
+([opentelemetry-js#6500](https://github.com/open-telemetry/opentelemetry-js/issues/6500)).
+There is no Deno equivalent at all.
+
+And it would tell us little. These handlers are I/O-bound, so a sampled stack is
+mostly "awaiting fetch". `createTracedClient` already opens a CLIENT span per
+round-trip, so the trace waterfall already attributes request time to specific
+queries — better than a profile would.
+
+**`packages/mcp-server/` is the one component that could be truly profiled**, if
+it were ever deployed to a VM or Kubernetes where the eBPF profiler can attach.
+Nothing deploys it today.
+
+### What we profile instead
+
+The time goes into SQL, and Postgres already profiles itself.
+`pg_stat_statements` holds **server-side cost per statement shape, aggregated
+across every caller** — the one thing per-request CLIENT spans cannot see, since
+they time each round-trip from the caller's side, one request at a time.
+
+```
+pg_cron (every minute)
+  └── lorekit_export_db_query_stats()      ← inert without vault secrets
+        └── pg_net → POST /functions/v1/profiling
+              └── lorekit_db_query_stats(20)          ← top-N reader RPC
+                    └── buildDbQueryMetrics()          ← pure mapper
+                          └── POST → Dash0 /v1/metrics
+```
+
+Three metrics, all **cumulative monotonic sums**:
+
+| Metric | Unit | Meaning |
+|--------|------|---------|
+| `lorekit.db.query.time` | `s` | Cumulative server-side execution time per statement shape |
+| `lorekit.db.query.calls` | `{call}` | Cumulative executions |
+| `lorekit.db.query.rows` | `{row}` | Cumulative rows returned or affected |
+
+Datapoint attributes — all bounded:
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `db.queryid` | `-3590487284026153938` | `pg_stat_statements.queryid`, as a **string** — it is an int64 and would lose precision as a JSON number |
+| `db.query.text` | `insert into memories(scope,key,value) values ($1,$2,$3)` | The normalised statement, whitespace-collapsed and truncated to 512 chars |
+| `db.query.toplevel` | `false` | `false` = executed inside a function body. LoreKit's writes run inside RPCs, so the outer `select memory_write(...)` and its inner statements both appear; **filter on this or you double-count** |
+| `db.system` | `postgresql` | |
+
+There is deliberately **no tenant dimension**. `pg_stat_statements` aggregates by
+statement shape across all callers, so it has no user to attribute a row to, and
+inventing one would both lie and make the cardinality unbounded.
+
+Mean latency is a derived query — `rate(lorekit.db.query.time) /
+rate(lorekit.db.query.calls)` — rather than a fourth metric that could disagree
+with the other two.
+
+### Why cumulative, not deltas
+
+`pg_stat_statements` counters are cumulative since `stats_reset`, and they are
+exported that way: each datapoint's `startTimeUnixNano` carries the reset
+timestamp, so Dash0 does the differencing and reads a reset as a **new series**
+rather than as negative traffic. Computing deltas in the exporter would mean
+persisting the previous snapshot somewhere and re-implementing reset detection in
+a new place.
+
+A consequence worth knowing: a dropped scrape costs **resolution, not data** —
+the next scrape still carries the full cumulative total. That is why the cron
+poke is fire-and-forget.
+
+### Cardinality
+
+Each statement is one series **per metric**, so top-N is the dial. The endpoint
+defaults to 20 and `lorekit_db_query_stats()` caps it at **200** regardless of
+what is asked for. Membership of the top-N changes over time, so series appear
+and disappear — expected, and the reason the cap is enforced in the RPC rather
+than trusted to the caller.
+
+### Turning it on
+
+**Off by default** — the same posture as the embedding pipeline
+([embeddings.md](./embeddings.md)). Migration `00073` ships the reader, the
+exporter and the cron schedule, but the exporter returns `disabled` and posts
+nothing until an operator provisions two Vault secrets:
+
+```sql
+select vault.create_secret(
+  'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/profiling',
+  'lorekit_profiling_url');
+select vault.create_secret('<service-role-key>', 'lorekit_profiling_key');
+```
+
+The gate is in one place, so this is the whole switch: no migration re-run and no
+schedule edit. Turn it off again by deleting either secret.
+
+Requires the `pg_stat_statements` extension (Supabase preloads it). It needs no
+new Dash0 credentials — the `profiling` function exports through the same
+`OTEL_EXPORTER_OTLP_*` secrets every other function already uses.
+
+### Checking it by hand
+
+```bash
+curl -sS -X POST \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/profiling | jq
+```
+
+```json
+{ "exported": true, "statements": 20, "datapoints": 60,
+  "metrics": ["lorekit.db.query.time", "lorekit.db.query.calls", "lorekit.db.query.rows"] }
+```
+
+Status codes are distinct on purpose — a `200` for a failed export would be a
+cron job reporting success while nothing reaches Dash0:
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Exported |
+| `401` | Not the service-role key. A user JWT and an `lk_*` token are both refused — these counters are the cluster's, not a caller's |
+| `502` | Dash0 rejected the payload or was unreachable |
+| `503` | Nothing to send, or nowhere to send it: `pg_stat_statements` absent/unreadable, or `OTEL_EXPORTER_OTLP_ENDPOINT` unset |
+
+The reader never raises. A missing extension, one installed but absent from
+`shared_preload_libraries`, a version too old for `toplevel`, or a privilege
+refusal all yield zero rows — an observability read must not be the thing that
+breaks. The exporter is excluded from its own results (both the RPC and the view
+name), or it would climb its own top-N at one scrape a minute and report on
+itself forever.
 
 ---
 

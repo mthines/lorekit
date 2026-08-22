@@ -405,7 +405,7 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 
 ## Key files
 
-The full annotated index (124 files, grouped by subsystem) lives in
+The full annotated index (130 files, grouped by subsystem) lives in
 [`docs/key-files.md`](./docs/key-files.md) — read it when you need to locate a
 specific handler, migration, or pure module. The load-bearing "start here" files:
 
@@ -416,7 +416,8 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit` — the origin of the "pure module mirrored self-contained into the edge function" pattern |
 | `packages/mcp-core/src/tenant-scope.ts` | `applyTenantScope` — the single widened tenant-visibility predicate (RLS side is `lorekit_member_org_ids()`) |
 | `supabase/functions/mcp/index.ts` | Self-contained Deno MCP server (production) |
-| `supabase/functions/_shared/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()` |
+| `supabase/functions/_shared/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()`, and the ONE source of the OTLP resource attributes / endpoint / attribute encoding that both the span and metric exporters share |
+| `packages/mcp-core/src/io-ledger.ts` | `mergeBusyMs`/`attributeIoTime` — the self-time split behind `lorekit.self_time_ms` (mirrored to `_shared/`). Merged intervals, never summed |
 | `supabase/functions/_shared/audit.ts` (← `packages/mcp-core/src/audit.ts`) | THE single edge audit writer (MCP tools **and** REST handlers) |
 | `supabase/functions/_shared/usage.ts` | `recordUsageEvent` + `getUserPlanName` — the single edge usage-event writer |
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
@@ -442,6 +443,24 @@ All `lorekit.*` spans carry:
 - `deployment.environment.name` — `production|preview|development|local` (on `web`, from `VERCEL_ENV` **cross-checked against `NODE_ENV`**, never `VERCEL_ENV` alone — see Key decisions), plus the synthetic `test` stamped on smoke/CI runs (the pipelines set `DEPLOYMENT_ENVIRONMENT=test`; the edge also honours it per-request via the `X-LoreKit-Deployment-Environment` header, allowlisted to `test`) — see [docs/otel.md](./docs/otel.md) → "Smoke / test runs are tagged"
 
 Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + `lorekit.scope.type`.
+
+Every edge ROOT request span additionally carries the self-time split, stamped by
+`traceRequest` and fed by span KIND (any `SPAN_KIND_CLIENT` span counts as an outbound call):
+- `lorekit.io.wait_ms` — wall-clock ms with ≥1 outbound call in flight. Concurrent calls count ONCE
+- `lorekit.io.calls` — how many outbound calls (summed, not merged — an N+1 vs one slow query)
+- `lorekit.self_time_ms` — the residue no child span explains: our own code
+
+Numeric measures, not dimensions, so they add no cardinality. The merge lives in the pure
+`io-ledger.ts` (mirrored to `_shared/`) — never simplify it back to a SUM, which double-counts
+concurrent queries and drives self time negative.
+
+**Profiles are NOT a signal LoreKit can emit** — Dash0 collects them with a host-level eBPF agent and
+every runtime here is managed serverless. Query-level profiling (`pg_stat_statements` → the three
+`lorekit.db.query.*` cumulative sums, via the service-role-only `profiling` function, OFF until two
+Vault secrets exist) is the substitute. Read
+[docs/otel.md](./docs/otel.md) → "Query-level profiling" and
+[docs/decisions.md](./docs/decisions.md#profiling-is-sql-level-because-there-is-no-host-to-profile)
+before proposing a profiler.
 
 Trace-context propagation (W3C `traceparent` — who sends/receives, the origin allow-list, the parser, span kinds, and the recorded-not-acted-on sampled flag) and the `service.name` inventory (edge = one `api` service told apart by `faas.name`; `mcp`/`web`/`cli`; never a per-function `SERVICE_NAME` secret) live in [`docs/otel.md`](./docs/otel.md) → "Custom span attributes — propagation & service.name".
 
@@ -512,3 +531,4 @@ their rationale inline. **Do not relitigate these.**
 - **Org REST routes open to `lk_*` tokens, gated by token permission not auth tier** — actor via `p_actor_user_id` (service-role only) + explicit tenant reads; CLI dropped MCP entirely. [rationale](./docs/decisions.md#org-rest-routes-open-to-lk_-tokens-gated-by-token-permission)
 - **Org-owned lore archive/hard-delete over REST** — `DELETE /memories?…&org=` routes to the role-gated `memory_delete`; no `/memories/:id`+`org` form; restore has no org branch on either surface. [rationale](./docs/decisions.md#org-owned-lore-archivehard-delete-over-rest)
 - **Usage analytics answer record-level questions** — `GET /memories/usage` reports call AND record counts; two fail-safe headers; expiry event-sourced through the purge. [rationale](./docs/decisions.md#usage-analytics-answer-record-level-questions)
+- **Profiling is SQL-level, because there is no host to profile** — Dash0 profiling needs a host-level eBPF agent and every runtime here is managed serverless; the substitutes are per-request self-time attribution (merged intervals, never summed) and `pg_stat_statements` → cumulative sums through the service-role-only `profiling` function (off until two Vault secrets exist). Don't re-open this as "add the profiler". [rationale](./docs/decisions.md#profiling-is-sql-level-because-there-is-no-host-to-profile)
