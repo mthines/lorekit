@@ -105,6 +105,38 @@ if (endpoint.includes(PRODUCTION_REF) && !ALLOW_PRODUCTION) {
 // otherwise the checks that need it are reported as skipped, never as passed.
 const restBase = /\/mcp\/?$/.test(endpoint) ? endpoint.replace(/\/mcp\/?$/, '') : null;
 
+/**
+ * Which auth tier the supplied credential belongs to, from the string alone.
+ *
+ * This decides two things, and getting it wrong is not cosmetic:
+ *
+ *   · `memory.purge` is an ACCOUNT-WIDE sweep. On the api_key and JWT tiers it
+ *     is scoped to one user; on the service tier there is no user to scope it
+ *     to, and the preview project is SHARED. So the purge check does not run
+ *     there — a smoke test must not be able to destroy another account's
+ *     archived lore.
+ *   · the `org.*` family is owner-keyed. A service-role caller has no user id
+ *     to own anything, so those checks would assert nothing.
+ *
+ * Anything undecodable is treated as `service` — the conservative end, since
+ * that is the tier whose checks are skipped rather than run.
+ */
+function credentialTier(cred) {
+  if (cred.startsWith('lk_')) return 'api_key';
+  try {
+    const claims = JSON.parse(Buffer.from(cred.split('.')[1], 'base64url').toString('utf8'));
+    return claims.role === 'service_role' ? 'service' : 'user';
+  } catch {
+    return 'service';
+  }
+}
+
+const TIER = credentialTier(token);
+/** Skip a check that needs a caller identity (see `credentialTier`). */
+const requireUserScoped = (what) => {
+  if (TIER === 'service') skip(`${what} needs a user-scoped credential; this one is service-role`);
+};
+
 const RUN_ID = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
 const SCOPE = `project::smoke-mcp-${RUN_ID}`;
 const SCOPE_ALT = `repo::lorekit-smoke/${RUN_ID}`;
@@ -576,6 +608,7 @@ check('scopes reports each scope this run wrote, with counts', async () => {
 });
 
 check('purge and purge_expired answer with a count', async () => {
+  requireUserScoped('an account-wide purge');
   const purged = await call('memory.purge', { retention_days: 365 });
   ok(Number.isInteger(purged.value?.purged), `purge: ${JSON.stringify(purged.value ?? purged.error)}`);
   const expired = await call('memory.purge_expired');
@@ -600,6 +633,7 @@ check('an invalid kind is refused', async () => {
 // ── 4. org.* over an API token (opened by #517) ──────────────────────────────
 
 check('org.create makes the caller owner and org.list reports the role', async () => {
+  requireUserScoped('org ownership');
   const c = await call('org.create', { slug: ORG_SLUG, name: 'Smoke MCP' });
   ok(c.ok && c.value?.slug === ORG_SLUG, `org.create failed: ${JSON.stringify(c.error ?? c.value)}`);
   createdOrgs.add(ORG_SLUG);
@@ -610,6 +644,7 @@ check('org.create makes the caller owner and org.list reports the role', async (
 });
 
 check('org.rename changes the display name', async () => {
+  requireUserScoped('org ownership');
   const r = await call('org.rename', { slug: ORG_SLUG, name: 'Smoke MCP renamed' });
   ok(r.ok, `org.rename failed: ${JSON.stringify(r.error)}`);
   const list = await call('org.list');
@@ -621,6 +656,7 @@ check('org.rename changes the display name', async () => {
 });
 
 check('a slug the caller cannot see is "not found", never a permission error', async () => {
+  requireUserScoped('org membership');
   // The same answer for a non-member org and a non-existent one is what keeps
   // the tool from becoming an existence oracle over the whole slug namespace.
   for (const slug of ['test', 'acme', 'lorekit', `absent-${RUN_ID}`]) {
@@ -634,6 +670,7 @@ check('a slug the caller cannot see is "not found", never a permission error', a
 });
 
 check('an org-owned write lands, and archive/restore/force-delete work on it', async () => {
+  requireUserScoped('org ownership');
   const w = await call('memory.write', {
     scope: SCOPE,
     key: 'org-owned',
@@ -650,12 +687,14 @@ check('an org-owned write lands, and archive/restore/force-delete work on it', a
 });
 
 check('a write naming an org the caller is not in is refused as unknown_org', async () => {
+  requireUserScoped('org membership');
   const r = await call('memory.write', { scope: SCOPE, key: 'foreign-org', value: 'v', org: 'test' });
   ok(!r.ok, 'a write to a foreign org was accepted');
   ok(/unknown_org/.test(r.error?.message ?? ''), `unexpected message: ${r.error?.message}`);
 });
 
 check('a soft-deleted org stops accepting writes, renames and deletes', async () => {
+  requireUserScoped('org ownership');
   const slug = `${ORG_SLUG}-transient`;
   const c = await call('org.create', { slug, name: 'Transient' });
   ok(c.ok, `org.create failed: ${JSON.stringify(c.error)}`);
@@ -678,6 +717,7 @@ known(
     // list forever — it cannot be renamed, deleted again, or recreated (the slug
     // unique index still holds it) and no purge exists on either public surface.
     // `handleListOrgs` (orgs/handlers/orgs/list.ts) has the same gap.
+    requireUserScoped('org ownership');
     const slug = `${ORG_SLUG}-listcheck`;
     ok((await call('org.create', { slug, name: 'List check' })).ok, 'org.create failed');
     createdOrgs.add(slug);
@@ -696,6 +736,7 @@ known(
   async () => {
     // REST runs `validateSlug` and answers 400; MCP runs none, so an org can be
     // created through MCP that the REST routes then refuse to manage at all.
+    requireUserScoped('org ownership');
     const slug = `smoke mcp ${RUN_ID}`;
     const r = await call('org.create', { slug, name: 'Spaced slug' });
     if (r.ok) createdOrgs.add(slug);
@@ -907,7 +948,15 @@ known('stdio-list-has-no-archived-filter', 'the stdio server can reach archived 
 
 console.log(`MCP tool smoke → ${endpoint}`);
 console.log(`  run id ${RUN_ID} · scopes ${SCOPE}, ${SCOPE_ALT} · org ${ORG_SLUG}`);
-console.log(`  lanes: conformance${PROBE ? ` + known defects${STRICT ? ' (strict)' : ''}` : ''}\n`);
+console.log(`  lanes: conformance${PROBE ? ` + known defects${STRICT ? ' (strict)' : ''}` : ''}`);
+// Naming the tier is not decoration: it decides which checks run, and only an
+// `lk_*` credential exercises the property that org tools serve API tokens at
+// all — the JWT tier passes those checks on any build, so a green run there is
+// not evidence for that half.
+console.log(
+  `  credential: ${TIER}${TIER === 'service' ? ' — org and purge checks will skip' : ''}` +
+    `${TIER === 'user' ? ' — org checks pass on a JWT regardless of the API-token gate' : ''}\n`,
+);
 
 let crashed = null;
 try {

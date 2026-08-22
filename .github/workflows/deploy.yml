@@ -487,6 +487,24 @@ jobs:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # The hosted MCP tool surface, behaviourally: every op the catalog declares,
+      # driven against the deploy that just landed. Same script ci.yml runs against
+      # the local stack, so the merge gate and the deploy gate assert one contract.
+      #
+      # Preview only, and the script enforces that itself — it refuses the
+      # production ref without `--allow-production`, because it WRITES. It cleans
+      # up after itself (per-run scope + org slug, removed in a `finally`) and
+      # reports anything it could not remove; a soft-deleted org is expected
+      # residue, since no purge exists on either public surface.
+      #
+      # Conformance lane only. `--probe` holds defects that are open on purpose
+      # and would red the pipeline; run it by hand, or `--strict` to gate a fix.
+      - name: Smoke — hosted MCP tool surface against preview
+        run: node scripts/smoke-mcp-tools.mjs "$URL" "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
       # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
       # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant,
       # unlike CI's ephemeral mode against a throwaway local stack. Runs only when
@@ -903,9 +921,13 @@ jobs:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
-      # NOTE: the write-heavy REST smoke (scripts/smoke-rest.mjs) is deliberately
-      # NOT run here — it runs in smoke-preview only. Do NOT "restore parity" by
-      # re-adding it to production:
+      # NOTE: the write-heavy smokes (scripts/smoke-rest.mjs and
+      # scripts/smoke-mcp-tools.mjs) are deliberately NOT run here — they run in
+      # smoke-preview only. The MCP tool-surface one enforces this in the script
+      # itself: it exits non-zero on the production ref unless
+      # `--allow-production` is passed, so adding it here fails loudly rather
+      # than quietly writing to the live tenant. Do NOT "restore parity" by
+      # re-adding either to production:
       #   • It writes append-only rows (audit_log / usage_events) that no cleanup
       #     can remove, so every prod deploy would leave synthetic audit trail in
       #     the live tenant (the orgs sub-suite adds org.create/member.* on top).

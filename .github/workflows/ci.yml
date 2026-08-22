@@ -74,7 +74,7 @@ jobs:
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|scripts/deno-check-functions|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|scripts/smoke-mcp-tools\.mjs|scripts/deno-check-functions|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
@@ -618,6 +618,35 @@ jobs:
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
           LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
         run: node scripts/smoke-rest.mjs
+
+      # The hosted MCP tool surface — the one agents actually talk to. The stdio
+      # smoke above proves the transport reaches a backend and smoke-rest covers
+      # the HTTP routes; neither drives `tools/call`, so `tools/list` shape was
+      # the only assertion this surface had. This runs every op the catalog
+      # declares and asserts the behaviour, with expectations read from
+      # `surfaces.generated.mjs` so there is no second list to drift.
+      #
+      # It takes the minted JWT, not the service-role key, for the reason stated
+      # above the stdio step: the suite WRITES, and a service-role write has a
+      # NULL `user_id`, which the local edge runtime's older PostgREST cannot
+      # resolve the upsert arbiter for. A JWT write carries a real user id and
+      # takes the same path production does.
+      #
+      # Conformance lane only. `--probe` holds defects that are open on purpose
+      # and would red every run; run it by hand, or with `--strict` to gate a fix.
+      - name: Smoke — hosted MCP tool surface against the live stack
+        if: steps.smokejwt.outputs.jwt != ''
+        env:
+          JWT: ${{ steps.smokejwt.outputs.jwt }}
+        run: node scripts/smoke-mcp-tools.mjs "http://127.0.0.1:54321/functions/v1/mcp" "$JWT"
+
+      # A JWT is minted per run against a throwaway stack, so an empty one means
+      # the mint step failed — say so rather than letting a skipped gate read as
+      # a pass, the same posture smoke-rest takes for its orgs suite.
+      - name: Note — MCP tool surface smoke was skipped
+        if: steps.smokejwt.outputs.jwt == ''
+        run: |
+          echo "::warning::No smoke JWT was minted — the hosted MCP tool-surface smoke did NOT run and is NOT gating this PR."
 
       - name: Smoke cleanup — sweep leftover artefacts (self-test of the sweeper)
         if: always()

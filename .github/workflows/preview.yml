@@ -294,6 +294,23 @@ jobs:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # The hosted MCP tool surface, behaviourally — every op the catalog
+      # declares, driven against the preview this run just deployed. Same script
+      # deploy.yml's smoke-preview and ci.yml run, so a `/preview` on the PR
+      # asserts the same contract the post-merge gate will.
+      #
+      # It WRITES, and cleans up after itself (per-run scope + org slug, removed
+      # in a `finally`), reporting anything it could not remove; a soft-deleted
+      # org is expected residue, since no purge exists on either public surface.
+      # The script refuses the production ref outright without
+      # `--allow-production`. Conformance lane only — `--probe` holds defects
+      # that are open on purpose and would red the run.
+      - name: Smoke — hosted MCP tool surface against preview
+        run: node scripts/smoke-mcp-tools.mjs "$URL" "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
       # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
       # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant.
       # Runs only when the optional credentials are configured; otherwise the
