@@ -1,9 +1,10 @@
-import { beforeAll, expect } from 'vitest';
+import { beforeAll, beforeEach, expect } from 'vitest';
 import { page } from 'vitest/browser';
 import { setProjectAnnotations } from '@storybook/nextjs-vite';
 import type { StoryContext } from '@storybook/react';
 
 import * as projectAnnotations from './preview';
+import { PREFERENCE_KEYS } from '../src/lib/persisted-preference';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storybook × Vitest setup — applies the preview annotations AND the
@@ -53,3 +54,27 @@ const project = setProjectAnnotations([
 ]);
 
 beforeAll(project.beforeAll);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persisted UI preferences are reset before EVERY story, globally.
+//
+// The suite runs every story file against ONE origin, so `localStorage` outlives
+// a file: a story that switches the Explorer's Activity panel to its heatmap view
+// would otherwise decide what a LATER file's baseline depicts — including files
+// that know nothing about the preference (`LorePage.stories.tsx` renders the panel
+// two levels down). That is a cross-file dependency on story order, and it fails
+// as a mysterious pixel diff in an unrelated component.
+//
+// Global rather than a `beforeEach` in each affected story meta, because "each
+// affected story" is not knowable: any story that renders a subtree containing a
+// persisted preference is affected, and the list grows silently.
+// ─────────────────────────────────────────────────────────────────────────────
+beforeEach(() => {
+  for (const key of Object.values(PREFERENCE_KEYS)) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // A blocked store means nothing persisted in the first place.
+    }
+  }
+});

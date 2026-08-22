@@ -15,13 +15,14 @@
  */
 
 import type { ReactNode } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotionConfig } from 'motion/react';
 import { Info, Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { StatTrend } from '@/lib/aggregations';
+import { formatPercentDelta, isPercentDeltaAbbreviated } from '@/lib/format-number';
 
 /** The small uppercase dimension tag in a card's header. */
 export function UnitTag({ label }: { label: string }) {
@@ -32,7 +33,29 @@ export function UnitTag({ label }: { label: string }) {
   );
 }
 
-/** Period-over-period change, coloured by direction. */
+/**
+ * Period-over-period change, coloured by direction.
+ *
+ * ## Large deltas ABBREVIATE
+ *
+ * The chip shares a line with the headline figure it annotates, and it carries two
+ * characters the figure does not — a sign and a `%`. A young scope's first busy
+ * week produces genuinely enormous percentages (a read count going from 3 to 265
+ * is `+8834%`), and at seven characters the chip collided with a `22,425` beside
+ * it on a desktop and was clipped at the card's edge on a phone. So the magnitude
+ * abbreviates above four digits (`+8.8K%`), through the same
+ * `lib/format-number.ts` vocabulary the dashboard's figures use — one meaning for
+ * `K` everywhere, rather than a second abbreviation invented for one badge.
+ *
+ * Small deltas are untouched: `+100%` means "doubled" and is the one figure in
+ * that range a reader actually reasons about.
+ *
+ * When something WAS dropped, the exact percentage stays reachable two ways: in
+ * the hover title, and as an `sr-only` twin with the visible text hidden from
+ * assistive tech — the same two-node pattern `AnimatedNumber` uses, for the same
+ * reason. Below the threshold there is no twin, so nothing changes for the
+ * overwhelming majority of chips.
+ */
 export function TrendChip({ changePct, title }: { changePct: number; title: string }) {
   const dir = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
   const Icon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus;
@@ -43,13 +66,23 @@ export function TrendChip({ changePct, title }: { changePct: number; title: stri
         ? 'text-[var(--color-error)]'
         : 'text-[var(--color-content-tertiary)]';
 
+  const abbreviated = isPercentDeltaAbbreviated(changePct);
+  const exact = `${changePct > 0 ? '+' : ''}${changePct}%`;
+
   return (
     <span
-      className={`flex items-center gap-1 text-xs font-medium tabular-nums ${color}`}
-      title={title}
+      // `shrink-0 whitespace-nowrap`: the chip shares a flex row with a headline
+      // figure that can be five digits wide, and a chip that shrinks or wraps
+      // reads as clipped rather than as short of room.
+      className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-medium tabular-nums ${color}`}
+      // The comparison the chip describes, prefixed with the exact figure when the
+      // visible one is rounded — so hovering recovers what was dropped without a
+      // second tooltip surface.
+      title={abbreviated ? `${exact} — ${title}` : title}
     >
       <Icon className="size-3.5" aria-hidden />
-      {changePct > 0 ? `+${changePct}` : changePct}%
+      <span aria-hidden={abbreviated || undefined}>{formatPercentDelta(changePct)}</span>
+      {abbreviated && <span className="sr-only">{exact}</span>}
     </span>
   );
 }
@@ -127,9 +160,26 @@ export function StatCard({
       <TrendChip changePct={trend.changePct} title={trendTitle} />
     ) : null;
 
+  // A collapsed card is a DENSER card, not just a shorter one. Folding the
+  // evidence away still left four tiles at full type scale filling about half a
+  // phone's viewport before the first memory — so the compact state also drops the
+  // icon box and the headline a step. Expanded is untouched, and so is every
+  // non-collapsible caller (the Overview).
+  //
+  // This is the one property the two densities do NOT share: an earlier revision
+  // promised the icon, number and label "never move" between them. Size is what
+  // buys the space the folded state exists for, and the swap is instant rather
+  // than animated, so it reads as a density change rather than a shift.
+  const compact = collapsible && collapsed;
+
   const iconBox = (
-    <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-      <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
+    <div
+      className={`flex ${compact ? 'size-7' : 'size-9'} shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]`}
+    >
+      <Icon
+        className={`${compact ? 'size-3.5' : 'size-4'} text-[var(--color-accent)]`}
+        aria-hidden
+      />
     </div>
   );
 
@@ -142,7 +192,11 @@ export function StatCard({
   // on its own. It COUNTS to a new value rather than swapping: see AnimatedNumber
   // for why that is a change indicator.
   const numberEl = (
-    <p className="text-2xl font-bold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-3xl">
+    <p
+      className={`font-bold leading-tight tabular-nums text-[var(--color-content-primary)] ${
+        compact ? 'text-lg sm:text-xl' : 'text-2xl sm:text-3xl'
+      }`}
+    >
       <AnimatedNumber value={value} />
     </p>
   );
@@ -177,7 +231,9 @@ export function StatCard({
   // label beneath, so a card is barely taller than the number itself. Expanding
   // UNFOLDS the evidence in one motion: the trend chip fades in beside the number
   // (no vertical shift), and the caption + full-width sparkbar grow their own
-  // height below. The icon, number and label never move.
+  // height below. The icon, number and label are never REMOUNTED — they step down
+  // a size in the compact state (see `compact` above), which is what makes the
+  // folded grid a summary line rather than four full-scale tiles.
   if (collapsible) {
     return (
       <CollapsibleStatCard
@@ -247,7 +303,12 @@ function CollapsibleStatCard({
   sparkbar: ReactNode;
   collapsed: boolean;
 }) {
-  const reduceMotion = useReducedMotion();
+  // `useReducedMotionConfig`, not `useReducedMotion`: only the former consults
+  // `MotionConfigContext`, which is how Storybook's preview collapses motion for
+  // deterministic baselines. These reveals gate an AnimatePresence UNMOUNT, so
+  // with the device-only hook a story asserting "the evidence is gone" was racing
+  // a real 200ms exit instead of observing a settled DOM.
+  const reduceMotion = useReducedMotionConfig();
 
   // Height reveal for the pieces that grow the card downward (caption, sparkbar).
   // `overflow:hidden` is what lets an auto-height animation run; reduced motion
@@ -273,10 +334,12 @@ function CollapsibleStatCard({
     // `data-stat-card`: the same stable test hook the plain card carries.
     <div
       data-stat-card
-      className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
+      className={`flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] ${
+        collapsed ? 'p-3' : 'p-4'
+      }`}
     >
       {/* Icon left of the number; number + label stacked to its right. */}
-      <div className="flex items-start gap-3">
+      <div className={`flex items-start ${collapsed ? 'gap-2' : 'gap-3'}`}>
         {iconBox}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">

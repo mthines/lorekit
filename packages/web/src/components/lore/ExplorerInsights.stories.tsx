@@ -16,6 +16,11 @@ import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
  * the query client retries off / never refetches — one settled render, one
  * baseline.
  *
+ * The panel's disclosure state and chosen view are PERSISTED, and the browser
+ * suite shares one origin, so a story that switched views could otherwise decide
+ * what a LATER file's baseline depicts. Both keys are reset before every story
+ * globally, in `.storybook/vitest.setup.ts` — see the note there.
+ *
  * The scenarios below are DATA and SELECTION states rather than a prop
  * `Playground`, because that is what actually varies in use: all scopes vs one,
  * and with vs without a filter bar narrowing the list underneath.
@@ -51,7 +56,12 @@ const meta: Meta<typeof ExplorerInsights> = {
 export default meta;
 type Story = StoryObj<typeof ExplorerInsights>;
 
-/** All scopes, no filters — the Explorer's resting state. */
+/**
+ * All scopes, no filters — the Explorer's resting state, which is now EXPANDED on
+ * the `charts` view: the four cards with their trends and sparkbars, the view
+ * toggle where the `Activity · <scope>` label used to be, and no heatmap stacked
+ * underneath.
+ */
 export const Default: Story = {
   args: {
     scope: null,
@@ -117,17 +127,22 @@ export const AbsoluteRange: Story = {
 };
 
 /**
- * The collapsed strip at PHONE width.
+ * PHONE width — the layout the header has to survive.
  *
- * The four numbers stay on ONE row of four equal columns here, which is the
- * whole point of the grid: the wrapping flex row this replaced broke into two
- * ragged lines below ~500px, so the summary that is meant to be readable at a
- * glance took two. Worth its own baseline because it is the layout most likely
- * to regress silently — a desktop screenshot cannot show it.
+ * Three controls now share the header row — the view toggle, the range picker and
+ * the chevron — and the row must not wrap. The toggle is what gives: it drops its
+ * labels to icons below the panel's `@md` container width, so the row stays one
+ * line at a width where three labelled controls could not. That is the layout most
+ * likely to regress silently, and a desktop screenshot cannot show it.
  *
- * The container is narrowed rather than the viewport, so this pins the strip
- * only. The heatmap's span is chosen from a real media query (`useIsMobile`),
- * which a narrow container does not move — and the strip is what collapses.
+ * Below the header the cards go ONE-up (this container is under the `@sm`
+ * breakpoint), which is deliberate: two cards in a ~350px column would crush the
+ * number that is the whole point of a card.
+ *
+ * The container is narrowed rather than the viewport, which is exactly right for
+ * the toggle and the card grid — both are container queries — and is why the
+ * heatmap's span is not pinned here: that one comes from a real media query
+ * (`useIsMobile`).
  */
 export const Narrow: Story = {
   args: {
@@ -143,21 +158,44 @@ export const Narrow: Story = {
 };
 
 /**
- * The EXPANDED state, reached the way a reader reaches it.
+ * The COLLAPSED state, reached the way a reader reaches it.
  *
- * Worth its own baseline because it is the state the redesign is judged on: the
- * four cards and the heatmap in one panel, under one header, with the range
- * picker still in reach. A play function opens it before the screenshot so the
- * baseline captures the real thing rather than a prop-forced approximation.
+ * The inverse of `Default` now that the panel opens expanded. It is the state the
+ * disclosure is judged on: the four numbers stay — the ANSWER — while every piece
+ * of evidence folds away, so collapsing buys space without costing the figure you
+ * came for.
  */
-export const Expanded: Story = {
+export const Collapsed: Story = {
   args: Default.args,
   render: Default.render,
   play: async ({ canvasElement }) => {
     const { within, userEvent } = await import('storybook/test');
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: /show activity detail/i }));
+    await userEvent.click(canvas.getByRole('button', { name: /hide activity detail/i }));
     // Let the height animation settle so the screenshot is not mid-transition.
     await new Promise((r) => setTimeout(r, 400));
+  },
+};
+
+/**
+ * The HEATMAP view, reached the way a reader reaches it.
+ *
+ * The other half of the view toggle, and the state that replaced the old stacked
+ * layout: the calendar gets the panel entirely to itself. The four cards are not
+ * merely folded here — they are absent, because keeping them above the calendar
+ * rebuilt the two-charts-in-one-card stack this panel exists to remove. A play
+ * function switches the view before the screenshot so the baseline captures the
+ * real thing rather than a prop-forced approximation.
+ */
+export const HeatmapView: Story = {
+  args: Default.args,
+  render: Default.render,
+  play: async ({ canvasElement }) => {
+    const { within, userEvent } = await import('storybook/test');
+    const canvas = within(canvasElement);
+    const toggle = within(canvas.getByRole('radiogroup', { name: /activity view/i }));
+    await userEvent.click(toggle.getByRole('radio', { name: /heatmap/i }));
+    // The height animation plus the heatmap's own staggered cell entrance.
+    await new Promise((r) => setTimeout(r, 600));
   },
 };
