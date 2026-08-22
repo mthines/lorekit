@@ -23,12 +23,8 @@ import { READ_TOOLS, WRITE_TOOLS, toolRequires } from './permissions.js';
 const repoRoot = join(import.meta.dirname, '../../..');
 const handlerSource = readFileSync(join(repoRoot, 'supabase/functions/mcp/mcp-handler.ts'), 'utf8');
 
-/** Tool names in a `const X_TOOLS = { ... }` dispatch map in the handler. */
-function dispatchMapNames(mapName: string): string[] {
-  const block = new RegExp(`const ${mapName} = \\{([\\s\\S]*?)\\n\\} as const;`).exec(handlerSource);
-  if (!block) throw new Error(`dispatch map ${mapName} not found — has mcp-handler.ts been restructured?`);
-  return [...(block[1] as string).matchAll(/'([a-z_]+\.[a-z_]+)'\s*:/g)].map((m) => m[1] as string);
-}
+const toolsSource = readFileSync(join(repoRoot, 'supabase/functions/mcp/tools.ts'), 'utf8');
+const generatedDispatch = readFileSync(join(repoRoot, 'supabase/functions/mcp/tool-dispatch.generated.ts'), 'utf8');
 
 describe('tool catalog ↔ permissions.ts', () => {
   it('agrees on which tools require read', () => {
@@ -41,31 +37,85 @@ describe('tool catalog ↔ permissions.ts', () => {
     expect(fromCatalog).toEqual([...WRITE_TOOLS].sort());
   });
 
-  it('marks exactly the ungated tools as org tools', () => {
+  it('gates every catalogued tool, and agrees on which permission', () => {
     for (const tool of MCP_TOOLS) {
       expect(toolRequires(tool.name)).toBe(tool.permission);
-      if (tool.permission === null) expect(tool.auth).toBe('jwt-only');
     }
+  });
+
+  it('leaves no tool ungated', () => {
+    // This replaces `permission === null ⇒ auth === 'jwt-only'`, which went
+    // vacuous the moment the org tools became token-gated: no tool is null any
+    // more, so the implication held for nothing. The property worth keeping is
+    // the stronger one — every tool IS gated, and `null` is not a state the
+    // catalog is currently allowed to be in. A tool arriving with no permission
+    // and no `jwt-only` auth would otherwise be reachable by any token.
+    for (const tool of MCP_TOOLS) {
+      if (tool.permission === null) {
+        expect(tool.auth, `${tool.name} is ungated, so it must be jwt-only`).toBe('jwt-only');
+      } else {
+        expect(['read', 'write']).toContain(tool.permission);
+      }
+    }
+    expect(MCP_TOOLS.filter((t) => t.permission === null)).toEqual([]);
+  });
+
+  it('serves the org tools to tokens, not only to a dashboard session', () => {
+    // The Phase-3a outcome, pinned by name. `org.list` reads, the three
+    // mutations write, and all four accept an `lk_*` token. Token permission is
+    // orthogonal to org ROLE: a `lk_rw_*` held by a viewer still cannot rename,
+    // because `lorekit_org_can` inside the RPCs is still the only role gate.
+    const org = MCP_TOOLS.filter((t) => t.name.startsWith('org.'));
+    expect(org.map((t) => t.name).sort()).toEqual(['org.create', 'org.delete', 'org.list', 'org.rename']);
+    for (const tool of org) {
+      expect(tool.auth, `${tool.name} must accept tokens`).toBe('token-or-jwt');
+    }
+    expect(org.filter((t) => t.permission === 'read').map((t) => t.name)).toEqual(['org.list']);
+    expect(org.filter((t) => t.permission === 'write').map((t) => t.name).sort())
+      .toEqual(['org.create', 'org.delete', 'org.rename']);
   });
 });
 
-describe('tool catalog ↔ mcp-handler dispatch maps', () => {
-  const dispatchable = [...dispatchMapNames('MEMORY_TOOLS'), ...dispatchMapNames('ORG_TOOLS')];
-
-  it('finds a non-trivial number of dispatchable tools', () => {
-    // Anti-vacuity: a regex that silently matches nothing would pass every
-    // assertion below.
-    expect(dispatchable.length).toBeGreaterThanOrEqual(14);
+describe('tool catalog ↔ the generated dispatch maps', () => {
+  /**
+   * These four replace a regex that scraped `const MEMORY_TOOLS = {…}` out of
+   * `mcp-handler.ts` and compared its keys to the catalog. That check had a
+   * real job while the maps were hand-written; now they are GENERATED from the
+   * catalog, so re-deriving the same comparison in a spec would only confirm
+   * the generator agrees with itself — the `mock-that-reimplements-the-thing-
+   * under-test` shape. What is worth asserting instead is that the runtime
+   * really consumes the generated module, that the generated module is fresh
+   * (owned by `surface-generator.spec.ts`'s `--check`), and that the handler
+   * names it binds actually exist.
+   */
+  it('makes the handler import its maps rather than declare them', () => {
+    expect(handlerSource).toContain("from './tool-dispatch.generated.ts'");
+    // The literals must not come back: a re-declared map is exactly the drift
+    // the generated module exists to prevent.
+    expect(handlerSource).not.toMatch(/const MEMORY_TOOLS = \{/);
+    expect(handlerSource).not.toMatch(/const ORG_TOOLS = \{/);
   });
 
-  it('catalogues every dispatchable tool', () => {
-    expect([...dispatchable].sort()).toEqual([...MCP_TOOL_NAMES].sort());
+  it('type-checks the key set against the catalog rather than by scraping', () => {
+    // This is the assertion that replaced the regex, and it is stronger: a
+    // missing op fails because `Record` requires every key, an extra one fails
+    // as an excess property. Both are compile errors, caught by the
+    // `edge-typecheck` CI job.
+    expect(generatedDispatch).toMatch(/satisfies Record<MemoryToolName, unknown>/);
+    expect(generatedDispatch).toMatch(/satisfies Record<OrgToolName, unknown>/);
   });
 
-  it('routes org tools through the org dispatch map only', () => {
-    const orgNames = dispatchMapNames('ORG_TOOLS').sort();
-    const catalogued = MCP_TOOLS.filter((t) => t.permission === null).map((t) => t.name).sort();
-    expect(orgNames).toEqual(catalogued);
+  it('binds a handler that tools.ts actually exports', () => {
+    // The names live in the catalog as strings, so nothing but this connects
+    // them to real symbols until `deno check` runs. Cheap, and it fails in the
+    // fast suite rather than only in the Deno job.
+    for (const tool of MCP_TOOLS) {
+      const handler = tool.surfaces.handler;
+      expect(
+        new RegExp(`export async function ${handler}\\b|export function ${handler}\\b`).test(toolsSource),
+        `${tool.name} names handler "${handler}", which tools.ts does not export`,
+      ).toBe(true);
+    }
   });
 
   it('renders tools/list from the catalog rather than an inline literal', () => {

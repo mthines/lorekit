@@ -74,7 +74,7 @@ jobs:
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|scripts/deno-check-functions|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
@@ -391,6 +391,56 @@ jobs:
       - name: Unit-test the deploy-scope resolver
         run: node --test scripts/resolve-deploy-scope.test.mjs
 
+  # ── Edge typecheck — `deno check` over every Edge Function, ratcheted ────────
+  #    Until this job existed, `supabase/functions/**` was typechecked by
+  #    NOTHING: no `deno check` anywhere, no tsconfig covering the tree, and no
+  #    nx target. The only thing exercising it was `integration`'s
+  #    `supabase start`, which proves modules RESOLVE and functions BOOT — not
+  #    that any type is correct.
+  #
+  #    That gap is load-bearing now. The MCP dispatch map is generated from the
+  #    tool catalog and binds each op name to a handler imported from
+  #    `mcp/tools.ts`; a source scan can confirm the handler is EXPORTED, but
+  #    only a typechecker can confirm it is exported with the right SIGNATURE.
+  #    Passing `(db, args, span)` where `(db, args, userId, span)` is expected
+  #    still resolves, still exports, still passes every unit test — and then
+  #    throws at runtime on the first `span.setAttributes`, on a surface no
+  #    smoke test calls.
+  #
+  #    The first run over the tree found errors that predate this gate, so the
+  #    check is a RATCHET rather than a clean gate: each function's existing
+  #    count is written down in `supabase/deno-check-baseline.json` and the job
+  #    fails the moment one goes UP. See scripts/deno-check-functions.mjs for
+  #    why blocking on zero was not an option (the debt is in `_shared/` modules
+  #    every function imports, so narrowing the gate does not avoid it either).
+  edge-typecheck:
+    name: Edge typecheck (deno check)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.api == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # The runner's own Node runs these; the ratchet script is dependency-free
+      # on purpose so this job needs no pnpm/Node setup and stays fast.
+      - name: Unit-test the ratchet
+        run: node --test scripts/deno-check-functions.test.mjs
+
+      # One implementation, called by BOTH this job and the `supabase:deno:check`
+      # nx target, so a contributor running it locally sees exactly what CI sees.
+      # It previously lived twice — once here and once in the target — and the
+      # two had already drifted on what a failure looks like.
+      - name: Typecheck every Edge Function
+        run: node scripts/deno-check-functions.mjs
+
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
   #    Functions) and asserts an authenticated MCP tools/list returns 200. That
@@ -618,7 +668,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope]
+    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, edge-typecheck]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate

@@ -23,7 +23,8 @@
  *   VCS_REPOSITORY_NAME           e.g. mthines/lorekit
  */
 
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
+import type { DbClient } from './db-client.ts';
 import { formatTraceparent, parseTraceparent } from './trace-context.ts';
 
 /** PostgREST error shape returned by @supabase/supabase-js. */
@@ -600,7 +601,27 @@ interface QueryState {
   filters: string[];
   orderBy?: string;
   lim?: number;
-  qb: ReturnType<SupabaseClient['from']>;
+  /**
+   * The postgrest builder being accumulated. Deliberately untyped, because the
+   * real type CHANGES ALONG THE CHAIN and no single annotation describes it:
+   * `.from()` yields a `PostgrestQueryBuilder` (select / insert / update /
+   * delete), and `.select()` yields a `PostgrestFilterBuilder` (eq / gt / in /
+   * order / limit …). The two share almost no methods.
+   *
+   * This was `ReturnType<SupabaseClient['from']>`, i.e. the FIRST of those two,
+   * which made every filter call below a type error — `Property 'eq' does not
+   * exist on type 'PostgrestQueryBuilder'` and so on, 34 of them. Nothing
+   * noticed because no typechecker had ever run over this tree; `overlaps()`
+   * below already carried an `as any` for a narrower instance of the same
+   * problem.
+   *
+   * `TracedQuery` exists precisely to erase this distinction — it presents one
+   * flat fluent surface and records SQL text as it goes — so the honest
+   * annotation is the permissive one, with the method signatures on
+   * `TracedQuery` serving as the contract callers actually see.
+   */
+  // deno-lint-ignore no-explicit-any -- see above: the builder's type changes along the chain
+  qb: any;
 }
 
 function buildSql(s: QueryState): string {
@@ -623,6 +644,44 @@ function buildSql(s: QueryState): string {
  * Fluent traced query builder — mirrors the Supabase query builder API
  * but wraps execution in a child span named after the SQL-like statement.
  */
+/**
+ * A query narrowed to at most one row by `.single()` / `.maybeSingle()`.
+ *
+ * Deliberately exposes ONLY awaiting: postgrest accepts no further filters
+ * after a single-row modifier, so a fluent surface here would advertise calls
+ * that cannot work.
+ *
+ * A type ALIAS rather than an empty `interface … extends PromiseLike<…>`,
+ * which `no-empty-interface` / `no-empty-object-type` reject — correctly, since
+ * the two forms are equivalent here and the alias says "this is exactly a
+ * thenable" without pretending to declare a new shape.
+ */
+export type TracedSingleQuery<T> = PromiseLike<PostgrestResponse<T>>;
+
+/**
+ * The result of a traced `.rpc()` call.
+ *
+ * An RPC resolves to the FUNCTION'S RETURN VALUE, which is a scalar for
+ * `lorekit_org_create` (uuid) and `purge_expired_memories` (count) and a set for
+ * `lorekit_member_org_ids`. `TracedQuery.then` resolves to
+ * `PostgrestResponse<T[]>` — correct for a table select, wrong for every scalar
+ * RPC, which is why three call sites carried a `data as number` / `data as
+ * string` cast that could not typecheck once rows were real.
+ *
+ * `T` is therefore the WHOLE result, not a row: pass `number` for a counter,
+ * `string` for an id, and leave the default for a set-returning function.
+ */
+export interface TracedRpcQuery<T> extends PromiseLike<PostgrestResponse<T>> {
+  /**
+   * Narrow a set-returning RPC to its first row.
+   *
+   * Unwraps the element type, so the default `Record<string, unknown>[]` gives
+   * one `Record<string, unknown>` — not the array again, which is what a plain
+   * `TracedSingleQuery<T>` here would have meant.
+   */
+  single(): TracedSingleQuery<T extends readonly (infer E)[] ? E : T>;
+}
+
 export class TracedQuery<T = Record<string, unknown>> {
   constructor(private state: QueryState, private parent: Span) {}
 
@@ -683,7 +742,16 @@ export class TracedQuery<T = Record<string, unknown>> {
   }
 
   // ── ordering & pagination ─────────────────────────────────────────────────
-  order(col: string, opts?: { ascending?: boolean }): this {
+  /**
+   * `referencedTable` orders by a column of an EMBEDDED table
+   * (`.select('…, orgs(*)').order('created_at', { referencedTable: 'orgs' })`).
+   * It was missing from this signature while two call sites already passed it —
+   * `mcp/tools.ts`'s org list and `orgs/handlers/orgs/list.ts` — so both were
+   * type errors that the untyped client had been absorbing. The option is real
+   * and is forwarded unchanged to postgrest; only the wrapper's declaration was
+   * behind. (`or()` below already accepted it.)
+   */
+  order(col: string, opts?: { ascending?: boolean; referencedTable?: string }): this {
     this.state.orderBy = `${col} ${opts?.ascending === false ? 'DESC' : 'ASC'}`;
     this.state.qb = this.state.qb.order(col, opts);
     return this;
@@ -691,8 +759,30 @@ export class TracedQuery<T = Record<string, unknown>> {
   limit(n: number): this { this.state.lim = n; this.state.qb = this.state.qb.limit(n); return this; }
 
   // ── result modifiers ──────────────────────────────────────────────────────
-  single(): this   { this.state.lim = 1; this.state.qb = this.state.qb.single(); return this; }
-  maybeSingle(): this { this.state.lim = 1; this.state.qb = this.state.qb.maybeSingle(); return this; }
+  //
+  // These return a SINGLE-ROW view, not `this`. `then` below resolves to
+  // `PostgrestResponse<T[]>`, which was correct for a plain select and wrong
+  // the moment either of these was called: postgrest returns one row, the type
+  // still said array. That single discrepancy is what produced the
+  // `(org as { id: string }).id` line copied across eight org handlers — the
+  // cast existed to paper over an array/row mismatch the wrapper had
+  // introduced, and it asserted the wrong side of it.
+  //
+  // Both narrow to `TracedSingleQuery<T>`, whose `data` is `T | null`: that is
+  // already right for `maybeSingle` (no match ⇒ null) and for `single` (an
+  // error ⇒ null with `error` set). The cast goes through `unknown` because the
+  // object really is the same mutated builder — only its result shape changed,
+  // which is not something the class's own generic can express.
+  single(): TracedSingleQuery<T> {
+    this.state.lim = 1;
+    this.state.qb = this.state.qb.single();
+    return this as unknown as TracedSingleQuery<T>;
+  }
+  maybeSingle(): TracedSingleQuery<T> {
+    this.state.lim = 1;
+    this.state.qb = this.state.qb.maybeSingle();
+    return this as unknown as TracedSingleQuery<T>;
+  }
 
   // ── mutations ─────────────────────────────────────────────────────────────
   insert(data: Record<string, unknown> | Record<string, unknown>[]): this {
@@ -782,20 +872,49 @@ export class TracedQuery<T = Record<string, unknown>> {
  * // → child span: "SELECT key,value FROM memories WHERE scope = '...' LIMIT 50"
  * ```
  */
-export function createTracedClient(supabase: SupabaseClient, parentSpan: Span) {
+/**
+ * The tables `from()` accepts, and the row each one yields.
+ *
+ * `from()` used to be `from<T = Record<string, unknown>>(table: string)`, which
+ * made every traced query untyped unless the caller remembered to pass a shape
+ * — and almost none did. That is what forced the `(org as { id: string }).id`
+ * cast repeated across eight org handlers: the row really was
+ * `Record<string, unknown>` as far as the compiler could tell, so reading a
+ * field off it needed an assertion, and the assertion was wrong (the value is a
+ * row, the type said array).
+ *
+ * Deriving the row from the schema fixes the whole family at the source. The
+ * generic is still available for the cases the schema cannot describe — a
+ * `.select()` with an embedded join, where the shape is genuinely not the plain
+ * table row.
+ *
+ * NOTE this deliberately does NOT model `.select('id')` narrowing: `from('orgs')`
+ * types the row as the FULL `orgs` row whatever columns are selected. Reading a
+ * column that was not selected is therefore still a runtime `undefined`, and
+ * that is the honest limit of what a fluent wrapper this thin can promise —
+ * `TracedQuery` exists to record SQL text, not to re-implement postgrest's
+ * column inference.
+ */
+type PublicTables = Database['public']['Tables'];
+type RowOf<K extends keyof PublicTables> = PublicTables[K]['Row'];
+
+export function createTracedClient(supabase: DbClient, parentSpan: Span) {
   return {
-    from<T = Record<string, unknown>>(table: string): TracedQuery<T> {
+    from<K extends keyof PublicTables, T = RowOf<K>>(table: K): TracedQuery<T> {
       return new TracedQuery<T>(
-        { table, op: 'SELECT', columns: '*', filters: [], qb: supabase.from(table) },
+        { table: table as string, op: 'SELECT', columns: '*', filters: [], qb: supabase.from(table) },
         parentSpan,
       );
     },
-    rpc<T = Record<string, unknown>>(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedQuery<T> {
+    rpc<T = Record<string, unknown>[]>(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedRpcQuery<T> {
       return new TracedQuery<T>(
         // deno-lint-ignore no-explicit-any -- SupabaseClient.rpc() generic overload isn't publicly typed; cast is safe
         { table: fn, op: 'RPC', columns: '', filters: [], qb: (supabase as any).rpc(fn, args, opts) },
         parentSpan,
-      );
+        // Same object, narrower promise: `TracedQuery.then` yields `T[]`, and an
+        // RPC yields `T`. Only the result shape differs, which the class's own
+        // generic cannot express.
+      ) as unknown as TracedRpcQuery<T>;
     },
   };
 }

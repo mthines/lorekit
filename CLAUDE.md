@@ -16,7 +16,7 @@ lets humans browse, search, and manage those lessons.
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 10 tool handlers, OTel tracer/meter |
 | `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
-| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI. `install`/`uninstall`/`doctor` (scaffold the `lorekit-memory`/`lorekit-setup`/`lorekit-groom` skills + MCP server + lifecycle hooks into `.claude`; connectivity/token/scope health checks); read commands `list`/`search`/`show`/`stats`/`scopes`/`diff`/`tree`/`lint`/`dedupe`/`link` (Offline + Remote split, `--json`/`--scope`); `hook` (the shared hook engine behind the plugins); `mcp` (local stdio MCP server); `migrate`. Self-contained OTLP telemetry (`service.name=cli`). Full command reference: [`docs/cli.md`](./docs/cli.md) |
+| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI. `install`/`uninstall`/`doctor` (scaffold the `lorekit-memory`/`lorekit-setup`/`lorekit-groom` skills + MCP server + lifecycle hooks into `.claude`; connectivity/token/scope health checks); read commands `list`/`search`/`show`/`stats`/`scopes`/`diff`/`tree`/`lint`/`dedupe`/`link` (Offline + Remote split, `--json`/`--scope`); maintenance sweeps `purge`/`purge-expired` (remote-only, account-wide, irreversible — confirm-or-`--yes`, refused for a scoped key); `hook` (the shared hook engine behind the plugins); `mcp` (local stdio MCP server); `migrate`. Self-contained OTLP telemetry (`service.name=cli`). Full command reference: [`docs/cli.md`](./docs/cli.md) |
 
 | `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
@@ -93,8 +93,8 @@ belongs**, not a sandbox.
 
 ### Sandbox baseline — read before trusting a red gate
 
-Three facts about a fresh sandbox/container, each confirmed across three or more
-runs. They cost time every time they are rediscovered:
+Five facts about a fresh sandbox/container, each confirmed by direct observation
+rather than inferred. They cost time every time they are rediscovered:
 
 1. **Run `pnpm install` before the first `pnpm nx` command.** A fresh container's
    install is incomplete or absent. The signature is a cryptic
@@ -120,6 +120,30 @@ runs. They cost time every time they are rediscovered:
    before == N failures after"; any specific N goes stale. This takes ~40s and is
    the difference between reporting an inherited red and "fixing" something that
    was never broken.
+4. **`supabase start` is impossible (no Docker socket) but the SQL tests still
+   run.** `migrations.test.sql` — the only thing that exercises raw migration
+   logic — needs a database, not the Supabase stack. PostgreSQL 16 is installed
+   locally, so `initdb` a throwaway cluster, apply
+   `supabase/tests/bare-postgres-bootstrap.sql` (it supplies the `auth.*` claim
+   readers, `auth.users`/`auth.identities` and the three roles), apply
+   `supabase/migrations/*.sql` in order, then run the test file. Its runbook is
+   in its own header. Needs `apt-get install postgresql-16-pgvector` for
+   00060/00062. **A failure is strong evidence; a pass is not a substitute for
+   CI's `Integration smoke` job** — the bootstrap is a stand-in, not Supabase.
+   The test file is one transaction ending in `rollback`, so it is re-runnable
+   against the same database, which makes guard-biting an assertion cheap.
+5. **`deno check` DOES run here — install it with `npm i -g deno`.** The
+   official installer fetches from `deno.land`, which the egress policy blocks,
+   and that made the ratchet look CI-only. npm is reachable, the `deno` package
+   ships the same binary, and the version it lands (2.9.5) satisfies the `v2.x`
+   CI pins and reproduces the committed baseline exactly. So
+   `node scripts/deno-check-functions.mjs` is a local gate, not a remote one —
+   which is how the 83 baselined errors were driven to 0 rather than guessed at.
+   Two traps if you script around it: `deno check` writes errors to stderr with
+   ANSI colour, so a `grep -cE '^TS[0-9]+'` counts **zero** on real failures
+   (strip ANSI first, and self-test the counter against a known-bad state); and
+   pass `--node-modules-dir=none` so `npm:` specifiers resolve from Deno's cache
+   the way production does, instead of the repo's pnpm `node_modules`.
 
 ```bash
 # CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the
@@ -408,12 +432,14 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 
 ## Key files
 
-The full annotated index (129 files, grouped by subsystem) lives in
+The full annotated index (139 files, grouped by subsystem) lives in
 [`docs/key-files.md`](./docs/key-files.md) — read it when you need to locate a
 specific handler, migration, or pure module. The load-bearing "start here" files:
 
 | File | Purpose |
 |------|---------|
+| `packages/schemas/src/tool-catalog.ts` | The single origin of the operation SURFACE — every tool's schema, `permission`, `auth`, and its `surfaces` binding (which of MCP/CLI/REST, under what name, backed by which handler, with a declared reason for each absence). Zero-import by construction; `gen-surfaces.mjs` projects the two consumers that cannot import it |
+| `packages/cli/src/commands.mjs` | The ONE CLI command registry — `bin/lorekit.mjs` derives dispatch, aliases, flag strictness, help and `traceCommand` wrapping from it |
 | `packages/mcp-core/src/scope.ts` | Canonical scope validation + wildcard expansion |
 | `packages/mcp-core/src/permissions.ts` | `READ_TOOLS`/`WRITE_TOOLS`, `toolRequires`, `tokenPrefixFor` — the `lk_rw_`/`lk_ro_`/`lk_wo_` prefix derivation + tool gating (mirrored to edge + web) |
 | `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit` — the origin of the "pure module mirrored self-contained into the edge function" pattern |
@@ -428,7 +454,7 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `packages/web/src/lib/filters.ts` | Pure model for the Lore Explorer filter bar (OR within a dimension, AND across; `filtersToBody` is the wire seam the Explorer uses, `filtersToQueryParams` the GET encoding kept for query-string callers) |
 | `packages/web/src/lib/dash0-rum.ts` | The SINGLE browser RUM init path for `@dash0/sdk-web` (init guard, endpoint validator, identity) |
 
-See [`docs/key-files.md`](./docs/key-files.md) for the remaining ~116 files:
+See [`docs/key-files.md`](./docs/key-files.md) for the remaining ~124 files:
 all migrations, the `_shared`/`mcp-core` pure modules and their edge mirrors,
 the auth/org/invite/scope-binding surfaces, and the Explorer/Settings UI.
 
@@ -517,3 +543,7 @@ their rationale inline. **Do not relitigate these.**
 - **Org REST routes open to `lk_*` tokens, gated by token permission not auth tier** — actor via `p_actor_user_id` (service-role only) + explicit tenant reads; CLI dropped MCP entirely. [rationale](./docs/decisions.md#org-rest-routes-open-to-lk_-tokens-gated-by-token-permission)
 - **Org-owned lore archive/hard-delete over REST** — `DELETE /memories?…&org=` routes to the role-gated `memory_delete`; no `/memories/:id`+`org` form; restore has no org branch on either surface. [rationale](./docs/decisions.md#org-owned-lore-archivehard-delete-over-rest)
 - **Usage analytics answer record-level questions** — `GET /memories/usage` reports call AND record counts; two fail-safe headers; expiry event-sourced through the purge. [rationale](./docs/decisions.md#usage-analytics-answer-record-level-questions)
+- **The tool catalog is the single origin of the operation SURFACE** — `packages/schemas/src/tool-catalog.ts` declares which of MCP/CLI/REST exposes each op, under what name, and the reason for each absence. Consumers *derive* (can import it), *generate* (cannot — `gen-surfaces.mjs`, committed artifacts, `--check`), or *assert* (deriving would be wrong). Never hand-edit a `*.generated.*` file; CLI **behaviour** stays hand-written in `packages/cli/src/commands.mjs`. [tiers + gates](./docs/architecture.md#surface-generation)
+- **`READ_TOOLS`/`WRITE_TOOLS` stay HAND-WRITTEN, not derived from the catalog** — the duplication *is* the authorization control: deriving the gate from the thing it gates means one careless catalog edit silently opens a tool. Held to the catalog by assertion instead (`tool-catalog-parity.spec.ts`), the same way the audit vocabulary is. Do not "simplify" this.
+- **MCP `org.*` tools serve `lk_*` tokens, gated by permission not auth tier** — matching REST; `org.list` reads, the three mutations write, and token permission is orthogonal to org ROLE (`lorekit_org_can` in the RPCs is still the only role gate). Actor via `p_actor_user_id`; every raw org read carries its own tenant predicate because the api_key path is service-role. [rationale](./docs/decisions.md#mcp-org-tools-serve-lk_-tokens-on-the-same-actor-override-rest-uses)
+- **Dashboard analytics reads stay REST-only** — `/usage`, `/tags`, `/facets`, `/activity`, `/read-activity` get no MCP tool and no CLI command: charts, not agent primitives, and three are name-bearing (scope-leak surface). Recorded as guarded `restOnly` fields in `telemetry-vocabulary.ts`, so re-proposing one argues with a decision rather than filing a gap. `/relevant` is NOT one of them — `memory.list order=rank` already covers it. [rationale](./docs/decisions.md#dashboard-analytics-reads-stay-rest-only)

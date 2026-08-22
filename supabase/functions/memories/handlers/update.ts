@@ -50,7 +50,7 @@ export async function handleUpdate(
   }
 
   const tracedDb = createTracedClient(db, span);
-  let q: TracedQuery<MemoryRow> = tracedDb.from<MemoryRow>('memories').update(patch).eq('id', idV.data).is('archived_at', null);
+  let q: TracedQuery<MemoryRow> = tracedDb.from('memories').update(patch).eq('id', idV.data).is('archived_at', null);
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control (org-owned rows included).
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);

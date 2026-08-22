@@ -112,7 +112,7 @@ routed into an org the token was never granted.
 | The request names NO scope (`memory.list` unfiltered, `GET /memories`) | Narrowed. Only rows inside the allowlist and the tenancy come back. |
 | The per-scope aggregates — `memory.scopes` / `GET /memories/scopes`, the `GET /memories/activity` and `/read-activity` series, and `GET /memories/tags` and `/facets` | **Unfiltered: narrowed** the same way, inside their RPCs. A scope string is a repo or project name, and the `origin_repo` facet is one outright, so an unfiltered catalog would leak exactly what scoping hides — and narrowing only some of these would move the leak rather than close it. A read whose scope could not be attributed names nothing and still counts toward the total. **With a `?scope=` outside the allowlist: refused with a `403`**, like the row above — narrowing a NAMED scope to an empty series answers "you read nothing there", which is a different statement than "you may not ask". `GET /memories/usage` is not in this list: it rolls up by `scope_type` (`repo`, `project`, `global`), never a name. |
 | `GET /memories/relevant` | The same two halves as `GET /memories`: narrowed when it names no scope, and refused with a `403` when any entry of `?scopes=` is outside the allowlist. Every named scope must be allowed — answering over the allowed subset would silently drop a rank from the precedence order the caller expressed. |
-| An account-wide sweep (`memory.purge`, `memory.purge_expired`, and their REST twins `POST /memories/purge` and `/purge-expired`) | Refused for a token WITH a scope allowlist, on both surfaces; unaffected for one without. There is no scope to check and no result set to narrow — the rows are chosen inside the RPC — so the only available answer is to refuse the call. Use an unscoped token for maintenance sweeps. |
+| An account-wide sweep (`memory.purge`, `memory.purge_expired`, their REST twins `POST /memories/purge` and `/purge-expired`, and the `lorekit purge` / `lorekit purge-expired` commands that call them) | Refused for a token WITH a scope allowlist, on every surface; unaffected for one without. There is no scope to check and no result set to narrow — the rows are chosen inside the RPC — so the only available answer is to refuse the call. Use an unscoped token for maintenance sweeps. The CLI prints the server's refusal VERBATIM plus a one-line next step, makes exactly one request, and never retries, splits the sweep or re-scopes to work around it. |
 | A write addressed BY ID (`PATCH` update, `DELETE /:id`, `POST /memories/:id/restore`) | Filtered by the allowlist and personal-only — narrowed to the caller's own rows within its scopes, never widened to org rows or another writer's. |
 | A removal or restore that NAMES a scope+key (`DELETE ?scope=…&key=…`, the `POST /memories/restore` body form, and the MCP `memory.delete` / `memory.archive` / `memory.restore` tools) | **Scope-authorized.** For a scope INSIDE the allowlist a scoped token may archive / hard-delete / restore **any** writer's row for that `(scope, key)` — the management authority the owner granted by scoping the key — and a 0-row result is reported as `404` (nothing there) rather than `403` (present, but not this token's to touch), so "already gone" and "not yours" stay distinguishable. A scope OUTSIDE the allowlist is refused with a `403`, like any other named scope. An UNSCOPED token is unchanged — own-rows-only. The `&org=` delete form stays role-gated inside its RPC (org membership + write capability), never widened by the scope allowlist. |
 | The token is unscoped (the default) | Nothing changes, on any path. |
@@ -131,6 +131,30 @@ routed into an org the token was never granted.
 | `memory.purge` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.purge_expired` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.list_archived` | ✓ | ✓ | ✗ (returns -32001) |
+| `org.list` | ✓ | ✓ | ✗ (returns -32001) |
+| `org.create` | ✓ | ✗ (returns -32001) | ✓ |
+| `org.rename` | ✓ | ✗ (returns -32001) | ✓ |
+| `org.delete` | ✓ | ✗ (returns -32001) | ✓ |
+
+The four `org.*` rows are new: those tools used to be dashboard-JWT-only on the
+MCP surface, while the REST `/orgs` routes already served `lk_*` tokens. Both
+surfaces now take tokens, through the same actor override
+(`00041_org_actor_override.sql`).
+
+**A token permission is not an org role, and does not become one.** The table
+above says what the KEY may attempt. What the HOLDER may do is decided
+separately by `lorekit_org_can` inside the SECURITY DEFINER RPCs, so a `lk_rw_*`
+token owned by an org *viewer* passes the permission gate above and is then
+refused the rename with `LK002`. Both gates apply, and neither substitutes for
+the other.
+
+**Scope restrictions do not currently narrow org operations.** A token with a
+scope allowlist can still create, rename and soft-delete orgs — on MCP as on
+REST, which has behaved this way since the org routes opened to tokens. Scope
+restrictions were designed for lore, and orgs carry no scope to match against.
+Whether an allowlist *ought* to imply "no org administration" is a real
+question, deliberately left open rather than answered differently on each
+surface; see [decisions.md](./decisions.md).
 
 ## Using a token
 

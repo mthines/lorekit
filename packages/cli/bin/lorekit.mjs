@@ -3,25 +3,13 @@
 import process from 'node:process';
 import { readFileSync } from 'node:fs';
 import { parseArgs, log, err, c } from '../src/util.mjs';
-import { install } from '../src/install.mjs';
-import { uninstall } from '../src/uninstall.mjs';
-import { doctor } from '../src/doctor.mjs';
-import { list } from '../src/list.mjs';
-import { search } from '../src/search.mjs';
-import { show } from '../src/show.mjs';
-import { write } from '../src/write.mjs';
-import { archive, del, restore } from '../src/remove.mjs';
-import { stats } from '../src/stats.mjs';
-import { scopes } from '../src/scopes.mjs';
-import { diff } from '../src/diff.mjs';
-import { tree } from '../src/tree.mjs';
-import { lint } from '../src/lint.mjs';
-import { dedupe } from '../src/dedupe.mjs';
-import { link } from '../src/link.mjs';
-import { hook } from '../src/hook.mjs';
-import { migrate } from '../src/migrate.mjs';
-import { bootstrap } from '../src/bootstrap.mjs';
-import { mcpServer } from '../src/mcp-server.mjs';
+// Commands, their handlers, aliases and dispatch properties all come from one
+// registry — see ../src/commands.mjs for why membership lives there and the
+// help prose stays here.
+import { COMMANDS_BY_NAME, STRICT_FLAG_COMMANDS, COMMAND_ALIASES } from '../src/commands.mjs';
+// Catalog-derived, so the default this help PROMISES is the one the server
+// applies — see src/surfaces.generated.mjs.
+import { PURGE_RETENTION_DAYS_DEFAULT } from '../src/surfaces.generated.mjs';
 import { traceCommand } from '../src/telemetry.mjs';
 import { loadDotEnv } from '../src/dotenv.mjs';
 
@@ -92,6 +80,15 @@ ${c.bold('Commands')}
               Explorer (--q / --owner / --tags / --range / --archived);
               --base or LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
               lorekit link | pbcopy.
+  purge       Permanently delete ARCHIVED memories older than --retention-days
+              (default ${PURGE_RETENTION_DAYS_DEFAULT}, range 1-365). Remote only, account-wide and
+              IRREVERSIBLE: prompts for confirmation, and requires --yes when
+              there is no terminal to prompt (a pipe, CI, or --json). A token
+              restricted to specific scopes is refused by the server.
+  purge-expired
+              Permanently delete every TTL-EXPIRED memory. Same posture as
+              purge: remote only, account-wide, irreversible, --yes required
+              non-interactively. Takes no options.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
@@ -122,6 +119,9 @@ ${c.bold('Options')}
       --link              Print the equivalent dashboard deep-link URL instead of running (show / search / list / tree)
       --base <url>        Dashboard base URL for deep links (link / --link; else LOREKIT_APP_URL, default https://lorekit.io)
       --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
+      --retention-days <1..365>
+                          Only purge archived memories older than this (purge;
+                          default ${PURGE_RETENTION_DAYS_DEFAULT})
       --from <path>       Source store to migrate from (migrate)
       --to <dest>         Migration destination: home | project | remote (migrate;
                           default routes each entry by scope across the local tiers)
@@ -645,6 +645,149 @@ ${c.bold('Examples')}
   npx @lorekit/cli migrate --from .lorekit --to remote        # preview the push
   npx @lorekit/cli migrate --from .lorekit --to remote --yes  # push local lore up
 `,
+  archive: `${c.bold('lorekit archive')} — hide a memory without losing it
+
+${c.bold('Usage')}
+  lorekit archive <scope::key>
+  lorekit archive <scope> <key>
+  lorekit archive --scope <scope> --key <key>
+
+Soft-archives one memory: it stops appearing in reads and in the hooks' injected
+context, but it is still there and ${c.cyan('lorekit restore')} brings it back. Reach for
+this rather than ${c.cyan('delete')} when a lesson has stopped being true — the record of
+having learned it is usually worth keeping.
+
+Addresses a memory the same three ways ${c.cyan('write')} / ${c.cyan('show')} do, and picks a store with
+the same precedence (remote when usable, else local; ${c.cyan('--remote')} / ${c.cyan('--local')} force it).
+
+${c.bold('Scoped API tokens')}
+Server-side this is scope-authorized: a token restricted to a scope may archive
+every writer's row in that scope, while an unscoped token may only archive its
+own. A no-match is reported as not-found rather than a silent success.
+
+${c.bold('Options')}
+      --scope <scope>     Name the scope explicitly
+      --key <key>         Name the key explicitly — for a key containing \`::\`
+      --remote / --local  Force a store instead of the usual precedence
+      --json              Machine-readable result
+`,
+
+  delete: `${c.bold('lorekit delete')} — archive a memory, or destroy it with --force ${c.dim('(alias: rm)')}
+
+${c.bold('Usage')}
+  lorekit delete <scope::key>            # soft-archive (reversible)
+  lorekit delete <scope::key> --force    # hard-delete (unrecoverable)
+
+Without ${c.cyan('--force')} this is exactly ${c.cyan('lorekit archive')} — the memory is hidden and
+restorable. With ${c.cyan('--force')} the row is gone and no restore can bring it back.
+
+${c.bold('Scoped API tokens')}
+Same scope authorization as ${c.cyan('archive')}: a scope-restricted token may act on any
+writer's row within its scopes, an unscoped one only on its own, and a 0-row
+result is reported as not-found rather than as success.
+
+${c.bold('Options')}
+      --force             Hard-delete instead of archiving. Unrecoverable
+      --scope <scope>     Name the scope explicitly
+      --key <key>         Name the key explicitly — for a key containing \`::\`
+      --remote / --local  Force a store instead of the usual precedence
+      --json              Machine-readable result
+`,
+
+  restore: `${c.bold('lorekit restore')} — bring an archived memory back
+
+${c.bold('Usage')}
+  lorekit restore <scope::key>
+  lorekit restore <scope> <key>
+
+Un-archives a memory so it appears in reads again. The counterpart to
+${c.cyan('archive')} (and to ${c.cyan('delete')} without ${c.cyan('--force')}). A memory that was hard-deleted
+cannot be restored — there is nothing left to restore.
+
+Restoring something that is already active is not an error; it reports that
+nothing changed.
+
+${c.bold('Options')}
+      --scope <scope>     Name the scope explicitly
+      --key <key>         Name the key explicitly — for a key containing \`::\`
+      --remote / --local  Force a store instead of the usual precedence
+      --json              Machine-readable result
+`,
+
+  bootstrap: `${c.bold('lorekit bootstrap')} — apply the LoreKit schema to your own Supabase database
+
+${c.bold('Usage')}
+  lorekit bootstrap [--yes]
+
+For BYOD ("bring your own database") only: creates the tables, functions and
+policies LoreKit needs in a Supabase project you control, so lore never leaves
+your infrastructure. You only need this if you are pointing the CLI at your own
+database via ${c.cyan('LOREKIT_STORAGE_URL')} / ${c.cyan('LOREKIT_STORAGE_ANON_KEY')} — the hosted
+service and the offline store both need nothing here.
+
+See ${c.cyan('docs/byod.md')} for the full setup, including which key to use and what the
+schema contains.
+
+${c.bold('Options')}
+  -y, --yes                Apply without prompting
+      --endpoint <url>     Target endpoint
+      --token <token>      Token for the target
+`,
+
+  purge: `${c.bold('lorekit purge')} — permanently delete archived memories past a retention window
+
+${c.bold('Usage')}
+  lorekit purge [--retention-days <1..365>] [--yes] [--json]
+
+Hard-deletes ARCHIVED memories older than the retention window. Archived lore is
+hidden from reads but recoverable with ${c.cyan('lorekit restore')} — this is what makes it
+unrecoverable, so it is the one step in the lifecycle that cannot be walked back.
+
+${c.bold('Remote only')}
+It sweeps server-side state; the offline store has no equivalent, so ${c.cyan('--local')} is
+refused rather than quietly doing nothing.
+
+${c.bold('Confirmation')}
+There is no dry run: the purge RPC returns its count only AFTER deleting, so
+"would purge N" cannot be answered honestly. Instead you are asked to confirm,
+and ${c.cyan('--yes')} is REQUIRED when there is no terminal to ask (a pipe, CI, or --json)
+— an unattended agent must not be able to purge by omission.
+
+${c.bold('Scoped tokens')}
+A token restricted to specific scopes is refused by the server: an account-wide
+sweep has no scope to check and no result set to narrow. Use an unscoped token
+for maintenance.
+
+${c.bold('Options')}
+      --retention-days <n>  Only purge archived memories older than n days
+                            (1-365, default ${PURGE_RETENTION_DAYS_DEFAULT})
+  -y, --yes                 Confirm; required when non-interactive
+      --json                Machine-readable result ({ ok, purged, error })
+  -e, --endpoint <url>      LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>       LoreKit token (needs write permission, unscoped)
+`,
+
+  'purge-expired': `${c.bold('lorekit purge-expired')} — permanently delete every TTL-expired memory
+
+${c.bold('Usage')}
+  lorekit purge-expired [--yes] [--json]
+
+Hard-deletes memories whose ${c.cyan('ttl_days')} window has passed. Complementary to
+${c.cyan('lorekit purge')}, which removes archived rows: this one removes rows that expired
+on their own. Takes no options of its own — the row set is every expired memory
+you own.
+
+Same posture as ${c.cyan('purge')}: remote only, account-wide, irreversible, confirmation
+required (${c.cyan('--yes')} when non-interactive), and refused for a token restricted to
+specific scopes.
+
+${c.bold('Options')}
+  -y, --yes               Confirm; required when non-interactive
+      --json              Machine-readable result ({ ok, purged, error })
+  -e, --endpoint <url>    LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>     LoreKit token (needs write permission, unscoped)
+`,
+
   hook: `${c.bold('lorekit hook')} — hook engine for Claude Code / Cursor / Codex
 
 ${c.bold('Usage')}
@@ -688,23 +831,11 @@ const KNOWN_FLAGS = [
   // error. It is parsed and discarded (nothing reads `args.view`). Remove it once
   // 1.x links have aged out.
   'link', 'base', 'q', 'owner', 'range', 'archived', 'view',
+  'retention-days',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
 ];
-
-// Commands that write to disk / talk to the network on a human's behalf. These
-// reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
-// never fail on a stray flag, and only ever receive flags we control).
-const HUMAN_COMMANDS = new Set([
-  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
-  'diff', 'tree', 'lint', 'dedupe', 'link', 'migrate', 'write',
-  'archive', 'delete', 'restore',
-]);
-
-// Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
-// and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link', rm: 'delete' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -730,17 +861,14 @@ async function main() {
     return 0;
   }
 
-  // `hook` is machine-facing: it must never print help/errors to stdout
-  // (that would corrupt the JSON the host parses). Handle it before the
-  // usage branch and always resolve to exit 0.
-  if (command === 'hook') {
-    return hook(args);
-  }
-
-  // `mcp` is machine-facing too: only JSON-RPC frames may reach stdout, so it
-  // must bypass the usage branch. It serves stdio until the client closes.
-  if (command === 'mcp') {
-    return mcpServer(args);
+  // Machine-facing commands (`hook`, `mcp`) own their stdout — a host's JSON
+  // contract and JSON-RPC frames respectively — so they must bypass the usage
+  // and version branches, which print. They are also deliberately UNTRACED:
+  // they fire on every agent event, and a span per event is a cost the caller
+  // never asked for. `machine` in the registry is the single statement of that.
+  const machineEntry = COMMANDS_BY_NAME.get(command);
+  if (machineEntry?.machine) {
+    return machineEntry.run(args);
   }
 
   if (args.version) {
@@ -755,61 +883,30 @@ async function main() {
 
   // Reject unrecognized flags on human-facing commands with an actionable
   // pointer, rather than silently ignoring a typo that would change behavior.
-  if (HUMAN_COMMANDS.has(command) && args._unknown.length > 0) {
+  if (STRICT_FLAG_COMMANDS.has(command) && args._unknown.length > 0) {
     const plural = args._unknown.length > 1 ? 's' : '';
     err(`${c.red(`Unknown option${plural}:`)} ${args._unknown.join(', ')}`);
     err(`Run ${c.cyan(`lorekit ${command} --help`)} to see valid options.`);
     return 1;
   }
 
-  // Human-facing commands are wrapped so we can see which commands people run
-  // (one OTel span + counter per invocation). `hook` and `mcp` are handled
-  // above and stay uninstrumented — they are machine-facing, fire on every
-  // agent event, and must keep stdout to their host protocol.
-  switch (command) {
-    case 'install':
-      return traceCommand('install', args, VERSION, () => install(args));
-    case 'uninstall':
-      return traceCommand('uninstall', args, VERSION, () => uninstall(args));
-    case 'doctor':
-      return traceCommand('doctor', args, VERSION, () => doctor(args));
-    case 'list':
-      return traceCommand('list', args, VERSION, () => list(args));
-    case 'search':
-      return traceCommand('search', args, VERSION, () => search(args));
-    case 'show':
-      return traceCommand('show', args, VERSION, () => show(args));
-    case 'stats':
-      return traceCommand('stats', args, VERSION, () => stats(args));
-    case 'scopes':
-      return traceCommand('scopes', args, VERSION, () => scopes(args));
-    case 'diff':
-      return traceCommand('diff', args, VERSION, () => diff(args));
-    case 'tree':
-      return traceCommand('tree', args, VERSION, () => tree(args));
-    case 'lint':
-      return traceCommand('lint', args, VERSION, () => lint(args));
-    case 'dedupe':
-      return traceCommand('dedupe', args, VERSION, () => dedupe(args));
-    case 'link':
-      return traceCommand('link', args, VERSION, () => link(args));
-    case 'migrate':
-      return traceCommand('migrate', args, VERSION, () => migrate(args));
-    case 'bootstrap':
-      return traceCommand('bootstrap', args, VERSION, () => bootstrap(args));
-    case 'write':
-      return traceCommand('write', args, VERSION, () => write(args));
-    case 'archive':
-      return traceCommand('archive', args, VERSION, () => archive(args));
-    case 'delete':
-      return traceCommand('delete', args, VERSION, () => del(args));
-    case 'restore':
-      return traceCommand('restore', args, VERSION, () => restore(args));
-    default:
-      err(`${c.red('Unknown command:')} ${command}\n`);
-      log(HELP);
-      return 1;
+  // Every remaining command is dispatched through `traceCommand`, so one OTel
+  // span and one counter are emitted per invocation without any command wiring
+  // its own — telemetry is INHERITED from this single call site. `hook` and
+  // `mcp` returned above and stay uninstrumented by design.
+  //
+  // This replaced nineteen identical `case` clauses whose only job was to
+  // repeat the command name three times. The registry already knows the name
+  // and the handler, so adding a command needs no edit here at all — which is
+  // what stops the dispatch list and the membership set drifting apart again.
+  const entry = COMMANDS_BY_NAME.get(command);
+  if (!entry) {
+    err(`${c.red('Unknown command:')} ${command}\n`);
+    log(HELP);
+    return 1;
   }
+
+  return traceCommand(entry.name, args, VERSION, () => entry.run(args));
 }
 
 main()

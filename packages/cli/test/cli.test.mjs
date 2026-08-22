@@ -57,6 +57,24 @@ test('a valid flag combination is not flagged as unknown', () => {
   assert.doesNotMatch(res.stderr, /Unknown option/);
 });
 
+test('bootstrap rejects an unknown flag like every other human command', () => {
+  // `bootstrap` used to be the one exception, and not deliberately: it was
+  // dispatched by the command switch but omitted from the set that gates
+  // unknown flags, so a typo'd option was silently ignored on a command that
+  // writes a store. Nothing cross-checked the two lists, so nothing caught it.
+  const res = run(['bootstrap', '--gloabl']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /Unknown option: --gloabl/);
+  assert.match(res.stderr, /lorekit bootstrap --help/);
+});
+
+test('bootstrap still accepts its own documented flags', () => {
+  // The other half of the fix: strictness must not over-reject. Every flag
+  // `bootstrap --help` documents has to survive the gate.
+  const res = run(['bootstrap', '--mode', 'off', '--dir', '.']);
+  assert.doesNotMatch(res.stderr, /Unknown option/);
+});
+
 test('hook --help documents the command instead of blocking on stdin', () => {
   const res = run(['hook', '--help']);
   assert.equal(res.status, 0);

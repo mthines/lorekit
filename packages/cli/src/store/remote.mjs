@@ -516,6 +516,65 @@ class RemoteStore {
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
 
+  // ── Maintenance sweeps → REST ─────────────────────────────────────────────
+  // `POST /memories/purge` and `/purge-expired` (handlers/purge.ts). Both are
+  // account-wide and irreversible, and both refuse a token carrying a scope
+  // allowlist with a 403 (`refuseAccountWideSweep`). `httpStatus` is passed
+  // through so the caller can print that refusal verbatim instead of a generic
+  // failure — the real status lives ONLY there, never in `error.code` (see
+  // `listScopes` above for why).
+
+  // `retention_days` is always SENT, never left to the server's default. For an
+  // irreversible sweep the request should record the exact window it used, and
+  // the caller has to know that number anyway to say what it is about to delete
+  // — `lorekit purge`'s confirmation names it. The default itself is derived
+  // from the tool catalog (`PURGE_RETENTION_DAYS_DEFAULT`), so sending it
+  // explicitly cannot disagree with what the server would have applied.
+  //
+  // An earlier version omitted the body when the argument was absent, to "let
+  // the server default apply". That branch was unreachable — the CLI resolves
+  // the default before calling — so it was dead code guarded by a comment that
+  // described behaviour the code did not have.
+  // Refuses an absent window LOUDLY rather than defaulting to one. `= {}` plus
+  // a bare pass-through would send `retention_days: undefined`, which
+  // JSON.stringify drops — so a caller that forgot the window would silently
+  // get the server's default and hard-delete against a window nobody chose.
+  // On an irreversible account-wide sweep that is the worst of the three
+  // options; throwing names the mistake at the call site instead. Unreachable
+  // today (`parseRetentionDays` resolves and validates before this is called),
+  // and cheap insurance for the day a second caller appears.
+  async purge({ retentionDays } = {}) {
+    if (!Number.isInteger(retentionDays)) {
+      throw new Error(
+        `purge requires an explicit integer retentionDays (got ${JSON.stringify(retentionDays)}); `
+        + 'an account-wide hard delete must never run against an unstated window.',
+      );
+    }
+    const res = await this._rest('/memories/purge', {
+      method: 'POST',
+      body: { retention_days: retentionDays },
+    });
+    return {
+      ok: res.ok,
+      purged: res.ok ? (res.data?.purged ?? 0) : null,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      networkError: res.networkError,
+    };
+  }
+
+  // Takes no body — the row set is every TTL-expired memory the caller owns.
+  async purgeExpired() {
+    const res = await this._rest('/memories/purge-expired', { method: 'POST' });
+    return {
+      ok: res.ok,
+      purged: res.ok ? (res.data?.purged ?? 0) : null,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      networkError: res.networkError,
+    };
+  }
+
   // ── Org operations → REST ─────────────────────────────────────────────────
   // `supabase/functions/orgs/` serves `lk_*` tokens on every route as of
   // 00041_org_actor_override.sql (see the file header). Each method's RETURN

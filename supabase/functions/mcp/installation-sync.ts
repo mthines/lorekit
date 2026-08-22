@@ -30,6 +30,8 @@ import { traceRequest, type Span } from '../_shared/otel.ts';
 import { resolveAuth } from './auth.ts';
 import { isAppConfigured, fetchInstallation } from './github-app-client.ts';
 import { reconcileInstallation } from './webhook-installation.ts';
+import type { Database } from '../_shared/database.types.ts';
+import { nullableRpcArg } from '../_shared/db-client.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -85,7 +87,7 @@ async function processSync(req: Request, span: Span): Promise<Response> {
     return json({ ok: false, error: 'installation_not_found' }, 200);
   }
 
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  const db = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
@@ -109,7 +111,7 @@ async function processSync(req: Request, span: Span): Promise<Response> {
     p_github_account_id: info.accountId,
     p_github_account_login: info.accountLogin,
     p_account_type: info.accountType,
-    p_user_id: verdict.kind === 'linked' ? verdict.userId : null,
+    p_user_id: nullableRpcArg(verdict.kind === 'linked' ? verdict.userId : null),
     p_status: verdict.kind,
     p_repos: info.repos,
   });
