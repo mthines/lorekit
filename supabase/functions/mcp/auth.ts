@@ -16,6 +16,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { extractToken } from './auth-token.ts';
 import { SPAN_KIND_CLIENT, type Span } from '../_shared/otel.ts';
 import { normalizeKeyRestriction, type KeyRestriction } from '../_shared/tenant-scope.ts';
+import type { Database } from '../_shared/database.types.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -161,7 +162,7 @@ async function resolveAuthTiers(
   // 2. LoreKit API token (lk_rw_..., lk_ro_..., or lk_wo_...)
   if (tier === 'api_key') {
     const hash = await sha256hex(token);
-    const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    const serviceDb = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     // The token lookup gets its own CLIENT span, like every other edge DB call,
@@ -258,7 +259,7 @@ async function resolveAuthTiers(
   }
 
   // 3. Supabase user JWT (browser session)
-  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -283,12 +284,12 @@ async function resolveAuthTiers(
 export function getDb(auth: AuthContext) {
   // service + api_key both use service-role; api_key queries MUST add .eq('user_id', userId)
   if (auth.type === 'service' || auth.type === 'api_key') {
-    return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    return createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
   // User JWT — RLS enforced automatically
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${auth.jwt!}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });

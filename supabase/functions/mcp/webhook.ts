@@ -66,6 +66,8 @@ import {
   reconcileInstallation,
 } from './webhook-installation.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
+import type { DbClient } from '../_shared/db-client.ts';
+import type { Database } from '../_shared/database.types.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
 const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
@@ -149,7 +151,7 @@ const INSTALLATION_EVENTS = new Set([
  * reaches a PostgREST filter unescaped.
  */
 async function resolveSecrets(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   fullName: string | undefined,
   event: string,
 ): Promise<{ secrets: string[]; source: WebhookSecretSource | 'app'; matchedRepo: string | null; isAppEvent: boolean }> {
@@ -206,7 +208,7 @@ async function resolveSecrets(
  *
  */
 async function reconcileAppInstallation(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   event: string,
   // deno-lint-ignore no-explicit-any
   payload: Record<string, any>,
@@ -377,7 +379,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
   const fullNameRaw = earlyPayload['repository']?.full_name as string | undefined;
   const fullName = fullNameRaw?.toLowerCase();
 
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  const db = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 

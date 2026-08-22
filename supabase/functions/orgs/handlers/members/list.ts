@@ -23,7 +23,7 @@ export async function handleListMembers(
 
   // Resolve slug → org_id (all member/invite RPCs take p_org_id).
   const { data: org, error: lookupErr } = await tracedDb
-    .from<{ id: string }>('orgs')
+    .from('orgs')
     .select('id')
     .eq('slug', slug)
     .is('deleted_at', null)

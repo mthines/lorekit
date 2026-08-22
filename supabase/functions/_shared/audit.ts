@@ -17,7 +17,7 @@
  * NOTE: the two copies are NOT whole-file comparable by
  * `packages/mcp-core/src/edge-parity.spec.ts` — they differ in their client
  * typing (`SupabaseClient` from the bare `@supabase/supabase-js` import in
- * mcp-core vs `ReturnType<typeof createClient>` off the `npm:` specifier
+ * mcp-core vs `DbClient` off the `npm:` specifier
  * here), which is precisely the Node/Deno import split the mirror exists for.
  *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
@@ -60,6 +60,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { AUDIT_ACTIONS } from './schemas/audit.ts';
 import type { AuditAction } from './schemas/audit.ts';
+import type { DbClient } from './db-client.ts';
 
 export { AUDIT_ACTIONS };
 export type { AuditAction };
@@ -102,7 +103,7 @@ export function buildAuditEntry(input: AuditEntryInput): AuditRow {
  * console.error for observability, not rethrown.
  */
 export async function recordAudit(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   input: AuditEntryInput,
   userId: string | null,
 ): Promise<void> {

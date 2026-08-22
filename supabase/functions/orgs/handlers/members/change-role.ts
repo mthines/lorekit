@@ -33,7 +33,7 @@ export async function handleChangeRole(
   const tracedDb = createTracedClient(db, span);
 
   const { data: org, error: lookupErr } = await tracedDb
-    .from<{ id: string }>('orgs')
+    .from('orgs')
     .select('id')
     .eq('slug', slug)
     .is('deleted_at', null)

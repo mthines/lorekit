@@ -133,8 +133,8 @@ export async function handleRemove(
   // non-archived rows the way the soft-archive is — purging an already-archived
   // memory is the main reason a caller asks for force.
   let q: TracedQuery<MemoryRow> = force
-    ? tracedDb.from<MemoryRow>('memories').delete({ count: 'exact' })
-    : tracedDb.from<MemoryRow>('memories').update({ archived_at: now }, { count: 'exact' }).is('archived_at', null);
+    ? tracedDb.from('memories').delete({ count: 'exact' })
+    : tracedDb.from('memories').update({ archived_at: now }, { count: 'exact' }).is('archived_at', null);
 
   if (idParam) {
     const v = validateUuid(idParam, cors);
