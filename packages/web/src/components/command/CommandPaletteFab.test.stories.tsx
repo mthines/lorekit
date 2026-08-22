@@ -44,8 +44,11 @@ type Story = StoryObj<typeof Harness>;
 
 /**
  * At rest the FAB announces itself as a collapsed dialog trigger, and its hit
- * area clears the 48dp Material / 44pt HIG floor with room to spare — the whole
- * reason the palette moved off the TopBar's 20px-tall `⌘K` chip on mobile.
+ * area sits exactly ON the 48dp Material floor (clear of the 44pt HIG one) —
+ * the whole reason the palette moved off the TopBar's 20px-tall `⌘K` chip on
+ * mobile. The disc is deliberately sized to that floor and no smaller, so this
+ * assertion is the guard that a future "make it subtler" pass cannot quietly
+ * shrink it below the minimum.
  */
 export const RestingState: Story = {
   play: async ({ canvasElement }) => {

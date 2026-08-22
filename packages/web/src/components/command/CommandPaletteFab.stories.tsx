@@ -80,7 +80,7 @@ export default meta;
 type Story = StoryObj<typeof CommandPaletteFab>;
 
 /**
- * The resting FAB docked in the tab bar: amber gradient face, top-edge bevel
+ * The resting FAB docked in the tab bar: graphite gradient face, top-edge bevel
  * highlight, breathing halo at its base opacity, and the four tabs holding even
  * columns either side of it.
  */
