@@ -5,15 +5,20 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
+import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
 // Primary content nav — 3 destinations keeps the sidebar scannable and the
 // mobile tab bar comfortably within the 3–5 item guideline.
+// `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
+// copy the tab bar's column does not: the bar now carries FOUR tabs plus the
+// docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
+// phone) and "Getting started" would wrap or clip there.
 const NAV = [
   { href: '/overview', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/docs', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
+  { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
@@ -134,49 +139,107 @@ export function Sidebar({ user }: SidebarProps) {
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
+      {/*
+        Five columns: two destinations, the docked command FAB, two more
+        destinations. The FAB gets a column of its own rather than floating over
+        the row so the four tabs keep even, predictable hit areas — nothing
+        shifts under the disc, and there is no tab hiding behind it.
+
+        `pb-[env(safe-area-inset-bottom)]` keeps the labels clear of the home
+        indicator on a notched phone; the dashboard layout's `main` reserves the
+        matching amount of scroll padding.
+      */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="Main navigation"
       >
-        {[...NAV, SETTINGS].map((item) => {
-          const { href, icon: Icon } = item;
-          const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
-          const active =
-            'isActive' in item
-              ? item.isActive(pathname)
-              : pathname === href || pathname.startsWith(href + '/');
-          const isDocs = href === '/docs';
-          const withProgressDot = isDocs && showProgress;
-          return (
-            <Link
-              key={href}
-              href={href}
-              prefetch={true}
-              className={[
-                'relative flex flex-1 min-h-[3.5rem] flex-col items-center justify-center gap-1 text-xs transition-all duration-150',
-                active
-                  ? 'text-[var(--color-accent)]'
-                  : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-              ].join(' ')}
-              aria-current={active ? 'page' : undefined}
-            >
-              <span className="relative">
-                <Icon className="size-5 shrink-0" aria-hidden />
-                {withProgressDot && (
-                  <span
-                    className="absolute -right-1 -top-0.5 size-2 rounded-full bg-[var(--color-accent)]"
-                    aria-hidden
-                  />
-                )}
-              </span>
-              <span>{label}</span>
-              {withProgressDot && (
-                <span className="sr-only">, setup not yet complete</span>
-              )}
-            </Link>
-          );
-        })}
+        {MOBILE_TABS_BEFORE_FAB.map((item) => (
+          <MobileTab
+            key={item.href}
+            item={item}
+            pathname={pathname}
+            showProgress={showProgress}
+          />
+        ))}
+
+        {/*
+          The FAB's column. `relative` makes it the FAB's containing block, so
+          the disc is centred on the bar's own midline and lifted from its top
+          border — see CommandPaletteFab for the offset.
+        */}
+        <div className="relative min-h-[3.5rem] flex-1">
+          <CommandPaletteFab />
+        </div>
+
+        {MOBILE_TABS_AFTER_FAB.map((item) => (
+          <MobileTab
+            key={item.href}
+            item={item}
+            pathname={pathname}
+            showProgress={showProgress}
+          />
+        ))}
       </nav>
     </>
+  );
+}
+
+// ── Mobile tab ────────────────────────────────────────────────────────────────
+
+// The FAB sits between the second and third destination, so the row is split
+// here rather than at render time — the split point is layout, not state.
+const MOBILE_TABS = [...NAV, SETTINGS] as const;
+const MOBILE_TABS_BEFORE_FAB = MOBILE_TABS.slice(0, 2);
+const MOBILE_TABS_AFTER_FAB = MOBILE_TABS.slice(2);
+
+type MobileTabItem = (typeof MOBILE_TABS)[number];
+
+interface MobileTabProps {
+  item: MobileTabItem;
+  pathname: string;
+  showProgress: boolean;
+}
+
+function MobileTab({ item, pathname, showProgress }: MobileTabProps) {
+  const { href, icon: Icon } = item;
+  const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
+  const active =
+    'isActive' in item
+      ? item.isActive(pathname)
+      : pathname === href || pathname.startsWith(href + '/');
+  const withProgressDot = href === '/docs' && showProgress;
+
+  return (
+    <Link
+      href={href}
+      prefetch={true}
+      className={[
+        // `text-[11px]` + `truncate`: a fifth column leaves ~66px on a 330px
+        // phone, and a wrapped label would push the row taller than the tabs
+        // beside it.
+        'relative flex min-h-[3.5rem] flex-1 flex-col items-center justify-center gap-1 px-0.5 text-[11px] transition-colors duration-150',
+        // Inactive tabs are `content-secondary`, matching the desktop rail
+        // above — NOT `content-tertiary`, which lands at 2.5:1 on the raised
+        // surface (below both the 4.5:1 AA floor for the label and the 3:1 floor
+        // for the icon) and is what made these labels read as disabled. At
+        // `content-secondary` they measure 5.9:1.
+        active
+          ? 'text-[var(--color-accent)]'
+          : 'text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)]',
+      ].join(' ')}
+      aria-current={active ? 'page' : undefined}
+    >
+      <span className="relative">
+        <Icon className="size-5 shrink-0" aria-hidden />
+        {withProgressDot && (
+          <span
+            className="absolute -right-1 -top-0.5 size-2 rounded-full bg-[var(--color-accent)]"
+            aria-hidden
+          />
+        )}
+      </span>
+      <span className="max-w-full truncate">{label}</span>
+      {withProgressDot && <span className="sr-only">, setup not yet complete</span>}
+    </Link>
   );
 }

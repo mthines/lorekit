@@ -38,6 +38,20 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out-smooth: cubic-bezier(0.16, 1, 0.3, 1);
 
+  /* The command FAB's halo — a slow, low-amplitude breathe that marks the one
+     primary ACTION in the mobile tab bar (see CommandPaletteFab). Deliberately
+     long and shallow: anything faster or wider reads as a notification badge
+     demanding to be dismissed. Composite-only (opacity + transform), so it
+     never costs a layout or paint frame. Under `prefers-reduced-motion` the
+     global rule below collapses it to ~0ms with no fill, so the element falls
+     back to its own base opacity — the resting look is in the classes, not
+     in a keyframe. */
+  --animate-halo-breathe: halo-breathe 4.5s ease-in-out infinite;
+  @keyframes halo-breathe {
+    0%, 100% { opacity: 0.35; transform: scale(0.9); }
+    50%      { opacity: 0.65; transform: scale(1.06); }
+  }
+
   /* Layout — the shared cap for the WIDE dashboard shells (Overview, Lore
      Explorer). It exists so those pages agree on one number instead of each
      page inventing its own arbitrary width: content stays left-aligned and
