@@ -1,0 +1,387 @@
+# Lore Graph — the 3D memory map
+
+A WebGL view of an account's lore: every memory a point in space, every scope a
+cluster, every relationship a line. This document is the feasibility record and
+the design contract — **read it before changing the model, the layout, or the
+scene**, because most of the decisions here exist to keep a 5,000-node view at
+60 fps and are not obvious from the code alone.
+
+## Is it feasible? Yes — and the reason is the memory cap
+
+The question a 3D graph normally dies on is "how many nodes?", and here it has a
+hard answer: a free-plan account is capped at **5,000 active memories**
+([limits.md](./limits.md)), enforced by a `BEFORE INSERT` trigger. So the view is
+not sizing for an unbounded graph; it is sizing for a known ceiling.
+
+At that ceiling the three costs land like this:
+
+| Cost | At 5,000 memories | Why it is not a problem |
+|------|-------------------|-------------------------|
+| **Draw calls** | 2 | All memory nodes are one instanced draw; all edges are one `LineSegments`. Draw-call count is independent of node count. |
+| **Graph build** | ~320–710 ms, median ~415 ms ([reproduce it](#reproducing-the-build-figure)) | Runs once per dataset change, not per frame — but **on the main thread today**, unlike the layout. It returns `GraphNode[]`/`GraphEdge[]`, so moving it into the worker costs a structured clone of that object graph, where the layout's `Float32Array` transfers for free. See [Where the build actually runs](#where-the-build-actually-runs). |
+| **Force layout** | the real cost — naive all-pairs repulsion is 25 M interactions/iteration | Solved by not doing it that way: see [Layout](#layout). |
+| **Fetching the data** | **the actual bottleneck** | `GET /memories` caps at 100 rows/page, so 5,000 memories is 50 round trips. See [Fetching](#fetching). |
+
+So the honest verdict is: the *rendering* is comfortably feasible, the *layout*
+is feasible with the right algorithm, and the *data path* is the part that needs
+a server-side answer rather than a client-side one.
+
+## Model — `packages/web/src/lib/lore-graph/`
+
+Pure, dependency-free, unit-tested (`build.spec.ts`). It never imports Three.js,
+so the relationship semantics can be reviewed and changed without touching the
+renderer.
+
+### Nodes
+
+Two kinds only: **memory** and **scope**. An early sketch added a node per
+label, which reads well on a whiteboard and badly on screen — a popular label
+becomes a hub every memory is tethered to, and the layout collapses into a
+starburst about the label rather than a map of the lore. Labels are edges
+between memories instead.
+
+Node identity is the natural key (`scope::key`), not the array index, so a
+refetch that re-orders the list does not move the user's selection.
+
+Node **weight** (which drives radius) follows `seen_count` for a memory and
+member count for a scope, `log1p`-scaled across the **observed range** so one
+400× outlier cannot flatten the rest. When there is no spread — `min === max` —
+the weight is **0**, i.e. the base size, *not* zero radius. That is the common
+case for `seen_count`, which only arrives with migration 00059.
+
+Two earlier guards drew the entire graph at maximum radius instead, and both are
+worth stating because the second looks like a fix for the first: returning `1`
+on no spread made the size channel shout while meaning nothing; guarding on
+`max <= 1` only caught the all-absent case, so a uniform `seen_count: 3` — or
+two scopes of equal size — still came out at `1` everywhere.
+
+Scaling is anchored at the observed **minimum** for the same reason. An absent
+`seen_count` reads as 1, so scaling from zero meant a single row gaining
+`seen_count: 2` shoved every other row from `0` to `0.631` — three fifths of the
+size channel spent on rows that carry no recurrence at all.
+
+### Edges
+
+Every edge kind is derivable from a single memory row — no extra request, no
+server-side join. An edge a user cannot explain by pointing at a field is a
+decorative line.
+
+| Kind | Meaning |
+|------|---------|
+| `scope` | memory → its scope node. The skeleton; never capped away. |
+| `label` | two memories share one or more labels. |
+| `key` | two memories share a `namespace::` key prefix (`aw-lessons::…`). |
+| `repo` | two memories were recorded from the same `origin_repo`. |
+
+Relation strength is the **Jaccard** overlap of the two term sets (shared over
+union), scaled by a **per-kind weight**. Two corrections are baked into that
+sentence, both of which the first version got wrong:
+
+- Normalising by the *smaller* set instead of the union scores a single-label
+  memory as a perfect twin of every memory carrying that label — manufacturing
+  exactly the false clusters the view exists to disprove.
+- Jaccard alone is **not comparable across kinds.** A key namespace and an
+  origin repo contribute exactly one term each, so every such pair scores a
+  perfect `1/1` and outranks even a genuine label twin before any budget is
+  applied. `KIND_WEIGHT` (`label 1`, `key 0.55`, `repo 0.35`) encodes the actual
+  evidence strength: sharing a label vocabulary says something about two
+  memories; being written from the same repository is the weakest signal the
+  model has, and is already visible from the scope clustering.
+
+The `kinds` option's **order is irrelevant** — the candidate sort is total
+(strength, then kind rank, then node indices), so it never depends on which kind
+happened to be generated first.
+
+### The three bounds that keep it linear
+
+Applied in this order, each reporting what it dropped in `graph.truncated`:
+
+1. **Hub suppression** (`hubSize`, default 64). A term carried by more than 64
+   memories is a *facet*, not a relation — "everything here is a lesson" tells
+   you nothing about which two memories relate — and it is also the term whose
+   posting list makes the pair count quadratic. One label on 3,000 memories
+   would alone yield ~4.5 M pairs. Dropping it removes the cost and the noise in
+   one move, which is why it is first rather than a later cap.
+
+   A suppressed term is excluded from the Jaccard **denominator** too. Declaring
+   a term "not evidence of a relationship" and then letting it count as evidence
+   *against* one is incoherent, and it bit: two memories sharing a niche label,
+   each also carrying fifteen `loop::*` hub labels, scored 0.032 and sank below
+   a pair sharing one of two ordinary labels. Single-occurrence terms **do**
+   stay in the denominator — they are real, discriminating vocabulary that
+   simply has no partner in this dataset.
+
+   Suppression is reported as `{of: 'terms', …}`. Without it a reader cannot
+   tell a genuinely sparse graph from a heavily suppressed one, which is the
+   same information gap the node and edge budgets report to close.
+2. **Degree cap** (`maxDegree`, default 12) — counted in **distinct neighbours,
+   not edges**. Strongest first. A pair that shares a label *and* a key
+   namespace *and* a repo produces three edges between the same two nodes;
+   spending three of the budget on them would declare a node full after one
+   neighbour. What the cap protects is legibility, and a hairball is twelve
+   *different* nodes — three parallel lines to one node is a single, slightly
+   bolder relationship. So an edge to an already-connected neighbour is free.
+3. **Edge budget** (`maxEdges`, default 15,000), strongest first — also counted
+   in **relationships, not edges**, for consistency with the degree cap. Charging
+   this budget per edge while the degree cap charged per neighbour let a
+   duplicate take the last slot from a genuinely new relationship. The drawn line
+   count is therefore up to `kinds.length ×` the budget (three today); those
+   parallel lines overlay exactly, so they cost GPU vertices rather than
+   legibility, which is the resource the budget protects.
+
+All three report in the same units the reader thinks in: `{of: 'edges', total:
+1, kept: 0}` for a pair that shares three dimensions, never `total: 3` — that
+would read as three dropped relationships when only one ever existed.
+
+`truncated` is not optional decoration: a picture of "the shape of your lore"
+that quietly omits half of it is worse than no picture, so the UI must say when
+a bound fired.
+
+### Where the build actually runs
+
+Worth stating plainly, because two sentences in this document disagreed about it
+until they were merged: **the layout runs in a Web Worker; `buildLoreGraph` does
+not.** It runs in a `useMemo` inside `LoreGraphView`, on the main thread.
+
+That is a deliberate position, not an oversight, and it is a close call:
+
+- The layout's output is a `Float32Array`, which a worker **transfers** at zero
+  copy cost. That is what makes moving it a pure win.
+- The build's output is `GraphNode[]` / `GraphEdge[]` — an object graph of
+  ~20,000 entries at the ceiling — which crosses a worker boundary by
+  **structured clone**, not by transfer. The clone is not obviously cheaper than
+  the ~415 ms it would offload, and it is paid on every rebuild.
+
+So the honest status is: at the plan ceiling this is a several-hundred-
+millisecond main-thread block on the transition into the map view. It is once
+per dataset change rather than per frame, and it is not on the dashboard's
+initial load — but it is not free, and "off the main thread" would be a false
+claim. The fix, if it is needed, is the server-side projection under
+[Fetching](#fetching) — which returns the graph already built and sidesteps both
+the block and the clone — not a worker move made on assumption. Measure first.
+
+### Reproducing the build figure
+
+The number above is not folklore — run it yourself:
+
+```bash
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/bench-lore-graph.mjs --runs 9
+```
+
+```text
+buildLoreGraph — 5,000 memories, 9 runs
+  node       v24.19.0
+  min/med/max 317.3 ms / 415.2 ms / 705.3 ms
+  nodes      5,100
+  edges      39,300
+  truncated  [{"of":"terms","total":600,"kept":597},{"of":"edges","total":248878,"kept":15000}]
+```
+
+**The fixture shape dominates this number, and it has been wrong twice — in
+opposite directions — so it is worth spelling out what it now is.** The first
+synthetic account used 40 key namespaces and 25 repos across 5,000 memories (125
+and 200 members each, both over `hubSize: 64`), so both of those kinds were
+suppressed entirely and the run timed the label path alone: eight times too
+optimistic. Raising them to 100 each (50 members apiece) fixed those two kinds
+but left the *labels* mis-shaped — both label families were emitted under one
+`t*` prefix, so `t0`–`t96` drew members from both cycles, reached 68–69 and were
+themselves suppressed, leaving only a ≤17-member tail live.
+
+The fixture now puts each family in its own namespace and straddles the cap
+deliberately, so every branch of the algorithm is on the clock:
+
+| Family | Terms | Members each | Role |
+|--------|-------|--------------|------|
+| `topic-*` | 300 | ~17 | the long tail |
+| `theme-*` | 97 | ~52 | just **under** `hubSize`, so this is the longest posting list the label path must walk |
+| `facet-*` | 3 | ~1667 | well **over** it, so suppression actually fires |
+| `bucket-*::` (key) | 100 | 50 | live |
+| `owner/repo-*` (repo) | 100 | 50 | live |
+
+The spread is wide because the harness this was captured on is a shared cloud
+container. What matters is the shape: hundreds of milliseconds, not seconds, and
+driven by the candidate-pair count (248,878 here) rather than by `n²` — the same
+build with hub suppression switched off considers **4,333,368** pairs and takes
+~8 s.
+
+It is also worth being plain that ~415 ms is not free. It is paid once per
+dataset change, in the worker, alongside the layout — and the analytic seed
+means the user sees a correct picture before the relaxation finishes, so the
+cost lands on "the graph settles a moment later", not on a frozen tab. If the
+figure grows, the server-side projection under [Fetching](#fetching) is the
+place to move this work, not a micro-optimisation here.
+
+The benchmark imports the real `build.ts` (Node strips the types; a small
+`registerHooks` resolver supplies the `@/` alias), so it can never drift into
+measuring a copy. It is **not** a test and gates nothing — a wall-clock
+assertion in the suite would be the one check that goes red on a noisy runner
+with no code change, and a flaky guard trains everyone to re-run rather than to
+read. `build.spec.ts` pins the bounded-output property instead, which is what
+would actually regress if an accidental all-pairs path crept back in.
+
+## Layout
+
+**Do not run naive `O(n²)` force-directed layout.** At 5,000 nodes that is 25 M
+interactions per iteration and hundreds of iterations to settle.
+
+The design is two-stage:
+
+1. **A deterministic analytic seed.** Scopes are placed on a Fibonacci sphere;
+   memories are placed around their scope's centre from a hash of their natural
+   key. This is `O(n)`, produces a usable picture on the first frame, and is
+   *stable* — the same lore lands in the same place tomorrow, which is what
+   makes the view navigable rather than a new abstract painting per visit.
+2. **A bounded relaxation pass**, in a Web Worker, using a spatial grid for
+   repulsion (never all-pairs), with a fixed iteration budget. It only refines
+   the seed, so a slow device that never finishes still shows the right thing.
+
+Positions are `Float32Array`s from end to end — the worker posts a transferable
+buffer straight into the GPU attribute, with no per-node object allocation.
+
+**At the 5,000-memory ceiling**, the seed is effectively free and relaxation
+costs ~10-15 ms per iteration on a developer machine — so a 30-iteration pass is
+~300-450 ms and the 120-iteration default is a second or two.
+
+Those are observations, not a contract. What `layout.spec.ts` actually *asserts*
+is a ceiling of **100 ms per iteration** (a 30-iteration pass under 3 s), which
+is ~7× the observed cost so a slow shared CI runner does not go red on load
+alone. That gap is deliberate and the guarantee still holds: the regression the
+budget exists to catch is an accidental all-pairs path, which at 5,000 nodes is
+~1000× the work, not 7×.
+
+Both stages are intended to run in a Web Worker off the main thread — the
+`Float32Array` shape above is what makes that transfer free — but the worker
+itself is not part of this module; it lands with the R3F scene. Either way both
+stages refine an already-correct picture, so the view is interactive from the
+first frame.
+
+Two properties the specs pin, because they are what make the view usable rather
+than merely fast:
+
+- **Scope nodes are pinned.** The relaxation moves memories, never scopes.
+  Scopes are the map's landmarks, and a simulation free to drift them turns
+  every refetch into a re-orientation exercise. It also makes the system
+  trivially stable — every memory is attracted to a fixed anchor, so there is no
+  global rotation or collapse for damping to fight.
+- **No randomness anywhere**, including the nudge that separates two exactly
+  coincident nodes. A layout seeded from `Math.random()` is a different picture
+  every visit, which costs the user the one thing a spatial view is for:
+  recognising where things are. A new memory fixes its bearing from its scope
+  centre for good; only the cluster's radius breathes as it grows.
+
+## Rendering
+
+Follows `agent-skills`' `animations/rules/three-d.md` and the accessibility floor
+in `packages/web/CLAUDE.md`:
+
+- **React Three Fiber**, lazy-loaded (`React.lazy` + `Suspense`). Three.js is
+  ~150 KB gzipped and must not enter the dashboard's initial bundle — the view is
+  opt-in, so the cost is opt-in too.
+- **Instanced.** One `InstancedMesh` for nodes, one `LineSegments` for edges.
+- **`frameloop="demand"`.** A memory map is static until the user moves it.
+  Rendering only on interaction takes idle GPU and battery cost to zero.
+- **`dpr={[1, 2]}`** so a 4K display does not shade four times the pixels.
+- **Never per-frame React state.** Camera and hover values live in refs, mutated
+  inside `useFrame`.
+- **`prefers-reduced-motion`** disables auto-rotation and camera easing; the
+  scene is still fully usable by dragging.
+
+### What shipped
+
+- `components/lore/graph/LoreGraphScene.tsx` — the only file that imports Three.js, and the only one loaded lazily (`React.lazy` behind a `Suspense` skeleton).
+- `components/lore/graph/LoreGraphView.tsx` — the lazy boundary, legend, live summary and truncation notice. Imports no `three`, so no future edit can accidentally pull WebGL into the eager bundle.
+- `components/lore/ViewToggle.tsx` + `lib/lore-view.ts` — the List ⇄ Map switch, backed by a `?view=` URL param so a map is a shareable link like every other Explorer view.
+
+The map draws the **same server-filtered memories the list draws**, so scope, search, range, status and every filter-bar dimension apply to it unchanged — switching view never silently widens what you are looking at.
+
+That list is an infinite query, so "the same memories" means the pages loaded so far, not the whole result set. The map says so rather than implying otherwise: while more pages are pending it prints a coverage notice (`coverageNotice` in `lib/lore-graph/summary.ts`, composed with the builder's own cap notice), and an empty first page renders the loading skeleton rather than the "nothing to map" empty state.
+
+Two rendering notes that are easy to undo by accident:
+
+- **Node matrices are written in `useLayoutEffect`, not `useEffect`.** With `useEffect` the first frame after a rebuild shows every instance stacked at the origin — a visible black hole on every data change.
+- **The `instancedMesh` is keyed on node count.** An `InstancedMesh`'s capacity is fixed at construction, so reusing one across a resize leaves stale instances drawn at the origin.
+
+### Stories: yes. Pixel baselines: no.
+
+`LoreGraphView.stories.tsx` covers eleven data shapes, and
+`LoreGraphView.test.stories.tsx` covers the DOM contract around the canvas.
+Every one of them sets `chromatic.disableSnapshot`, which is the opt-out
+`.storybook/vitest.setup.ts` honours (see [storybook.md](./storybook.md)).
+
+**Why no baseline.** A WebGL frame depends on the GPU, the driver and the ANGLE
+backend, so a committed screenshot would compare like-for-unlike and flake for
+reasons unrelated to the change under test. Everything that *can* be pinned is
+pinned in Node instead — the graph model, the layout, the GPU buffer contents,
+the palette mirror and the notice copy, ~120 specs. What stays unpinned is the
+draw call, which is the thing a screenshot proves least about.
+
+**Why one story per scenario**, against the house pattern of grouping variants
+into a single `Default`: that pattern exists to take one snapshot per file, and
+there is no snapshot here. Following it anyway would be actively harmful —
+each `<Canvas>` acquires its own WebGL context, browsers cap live contexts at
+roughly 8–16 and silently evict the oldest past the cap, so eight scenarios in
+one render tree is a page of blank canvases.
+
+**What the interaction tests assert.** The DOM around the canvas, never pixels
+inside it — the live-region summary, the coverage notice, the legend, the empty
+state. That is not a compromise: it is the map's actual promise, that everything
+shown visually is also stated in text. If those tests pass, a screen-reader user
+can use the feature; a pixel test could not tell you that.
+
+The scenarios worth opening first:
+
+| Story | What it is for |
+|-------|----------------|
+| `Default` | A working agent fleet — 240 memories over six scopes. |
+| `Plan ceiling (5,000 memories)` | The most the free tier can hold; where you feel the build cost before a customer does. |
+| `Hub-suppressed labels` | Every memory carrying the same labels. Looks identical to `NoRelationships` and means the opposite — the notice is the only thing that tells them apart. |
+| `NoRelationships` | Nothing shared at all. A legitimate picture that must not read as a bug. |
+| `AllArchived` | The whole graph dimmed; checks the scope hue survived dimming. |
+| `AwkwardLabels` | A 100-character key, CJK, an emoji, RTL, a one-character key. |
+| `PartiallyLoaded` | The Explorer has unfetched pages and the map admits it. |
+| `Playground` | Knobs over the fixture (count, scopes, archived share, hub label) rather than over dead props. |
+
+## Accessibility
+
+A `<canvas>` is opaque to assistive technology, so the 3D view can never be the
+only way to reach a memory. The rules:
+
+- The graph is a **second view of the existing Lore Explorer list**, toggled, not
+  a replacement. The list remains the keyboard- and screen-reader-complete path.
+- The canvas carries an `aria-hidden="true"` presentation layer with a live
+  text summary (node count, scope count, current selection) beside it.
+- Selecting a node opens the same `LessonDetailSheet` the list opens, so
+  everything reachable in 3D is reachable in 2D.
+- The List ⇄ Map switch is a real APG radio group: one tab stop for the pair
+  (roving `tabIndex` on the checked option), Left/Up and Right/Down moving
+  between them with selection following focus, plus Home and End. `role="radio"`
+  on a `<button>` gives none of that for free — only a real `<input
+  type="radio">` gets it from the platform — so `ViewToggle` implements it.
+
+## Fetching
+
+This is the open constraint, and the one place the view must not take a
+shortcut. `GET /memories` returns at most 100 rows per keyset page, so a
+whole-account graph is up to 50 round trips.
+
+Two options, in preference order:
+
+1. **A compact server-side projection** (`GET /memories/graph`) returning nodes
+   and edges rather than full rows — no `value` bodies, which are the bulk of the
+   payload. This is the right long-term answer and follows the package rule that
+   *any account-wide aggregate belongs in Postgres behind an endpoint, never a
+   `select … limit N` plus a browser-side reduce* (`packages/web/CLAUDE.md`).
+2. **A bounded page walk** of the existing endpoint with an explicit cap, the cap
+   surfaced in the UI through `graph.truncated`.
+
+What is **not** acceptable is a direct PostgREST query from the dashboard: it
+re-implements the tenant scope, archived partition, expiry filter and cursor the
+REST handler already owns, and PostgREST truncates silently at its row cap — so
+the graph would be quietly wrong for exactly the accounts with the most lore.
+
+## Related
+
+- [limits.md](./limits.md) — the 5,000-memory cap this is sized against.
+- [storybook.md](./storybook.md) — how the scene's stories and visual baselines run.
+- `packages/web/CLAUDE.md` — the REST-only data-access rule and the motion /
+  accessibility conventions.

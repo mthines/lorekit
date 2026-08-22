@@ -188,6 +188,12 @@ view is a shareable link.
 | Branch | `origin_branch` | is / is either of, is not |
 | Pull request | `origin_pr` | is / is either of, is not |
 
+The results render as a list (default) or as a **3D map** — `/lore?view=%22map%22` — where each
+memory is a point, each scope a cluster, and lines join memories that share a label, a key
+namespace, or an origin repository. The map draws whatever the filters above have narrowed to, so
+it is a second view of the same query rather than a separate one, and the list stays the complete
+keyboard and screen-reader path.
+
 The same filters are on the REST list route, so an agent or the CLI can ask the same questions:
 
 ```bash

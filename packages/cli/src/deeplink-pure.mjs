@@ -54,14 +54,24 @@ export const LORE_PARAM_DEFAULTS = {
   // boolean — SUPERSEDED by `status`, still READ by the app so existing links
   // (and `lorekit link --archived`) keep resolving to the archived view.
   archived: false,
+  // 'map' | null — which view of the results the link opens on. `null`,
+  // NOT 'list', is the default: the list view is never written to the URL, so an
+  // un-parameterised /lore stays the canonical link every existing bookmark and
+  // every previously-generated `lorekit link` URL already points at.
+  view: null,
   lesson: null, // { scope, key } | null — opens the detail sheet
 };
 
 // A stable, readable param order (also makes URLs deterministic for tests).
-// Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
-// param last), so `filters` and `tags` sit between `owner` and `status`. `scope`
-// precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'status', 'archived', 'lesson'];
+// It is a READING order, not a mirror of anything: the app parses params by
+// name, so the only job here is that a link is legible and byte-stable. It
+// broadly follows the `useUrlState` call order in `LoreExplorer.tsx` — `filters`
+// and `tags` sit between `owner` and `status` as they do there — with two
+// deliberate departures: `view` is second in that file but sits late here,
+// beside the other display-only params rather than in front of the query that
+// produces the results, and `lesson` is pinned last. `scope` precedes `lesson`
+// so a lesson link reads `?scope=…&lesson=…`.
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'status', 'archived', 'view', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.

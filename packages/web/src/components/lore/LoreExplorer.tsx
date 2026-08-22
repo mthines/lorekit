@@ -96,6 +96,10 @@ import {
   type FilterOperator,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
+import { ViewToggle } from './ViewToggle';
+import { LoreGraphView } from './graph/LoreGraphView';
+import { memoryNodeId } from '@/lib/lore-graph/build';
+import { resolveView, viewParamValue } from '@/lib/lore-view';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 
@@ -244,6 +248,16 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     () => resolveScopeParam(scopeParam),
     [scopeParam],
   );
+
+  // Which view of the results — the flat card list, or the 3D map of the same
+  // memories. URL-backed for the same reason `scope` and `filters` are: "here
+  // is the map of our CI lessons" has to be a link you can paste. The list
+  // default is never written, so a plain `/lore` stays the canonical URL every
+  // existing bookmark already points at. See `lib/lore-view.ts`.
+  const [viewParam, setViewParam] = useUrlState<string | null>('view', null, {
+    cleanOnPathname: '/lore',
+  });
+  const view = resolveView(viewParam);
 
   // Search is high-frequency input — the returned `search` is instantly
   // responsive (local state) while the URL param is written on a trailing
@@ -597,7 +611,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // any filter/search/transition state changed — replaying every card's enter
   // animation even when the same cards remain. Inlining the returned JSX keeps
   // each keyed card mounted across renders, so only genuinely-new cards animate.
-  const renderResults = () => {
+  const renderResults = (variant: 'desktop' | 'mobile') => {
     if (isLoading) {
       return (
         <div className="flex flex-col gap-2 p-3" aria-label="Loading memories" role="status">
@@ -614,6 +628,62 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           <p className="text-sm text-[var(--color-content-secondary)]">Failed to load memories. Please refresh.</p>
         </div>
       );
+    }
+
+    // The map draws the SAME server-filtered `lessons` the list does, so every
+    // filter, scope and range selection applies to it unchanged — switching
+    // view never silently widens what you are looking at. `lessons` is the
+    // pages loaded so far, though, so `hasMore` goes with it: the map has to say
+    // out loud that it is drawing a prefix, or it reads as the whole account.
+    // It is placed before
+    // the empty-state branch because it renders its own, map-specific empty
+    // copy: "no memories to map" wants to explain what the map draws, which the
+    // list's "try a different search term" does not.
+    if (view === 'map') {
+      // Both breakpoint layouts stay mounted — the split below is CSS, not a
+      // conditional render — which is free for a list and expensive for a map:
+      // rendering it in both would mean two `buildLoreGraph` passes, two layout
+      // workers and two WebGL contexts, one of them feeding a canvas nobody can
+      // see. So the map is the one branch that IS gated in JS, on the same
+      // `useIsMobile` the FilterMenu split already needs. A first paint before
+      // the media query resolves renders the desktop one and then swaps, which
+      // costs one remount on a phone and never two live scenes.
+      if ((variant === 'mobile') !== isMobile) return null;
+
+      // The map's own empty copy explains what the map draws — the right answer
+      // for an account with no lore, and the wrong one for a query that matched
+      // nothing: it would tell a reader whose filter is too tight that their
+      // agents have written nothing, and offer none of the ways out. So an
+      // empty result that ANY narrowing could have caused falls through to the
+      // list's empty state below, which names the cause and carries the
+      // "View all time" action.
+      const narrowed =
+        selectedScope !== null ||
+        isNarrowedWithinView ||
+        rangeIsNarrowing ||
+        status !== 'active';
+      if (!(lessons.length === 0 && !hasNextPage && narrowed)) {
+        return (
+          <div className="flex flex-col gap-2">
+            <LoreGraphView
+              memories={lessons}
+              hasMore={hasNextPage}
+              selectedId={openLesson ? memoryNodeId(openLesson) : null}
+              onSelect={(nodeId) => {
+                // Matched on the same `memoryNodeId` that built the node, so
+                // selection round-trips through the canonical identity rather
+                // than through a display label.
+                const lesson = lessons.find((candidate) => memoryNodeId(candidate) === nodeId);
+                if (lesson) handleLessonClick(lesson);
+              }}
+            />
+            {/* The SAME control the list gets. A map that admits it is drawing
+                a prefix has to offer the way to extend it, or the notice names
+                a remedy the reader has to leave the view to reach. */}
+            {loadMore}
+          </div>
+        );
+      }
     }
 
     // Empty state only when nothing is left to show AND nothing more to load.
@@ -758,6 +828,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           live FilterMenu, exactly as before; `variant` carries the only styling
           difference between them. */}
 
+      {/* The view switch sits OUTSIDE the two breakpoint layouts and above
+          both, because it selects between them rather than being part of
+          either — and because it is the one control that changes what the
+          panel below it fundamentally is, which is a decision that belongs
+          above the thing it changes rather than inside its toolbar. */}
+      <div className="flex items-center justify-end">
+        <ViewToggle value={view} onChange={(next) => setViewParam(viewParamValue(next))} />
+      </div>
+
       {/* Desktop */}
       <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
         <ControlRow
@@ -785,7 +864,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onEditField={setEditingField}
         />
 
-        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
+        <div className="flex-1 overflow-y-auto p-3">{renderResults('desktop')}</div>
       </div>
 
       {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
@@ -818,7 +897,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           />
         </div>
 
-        <div>{renderResults()}</div>
+        <div>{renderResults('mobile')}</div>
       </div>
     </div>
   );
