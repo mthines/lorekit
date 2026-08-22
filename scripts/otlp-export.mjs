@@ -29,8 +29,12 @@ import { spawnSync } from 'node:child_process';
 /** OTLP span kinds. A benchmark harness acts for nobody, so its spans are INTERNAL. */
 export const SPAN_KIND_INTERNAL = 1;
 
-/** OTLP `AggregationTemporality`. DELTA = 1; benchmarks emit gauges, not sums. */
-export const AGGREGATION_TEMPORALITY_CUMULATIVE = 2;
+// No `AggregationTemporality` constant here on purpose: every metric this module
+// builds is a GAUGE (`gaugeMetric`), and a gauge datapoint carries no
+// temporality — it is a measurement at a point in time. The edge's
+// `_shared/otlp-metrics.ts` does declare one, because its `pg_stat_statements`
+// metrics are genuinely cumulative sums. If a benchmark ever needs a sum, take
+// the constant from there rather than reviving an unused copy here.
 
 /**
  * Encode a scalar as an OTLP `AnyValue`.
