@@ -5,6 +5,84 @@ export interface LessonRef {
   key: string;
 }
 
+/** Canonical UUID form — what `GET /memories/:id` accepts (and 400s without). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Is this a memory id the by-id endpoint will accept? */
+function isMemoryId(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
+
+/** A `{ scope, key }` ref, or null for anything that is not one. */
+function asLessonRef(value: unknown): LessonRef | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { scope, key } = value as Partial<LessonRef>;
+  if (typeof scope !== 'string' || typeof key !== 'string') return null;
+  if (scope === '' || key === '') return null;
+  return { scope, key };
+}
+
+export interface LessonParamResolution {
+  /** The scope+key ref, when the param holds one. */
+  ref: LessonRef | null;
+  /** A memory id recovered from the param, when it holds one of those instead. */
+  memoryId: string | null;
+}
+
+/**
+ * Interpret the `?lesson=` param, which people and tools populate in three
+ * different shapes.
+ *
+ * The param's documented form is a JSON-encoded `{ scope, key }`. But a bare
+ * memory UUID in it used to be a **silent no-op**: `useUrlState`'s `deserialise`
+ * runs `JSON.parse`, a bare UUID is not valid JSON, so it fell back to `null` —
+ * `lessonRef` was null, `isOpen` was false, and the link landed on `/lore` with
+ * nothing open and nothing logged. Nothing whatsoever told the person their link
+ * was malformed.
+ *
+ * That is a trap worth absorbing rather than documenting harder. `?memoryId=` is
+ * the param for a raw UUID, but `?lesson=` is the name everything ELSE points at
+ * — the `link` command emits it, `docs/cli.md` names it — so someone holding an
+ * `id` and reading about `lesson` writes the combination that cannot work. Both
+ * forms now resolve to the same state.
+ *
+ * Three accepted shapes, all mapped here so the provider has one thing to read:
+ *
+ * | Param value | Result |
+ * |---|---|
+ * | `{"scope":"…","key":"…"}` (JSON) | `ref` — the documented form, unchanged |
+ * | `<uuid>` (raw) | `memoryId` — behaves exactly like `?memoryId=<uuid>` |
+ * | `"<uuid>"` (JSON string) | `memoryId` — same |
+ *
+ * The JSON-string case is not hypothetical padding: every OTHER Explorer param
+ * IS JSON-encoded, so a tool that applies that rule uniformly to a UUID produces
+ * `?lesson=%22<uuid>%22`. Accepting only the raw form would fix the trap for
+ * hand-written links and leave it open for exactly the generated ones.
+ *
+ * A value that is neither a usable ref nor a UUID resolves to NEITHER field —
+ * garbage stays inert rather than becoming a doomed by-id request (the endpoint
+ * 400s on a non-UUID) or a by-ref fetch for a half-formed ref. That last case is
+ * why `asLessonRef` validates instead of trusting the type: `deserialise` casts
+ * `JSON.parse` output blindly, so the declared `LessonRef` generic is a claim
+ * about the URL, not a guarantee about the value.
+ *
+ * Takes BOTH the deserialised value and the raw string because the two shapes
+ * are distinguishable only before and only after parsing respectively: a raw
+ * UUID never survives `JSON.parse`, and a JSON-quoted one is only a UUID once
+ * parsed.
+ *
+ * Pure, so all three shapes are unit-tested rather than asserted in a comment.
+ */
+export function resolveLessonParam(value: unknown, raw: string | null): LessonParamResolution {
+  const ref = asLessonRef(value);
+  if (ref) return { ref, memoryId: null };
+  // A JSON-quoted UUID parses to a string; a bare one fails to parse at all and
+  // is only visible in `raw`.
+  if (isMemoryId(value)) return { ref: null, memoryId: value };
+  if (isMemoryId(raw)) return { ref: null, memoryId: raw };
+  return { ref: null, memoryId: null };
+}
+
 /**
  * Resolve which memory the detail sheet shows from the two independent
  * deep-link params the sidebar reads: the `lesson` scope+key ref and the plain

@@ -131,6 +131,13 @@ export function loreScopeUrl(scope, opts = {}) {
 // own scope, coherent with the detail view. A lesson older than that window or
 // archived can still open blank — a dashboard-side limitation the link can't fix.
 // `scope` is the lesson's own scope. Pure.
+//
+// NOTE FOR ANYONE HAND-BUILDING A URL INSTEAD OF CALLING THIS: the `lesson`
+// param takes a JSON-encoded `{scope, key}`, NOT a memory id. If you hold the
+// `id` a write returned, the param is `?memoryId=<uuid>` (raw, not JSON-encoded).
+// `/lore` now also accepts a UUID in `?lesson=` so the wrong combination
+// resolves rather than silently doing nothing — but that is a safety net, and
+// this function is the thing to call when you have a scope and key.
 export function buildLessonUrl(scope, key, opts = {}) {
   const params = { lesson: { scope, key } };
   if (scope) params.scope = scope;

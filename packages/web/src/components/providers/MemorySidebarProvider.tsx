@@ -10,6 +10,10 @@
  * URL params used:
  *   lesson    – JSON-encoded { scope, key } identifying the open lesson.
  *               Absent (not in URL) when no lesson is selected.
+ *               ALSO accepts a memory UUID, raw or JSON-quoted, in which case it
+ *               behaves exactly like `memoryId` below. It previously ignored one
+ *               silently — see `resolveLessonParam` for why that is worth
+ *               absorbing rather than documenting harder.
  *   memoryId  – Plain DB row id (NOT JSON-encoded). A robust deep-link form that
  *               fetches the memory by id, so the sheet opens even when the row is
  *               outside the Explorer's recent/active window. Absent when unused.
@@ -17,6 +21,7 @@
  *               the sheet records the dismissal locally and leaves the param in
  *               the URL (see `activeMemoryId`), because stripping it would be a
  *               second navigation racing the Explorer's own scope/filter write.
+ *               Wins over a UUID in `lesson` when both are present.
  *
  * ## SSR & hydration
  * `useUrlState` reads from `useSearchParams()`, which is empty on the server.
@@ -42,6 +47,7 @@ import { useLoreData, useMemoryById, useLessonByRef } from '@/lib/queries/lore';
 import {
   activeMemoryId,
   lessonResolvedLocally,
+  resolveLessonParam,
   resolveOpenLesson,
   type LessonRef,
 } from '@/lib/open-lesson';
@@ -101,8 +107,16 @@ interface MemorySidebarProviderProps {
 export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) {
   // Stored in URL as JSON: null when closed, { scope, key } when open.
   // useUrlState provides optimistic local state so open/close is immediate
-  // without waiting for the router navigation round-trip.
-  const [lessonRef, setLessonRef] = useUrlState<LessonRef | null>('lesson', null);
+  // without waiting for the router navigation round-trip — which is why the READ
+  // still goes through it rather than through `searchParams` below: reading the
+  // ref raw would lose the optimistic layer and make the sheet lag a navigation
+  // on every in-app click.
+  //
+  // The declared generic is a claim about what the URL SHOULD hold, not a
+  // guarantee — `deserialise` casts `JSON.parse` output blindly — so the value is
+  // classified at runtime by the pure `resolveLessonParam`, which also recovers
+  // the two UUID shapes this param used to swallow silently.
+  const [lessonParamValue, setLessonRef] = useUrlState<LessonRef | null>('lesson', null);
 
   // Holds a pre-fetched lesson passed by the caller (e.g. an archived memory
   // that won't be present in the active useLoreData cache). Kept in a ref so
@@ -121,7 +135,29 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // resolves the memory even when it is outside the Explorer's recent/active
   // window, the case where the `?lesson=` scope+key form opens blank.
   const searchParams = useSearchParams();
-  const urlMemoryId = searchParams.get('memoryId');
+
+  // Split `?lesson=` into the ref it usually holds and the memory id it is also
+  // now allowed to hold — see `resolveLessonParam` for the three shapes and why
+  // a bare UUID there used to do nothing at all.
+  //
+  // MEMOISED because the resolution builds a fresh `{ scope, key }`: `lessonRef`
+  // is a dependency of the `openLesson` memo and of `contextValue`, so returning
+  // a new object identity every render would re-run both on every render and
+  // push a new context value to every consumer of the sidebar. Both inputs are
+  // themselves stable per navigation (`lessonParamValue` is memoised inside
+  // `useUrlState`), so this recomputes exactly when the URL changes.
+  const lessonParamRaw = searchParams.get('lesson');
+  const { ref: lessonRef, memoryId: lessonParamMemoryId } = useMemo(
+    () => resolveLessonParam(lessonParamValue, lessonParamRaw),
+    [lessonParamValue, lessonParamRaw],
+  );
+
+  // `?memoryId=` stays the explicit, documented spelling and WINS when both are
+  // present — a caller who named the param meant it. `?lesson=<uuid>` is the
+  // forgiving alias, so the two converge on one id from here on and every
+  // downstream behaviour (the by-id fetch, dismissal, `isOpen`) is shared rather
+  // than reimplemented for the alias.
+  const urlMemoryId = searchParams.get('memoryId') ?? lessonParamMemoryId;
   // Closing the sheet dismisses the id locally rather than rewriting the URL —
   // the pure `activeMemoryId` docblock has the why (a second router.replace in
   // the same tick clobbers the Explorer's scope/filter write).
