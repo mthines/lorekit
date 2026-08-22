@@ -85,6 +85,21 @@ https://lorekit.io/lore?scope=%22global%22&lesson=%7B%22scope%22%3A%22global%22%
 
 The detail sheet resolves this form from the active-memory cache, and when the memory is outside that recent window it fetches it by scope + key — so any **active** memory opens, however old. An **archived** memory is the exception: the by-key read returns only active rows, so an archived deep link opens blank; open it from the archived list instead. (`?memoryId=` above has the same archived limitation, since `GET /memories/:id` also skips archived rows.)
 
+### A UUID in `lesson` also works
+
+`lesson` expects the JSON `{scope, key}` object above, but if you put a **memory UUID** there it is treated as `memoryId` instead — raw or JSON-quoted, both resolve:
+
+```text
+# all three open the same memory
+https://lorekit.io/lore?memoryId=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+https://lorekit.io/lore?lesson=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+https://lorekit.io/lore?lesson=%229b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d%22
+```
+
+This exists because the mistake was easy to make and impossible to notice: `lesson` is the parameter everything else points at, so anyone holding an `id` reached for it, and a UUID is not valid JSON — the parameter was ignored, the page loaded normally with nothing open, and no error said why. Both readings now land on the same view.
+
+**`memoryId` is still the parameter to write.** It is explicit, it is what tools should generate, and it wins if a link somehow carries both. The tolerance in `lesson` is a safety net, not a second interface. A value that is neither a valid `{scope, key}` nor a UUID stays ignored — a non-UUID id would only be rejected by the API anyway.
+
 ## Link to a search or a filtered view
 
 Combine any of the Explorer parameters. Each is JSON-encoded and default-omitted:

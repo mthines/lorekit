@@ -12,7 +12,12 @@
 import { describe, it, expect } from 'vitest';
 import type { MemoryEntry } from '@lorekit/schemas/memory';
 import { lessonFromMemoryEntry } from './lesson-entry';
-import { activeMemoryId, lessonResolvedLocally, resolveOpenLesson } from './open-lesson';
+import {
+  activeMemoryId,
+  lessonResolvedLocally,
+  resolveLessonParam,
+  resolveOpenLesson,
+} from './open-lesson';
 
 function lesson(scope: string, key: string) {
   const entry: MemoryEntry = {
@@ -288,5 +293,83 @@ describe('activeMemoryId', () => {
   it('is null when the URL carries no memoryId at all', () => {
     expect(activeMemoryId(null, null)).toBeNull();
     expect(activeMemoryId(null, 'id-a')).toBeNull();
+  });
+});
+
+describe('resolveLessonParam', () => {
+  const UUID = 'dce19167-34ed-4f91-b304-552062680b50';
+
+  // The documented form, unchanged by the UUID tolerance.
+  it('resolves a JSON-encoded { scope, key } as a ref', () => {
+    expect(resolveLessonParam({ scope: 'global', key: 'a' }, '{"scope":"global","key":"a"}')).toEqual(
+      { ref: { scope: 'global', key: 'a' }, memoryId: null },
+    );
+  });
+
+  // The regression this function exists for. A bare UUID in `?lesson=` is not
+  // valid JSON, so `deserialise` fell back to null and the link was a SILENT
+  // no-op: nothing opened, nothing warned. It now behaves like `?memoryId=`.
+  it('recovers a RAW uuid — the shape that used to be a silent no-op', () => {
+    // `deserialise` yields the fallback (null) because JSON.parse threw, so the
+    // raw string is the only place the id is still visible.
+    expect(resolveLessonParam(null, UUID)).toEqual({ ref: null, memoryId: UUID });
+  });
+
+  // Every other Explorer param IS JSON-encoded, so a tool applying that rule
+  // uniformly to a UUID emits ?lesson=%22<uuid>%22. Accepting only the raw form
+  // would fix hand-written links and leave generated ones broken.
+  it('recovers a JSON-QUOTED uuid, which parses to a plain string', () => {
+    expect(resolveLessonParam(UUID, `"${UUID}"`)).toEqual({ ref: null, memoryId: UUID });
+  });
+
+  it('accepts an uppercase uuid', () => {
+    const upper = UUID.toUpperCase();
+    expect(resolveLessonParam(null, upper).memoryId).toBe(upper);
+  });
+
+  it('is inert for an absent param', () => {
+    expect(resolveLessonParam(null, null)).toEqual({ ref: null, memoryId: null });
+  });
+
+  // Garbage must resolve to NEITHER field. A non-UUID id would 400 at
+  // `GET /memories/:id`, and a half-formed ref would fire a by-ref fetch that
+  // cannot match anything — inert is the only honest answer.
+  it('is inert for a value that is neither a usable ref nor a uuid', () => {
+    for (const [value, raw] of [
+      ['not-a-uuid', 'not-a-uuid'],
+      [null, 'garbage'],
+      [42, '42'],
+      [[], '[]'],
+      [{ scope: 'global' }, '{"scope":"global"}'],
+      [{ key: 'a' }, '{"key":"a"}'],
+      [{ scope: 'global', key: 42 }, '{"scope":"global","key":42}'],
+      [{ scope: '', key: 'a' }, '{"scope":"","key":"a"}'],
+      [{ scope: 'global', key: '' }, '{"scope":"global","key":""}'],
+      // A uuid-like string that is the wrong length must not slip through.
+      [null, 'dce19167-34ed-4f91-b304-552062680b5'],
+      [null, `${UUID}-extra`],
+    ] as [unknown, string | null][]) {
+      expect(resolveLessonParam(value, raw), `value=${JSON.stringify(value)}`).toEqual({
+        ref: null,
+        memoryId: null,
+      });
+    }
+  });
+
+  // A real ref wins outright: the id arms are a FALLBACK for a param that could
+  // not be read as a ref, never a second interpretation of one that could.
+  it('prefers a usable ref over any uuid reading of the same param', () => {
+    expect(resolveLessonParam({ scope: 'global', key: UUID }, '{"scope":"global","key":"…"}')).toEqual(
+      { ref: { scope: 'global', key: UUID }, memoryId: null },
+    );
+  });
+
+  // Feeding the recovered id through the SAME activeMemoryId the explicit param
+  // uses is what makes dismissal (and therefore closing the sheet) work for the
+  // alias without reimplementing it.
+  it('produces an id that dismisses like an explicit ?memoryId=', () => {
+    const { memoryId } = resolveLessonParam(null, UUID);
+    expect(activeMemoryId(memoryId, null)).toBe(UUID);
+    expect(activeMemoryId(memoryId, UUID)).toBeNull();
   });
 });
