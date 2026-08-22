@@ -86,17 +86,19 @@ export const getPost = cache((slug: string): Post | null => {
 });
 
 /**
- * Every VISIBLE post, newest first. In production, future-dated drafts are
- * omitted — which also removes them from `generateStaticParams`, so with
- * `dynamicParams = false` their URL 404s until the date lands. On preview/dev,
- * drafts are kept (listed with a badge and reachable) so they can be reviewed
- * before going live. This is the single seam that gates draft visibility; the
- * detail route relies on it rather than re-checking, so the rule lives here.
+ * Every VISIBLE post, **newest first by `date`** (ISO strings sort
+ * chronologically; ties fall back to the registry `order`). In production,
+ * future-dated drafts are omitted — which also removes them from
+ * `generateStaticParams`, so with `dynamicParams = false` their URL 404s until
+ * the date lands. On preview/dev, drafts are kept (listed with a badge and
+ * reachable) so they can be reviewed before going live. This is the single seam
+ * that gates draft visibility; the detail route relies on it rather than
+ * re-checking, so the rule lives here.
  */
 export const getAllPosts = cache((): Post[] => {
   const showDrafts = draftsVisible();
   return BLOG_SLUGS.map((slug) => getPost(slug))
     .filter((p): p is Post => p !== null)
     .filter((p) => showDrafts || !p.isDraft)
-    .sort((a, b) => a.order - b.order);
+    .sort((a, b) => b.date.localeCompare(a.date) || a.order - b.order);
 });
