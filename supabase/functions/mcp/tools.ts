@@ -240,6 +240,7 @@ export async function toolWrite(
       metadata: { scope, key },
     },
     userId,
+    span,
   );
   // `inserted` is an internal audit-classification signal (D4), not part of
   // the memory.write response contract — keep the same {id, created_at}
@@ -506,6 +507,7 @@ export async function toolDelete(
         metadata: { scope, key, force, ...(org ? { org } : {}) },
       },
       userId,
+      span,
     );
     return { deleted: row.deleted, archived: row.archived };
   }
@@ -627,6 +629,7 @@ export async function toolArchive(
       db,
       { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
+      span,
     );
     return { archived: true };
   }
@@ -705,6 +708,7 @@ export async function toolRestore(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
+      span,
     );
     return { restored: true };
   }
@@ -756,6 +760,7 @@ export async function toolPurge(
         metadata: { purged, retention_days: retentionDays },
       },
       userId,
+      span,
     );
   }
   return { purged };
@@ -1009,6 +1014,7 @@ export async function toolPurgeExpired(
         metadata: { purged_expired: purged },
       },
       userId,
+      span,
     );
   }
 

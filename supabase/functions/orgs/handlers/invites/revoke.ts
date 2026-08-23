@@ -37,6 +37,7 @@ export async function handleRevokeInvite(req: Request, auth: AuthContext, db: Db
     db,
     { action: 'member.revoke', resourceType: 'org_invite', resourceId: idV.data },
     auditUserId(auth),
+    span,
   );
   return noContent(cors);
 }
