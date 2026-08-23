@@ -383,10 +383,51 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         });
       }
 
-      if (err instanceof LimitError) {
-        // Distinct JSON-RPC error code for the memory cap — an actionable,
-        // MCP-appropriate error rather than the generic -32603 internal error.
-        return jsonrpcError(id, -32040, err.message);
+      // A failure that ORIGINATED IN THE TOOL goes back inside the RESULT with
+      // `isError: true`, not as a JSON-RPC error. The MCP spec is explicit about
+      // why, and the reason is the whole point of this branch:
+      //
+      //   "Any errors that originate from the tool SHOULD be reported inside the
+      //    result object, with `isError` set to true, _not_ as an MCP
+      //    protocol-level error response. Otherwise, the LLM would not be able
+      //    to see that an error occurred and self-correct.
+      //    However, any errors in _finding_ the tool […] or any other
+      //    exceptional conditions, should be reported as an MCP error response."
+      //
+      // A protocol error is handled by the CLIENT LIBRARY and may never reach
+      // the model at all — mcp-remote surfaces it as a transport failure. So an
+      // agent that hit the memory cap used to be told nothing it could act on,
+      // when "cap reached, archive something" is precisely the kind of thing an
+      // agent CAN fix by itself. Same for a malformed scope, a bad TTL, or an
+      // org slug that does not resolve.
+      //
+      // The dividing line is DISPATCH, which maps onto this try/catch exactly
+      // and so cannot drift: everything thrown from inside the tool call is
+      // tool-originated; everything refused BEFORE it (parse errors, unknown
+      // tool, unknown method, token-permission denials, the account-wide and
+      // scope-allowlist refusals) stays a protocol error above. Auth-family
+      // errors in particular MUST stay protocol errors travelling in-band —
+      // `mcp-authz-status.spec.ts` explains what happens to mcp-remote
+      // otherwise, and it is a 30-minute hang, not a worse message.
+      //
+      // This is the EDGE converging on a posture the product already had: the
+      // CLI's local stdio MCP server (`packages/cli/src/commands/mcp-server.mjs`) has
+      // always wrapped a failed tool payload in `isError`, and the hook engine's
+      // `core/failure.mjs` already reads it. Two MCP surfaces were answering the
+      // same class of failure with two different shapes.
+      //
+      // `isClientError` already computed the "the caller can fix this" set, so
+      // this reuses it rather than inventing a second classification. A genuine
+      // server fault (a DB outage) is NOT tool-originated in any sense the model
+      // can self-correct from, and a client may legitimately retry it, so it
+      // remains -32603 — the spec's "other exceptional conditions".
+      if (isClientError || err instanceof LimitError) {
+        // `(err as Error).message` rather than `msg`: `msg` is class-qualified
+        // (`UserInputError: …`) which is useful on a span and noise to a model.
+        return jsonrpc(id, {
+          content: [{ type: 'text', text: (err as Error).message }],
+          isError: true,
+        });
       }
       return jsonrpcError(id, -32603, (err as Error).message);
     }

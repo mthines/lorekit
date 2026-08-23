@@ -300,3 +300,66 @@ Nothing forces them on, either: the completeness gate requires a **catalogued MC
 If this is ever revisited, the answer is **not** five tools. It is at most ONE compact `memory.stats` rollup, and `lorekit stats --tags` / `--activity` flags rather than new top-level commands, so the agent-facing surface grows by one entry instead of five.
 
 **The decision is annotated in code, not only here.** Each of the five is a `restOnly` entry in `packages/mcp-core/src/telemetry/telemetry-vocabulary.ts` — the closed set of names `usage_events.tool_name` may carry — so the omission is a declared, guarded field rather than an absence a future audit reads as a gap. `telemetry-vocabulary.spec.ts` pins the five by name, pins `memory.relevant` as explicitly NOT one of them (it looks like a sixth; it is already covered by `memory.list order=rank` and `remote.relevant()`), and scans the CLI sources to prove no command calls the five — using the `/memories/relevant` call that IS there as the anti-vacuity floor, so a broken scan fails rather than passing on nothing. The same spec asserts this section still exists: the field says which, this record says why, and losing either leaves the other unexplained.
+
+
+## A tool-originated MCP failure is an `isError` result, not a protocol error
+
+**A failure thrown from inside a tool call comes back as a SUCCESSFUL JSON-RPC
+result carrying `isError: true`. A failure to dispatch stays a JSON-RPC `error`.**
+
+The MCP spec draws this line and gives the reason (quoted verbatim in
+`@modelcontextprotocol/sdk`'s `CallToolResult`):
+
+> Any errors that originate from the tool SHOULD be reported inside the result
+> object, with `isError` set to true, *not* as an MCP protocol-level error
+> response. Otherwise, the LLM would not be able to see that an error occurred
+> and self-correct. However, any errors in *finding* the tool, an error
+> indicating that the server does not support tool calls, or any other
+> exceptional conditions, should be reported as an MCP error response.
+
+**LoreKit had already made this decision on the surface it fully controls.** The
+CLI's local stdio MCP server (`packages/cli/src/commands/mcp-server.mjs`) wraps a failed
+tool payload in `isError` rather than a protocol error, and the shared hook
+engine's `core/failure.mjs` reads `isError` when detecting a failed tool result.
+So this is not a new posture — it is the EDGE server converging on the one the
+rest of the product already had. Two MCP surfaces in one product were answering
+the same class of failure with two different shapes.
+
+LoreKit's edge server returned a protocol error for everything, including a
+memory-cap hit. A
+protocol error is consumed by the client LIBRARY — `mcp-remote` surfaces it as a
+transport failure — so the model never saw it. An agent that filled its 5,000-row
+cap was told nothing it could act on, when "archive something and retry" is
+precisely what it should have done next. Same for a malformed scope, an invalid
+`ttl_*`, or an org slug that does not resolve: all fixable by the caller, all
+previously invisible to it.
+
+**The dividing line is DISPATCH, and it maps onto the handler's own try/catch so
+it cannot drift.** Everything thrown from inside the tool call is
+tool-originated; everything refused before it — parse errors, unknown tool,
+unknown method, token-permission denials, the account-wide and scope-allowlist
+refusals — stays a protocol error. The implementation reuses the `isClientError`
+classification the catch block already computed rather than inventing a second
+one, which is what keeps the span status, the usage outcome and the wire shape
+agreeing about what kind of failure occurred.
+
+**Two things deliberately did NOT change.**
+
+*Auth-family errors stay protocol errors travelling in-band* (HTTP 200 + a
+JSON-RPC error with the real request id). This is not a style preference: a `401`
+or an `id: null` makes streamable-HTTP clients retry a session handshake and
+hang, observed at ~30 minutes. An `isError` result would be worse still — every
+client would read a rotated token as a working connection whose tool merely
+complained. `mcp-authz-status.spec.ts` guards the shape; the new
+`mcp-tool-error-shape.spec.ts` guards that `isError` never leaks into it.
+
+*A genuine server fault stays `-32603`.* A DB outage is the spec's "other
+exceptional condition": not something a model can self-correct from, and safe for
+a client to retry.
+
+**This is a wire-contract change, so the clients matter.** A client that only
+tests for `response.error` now reads a cap rejection as a success — the status is
+`200` and there is no `error` member. The repo's own client
+(`packages/cli/src/shared/mcp.mjs`) checks `result.isError` and reports a `tool_error`;
+`docs/mcp-tools.md` and `llms.txt` both say so explicitly for third parties. The
+former cap-specific code `-32040` no longer exists.

@@ -77,6 +77,24 @@ export async function mcpCall(endpoint, token, method, params = {}, { timeoutMs 
         error: { code: res.status, message: text.slice(0, 200) || res.statusText },
       };
     }
+    // A tool-originated failure arrives as a SUCCESSFUL JSON-RPC result carrying
+    // `isError: true` — that is the MCP spec's shape, so the model can see the
+    // error and self-correct, and the edge handler now uses it for everything
+    // the caller can fix (a memory-cap hit, a malformed scope, a bad TTL).
+    //
+    // Without this branch the check above passes (there is no `json.error`) and
+    // the call is reported as `ok: true`, so a cap rejection reads as a
+    // successful write. Exactly the trap the load-test driver hit from the other
+    // side: on this transport the status code does not carry the outcome.
+    if (json && json.result && json.result.isError) {
+      const text0 = json.result.content && json.result.content[0];
+      return {
+        ok: false,
+        httpStatus: res.status,
+        toolError: true,
+        error: { code: 'tool_error', message: (text0 && text0.text) || 'The tool reported an error.' },
+      };
+    }
     return { ok: true, httpStatus: res.status, result: json ? json.result : undefined };
   } catch (e) {
     return { ok: false, networkError: String(e && e.message ? e.message : e) };
