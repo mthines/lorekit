@@ -7437,6 +7437,97 @@ begin
 end;
 $$;
 
+-- ── 88. Per-memory read counters + daily rollup (00077) ─────────────────────
+-- usage_events records HOW MANY records a call touched, never WHICH -- there
+-- is no memory_id on the read ledger and none of the 17 tables is a
+-- per-memory read table. This closes it with counters + a daily rollup, not a
+-- per-read event table.
+-- AC-1: lorekit_record_memory_reads increments read_count/last_read_at for
+--       EVERY id in the array, in one call.
+-- AC-2: it upserts memory_read_daily, keyed by (memory_id, day, read_kind),
+--       accumulating count across repeated calls on the same day.
+-- AC-3: a null/empty array is a no-op -- no row touched, no error raised.
+-- AC-4: the read_kind CHECK is a real backstop.
+-- AC-5: ON DELETE CASCADE -- purging a memory removes its rollup rows; an
+--       ARCHIVED memory (soft-delete only) keeps them.
+do $$
+declare
+  v_m1        uuid;
+  v_m2        uuid;
+  v_read_count integer;
+  v_last_read  timestamptz;
+  v_rollup_count integer;
+  v_rollup_rows  integer;
+  v_raised       boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-1', 'v')
+    returning id into v_m1;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-2', 'v')
+    returning id into v_m2;
+
+  -- AC-1: a bulk read over both memories, one call, one array.
+  perform lorekit_record_memory_reads(array[v_m1, v_m2], 'bulk');
+
+  select read_count, last_read_at into v_read_count, v_last_read from memories where id = v_m1;
+  assert v_read_count = 1, format('88 AC-1: read_count must increment to 1, got %s', v_read_count);
+  assert v_last_read is not null, '88 AC-1: last_read_at must be set';
+
+  select read_count into v_read_count from memories where id = v_m2;
+  assert v_read_count = 1, format('88 AC-1: the second id in the array must ALSO increment, got %s', v_read_count);
+
+  -- AC-2: a second bulk call the SAME day accumulates onto the same rollup row
+  -- rather than inserting a second one.
+  perform lorekit_record_memory_reads(array[v_m1], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m1], 'targeted');
+
+  select count into v_rollup_count from memory_read_daily
+   where memory_id = v_m1 and day = (now() at time zone 'UTC')::date and read_kind = 'bulk';
+  assert v_rollup_count = 2, format('88 AC-2: the bulk rollup must accumulate to 2, got %s', v_rollup_count);
+
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m1;
+  assert v_rollup_rows = 2,
+    format('88 AC-2: bulk and targeted must be SEPARATE rollup rows for the same day, got %s rows', v_rollup_rows);
+
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('88 AC-2: read_count must reflect all three calls (1+1+1), got %s', v_read_count);
+
+  -- AC-3: a null/empty array must not raise and must not touch any row.
+  perform lorekit_record_memory_reads(null, 'bulk');
+  perform lorekit_record_memory_reads(array[]::uuid[], 'bulk');
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('88 AC-3: a null/empty array must be a no-op, got read_count=%s', v_read_count);
+
+  -- AC-4: the read_kind CHECK is a real backstop, not decoration.
+  begin
+    insert into memory_read_daily (memory_id, day, read_kind, count) values (v_m1, current_date, 'skimmed', 1);
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '88 AC-4: an unrecognised read_kind must violate the CHECK';
+
+  -- AC-5: hard-delete (purge) cascades; archive (soft-delete) does not touch
+  -- the rollup at all. Test the CASCADE using m2 (already has no rollup rows
+  -- yet, isolating the assertion from m1's history above) — give it one first.
+  perform lorekit_record_memory_reads(array[v_m2], 'targeted');
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 1, '88 AC-5 setup: m2 must have exactly one rollup row before the delete';
+
+  delete from memories where id = v_m2;
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 0,
+    format('88 AC-5: deleting the memory must CASCADE its rollup rows, got %s remaining', v_rollup_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

@@ -255,6 +255,35 @@ export type Database = {
           },
         ]
       }
+      memory_read_daily: {
+        Row: {
+          count: number
+          day: string
+          memory_id: string
+          read_kind: string
+        }
+        Insert: {
+          count?: number
+          day: string
+          memory_id: string
+          read_kind: string
+        }
+        Update: {
+          count?: number
+          day?: string
+          memory_id?: string
+          read_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_read_daily_memory_id_fkey"
+            columns: ["memory_id"]
+            isOneToOne: false
+            referencedRelation: "memories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       org_invites: {
         Row: {
           created_at: string
@@ -891,6 +920,13 @@ export type Database = {
           count: number
           scope: string | null
         }[]
+      }
+      lorekit_record_memory_reads: {
+        Args: {
+          p_memory_ids: string[]
+          p_read_kind: string
+        }
+        Returns: undefined
       }
       lorekit_record_usage_event: {
         Args: {

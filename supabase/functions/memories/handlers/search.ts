@@ -11,6 +11,7 @@ import type { Tables } from '../../_shared/db/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { applyFilter } from '../../_shared/api/filter.ts';
+import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -72,5 +73,7 @@ export async function handleSearch(
   // Record count for the router's usage event — see RESULT_COUNT_HEADER.
   const res = ok({ ...page, entries: page.entries.map(shapeMemoryRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
+  // memory.search is a BULK read for the per-memory counter (migration 00077).
+  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
   return res;
 }
