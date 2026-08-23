@@ -20,7 +20,7 @@
  * tested directly.
  */
 
-import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../tool-catalog.ts';
+import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../shared/tool-catalog.ts';
 
 /** One entry in the generated docs index, read from an MDX file's frontmatter. */
 export interface DocsIndexEntry {
@@ -38,7 +38,7 @@ const GENERATED_BANNER = `<!--
   GENERATED FILE — do not edit by hand.
 
   Editorial prose:  packages/schemas/src/llms/template.md
-  Tool reference:   packages/schemas/src/tool-catalog.ts
+  Tool reference:   packages/schemas/src/shared/tool-catalog.ts
   Docs index:       packages/web/src/content/docs/*.mdx (frontmatter)
 
   Regenerate:  pnpm nx generate:llms schemas

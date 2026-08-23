@@ -34,43 +34,43 @@ import {
   ActivityBodySchema,
   ReadActivityQuerySchema,
   ReadActivityResponseSchema,
-} from '../memory.ts';
+} from '../domain/memory.ts';
 import {
   OrgResponseSchema,
   OrgListResponseSchema,
   CreateOrgBodySchema,
   RenameOrgBodySchema,
-} from '../org.ts';
+} from '../domain/org.ts';
 import {
   OrgMemberSchema,
   OrgMemberListResponseSchema,
   UpdateMemberRoleBodySchema,
-} from '../member.ts';
+} from '../domain/member.ts';
 import {
   OrgInviteSchema,
   OrgInviteListResponseSchema,
   CreateInviteBodySchema,
-} from '../invite.ts';
+} from '../domain/invite.ts';
 import {
   ErrorResponseSchema,
   MemoryIdParamsSchema,
   OrgSlugParamsSchema,
   OrgSlugMemberParamsSchema,
   OrgSlugInviteParamsSchema,
-} from '../common.ts';
+} from '../shared/common.ts';
 import {
   UsageStatsQuerySchema,
   UsageStatsResponseSchema,
-} from '../usage.ts';
+} from '../domain/usage.ts';
 import {
   RelevantQuerySchema,
   RelevantResponseSchema,
-} from '../relevant.ts';
+} from '../shared/relevant.ts';
 import {
   GetBlogLikesQuerySchema,
   LikeBlogBodySchema,
   BlogLikesResponseSchema,
-} from '../blog.ts';
+} from '../domain/blog.ts';
 
 let _cachedSpec: Record<string, unknown> | null = null;
 

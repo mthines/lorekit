@@ -33,7 +33,7 @@ const CASES = [
   ['packages/web/src/app/(dashboard)/lore/LorePage.tsx', true],
   ['packages/web/package.json', true],
   ['packages/web/public/llms.txt', true],
-  ['packages/schemas/src/tool-catalog.ts', true],
+  ['packages/schemas/src/shared/tool-catalog.ts', true],
   ['package.json', true],
   ['nx.json', true],
 

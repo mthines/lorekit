@@ -31,7 +31,7 @@ import { createRemoteStore } from './store/remote.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
 import { readScopeInventory } from './store/scope-inventory.mjs';
 import { inferKindHostFromTags } from './lessons-view.mjs';
-// Generated from packages/schemas/src/tool-catalog.ts — the same declaration the
+// Generated from packages/schemas/src/shared/tool-catalog.ts — the same declaration the
 // hosted MCP server renders `tools/list` from. Committed and zero-dep because
 // this is a published package that cannot import the workspace schemas.
 import { MCP_TOOL_DEFS, MCP_TOOL_NAMES } from './surfaces.generated.mjs';
@@ -365,7 +365,7 @@ export function advertise(dispatch) {
       if (!def) {
         throw new Error(
           `mcp-server dispatches "${name}", which the tool catalog does not declare. `
-          + 'Add it to packages/schemas/src/tool-catalog.ts (and regenerate: node scripts/gen-surfaces.mjs).',
+          + 'Add it to packages/schemas/src/shared/tool-catalog.ts (and regenerate: node scripts/gen-surfaces.mjs).',
         );
       }
       return def;

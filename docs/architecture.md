@@ -67,7 +67,7 @@ LoreKit is a shared memory layer for AI coding agents. Agents write lessons they
 Every LoreKit operation is exposed on up to three surfaces — the MCP server, the
 REST API, and the CLI. Which surfaces an operation reaches, what it is called on
 each, and why it is absent from one is declared ONCE, in
-**`packages/schemas/src/tool-catalog.ts`** (the `surfaces` binding on each tool).
+**`packages/schemas/src/shared/tool-catalog.ts`** (the `surfaces` binding on each tool).
 An operation appearing on one surface and quietly not on another used to be a
 matter of nobody noticing; now it is a failing test.
 

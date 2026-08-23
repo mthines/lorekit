@@ -555,7 +555,7 @@ the `.lorekit/` files directly, `remote` passes calls through to the hosted
 endpoint, and `off` advertises no tools.
 
 Tools advertised are **derived from the canonical tool catalog**
-(`packages/schemas/src/tool-catalog.ts`) rather than declared here, so this
+(`packages/schemas/src/shared/tool-catalog.ts`) rather than declared here, so this
 server and the hosted one describe each operation identically. In `local` and
 `remote` mode that is `memory.write`, `memory.read`, `memory.list`,
 `memory.search`, `memory.delete`, `memory.archive`, `memory.restore` and

@@ -320,14 +320,14 @@ describe('SCOPE_PATTERN parity across every copy', () => {
   const repoRoot = path.resolve(here, '../../../..');
   const read = (rel: string) => readFileSync(path.resolve(repoRoot, rel), 'utf8');
 
-  // The authority, as written in `packages/schemas/src/api-key.ts`.
+  // The authority, as written in `packages/schemas/src/domain/api-key.ts`.
   const AUTHORITY = String.raw`^[a-z0-9._:/-]+(?:(?:\/|::)\*)?$`;
   // The same shape in POSIX regex, as the SQL copies must spell it: Postgres
   // `~` has no non-capturing-group syntax and needs no `/` escape.
   const AUTHORITY_SQL = String.raw`^[a-z0-9._:/-]+((/|::)\*)?$`;
 
   it('the schema still says what this guard thinks it says (anti-vacuity)', () => {
-    expect(read('packages/schemas/src/api-key.ts')).toContain(`/${AUTHORITY}/`);
+    expect(read('packages/schemas/src/domain/api-key.ts')).toContain(`/${AUTHORITY}/`);
   });
 
   it.each([

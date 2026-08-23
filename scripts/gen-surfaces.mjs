@@ -4,7 +4,7 @@
  *
  * Why a generator at all
  * ---------------------
- * `packages/schemas/src/tool-catalog.ts` is the single origin of LoreKit's
+ * `packages/schemas/src/shared/tool-catalog.ts` is the single origin of LoreKit's
  * operation surface. Most consumers just import it — the edge function reads
  * the mirrored copy, `mcp-core` imports the package — and an import has no
  * staleness surface at all, so it needs no generator and no `--check`.
@@ -37,7 +37,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const catalogPath = join(repoRoot, 'packages/schemas/src/tool-catalog.ts');
+const catalogPath = join(repoRoot, 'packages/schemas/src/shared/tool-catalog.ts');
 
 /**
  * Minimum Node for THIS SCRIPT: it `import()`s a `.ts` file and relies on
@@ -60,7 +60,7 @@ function assertNodeSupportsTypeStripping() {
   if (ok) return;
   console.error(
     `gen-surfaces.mjs needs Node >= ${MIN_NODE.join('.')} (found ${process.versions.node}).\n` +
-      'It imports packages/schemas/src/tool-catalog.ts directly and relies on native\n' +
+      'It imports packages/schemas/src/shared/tool-catalog.ts directly and relies on native\n' +
       'TypeScript type stripping, which is enabled by default from 22.18.0.\n' +
       'Upgrade Node, or run it under the version CI pins (see .github/workflows/ci.yml).',
   );
@@ -73,7 +73,7 @@ export async function loadCatalog() {
 }
 
 const BANNER = `// GENERATED — do not edit.
-// Source: packages/schemas/src/tool-catalog.ts
+// Source: packages/schemas/src/shared/tool-catalog.ts
 // Regenerate: node scripts/gen-surfaces.mjs
 //
 // Edit the catalog's \`surfaces\` bindings, not this file. \`--check\` fails CI

@@ -31,7 +31,7 @@ and Phase 6 rather than blocking the audit.
 Before crawling, load prior insight so the run does not re-derive decisions:
 
 `MemorySearchSchema` takes a single string `q` and a `scopes` **array**
-(`packages/schemas/src/memory.ts`), so this is one call per query term, not an
+(`packages/schemas/src/domain/memory.ts`), so this is one call per query term, not an
 array in one call:
 
 ```text

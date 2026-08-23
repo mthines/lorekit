@@ -1,5 +1,5 @@
 // GENERATED — do not edit.
-// Source: packages/schemas/src/tool-catalog.ts
+// Source: packages/schemas/src/shared/tool-catalog.ts
 // Regenerate: node scripts/gen-surfaces.mjs
 //
 // Edit the catalog's `surfaces` bindings, not this file. `--check` fails CI

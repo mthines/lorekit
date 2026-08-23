@@ -20,7 +20,7 @@
  */
 
 import { normalizeTagList, parseTagsParam } from './tags.ts';
-import type { ScalarFilterMode, TagsMode } from './memory.ts';
+import type { ScalarFilterMode, TagsMode } from '../domain/memory.ts';
 
 /** One dimension: the values it names and how they combine. */
 export interface Dimension<Mode> {

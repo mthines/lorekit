@@ -77,11 +77,11 @@ function runGenerator(args: string[], cwd = repoRoot): string {
 function sandbox(): { dir: string; dispose: () => void } {
   const dir = mkdtempSync(path.join(tmpdir(), 'gen-surfaces-'));
   mkdirSync(path.join(dir, 'scripts'), { recursive: true });
-  mkdirSync(path.join(dir, 'packages/schemas/src'), { recursive: true });
+  mkdirSync(path.join(dir, 'packages/schemas/src/shared'), { recursive: true });
   copyFileSync(path.join(repoRoot, generator), path.join(dir, generator));
   copyFileSync(
-    path.join(repoRoot, 'packages/schemas/src/tool-catalog.ts'),
-    path.join(dir, 'packages/schemas/src/tool-catalog.ts'),
+    path.join(repoRoot, 'packages/schemas/src/shared/tool-catalog.ts'),
+    path.join(dir, 'packages/schemas/src/shared/tool-catalog.ts'),
   );
   return { dir, dispose: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -203,7 +203,7 @@ describe('the published CLI artifact stays publishable', () => {
 
   it('carries the GENERATED banner naming its source and regenerate command', () => {
     expect(artifact()).toContain('GENERATED — do not edit.');
-    expect(artifact()).toContain('packages/schemas/src/tool-catalog.ts');
+    expect(artifact()).toContain('packages/schemas/src/shared/tool-catalog.ts');
     expect(artifact()).toContain('node scripts/gen-surfaces.mjs');
   });
 

@@ -8,7 +8,7 @@ import {
   type DocsIndexEntry,
 } from './render.ts';
 import { buildLlmsTxt, parseFrontmatter, readDocsIndex, OUTPUT_PATH } from './generate.ts';
-import { MCP_TOOLS, type McpToolDoc } from '../tool-catalog.ts';
+import { MCP_TOOLS, type McpToolDoc } from '../shared/tool-catalog.ts';
 
 const toolNamed = (name: string): McpToolDoc => {
   const found = MCP_TOOLS.find((t) => t.name === name);

@@ -112,7 +112,7 @@ test('a docs-only merge deploys nothing', () => {
 
 test('shared and pipeline paths force both halves', () => {
   for (const f of [
-    'packages/schemas/src/memory.ts',
+    'packages/schemas/src/domain/memory.ts',
     'pnpm-lock.yaml',
     'package.json',
     'nx.json',

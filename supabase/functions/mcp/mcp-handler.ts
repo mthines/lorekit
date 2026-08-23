@@ -12,7 +12,7 @@ import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
 import { TtlError } from './ttl.ts';
 import { CreatedAtError } from '../_shared/created-at.ts';
 import { type Params } from './tools.ts';
-// The dispatch maps are GENERATED from packages/schemas/src/tool-catalog.ts —
+// The dispatch maps are GENERATED from packages/schemas/src/shared/tool-catalog.ts —
 // see tool-dispatch.generated.ts. They were hand-written here, which is why a
 // regex in tool-catalog-parity.spec.ts had to scrape this file to check them
 // against the catalog. Now `satisfies Record<MemoryToolName, unknown>` in the
@@ -116,7 +116,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   }
 
   if (method === 'tools/list') {
-    // Rendered from the canonical catalog in packages/schemas/src/tool-catalog.ts
+    // Rendered from the canonical catalog in packages/schemas/src/shared/tool-catalog.ts
     // (mirrored here by scripts/sync-edge-schemas.mjs). The same catalog renders
     // the MCP tools section of llms.txt, so the wire contract and the published
     // docs cannot drift. Add a tool there AND to the dispatch maps above.

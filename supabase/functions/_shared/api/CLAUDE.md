@@ -181,7 +181,7 @@ Rules:
 - This module is a **thin adapter only**. The semantics — operator mapping, the field
   whitelist, and value encoding — live in `@lorekit/schemas/filter`'s
   `serializeFilterGroup`, next to the `FilterGroupSchema` that validates the input,
-  so they are unit-tested in Node (`packages/schemas/src/filter.spec.ts`) and cannot
+  so they are unit-tested in Node (`packages/schemas/src/shared/filter.spec.ts`) and cannot
   drift from the schema. Add a new operator or filterable column **there**, not here.
 - `serializeFilterGroup` returns an AND-list of PostgREST `or()` expressions; the adapter
   chains one `.or()` call per element, because PostgREST ANDs successive `.or()` calls.
