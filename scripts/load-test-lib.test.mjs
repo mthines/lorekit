@@ -3,14 +3,24 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_MIX,
+  MCP_TOOL_FOR_OP,
   buildOpSequence,
+  buildRampRungs,
   buildSchedule,
+  checkRateHeadroom,
   checkServiceCredential,
+  classifyMcpResponse,
   dbShare,
   describeSupabaseKey,
   diffQueryStats,
+  limitedShareOfMix,
+  mcpArgumentsFor,
+  outcomeOf,
   percentile,
   projectRefFromUrl,
+  rampVerdict,
+  resolveAuthMode,
+  resolveSurface,
   resolveTarget,
   summarize,
   totals,
@@ -377,4 +387,183 @@ test('a self-hosted URL asserts no mismatch', () => {
     supabaseUrl: 'http://localhost:54321',
   });
   assert.deepEqual(r.errors, []);
+});
+
+// ── surface / auth resolution ────────────────────────────────────────────────
+
+/**
+ * These exist because the REST arm was mistaken for whole-system coverage. REST
+ * is the DASHBOARD's path; agents use MCP, which has its own handlers, its own
+ * auth span, and rate-limits every method. The pair (surface, auth) is what
+ * identifies a real caller, so both dimensions are resolved and both defaulted.
+ */
+
+test('the surface defaults to rest and rejects anything unknown', () => {
+  assert.equal(resolveSurface(undefined, {}).surface, 'rest');
+  assert.equal(resolveSurface('mcp', {}).surface, 'mcp');
+  assert.equal(resolveSurface('MCP', {}).surface, 'mcp', 'case-insensitive');
+  assert.equal(resolveSurface(undefined, { LOREKIT_LOAD_SURFACE: 'mcp' }).surface, 'mcp');
+  assert.equal(resolveSurface('grpc', {}).ok, false);
+});
+
+test('auth defaults to the tier each surface is really called with', () => {
+  // mcp -> token: agents hold `lk_rw_*`. rest -> jwt: the dashboard holds a JWT.
+  assert.equal(resolveAuthMode(undefined, 'mcp').auth, 'token');
+  assert.equal(resolveAuthMode(undefined, 'rest').auth, 'jwt');
+  // rest + token is the CLI's remote mode — a DIFFERENT branch of
+  // resolveRestAuth than the dashboard's, so it must be reachable.
+  assert.equal(resolveAuthMode('token', 'rest').auth, 'token');
+  assert.equal(resolveAuthMode('oauth', 'rest').ok, false);
+});
+
+// ── MCP wire shape ───────────────────────────────────────────────────────────
+
+test('every op in the default mix maps to a real MCP tool', () => {
+  for (const { op } of DEFAULT_MIX) {
+    assert.ok(MCP_TOOL_FOR_OP[op], `no MCP tool for "${op}"`);
+    assert.match(MCP_TOOL_FOR_OP[op], /^memory\./);
+  }
+});
+
+test('MCP arguments satisfy each tool\'s required fields', () => {
+  // Straight from the catalog: list->scope, search->q, write->scope/key/value,
+  // scopes->none. A missing one returns HTTP 200 with a JSON-RPC error, so this
+  // is not a cosmetic assertion.
+  const ctx = { scope: 'global', key: 'k', value: 'v' };
+  assert.deepEqual(Object.keys(mcpArgumentsFor('scopes', ctx)), []);
+  assert.ok('scope' in mcpArgumentsFor('list', ctx));
+  assert.ok('q' in mcpArgumentsFor('search', ctx));
+  for (const f of ['scope', 'key', 'value']) assert.ok(f in mcpArgumentsFor('write', ctx), `write needs ${f}`);
+});
+
+test('search takes `scopes` (array) and list takes `scope` — not interchangeable', () => {
+  const a = mcpArgumentsFor('search', { scope: 'global' });
+  assert.ok(Array.isArray(a.scopes), 'search.scopes must be an array');
+  assert.equal(a.scope, undefined, 'search must not send the singular form');
+  const l = mcpArgumentsFor('list', { scope: 'global' });
+  assert.equal(typeof l.scope, 'string');
+  assert.equal(l.scopes, undefined, 'list must not send the plural form');
+});
+
+test('an unmapped op throws rather than sending an empty tool call', () => {
+  assert.throws(() => mcpArgumentsFor('teleport', {}), /no MCP mapping/);
+});
+
+// ── the JSON-RPC trap ────────────────────────────────────────────────────────
+
+test('a JSON-RPC error inside a 200 is an ERROR, not a success', () => {
+  // THE trap of this transport. A driver that checks only the status code
+  // reports a perfect run having failed every single request.
+  assert.equal(classifyMcpResponse({ status: 200, body: { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid params' } } }), 'error');
+  assert.equal(classifyMcpResponse({ status: 200, body: { jsonrpc: '2.0', id: 1, result: { content: [] } } }), 'ok');
+});
+
+test('a tool-level isError is an error even though the call succeeded', () => {
+  assert.equal(classifyMcpResponse({ status: 200, body: { result: { isError: true, content: [{ type: 'text', text: 'memory cap reached' }] } } }), 'error');
+});
+
+test('429 is read before the body — the limiter answers above JSON-RPC', () => {
+  assert.equal(classifyMcpResponse({ status: 429, body: null }), 'rate_limited');
+  // Even if a body somehow accompanies it.
+  assert.equal(classifyMcpResponse({ status: 429, body: { error: { code: -32000 } } }), 'rate_limited');
+});
+
+test('transport failures and non-2xx are errors', () => {
+  assert.equal(classifyMcpResponse({ status: 0, body: null }), 'error');
+  assert.equal(classifyMcpResponse({ status: 500, body: null }), 'error');
+  assert.equal(classifyMcpResponse({ status: 200, body: null }), 'error', 'a 200 with no parseable body is not a success');
+});
+
+// ── rate-limit headroom ──────────────────────────────────────────────────────
+
+test('MCP counts every method; REST counts only the write share', () => {
+  assert.equal(limitedShareOfMix('mcp'), 1);
+  // DEFAULT_MIX is 15/100 write.
+  assert.ok(Math.abs(limitedShareOfMix('rest') - 0.15) < 1e-9);
+});
+
+test('the harness\'s OWN defaults are refused on MCP — the guard that matters', () => {
+  // 20 rps / 5 users = 4 rps/user against a 2 rps/user ceiling. Half the run
+  // would 429 and the percentiles would describe the guardrail. This must fail.
+  const r = checkRateHeadroom({ surface: 'mcp', rps: 20, users: 5 });
+  assert.equal(r.ok, false);
+  assert.equal(r.requiredUsers, 10);
+  assert.match(r.error, /needs at least 10 users/);
+  assert.match(r.error, /Raise --users to 10, or lower --rps to 10/);
+});
+
+test('the same settings are fine on REST, because reads are ungated', () => {
+  // Only 15% of 20 rps is limited = 3 rps, i.e. 0.6 rps/user over 5 users.
+  const r = checkRateHeadroom({ surface: 'rest', rps: 20, users: 5 });
+  assert.equal(r.ok, true);
+  assert.equal(r.requiredUsers, 2);
+});
+
+test('a raised per-user ceiling reduces the users needed', () => {
+  // The real ceiling is lorekit_get_limit(user,'requests_per_minute'); 120 is
+  // only the default and a user_limits row can raise it.
+  const r = checkRateHeadroom({ surface: 'mcp', rps: 20, users: 2, requestsPerMinute: 600 });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.requiredUsers, 2);
+});
+
+test('stress rates need proportionally many users on MCP', () => {
+  assert.equal(checkRateHeadroom({ surface: 'mcp', rps: 100, users: 1 }).requiredUsers, 50);
+  assert.equal(checkRateHeadroom({ surface: 'mcp', rps: 200, users: 1 }).requiredUsers, 100);
+});
+
+// ── ramp / stress ────────────────────────────────────────────────────────────
+
+test('the ramp is geometric and always includes the ceiling', () => {
+  assert.deepEqual(buildRampRungs({ startRps: 20, maxRps: 160 }), [20, 40, 80, 160]);
+  // Overshooting factor must not drop or exceed the stated max.
+  assert.deepEqual(buildRampRungs({ startRps: 20, maxRps: 100 }), [20, 40, 80, 100]);
+  assert.deepEqual(buildRampRungs({ startRps: 20, maxRps: 20 }), [20]);
+  assert.deepEqual(buildRampRungs({ startRps: 0, maxRps: 100 }), []);
+  assert.deepEqual(buildRampRungs({ startRps: 50, maxRps: 10 }), [], 'max below start yields nothing');
+});
+
+test('the ladder stops on errors, latency, 429s, or a saturated client', () => {
+  const good = { count: 1000, errors: 0, rateLimited: 0, p99: 800, requestedRps: 20, achievedRps: 19.8 };
+  assert.equal(rampVerdict(good).stop, false);
+
+  assert.match(rampVerdict({ ...good, errors: 50 }).reason, /error rate/);
+  assert.match(rampVerdict({ ...good, p99: 9000 }).reason, /p99/);
+  // 429s end the USEFUL ladder without meaning the service failed.
+  assert.match(rampVerdict({ ...good, rateLimited: 100 }).reason, /measuring the rate limiter/);
+  // Client saturation must be named as such, not misread as the service slowing.
+  assert.match(rampVerdict({ ...good, achievedRps: 12 }).reason, /CLIENT saturated/);
+});
+
+test('a rung with no completed requests stops the ladder', () => {
+  assert.equal(rampVerdict({ count: 0 }).stop, true);
+});
+
+test('an MCP failure inside a 200 is summarised as an error, not a success', () => {
+  // The classifier is worthless unless the SUMMARY honours it. Without this,
+  // the MCP arm reports every failed tool call as ok.
+  const rs = [
+    { op: 'write', status: 200, ms: 100, outcome: 'ok' },
+    { op: 'write', status: 200, ms: 110, outcome: 'error' },       // JSON-RPC error
+    { op: 'write', status: 429, ms: 3, outcome: 'rate_limited' },
+  ];
+  const [w] = summarize(rs);
+  assert.equal(w.ok, 1);
+  assert.equal(w.errors, 1, 'the 200-with-error must not count as ok');
+  assert.equal(w.rateLimited, 1);
+  assert.equal(w.p50, 100, 'only the genuine success contributes latency');
+  assert.equal(totals(rs).errors, 1);
+});
+
+test('REST results with no explicit outcome behave exactly as before', () => {
+  // Regression guard on the fallback: adding the outcome field must not change
+  // how the REST arm is scored.
+  assert.equal(outcomeOf({ status: 200 }), 'ok');
+  assert.equal(outcomeOf({ status: 201 }), 'ok');
+  assert.equal(outcomeOf({ status: 429 }), 'rate_limited');
+  assert.equal(outcomeOf({ status: 500 }), 'error');
+  assert.equal(outcomeOf({ status: 0 }), 'error');
+  assert.equal(outcomeOf({ status: 404 }), 'client_error');
+  // An explicit outcome always wins.
+  assert.equal(outcomeOf({ status: 200, outcome: 'error' }), 'error');
 });

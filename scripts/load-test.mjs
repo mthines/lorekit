@@ -1,20 +1,38 @@
 #!/usr/bin/env node
 /**
- * LoreKit load test — drives the REST surface at a fixed arrival rate, then
- * attributes the latency to specific SQL statements.
+ * LoreKit load and stress test — drives a chosen surface at a fixed arrival rate
+ * (or up a ladder of rates), then attributes the latency to specific SQL
+ * statements.
  *
- * WHY REST, AND WHY NOT MCP OR THE CLI
- * ------------------------------------
- * REST and MCP converge on the same handlers and the same SQL, so the expensive
- * part is shared — and REST reads are the only surface that can actually be
- * pushed: MCP checks the rate limit on EVERY method (120/min/user = 2 rps), so a
- * load script pointed at it measures the rate limiter. The CLI is a REST client
- * and adds no server-side path; load-testing it measures node startup on the
- * runner. Full reasoning in docs/benchmarking.md.
+ * TWO DIMENSIONS: SURFACE x AUTH TIER
+ * -----------------------------------
+ * The pair identifies a real caller, and all three pairings are genuinely
+ * different code paths — the REST-only arm this started as was never
+ * whole-system coverage:
+ *
+ *   rest + jwt    the DASHBOARD (packages/web/src/lib/api/)
+ *   rest + token  the CLI in remote mode — `lk_*` takes a different branch of
+ *                 `resolveRestAuth`, reached via a DB lookup on `api_tokens`
+ *   mcp  + token  AGENTS — its own handlers (mcp/tools.ts), its own auth span
+ *                 (`lorekit.mcp.auth`, which `lorekit.rest.auth` is NOT), and it
+ *                 rate-limits EVERY method where REST gates only writes
+ *
+ * They converge at the RPC/SQL layer, so a DATABASE finding generalises across
+ * them. A transport or auth finding does not.
+ *
+ * THE CONSTRAINT THAT SHAPES THE MCP ARM
+ * MCP checks the rate limit on every method — 120/min/user = 2 rps — so rate is
+ * bought with USERS, not with a bigger number. 20 rps needs 10 users; 100 needs
+ * 50. `checkRateHeadroom` REFUSES a configuration that cannot fit, because a run
+ * that silently measures its own throttling produces a number that looks usable.
+ * Full reasoning in docs/benchmarking.md.
  *
  * WHAT MAKES THE NUMBERS TRUSTWORTHY
  *  - OPEN LOOP. The arrival schedule is fixed up front, so a slowing server
  *    cannot reduce the offered load (see `buildSchedule`).
+ *  - On MCP, the OUTCOME is read from the JSON-RPC body, not the status code:
+ *    that transport returns application errors inside a 200, so a status-only
+ *    reading scores every failed tool call as a success.
  *  - Percentiles over successful requests only; 429 is counted separately
  *    because it is the guardrail working, not a failure.
  *  - Users are SCALED rather than having their limits raised: the rate-limit
@@ -39,15 +57,23 @@
  *   sandbox baseline point 6).
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_MIX,
+  MCP_TOOL_FOR_OP,
   buildOpSequence,
+  buildRampRungs,
   buildSchedule,
+  checkRateHeadroom,
   checkServiceCredential,
+  classifyMcpResponse,
   dbShare,
   diffQueryStats,
+  mcpArgumentsFor,
+  rampVerdict,
+  resolveAuthMode,
+  resolveSurface,
   resolveTarget,
   summarize,
   totals,
@@ -57,14 +83,20 @@ import { exportLoad } from './load-telemetry.mjs';
 // ── argv ─────────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const opts = { rps: '20', duration: '60', users: '5', seed: '50', target: null, dryRun: false, keepUsers: false };
+  const opts = {
+    rps: '20', duration: '60', users: '5', seed: '50', target: null,
+    surface: null, auth: null, maxRps: null,
+    dryRun: false, keepUsers: false, ramp: false,
+  };
   const flags = {
     '--target': 'target', '--rps': 'rps', '--duration': 'duration',
     '--users': 'users', '--seed': 'seed',
+    '--surface': 'surface', '--auth': 'auth', '--max-rps': 'maxRps',
   };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--dry-run') { opts.dryRun = true; continue; }
     if (argv[i] === '--keep-users') { opts.keepUsers = true; continue; }
+    if (argv[i] === '--ramp') { opts.ramp = true; continue; }
     if (argv[i] === '--help' || argv[i] === '-h') { opts.help = true; continue; }
     const key = flags[argv[i]];
     if (!key) die(`Unknown argument: ${argv[i]} (try --help)`);
@@ -102,6 +134,36 @@ async function timed(op, url, init, timeoutMs = 30_000) {
     return { op, status: res.status, ms: performance.now() - t0 };
   } catch (err) {
     return { op, status: 0, ms: performance.now() - t0, error: `${err.name}: ${err.message}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * One measured MCP request. Like `timed`, but it PARSES the body.
+ *
+ * It has to. JSON-RPC returns application errors inside a 200, so unlike REST
+ * the status code does not determine the outcome — draining the body unread (as
+ * `timed` does, deliberately, to avoid holding the socket) would make every
+ * failed tool call indistinguishable from a success. The body is small here: a
+ * tool result, not a page of rows.
+ */
+async function timedMcp(op, url, init, timeoutMs = 30_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const t0 = performance.now();
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    const text = await res.text().catch(() => '');
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+    const outcome = classifyMcpResponse({ status: res.status, body });
+    const detail = outcome === 'error'
+      ? (body?.error?.message ?? body?.result?.content?.[0]?.text ?? `HTTP ${res.status}`)
+      : undefined;
+    return { op, status: res.status, ms: performance.now() - t0, outcome, error: detail?.slice(0, 200) };
+  } catch (err) {
+    return { op, status: 0, ms: performance.now() - t0, outcome: 'error', error: `${err.name}: ${err.message}` };
   } finally {
     clearTimeout(timer);
   }
@@ -181,6 +243,16 @@ async function deleteUsers({ supabaseUrl, serviceKey, users }) {
 }
 
 /** Seed a little lore per user, so reads return rows instead of measuring an empty table. */
+/**
+ * Seed lore so reads measure a populated table.
+ *
+ * ALWAYS over REST with a JWT, whatever surface is being driven. Seeding is
+ * setup, not measurement — and pointing it at the surface `endpoint` would POST
+ * REST-shaped bodies at the JSON-RPC function on `--surface mcp`, seeding
+ * nothing and leaving every subsequent read to measure an empty table while the
+ * report looked healthy. Same failure class as the doubled `/memories` path this
+ * harness shipped with once already.
+ */
 async function seedLore({ endpoint, users, perUser, runId, headers }) {
   let written = 0;
   for (const u of users) {
@@ -200,6 +272,53 @@ async function seedLore({ endpoint, users, perUser, runId, headers }) {
     }
   }
   return written;
+}
+
+/**
+ * Mint an `lk_rw_*` API token for a provisioned user.
+ *
+ * WHY THE HARNESS MINTS ITS OWN
+ * The token tiers are not cosmetic: `lk_*` takes a different branch of
+ * `resolveRestAuth`/`mcp/auth.ts` than a dashboard JWT — a service-role client
+ * with a mandatory `user_id` filter, reached via a DB lookup on `api_tokens`.
+ * Agents hold these, so driving MCP or the CLI's remote path with a JWT would
+ * measure a code path nobody runs in production.
+ *
+ * Inserted directly with the service-role key. The table's RLS insert policy is
+ * `user_id = auth.uid()`, which a service-role connection bypasses — the same
+ * reason the harness can provision users at all. The row is deleted with the
+ * user (`on delete cascade`).
+ *
+ * The hash contract is fixed by `mcp/auth.ts`: plain SHA-256 HEX of the full
+ * token string, looked up against `api_tokens.token_hash`. Not a salted hash,
+ * not base64 — a mismatch here 401s every request in the run.
+ */
+async function mintApiToken({ supabaseUrl, serviceKey, userId, runId }) {
+  // `lk_{perm}_{32 alphanumerics}`, per 00002_api_tokens.sql.
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = randomBytes(32);
+  const suffix = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+  const token = `lk_rw_${suffix}`;
+  const hash = createHash('sha256').update(token).digest('hex');
+
+  await json(`${supabaseUrl}/rest/v1/api_tokens`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      name: `loadtest-${runId}`,
+      // First 12 chars + "..." — the display form, capped at 16 by a CHECK.
+      token_prefix: `${token.slice(0, 12)}...`,
+      token_hash: hash,
+      permissions: ['read', 'write'],
+    }),
+  });
+  return token;
 }
 
 const SCOPES = ['global', 'project::loadtest', 'repo::mthines/lorekit', 'branch::mthines/lorekit::main'];
@@ -239,7 +358,7 @@ async function snapshotQueryStats({ supabaseUrl, serviceKey }) {
  * together at the end, which is what makes this open-loop: a slow response
  * delays nothing but itself.
  */
-async function drive({ endpoint, users, schedule, ops, headers, correlationId }) {
+async function drive({ endpoint, users, schedule, ops, headers, correlationId, requestFn }) {
   const started = performance.now();
   const inFlight = [];
 
@@ -254,7 +373,7 @@ async function drive({ endpoint, users, schedule, ops, headers, correlationId })
     const user = users[i % users.length];
     const op = ops[i];
     const h = { ...headers(user), 'X-LoreKit-Correlation-Id': correlationId };
-    inFlight.push(request({ endpoint, op, user, headers: h, i, correlationId }));
+    inFlight.push(requestFn({ endpoint, op, user, headers: h, i, correlationId }));
   }
 
   const results = await Promise.all(inFlight);
@@ -290,6 +409,41 @@ function request({ endpoint, op, headers, i, correlationId }) {
     default:
       throw new Error(`Unknown op: ${op}`);
   }
+}
+
+/**
+ * The MCP counterpart: one JSON-RPC `tools/call` over POST.
+ *
+ * MCP is STATELESS here — `mcp-handler.ts` dispatches `tools/call` on its own,
+ * with `initialize` handled but never a precondition — so no handshake is
+ * replayed per request. One `initialize` per user would be protocol-polite and
+ * would measure nothing, so it is omitted rather than inflating the request
+ * count with a method no agent repeats.
+ *
+ * Every request carries the rate limiter's full attention: unlike REST, MCP
+ * checks the limit on EVERY method, which is why `checkRateHeadroom` refuses a
+ * configuration that cannot fit under it.
+ */
+function mcpRequest({ endpoint, op, headers, i, correlationId }) {
+  const scope = SCOPES[i % SCOPES.length];
+  const args = mcpArgumentsFor(op, {
+    scope,
+    // Unique per request for the same reason as the REST arm: an upsert UPDATE
+    // would skip the cap trigger and measure the wrong write.
+    key: `loadtest-${correlationId}-m-${i}`,
+    value: `Load write ${i}.`,
+    q: 'merged intervals',
+  });
+  return timedMcp(op, endpoint, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: i + 1,
+      method: 'tools/call',
+      params: { name: MCP_TOOL_FOR_OP[op], arguments: args },
+    }),
+  });
 }
 
 // ── report ───────────────────────────────────────────────────────────────────
@@ -362,6 +516,12 @@ LoreKit load test — open-loop REST driver with SQL attribution.
   --duration <s>     drive duration in seconds        (default 60)
   --users <n>        provisioned users; each gets its own 120 rpm budget (5)
   --seed <n>         lore rows seeded per user        (default 50)
+  --surface <s>      rest | mcp                        (default rest)
+                     rest = dashboard/CLI path, mcp = the AGENT path
+  --auth <a>         jwt | token                       (default: mcp->token, rest->jwt)
+                     rest+token is the CLI's remote path (api_key tier)
+  --ramp             stress mode: step the rate until saturation
+  --max-rps <n>      the ramp's ceiling (required with --ramp)
   --dry-run          build the OTLP payloads, send nothing
   --keep-users       skip cleanup (for debugging; leaves real rows behind)
 
@@ -375,6 +535,14 @@ Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY.
 const targetResult = resolveTarget(opts.target, process.env);
 if (!targetResult.ok) die(targetResult.error);
 const target = targetResult.target;
+
+const surfaceResult = resolveSurface(opts.surface, process.env);
+if (!surfaceResult.ok) die(surfaceResult.error);
+const surface = surfaceResult.surface;
+
+const authResult = resolveAuthMode(opts.auth, surface, process.env);
+if (!authResult.ok) die(authResult.error);
+const authMode = authResult.auth;
 
 for (const [flag, v] of [['--rps', opts.rps], ['--duration', opts.duration], ['--users', opts.users], ['--seed', opts.seed]]) {
   if (!/^\d+(\.\d+)?$/.test(v) || Number(v) <= 0) die(`${flag} must be a positive number, got "${v}"`);
@@ -401,23 +569,44 @@ const run = {
   durationSec: Number(opts.duration),
   users: Number(opts.users),
 };
+// REFUSE a configuration the rate limiter would decide. MCP checks the limit on
+// every method (2 rps/user at the 120/min default), so the harness's own
+// defaults — 20 rps across 5 users — are 2x over on that surface: half the run
+// would 429 and the percentiles would describe the guardrail, not the service. A
+// load test that silently measures its own throttling is worse than none,
+// because the number looks usable. Fails with the users actually required.
+const peakRps = opts.ramp && opts.maxRps ? Number(opts.maxRps) : run.rps;
+const headroom = checkRateHeadroom({ surface, rps: peakRps, users: run.users });
+if (!headroom.ok) die(headroom.error);
+
 const runId = randomUUID().slice(0, 8);
 const correlationId = `load-${runId}`;
 // The `memories` FUNCTION base. Every op path is relative to this, so it must
 // NOT be re-suffixed with `/memories`: `…/functions/v1/memories/memories`
 // matches the router's `/:id` route with id="memories" rather than the list
 // route, and the run measures error responses while looking healthy.
-const endpoint = `${supabaseUrl}/functions/v1/memories`;
+const endpoint = surface === 'mcp'
+  ? `${supabaseUrl}/functions/v1/mcp`
+  : `${supabaseUrl}/functions/v1/memories`;
+const requestFn = surface === 'mcp' ? mcpRequest : request;
+
+// Both functions declare `verify_jwt = false` (supabase/config.toml), so the
+// gateway does not gate them and the function does its own auth — which is why
+// an `lk_*` token needs no accompanying `apikey`, exactly as the CLI sends it
+// (`packages/cli/src/mcp.mjs`). The JWT arm keeps the anon key because that is
+// what the dashboard sends.
 const headers = (user) => ({
-  Authorization: `Bearer ${user.jwt}`,
-  apikey: anonKey,
-  'X-LoreKit-Client': 'cli',
+  ...(authMode === 'token'
+    ? { Authorization: `Bearer ${user.token}` }
+    : { Authorization: `Bearer ${user.jwt}`, apikey: anonKey }),
+  'X-LoreKit-Client': surface === 'mcp' ? 'mcp' : 'cli',
   // Marks the run's server spans synthetic, so they filter apart from real
   // traffic instead of polluting a production view.
   'X-LoreKit-Deployment-Environment': 'test',
 });
 
 log(`\n▸ Load test → ${target}  (${supabaseUrl})`);
+log(`  surface ${surface} · auth ${authMode}${surface === 'mcp' ? ' · agent path' : authMode === 'token' ? ' · CLI remote path' : ' · dashboard path'}`);
 log(`  ${run.rps} rps × ${run.durationSec}s across ${run.users} users · correlation_id ${correlationId}`);
 if (target === 'production') {
   log('  ⚠ PRODUCTION: this writes real rows into the shared memories table and');
@@ -429,6 +618,16 @@ try {
   log(`\n▸ Provisioning ${run.users} users`);
   try {
     users = await provisionUsers({ supabaseUrl, serviceKey, anonKey, count: run.users, runId });
+    if (authMode === 'token') {
+      // Minted per user, not shared: the rate limiter counts per (user, window),
+      // so one token across N users would concentrate the whole run on a single
+      // counter row and measure lock serialization production never sees — the
+      // same reason users are scaled rather than having their limits raised.
+      log(`  minting an lk_rw_ token per user (${authMode} tier)`);
+      for (const u of users) {
+        u.token = await mintApiToken({ supabaseUrl, serviceKey, userId: u.id, runId });
+      }
+    }
   } catch (err) {
     // The pre-flight above already ruled out the two decidable causes of a 401
     // (wrong project, wrong role). If one still arrives, the remaining causes
@@ -446,19 +645,85 @@ try {
   }
 
   log(`▸ Seeding ${opts.seed} lore rows per user`);
-  const seeded = await seedLore({ endpoint, users, perUser: Number(opts.seed), runId, headers });
+  const seeded = await seedLore({
+    endpoint: `${supabaseUrl}/functions/v1/memories`,
+    users,
+    perUser: Number(opts.seed),
+    runId,
+    // The JWT tier explicitly: a freshly minted `lk_*` token would also work,
+    // but the JWT is present on every run and keeps seeding independent of
+    // whichever tier is under test.
+    headers: (u) => ({ Authorization: `Bearer ${u.jwt}`, apikey: anonKey, 'X-LoreKit-Deployment-Environment': 'test' }),
+  });
   log(`  ${seeded} rows written`);
 
   log('▸ Baseline query-stats snapshot');
   const before = await snapshotQueryStats({ supabaseUrl, serviceKey });
 
-  const schedule = buildSchedule({ rps: run.rps, durationSec: run.durationSec });
-  const ops = buildOpSequence(schedule.length, DEFAULT_MIX);
-  log(`▸ Driving ${schedule.length} requests (open loop)\n`);
+  // ── the drive phase, one rung or a ladder ──────────────────────────────────
+  // A single rung IS a load test; a ladder of rungs is the stress test. Both
+  // reuse the same provisioned users and the same seeded rows, so a difference
+  // between rungs is the offered rate and nothing else.
+  const rungs = opts.ramp
+    ? buildRampRungs({ startRps: run.rps, maxRps: Number(opts.maxRps) })
+    : [run.rps];
+  if (opts.ramp && !rungs.length) die('--ramp needs --max-rps >= --rps.');
+  if (opts.ramp) log(`▸ Stress ladder: ${rungs.join(' → ')} rps, ${run.durationSec}s per rung\n`);
 
   const startMs = Date.now();
-  const { results, wallMs } = await drive({ endpoint, users, schedule, ops, headers, correlationId });
+  let results = [];
+  let wallMs = 0;
+  const ladder = [];
+
+  for (const rungRps of rungs) {
+    const schedule = buildSchedule({ rps: rungRps, durationSec: run.durationSec });
+    const ops = buildOpSequence(schedule.length, DEFAULT_MIX);
+    log(`▸ Driving ${schedule.length} requests at ${rungRps} rps (open loop)`);
+    const r = await drive({ endpoint, users, schedule, ops, headers, correlationId, requestFn });
+
+    const rungAgg = totals(r.results);
+    const rungAchieved = r.results.length / (r.wallMs / 1000);
+    const rung = {
+      requestedRps: rungRps,
+      achievedRps: rungAchieved,
+      count: rungAgg.requests,
+      ok: rungAgg.ok,
+      errors: rungAgg.errors,
+      rateLimited: rungAgg.rateLimited,
+      p50: rungAgg.p50, p95: rungAgg.p95, p99: rungAgg.p99,
+    };
+    const verdict = rampVerdict(rung);
+    ladder.push({ ...rung, stopped: verdict.stop, reason: verdict.reason });
+
+    // The LAST rung's results are the ones reported and exported in detail:
+    // on a single-rung run that is the run, and on a ladder it is the most
+    // interesting rung reached. Earlier rungs live in the ladder table.
+    results = r.results;
+    wallMs = r.wallMs;
+
+    const ms = (v) => (v == null ? '-' : v.toFixed(1));
+    log(`  ${rungRps} rps → achieved ${rungAchieved.toFixed(1)} · p50 ${ms(rung.p50)}ms · p99 ${ms(rung.p99)}ms · ${rung.errors} err · ${rung.rateLimited} 429`);
+    if (verdict.stop) {
+      log(`  ⤵ ladder stops here: ${verdict.reason}`);
+      break;
+    }
+  }
+  log('');
   const endMs = Date.now();
+
+  if (opts.ramp) {
+    const lastGood = [...ladder].reverse().find((r) => !r.stopped);
+    log('── Stress ladder ───────────────────────────────────────────────');
+    log('   req rps   achieved       p50       p99    err    429');
+    for (const r of ladder) {
+      const f = (v) => (v == null ? '-' : v.toFixed(1));
+      log(`   ${String(r.requestedRps).padStart(7)}   ${r.achievedRps.toFixed(1).padStart(8)}   ${f(r.p50).padStart(7)}   ${f(r.p99).padStart(7)}   ${String(r.errors).padStart(4)}   ${String(r.rateLimited).padStart(4)}${r.stopped ? '   ← stopped' : ''}`);
+    }
+    log(lastGood
+      ? `\n   Highest sustained rate: ${lastGood.requestedRps} rps (p99 ${lastGood.p99?.toFixed(1)}ms)`
+      : '\n   No rung passed — the first rate was already past saturation.');
+    log('');
+  }
 
   log('▸ Final query-stats snapshot');
   const after = await snapshotQueryStats({ supabaseUrl, serviceKey });
