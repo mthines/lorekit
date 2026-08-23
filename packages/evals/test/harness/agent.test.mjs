@@ -10,8 +10,8 @@ import {
   parseResultLine,
   runAgent,
   summarizeResult,
-} from "../src/agent.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
+} from "../../src/harness/agent.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
 
 test("the model under test is pinned in exactly one constant (AC-1.2)", () => {
   assert.equal(MODEL_UNDER_TEST, "claude-opus-4-8");

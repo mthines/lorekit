@@ -21,7 +21,7 @@
     "@lorekit/web": "workspace:*"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test",
     "eval": "node bin/run-eval.mjs"
   }
 }

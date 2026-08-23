@@ -14,7 +14,7 @@ import {
   buildClaudeArgs,
   collectHookEvents,
   parseInitEvent,
-} from "../src/agent.mjs";
+} from "../../src/harness/agent.mjs";
 import {
   EXPECTED_MCP_SERVERS,
   FINDING_CWD,
@@ -28,13 +28,14 @@ import {
   assertCleanEnvironment,
   describeEnvironment,
   summarizeEnvironment,
-} from "../src/environment.mjs";
-import { MCP_SERVER_NAME } from "../src/mcp-config.mjs";
-import { prepareArm } from "../src/arm.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
+} from "../../src/grading/environment.mjs";
+import { MCP_SERVER_NAME } from "../../src/harness/mcp-config.mjs";
+import { prepareArm } from "../../src/harness/arm.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
 
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
+  "..",
   "..",
   "fixtures",
 );

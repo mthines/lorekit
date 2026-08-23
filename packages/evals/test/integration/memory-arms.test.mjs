@@ -16,15 +16,15 @@ import {
   DEFAULT_OWNER_REPO,
   assertScopesAvailable,
   initGitIdentity,
-} from "../src/git-identity.mjs";
+} from "../../src/sandbox/git-identity.mjs";
 import {
   READ_ONLY_EVENTS,
   installSessionStartHook,
   parseInjectedIndex,
   positionOf,
   readInjectedLessons,
-} from "../src/hook-install.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
+} from "../../src/sandbox/hook-install.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
 import {
   CANONICAL_LESSON,
   canonicalLesson,
@@ -34,7 +34,7 @@ import {
   seedLesson,
   seedMany,
   seedOrganic,
-} from "../src/store-setup.mjs";
+} from "../../src/sandbox/store-setup.mjs";
 
 const TARGET_SCOPE = `branch::${DEFAULT_OWNER_REPO}::${DEFAULT_BRANCH}`;
 

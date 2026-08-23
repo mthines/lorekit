@@ -11,7 +11,7 @@ import {
   repoOfScope,
   seenCountOf,
   RECURRENCE_CONFIRMED_AT,
-} from "../src/ground-truth.mjs";
+} from "../../src/relevance/ground-truth.mjs";
 
 // The two real outcome/relevance rows from the in-repo mock, as the store hands
 // them back. Copied here as the MINIMAL shape the predicate reads — the full
@@ -147,7 +147,7 @@ test("AC-1-reuse: ground-truth.mjs re-encodes NO `loop::` literal and imports th
   // legitimately names both loop tags while explaining why it must not encode
   // them, so comments are stripped before the grep.
   const source = fs.readFileSync(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "ground-truth.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "relevance", "ground-truth.mjs"),
     "utf8",
   );
   const code = source

@@ -35,10 +35,10 @@ import {
   DEFAULT_OWNER_REPO,
   assertScopesAvailable,
   initGitIdentity,
-} from "./git-identity.mjs";
-import { installSessionStartHook } from "./hook-install.mjs";
+} from "../sandbox/git-identity.mjs";
+import { installSessionStartHook } from "../sandbox/hook-install.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
-import { empty, seedCanonical, seedOrganic } from "./store-setup.mjs";
+import { empty, seedCanonical, seedOrganic } from "../sandbox/store-setup.mjs";
 
 /** Which of the derived scopes an arm seeds and expects to be injected. */
 export const SCOPE_MODES = ["branch", "repo", "project", "global"];

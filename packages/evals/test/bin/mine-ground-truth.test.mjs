@@ -14,7 +14,7 @@ import {
   OUTCOME_TAGS,
   PAGE_LIMIT,
   SERVICE_ROLE_ENV,
-} from "../bin/mine-ground-truth.mjs";
+} from "../../bin/mine-ground-truth.mjs";
 
 test("AC-5: redactToMetadata drops the lesson body and keeps only metadata", () => {
   const row = {

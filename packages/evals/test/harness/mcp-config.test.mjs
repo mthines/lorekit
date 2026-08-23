@@ -9,9 +9,9 @@ import {
   WRITE_TOOLS,
   buildMcpConfig,
   writeMcpConfig,
-} from "../src/mcp-config.mjs";
-import { LOREKIT_BIN } from "../src/paths.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
+} from "../../src/harness/mcp-config.mjs";
+import { LOREKIT_BIN } from "../../src/sandbox/paths.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
 
 test("the MCP server runs the local CLI against the scratch store (AC-2.1)", () => {
   const config = buildMcpConfig({

@@ -9,9 +9,9 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
-import { prepareArm } from "../src/arm.mjs";
-import { initGitIdentity } from "../src/git-identity.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
+import { prepareArm } from "../../src/harness/arm.mjs";
+import { initGitIdentity } from "../../src/sandbox/git-identity.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
 
 /** Phrases that would give the branch-scope gotcha away. */
 const SPOILERS = ["::", "double colon", "separator"];

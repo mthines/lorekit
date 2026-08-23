@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { main, parseArgs, runId } from "../bin/run-eval.mjs";
+import { main, parseArgs, runId } from "../../bin/run-eval.mjs";
 
 test("parseArgs defaults to the N=3 indicator design (AC-1.3)", () => {
   const options = parseArgs(["arm0"]);

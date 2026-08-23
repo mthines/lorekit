@@ -26,7 +26,7 @@
 // so the harness judges the outcome and refuses to score a contaminated rep.
 // A rep that ran dirty is not a data point; it is a discarded run.
 
-import { MCP_SERVER_NAME } from "./mcp-config.mjs";
+import { MCP_SERVER_NAME } from "../harness/mcp-config.mjs";
 
 /**
  * MCP servers an arm is allowed to see. Anything else is contamination.

@@ -11,9 +11,9 @@ import {
   goldenPrompt,
   specText,
   taskById,
-} from "../src/task.mjs";
-import { isValidScope } from "../src/grade.mjs";
-import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../src/git-identity.mjs";
+} from "../../src/harness/task.mjs";
+import { isValidScope } from "../../src/grading/grade.mjs";
+import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../../src/sandbox/git-identity.mjs";
 
 test("the target scope is the canonical branch form and is valid (AC-3.3)", () => {
   assert.equal(TARGET_SCOPE, "branch::mthines/gw-tools::feat/x");
