@@ -22,11 +22,14 @@ interface BadgeProps {
   children: ReactNode;
   variant?: BadgeVariant;
   className?: string;
+  /** Native tooltip — e.g. explaining what a compact affordance means. */
+  title?: string;
 }
 
-export function Badge({ children, variant = 'default', className = '' }: BadgeProps) {
+export function Badge({ children, variant = 'default', className = '', title }: BadgeProps) {
   return (
     <span
+      title={title}
       className={[
         'inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-xs',
         VARIANT_STYLES[variant],
