@@ -740,6 +740,24 @@ export type Database = {
           value: string
         }[]
       }
+      lorekit_memory_read_ranking: {
+        Args: {
+          p_direction?: string
+          p_key_scopes?: string[]
+          p_limit?: number
+          p_scope?: string
+          p_user_id: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          key: string
+          last_read_at: string | null
+          read_count: number
+          scope: string
+          seen_count: number | null
+        }[]
+      }
       lorekit_memory_scopes: {
         Args: {
           p_key_org_access?: string

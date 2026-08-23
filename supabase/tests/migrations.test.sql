@@ -7528,6 +7528,105 @@ begin
 end;
 $$;
 
+-- ── 89. lorekit_memory_read_ranking — hot/cold lore (00078) ──────────────────
+-- With per-memory counters in place (00077), rank memories by how often they
+-- have actually been read. hot = most-read first; cold = least-read, oldest
+-- first among ties.
+-- AC-1: hot ranks strictly by read_count desc.
+-- AC-2: cold ranks strictly by read_count asc, and among equal (zero) counts,
+--       oldest-created first — the most actionable prune candidates.
+-- AC-3: archived memories are excluded (already pruned; ranking them again is
+--       noise).
+-- AC-4: a scoped API key's unfiltered call is narrowed to its own allowlist.
+-- AC-5: an invalid direction raises rather than silently defaulting.
+do $$
+declare
+  v_m_hot   uuid;
+  v_m_warm  uuid;
+  v_m_cold1 uuid;
+  v_m_cold2 uuid;
+  v_m_archived uuid;
+  v_ids     uuid[];
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-hot', 'v', timestamptz '2026-01-01')
+    returning id into v_m_hot;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-warm', 'v', timestamptz '2026-01-02')
+    returning id into v_m_warm;
+  -- Two never-read memories, at different creation times, to prove the cold
+  -- tiebreak orders by created_at asc rather than leaving ties unordered.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-older', 'v', timestamptz '2025-06-01')
+    returning id into v_m_cold1;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-newer', 'v', timestamptz '2025-07-01')
+    returning id into v_m_cold2;
+  insert into memories (user_id, scope, key, value, archived_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-archived', 'v', now())
+    returning id into v_m_archived;
+
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_warm], 'targeted');
+  -- Give the archived memory reads too, to prove archived rows are excluded
+  -- from the ranking regardless of how often they were read before archiving.
+  perform lorekit_record_memory_reads(array[v_m_archived, v_m_archived], 'bulk');
+
+  -- AC-1: hot ranks strictly by read_count desc.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 10)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-hot', '89-warm', '89-cold-older', '89-cold-newer']
+      or v_ids::text[] = array['89-hot', '89-warm', '89-cold-newer', '89-cold-older'],
+    format('89 AC-1: hot must rank 89-hot first and 89-warm second, got %s', v_ids);
+
+  -- AC-2: cold ranks read_count asc, then created_at asc among zero-count ties.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'cold', null, 10)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-cold-older', '89-cold-newer', '89-warm', '89-hot'],
+    format('89 AC-2: cold must rank the never-read, oldest-first, before the read ones, got %s', v_ids);
+
+  -- AC-3: the archived memory never appears in either ranking.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+     where key = '89-archived'
+  ), '89 AC-3: an archived memory must be excluded from the ranking';
+
+  -- AC-4: a scoped key's unfiltered call is narrowed to its allowlist —
+  -- restricting to a DIFFERENT scope than 'global' must exclude every 89-* row.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking(
+      '00000000-0000-0000-0000-0000000000a1', 'hot', null, 100, array['repo::acme/other']
+    ) where key like '89-%'
+  ), '89 AC-4: an out-of-allowlist key_scopes must narrow the result to nothing for these rows';
+
+  -- AC-5: an invalid direction raises rather than silently defaulting to hot.
+  begin
+    perform lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'sideways', null, 10);
+  exception when sqlstate '22023' then
+    v_raised := true;
+  end;
+  assert v_raised, '89 AC-5: an invalid direction must raise, not silently default';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
