@@ -10,8 +10,8 @@
  * memory-count billing.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import type { DbClient } from '../_shared/db-client.ts';
-import type { Database } from '../_shared/database.types.ts';
+import type { DbClient } from '../_shared/db/db-client.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 export interface StorageAdapter {
   db: DbClient;

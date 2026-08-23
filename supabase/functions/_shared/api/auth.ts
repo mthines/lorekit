@@ -1,8 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import type { Span } from '../otel.ts';
-import { normalizeKeyRestriction, type KeyRestriction } from '../tenant-scope.ts';
-import type { DbClient } from '../db-client.ts';
-import type { Database } from '../database.types.ts';
+import type { Span } from '../telemetry/otel.ts';
+import { normalizeKeyRestriction, type KeyRestriction } from '../auth/tenant-scope.ts';
+import type { DbClient } from '../db/db-client.ts';
+import type { Database } from '../db/database.types.ts';
 
 export interface AuthContext {
   type: 'user' | 'service' | 'api_key';
@@ -20,7 +20,7 @@ export interface AuthContext {
 
 /**
  * Re-exported so every existing importer of `DbClient` from this module keeps
- * working. The canonical declaration is `_shared/db-client.ts` — see its
+ * working. The canonical declaration is `_shared/db/db-client.ts` — see its
  * docblock for why the typed client lives in its own file rather than here.
  */
 export type { DbClient };
@@ -129,11 +129,11 @@ export function isJwtAuth(auth: AuthContext): boolean {
  * those rows. That asymmetry is the remaining bug, and `getUserId` is the side
  * that should converge on this rule — not the reverse.
  *
- * The rule itself lives in the pure, unit-tested `_shared/rest-audit-actor.ts`
+ * The rule itself lives in the pure, unit-tested `_shared/audit/rest-audit-actor.ts`
  * (mirror of `packages/mcp-core/src/audit/rest-audit-actor.ts`), re-exported here so
  * every existing `import { auditUserId } from '…/api/auth.ts'` is unchanged.
  */
-export { auditUserId } from '../rest-audit-actor.ts';
+export { auditUserId } from '../audit/rest-audit-actor.ts';
 
 /**
  * The user a usage event is attributed to — unlike `auditUserId` this is the

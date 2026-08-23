@@ -51,9 +51,9 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { validateScope } from '../_shared/scope.ts';
-import { sanitizeOrigin } from '../_shared/origin.ts';
-import { traceRequest, type Span } from '../_shared/otel.ts';
+import { validateScope } from '../_shared/scope/scope.ts';
+import { sanitizeOrigin } from '../_shared/provenance/origin.ts';
+import { traceRequest, type Span } from '../_shared/telemetry/otel.ts';
 import { toolWrite } from './tools.ts';
 import {
   selectWebhookSecrets,
@@ -65,8 +65,8 @@ import {
   reconcileInstallation,
 } from './webhook-installation.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
-import { nullableRpcArg, type DbClient } from '../_shared/db-client.ts';
-import type { Database } from '../_shared/database.types.ts';
+import { nullableRpcArg, type DbClient } from '../_shared/db/db-client.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
 const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;

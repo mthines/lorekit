@@ -1,10 +1,10 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Database } from '../../_shared/database.types.ts';
+import type { Database } from '../../_shared/db/database.types.ts';
 
 type ScopeRow = Database['public']['Functions']['lorekit_memory_scopes']['Returns'][number];
 

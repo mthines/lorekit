@@ -10,7 +10,7 @@
  *
  *   * The resource attributes. Two copies is how a metric ends up on a resource
  *     Dash0 treats as a DIFFERENT service from the spans beside it — the
- *     signals silently stop correlating and nothing errors. `_shared/otel.ts`
+ *     signals silently stop correlating and nothing errors. `_shared/telemetry/otel.ts`
  *     holds the same invariant on the edge, for the same reason.
  *   * The int64/double split in `toOtlpValue`. proto3 JSON renders int64 as a
  *     STRING, and a bare number is the classic OTLP rejection: a silent 400.
@@ -32,7 +32,7 @@ export const SPAN_KIND_INTERNAL = 1;
 // No `AggregationTemporality` constant here on purpose: every metric this module
 // builds is a GAUGE (`gaugeMetric`), and a gauge datapoint carries no
 // temporality — it is a measurement at a point in time. The edge's
-// `_shared/otlp-metrics.ts` does declare one, because its `pg_stat_statements`
+// `_shared/telemetry/otlp-metrics.ts` does declare one, because its `pg_stat_statements`
 // metrics are genuinely cumulative sums. If a benchmark ever needs a sum, take
 // the constant from there rather than reviving an unused copy here.
 

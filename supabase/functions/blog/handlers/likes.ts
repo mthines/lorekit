@@ -1,8 +1,8 @@
 import type { DbClient } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { validateQuery, validateBody } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { GetBlogLikesQuerySchema, LikeBlogBodySchema } from '../../_shared/schemas/blog.ts';
 
 /** Coerce a bigint-or-number-or-string count into a safe non-negative integer. */

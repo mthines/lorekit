@@ -21,7 +21,7 @@
 //
 // `parseOrigin` is the single, pure validation gate for all four. It is
 // mirrored self-contained into the Deno edge tree
-// (supabase/functions/_shared/origin.ts — `_shared/` because BOTH the MCP
+// (supabase/functions/_shared/provenance/origin.ts — `_shared/` because BOTH the MCP
 // tools and the REST `POST /memories` handler validate through it), the same
 // pattern as created-at.ts and ttl.ts. Keep the two copies behaviourally
 // identical; the vitest suite here is the shared guard.

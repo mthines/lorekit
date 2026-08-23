@@ -1,7 +1,7 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { ok } from '../../../_shared/api/respond.ts';
-import { createTracedClient } from '../../../_shared/otel.ts';
-import type { Span } from '../../../_shared/otel.ts';
+import { createTracedClient } from '../../../_shared/telemetry/otel.ts';
+import type { Span } from '../../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { applyOwnMembershipFilter } from '../../../_shared/api/tenant.ts';
 

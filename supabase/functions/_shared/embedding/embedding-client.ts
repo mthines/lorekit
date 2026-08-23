@@ -2,7 +2,7 @@
 //
 // The decisions (what text to embed, how to shape a request, whether a response
 // is trustworthy, how to batch, what it costs) all live in the pure
-// `_shared/embedding.ts`, which is unit-tested in `packages/mcp-core`. This file
+// `_shared/embedding/embedding.ts`, which is unit-tested in `packages/mcp-core`. This file
 // is deliberately thin, and everything in it is the part a test cannot cover
 // without a key: it is the `github-app-client.ts` split.
 //

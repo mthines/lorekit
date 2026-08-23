@@ -19,7 +19,7 @@
 //    `--json`). An agent loop must not be able to trigger one by omission.
 //
 // 3. A SCOPED KEY IS REFUSED BY THE SERVER, and that refusal is passed through
-//    verbatim. `_shared/account-wide-tools.ts` refuses these two operations for
+//    verbatim. `_shared/auth/account-wide-tools.ts` refuses these two operations for
 //    any token carrying a scope allowlist — a key narrowed to one repo has no
 //    business sweeping the whole account. The CLI makes exactly one request and
 //    reports the server's answer; it never retries, never splits the sweep and

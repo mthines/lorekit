@@ -32,7 +32,7 @@ const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 // inventory").
 const SERVICE_NAME_SITES: ReadonlyArray<readonly [string, string, RegExp, string]> = [
   ['cli', 'packages/cli/src/telemetry/telemetry.mjs', /service\.name',\s*value:\s*\{\s*stringValue:\s*'([^']+)'/, 'cli'],
-  ['api (edge)', 'supabase/functions/_shared/otel.ts', /SERVICE_NAME'\)\s*\?\?\s*'([^']+)'/, 'api'],
+  ['api (edge)', 'supabase/functions/_shared/telemetry/otel.ts', /SERVICE_NAME'\)\s*\?\?\s*'([^']+)'/, 'api'],
   ['web', 'packages/web/src/instrumentation.ts', /SERVICE_NAME = '([^']+)'/, 'web'],
 ];
 
@@ -45,7 +45,7 @@ const WEB_BROWSER_SERVICE_NAME_SITE = ['packages/web/src/lib/dash0-rum.ts', /SER
 // so all components aggregate under one namespace.
 const NAMESPACE_SITES = [
   'packages/cli/src/telemetry/telemetry.mjs',
-  'supabase/functions/_shared/otel.ts',
+  'supabase/functions/_shared/telemetry/otel.ts',
   'packages/web/src/instrumentation.ts',
   // The browser bundle's single init path. `instrumentation-client.ts` and
   // `Dash0Provider.tsx` used to each declare their own copy of the attributes
@@ -99,7 +99,7 @@ describe('service.namespace', () => {
 });
 
 describe('edge span-kind assignment (SERVER root / CLIENT db / INTERNAL child)', () => {
-  const otel = read('supabase/functions/_shared/otel.ts');
+  const otel = read('supabase/functions/_shared/telemetry/otel.ts');
 
   it('uses the OTLP wire values (INTERNAL=1, SERVER=2, CLIENT=3)', () => {
     expect(otel).toMatch(/SPAN_KIND_INTERNAL\s*=\s*1\b/);
@@ -124,7 +124,7 @@ describe('edge span-kind assignment (SERVER root / CLIENT db / INTERNAL child)',
 });
 
 describe('faas.name distinguishes the five edge functions', () => {
-  const otel = read('supabase/functions/_shared/otel.ts');
+  const otel = read('supabase/functions/_shared/telemetry/otel.ts');
 
   it('root span sets faas.name derived from the operation name', () => {
     expect(otel).toMatch(/'faas\.name':\s*faasNameFrom\(operationName\)/);
@@ -143,7 +143,7 @@ describe('edge + CLI route trace propagation through the shared W3C seam', () =>
   // correlation proofs assume. If a component stopped using the seam (or
   // hand-rolled a divergent header/parser), CLI/MCP traces could silently
   // orphan and no behavioural copy-test would notice.
-  const edge = read('supabase/functions/_shared/otel.ts');
+  const edge = read('supabase/functions/_shared/telemetry/otel.ts');
   const cli = read('packages/cli/src/telemetry/telemetry.mjs');
 
   it('the edge receiver (extractTraceContext) parses inbound context via parseTraceparent', () => {
@@ -173,7 +173,7 @@ describe('edge + CLI route trace propagation through the shared W3C seam', () =>
 });
 
 describe('AlwaysOn: the sampled flag is recorded, never an export gate', () => {
-  const otel = read('supabase/functions/_shared/otel.ts');
+  const otel = read('supabase/functions/_shared/telemetry/otel.ts');
 
   it('records the W3C sampled bit as OTLP span flags', () => {
     expect(otel).toMatch(/flags:\s*s\.ctx\.sampled\s*\?\s*1\s*:\s*0/);
@@ -280,7 +280,7 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
   });
 
   it('the edge honours exactly the synthetic value `test`, which the charset admits', () => {
-    const otel = read('supabase/functions/_shared/otel.ts');
+    const otel = read('supabase/functions/_shared/telemetry/otel.ts');
     expect(otel).toMatch(/HEADER_ENV_ALLOWLIST\s*=\s*new Set\(\['test'\]\)/);
   });
 });
@@ -290,7 +290,7 @@ describe('self-time attribution — the edge stand-in for a CPU profile', () => 
   // carries the next best thing: how much of the request no child span
   // explains. The numbers are only meaningful if the wiring below holds, and
   // every one of these failures is SILENT — a plausible number that is wrong.
-  const otel = () => read('supabase/functions/_shared/otel.ts');
+  const otel = () => read('supabase/functions/_shared/telemetry/otel.ts');
 
   it('stamps the three measures on every root request span', () => {
     const src = otel();
@@ -334,7 +334,7 @@ describe('self-time attribution — the edge stand-in for a CPU profile', () => 
 describe('OTLP metric export shares the trace exporter’s resource', () => {
   // Spans and metrics leaving the same isolate must describe the SAME resource,
   // or Dash0 files them under two services and they silently stop correlating.
-  const metrics = () => read('supabase/functions/_shared/otlp-metrics.ts');
+  const metrics = () => read('supabase/functions/_shared/telemetry/otlp-metrics.ts');
 
   it('imports the resource, endpoint and encoding from the span exporter', () => {
     const src = metrics();
@@ -354,7 +354,7 @@ describe('OTLP metric export shares the trace exporter’s resource', () => {
 
   it('posts metrics to /v1/metrics and spans to /v1/traces', () => {
     expect(metrics()).toMatch(/\/v1\/metrics/);
-    expect(read('supabase/functions/_shared/otel.ts')).toMatch(/\/v1\/traces/);
+    expect(read('supabase/functions/_shared/telemetry/otel.ts')).toMatch(/\/v1\/traces/);
   });
 
   it('emits CUMULATIVE monotonic sums, so the backend owns rate() and resets', () => {

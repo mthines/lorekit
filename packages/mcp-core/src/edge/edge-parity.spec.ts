@@ -56,7 +56,7 @@ function executableSource(file: string): string {
 // REST router derives its usage-event tool name from it.
 //
 // `audit.ts` is mirrored too (packages/mcp-core/src/audit/audit.ts ↔
-// supabase/functions/_shared/audit.ts) but is deliberately ABSENT here: like
+// supabase/functions/_shared/audit/audit.ts) but is deliberately ABSENT here: like
 // limits.ts, the edge copy is not import-free — it types the client as
 // `ReturnType<typeof createClient>` off an `npm:` specifier where mcp-core
 // types it as an imported `SupabaseClient`, so a whole-file comparison does not
@@ -68,47 +68,47 @@ function executableSource(file: string): string {
 // mcp-core copy.
 const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['../auth/auth-token.ts', 'mcp/auth-token.ts'],
-  ['../limits/created-at.ts', '_shared/created-at.ts'],
+  ['../limits/created-at.ts', '_shared/limits/created-at.ts'],
   ['../limits/ttl.ts', 'mcp/ttl.ts'],
   ['../limits/ttl-defaults.ts', 'mcp/ttl-defaults.ts'],
-  ['../provenance/origin.ts', '_shared/origin.ts'],
+  ['../provenance/origin.ts', '_shared/provenance/origin.ts'],
   ['../webhook/webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
-  ['../auth/tenant-scope.ts', '_shared/tenant-scope.ts'],
+  ['../auth/tenant-scope.ts', '_shared/auth/tenant-scope.ts'],
   ['../auth/org-permissions.ts', 'mcp/org-permissions.ts'],
   ['../webhook/webhook-installation.ts', 'mcp/webhook-installation.ts'],
   ['../webhook/github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
-  ['../telemetry/trace-context.ts', '_shared/trace-context.ts'],
-  ['../rest/rest-tool-name.ts', '_shared/rest-tool-name.ts'],
+  ['../telemetry/trace-context.ts', '_shared/telemetry/trace-context.ts'],
+  ['../rest/rest-tool-name.ts', '_shared/rest/rest-tool-name.ts'],
   // The ranking used by GET /memories/relevant. Note this file has a SECOND,
   // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
   // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.
-  ['../ranking/lesson-rank.ts', '_shared/lesson-rank.ts'],
+  ['../ranking/lesson-rank.ts', '_shared/ranking/lesson-rank.ts'],
   // The tags/origin_pr → outcome-factor mapping the ranked reads feed the
   // scorer. Mirrored because BOTH ranked edge paths derive it —
   // memories/handlers/relevant.ts and mcp/tools.ts (order=rank) — and neither
   // can cross-import mcp-core; hoisted out of both so the two cannot drift.
-  ['../ranking/outcome-signal.ts', '_shared/outcome-signal.ts'],
+  ['../ranking/outcome-signal.ts', '_shared/ranking/outcome-signal.ts'],
   // The pure half of the embedding pipeline. The impure half (`fetch`, the API
-  // key) is `_shared/embedding-client.ts`, which is Deno-only and not mirrored.
-  ['../provenance/embedding.ts', '_shared/embedding.ts'],
+  // key) is `_shared/embedding/embedding-client.ts`, which is Deno-only and not mirrored.
+  ['../provenance/embedding.ts', '_shared/embedding/embedding.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome
   // classification (was inline in _shared/api/router.ts). Both edge files now
   // import their mirror instead of holding a copy.
-  ['../audit/rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
-  ['../rest/rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
-  ['../limits/dry-run.ts', '_shared/dry-run.ts'],
+  ['../audit/rest-audit-actor.ts', '_shared/audit/rest-audit-actor.ts'],
+  ['../rest/rest-response-outcome.ts', '_shared/rest/rest-response-outcome.ts'],
+  ['../limits/dry-run.ts', '_shared/limits/dry-run.ts'],
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
-  ['../telemetry/usage-stats.ts', '_shared/usage-stats.ts'],
+  ['../telemetry/usage-stats.ts', '_shared/telemetry/usage-stats.ts'],
   // The `(now, now + days]` bounds behind `GET /memories?expiring_within_days=`.
   // Mirrored for the usage-stats reason (the list handler cannot cross-import
   // mcp-core) and guarded here rather than left inline because the asymmetric
   // boundary — exclusive lower so an already-expired row is never shown,
   // inclusive upper so "within 7 days" includes day 7 — is the entire feature,
   // and a drift between the tested copy and the deployed one is silent.
-  ['../limits/expiring-window.ts', '_shared/expiring-window.ts'],
+  ['../limits/expiring-window.ts', '_shared/limits/expiring-window.ts'],
   // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
   // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
   ['../rest/cors-origins.ts', '_shared/api/cors-origins.ts'],
@@ -116,26 +116,26 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // transports resolve it before validation — mcp-handler.ts from the tool
   // arguments, api/router.ts from the query string — and neither can
   // cross-import mcp-core.
-  ['../scope/scope-type-attribute.ts', '_shared/scope-type-attribute.ts'],
+  ['../scope/scope-type-attribute.ts', '_shared/scope/scope-type-attribute.ts'],
   // Which operations sweep the whole account, and the refusal a scoped key
   // meets. Mirrored into `_shared/` rather than left in `mcp/permissions.ts`
   // because BOTH transports enforce it — the MCP dispatcher and the REST
   // `POST /memories/purge` handlers — and the REST tree cannot cross-import the
   // `mcp/` directory. A second copy is exactly how the REST half shipped
   // ungated while the docs claimed it was refused.
-  ['../auth/account-wide-tools.ts', '_shared/account-wide-tools.ts'],
+  ['../auth/account-wide-tools.ts', '_shared/auth/account-wide-tools.ts'],
   // The self-time / IO-wait split stamped on every root request span. Mirrored
   // because `traceRequest` (Deno) is the only caller and cannot cross-import
   // mcp-core; guarded here because the interval MERGE is the whole point — a
   // copy that drifts back to summing overlapping calls reports negative self
   // time on exactly the concurrent requests worth profiling.
-  ['../telemetry/io-ledger.ts', '_shared/io-ledger.ts'],
+  ['../telemetry/io-ledger.ts', '_shared/telemetry/io-ledger.ts'],
   // pg_stat_statements rows → OTel cumulative sums, for the `profiling`
   // function. Mirrored for the io-ledger.ts reason; guarded here because the
   // ms→s conversion and the epoch fallback for an unreset counter are both
   // silent when wrong — a drifted copy exports plausible numbers that are off
   // by 1000x or collapse into an unrateable zero-length series.
-  ['../telemetry/db-query-metrics.ts', '_shared/db-query-metrics.ts'],
+  ['../telemetry/db-query-metrics.ts', '_shared/telemetry/db-query-metrics.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

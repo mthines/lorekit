@@ -15,8 +15,8 @@
  * structured usage events for plan-sizing analytics.
  */
 
-import { createTracedClient, type Span } from '../_shared/otel.ts';
-import type { DbClient } from '../_shared/db-client.ts';
+import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
+import type { DbClient } from '../_shared/db/db-client.ts';
 
 export type LimitErrorCode = 'memory_cap' | 'rate_limited';
 
@@ -112,7 +112,7 @@ export async function checkRateLimit(
 
 // ── Usage event recording ─────────────────────────────────────────────────────
 //
-// MOVED to ../_shared/usage.ts. The REST router records usage events too
+// MOVED to ../_shared/telemetry/usage.ts. The REST router records usage events too
 // (one per dispatched route), and it must use the SAME writer — two copies
 // would drift the moment either side gained a field. Re-exported here so
 // mcp-handler.ts's existing `from './limits.ts'` import sites are unchanged
@@ -125,5 +125,5 @@ export async function checkRateLimit(
 // recording is edge-only. The parity that does exist (LimitError,
 // translateCapError, the message builders, checkRateLimit — all above this
 // line) is untouched.
-export { recordUsageEvent, getUserPlanName, type UsageEventParams } from '../_shared/usage.ts';
+export { recordUsageEvent, getUserPlanName, type UsageEventParams } from '../_shared/telemetry/usage.ts';
 

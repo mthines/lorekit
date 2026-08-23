@@ -32,7 +32,7 @@
  * `tools/search.ts`.
  *
  * Import-free, so it can be mirrored verbatim into
- * `supabase/functions/_shared/scope-type-attribute.ts` and kept in sync by
+ * `supabase/functions/_shared/scope/scope-type-attribute.ts` and kept in sync by
  * `edge-parity.spec.ts` — the `rest-tool-name.ts` pattern.
  */
 

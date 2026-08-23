@@ -17,7 +17,7 @@
  * comparison is not available.
  *
  * This file is itself mirrored verbatim into
- * `supabase/functions/_shared/lesson-rank.ts` (`edge-parity.spec.ts` MIRRORS),
+ * `supabase/functions/_shared/ranking/lesson-rank.ts` (`edge-parity.spec.ts` MIRRORS),
  * which is what makes it reachable from the handler. Import-free for that
  * reason — no `zod`, no node builtins, nothing.
  *

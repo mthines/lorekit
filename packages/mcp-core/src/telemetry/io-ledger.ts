@@ -21,7 +21,7 @@
 // long was at least one call in flight".
 //
 // Mirrored self-contained into the Deno edge tree
-// (supabase/functions/_shared/io-ledger.ts) because the edge runtime cannot
+// (supabase/functions/_shared/telemetry/io-ledger.ts) because the edge runtime cannot
 // cross-import this package — the same pattern as limits.ts and created-at.ts.
 // Keep the two copies behaviourally identical; the vitest suite here is the
 // guard.

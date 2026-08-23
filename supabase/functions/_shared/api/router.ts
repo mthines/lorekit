@@ -2,14 +2,14 @@ import type { AuthContext, ResolvedAuth, DbClient } from './auth.ts';
 import { hasPermission, isJwtAuth, analyticsUserId, usageAuthType } from './auth.ts';
 import { forbidden, notFound, methodNotAllowed } from './respond.ts';
 import { translateDbError } from './errors.ts';
-import { recordUsageEvent, getUserPlanName } from '../usage.ts';
-import type { UsageEventParams } from '../usage.ts';
-import { restToolName } from '../rest-tool-name.ts';
-import { classifyResponseOutcome } from '../rest-response-outcome.ts';
-import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../usage-stats.ts';
-import { safeValidateScope } from '../scope.ts';
-import { scopeTypeAttribute } from '../scope-type-attribute.ts';
-import type { Span } from '../otel.ts';
+import { recordUsageEvent, getUserPlanName } from '../telemetry/usage.ts';
+import type { UsageEventParams } from '../telemetry/usage.ts';
+import { restToolName } from '../rest/rest-tool-name.ts';
+import { classifyResponseOutcome } from '../rest/rest-response-outcome.ts';
+import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../telemetry/usage-stats.ts';
+import { safeValidateScope } from '../scope/scope.ts';
+import { scopeTypeAttribute } from '../scope/scope-type-attribute.ts';
+import type { Span } from '../telemetry/otel.ts';
 
 /**
  * Request header carrying a client-supplied grouping key (a PR ref, session id,
@@ -117,7 +117,7 @@ export function relativePath(pathname: string, functionName: string): string {
  * Read the `code` field a 429 body may carry, then classify.
  *
  * The CLASSIFICATION is the pure, unit-tested `classifyResponseOutcome`
- * (`_shared/rest-response-outcome.ts`, mirror of
+ * (`_shared/rest/rest-response-outcome.ts`, mirror of
  * `packages/mcp-core/src/rest/rest-response-outcome.ts`) — see that module for the
  * full status→outcome mapping and why 429 is the one case needing the body.
  * Only the I/O stays here: the response is cloned on that rare path alone, and

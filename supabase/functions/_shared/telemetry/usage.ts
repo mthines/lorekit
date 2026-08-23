@@ -13,9 +13,9 @@
  * is fire-and-forget, `getUserPlanName` fails open to null.
  */
 
-import { background } from './background.ts';
+import { background } from '../runtime/background.ts';
 import { createTracedClient, type Span } from './otel.ts';
-import type { DbClient } from './db-client.ts';
+import type { DbClient } from '../db/db-client.ts';
 
 export interface UsageEventParams {
   userId: string | null;
@@ -131,7 +131,7 @@ export function recordUsageEvent(
  * attributes. Fails open (returns null) on any error.
  *
  * Pass `parentSpan` to have the lookup emit its own CLIENT span, the way every
- * other edge DB call does (`createTracedClient`, see `_shared/otel.ts`). It is
+ * other edge DB call does (`createTracedClient`, see `_shared/telemetry/otel.ts`). It is
  * optional rather than required because the two existing callers differ: the
  * MCP transport resolves the plan inline on the request's critical path and
  * wants it timed, while `_shared/api/router.ts` starts it un-awaited purely to

@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * `supabase/functions/_shared/database.types.ts` is GENERATED from the live
+ * `supabase/functions/_shared/db/database.types.ts` is GENERATED from the live
  * schema by `pnpm nx db:types supabase`, and it is committed. That combination
  * has exactly one failure mode: a migration adds a table and nobody
  * regenerates, so the committed types describe a schema that no longer exists.
@@ -27,7 +27,7 @@ import path from 'node:path';
 
 const repoRoot = path.join(import.meta.dirname, '../../../..');
 const migrationsDir = path.join(repoRoot, 'supabase/migrations');
-const typesFile = path.join(repoRoot, 'supabase/functions/_shared/database.types.ts');
+const typesFile = path.join(repoRoot, 'supabase/functions/_shared/db/database.types.ts');
 
 /** Table names created by any migration. */
 function tablesInMigrations(): Set<string> {

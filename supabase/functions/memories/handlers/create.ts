@@ -2,19 +2,19 @@ import type { AuthContext } from '../../_shared/api/auth.ts';
 import { actorUserId, auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { created, tooManyRequests, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { firstDeniedScope } from '../../_shared/api/tenant.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { CreateMemoryBodySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
-import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
-import { parseOrigin, OriginError } from '../../_shared/origin.ts';
+import { parseCreatedAt, CreatedAtError } from '../../_shared/limits/created-at.ts';
+import { parseOrigin, OriginError } from '../../_shared/provenance/origin.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
-import { recordAuditDeferred } from '../../_shared/audit.ts';
-import { embedOnWrite } from '../../_shared/embed-on-write.ts';
+import { recordAuditDeferred } from '../../_shared/audit/audit.ts';
+import { embedOnWrite } from '../../_shared/embedding/embed-on-write.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Database } from '../../_shared/database.types.ts';
+import type { Database } from '../../_shared/db/database.types.ts';
 
 type RateLimitRow = Database['public']['Functions']['lorekit_check_rate_limit']['Returns'][number];
 
@@ -42,7 +42,7 @@ export async function handleCreate(
   // Optional creation-date override (the `lorekit migrate` backdating case).
   // `CreateMemoryBodySchema` only types it as a string; the SEMANTIC rule
   // (parseable, not in the future beyond a 60s skew, normalised to ISO) lives
-  // in exactly one place for both surfaces — `_shared/created-at.ts`, the same
+  // in exactly one place for both surfaces — `_shared/limits/created-at.ts`, the same
   // module `mcp/tools.ts`'s toolWrite calls. An invalid value is a client
   // error: a 400 naming the problem, never a silent drop and never a 500.
   let createdAtOverride: string | null;
@@ -63,7 +63,7 @@ export async function handleCreate(
 
   // Optional provenance (repo / branch / commit / PR the write came from).
   // Same posture as created_at: the schema only types the fields, the SEMANTIC
-  // rules live once in `_shared/origin.ts` — the module mcp/tools.ts's
+  // rules live once in `_shared/provenance/origin.ts` — the module mcp/tools.ts's
   // toolWrite calls — and a malformed value is a 400 naming the problem rather
   // than a silently dropped origin.
   let origin;
@@ -200,7 +200,7 @@ export async function handleCreate(
   // committed. On the edge the await below resolves immediately and the insert
   // finishes under `EdgeRuntime.waitUntil`; on a runtime without that hook it
   // degrades to the awaited behaviour rather than dropping the row. See
-  // `_shared/audit.ts` → `recordAuditDeferred` for why that fallback differs
+  // `_shared/audit/audit.ts` → `recordAuditDeferred` for why that fallback differs
   // from `embed-on-write.ts`'s deliberate skip.
   await recordAuditDeferred(
     db,

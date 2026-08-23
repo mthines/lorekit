@@ -183,7 +183,7 @@ export function resolveTelemetryTokenSource(env = process.env) {
   return 'none';
 }
 
-// ── ID + value helpers (mirror _shared/otel.ts) ───────────────────────────────
+// ── ID + value helpers (mirror _shared/telemetry/otel.ts) ───────────────────────────────
 
 export function randHex(bytes) {
   const b = new Uint8Array(bytes);

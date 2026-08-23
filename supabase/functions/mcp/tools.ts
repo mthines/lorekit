@@ -21,21 +21,21 @@
  * decides what a member may do.
  */
 
-import { validateScope, UserInputError } from '../_shared/scope.ts';
-import { createTracedClient, type Span } from '../_shared/otel.ts';
+import { validateScope, UserInputError } from '../_shared/scope/scope.ts';
+import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
-import { parseCreatedAt } from '../_shared/created-at.ts';
+import { parseCreatedAt } from '../_shared/limits/created-at.ts';
 import { parseTtl } from './ttl.ts';
-import { parseOrigin } from '../_shared/origin.ts';
-import { recordAudit } from '../_shared/audit.ts';
-import { applyTenantScope, type KeyRestriction } from '../_shared/tenant-scope.ts';
+import { parseOrigin } from '../_shared/provenance/origin.ts';
+import { recordAudit } from '../_shared/audit/audit.ts';
+import { applyTenantScope, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';
-import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
-import type { RankableLesson } from '../_shared/lesson-rank.ts';
-import { outcomeFromTags } from '../_shared/outcome-signal.ts';
-import type { DbClient } from '../_shared/db-client.ts';
+import { rankLessons, selectDiverse } from '../_shared/ranking/lesson-rank.ts';
+import type { RankableLesson } from '../_shared/ranking/lesson-rank.ts';
+import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
+import type { DbClient } from '../_shared/db/db-client.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;

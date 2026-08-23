@@ -1,10 +1,10 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { ok, notFound } from '../../_shared/api/respond.ts';
 import { validateUuid } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';

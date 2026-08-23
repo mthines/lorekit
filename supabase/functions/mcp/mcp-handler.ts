@@ -6,11 +6,11 @@
 import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction } from './auth.ts';
 import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
-import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
-import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
+import { UserInputError, safeValidateScope } from '../_shared/scope/scope.ts';
+import { scopeTypeAttribute } from '../_shared/scope/scope-type-attribute.ts';
 import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
 import { TtlError } from './ttl.ts';
-import { CreatedAtError } from '../_shared/created-at.ts';
+import { CreatedAtError } from '../_shared/limits/created-at.ts';
 import { type Params } from './tools.ts';
 // The dispatch maps are GENERATED from packages/schemas/src/shared/tool-catalog.ts —
 // see tool-dispatch.generated.ts. They were hand-written here, which is why a
@@ -21,12 +21,12 @@ import { type Params } from './tools.ts';
 // Only the maps moved. Every decision below — the auth gate, the span bracket,
 // the try/catch, the usage events — stays here and stays hand-written.
 import { MEMORY_TOOLS, ORG_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
-import { type Span } from '../_shared/otel.ts';
+import { type Span } from '../_shared/telemetry/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
-import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/account-wide-tools.ts';
+import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/auth/account-wide-tools.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
-import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/usage-stats.ts';
+import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/telemetry/usage-stats.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 /**
@@ -226,7 +226,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // dimension declared low-cardinality, and a tool that takes no `scope` at
     // all recorded the literal `unknown`. `memory.search` takes `scopes` (an
     // ARRAY), so EVERY search landed in that placeholder bucket. See
-    // `_shared/scope-type-attribute.ts`.
+    // `_shared/scope/scope-type-attribute.ts`.
     const scopeType = scopeTypeAttribute(rawScope, toolArgs['scopes']);
     // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
     // "records read from repo::owner/name" answerable, which the deliberately

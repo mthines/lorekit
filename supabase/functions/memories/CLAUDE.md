@@ -220,7 +220,7 @@ its own `<column>_mode` of `in` (default) or `nin`.
 
 `?expiring_within_days=N` (integer, 1–365) keeps only memories whose TTL runs out inside the
 window `(now, now + N days]`. The bounds come from the shared pure `expiringWindow`
-(`packages/mcp-core/src/limits/expiring-window.ts` ↔ `_shared/expiring-window.ts`, drift-guarded by
+(`packages/mcp-core/src/limits/expiring-window.ts` ↔ `_shared/limits/expiring-window.ts`, drift-guarded by
 `edge-parity.spec.ts`), never computed inline — the boundary rules below ARE the feature, and an
 off-by-one here does not throw, it shows a row that already expired.
 
@@ -366,7 +366,7 @@ the `origin_*` columns.
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating
 case, and it is honoured (it used to be silently dropped — `p_created_at` was hard-coded to
-`null`). The value is validated by `_shared/created-at.ts`'s `parseCreatedAt`, the very same
+`null`). The value is validated by `_shared/limits/created-at.ts`'s `parseCreatedAt`, the very same
 module the MCP `memory.write` tool uses: parseable date-time, normalised to ISO, and **rejected
 if it is in the future** beyond a 60s clock-skew allowance. An invalid value is a `400` naming
 the problem, never a silent drop and never a 500. Omitting the field leaves the DB's `now()`
@@ -418,7 +418,7 @@ over `fts` is the difference between reading 40 rows and reading the whole store
 scorer ORDERS them in TypeScript. The ranking is deliberately *not* SQL: it is set-relative
 (salience normalises against the most-recurring candidate) and it must agree exactly with the
 CLI hook's ordering. A plpgsql copy could not be held to that agreement by any test, whereas
-`lesson-rank-parity.spec.ts` holds `_shared/lesson-rank.ts` to the CLI's `lessons-pure.mjs`
+`lesson-rank-parity.spec.ts` holds `_shared/ranking/lesson-rank.ts` to the CLI's `lessons-pure.mjs`
 behaviourally — same scores, same order, over shared fixtures.
 
 **`q` is optional on purpose.** With it, relevance participates and the answer is "what
@@ -571,7 +571,7 @@ second function computing the same number would be free to drift from the bars d
 it, the exact property this series exists to guarantee.
 
 **The two scope paths fail in opposite directions, on purpose.** Recording a scope
-(`safeValidateScope`, `_shared/scope.ts`) is a measurement taken alongside an operation the
+(`safeValidateScope`, `_shared/scope/scope.ts`) is a measurement taken alongside an operation the
 caller asked for, so a bad value degrades to `null` and never breaks it. Filtering by a
 scope is the question itself, so a bad value is a `400` — silently dropping a typo'd filter
 would answer "reads everywhere" under the label the caller asked for. Same call as
@@ -590,7 +590,7 @@ stores `scope`, it does not filter by it.) They previously
 passed the raw value into the predicate, so a bad scope matched nothing and the route
 answered `200` with an empty page — the same input getting a `400` from one route and a
 cheerful empty result from five others. The shared entry point is
-**`parseScopeFilter`** (`_shared/scope.ts`).
+**`parseScopeFilter`** (`_shared/scope/scope.ts`).
 
 `parseScopeFilter` **rejects without normalising**, and that is deliberate: `validateScope`
 lowercases, but the write path does not (`CreateMemoryBodySchema` binds `RawScopeSchema`,
@@ -617,7 +617,7 @@ not been made yet. The MCP twin (`mcp/tools.ts`) validates each entry, so that i
 precedent to reconcile against when it is.
 
 `safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope/scope.ts` and
-`supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
+`supabase/functions/_shared/scope/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
 that file is excluded from `MIRRORS` because the two `validateScope` bodies deliberately
 differ. The wrapper delegates every grammar decision to whichever one is in scope, so the
 difference propagates instead of being duplicated. Keep the two wrappers in step by hand.
@@ -693,7 +693,7 @@ self-only (the RPC filters `user_id = caller`, with the same `service_role` +
 NULL escape hatch `lorekit_memory_scopes` uses); there is no
 `applyRestTenantScope` call because there is no query to scope. `summary` and
 `by_scope_type` are computed by the pure `summarizeUsageRows` /
-`rollupByScopeType` (`_shared/usage-stats.ts`, mirror of
+`rollupByScopeType` (`_shared/telemetry/usage-stats.ts`, mirror of
 `packages/mcp-core/src/telemetry/usage-stats.ts`) from the SAME rows returned as `by_tool`,
 so the headline totals can never disagree with the detail. Window + correlation
 validation are the pure `parseUsageWindow` / `parseCorrelationId` in the same
@@ -739,7 +739,7 @@ per-handler concern:
 ## Audit events
 
 Every mutating handler writes to `audit_log` through **the one shared edge writer**,
-`_shared/audit.ts` — the same `recordAudit` the MCP tools call (it was promoted out of
+`_shared/audit/audit.ts` — the same `recordAudit` the MCP tools call (it was promoted out of
 `mcp/audit.ts`; there is deliberately no second writer under `_shared/api/`).
 
 | Handler | Action | Notes |
@@ -758,7 +758,7 @@ Three invariants, all mirrored from the MCP side:
 - **It can never fail the request.** `recordAudit` does not throw; a failed insert is logged
   and swallowed.
 - **The actor is auth-type-sensitive** (`auditUserId` in `_shared/api/auth.ts`, re-exported from
-  the pure `_shared/rest-audit-actor.ts`): the resolved user for BOTH `api_key` and user-JWT
+  the pure `_shared/audit/rest-audit-actor.ts`): the resolved user for BOTH `api_key` and user-JWT
   callers, `null` ONLY for service-role. It previously returned `null` for JWT callers too, and
   that was a bug: the JWT client is RLS-scoped, `audit_log`'s INSERT policy is
   `with check (user_id = auth.uid())`, and `auth.uid()` is that caller's id — so passing the id
@@ -830,5 +830,5 @@ to PostgREST lives in `@lorekit/schemas/filter` (`serializeFilterGroup`), applie
 5. Translate DB errors with `translateDbError` before re-throwing.
 6. If it mutates, honour dry-run: after all validation/auth/ownership checks and BEFORE the first
    write, `if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);`
-   (`_shared/dry-run.ts` + `_shared/api/respond.ts`). `dry-run-coverage.spec.ts` fails the build
+   (`_shared/limits/dry-run.ts` + `_shared/api/respond.ts`). `dry-run-coverage.spec.ts` fails the build
    for any mutating route that skips it.

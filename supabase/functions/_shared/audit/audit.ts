@@ -28,7 +28,7 @@
  * capture it. See CLAUDE.md "Key decisions" for the full rationale.
  *
  * VOCABULARY: `AUDIT_ACTIONS` / `AuditAction` are NOT declared here. They come
- * from the generated schema mirror `./schemas/audit.ts` (source of truth:
+ * from the generated schema mirror `../schemas/audit.ts` (source of truth:
  * `packages/schemas/src/domain/audit.ts`, mirrored by
  * `node scripts/codegen/sync-edge-schemas.mjs`) and are re-exported so every existing
  * importer of this module is unchanged. The import path MUST stay relative —
@@ -58,13 +58,13 @@
  * RLS), so their inserts succeed regardless of `user_id`.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { background } from './background.ts';
-import { AUDIT_ACTIONS } from './schemas/audit.ts';
-import type { AuditAction } from './schemas/audit.ts';
-import type { DbClient } from './db-client.ts';
-import type { Json } from './database.types.ts';
-import { createTracedClient } from './otel.ts';
-import type { Span } from './otel.ts';
+import { background } from '../runtime/background.ts';
+import { AUDIT_ACTIONS } from '../schemas/audit.ts';
+import type { AuditAction } from '../schemas/audit.ts';
+import type { DbClient } from '../db/db-client.ts';
+import type { Json } from '../db/database.types.ts';
+import { createTracedClient } from '../telemetry/otel.ts';
+import type { Span } from '../telemetry/otel.ts';
 
 export { AUDIT_ACTIONS };
 export type { AuditAction };

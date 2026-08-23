@@ -19,7 +19,7 @@
  * to the scorer, never computed inside it.
  *
  * Import-free so it can be mirrored verbatim into
- * `supabase/functions/_shared/outcome-signal.ts` (the Deno edge tree cannot
+ * `supabase/functions/_shared/ranking/outcome-signal.ts` (the Deno edge tree cannot
  * cross-import this Node package). `edge-parity.spec.ts` guards the two copies.
  */
 

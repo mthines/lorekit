@@ -23,11 +23,11 @@
  *   VCS_REPOSITORY_NAME           e.g. mthines/lorekit
  */
 
-import type { Database } from './database.types.ts';
-import type { DbClient } from './db-client.ts';
+import type { Database } from '../db/database.types.ts';
+import type { DbClient } from '../db/db-client.ts';
 import { formatTraceparent, parseTraceparent } from './trace-context.ts';
 import { attributeIoTime, type IoInterval } from './io-ledger.ts';
-import { translateDbError } from './api/errors.ts';
+import { translateDbError } from '../api/errors.ts';
 
 /** PostgREST error shape returned by @supabase/supabase-js. */
 type PostgrestError = { message: string; details?: string | null; hint?: string | null; code?: string };

@@ -763,7 +763,7 @@ All signals carry these resource attributes:
 
 ### The edge's environment is set by the deploy pipeline, not inferred
 
-`resolveDeploymentEnv()` (`_shared/otel.ts`) reads `DEPLOYMENT_ENVIRONMENT`, then
+`resolveDeploymentEnv()` (`_shared/telemetry/otel.ts`) reads `DEPLOYMENT_ENVIRONMENT`, then
 falls back to `VERCEL_ENV`, then to `'local'`. **A Supabase project has neither
 variable by default** — `VERCEL_ENV` exists only inside Vercel's build and
 runtime — so with nothing set, both the preview and the production Supabase
@@ -902,7 +902,7 @@ change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
 **Dataset precedence** (highest first): an explicit `Dash0-Dataset` passed via
 `OTEL_EXPORTER_OTLP_HEADERS` is preserved and never overwritten; otherwise
 `DASH0_DATASET`; otherwise the `default` fallback. The edge functions
-(`_shared/otel.ts`) follow the same order.
+(`_shared/telemetry/otel.ts`) follow the same order.
 
 > **Note:** the CLI `service.name` was `lorekit-cli` before this and is now `cli`
 > (aligning with the namespace-grouped `api` / `web` / `mcp` names). This is a
@@ -1093,13 +1093,13 @@ Canonical detail for the **OTel attributes** summary in the root [`CLAUDE.md`](.
   fails open to any `*.supabase.co` / `*.supabase.in` host (kept so local/preview setups
   without the var still propagate) and emits a one-time `console.warn` so the widening is
   visible rather than silent.
-- **Who receives it.** Every edge function's `traceRequest` (`supabase/functions/_shared/otel.ts`)
+- **Who receives it.** Every edge function's `traceRequest` (`supabase/functions/_shared/telemetry/otel.ts`)
   parses the inbound header; an invalid one falls back to a new root trace instead of a corrupt
   span. Responses carry a `traceparent` back (exposed via `Access-Control-Expose-Headers`) so a
   client can correlate with the server span.
 - **The parser** is `packages/mcp-core/src/telemetry/trace-context.ts` (`parseTraceparent` /
   `formatTraceparent` / `isValidTraceId` / `isValidSpanId`), import-free and mirrored verbatim
-  to `supabase/functions/_shared/trace-context.ts`; drift is parity-guarded by
+  to `supabase/functions/_shared/telemetry/trace-context.ts`; drift is parity-guarded by
   `edge-parity.spec.ts`. Strict W3C validation: lowercase hex only, no all-zero ids, version
   `ff` rejected, version `00` fixed at four fields, future versions may append fields.
 - **Span kinds.** Root request spans are SERVER (2), `TracedQuery` DB spans are CLIENT (3),
@@ -1118,7 +1118,7 @@ unique.
 
 | `service.name` | Component | Set in |
 |---|---|---|
-| `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
+| `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/telemetry/otel.ts`. No configuration required. |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts` (server), `packages/web/src/lib/dash0-rum.ts` (browser). Both pin the literal `web`; `otel-conventions.spec.ts` asserts the two agree, because server and browser are ONE service told apart by `telemetry.sdk.language`, not by name |
 | `cli` | CLI | `packages/cli/src/telemetry/telemetry.mjs` |
 

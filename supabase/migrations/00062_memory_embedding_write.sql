@@ -3,7 +3,7 @@
 -- memory's vector.
 --
 -- ── WHY THIS EXISTS ──────────────────────────────────────────────────────
--- The write-path embedder (`_shared/embed-on-write.ts`) updated `memories`
+-- The write-path embedder (`_shared/embedding/embed-on-write.ts`) updated `memories`
 -- directly, with whatever client the request happened to arrive on. That is
 -- correct on two of the three auth tiers and SILENTLY wrong on the third:
 --

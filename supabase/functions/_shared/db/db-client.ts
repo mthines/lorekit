@@ -60,7 +60,7 @@ export type DbClient = SupabaseClient<Database>;
  *
  * USE THIS ONLY WHERE THE SQL PARAMETER HAS NO DEFAULT. Where a parameter is
  * `default null`, the right answer is `?? undefined`: that omits the argument
- * and lets the function apply its own default (see `_shared/usage.ts`, where
+ * and lets the function apply its own default (see `_shared/telemetry/usage.ts`, where
  * all fifteen are `default null`). The two are not interchangeable, and getting
  * them the wrong way round fails silently in opposite directions — `?? undefined`
  * here would drop a required argument and break every pending installation,
