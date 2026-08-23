@@ -1,15 +1,15 @@
 import { applyKeyScopeFilter } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
-import { recordAudit } from '../../_shared/audit.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
 import { ok, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { UpdateMemoryBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 
 type MemoryRow = Tables<'memories'>;
 

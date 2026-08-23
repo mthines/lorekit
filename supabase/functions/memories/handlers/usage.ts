@@ -1,8 +1,8 @@
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
 import { ok, badRequest } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { UsageStatsQuerySchema } from '../../_shared/schemas/usage.ts';
 import {
   parseUsageWindow,
@@ -11,7 +11,7 @@ import {
   rollupByScopeType,
   UsageStatsError,
   type UsageStatRow,
-} from '../../_shared/usage-stats.ts';
+} from '../../_shared/telemetry/usage-stats.ts';
 
 /** The raw shape `lorekit_usage_stats` returns (bigints arrive as strings). */
 interface RawUsageRow {

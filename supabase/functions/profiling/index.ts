@@ -13,8 +13,8 @@
  * a time.
  *
  * Read `lorekit_db_query_stats()` → map to cumulative sums
- * (`_shared/db-query-metrics.ts`) → POST as OTLP metrics
- * (`_shared/otlp-metrics.ts`). Full rationale in docs/otel.md →
+ * (`_shared/telemetry/db-query-metrics.ts`) → POST as OTLP metrics
+ * (`_shared/telemetry/otlp-metrics.ts`). Full rationale in docs/otel.md →
  * "Query-level profiling".
  *
  * OPERATOR SURFACE, service-role only. The rows are cross-tenant query shapes,
@@ -29,9 +29,9 @@
  * Deploy with: supabase functions deploy profiling --no-verify-jwt
  */
 
-import { traceRequest, resolveEnvironmentOverride, createTracedClient } from '../_shared/otel.ts';
-import { exportMetrics } from '../_shared/otlp-metrics.ts';
-import { buildDbQueryMetrics, type DbQueryStatRow } from '../_shared/db-query-metrics.ts';
+import { traceRequest, resolveEnvironmentOverride, createTracedClient } from '../_shared/telemetry/otel.ts';
+import { exportMetrics } from '../_shared/telemetry/otlp-metrics.ts';
+import { buildDbQueryMetrics, type DbQueryStatRow } from '../_shared/telemetry/db-query-metrics.ts';
 import { resolveRestAuth } from '../_shared/api/auth.ts';
 
 /**

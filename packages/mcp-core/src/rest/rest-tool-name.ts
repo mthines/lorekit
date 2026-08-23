@@ -18,7 +18,7 @@
 // No new naming scheme is introduced here.
 //
 // Pure and import-free so it can be mirrored verbatim into
-// `supabase/functions/_shared/rest-tool-name.ts` (the edge tree cannot
+// `supabase/functions/_shared/rest/rest-tool-name.ts` (the edge tree cannot
 // cross-import this package) and unit-tested in Node — the edge functions have
 // no test harness of their own. `edge-parity.spec.ts` guards the two copies.
 

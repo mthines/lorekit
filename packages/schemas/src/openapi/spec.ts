@@ -511,7 +511,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   // Attach the dry-run header to every mutating operation, centrally rather
   // than per-registerPath. It defaults to `true` so Scalar pre-fills it and the
   // docs are safe by default; the caller clears it to execute for real. The
-  // backend contract lives in `_shared/dry-run.ts` (isDryRunHeader).
+  // backend contract lives in `_shared/limits/dry-run.ts` (isDryRunHeader).
   const MUTATING_METHODS = new Set(['post', 'patch', 'delete', 'put']);
   const dryRunParam = {
     name: 'X-LoreKit-Dry-Run',

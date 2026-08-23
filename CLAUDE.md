@@ -148,7 +148,7 @@ rather than inferred. They cost time every time they are rediscovered:
 6. **Node's built-in `fetch` ignores `HTTPS_PROXY` — run it with
    `NODE_USE_ENV_PROXY=1`.** This bites anything in this repo that exports
    telemetry over `fetch`: `scripts/migrations/sweep-rows.mjs`, the CLI's
-   `packages/cli/src/telemetry/telemetry.mjs`, and the `_shared/otel.ts` exporters when
+   `packages/cli/src/telemetry/telemetry.mjs`, and the `_shared/telemetry/otel.ts` exporters when
    exercised locally. The symptom is a **`403 Host not in allowlist: <host>`**
    *even for a host that IS allowlisted*, because without the variable undici
    goes DIRECT and meets the network gateway's own, narrower allowlist instead
@@ -460,10 +460,10 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `packages/mcp-core/src/limits/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit` — the origin of the "pure module mirrored self-contained into the edge function" pattern |
 | `packages/mcp-core/src/auth/tenant-scope.ts` | `applyTenantScope` — the single widened tenant-visibility predicate (RLS side is `lorekit_member_org_ids()`) |
 | `supabase/functions/mcp/index.ts` | Self-contained Deno MCP server (production) |
-| `supabase/functions/_shared/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()`, and the ONE source of the OTLP resource attributes / endpoint / attribute encoding that both the span and metric exporters share |
+| `supabase/functions/_shared/telemetry/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()`, and the ONE source of the OTLP resource attributes / endpoint / attribute encoding that both the span and metric exporters share |
 | `packages/mcp-core/src/telemetry/io-ledger.ts` | `mergeBusyMs`/`attributeIoTime` — the self-time split behind `lorekit.self_time_ms` (mirrored to `_shared/`). Merged intervals, never summed |
-| `supabase/functions/_shared/audit.ts` (← `packages/mcp-core/src/audit/audit.ts`) | THE single edge audit writer (MCP tools **and** REST handlers) |
-| `supabase/functions/_shared/usage.ts` | `recordUsageEvent` + `getUserPlanName` — the single edge usage-event writer |
+| `supabase/functions/_shared/audit/audit.ts` (← `packages/mcp-core/src/audit/audit.ts`) | THE single edge audit writer (MCP tools **and** REST handlers) |
+| `supabase/functions/_shared/telemetry/usage.ts` | `recordUsageEvent` + `getUserPlanName` — the single edge usage-event writer |
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory-cap trigger (`enforce_memory_cap`) + rate-limit RPC (`lorekit_check_rate_limit`) + `user_limits`/`lorekit_get_limit` config source |
 | `packages/web/src/lib/api/` | The dashboard's client for LoreKit's OWN REST API (`restFetch`, typed wrappers from `@lorekit/schemas`) |
@@ -559,7 +559,7 @@ their rationale inline. **Do not relitigate these.**
 - Rate limiting is a Postgres-backed fixed-window counter (not in-memory/Redis) — edge isolates are stateless; no new infra
 - Limits config lives in one DB function (`lorekit_default_limit`) + `user_limits` override table — no numeric limit hardcoded; raising a ceiling is one row upsert
 - **Webhook secrets are repo-scoped** — matched by `repository.full_name` against `webhook_secrets.repo`; `selectWebhookSecrets` pure + mirrored. [rationale](./docs/decisions.md#webhook-secrets-are-repo-scoped)
-- **Audit logging is captured at the app layer** — explicit `recordAudit` after each mutation; actor via `auditUserId`; ONE edge writer (`_shared/audit.ts`); one action vocabulary in `@lorekit/schemas`. [rationale](./docs/decisions.md#audit-logging-is-captured-at-the-app-layer)
+- **Audit logging is captured at the app layer** — explicit `recordAudit` after each mutation; actor via `auditUserId`; ONE edge writer (`_shared/audit/audit.ts`); one action vocabulary in `@lorekit/schemas`. [rationale](./docs/decisions.md#audit-logging-is-captured-at-the-app-layer)
 - **Usage events recorded once per surface, in the dispatcher** — never per handler; a REST route reports the equivalent MCP tool name via `rest-tool-name.ts`. [rationale](./docs/decisions.md#usage-events-recorded-once-per-surface-in-the-dispatcher)
 - **Org/scope sharing is ORG-FIRST (Phase 1)** — single authoritative shared row; tenant visibility in ONE place (`lorekit_member_org_ids` / `applyTenantScope`). [rationale](./docs/decisions.md#orgscope-sharing-is-org-first-phase-1)
 - **Org-sharing Phase 2 (org-owned writes)** — `memory_write` gains `p_org_slug`, ownership authorization-derived inside the RPC; cap becomes tenant-keyed; `LK002` denial. [rationale](./docs/decisions.md#orgscope-sharing-phase-2-org-owned-writes)

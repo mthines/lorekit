@@ -1,9 +1,9 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { ok, notFound } from '../../../_shared/api/respond.ts';
 import { validateOrgSlug } from '../../../_shared/api/validate.ts';
-import { createTracedClient } from '../../../_shared/otel.ts';
-import type { Span } from '../../../_shared/otel.ts';
-import type { Database } from '../../../_shared/database.types.ts';
+import { createTracedClient } from '../../../_shared/telemetry/otel.ts';
+import type { Span } from '../../../_shared/telemetry/otel.ts';
+import type { Database } from '../../../_shared/db/database.types.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
 import { isOrgMember } from '../../../_shared/api/tenant.ts';

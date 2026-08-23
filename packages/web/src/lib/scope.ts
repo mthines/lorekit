@@ -11,7 +11,7 @@ const VALID_PREFIXES: readonly string[] = ['global', 'project', 'repo', 'branch'
 
 /**
  * The canonical charset a scope may use, mirroring the edge validator's
- * `/^[\w.:/-]+$/` guard (`supabase/functions/_shared/scope.ts`). A canonical
+ * `/^[\w.:/-]+$/` guard (`supabase/functions/_shared/scope/scope.ts`). A canonical
  * scope only ever uses word chars plus `. : / -`; the edge rejects anything
  * else because a scope is interpolated into a PostgREST `.or()` filter where
  * `"` `,` `(` `)` are structural.
@@ -21,7 +21,7 @@ const CANONICAL_CHARSET = /^[\w.:/-]+$/;
 /**
  * Is `raw` a scope the API will ACCEPT as a filter?
  *
- * This mirrors `parseScopeFilter` in `supabase/functions/_shared/scope.ts` —
+ * This mirrors `parseScopeFilter` in `supabase/functions/_shared/scope/scope.ts` —
  * the entry point five of the six scope-filtering routes now call — and
  * deliberately NOT the stricter per-prefix grammar in
  * `packages/mcp-core/src/scope/scope.ts`. Mirroring the stricter one would have the

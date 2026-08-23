@@ -44,7 +44,7 @@ export const MemoryWriteSchema = z.object({
   kind: MemoryKindSchema.optional(), host: z.string().max(64).optional(),
   // Provenance — where the memory was RECORDED FROM (vs `scope`, which says
   // where it applies). Every field is independently optional; the shared
-  // `parseOrigin` validator (mcp-core / _shared/origin.ts) owns the shape rules.
+  // `parseOrigin` validator (mcp-core / _shared/provenance/origin.ts) owns the shape rules.
   origin_repo: z.string().optional(), origin_branch: z.string().optional(),
   origin_commit: z.string().optional(), origin_pr: z.union([z.number(), z.string()]).optional(),
 });

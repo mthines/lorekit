@@ -58,7 +58,7 @@ function stripComments(source: string): string {
 function importedSpecifiers(source: string): string[] {
   // Anchored to real import/export statements, with the specifier forbidden
   // from spanning a newline. A loose /from ['"](...)['"]/ matches prose inside
-  // the SQL string builders in `_shared/otel.ts` and swallows whole functions.
+  // the SQL string builders in `_shared/telemetry/otel.ts` and swallows whole functions.
   const src = stripComments(source);
   const found = new Set<string>();
   const patterns = [

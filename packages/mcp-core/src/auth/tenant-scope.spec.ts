@@ -332,7 +332,7 @@ describe('SCOPE_PATTERN parity across every copy', () => {
 
   it.each([
     ['packages/mcp-core/src/auth/tenant-scope.ts', AUTHORITY],
-    ['supabase/functions/_shared/tenant-scope.ts', AUTHORITY],
+    ['supabase/functions/_shared/auth/tenant-scope.ts', AUTHORITY],
   ])('%s restates the authority verbatim', (file, expected) => {
     expect(read(file)).toContain(expected);
   });

@@ -36,7 +36,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const { Span, ExportBatch } = await import(
-  pathToFileURL(path.join(repoRoot, 'supabase', 'functions', '_shared', 'otel.ts')).href
+  pathToFileURL(path.join(repoRoot, 'supabase', 'functions', '_shared', 'telemetry', 'otel.ts')).href
 ) as {
   Span: new (
     name: string,

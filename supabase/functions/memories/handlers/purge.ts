@@ -1,15 +1,15 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
-import { accountWideRefusalMessage, isRefusedForScopedKey } from '../../_shared/account-wide-tools.ts';
-import { recordAudit } from '../../_shared/audit.ts';
+import { accountWideRefusalMessage, isRefusedForScopedKey } from '../../_shared/auth/account-wide-tools.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
 import { ok, forbidden, tooManyRequests, dryRun } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateOptionalBody } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { PurgeMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Database } from '../../_shared/database.types.ts';
+import type { Database } from '../../_shared/db/database.types.ts';
 
 type RateLimitRow = Database['public']['Functions']['lorekit_check_rate_limit']['Returns'][number];
 
@@ -45,7 +45,7 @@ function requireUserId(auth: AuthContext, cors: Record<string, string>): string 
  * BOTH surfaces; only the MCP dispatcher enforced it, so these two endpoints
  * were the documented-but-unimplemented half. The decision itself is not
  * restated here — `isRefusedForScopedKey` and the message come from the one
- * `_shared/account-wide-tools.ts` module the MCP dispatcher also calls, keyed on
+ * `_shared/auth/account-wide-tools.ts` module the MCP dispatcher also calls, keyed on
  * the same tool name `rest-tool-name.ts` already maps these routes to.
  *
  * A 403 for the same reason the router's `requires` refusals are: the request is

@@ -4,7 +4,7 @@
  * Everything here is a total function over plain data: what text a memory
  * embeds as, how a provider request is shaped, how its response is validated,
  * how a batch is sized, what a run costs. The impure half — the actual `fetch`,
- * the API key, the clock — lives in `supabase/functions/_shared/embedding-client.ts`
+ * the API key, the clock — lives in `supabase/functions/_shared/embedding/embedding-client.ts`
  * and in `scripts/migrations/backfill-embeddings.mjs`, which are the two places that can
  * reach a network.
  *
@@ -15,7 +15,7 @@
  * without a key.
  *
  * Import-free so it can be mirrored verbatim into
- * `supabase/functions/_shared/embedding.ts` (`edge-parity.spec.ts` MIRRORS).
+ * `supabase/functions/_shared/embedding/embedding.ts` (`edge-parity.spec.ts` MIRRORS).
  *
  * NOTHING here is wired into a CI gate. Embedding runs cost money and depend on
  * a third-party endpoint, so they are manual and on demand — the same posture

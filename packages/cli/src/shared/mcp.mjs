@@ -159,7 +159,7 @@ export function mcpToRestBase(mcpEndpointUrl) {
 /**
  * Normalise a client-supplied usage correlation id (a PR ref, session id, or CI
  * job id). Bounded + charset-restricted to match the server's `parseCorrelationId`
- * (supabase/functions/_shared/usage-stats.ts); returns null for empty/over-long/
+ * (supabase/functions/_shared/telemetry/usage-stats.ts); returns null for empty/over-long/
  * out-of-charset input so a bad value is simply not sent. Zero-dep (the CLI does
  * not import mcp-core), so the small regex is duplicated intentionally.
  */

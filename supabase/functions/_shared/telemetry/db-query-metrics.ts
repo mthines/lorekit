@@ -10,7 +10,7 @@
 //
 // The pure half of LoreKit's query-level profiling. The impure half is
 // `supabase/functions/profiling/index.ts` (the RPC read) and
-// `supabase/functions/_shared/otlp-metrics.ts` (the POST); this module is the
+// `supabase/functions/_shared/telemetry/otlp-metrics.ts` (the POST); this module is the
 // mapping in between, hoisted out so the decisions that are easy to get
 // silently wrong — the unit conversion, the reset timestamp, the attribute set
 // — are unit-testable rather than only observable as a wrong number on a
@@ -30,7 +30,7 @@
 // the other two.
 //
 // Mirrored self-contained into the Deno edge tree
-// (supabase/functions/_shared/db-query-metrics.ts) because the edge runtime
+// (supabase/functions/_shared/telemetry/db-query-metrics.ts) because the edge runtime
 // cannot cross-import this package — the same pattern as io-ledger.ts and
 // created-at.ts. Keep the two copies behaviourally identical; the vitest suite
 // here is the guard.

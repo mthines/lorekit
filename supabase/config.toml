@@ -61,7 +61,7 @@ inspector_port = 8083
 # tests without a gateway 401.
 #
 # No SERVICE_NAME secrets here on purpose. Every function is one logical
-# service, `api`, hard-coded in `_shared/otel.ts`; the function is identified by
+# service, `api`, hard-coded in `_shared/telemetry/otel.ts`; the function is identified by
 # `faas.name` and the span name. Supabase secrets are project-wide rather than
 # per-function, so a per-function SERVICE_NAME could never have worked anyway.
 [functions.mcp]

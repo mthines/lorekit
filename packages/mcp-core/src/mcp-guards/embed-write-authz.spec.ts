@@ -6,7 +6,7 @@ import path from 'node:path';
 /**
  * Drift guard for the write-path embedder's authorisation.
  *
- * THE BUG THIS PINS. `_shared/embed-on-write.ts` used to update `memories`
+ * THE BUG THIS PINS. `_shared/embedding/embed-on-write.ts` used to update `memories`
  * directly with whatever client the request arrived on. The READ policies were
  * widened for orgs in 00015 (`org_id in (select lorekit_member_org_ids(…))`);
  * `rls_update` (00001) never was. An org-owned memory carries `user_id is null`
@@ -29,7 +29,7 @@ import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // packages/mcp-core/src/mcp-guards
 const repoRoot = path.resolve(here, '../../../..');
-const embedOnWrite = path.join(repoRoot, 'supabase', 'functions', '_shared', 'embed-on-write.ts');
+const embedOnWrite = path.join(repoRoot, 'supabase', 'functions', '_shared', 'embedding', 'embed-on-write.ts');
 const createHandler = path.join(
   repoRoot, 'supabase', 'functions', 'memories', 'handlers', 'create.ts',
 );

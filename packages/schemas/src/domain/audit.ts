@@ -30,7 +30,7 @@ import { z } from 'zod';
  * Who consumes this list
  * ----------------------
  *   - `packages/mcp-core/src/audit/audit.ts`            — imports it (Node).
- *   - `supabase/functions/_shared/audit.ts`       — imports the mirror
+ *   - `supabase/functions/_shared/audit/audit.ts`       — imports the mirror
  *     (`./schemas/audit.ts`); a bare specifier would break the edge boot, so
  *     the path must stay relative.
  *   - `supabase/migrations/*_audit_log_*.sql`     — the CHECK must list

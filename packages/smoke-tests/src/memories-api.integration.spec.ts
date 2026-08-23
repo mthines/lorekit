@@ -1519,7 +1519,7 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
     // would answer "reads everywhere" under the label the caller asked for.
     //
     // Every case here must be rejected by the EDGE `validateScope`
-    // (`supabase/functions/_shared/scope.ts`), which is the deliberately
+    // (`supabase/functions/_shared/scope/scope.ts`), which is the deliberately
     // lighter mirror: it checks the `::` separator, the prefix vocabulary and
     // the charset, but has NO per-prefix shape check. `repo::no-slash` is
     // therefore accepted there and rejected only by the mcp-core copy — asserting

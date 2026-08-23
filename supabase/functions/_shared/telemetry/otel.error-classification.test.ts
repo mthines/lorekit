@@ -10,7 +10,7 @@
  * `PGRST116`, inflating the API's span-error-rate alert with requests it was
  * handling correctly.
  *
- * Run with: deno test --no-check supabase/functions/_shared/otel.error-classification.test.ts
+ * Run with: deno test --no-check supabase/functions/_shared/telemetry/otel.error-classification.test.ts
  * (--no-check because the surrounding tree needs the full Supabase import-map
  * to typecheck; `node scripts/ci/deno-check-functions.mjs` is the typecheck gate).
  */

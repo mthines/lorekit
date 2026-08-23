@@ -14,7 +14,7 @@
 //     into the summary + per-scope-type view WITHOUT a second DB pass.
 //
 // Import-free so it can be mirrored verbatim into
-// `supabase/functions/_shared/usage-stats.ts` (the edge tree cannot cross-import
+// `supabase/functions/_shared/telemetry/usage-stats.ts` (the edge tree cannot cross-import
 // this package) and unit-tested in Node — the edge functions have no test
 // harness of their own. `edge-parity.spec.ts` guards the two copies.
 

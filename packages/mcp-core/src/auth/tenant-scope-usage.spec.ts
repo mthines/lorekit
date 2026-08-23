@@ -74,13 +74,13 @@ function extractFunctionBody(src: string, fnName: string): string {
 
 describe('tenant-scope usage guard (edge read handlers)', () => {
   it('imports applyTenantScope from the shared tenant-scope module', () => {
-    // The mirror moved from `mcp/tenant-scope.ts` to `_shared/tenant-scope.ts`
+    // The mirror moved from `mcp/tenant-scope.ts` to `_shared/auth/tenant-scope.ts`
     // when the REST surface started needing the same module: two edge copies of
     // one predicate is the drift this guard exists to prevent, so there is now
     // one, importable by every function. The import list is matched loosely
     // because it also carries the `KeyRestriction` type.
     expect(source).toMatch(
-      /import\s*\{[^}]*\bapplyTenantScope\b[^}]*\}\s*from\s*['"]\.\.\/_shared\/tenant-scope\.(ts|js)['"]/,
+      /import\s*\{[^}]*\bapplyTenantScope\b[^}]*\}\s*from\s*['"]\.\.\/_shared\/auth\/tenant-scope\.(ts|js)['"]/,
     );
   });
 
@@ -189,8 +189,8 @@ describe('tenancy exclusion guard (REST helper)', () => {
 
   it('imports both helpers from the single mirrored module', () => {
     const src = restTenantSource();
-    expect(src).toMatch(/ownRowsFragment,[\s\S]*?from '\.\.\/tenant-scope\.ts'/);
-    expect(src).toMatch(/restrictsTenancy,[\s\S]*?from '\.\.\/tenant-scope\.ts'/);
+    expect(src).toMatch(/ownRowsFragment,[\s\S]*?from '\.\.\/auth\/tenant-scope\.ts'/);
+    expect(src).toMatch(/restrictsTenancy,[\s\S]*?from '\.\.\/auth\/tenant-scope\.ts'/);
   });
 });
 
@@ -418,7 +418,7 @@ describe('account-wide tool guard', () => {
     // The decision itself must be IMPORTED, never restated: a third copy of
     // "which operations are account-wide" is how these two drifted apart.
     expect(src).toMatch(
-      /import\s*\{[^}]*\bisRefusedForScopedKey\b[^}]*\}\s*from\s*['"]\.\.\/\.\.\/_shared\/account-wide-tools\.(ts|js)['"]/,
+      /import\s*\{[^}]*\bisRefusedForScopedKey\b[^}]*\}\s*from\s*['"]\.\.\/\.\.\/_shared\/auth\/account-wide-tools\.(ts|js)['"]/,
     );
   });
 
@@ -434,7 +434,7 @@ describe('account-wide tool guard', () => {
     expect(isRefusedForScopedKey('memory.scopes', true)).toBe(false);
 
     const edge = readFileSync(
-      path.resolve(here, '../../../../supabase/functions/_shared/account-wide-tools.ts'),
+      path.resolve(here, '../../../../supabase/functions/_shared/auth/account-wide-tools.ts'),
       'utf8',
     );
     expect(edge).toContain("'memory.purge',");

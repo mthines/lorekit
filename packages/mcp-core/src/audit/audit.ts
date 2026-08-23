@@ -11,7 +11,7 @@
  *     are logged, not surfaced.
  *
  * Mirrored self-contained (no cross-package import) into
- * supabase/functions/_shared/audit.ts — the single audit writer for the whole
+ * supabase/functions/_shared/audit/audit.ts — the single audit writer for the whole
  * edge tree (MCP tools AND REST handlers). The edge runtime cannot
  * cross-import this package (same pattern as limits.ts, created-at.ts,
  * webhook-secret-select.ts). Keep buildAuditEntry's body byte-consistent

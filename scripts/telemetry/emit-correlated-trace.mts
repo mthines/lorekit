@@ -17,7 +17,7 @@
  * re-implementation:
  *   • the `cli` span   → the CLI's real `buildTracePayload` (packages/cli)
  *   • the `api` spans  → the edge's real `Span` / `buildOtlpPayload`
- *     (supabase/functions/_shared/otel.ts)
+ *     (supabase/functions/_shared/telemetry/otel.ts)
  *   • the `mcp-node` span → the same edge builder with `service.name=mcp-node`
  *     (the Node MCP server emits via the OTel SDK, which can't be driven
  *     single-shot cross-package; the wire shape is identical)
@@ -39,7 +39,7 @@
  * See:  docs/telemetry-quality-review.md → "Emitting a real correlated trace".
  */
 
-// The edge module (`_shared/otel.ts`) reads `Deno.env` when it builds a payload.
+// The edge module (`_shared/telemetry/otel.ts`) reads `Deno.env` when it builds a payload.
 // Shim it onto Node's process.env so the edge's REAL code runs unmodified here.
 // (Assigned before any harness call touches the edge builder.)
 (globalThis as unknown as { Deno?: unknown }).Deno ??= {
@@ -58,7 +58,7 @@ import {
   buildOtlpPayload,
   SPAN_KIND_SERVER,
   SPAN_KIND_CLIENT,
-} from '../../supabase/functions/_shared/otel.ts';
+} from '../../supabase/functions/_shared/telemetry/otel.ts';
 import {
   resolveTelemetryConfig,
   buildTracePayload,

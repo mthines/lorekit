@@ -5,7 +5,7 @@ Semantic search for lore, in three deliberately separate pieces:
 | Piece | Where | State |
 |-------|-------|-------|
 | Schema | `supabase/migrations/00060_memory_embeddings.sql` | Landed, dormant |
-| Pipeline | `_shared/embed-on-write.ts` + `scripts/migrations/backfill-embeddings.mjs` | Landed, **off by default** |
+| Pipeline | `_shared/embedding/embed-on-write.ts` + `scripts/migrations/backfill-embeddings.mjs` | Landed, **off by default** |
 | Search | `POST /memories/search?mode=semantic\|hybrid` | Not built |
 
 They are separate because they fail differently. The schema is a migration; the
@@ -489,9 +489,9 @@ reports success is worse than no run.
 |------|------|
 | `packages/mcp-core/src/provenance/embedding.ts` | **Pure**: what to embed, request shape, response validation, batching, cost. Unit-tested without a key. |
 | `packages/mcp-core/src/provenance/embedding.spec.ts` | Unit tests over the above — config resolution, input construction, request shape, response validation, batching, and cost. No key required. |
-| `supabase/functions/_shared/embedding.ts` | Verbatim mirror (`edge-parity.spec.ts`). |
-| `supabase/functions/_shared/embedding-client.ts` | **Impure**: the `fetch`, the key, the timeout. Deno-only, not mirrored. |
-| `supabase/functions/_shared/embed-on-write.ts` | The background-and-swallow write path. |
+| `supabase/functions/_shared/embedding/embedding.ts` | Verbatim mirror (`edge-parity.spec.ts`). |
+| `supabase/functions/_shared/embedding/embedding-client.ts` | **Impure**: the `fetch`, the key, the timeout. Deno-only, not mirrored. |
+| `supabase/functions/_shared/embedding/embed-on-write.ts` | The background-and-swallow write path. |
 | `supabase/migrations/00062_memory_embedding_write.sql` | `lorekit_memory_set_embedding` — the ONE authorised path for writing a vector. Authorises inside the function so an org-owned row is embeddable by a write-capable member and refused for a viewer. |
 | `packages/mcp-core/src/mcp-guards/embed-write-authz.spec.ts` | Drift guard: holds the edge module to the RPC and off a direct `UPDATE`. Mutation-verified — restoring the direct update fails three of its cases. |
 | `scripts/migrations/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. Exports `parseArgs` behind an `invokedDirectly` seam so importing it never starts a run. |

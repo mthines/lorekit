@@ -19,10 +19,10 @@
 // Every failure is swallowed after being recorded on the span. There is no
 // retry here: a retry on the write path is just a slower way to fail, and the
 // backfill already retries by construction (it selects on `embedding is null`).
-import { background } from './background.ts';
-import { createTracedClient } from './otel.ts';
-import type { Span } from './otel.ts';
-import type { DbClient } from './api/auth.ts';
+import { background } from '../runtime/background.ts';
+import { createTracedClient } from '../telemetry/otel.ts';
+import type { Span } from '../telemetry/otel.ts';
+import type { DbClient } from '../api/auth.ts';
 import { embeddingInput, isEmbeddable, toVectorLiteral, resolveEmbeddingConfig } from './embedding.ts';
 import { embedTexts } from './embedding-client.ts';
 

@@ -7,7 +7,7 @@ import { normalizeRunEnvironment } from '../src/shared/mcp.mjs';
 // OTEL_DEPLOYMENT_ENVIRONMENT) is set — the edge reports it as
 // `deployment.environment.name` (honouring only the synthetic `test`), so a
 // smoke run's downstream spans filter apart from real traffic. Bounds mirror the
-// edge's `resolveEnvironmentOverride` charset (supabase/functions/_shared/otel.ts)
+// edge's `resolveEnvironmentOverride` charset (supabase/functions/_shared/telemetry/otel.ts)
 // and `testRunHeaders` (packages/smoke-tests/src/smoke-telemetry.ts).
 
 test('normalizeRunEnvironment accepts bounded environment names, trimmed', () => {

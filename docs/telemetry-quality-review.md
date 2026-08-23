@@ -19,7 +19,7 @@ lower-severity recommendations.
 Every component propagates one W3C `traceparent` through a single pure seam:
 `parseTraceparent` (receiver) and `formatTraceparent` (sender), which live in
 `packages/mcp-core/src/telemetry/trace-context.ts` and are mirrored verbatim into every
-edge function (`supabase/functions/_shared/trace-context.ts`). The zero-dep CLI
+edge function (`supabase/functions/_shared/telemetry/trace-context.ts`). The zero-dep CLI
 re-implements the same header format in `packages/cli/src/telemetry/telemetry.mjs`.
 
 ```
@@ -95,7 +95,7 @@ cli (INTERNAL, service=cli)                       ← the CLI command span (root
 
 **Why it is faithful, not a mock.** Each span is built with the component's own
 emission code — the CLI's real `buildTracePayload`, the edge's real `Span` /
-`buildOtlpPayload` (`supabase/functions/_shared/otel.ts`) — and every parent→child
+`buildOtlpPayload` (`supabase/functions/_shared/telemetry/otel.ts`) — and every parent→child
 edge is derived through the **real** W3C seam (`formatTraceparent` →
 `parseTraceparent`), exactly as the edge's `extractTraceContext` does on the
 wire. It runs in Node via `--experimental-transform-types` and shims `Deno.env`
@@ -144,7 +144,7 @@ resource attributes only.
 ## Recommendations (not applied — design/judgment calls)
 
 1. **`db.query.text` and DB span names inline literal filter values**
-   (`_shared/otel.ts` `buildSql`). Span names like
+   (`_shared/telemetry/otel.ts` `buildSql`). Span names like
    `SELECT ... FROM memories WHERE scope = 'repo::acme/x' AND key = '...'` are
    **high-cardinality** (an anti-pattern for span names, which should group) and
    put user-controlled values (scope, key, filter args) into `db.query.text`,

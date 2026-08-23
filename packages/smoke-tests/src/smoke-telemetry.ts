@@ -8,7 +8,7 @@
  *
  *   • `X-LoreKit-Deployment-Environment` → the edge reports this request's
  *     `deployment.environment.name` (it honours only the synthetic `test`
- *     value; supabase/functions/_shared/otel.ts), so a whole smoke run's server
+ *     value; supabase/functions/_shared/telemetry/otel.ts), so a whole smoke run's server
  *     spans sit under env=test alongside the CLI's own test-tagged spans.
  *   • `X-LoreKit-Correlation-Id`         → recorded on `usage_events.correlation_id`
  *     by the router, so ONE run's calls share a key.

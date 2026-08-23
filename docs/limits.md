@@ -203,6 +203,6 @@ directly rather than relying solely on the trigger.
 | MCP error mapping | `supabase/functions/mcp/mcp-handler.ts` (distinct JSON-RPC code) | `LimitError.code` |
 
 The Deno module is a **self-contained mirror** of `packages/mcp-core/src/limits/limits.ts`
-(same convention as `_shared/scope.ts` mirroring `mcp-core`'s scope validator)
+(same convention as `_shared/scope/scope.ts` mirroring `mcp-core`'s scope validator)
 — the edge function has no cross-package imports. Keep the two in sync when
 either changes.

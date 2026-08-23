@@ -3,11 +3,11 @@ import { keyRestriction } from '../../_shared/api/auth.ts';
 import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
-import { parseScopeFilter } from '../../_shared/scope.ts';
+import { parseScopeFilter } from '../../_shared/scope/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import type { SortColumn } from '../../_shared/api/paginate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import {
   ListMemoriesBodySchema,
   ListMemoriesQuerySchema,
@@ -16,9 +16,9 @@ import {
 import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
 import { likeNeedle } from '../../_shared/schemas/filter.ts';
-import { expiringWindow } from '../../_shared/expiring-window.ts';
+import { expiringWindow } from '../../_shared/limits/expiring-window.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 
 type MemoryRow = Tables<'memories'>;
 

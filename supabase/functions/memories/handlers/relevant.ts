@@ -1,10 +1,10 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import {
@@ -22,9 +22,9 @@ import {
   normalizeOutcome,
   seenCountFrom,
   updatedAtFrom,
-} from '../../_shared/lesson-rank.ts';
-import type { RankableLesson } from '../../_shared/lesson-rank.ts';
-import { outcomeFromTags } from '../../_shared/outcome-signal.ts';
+} from '../../_shared/ranking/lesson-rank.ts';
+import type { RankableLesson } from '../../_shared/ranking/lesson-rank.ts';
+import { outcomeFromTags } from '../../_shared/ranking/outcome-signal.ts';
 
 type MemoryRow = Tables<'memories'>;
 

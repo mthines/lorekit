@@ -1,10 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { traceRequest } from '../_shared/otel.ts';
+import { traceRequest } from '../_shared/telemetry/otel.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { notFound, methodNotAllowed, internalError } from '../_shared/api/respond.ts';
 import { relativePath } from '../_shared/api/router.ts';
 import { handleGetLikes, handleAddLike } from './handlers/likes.ts';
-import type { Database } from '../_shared/database.types.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 /**
  * blog — the PUBLIC blog like counter (`/blog/likes`).

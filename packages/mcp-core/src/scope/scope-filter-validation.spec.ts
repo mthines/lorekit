@@ -55,12 +55,12 @@ function handlerBody(src: string, fnName: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Behavioural: the shared helper every handler routes through.
 //
-// `supabase/functions/_shared/scope.ts` is plain TypeScript with no Deno-only
+// `supabase/functions/_shared/scope/scope.ts` is plain TypeScript with no Deno-only
 // imports, so vitest loads it directly — these assert real behaviour, not text.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const edgeScope = (await import(
-  path.join(repoRoot, 'supabase/functions/_shared/scope.ts')
+  path.join(repoRoot, 'supabase/functions/_shared/scope/scope.ts')
 )) as unknown as {
   parseScopeFilter: (raw: string | undefined) => string | undefined;
   validateScope: (raw: string) => string;
@@ -151,7 +151,7 @@ describe('parseScopeFilter', () => {
 //
 // That deferral is a SEMANTICS call about the per-entry outcome, and explicitly
 // not a judgement that the charset check is optional there. Per
-// `_shared/scope.ts:34`, the charset guard exists because a scope is
+// `_shared/scope/scope.ts:34`, the charset guard exists because a scope is
 // interpolated into a PostgREST filter value where `"` `,` `(` `)` are
 // structural — and `.in('scope', …)` is exactly that shape. So whichever
 // per-entry outcome is chosen, every entry still has to pass the grammar; the
@@ -230,7 +230,7 @@ describe('REST scope filters are validated before they reach a query', () => {
     (file) => {
       const src = read(file);
       expect(src).toMatch(
-        /import \{[^}]*(parseScopeFilter|validateScope)[^}]*\} from '\.\.\/\.\.\/_shared\/scope\.ts'/,
+        /import \{[^}]*(parseScopeFilter|validateScope)[^}]*\} from '\.\.\/\.\.\/_shared\/scope\/scope\.ts'/,
       );
     },
   );

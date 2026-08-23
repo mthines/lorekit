@@ -14,9 +14,9 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { extractToken } from './auth-token.ts';
-import { SPAN_KIND_CLIENT, type Span } from '../_shared/otel.ts';
-import { normalizeKeyRestriction, type KeyRestriction } from '../_shared/tenant-scope.ts';
-import type { Database } from '../_shared/database.types.ts';
+import { SPAN_KIND_CLIENT, type Span } from '../_shared/telemetry/otel.ts';
+import { normalizeKeyRestriction, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -182,7 +182,7 @@ async function resolveAuthTiers(
     // the only thing that enqueues a span for export, so a lookup that REJECTS
     // (transport failure, abort) would drop the child entirely and the failing
     // case — the one this span exists to make visible — would vanish. This
-    // mirrors `TracedQuery`'s rejection handler in `_shared/otel.ts`. The
+    // mirrors `TracedQuery`'s rejection handler in `_shared/telemetry/otel.ts`. The
     // rejection is rethrown untouched: an infra outage must not be reported as
     // an invalid key.
     //
@@ -230,7 +230,7 @@ async function resolveAuthTiers(
     // it to EdgeRuntime.waitUntil so the isolate stays alive until the write
     // commits. A bare fire-and-forget is dropped when the isolate freezes right
     // after the response returns, so the timestamp never lands (same reason the
-    // OTel flush in _shared/otel.ts uses waitUntil).
+    // OTel flush in _shared/telemetry/otel.ts uses waitUntil).
     const lastUsedUpdate = Promise.resolve(
       serviceDb
         .from('api_tokens')

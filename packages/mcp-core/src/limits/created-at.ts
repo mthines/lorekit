@@ -6,7 +6,7 @@
 //
 // `parseCreatedAt` is the single, pure validation gate for that value. It is
 // mirrored self-contained into the Deno edge tree
-// (supabase/functions/_shared/created-at.ts — `_shared/` because BOTH the MCP
+// (supabase/functions/_shared/limits/created-at.ts — `_shared/` because BOTH the MCP
 // tools and the REST `POST /memories` handler validate the override through it)
 // — the edge runtime cannot cross-import
 // this package, the same pattern as limits.ts and webhook-secret-select.ts. Keep
