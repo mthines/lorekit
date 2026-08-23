@@ -289,7 +289,7 @@ jobs:
       # memory.list against the endpoint — proving the transport a `.mcp.json`
       # points at launches and reaches the backend. Same script as deploy.yml.
       - name: Smoke — robust stdio transport handshakes against preview
-        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -306,7 +306,7 @@ jobs:
       # `--allow-production`. Conformance lane only — `--probe` holds defects
       # that are open on purpose and would red the run.
       - name: Smoke — hosted MCP tool surface against preview
-        run: node scripts/smoke-mcp-tools.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke/smoke-mcp-tools.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -333,7 +333,7 @@ jobs:
           LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
           LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
         run: |
-          if JWT="$(node scripts/mint-smoke-jwt.mjs)"; then
+          if JWT="$(node scripts/smoke/mint-smoke-jwt.mjs)"; then
             echo "::add-mask::$JWT"
             echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
           else
@@ -353,7 +353,7 @@ jobs:
         # Specs self-clean with per-run timestamped keys, so a re-run is safe.
         run: |
           for attempt in 1 2; do
-            node scripts/smoke-rest.mjs && break
+            node scripts/smoke/smoke-rest.mjs && break
             rc=$?
             if [ "$attempt" -eq 2 ]; then
               echo "::error::REST smoke failed after $attempt attempts"

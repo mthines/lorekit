@@ -81,14 +81,14 @@ jobs:
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/smoke-tests/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|scripts/deno-check-functions|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/smoke-tests/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke/smoke-mcp-stdio\.mjs|scripts/ci/deno-check-functions|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
           fi
           # Plugin smoke gate: the Claude marketplace bundle, its vendored skill
           # source, the hook engine it shells out to, and the sync/smoke scripts.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(plugins/|\.claude-plugin/|packages/cli/skill/|packages/cli/src/|packages/cli/bin/|scripts/sync-plugin-skill\.mjs|scripts/smoke-plugin\.sh|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(plugins/|\.claude-plugin/|packages/cli/skill/|packages/cli/src/|packages/cli/bin/|scripts/codegen/sync-plugin-skill\.mjs|scripts/smoke/smoke-plugin\.sh|\.github/workflows/ci\.yml)'; then
             echo "plugin=true" >> "$GITHUB_OUTPUT"
           else
             echo "plugin=false" >> "$GITHUB_OUTPUT"
@@ -118,11 +118,11 @@ jobs:
           # quota, so this asks the narrower question — can this change alter
           # what the deployed dashboard looks like, or how it gets deployed?
           #
-          # COPY of scripts/web-preview-filter.mjs (the canonical definition,
+          # COPY of scripts/ci/web-preview-filter.mjs (the canonical definition,
           # which documents why `ci.yml` and `pnpm-lock.yaml` are NOT on it) and
           # of web-preview-deploy.yml's `web-path-filter` default. This job stays
           # dependency-free like its siblings, so the string is duplicated and
-          # held in place by scripts/web-preview-filter.test.mjs — which fails
+          # held in place by scripts/ci/web-preview-filter.test.mjs — which fails
           # when any of the three drifts.
           if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'; then
             echo "web_preview=true" >> "$GITHUB_OUTPUT"
@@ -132,21 +132,21 @@ jobs:
           # Preview-filter gate: the canonical filter module, its test, and the
           # two workflows that carry a copy of the ERE — the test asserts all
           # three agree, so it must run when ANY of them moves.
-          # `scripts/web-preview-filter` (no extension) matches both the module
+          # `scripts/ci/web-preview-filter` (no extension) matches both the module
           # and its `.test.mjs`, same trick as the migration guards above.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/web-preview-filter|\.github/workflows/(ci|web-preview-deploy)\.yml$)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/ci/web-preview-filter|\.github/workflows/(ci|web-preview-deploy)\.yml$)'; then
             echo "preview_filter=true" >> "$GITHUB_OUTPUT"
           else
             echo "preview_filter=false" >> "$GITHUB_OUTPUT"
           fi
           # Migration-order gate: run when a migration is added/changed, or when
           # the guard/CI itself changes (so the guard is exercised on its own PR).
-          # `scripts/check-migration-order` (no extension) matches BOTH the guard
+          # `scripts/migrations/check-migration-order` (no extension) matches BOTH the guard
           # and its `.test.mjs` — so a test-only edit still triggers this job.
-          # `scripts/check-remote-migration-drift` (no extension) likewise matches
+          # `scripts/migrations/check-remote-migration-drift` (no extension) likewise matches
           # the deploy-time drift classifier and its `.test.mjs`, unit-tested by
           # this same job.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order|scripts/check-remote-migration-drift|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/migrations/check-migration-order|scripts/migrations/check-remote-migration-drift|\.github/workflows/ci\.yml)'; then
             echo "migrations=true" >> "$GITHUB_OUTPUT"
           else
             echo "migrations=false" >> "$GITHUB_OUTPUT"
@@ -156,7 +156,7 @@ jobs:
           # it. `scripts/**` is outside `nx affected`, so the `check` job never
           # runs this test — without this job the decision that gates production
           # would ship unexercised.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(\.github/workflows/deploy\.yml|scripts/ci/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)'; then
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
@@ -166,13 +166,13 @@ jobs:
           # own scripts, the way `deploy` above names resolve-deploy-scope —
           # because these tests previously rode along in `migration-order`,
           # whose filter is migrations-only. A PR touching just
-          # `scripts/sweep-telemetry.mjs` therefore did not re-run the tests
+          # `scripts/telemetry/sweep-telemetry.mjs` therefore did not re-run the tests
           # that guard it, and the coverage was silently decorative.
           #
           # `load-test-cleanup` earns its place here loudly: its guards decide
           # which USER ACCOUNTS a sweep deletes from a live project, so a change
           # to it that skips its tests is a change that can destroy real data.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/(sweep-rows|sweep-telemetry|load-test|load-test-lib|load-telemetry|load-test-cleanup|otlp-export)(\.test)?\.mjs|supabase/tests/row-scaling-sweep\.sql|\.github/workflows/(ci|load-test)\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/migrations/sweep-rows(\.test)?\.mjs|scripts/telemetry/sweep-telemetry(\.test)?\.mjs|scripts/load-test/load-test(\.test)?\.mjs|scripts/load-test/load-test-lib(\.test)?\.mjs|scripts/telemetry/load-telemetry(\.test)?\.mjs|scripts/load-test/load-test-cleanup(\.test)?\.mjs|scripts/telemetry/otlp-export(\.test)?\.mjs|supabase/tests/row-scaling-sweep\.sql|\.github/workflows/(ci|load-test)\.yml)'; then
             echo "bench=true" >> "$GITHUB_OUTPUT"
           else
             echo "bench=false" >> "$GITHUB_OUTPUT"
@@ -225,7 +225,7 @@ jobs:
   # ── Plugin smoke — the Claude marketplace plugin installs + enables ──────────
   #    Runs the real `claude` CLI install flow end-to-end (validate → marketplace
   #    add → install → assert enabled → hook engine smoke) via
-  #    scripts/smoke-plugin.sh. Gated on plugin-relevant paths so unrelated PRs
+  #    scripts/smoke/smoke-plugin.sh. Gated on plugin-relevant paths so unrelated PRs
   #    skip it; a skipped required check is treated as passing by branch
   #    protection. The frameworks unit test only *validates* the manifest (and
   #    skips when the CLI is absent) — this job proves an actual install works.
@@ -249,7 +249,7 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Plugin install smoke
-        run: bash scripts/smoke-plugin.sh
+        run: bash scripts/smoke/smoke-plugin.sh
 
   # ── Web — Storybook interaction + visual-regression tests ────────────────────
   #    Runs the dashboard's stories as browser tests via `@storybook/addon-vitest`
@@ -341,7 +341,7 @@ jobs:
   #    `web_preview`, NOT the broader `web` that gates the Storybook job: that
   #    one includes `ci.yml` and `pnpm-lock.yaml`, so every unrelated CI edit and
   #    every dependency bump anywhere in the monorepo used to spend a deployment
-  #    on a dashboard nobody changed. See scripts/web-preview-filter.mjs.
+  #    on a dashboard nobody changed. See scripts/ci/web-preview-filter.mjs.
   #
   #    The whole job body now lives in .github/workflows/web-preview-deploy.yml
   #    so the `/web-preview` command workflow can run the exact same flow. This
@@ -380,7 +380,7 @@ jobs:
   #    ("migration files to be inserted before the last migration on remote").
   #    Sequential integer prefixes don't survive parallel PRs; this catches it at
   #    review time. Path-gated, so unrelated PRs skip it (a skipped required check
-  #    is treated as passing by branch protection). See scripts/check-migration-order.mjs.
+  #    is treated as passing by branch protection). See scripts/migrations/check-migration-order.mjs.
   migration-order:
     name: Migration order (no out-of-order prefixes)
     runs-on: ubuntu-latest
@@ -403,7 +403,7 @@ jobs:
       # so a regression in the ordering check is caught here, not by letting a bad
       # migration through or blocking a good PR.
       - name: Unit-test the guard
-        run: node --test scripts/check-migration-order.test.mjs
+        run: node --test scripts/migrations/check-migration-order.test.mjs
 
       # The deploy-time counterpart: the PR-time guard above stops an
       # out-of-order file from landing, while the drift classifier decides what
@@ -411,13 +411,13 @@ jobs:
       # ahead of the ref being deployed. Its verdict gates a `supabase db push`,
       # so it is unit-tested here too.
       - name: Unit-test the remote-migration-drift classifier
-        run: node --test scripts/check-remote-migration-drift.test.mjs
+        run: node --test scripts/migrations/check-remote-migration-drift.test.mjs
 
 
       - name: Check migration ordering against the base branch
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/check-migration-order.mjs "$BASE"
+        run: node scripts/migrations/check-migration-order.mjs "$BASE"
 
   # ── Benchmark harness logic — the sweep and the load test ────────────────────
   #    Both harnesses are manual: the sweep grows a table to 100k rows, and the
@@ -428,7 +428,7 @@ jobs:
   #
   #    Gated on its own `bench` filter rather than riding along in
   #    `migration-order`, which is where these tests first landed. That filter is
-  #    migrations-only, so a PR touching just `scripts/sweep-telemetry.mjs` did
+  #    migrations-only, so a PR touching just `scripts/telemetry/sweep-telemetry.mjs` did
   #    not re-run the tests protecting it — coverage that looked present and was
   #    decorative.
   #
@@ -455,13 +455,13 @@ jobs:
       # Node's built-in runner, zero deps — these modules are dependency-free on
       # purpose so they can run before any install.
       - name: Unit-test the sweep's OTLP payloads
-        run: node --test scripts/sweep-telemetry.test.mjs
+        run: node --test scripts/telemetry/sweep-telemetry.test.mjs
 
       - name: Unit-test the load test's logic
         run: |
-          node --test scripts/load-test-lib.test.mjs
-          node --test scripts/load-telemetry.test.mjs
-          node --test scripts/load-test-cleanup.test.mjs
+          node --test scripts/load-test/load-test-lib.test.mjs
+          node --test scripts/telemetry/load-telemetry.test.mjs
+          node --test scripts/load-test/load-test-cleanup.test.mjs
 
   # ── Deploy-scope resolver — the decision that gates production ───────────────
   #    deploy.yml's `changes` job diffs each half (API / web) against the commit
@@ -490,11 +490,11 @@ jobs:
 
       # node's built-in runner, zero deps — no install step needed.
       - name: Unit-test the deploy-scope resolver
-        run: node --test scripts/resolve-deploy-scope.test.mjs
+        run: node --test scripts/ci/resolve-deploy-scope.test.mjs
 
   # ── Web-preview filter — the decision that spends Vercel quota ───────────────
   #    The filter deciding whether a push deploys a dashboard preview exists in
-  #    THREE places: the canonical `scripts/web-preview-filter.mjs`, the
+  #    THREE places: the canonical `scripts/ci/web-preview-filter.mjs`, the
   #    `changes` job's `web_preview` grep above, and web-preview-deploy.yml's
   #    `web-path-filter` default. Neither workflow can import the module (one
   #    runs before any toolchain setup, the other before its checkout), so the
@@ -524,7 +524,7 @@ jobs:
           node-version: 20
 
       - name: Unit-test the web-preview path filter
-        run: node --test scripts/web-preview-filter.test.mjs
+        run: node --test scripts/ci/web-preview-filter.test.mjs
 
   # ── Edge typecheck — `deno check` over every Edge Function, ratcheted ────────
   #    Until this job existed, `supabase/functions/**` was typechecked by
@@ -545,7 +545,7 @@ jobs:
   #    The first run over the tree found errors that predate this gate, so the
   #    check is a RATCHET rather than a clean gate: each function's existing
   #    count is written down in `supabase/deno-check-baseline.json` and the job
-  #    fails the moment one goes UP. See scripts/deno-check-functions.mjs for
+  #    fails the moment one goes UP. See scripts/ci/deno-check-functions.mjs for
   #    why blocking on zero was not an option (the debt is in `_shared/` modules
   #    every function imports, so narrowing the gate does not avoid it either).
   edge-typecheck:
@@ -567,14 +567,14 @@ jobs:
       # The runner's own Node runs these; the ratchet script is dependency-free
       # on purpose so this job needs no pnpm/Node setup and stays fast.
       - name: Unit-test the ratchet
-        run: node --test scripts/deno-check-functions.test.mjs
+        run: node --test scripts/ci/deno-check-functions.test.mjs
 
       # One implementation, called by BOTH this job and the `supabase:deno:check`
       # nx target, so a contributor running it locally sees exactly what CI sees.
       # It previously lived twice — once here and once in the target — and the
       # two had already drifted on what a failure looks like.
       - name: Typecheck every Edge Function
-        run: node scripts/deno-check-functions.mjs
+        run: node scripts/ci/deno-check-functions.mjs
 
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
@@ -722,7 +722,7 @@ jobs:
       - name: Smoke — robust stdio transport handshakes against the live stack
         env:
           TOKEN: ${{ steps.supabase.outputs.service_role_key }}
-        run: node scripts/smoke-mcp-stdio.mjs "http://127.0.0.1:54321/functions/v1/mcp" "$TOKEN"
+        run: node scripts/smoke/smoke-mcp-stdio.mjs "http://127.0.0.1:54321/functions/v1/mcp" "$TOKEN"
 
       # The orgs suite needs a Supabase USER JWT — every `lorekit_org_*` RPC is
       # SECURITY DEFINER and resolves the actor as `auth.uid()`, so the
@@ -736,7 +736,7 @@ jobs:
           SUPABASE_URL: http://127.0.0.1:54321
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
         run: |
-          JWT="$(node scripts/mint-smoke-jwt.mjs)"
+          JWT="$(node scripts/smoke/mint-smoke-jwt.mjs)"
           echo "::add-mask::$JWT"
           echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
 
@@ -752,7 +752,7 @@ jobs:
           LOREKIT_SMOKE_TOKEN: ${{ steps.supabase.outputs.service_role_key }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
           LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
-        run: node scripts/smoke-rest.mjs
+        run: node scripts/smoke/smoke-rest.mjs
 
       - name: Smoke cleanup — sweep leftover artefacts (self-test of the sweeper)
         if: always()
@@ -761,7 +761,7 @@ jobs:
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
           LOREKIT_SWEEP_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
           LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
 
       - name: Diagnose — edge runtime logs (on failure)
         if: failure()

@@ -8,10 +8,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/cli/src/telemetry.mjs'
-      - 'packages/cli/src/telemetry-token.mjs'
-      - 'packages/cli/src/doctor.mjs'
-      - 'scripts/inject-telemetry-token.mjs'
+      - 'packages/cli/src/telemetry/telemetry.mjs'
+      - 'packages/cli/src/telemetry/telemetry-token.mjs'
+      - 'packages/cli/src/commands/doctor.mjs'
+      - 'scripts/telemetry/inject-telemetry-token.mjs'
       - '.github/workflows/telemetry-smoke.yml'
 
 permissions: {}
