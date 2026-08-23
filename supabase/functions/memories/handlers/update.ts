@@ -82,6 +82,7 @@ export async function handleUpdate(
       metadata: { scope: updated.scope, key: updated.key },
     },
     auditUserId(auth),
+    span,
   );
   return ok(shapeMemoryRow(data as Record<string, unknown>), cors);
 }

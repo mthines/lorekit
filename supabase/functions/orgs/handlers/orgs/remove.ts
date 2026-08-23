@@ -59,6 +59,7 @@ export async function handleDeleteOrg(
     db,
     { action: 'org.delete', resourceType: 'org', resourceId: orgId },
     auditUserId(auth),
+    span,
   );
 
   return noContent(cors);

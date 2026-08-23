@@ -76,6 +76,7 @@ export async function handleChangeRole(
       metadata: { role: bodyV.data.role },
     },
     auditUserId(auth),
+    span,
   );
 
   return ok({ slug, userId: idV.data, role: bodyV.data.role }, cors);

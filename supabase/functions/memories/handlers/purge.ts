@@ -139,6 +139,7 @@ export async function handlePurge(
         metadata: { purged, retention_days: retentionDays },
       },
       auditUserId(auth),
+      span,
     );
   }
   return ok({ purged }, cors);
@@ -189,6 +190,7 @@ export async function handlePurgeExpired(
         metadata: { purged_expired: purged },
       },
       auditUserId(auth),
+      span,
     );
   }
   return ok({ purged }, cors);
