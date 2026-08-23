@@ -31,7 +31,7 @@ const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 // indistinguishable node in the Dash0 service map (root CLAUDE.md, "service.name
 // inventory").
 const SERVICE_NAME_SITES: ReadonlyArray<readonly [string, string, RegExp, string]> = [
-  ['cli', 'packages/cli/src/telemetry.mjs', /service\.name',\s*value:\s*\{\s*stringValue:\s*'([^']+)'/, 'cli'],
+  ['cli', 'packages/cli/src/telemetry/telemetry.mjs', /service\.name',\s*value:\s*\{\s*stringValue:\s*'([^']+)'/, 'cli'],
   ['api (edge)', 'supabase/functions/_shared/otel.ts', /SERVICE_NAME'\)\s*\?\?\s*'([^']+)'/, 'api'],
   ['web', 'packages/web/src/instrumentation.ts', /SERVICE_NAME = '([^']+)'/, 'web'],
 ];
@@ -44,7 +44,7 @@ const WEB_BROWSER_SERVICE_NAME_SITE = ['packages/web/src/lib/dash0-rum.ts', /SER
 // Every place a `service.namespace` is declared — must be `lorekit` everywhere
 // so all components aggregate under one namespace.
 const NAMESPACE_SITES = [
-  'packages/cli/src/telemetry.mjs',
+  'packages/cli/src/telemetry/telemetry.mjs',
   'supabase/functions/_shared/otel.ts',
   'packages/web/src/instrumentation.ts',
   // The browser bundle's single init path. `instrumentation-client.ts` and
@@ -144,7 +144,7 @@ describe('edge + CLI route trace propagation through the shared W3C seam', () =>
   // hand-rolled a divergent header/parser), CLI/MCP traces could silently
   // orphan and no behavioural copy-test would notice.
   const edge = read('supabase/functions/_shared/otel.ts');
-  const cli = read('packages/cli/src/telemetry.mjs');
+  const cli = read('packages/cli/src/telemetry/telemetry.mjs');
 
   it('the edge receiver (extractTraceContext) parses inbound context via parseTraceparent', () => {
     const fn = edge.match(/function extractTraceContext\([\s\S]*?\n\}/);
@@ -264,7 +264,7 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
   // pins its own invariant, so a drift in one copy fails the build.
   const CHARSET = '[A-Za-z0-9_.\\-:]';
   const sites: Array<[string, string]> = [
-    ['CLI restFetch (normalizeRunEnvironment)', 'packages/cli/src/mcp.mjs'],
+    ['CLI restFetch (normalizeRunEnvironment)', 'packages/cli/src/shared/mcp.mjs'],
     ['orphan sweeper (runEnvHeaders)', 'scripts/smoke-cleanup.mjs'],
   ];
 

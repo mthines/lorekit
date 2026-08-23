@@ -5,10 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/install.mjs';
+import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/commands/install.mjs';
 import {
   skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES, CLAUDE_HOOK_EVENTS,
-} from '../src/config.mjs';
+} from '../src/shared/config.mjs';
 import { withHome } from './helpers.mjs';
 
 function tmp(prefix) {

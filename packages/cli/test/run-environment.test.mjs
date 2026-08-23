@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRunEnvironment } from '../src/mcp.mjs';
+import { normalizeRunEnvironment } from '../src/shared/mcp.mjs';
 
 // The deployment-environment marker restFetch attaches as
 // X-LoreKit-Deployment-Environment when DEPLOYMENT_ENVIRONMENT (or

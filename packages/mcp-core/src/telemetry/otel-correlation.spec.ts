@@ -19,7 +19,7 @@ const readRepo = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8')
  * pure functions — `parseTraceparent` (receiver) and `formatTraceparent`
  * (sender) — which are the single seam mirrored verbatim into every edge
  * function (`supabase/functions/_shared/trace-context.ts`) and re-implemented
- * byte-for-byte by the zero-dep CLI (`packages/cli/src/telemetry.mjs`
+ * byte-for-byte by the zero-dep CLI (`packages/cli/src/telemetry/telemetry.mjs`
  * `getActiveTraceparent`). So the correlation contract is provable purely from
  * that seam, without booting a Deno isolate or an OTel SDK.
  *
@@ -213,7 +213,7 @@ describe('sender/receiver seam is self-consistent', () => {
     // concrete ids yields exactly what `formatTraceparent` produces. If the CLI
     // source drifts (version prefix, field order, the sampled ternary) this
     // fails — which a byte-comparison of two in-file copies never would.
-    const cliSrc = readRepo('packages/cli/src/telemetry.mjs');
+    const cliSrc = readRepo('packages/cli/src/telemetry/telemetry.mjs');
     const fnBody = cliSrc.match(/export function getActiveTraceparent\(\)\s*\{([\s\S]*?)\n\}/);
     expect(fnBody, 'getActiveTraceparent not found in telemetry.mjs').not.toBeNull();
     const tpl = fnBody![1].match(/return\s*`([^`]*)`/);

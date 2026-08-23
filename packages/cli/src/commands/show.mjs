@@ -18,9 +18,9 @@
 // an unconfigured remote is a short note, never an error. Read-only. Human-facing,
 // so the bin wraps it in `traceCommand`.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import {
   normalizeEntry,
   shortDate,
@@ -28,10 +28,10 @@ import {
   recordsDiverge,
   resolveScopeKeyArgs,
   scopeIssue,
-} from './lessons-view.mjs';
-import { resolveAppBase } from './deeplink-pure.mjs';
+} from '../shared/lessons-view.mjs';
+import { resolveAppBase } from '../shared/deeplink-pure.mjs';
 import { emitLink } from './link.mjs';
-import { log, err, heading, status, c } from './util.mjs';
+import { log, err, heading, status, c } from '../shared/util.mjs';
 
 // Read one scope::key from a store, normalizing the result into a small,
 // uniform shape: { available:true, found, record } on success, or

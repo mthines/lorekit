@@ -15,8 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/lessons-view.mjs';
-import { remoteUnavailableReason } from '../src/stores.mjs';
+import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/shared/lessons-view.mjs';
+import { remoteUnavailableReason } from '../src/shared/stores.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));

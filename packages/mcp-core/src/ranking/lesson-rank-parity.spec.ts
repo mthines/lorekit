@@ -16,7 +16,7 @@ import {
 /**
  * CROSS-LANGUAGE PARITY: `packages/mcp-core/src/ranking/lesson-rank.ts` (the server
  * scorer, mirrored into the edge tree) must rank identically to
- * `packages/cli/src/lessons-pure.mjs` (the hook scorer).
+ * `packages/cli/src/shared/lessons-pure.mjs` (the hook scorer).
  *
  * Two implementations of one ranking exist because the two runtimes cannot
  * share a module: the CLI is a zero-dep `.mjs` package with no build step, and
@@ -34,7 +34,7 @@ import {
 
 // The CLI is a plain `.mjs` package outside this project's tsconfig, so it is
 // loaded by URL at runtime rather than as a typed import.
-const cliModulePath = join(import.meta.dirname, '../../../cli/src/lessons-pure.mjs');
+const cliModulePath = join(import.meta.dirname, '../../../cli/src/shared/lessons-pure.mjs');
 const cli = await import(/* @vite-ignore */ `file://${cliModulePath}`) as {
   rankLessons: (entries: unknown[], opts?: Record<string, unknown>) => { key?: string; scope?: string; value?: string }[];
   selectDiverse: (entries: unknown[], k: number, opts?: { lambda?: number; scores?: number[] }) => { key?: string; scope?: string }[];

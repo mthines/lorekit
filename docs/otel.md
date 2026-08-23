@@ -433,7 +433,7 @@ Both live in `$LOREKIT_HOME/telemetry-id.json` (default
 `~/.lorekit/telemetry-id.json`), beside the home-tier store. `lorekit doctor`
 prints the path and both values.
 
-Privacy invariants, enforced in `packages/cli/src/telemetry-identity.mjs`:
+Privacy invariants, enforced in `packages/cli/src/telemetry/telemetry-identity.mjs`:
 
 - **Nothing is minted and no file is created while telemetry is disabled.** An
   opted-out user never gets a tracking id written to their disk.
@@ -476,7 +476,7 @@ never on the span status.
 - With no OTLP endpoint (or no auth for the default endpoint) resolvable, export
   is a no-op and the command runs with zero overhead.
 
-The default endpoint + token live in `packages/cli/src/telemetry.mjs` and are
+The default endpoint + token live in `packages/cli/src/telemetry/telemetry.mjs` and are
 **public by design** — anyone can unpack the npm tarball and read them. The token
 **MUST be a Dash0 ingesting-only token** scoped to the CLI dataset (write spans,
 never read/query/manage). Leave `DEFAULT_TOKEN` empty to keep default export off.
@@ -897,7 +897,7 @@ After adding variables, **Redeploy** in Vercel — `NEXT_PUBLIC_*` vars are bake
 The token is **not committed to git** — it is injected into the published tarball
 at release time from a GitHub Actions secret, so it can be rotated without a code
 change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
-`default`) are committed defaults in `packages/cli/src/telemetry.mjs`.
+`default`) are committed defaults in `packages/cli/src/telemetry/telemetry.mjs`.
 
 **Dataset precedence** (highest first): an explicit `Dash0-Dataset` passed via
 `OTEL_EXPORTER_OTLP_HEADERS` is preserved and never overwritten; otherwise
@@ -1073,7 +1073,7 @@ Canonical detail for the **OTel attributes** summary in the root [`CLAUDE.md`](.
   `org.*` ops and the `ping` health probe. `packages/cli/src/store/remote.mjs` no longer
   references `mcpCall` at all (guarded by `packages/cli/test/source-hygiene.test.mjs`), so
   there is no second, MCP-shaped propagation path to keep in sync. Values are sourced
-  from `getActiveTraceparent()` in `packages/cli/src/telemetry.mjs`. Context is generated for
+  from `getActiveTraceparent()` in `packages/cli/src/telemetry/telemetry.mjs`. Context is generated for
   **every** `traceCommand` run, including when telemetry export is disabled — propagation is
   decoupled from export. The browser sends it via `@dash0/sdk-web`. The Next.js **server**
   side sends it via `@vercel/otel`'s fetch instrumentation, configured in
@@ -1120,7 +1120,7 @@ unique.
 |---|---|---|
 | `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts` (server), `packages/web/src/lib/dash0-rum.ts` (browser). Both pin the literal `web`; `otel-conventions.spec.ts` asserts the two agree, because server and browser are ONE service told apart by `telemetry.sdk.language`, not by name |
-| `cli` | CLI | `packages/cli/src/telemetry.mjs` |
+| `cli` | CLI | `packages/cli/src/telemetry/telemetry.mjs` |
 
 - **The edge functions are one service, not five.** They share a deployment, a database and a
   lifecycle; each function is an *operation* on `api`, not a separate service. Splitting them

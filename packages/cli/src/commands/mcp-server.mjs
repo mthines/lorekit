@@ -24,17 +24,17 @@
 //
 // The transport is hand-rolled (no MCP SDK) to keep the CLI dependency-free.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { loadControl } from './control.mjs';
-import { createStore } from './store/index.mjs';
-import { createRemoteStore } from './store/remote.mjs';
-import { deriveOrigin, mergeOrigin } from './origin.mjs';
-import { readScopeInventory } from './store/scope-inventory.mjs';
-import { inferKindHostFromTags } from './lessons-view.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { loadControl } from '../shared/control.mjs';
+import { createStore } from '../store/index.mjs';
+import { createRemoteStore } from '../store/remote.mjs';
+import { deriveOrigin, mergeOrigin } from '../shared/origin.mjs';
+import { readScopeInventory } from '../store/scope-inventory.mjs';
+import { inferKindHostFromTags } from '../shared/lessons-view.mjs';
 // Generated from packages/schemas/src/shared/tool-catalog.ts — the same declaration the
 // hosted MCP server renders `tools/list` from. Committed and zero-dep because
 // this is a published package that cannot import the workspace schemas.
-import { MCP_TOOL_DEFS, MCP_TOOL_NAMES } from './surfaces.generated.mjs';
+import { MCP_TOOL_DEFS, MCP_TOOL_NAMES } from '../surfaces.generated.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };

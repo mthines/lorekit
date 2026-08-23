@@ -6,7 +6,7 @@
 //
 // DESIGN: the sweep is fully below-the-model.  It composes three existing
 // functions — the real ground-truth predicate (ground-truth.mjs), the real
-// ranking function (rankLessons from @lorekit/cli/src/lessons-pure.mjs), and
+// ranking function (rankLessons from @lorekit/cli/src/shared/lessons-pure.mjs), and
 // the retrieval-relevance metrics (relevance-metrics.mjs) — and adds only the
 // pool-injection and the window-modeling scaffolding.  No new logic replaces
 // existing logic; the only genuinely new pieces are:
@@ -42,7 +42,7 @@
 // Source: supabase/functions/memories/handlers/relevant.ts and
 //         supabase/functions/mcp/tools.ts.
 
-import { rankLessons } from "@lorekit/cli/src/lessons-pure.mjs";
+import { rankLessons } from "@lorekit/cli/src/shared/lessons-pure.mjs";
 import { buildGroundTruth, shouldSurface } from "./ground-truth.mjs";
 import {
   precisionAtK,
@@ -222,7 +222,7 @@ export function recencyOrder(rows, { limit = 50 } = {}) {
  * the window-eviction cliff (AC-4).
  *
  * REUSE, NOT RE-ENCODING. The ranking is done by the REAL `rankLessons` from
- * `@lorekit/cli/src/lessons-pure.mjs`, the offline parity twin of the edge
+ * `@lorekit/cli/src/shared/lessons-pure.mjs`, the offline parity twin of the edge
  * ranker. This file contains NO local scoring formula.
  *
  * @param {object[]} rows

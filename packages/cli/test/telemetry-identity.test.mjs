@@ -22,12 +22,12 @@ import {
   identityAttributes,
   identityResourceAttributes,
   describeIdentity,
-} from '../src/telemetry-identity.mjs';
+} from '../src/telemetry/telemetry-identity.mjs';
 import {
   buildTracePayload,
   buildMetricsPayload,
   meterCommand,
-} from '../src/telemetry.mjs';
+} from '../src/telemetry/telemetry.mjs';
 
 const ON = { enabled: true };
 const OFF = { enabled: false };

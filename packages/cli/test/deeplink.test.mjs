@@ -32,8 +32,8 @@ import {
   resolveScopeArg,
   mostSpecificScope,
   surfaceFor,
-} from '../src/deeplink-pure.mjs';
-import { scopeIssue } from '../src/lessons-view.mjs';
+} from '../src/shared/deeplink-pure.mjs';
+import { scopeIssue } from '../src/shared/lessons-view.mjs';
 
 // The real validity predicate the `link` command injects.
 const isScope = (s) => scopeIssue(s) === null;

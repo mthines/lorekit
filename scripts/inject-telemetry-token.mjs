@@ -2,7 +2,7 @@
 // Inject the Dash0 ingesting-only telemetry token into the CLI at publish time.
 //
 // Reads LOREKIT_TELEMETRY_TOKEN from the environment (a GitHub Actions secret in
-// the release workflow) and rewrites packages/cli/src/telemetry-token.mjs so the
+// the release workflow) and rewrites packages/cli/src/telemetry/telemetry-token.mjs so the
 // published npm tarball carries the token — without it ever being committed to
 // git. Run right before `npm publish` in .github/workflows/release.yml.
 //
@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const TARGET = fileURLToPath(
-  new URL('../packages/cli/src/telemetry-token.mjs', import.meta.url),
+  new URL('../packages/cli/src/telemetry/telemetry-token.mjs', import.meta.url),
 );
 
 /**

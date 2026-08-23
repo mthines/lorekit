@@ -43,7 +43,7 @@ project-tier hits ahead of home-tier ones, so scope precedence holds only within
 `store.search`'s `q` accepts a term LIST for exactly this
 one-pass multi-term query (the remote joins it into one `websearch` `OR` query, a single round-trip). The cross-scope precedence merge (the SessionStart read) still
 uses the SAME `resolvePrecedence` the read commands use, in the dependency-free
-`packages/cli/src/lessons-pure.mjs` (re-exported by `lessons-view.mjs`), so the hot path shares it without
+`packages/cli/src/shared/lessons-pure.mjs` (re-exported by `lessons-view.mjs`), so the hot path shares it without
 dragging in the `util`/render stack. The end-of-turn retrospective nudge
 is **friction-gated** by default (`hooks.stop`, resolved in `control.mjs`: `friction` | `always` | `off`,
 default `friction`): in `friction` mode the Stop handler reads the session transcript via the pure
@@ -148,7 +148,7 @@ rather than inferred. They cost time every time they are rediscovered:
 6. **Node's built-in `fetch` ignores `HTTPS_PROXY` — run it with
    `NODE_USE_ENV_PROXY=1`.** This bites anything in this repo that exports
    telemetry over `fetch`: `scripts/sweep-rows.mjs`, the CLI's
-   `packages/cli/src/telemetry.mjs`, and the `_shared/otel.ts` exporters when
+   `packages/cli/src/telemetry/telemetry.mjs`, and the `_shared/otel.ts` exporters when
    exercised locally. The symptom is a **`403 Host not in allowlist: <host>`**
    *even for a host that IS allowlisted*, because without the variable undici
    goes DIRECT and meets the network gateway's own, narrower allowlist instead

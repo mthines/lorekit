@@ -11,12 +11,12 @@
 // and exits 0 (never a crash). Read-only. Human-facing, so the bin wraps it in
 // `traceCommand`.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { deriveScope } from './scope.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, diffGroups, preview, shortDate } from './lessons-view.mjs';
-import { log, heading, status, c } from './util.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { scopeList, gather, diffGroups, preview, shortDate } from '../shared/lessons-view.mjs';
+import { log, heading, status, c } from '../shared/util.mjs';
 
 export async function diff(args) {
   const root = resolveProjectRoot(args.dir);

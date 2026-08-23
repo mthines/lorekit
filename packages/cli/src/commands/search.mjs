@@ -14,14 +14,14 @@
 // never an error; a per-scope read failure is a warning, not a crash. Read-only,
 // archived hidden. Human-facing, so the bin wraps it in `traceCommand`.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { deriveScope } from './scope.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, filterGroups, renderSection } from './lessons-view.mjs';
-import { resolveAppBase, mostSpecificScope } from './deeplink-pure.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { scopeList, gather, filterGroups, renderSection } from '../shared/lessons-view.mjs';
+import { resolveAppBase, mostSpecificScope } from '../shared/deeplink-pure.mjs';
 import { emitLink } from './link.mjs';
-import { log, err, heading, c } from './util.mjs';
+import { log, err, heading, c } from '../shared/util.mjs';
 
 export async function search(args) {
   const root = resolveProjectRoot(args.dir);

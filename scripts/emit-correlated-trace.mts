@@ -63,7 +63,7 @@ import {
   resolveTelemetryConfig,
   buildTracePayload,
   randHex,
-} from '../packages/cli/src/telemetry.mjs';
+} from '../packages/cli/src/telemetry/telemetry.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS, advertise } from '../src/mcp-server.mjs';
+import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS, advertise } from '../src/commands/mcp-server.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 

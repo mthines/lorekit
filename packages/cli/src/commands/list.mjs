@@ -9,14 +9,14 @@
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { deriveScope } from './scope.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, gatherStream, renderSection, DEFAULT_MAX } from './lessons-view.mjs';
-import { resolveAppBase, mostSpecificScope } from './deeplink-pure.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { scopeList, gather, gatherStream, renderSection, DEFAULT_MAX } from '../shared/lessons-view.mjs';
+import { resolveAppBase, mostSpecificScope } from '../shared/deeplink-pure.mjs';
 import { emitLink } from './link.mjs';
-import { log, heading, c } from './util.mjs';
+import { log, heading, c } from '../shared/util.mjs';
 
 // Abbreviate the user's home directory to `~` for readable paths.
 function prettyPath(p) {

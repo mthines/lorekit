@@ -46,7 +46,7 @@
  * benchmark ends up in the wrong dataset, or exporting when someone opted out.
  */
 
-import { resolveTelemetryConfig, randHex } from '../packages/cli/src/telemetry.mjs';
+import { resolveTelemetryConfig, randHex } from '../packages/cli/src/telemetry/telemetry.mjs';
 import {
   SPAN_KIND_INTERNAL,
   gauge,

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseDotEnv, loadDotEnv } from '../src/dotenv.mjs';
+import { parseDotEnv, loadDotEnv } from '../src/shared/dotenv.mjs';
 
 // ── parseDotEnv (pure) ─────────────────────────────────────────────────────────
 

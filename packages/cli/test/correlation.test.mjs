@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeCorrelationId } from '../src/mcp.mjs';
+import { normalizeCorrelationId } from '../src/shared/mcp.mjs';
 
 // The opt-in usage correlation id restFetch attaches as X-LoreKit-Correlation-Id
 // when LOREKIT_CORRELATION_ID is set. Bounds must match the server's

@@ -16,12 +16,12 @@
 // `memory.list` returns for each scope (server-side default page size), the
 // same window `list` already shows.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { deriveScope } from './scope.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, tallyGroups, summarizeScopeInventory, filterScopeInventory } from './lessons-view.mjs';
-import { log, heading, status, c } from './util.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { scopeList, gather, tallyGroups, summarizeScopeInventory, filterScopeInventory } from '../shared/lessons-view.mjs';
+import { log, heading, status, c } from '../shared/util.mjs';
 
 export async function stats(args) {
   const root = resolveProjectRoot(args.dir);

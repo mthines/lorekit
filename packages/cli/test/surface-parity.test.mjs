@@ -38,7 +38,7 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 
 const registrySource = read('../src/commands.mjs');
 const binSource = read('../bin/lorekit.mjs');
-const stdioSource = read('../src/mcp-server.mjs');
+const stdioSource = read('../src/commands/mcp-server.mjs');
 
 // ── parsers ──────────────────────────────────────────────────────────────────
 // Source scans, not imports: importing the registry would execute the whole CLI
@@ -249,7 +249,7 @@ describe('the derived tables are derived, not restated', () => {
   });
 
   test('mcp-server.mjs projects its tool defs from the generated artifact', () => {
-    assert.match(stdioSource, /from '\.\/surfaces\.generated\.mjs'/);
+    assert.match(stdioSource, /from '\.\.\/surfaces\.generated\.mjs'/);
     assert.doesNotMatch(stdioSource, /export const MEMORY_TOOL_DEFS = \[\s*\n\s*\{\s*\n\s*name:/);
   });
 });

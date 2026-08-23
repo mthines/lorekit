@@ -220,7 +220,7 @@ then hands children `LOREKIT_MODE=local` plus `LOREKIT_TELEMETRY=0` /
 `DO_NOT_TRACK=1`.
 
 That is not a convention the harness politely follows — it is how
-`packages/cli/src/control.mjs` already resolves its store, so there is no code
+`packages/cli/src/shared/control.mjs` already resolves its store, so there is no code
 path from a sandboxed run to `~/.lorekit`. A guard throws if a scratch home ever
 resolves inside the real one, `dispose()` is idempotent and runs in a `finally`,
 and `withSandbox` tears down even when the body throws.
@@ -295,7 +295,7 @@ invalidating the harness.
   `pnpm nx show project evals --json` after an nx upgrade.
 - **Wiring the SessionStart hook (PR2).** Neither shelling out to `lorekit
 install` nor hand-writing the settings block: `upsertClaudeHooks(root, scope,
-runner, ['SessionStart'])` is exported from `packages/cli/src/config.mjs` and
+runner, ['SessionStart'])` is exported from `packages/cli/src/shared/config.mjs` and
   writes the canonical block itself. Using it keeps the harness in lockstep with
   `CLAUDE_HOOK_EVENTS` by construction rather than by a drift test.
 - **A git-identity sandbox needs a commit, not just `git init`.** `deriveScope` builds
@@ -463,7 +463,7 @@ two ways:
 | Arm | Model |
 | --- | ----- |
 | **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline. |
-| **ranked** | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
+| **ranked** | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/shared/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
 
 The ranked arm calls the **real** ranker — the zero-import parity twin of the
 edge function — never a reimplementation. A grep guard (`AC-1` in

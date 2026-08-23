@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { deriveScope } from "@lorekit/cli/src/scope.mjs";
+import { deriveScope } from "@lorekit/cli/src/shared/scope.mjs";
 
 import {
   GIT_DEPENDENT_SCOPE_MODES,

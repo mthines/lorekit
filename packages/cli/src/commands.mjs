@@ -33,26 +33,26 @@
 // leaving them entirely silent meant the usage that dominates was the usage
 // nobody could see — a span each is still the wrong trade, a counter is not.
 
-import { install } from './install.mjs';
-import { uninstall } from './uninstall.mjs';
-import { doctor } from './doctor.mjs';
-import { list } from './list.mjs';
-import { search } from './search.mjs';
-import { show } from './show.mjs';
-import { write } from './write.mjs';
-import { archive, del, restore } from './remove.mjs';
-import { stats } from './stats.mjs';
-import { scopes } from './scopes.mjs';
-import { diff } from './diff.mjs';
-import { tree } from './tree.mjs';
-import { lint } from './lint.mjs';
-import { dedupe } from './dedupe.mjs';
-import { link } from './link.mjs';
-import { hook } from './hook.mjs';
-import { migrate } from './migrate.mjs';
-import { bootstrap } from './bootstrap.mjs';
-import { mcpServer } from './mcp-server.mjs';
-import { purge, purgeExpired } from './purge.mjs';
+import { install } from './commands/install.mjs';
+import { uninstall } from './commands/uninstall.mjs';
+import { doctor } from './commands/doctor.mjs';
+import { list } from './commands/list.mjs';
+import { search } from './commands/search.mjs';
+import { show } from './commands/show.mjs';
+import { write } from './commands/write.mjs';
+import { archive, del, restore } from './commands/remove.mjs';
+import { stats } from './commands/stats.mjs';
+import { scopes } from './commands/scopes.mjs';
+import { diff } from './commands/diff.mjs';
+import { tree } from './commands/tree.mjs';
+import { lint } from './commands/lint.mjs';
+import { dedupe } from './commands/dedupe.mjs';
+import { link } from './commands/link.mjs';
+import { hook } from './commands/hook.mjs';
+import { migrate } from './commands/migrate.mjs';
+import { bootstrap } from './commands/bootstrap.mjs';
+import { mcpServer } from './commands/mcp-server.mjs';
+import { purge, purgeExpired } from './commands/purge.mjs';
 
 /**
  * Every command, in the order the top-level help lists them.

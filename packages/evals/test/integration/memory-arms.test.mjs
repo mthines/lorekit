@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { test } from "node:test";
 
-import { CLAUDE_HOOK_EVENTS } from "@lorekit/cli/src/config.mjs";
+import { CLAUDE_HOOK_EVENTS } from "@lorekit/cli/src/shared/config.mjs";
 
 import {
   DEFAULT_BRANCH,
@@ -52,7 +52,7 @@ test("the sandbox derives the scopes the golden task depends on", async () => {
 test("a sandbox with no git identity fails loudly rather than reading nothing", async () => {
   await withSandbox({}, async (sandbox) => {
     // No initGitIdentity — the branch scope does not exist here.
-    const { deriveScope } = await import("@lorekit/cli/src/scope.mjs");
+    const { deriveScope } = await import("@lorekit/cli/src/shared/scope.mjs");
     const scope = deriveScope(sandbox.cwd);
     assert.equal(scope.branchScope, null);
     assert.throws(

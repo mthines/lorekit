@@ -55,7 +55,7 @@ export const CLIENT_HEADER = 'x-lorekit-client';
  * Absent, never empty, for service-role: there is no human actor to name. Same
  * posture as the `auth.user_id` span attribute.
  *
- * Kept in step with `USER_ID_HEADER` in `packages/cli/src/mcp.mjs`, and listed
+ * Kept in step with `USER_ID_HEADER` in `packages/cli/src/shared/mcp.mjs`, and listed
  * in `Access-Control-Expose-Headers` (`cors-origins.ts`) — a browser cannot read
  * a response header that is not exposed, so omitting it there would make this
  * invisible to the dashboard even though it is set.

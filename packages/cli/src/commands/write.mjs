@@ -60,13 +60,13 @@
 // resolved scope, key, store written, and a boolean `inserted` (true = created,
 // false = updated) when the remote reports it.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { loadControl, resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { log, err, heading, status, c } from './util.mjs';
-import { resolveScopeKeyArgs, scopeIssue } from './lessons-view.mjs';
-import { deriveOrigin, mergeOrigin } from './origin.mjs';
-import { parseTtlDays, resolveDefaultTtlDays } from './store/ttl.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { loadControl, resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { log, err, heading, status, c } from '../shared/util.mjs';
+import { resolveScopeKeyArgs, scopeIssue } from '../shared/lessons-view.mjs';
+import { deriveOrigin, mergeOrigin } from '../shared/origin.mjs';
+import { parseTtlDays, resolveDefaultTtlDays } from '../store/ttl.mjs';
 
 // Read all of stdin to a string. Resolves to '' when stdin IS a TTY (no pipe).
 function readStdin() {

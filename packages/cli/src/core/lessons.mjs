@@ -2,7 +2,7 @@
 // Framework-agnostic — adapters shape these strings into each tool's contract.
 // Storage is reached through the resolved store (local | remote), never a
 // backend directly, so the same read path serves every mode.
-import { deriveScope } from '../scope.mjs';
+import { deriveScope } from '../shared/scope.mjs';
 // The cross-scope precedence merge comes from the dependency-free
 // `lessons-pure.mjs` — the SAME `resolvePrecedence` `tree` uses, so the hook
 // can't drift from it, and the hot path never pulls in the `lessons-view.mjs`
@@ -14,7 +14,7 @@ import { deriveScope } from '../scope.mjs';
 // of what "most useful" means.
 import {
   resolvePrecedence, rankLessons, diversifyRankedLessons, capPerBucket, loopBucketOf,
-} from '../lessons-pure.mjs';
+} from '../shared/lessons-pure.mjs';
 // The store's own scope inventory, normalised — the SAME helper `memory.scopes`
 // uses, so the map and the MCP tool cannot disagree about what a scope holds or
 // about what a failed enumeration looks like.
@@ -23,7 +23,7 @@ import { readScopeInventory } from '../store/scope-inventory.mjs';
 // `--link` flag use, so the hook's confirmation/nudge links are JSON-encoded
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
 // from the command-line links.
-import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
+import { loreScopeUrl, buildLessonUrl } from '../shared/deeplink-pure.mjs';
 // The SAME resolver `lorekit write` applies, so the TTL the nudge advises an
 // agent to send is byte-for-byte the one the CLI would have applied itself. A
 // hook cannot set a TTL — it only reads and emits text; the write happens later,
@@ -41,7 +41,7 @@ import {
   DEFAULT_SESSION_START_MAX_LESSONS,
   MAX_SESSION_START_MAX_LESSONS,
   SESSION_START_MODES,
-} from '../control.mjs';
+} from '../shared/control.mjs';
 import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
 // THE INJECTED SET IS BOUNDED BY A CHARACTER BUDGET, NOT BY A COUNT.

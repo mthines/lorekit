@@ -23,7 +23,7 @@ import {
   PURGE_RETENTION_DAYS_DEFAULT,
   RETENTION_DAYS_MIN,
   RETENTION_DAYS_MAX,
-} from '../src/purge.mjs';
+} from '../src/commands/purge.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 

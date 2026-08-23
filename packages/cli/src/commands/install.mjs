@@ -26,10 +26,10 @@ import {
   readJsonIfExists,
   readLorekitServer,
   isWebMcpServerEntry,
-} from './config.mjs';
-import { buildRemoteUrl, splitEndpoint } from './mcp.mjs';
-import { deriveScope } from './scope.mjs';
-import { log, heading, status, select, err, c } from './util.mjs';
+} from '../shared/config.mjs';
+import { buildRemoteUrl, splitEndpoint } from '../shared/mcp.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { log, heading, status, select, err, c } from '../shared/util.mjs';
 
 // The MCP server URL is fixed — there is only one hosted LoreKit endpoint.
 const LOREKIT_MCP_ENDPOINT = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
