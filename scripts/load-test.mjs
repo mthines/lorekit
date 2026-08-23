@@ -565,6 +565,11 @@ if (cred.errors.length) die(`credential check failed:\n  - ${cred.errors.join('\
 
 const run = {
   target,
+  // Carried into the telemetry: without these two, an MCP run and a REST run
+  // land in the SAME Dash0 series and average together, which is the one
+  // comparison this harness exists to make.
+  surface,
+  authTier: authMode,
   rps: Number(opts.rps),
   durationSec: Number(opts.duration),
   users: Number(opts.users),
@@ -738,7 +743,7 @@ try {
 
   const exported = await exportLoad({
     run: { ...run, startMs, endMs },
-    summary, agg, queryDiff, share, correlationId, dryRun: opts.dryRun,
+    summary, agg, queryDiff, share, correlationId, ladder, dryRun: opts.dryRun,
   });
 
   if (exported.dryRun) {
@@ -747,8 +752,9 @@ try {
     log(`    metrics    ${exported.metrics.resourceMetrics[0].scopeMetrics[0].metrics.map((m) => m.name).join(', ')}`);
   } else if (exported.exported) {
     log(`\n▸ Exported to Dash0: ${exported.datapoints} datapoints · trace ${exported.traceId}`);
-    log(`  Compare runs on service.name=load; join the server side on`);
-    log(`  lorekit.correlation_id=${correlationId}`);
+    log(`  Filter: service.name=load, lorekit.load.surface=${surface}, lorekit.load.auth_tier=${authMode}`);
+    log(`  Join the server side on lorekit.correlation_id=${correlationId}`);
+    if (ladder.length > 1) log(`  Ladder: lorekit.load.rung.duration by rps · lorekit.load.max_sustained_rps`);
   } else if (exported.reason) {
     log(`\n▸ Dash0 export skipped (${exported.reason}).`);
   } else {

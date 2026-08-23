@@ -263,6 +263,31 @@ is unavailable. A degraded run, not a failed one.
 - **The per-statement delta is the real output.** It turns "p95 was 240 ms" into
   "these three statements were 62 % of it".
 
+#### Telemetry
+
+**Every span and every datapoint carries `lorekit.load.surface` and
+`lorekit.load.auth_tier`.** Both, on both signal types — a dimension present only
+on the trace cannot filter a metric series, so without them on the datapoints an
+MCP run and a REST run land in the SAME series and silently average together,
+which is the one comparison this harness exists to make. Both are bounded
+(`rest|mcp`, `jwt|token`), so they add no meaningful cardinality.
+
+A **stress** run additionally emits one `lorekit.load.rung` child span per rung
+(mirroring the sweep's rung spans — the waterfall is where a ladder becomes
+readable) plus three series:
+
+| Metric | Unit | Keyed by |
+|---|---|---|
+| `lorekit.load.rung.duration` | `s` | `rps`, `quantile` — the ladder as a curve |
+| `lorekit.load.rung.achieved_rps` | `{request}/s` | `rps` — below requested means the *client* saturated |
+| `lorekit.load.max_sustained_rps` | `{request}/s` | — the headline; **0** when the first rung already failed |
+
+`rps` is a dimension here for the same reason the sweep's `rows` is: it is the
+experiment's independent variable, the x-axis, bounded by the rung count.
+
+The rung that ended the ladder carries `lorekit.load.rung.stop_reason`, which is
+the one thing a bare number cannot convey.
+
 Telemetry: one `lorekit.load` root span (not one per request — 20 rps for two
 minutes is 2,400 spans of a synthetic client, and the per-request detail already
 exists server-side) plus four gauges, under `service.name=load`. The run's
