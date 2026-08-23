@@ -13,11 +13,11 @@
 #
 # Requires the `claude` CLI on PATH (CI installs @anthropic-ai/claude-code).
 # Idempotent: cleans up the marketplace/plugin it registered, even on failure.
-# Run from the repo root:  bash scripts/smoke-plugin.sh
+# Run from the repo root:  bash scripts/smoke/smoke-plugin.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 PLUGIN="lorekit-memory"
@@ -44,7 +44,7 @@ claude plugin validate ./plugins/lorekit-claude
 
 # 2. Vendored skill matches its single source of truth.
 echo "── skill sync (--check) ──────────────────────────────────────"
-node scripts/sync-plugin-skill.mjs --check
+node scripts/codegen/sync-plugin-skill.mjs --check
 
 # 3. Register the repo as a marketplace and install from it.
 #    Remove any stale registration first so a re-run is deterministic.

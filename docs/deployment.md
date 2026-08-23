@@ -449,7 +449,7 @@ avoid advancing what it could not undo.
 
 `ci.yml` guards the decision on every PR that touches it: a `deploy` path filter
 over
-`^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
+`^(\.github/workflows/deploy\.yml|scripts/ci/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
 gates a `deploy-scope` job running `node --test
 scripts/ci/resolve-deploy-scope.test.mjs`, and that job is in the `summary` gate's
 `needs`. Without it the test would never run — `scripts/**` is outside
@@ -582,7 +582,7 @@ The classifier is live in the workflows (no manual step — unlike the older
   'push'`. A `fail` verdict exits non-zero and stops the deploy; `skip` continues
   to the function deploy without pushing. `deploy-production` is left strict.
 - **`.github/workflows/ci.yml`**: the `changes` job's migration path filter also
-  matches `scripts/check-remote-migration-drift`, and the `migration-order` job
+  matches `scripts/migrations/check-remote-migration-drift`, and the `migration-order` job
   unit-tests the classifier (`node --test scripts/migrations/check-remote-migration-drift.test.mjs`)
   alongside the ordering guard.
 

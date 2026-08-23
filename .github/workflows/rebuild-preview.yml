@@ -4,7 +4,7 @@
 # `preview` is a shared project. `/preview` runs (preview.yml) push UN-MERGED
 # migrations to it from open PR head SHAs, so over time it accumulates drifted
 # history rows and orphan schema objects from PRs that were edited or abandoned.
-# The deploy-time drift classifier (scripts/check-remote-migration-drift.mjs)
+# The deploy-time drift classifier (scripts/migrations/check-remote-migration-drift.mjs)
 # keeps `main`'s deploy GREEN through that drift; THIS workflow is the flush that
 # clears it — `supabase db reset --linked` drops and re-provisions the remote DB
 # from the migration files on this ref, so grants and RLS defaults are restored
@@ -145,7 +145,7 @@ jobs:
       # reminder rather than smuggling the key into a recurring workflow.
       - name: Remind to re-seed the orgs-smoke user
         run: |
-          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
+          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/smoke/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM
