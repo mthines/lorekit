@@ -50,8 +50,8 @@
 import process from 'node:process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { homeRoot } from './control.mjs';
-import { writeFileAtomic } from './config.mjs';
+import { homeRoot } from '../shared/control.mjs';
+import { writeFileAtomic } from '../shared/config.mjs';
 
 /** Filename under the home tier. Sits beside `config.json` and the local store. */
 const IDENTITY_FILE = 'telemetry-id.json';

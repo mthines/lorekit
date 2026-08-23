@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
-import { startupBanner, mcpServer } from '../src/mcp-server.mjs';
+import { startupBanner, mcpServer } from '../src/commands/mcp-server.mjs';
 
 // An input stream that ends immediately (no JSON-RPC frames), with a settable
 // `isTTY` flag — the only thing the banner gate keys on.

@@ -26,7 +26,7 @@ Start with the thing that scales: what bounds the block. It's a **character budg
 A budget does neither. Six lessons render six lines and stop. Sixty thousand render however many fit in 3000 characters, ranked best-first. The window cost is flat; the count adapts to the store.
 
 ```js
-// packages/cli/src/control.mjs — two dials, both defaulting small.
+// packages/cli/src/shared/control.mjs — two dials, both defaulting small.
 const DEFAULT_SESSION_START_MAX_CHARS   = 3000;  // characters you SEE — a slice of the window
 const DEFAULT_SESSION_START_MAX_LESSONS = 100;   // read DEPTH — candidates the ranker chooses from
 ```
@@ -38,7 +38,7 @@ Characters rather than tokens on purpose — a real tokenizer is a dependency th
 A budget decides *how much*. Ranking decides *which*, and it's the half that matters as the store grows. Fill the budget by recency and a busy repo hands you one task's iteration log — the newest cluster, not the most useful. So the lessons that survive precedence are scored, and the score is a normalized blend of four factors:
 
 ```js
-// packages/cli/src/lessons-pure.mjs (shape of scoreWithTerms) — every factor in [0,1], weights normalized (default: all equal)
+// packages/cli/src/shared/lessons-pure.mjs (shape of scoreWithTerms) — every factor in [0,1], weights normalized (default: all equal)
 const score =
   (w.recency   * recencyFactor(entry.updatedAt, now, 14 /* -day half-life */) +
    w.salience  * salienceFactor(seenCount, maxSeenCount) +  // how often it recurred

@@ -14,8 +14,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { install } from '../src/install.mjs';
-import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
+import { install } from '../src/commands/install.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/shared/config.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';

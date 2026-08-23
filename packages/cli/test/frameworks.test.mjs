@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/shared/config.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const BIN = path.join(HERE, '..', 'bin', 'lorekit.mjs');

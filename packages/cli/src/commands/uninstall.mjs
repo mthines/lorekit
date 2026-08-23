@@ -12,8 +12,8 @@ import {
   removeWebMcpServer,
   removeClaudeHooks,
   homeDir,
-} from './config.mjs';
-import { log, heading, status, c } from './util.mjs';
+} from '../shared/config.mjs';
+import { log, heading, status, c } from '../shared/util.mjs';
 
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

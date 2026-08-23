@@ -28,7 +28,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-import { deriveScope } from "@lorekit/cli/src/scope.mjs";
+import { deriveScope } from "@lorekit/cli/src/shared/scope.mjs";
 
 import {
   DEFAULT_BRANCH,

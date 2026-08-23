@@ -15,8 +15,8 @@
 // Every param is JSON-encoded per the `useUrlState` contract (see
 // `deeplink-pure.mjs`) — a raw `?scope=global` would silently mean "all scopes".
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { deriveScope } from './scope.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
 import {
   resolveAppBase,
   buildLoreUrl,
@@ -26,8 +26,8 @@ import {
   parseTagsArg,
   resolveScopeKeyArgs,
   surfaceFor,
-} from './deeplink-pure.mjs';
-import { log, err } from './util.mjs';
+} from '../shared/deeplink-pure.mjs';
+import { log, err } from '../shared/util.mjs';
 
 export async function link(args) {
   const root = resolveProjectRoot(args.dir);

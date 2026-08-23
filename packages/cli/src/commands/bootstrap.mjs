@@ -12,13 +12,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
-import { log, err, heading, status, c } from './util.mjs';
+import { log, err, heading, status, c } from '../shared/util.mjs';
 
 // The bootstrap.sql file is at <repo-root>/supabase/byod/bootstrap.sql.
-// This file lives at packages/cli/src/bootstrap.mjs, so the relative path
-// from here to the repo root is ../../../  (src → cli → packages → root).
+// This file lives at packages/cli/src/commands/bootstrap.mjs, so the relative
+// path from here to the repo root is ../../../../  (commands → src → cli →
+// packages → root).
 const BOOTSTRAP_SQL_PATH = fileURLToPath(
-  new URL('../../../supabase/byod/bootstrap.sql', import.meta.url),
+  new URL('../../../../supabase/byod/bootstrap.sql', import.meta.url),
 );
 
 export async function bootstrap(_args) {

@@ -68,7 +68,7 @@ test("the canonical SessionStart hook wiring is reusable (OQ-3, seam for AC-2.2)
   // call it directly and stay in lockstep with CLAUDE_HOOK_EVENTS by
   // construction instead of by a drift test.
   const { CLAUDE_HOOK_EVENTS, upsertClaudeHooks, settingsPath } = await import(
-    "@lorekit/cli/src/config.mjs"
+    "@lorekit/cli/src/shared/config.mjs"
   );
 
   assert.equal(typeof upsertClaudeHooks, "function");

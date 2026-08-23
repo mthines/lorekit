@@ -24,11 +24,11 @@
 //    business sweeping the whole account. The CLI makes exactly one request and
 //    reports the server's answer; it never retries, never splits the sweep and
 //    never re-scopes to work around it.
-import { resolveProjectRoot } from './config.mjs';
-import { loadControl, resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { log, err, c, select } from './util.mjs';
-import { PURGE_RETENTION_DAYS_DEFAULT } from './surfaces.generated.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { loadControl, resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { log, err, c, select } from '../shared/util.mjs';
+import { PURGE_RETENTION_DAYS_DEFAULT } from '../surfaces.generated.mjs';
 
 /** The window `retention_days` accepts, mirroring `PurgeMemoriesBodySchema`. */
 export const RETENTION_DAYS_MIN = 1;

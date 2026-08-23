@@ -22,16 +22,16 @@
 // org-owned writes; a v1 migration always lands as the caller's personal lore.
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveProjectRoot, tokenKind } from './config.mjs';
-import { localStoreDirs, loadControl } from './control.mjs';
-import { createLocalStore, createTwoTierStore, createRemoteStore } from './store/index.mjs';
-import { parseEntry } from './store/format.mjs';
-import { isLive, TTL_MAX_DAYS } from './store/ttl.mjs';
-import { remoteWriteLosses } from './store/remote.mjs';
+import { resolveProjectRoot, tokenKind } from '../shared/config.mjs';
+import { localStoreDirs, loadControl } from '../shared/control.mjs';
+import { createLocalStore, createTwoTierStore, createRemoteStore } from '../store/index.mjs';
+import { parseEntry } from '../store/format.mjs';
+import { isLive, TTL_MAX_DAYS } from '../store/ttl.mjs';
+import { remoteWriteLosses } from '../store/remote.mjs';
 import {
   createPacer, withRetry, isMemoryCap, sleep, DEFAULT_CONSECUTIVE_FAILURE_LIMIT,
-} from './store/rate-limit.mjs';
-import { log, heading, status, err, c } from './util.mjs';
+} from '../store/rate-limit.mjs';
+import { log, heading, status, err, c } from '../shared/util.mjs';
 
 // Recursively collect every parseable LoreKit entry under a base dir. The
 // canonical scope comes from each file's frontmatter, so the source layout does

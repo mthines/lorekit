@@ -260,7 +260,7 @@ export async function main(
   const { resolveStores } =
     deps.resolveStores
       ? { resolveStores: deps.resolveStores }
-      : await import("@lorekit/cli/src/stores.mjs");
+      : await import("@lorekit/cli/src/shared/stores.mjs");
 
   const { remote, connection } = resolveStores(process.cwd(), {
     env: process.env,
@@ -279,7 +279,7 @@ export async function main(
   // PAGINATED. `remote.list` caps a page at `limit` and reports `hasMore` +
   // `nextCursor`; reading only the first page would freeze a SILENTLY TRUNCATED
   // snapshot whose header calls it safe to gate PRs on. The cursor walk mirrors
-  // `gatherStream` in `@lorekit/cli/src/lessons-view.mjs` — the same
+  // `gatherStream` in `@lorekit/cli/src/shared/lessons-view.mjs` — the same
   // `!hasMore || !nextCursor → stop` termination the read commands use, so a
   // local store (which returns everything in one page and no cursor) still ends
   // after one iteration.

@@ -23,7 +23,7 @@ import {
   upsertWebMcpServer,
   isWebMcpServerEntry,
   removeWebMcpServer,
-} from '../src/config.mjs';
+} from '../src/shared/config.mjs';
 import { execFileSync } from 'node:child_process';
 
 function tmpRoot() {
@@ -159,8 +159,8 @@ test('copyDir reports how many files it actually wrote', () => {
 });
 
 // ── mcp.endpoint in .lorekit.json ─────────────────────────────────────────────
-import { resolveProjectConnection } from '../src/config.mjs';
-import { splitEndpoint } from '../src/mcp.mjs';
+import { resolveProjectConnection } from '../src/shared/config.mjs';
+import { splitEndpoint } from '../src/shared/mcp.mjs';
 
 test('resolveProjectConnection uses mcp.endpoint from .lorekit.json as fallback', () => {
   const root = tmpRoot();

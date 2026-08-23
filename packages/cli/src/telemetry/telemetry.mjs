@@ -34,7 +34,7 @@
 
 import process from 'node:process';
 import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
-import { readLorekitJson } from './config.mjs';
+import { readLorekitJson } from '../shared/config.mjs';
 import {
   ensureIdentity,
   identityAttributes,

@@ -83,7 +83,7 @@ test('the remote store contains no MCP transport call', () => {
 // exactly the kind of invariant that erodes one convenient import at a time —
 // each of which then loads on every single session start, and any of which
 // could throw inside a hook contractually obliged to exit 0.
-const LESSONS_PURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'lessons-pure.mjs');
+const LESSONS_PURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared', 'lessons-pure.mjs');
 
 test('lessons-pure imports nothing — not a package, not even a node builtin', () => {
   const src = readFileSync(LESSONS_PURE, 'utf8');

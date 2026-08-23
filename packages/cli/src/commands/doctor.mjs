@@ -16,18 +16,18 @@ import {
   readMcpConfig,
   tokenKind,
   readLorekitJson,
-} from './config.mjs';
-import { splitEndpoint } from './mcp.mjs';
+} from '../shared/config.mjs';
+import { splitEndpoint } from '../shared/mcp.mjs';
 import {
   resolveTelemetryConfig,
   resolveTelemetryTokenSource,
   probeTelemetryExport,
-} from './telemetry.mjs';
-import { describeIdentity } from './telemetry-identity.mjs';
-import { deriveScope } from './scope.mjs';
-import { loadControl, HOOK_INSTRUCTION_EVENTS } from './control.mjs';
-import { createStore } from './store/index.mjs';
-import { log, heading, status, c } from './util.mjs';
+} from '../telemetry/telemetry.mjs';
+import { describeIdentity } from '../telemetry/telemetry-identity.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { loadControl, HOOK_INSTRUCTION_EVENTS } from '../shared/control.mjs';
+import { createStore } from '../store/index.mjs';
+import { log, heading, status, c } from '../shared/util.mjs';
 
 const AUTH_CODES = new Set([401, 403, -32001]);
 
@@ -590,7 +590,7 @@ async function checkTelemetryExport(args, root, record) {
 /** The running CLI version, for stamping the telemetry probe span. */
 function cliVersion() {
   try {
-    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+    return JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
   } catch {
     return '0.0.0';
   }

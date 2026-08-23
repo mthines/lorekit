@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { install } from '../src/install.mjs';
-import { uninstall } from '../src/uninstall.mjs';
+import { install } from '../src/commands/install.mjs';
+import { uninstall } from '../src/commands/uninstall.mjs';
 import { withHome } from './helpers.mjs';
 
 function tmp(prefix) {

@@ -13,7 +13,7 @@ import {
   FRICTION_FAILURE,
   FRICTION_STUCK_LOOP,
 } from '../src/core/friction.mjs';
-import { normalizeStopMode } from '../src/control.mjs';
+import { normalizeStopMode } from '../src/shared/control.mjs';
 
 // Build a JSONL transcript from message-content arrays.
 function transcript(...lines) {

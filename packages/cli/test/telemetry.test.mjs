@@ -19,8 +19,8 @@ import {
   probeTelemetryExport,
   CLI_OUTCOMES,
   CLI_OUTCOME_VALUES,
-} from '../src/telemetry.mjs';
-import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
+} from '../src/telemetry/telemetry.mjs';
+import { TELEMETRY_TOKEN } from '../src/telemetry/telemetry-token.mjs';
 import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
 
 // A base env with the baked-in default endpoint authenticated via explicit
@@ -1030,7 +1030,7 @@ test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const source = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'telemetry.mjs'),
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'telemetry', 'telemetry.mjs'),
     'utf8',
   );
 

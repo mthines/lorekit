@@ -20,7 +20,7 @@
  * behaves exactly as before.
  *
  * Bounds mirror `normalizeRunEnvironment` / `normalizeCorrelationId` in the
- * zero-dep CLI (packages/cli/src/mcp.mjs); keep them in step.
+ * zero-dep CLI (packages/cli/src/shared/mcp.mjs); keep them in step.
  */
 export function testRunHeaders(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const headers: Record<string, string> = {};

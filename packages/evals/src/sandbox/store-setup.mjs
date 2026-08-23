@@ -12,7 +12,7 @@
 // `loadControl` takes an `env` override, so this runs in-process against the
 // sandbox env with no subprocess and no mutation of `process.env` — which also
 // means two sandboxes can be seeded concurrently without racing.
-import { loadControl } from "@lorekit/cli/src/control.mjs";
+import { loadControl } from "@lorekit/cli/src/shared/control.mjs";
 import { createStore } from "@lorekit/cli/src/store/index.mjs";
 
 import { canonicalLessonText } from "../harness/task.mjs";

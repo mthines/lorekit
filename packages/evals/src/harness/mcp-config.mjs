@@ -1,7 +1,7 @@
 // The `.mcp.json` that points the agent under test at the sandbox's own memory.
 //
 // The CLI's own writers (`upsertMcpServer`, `upsertWebMcpServer` in
-// `packages/cli/src/config.mjs`) both emit the REMOTE form — `npx -y mcp-remote
+// `packages/cli/src/shared/config.mjs`) both emit the REMOTE form — `npx -y mcp-remote
 // <url>` — which is exactly what an eval must not use: it would talk to the
 // hosted store over the network. The local stdio form has no writer in the CLI,
 // so the harness builds it here, and pins the shape with a test.

@@ -1,5 +1,5 @@
 /**
- * Lesson ranking — the server-side twin of `packages/cli/src/lessons-pure.mjs`.
+ * Lesson ranking — the server-side twin of `packages/cli/src/shared/lessons-pure.mjs`.
  *
  * WHY A SECOND IMPLEMENTATION EXISTS AT ALL, since this repo is otherwise
  * hostile to duplicated logic: the ranking has to run in two places that cannot
@@ -73,7 +73,7 @@ export const DEFAULT_RANK_WEIGHTS: RankWeights = { recency: 1, salience: 1, rele
  *
  * This is the ONE deliberate asymmetry vs `normalizeRelevance` (which returns
  * 0 for absent / unreadable input). Mirrored byte-identically in the edge twin
- * and `packages/cli/src/lessons-pure.mjs`.
+ * and `packages/cli/src/shared/lessons-pure.mjs`.
  */
 export const COLD_START_OUTCOME_PRIOR = 0.5;
 
@@ -224,7 +224,7 @@ export interface RankedLesson<T extends RankableLesson> {
  * MMR λ (lambda) — weight given to relevance vs diversity in the MMR objective.
  * At 0.7 the selector favours relevance, with 0.3 of the budget for diversity.
  * Anchored to Carbonell & Goldstein (1998), the original MMR paper.
- * Mirrored byte-identically in the edge twin and `packages/cli/src/lessons-pure.mjs`.
+ * Mirrored byte-identically in the edge twin and `packages/cli/src/shared/lessons-pure.mjs`.
  */
 export const MMR_LAMBDA = 0.7;
 

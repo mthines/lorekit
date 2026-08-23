@@ -12,7 +12,7 @@ import process from 'node:process';
 import { localStoreDirs } from './control.mjs';
 import { resolveProjectConnection } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
-import { createTwoTierStore, createRemoteStore } from './store/index.mjs';
+import { createTwoTierStore, createRemoteStore } from '../store/index.mjs';
 
 // Build both stores for `root`. Explicit `endpoint` / `token` (e.g. from
 // `--endpoint` / `--token` flags) take precedence over the resolved connection;

@@ -1,7 +1,7 @@
 // Give the sandbox working directory a git identity.
 //
 // WHY this is load-bearing rather than cosmetic. `deriveScope`
-// (`packages/cli/src/scope.mjs`) reads `remote.origin.url` and the current
+// (`packages/cli/src/shared/scope.mjs`) reads `remote.origin.url` and the current
 // branch to build the scopes the SessionStart hook reads from —
 // `[project::<dir>, branch::<owner>/<repo>::<branch>, repo::<owner>/<repo>,
 // global]`. A bare temp directory has no remote, so those scopes do not exist
@@ -16,7 +16,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { deriveScope } from "@lorekit/cli/src/scope.mjs";
+import { deriveScope } from "@lorekit/cli/src/shared/scope.mjs";
 
 const exec = promisify(execFile);
 

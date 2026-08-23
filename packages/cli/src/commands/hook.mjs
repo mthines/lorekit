@@ -3,10 +3,10 @@
 // logic, and prints the framework-shaped injection on stdout. Always exits 0 —
 // a memory hook must never block or break the host agent.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { deriveScope } from './scope.mjs';
-import { loadControl } from './control.mjs';
-import { createStore } from './store/index.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { loadControl } from '../shared/control.mjs';
+import { createStore } from '../store/index.mjs';
 import {
   fetchLessons,
   formatLessons,
@@ -20,19 +20,19 @@ import {
   relevantLessonsFromStore,
   formatRelevantLessons,
   writeConfirmation,
-} from './core/lessons.mjs';
-import { isFailure } from './core/failure.mjs';
-import { readSessionFriction, shouldRetrospect, FRICTION_FAILURE } from './core/friction.mjs';
+} from '../core/lessons.mjs';
+import { isFailure } from '../core/failure.mjs';
+import { readSessionFriction, shouldRetrospect, FRICTION_FAILURE } from '../core/friction.mjs';
 import {
   firstTimeThisSession,
   sessionMarkerExists,
   shownLessons,
   recordShownLessons,
-} from './core/state.mjs';
-import { recordFixture } from './core/record.mjs';
-import { claude } from './adapters/claude.mjs';
-import { cursor } from './adapters/cursor.mjs';
-import { codex } from './adapters/codex.mjs';
+} from '../core/state.mjs';
+import { recordFixture } from '../core/record.mjs';
+import { claude } from '../adapters/claude.mjs';
+import { cursor } from '../adapters/cursor.mjs';
+import { codex } from '../adapters/codex.mjs';
 
 const ADAPTERS = { claude, cursor, codex };
 

@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { migrate } from '../src/migrate.mjs';
+import { migrate } from '../src/commands/migrate.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
-import { setWriters } from '../src/util.mjs';
+import { setWriters } from '../src/shared/util.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-mig-'));

@@ -2,7 +2,7 @@
 // actually injects.
 //
 // The wiring is NOT hand-written here. `upsertClaudeHooks` from
-// `packages/cli/src/config.mjs` is exported and already writes the canonical
+// `packages/cli/src/shared/config.mjs` is exported and already writes the canonical
 // block into `<root>/.claude/settings.json`; passing `['SessionStart']` also
 // PRUNES the other two events, which is what makes this a genuine read-only
 // install rather than an additive one that leaves the nudges firing. Calling it
@@ -23,7 +23,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   settingsPath,
   upsertClaudeHooks,
-} from "@lorekit/cli/src/config.mjs";
+} from "@lorekit/cli/src/shared/config.mjs";
 
 import { LOREKIT_BIN } from "./paths.mjs";
 

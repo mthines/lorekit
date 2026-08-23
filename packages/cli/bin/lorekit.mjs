@@ -2,7 +2,7 @@
 // LoreKit CLI — install the shared-memory skill and run health checks.
 import process from 'node:process';
 import { readFileSync } from 'node:fs';
-import { parseArgs, log, err, c } from '../src/util.mjs';
+import { parseArgs, log, err, c } from '../src/shared/util.mjs';
 // Commands, their handlers, aliases and dispatch properties all come from one
 // registry — see ../src/commands.mjs for why membership lives there and the
 // help prose stays here.
@@ -10,8 +10,8 @@ import { COMMANDS_BY_NAME, STRICT_FLAG_COMMANDS, COMMAND_ALIASES } from '../src/
 // Catalog-derived, so the default this help PROMISES is the one the server
 // applies — see src/surfaces.generated.mjs.
 import { PURGE_RETENTION_DAYS_DEFAULT } from '../src/surfaces.generated.mjs';
-import { traceCommand, meterCommand } from '../src/telemetry.mjs';
-import { loadDotEnv } from '../src/dotenv.mjs';
+import { traceCommand, meterCommand } from '../src/telemetry/telemetry.mjs';
+import { loadDotEnv } from '../src/shared/dotenv.mjs';
 
 // Read the version from package.json so it always matches the published
 // package — release-please bumps package.json, and this tracks it for free.

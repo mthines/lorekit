@@ -12,11 +12,11 @@
 // memory.delete / memory.restore operations, which are scope-authorized for an
 // API token by its allowlist (migrations 00071 / 00072): a key scoped to a
 // scope may manage every writer's row in it, an unscoped key only its own.
-import { resolveProjectRoot } from './config.mjs';
-import { loadControl, resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { log, err, c } from './util.mjs';
-import { resolveScopeKeyArgs, scopeIssue } from './lessons-view.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { loadControl, resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { log, err, c } from '../shared/util.mjs';
+import { resolveScopeKeyArgs, scopeIssue } from '../shared/lessons-view.mjs';
 
 // The three surfaces return different success shapes: the remote store answers
 // `{ ok, error, networkError }`, the local store `{ deleted, archived, entry }`.

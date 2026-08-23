@@ -1,9 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ownerRepoFromRemote } from '../src/scope.mjs';
-import { splitEndpoint, buildRemoteUrl, mcpCall, retryAfterFrom } from '../src/mcp.mjs';
-import { tokenKind } from '../src/config.mjs';
-import { parseArgs, selectAction, select } from '../src/util.mjs';
+import { ownerRepoFromRemote } from '../src/shared/scope.mjs';
+import { splitEndpoint, buildRemoteUrl, mcpCall, retryAfterFrom } from '../src/shared/mcp.mjs';
+import { tokenKind } from '../src/shared/config.mjs';
+import { parseArgs, selectAction, select } from '../src/shared/util.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,13 +12,13 @@ import { createPacer, withRetry, isRateLimited, isMemoryCap } from '../src/store
 import { createLocalStore } from '../src/store/local.mjs';
 import {
   gatherStream, gather, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX,
-} from '../src/lessons-view.mjs';
+} from '../src/shared/lessons-view.mjs';
 import {
   rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
   normalizeOutcome, RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS, COLD_START_OUTCOME_PRIOR,
   diversifyRankedLessons, selectDiverse, capPerBucket, loopBucketOf,
-} from '../src/lessons-pure.mjs';
-import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
+} from '../src/shared/lessons-pure.mjs';
+import { MEMORY_TOOL_DEFS } from '../src/commands/mcp-server.mjs';
 
 test('ownerRepoFromRemote normalizes remote URL variants', () => {
   assert.equal(ownerRepoFromRemote('git@github.com:mthines/LoreKit.git'), 'mthines/lorekit');

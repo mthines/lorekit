@@ -7,7 +7,7 @@
 // damage is silent and only shows up as a poisoned lesson weeks later.
 //
 // Isolation is achieved the same way production resolves its store, not by
-// monkey-patching: `packages/cli/src/control.mjs` roots the home tier at
+// monkey-patching: `packages/cli/src/shared/control.mjs` roots the home tier at
 // `$LOREKIT_HOME` (default `~/.lorekit`) and the project tier at
 // `$LOREKIT_STORE`, and `LOREKIT_MODE=local` forces the offline file store. Point
 // all three at a `mkdtemp` directory and the real store is unreachable by

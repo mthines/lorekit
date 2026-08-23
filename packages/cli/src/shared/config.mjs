@@ -5,8 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-// packages/cli/ — the installable package root (this file lives in src/).
-export const PKG_ROOT = fileURLToPath(new URL('../', import.meta.url));
+// packages/cli/ — the installable package root (this file lives in src/shared/).
+export const PKG_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const SKILL_NAME = 'lorekit-memory';
 export const SKILL_SOURCE = path.join(PKG_ROOT, 'skill', SKILL_NAME);
 

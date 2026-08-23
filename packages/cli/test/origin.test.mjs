@@ -4,7 +4,7 @@
 // deterministic — no real repository, no real CI runner.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveOrigin, isValidRef, isValidRepo, mergeOrigin, prNumberFromEnv } from '../src/origin.mjs';
+import { deriveOrigin, isValidRef, isValidRepo, mergeOrigin, prNumberFromEnv } from '../src/shared/origin.mjs';
 
 /** A fake `git` that answers from a lookup table and returns null otherwise. */
 function fakeGit(answers) {

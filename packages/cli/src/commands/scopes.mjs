@@ -25,11 +25,11 @@
 // scopes whose string contains that substring; `--json` emits `{ offline,
 // remote }`.
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { summarizeScopeInventory, filterScopeInventory, describeError } from './lessons-view.mjs';
-import { log, heading, status, c } from './util.mjs';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { summarizeScopeInventory, filterScopeInventory, describeError } from '../shared/lessons-view.mjs';
+import { log, heading, status, c } from '../shared/util.mjs';
 
 export async function scopes(args) {
   const root = resolveProjectRoot(args.dir);

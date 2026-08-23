@@ -30,9 +30,9 @@ import {
   DEFAULT_SESSION_START_MAX_CHARS,
   DEFAULT_SESSION_START_MAX_LESSONS,
   MAX_SESSION_START_MAX_LESSONS,
-} from '../src/control.mjs';
-import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
-import { deriveScope } from '../src/scope.mjs';
+} from '../src/shared/control.mjs';
+import { resolvePrecedence, matchesQuery } from '../src/shared/lessons-pure.mjs';
+import { deriveScope } from '../src/shared/scope.mjs';
 import { claude } from '../src/adapters/claude.mjs';
 import { cursor } from '../src/adapters/cursor.mjs';
 import { codex } from '../src/adapters/codex.mjs';
@@ -1472,7 +1472,7 @@ test('sessionStart budget — an empty store is unchanged (null, or the instruct
 });
 
 test('fetchLessons scope map — counts come from the winners, per scope, in readOrder', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [first, ...rest] = scope.readOrder;
   const last = rest[rest.length - 1] ?? first;
@@ -1502,7 +1502,7 @@ test('fetchLessons scope map — counts come from the winners, per scope, in rea
 // threshold is imported, not retyped: an assertion that restates a production
 // constant goes vacuous the moment the constant moves.
 test('fetchLessons scope map — a scope read to the cap reports a lower bound, not a total', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [capped, ...rest] = scope.readOrder;
   const under = rest[rest.length - 1] ?? null;
@@ -1552,7 +1552,7 @@ function enumerableStore(byScope, inventory) {
 }
 
 test('fetchLessons scope map — exact counts from the local store bare-array form', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [first] = scope.readOrder;
 
@@ -1570,7 +1570,7 @@ test('fetchLessons scope map — exact counts from the local store bare-array fo
 });
 
 test('fetchLessons scope map — exact counts from the remote envelope form', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [first] = scope.readOrder;
 
@@ -1592,7 +1592,7 @@ test('fetchLessons scope map — the enumeration is issued before the per-scope 
   // session-start path. Pin the ordering rather than trusting the source to
   // keep it: a later edit that moves the call back below the loop is invisible
   // to every other assertion in this file.
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [first] = scope.readOrder;
 
@@ -1619,7 +1619,7 @@ test('fetchLessons scope map — the enumeration is issued before the per-scope 
 test('fetchLessons scope map — the store total counts what EXISTS, not what was injected', async (t) => {
   // Two deliberate differences from the derived counts, both because the map
   // answers a different question from the injected set.
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   if (scope.readOrder.length < 2) {
     t.skip('needs at least two scopes to tell the enumerated total from the injected set');
@@ -1651,7 +1651,7 @@ test('fetchLessons scope map — narrowed to readOrder and ordered by the hierar
   // `listScopes()` is store-wide by design (it backs the `scopes` command).
   // The map describes THIS workspace, so a scope the reader is not working in
   // is noise dressed up as guidance.
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const inOrder = scope.readOrder.map((s, i) => ({ scope: s, count: i + 1 }));
 
@@ -1673,7 +1673,7 @@ test('fetchLessons scope map — narrowed to readOrder and ordered by the hierar
 });
 
 test('fetchLessons scope map — a zero-count scope is omitted, not rendered as 0', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [first] = scope.readOrder;
   const { scopeCounts } = await fetchLessons(
@@ -1689,7 +1689,7 @@ test('fetchLessons scope map — a zero-count scope is omitted, not rendered as 
 test('fetchLessons scope map — falls back to the derived counts when enumeration fails', async () => {
   // Best-effort, like everything on this path. An unreachable remote must cost
   // the reader precision, never the map itself.
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [capped] = scope.readOrder;
   const byScope = {
@@ -1722,7 +1722,7 @@ test('fetchLessons scope map — a successful enumeration that omits a scope fal
   // scope that just contributed injected lessons must keep a row: dropping it
   // would show the reader lore in the digest with nothing saying where it
   // lives, which is worse than the approximate count already in hand.
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   if (scope.readOrder.length < 2) {
     t.skip('needs at least two scopes for the enumeration to omit one of them');
@@ -1755,7 +1755,7 @@ test('fetchLessons scope map — a successful enumeration that omits a scope fal
 test('fetchLessons scope map — enumeration never changes the injected lessons', async () => {
   // The map is a footer. Whether the store could enumerate must not move a
   // single lesson, or this "refactor" would be a behaviour change in disguise.
-  const { deriveScope } = await import('../src/scope.mjs');
+  const { deriveScope } = await import('../src/shared/scope.mjs');
   const scope = deriveScope(process.cwd());
   const [first] = scope.readOrder;
   const byScope = {

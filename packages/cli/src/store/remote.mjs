@@ -14,13 +14,13 @@
 // and the `orgs` edge function now passes it plus its own tenant filters — so
 // every `/orgs*` route serves api_key tokens and the holdout is gone.
 //
-// `packages/cli/src/mcp.mjs` still exists and is still used: it backs the
+// `packages/cli/src/shared/mcp.mjs` still exists and is still used: it backs the
 // `lorekit mcp` stdio server command and provides `mcpToRestBase`. It is just
 // no longer a transport for this store.
 // Zero-dependency.
-import { restFetch, mcpToRestBase } from '../mcp.mjs';
-import { rememberAccountId } from '../telemetry-identity.mjs';
-import { getActiveTraceparent } from '../telemetry.mjs';
+import { restFetch, mcpToRestBase } from '../shared/mcp.mjs';
+import { rememberAccountId } from '../telemetry/telemetry-identity.mjs';
+import { getActiveTraceparent } from '../telemetry/telemetry.mjs';
 import { withReadFields } from './entry-fields.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 
@@ -598,7 +598,7 @@ class RemoteStore {
   // ── Org operations → REST ─────────────────────────────────────────────────
   // `supabase/functions/orgs/` serves `lk_*` tokens on every route as of
   // 00041_org_actor_override.sql (see the file header). Each method's RETURN
-  // SHAPE is unchanged from the MCP era — `packages/cli/src/mcp-server.mjs`
+  // SHAPE is unchanged from the MCP era — `packages/cli/src/commands/mcp-server.mjs`
   // serialises these objects straight into a `tools/call` result, so the shape
   // is a published contract, not an internal detail.
   //
@@ -613,7 +613,7 @@ class RemoteStore {
   // `{ id, slug, name }`. A bare JSON id string is the LEGACY shape an older
   // deployed backend can still return — that is what the string branch below is
   // for, not the normal case. Either way this method reassembles the
-  // `{ id, slug, name }` triple, because `packages/cli/src/mcp-server.mjs`
+  // `{ id, slug, name }` triple, because `packages/cli/src/commands/mcp-server.mjs`
   // serialises it straight into a `tools/call` result and that shape is a
   // published contract.
   async orgCreate({ slug, name } = {}) {

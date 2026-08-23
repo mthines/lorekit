@@ -13,8 +13,8 @@ import {
   DEFAULT_SESSION_START_MAX_LESSONS, MIN_SESSION_START_MAX_LESSONS,
   MAX_SESSION_START_MAX_LESSONS, normalizeSessionStartMaxLessons,
   HOOK_INSTRUCTION_EVENTS,
-} from '../src/control.mjs';
-import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
+} from '../src/shared/control.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/shared/config.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));

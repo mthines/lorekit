@@ -14,10 +14,10 @@ import {
   MIN_SESSION_START_MAX_CHARS,
   MAX_SESSION_START_MAX_LESSONS,
   DEFAULT_SESSION_START_MAX_LESSONS,
-} from '../src/control.mjs';
+} from '../src/shared/control.mjs';
 import { MAX_STORE_LIST_LIMIT } from '../src/core/lessons.mjs';
 import { createTwoTierStore } from '../src/store/index.mjs';
-import { deriveScope } from '../src/scope.mjs';
+import { deriveScope } from '../src/shared/scope.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));

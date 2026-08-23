@@ -11,12 +11,12 @@
 // Same Offline / Remote split and graceful degradation as `list`. Read-only.
 // Human-facing, so the bin wraps it in `traceCommand`.
 import process from 'node:process';
-import { resolveProjectRoot, readLorekitJson } from './config.mjs';
-import { deriveScope } from './scope.mjs';
-import { resolveDenies } from './control.mjs';
-import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBlocked, clusterByKeyPattern, compileKeyPattern, DEFAULT_MAX } from './lessons-view.mjs';
-import { log, heading, status, err, c } from './util.mjs';
+import { resolveProjectRoot, readLorekitJson } from '../shared/config.mjs';
+import { deriveScope } from '../shared/scope.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBlocked, clusterByKeyPattern, compileKeyPattern, DEFAULT_MAX } from '../shared/lessons-view.mjs';
+import { log, heading, status, err, c } from '../shared/util.mjs';
 
 const DEFAULT_THRESHOLD = 0.8;
 // Maximum entries to accumulate before the survey becomes memory-prohibitive.

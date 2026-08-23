@@ -20,7 +20,7 @@ Every component propagates one W3C `traceparent` through a single pure seam:
 `parseTraceparent` (receiver) and `formatTraceparent` (sender), which live in
 `packages/mcp-core/src/telemetry/trace-context.ts` and are mirrored verbatim into every
 edge function (`supabase/functions/_shared/trace-context.ts`). The zero-dep CLI
-re-implements the same header format in `packages/cli/src/telemetry.mjs`.
+re-implements the same header format in `packages/cli/src/telemetry/telemetry.mjs`.
 
 ```
 agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
@@ -130,7 +130,7 @@ still omits the attribute by default (it has no ambient deployment).
 ## Bug fixed
 
 **`os.type` / `host.arch` emitted Node spellings, not OTel-registry values**
-(`packages/cli/src/telemetry.mjs`). The CLI resource set `os.type` from
+(`packages/cli/src/telemetry/telemetry.mjs`). The CLI resource set `os.type` from
 `process.platform` (`win32`, `sunos`) and `host.arch` from `process.arch`
 (`x64`, `ia32`, `arm`). Those Node spellings are **not** members of the OTel
 `os.type` / `host.arch` registries (`windows`, `solaris` / `amd64`, `x86`,

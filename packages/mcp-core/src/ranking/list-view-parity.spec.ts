@@ -15,7 +15,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from '../tools/list.js';
  *      production path. It cannot cross-import a package, the same constraint
  *      that already forces `MAX_VALUE_BYTES` and `PURGE_RETENTION_DAYS_DEFAULT`
  *      to be redeclared locally in that file.
- *   4. `packages/cli/src/mcp-server.mjs`     — the `lorekit mcp` stdio server,
+ *   4. `packages/cli/src/commands/mcp-server.mjs`     — the `lorekit mcp` stdio server,
  *      which is zero-dependency by design and cannot import `@lorekit/schemas`.
  *
  * A drift here is silent and asymmetric: the same call against two of these
@@ -26,7 +26,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from '../tools/list.js';
 
 const repoRoot = join(import.meta.dirname, '../../../..');
 const edgeSource = readFileSync(join(repoRoot, 'supabase/functions/mcp/tools.ts'), 'utf8');
-const cliSource = readFileSync(join(repoRoot, 'packages/cli/src/mcp-server.mjs'), 'utf8');
+const cliSource = readFileSync(join(repoRoot, 'packages/cli/src/commands/mcp-server.mjs'), 'utf8');
 const coreListSource = readFileSync(join(repoRoot, 'packages/mcp-core/src/tools/list.ts'), 'utf8');
 
 /** The numeric literal a source file declares for the preview cap. */
@@ -46,7 +46,7 @@ describe('memory.list summary preview length parity', () => {
   });
 
   it('the CLI stdio server agrees with the schema declaration', () => {
-    expect(declaredPreviewChars(cliSource, 'packages/cli/src/mcp-server.mjs')).toBe(SCHEMA_PREVIEW_CHARS);
+    expect(declaredPreviewChars(cliSource, 'packages/cli/src/commands/mcp-server.mjs')).toBe(SCHEMA_PREVIEW_CHARS);
   });
 
   it('the documented cap in the tool catalog matches the implementation', () => {

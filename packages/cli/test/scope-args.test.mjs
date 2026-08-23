@@ -19,11 +19,11 @@ import {
   isScopeString,
   resolveScopeArg,
   resolveScopeKeyArgs,
-} from '../src/lessons-pure.mjs';
+} from '../src/shared/lessons-pure.mjs';
 // Re-export sites: every command imports through one of these two, so a broken
 // re-export is a broken command even with this module green.
-import { scopeIssue as scopeIssueFromView, resolveScopeKeyArgs as fromView } from '../src/lessons-view.mjs';
-import { resolveScopeKeyArgs as fromDeeplink } from '../src/deeplink-pure.mjs';
+import { scopeIssue as scopeIssueFromView, resolveScopeKeyArgs as fromView } from '../src/shared/lessons-view.mjs';
+import { resolveScopeKeyArgs as fromDeeplink } from '../src/shared/deeplink-pure.mjs';
 
 // ── scopeIssue: `::` is RESERVED as the segment separator ─────────────────────
 
