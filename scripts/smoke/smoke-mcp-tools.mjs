@@ -208,8 +208,30 @@ async function rpc(body, { auth = token, retryOn429 = true, attempt = 0 } = {}) 
  * Every handler answers with its result JSON-encoded inside
  * `result.content[0].text`, so a caller that reads `result` directly is reading
  * the MCP envelope rather than the tool's answer. Returns
- * `{ ok, value, error, status }`: `ok` false means the server refused the call
- * (a JSON-RPC error), and `value` is the parsed tool payload otherwise.
+ * `{ ok, value, error, status }`: `ok` false means the call was REFUSED, and
+ * `value` is the parsed tool payload otherwise.
+ *
+ * A refusal arrives in one of TWO shapes, and `ok` folds both together so a
+ * check can assert "this was refused" without caring which:
+ *
+ *   • a JSON-RPC `error` — the call never reached the tool (parse error,
+ *     unknown tool/method, an auth or permission denial);
+ *   • a SUCCESSFUL result carrying `isError: true` — the tool ran and refused
+ *     (a malformed scope, a bad TTL, an oversize value, a memory-cap hit).
+ *
+ * The second shape is the MCP spec's, so the model can see the failure and
+ * self-correct; `mcp-handler.ts` explains the dividing line (dispatch) at
+ * length. Reading only `json.error` — as this helper did — reports every
+ * tool-originated refusal as a SUCCESS, so each `ok(!r.ok, '… was accepted')`
+ * check silently inverts: the harness passes the invalid input, the server
+ * correctly rejects it, and the check reports the server accepted it. Eight of
+ * them failed that way against preview once the edge adopted the shape.
+ * `error.message` carries the tool's own text so the message assertions below
+ * (`/use "::"/`, `/65536|64/`, `/unknown_org/`) read one field either way.
+ *
+ * Same treatment the repo's other MCP clients already give it:
+ * `packages/cli/src/shared/mcp.mjs`, `classifyMcpResponse` in
+ * `scripts/load-test/load-test-lib.mjs`, and both integration smoke specs.
  */
 async function call(name, args = {}) {
   const { status, json } = await rpc({
@@ -226,7 +248,20 @@ async function call(name, args = {}) {
   } catch {
     /* a non-JSON body is returned verbatim */
   }
-  return { ok: true, value, status, isError: json?.result?.isError === true };
+  if (json?.result?.isError) {
+    // `code: 'tool_error'` rather than a JSON-RPC number: there is no code on
+    // this path, and inventing one would let a check assert a code the wire
+    // never carried. `value` rides along for diagnostics — the cleanup ledger
+    // prints `r.error ?? r.value`.
+    return {
+      ok: false,
+      toolError: true,
+      error: { code: 'tool_error', message: typeof text === 'string' ? text : 'the tool reported an error' },
+      value,
+      status,
+    };
+  }
+  return { ok: true, value, status };
 }
 
 // ── cleanup ledger ───────────────────────────────────────────────────────────
@@ -651,6 +686,27 @@ check('an invalid kind is refused', async () => {
   ok(!(await call('memory.list', { scope: SCOPE, kind: 'nonsense' })).ok, 'kind=nonsense');
 });
 
+// The SHAPE of the refusals above, asserted on the raw envelope rather than
+// through `call()` — which folds both refusal shapes into `ok: false` and so
+// would pass whichever one the server sent. A caller mistake is a tool-
+// originated failure: it comes back as a SUCCESSFUL result carrying
+// `isError: true`, so the model can read the reason and self-correct, not as a
+// JSON-RPC error a client library may swallow before the model ever sees it.
+// Dispatch is the dividing line (mcp-handler.ts), so an unknown TOOL stays a
+// protocol error — the check above already pins that end.
+check('a caller mistake is an isError result, not a JSON-RPC error', async () => {
+  const { status, json } = await rpc({
+    jsonrpc: '2.0',
+    id: ++rpcId,
+    method: 'tools/call',
+    params: { name: 'memory.write', arguments: { scope: 'project:single', key: 'k', value: 'v' } },
+  });
+  eq(status, 200, 'http status');
+  ok(!json?.error, `a caller mistake must not be a JSON-RPC error: ${JSON.stringify(json?.error)}`);
+  eq(json?.result?.isError, true, 'result.isError');
+  ok(/use "::"/.test(json?.result?.content?.[0]?.text ?? ''), 'the refusal carries the reason the model needs');
+});
+
 // ── 4. org.* over an API token (opened by #517) ──────────────────────────────
 
 check('org.create makes the caller owner and org.list reports the role', async () => {
@@ -850,15 +906,6 @@ known('unknown-arguments-ignored', 'an unknown tool argument is refused, not ign
     ok(r.value?.expires_at, 'the typo\'d `ttl` was accepted AND silently dropped');
   }
   ok(!r.ok, 'an unknown argument was accepted');
-});
-
-known('validation-errors-use-internal-error-code', 'a bad argument is -32602 (invalid params)', async () => {
-  // Every validation failure answers -32603 "Internal error". -32602 is the
-  // JSON-RPC code for a caller mistake, and the distinction is what tells a
-  // client whether retrying could ever help.
-  const r = await call('memory.list', { scope: 'project:single' });
-  ok(!r.ok, 'the call succeeded');
-  eq(r.error?.code, -32602, 'error code for an invalid argument');
 });
 
 known('rate-limit-response-has-null-id', 'a 429 echoes the request id', async () => {
