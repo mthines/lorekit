@@ -79,6 +79,17 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+-- The new RETURNS TABLE columns (scope, key, value, tags, source_agent,
+-- trigger, updated_at, archived_at, origin_*, kind, host, seen_count) are also
+-- plpgsql OUT variables, and `scope`/`key` collide with the bare column names
+-- used in the `on conflict (…, scope, key)` arbiter lists below — Postgres
+-- parses an arbiter list as a general expression context, unlike an INSERT
+-- column list or an UPDATE SET target, so it raises "column reference ...
+-- is ambiguous" there without this. Every other reference in the body is
+-- table-qualified already; this directive (the same one 00039/00043/00050/…
+-- use for exactly this OUT-column shape) makes the column win regardless, so
+-- the body can never be mis-resolved against the OUT variables.
+#variable_conflict use_column
 declare
   v_org_id       uuid;
   v_binding_org  uuid;
