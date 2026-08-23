@@ -150,22 +150,36 @@ export async function handleCreate(
     throw error;
   }
 
-  // Fetch the full row so the response matches MemoryEntrySchema.
+  // `memory_write` (migration 00075) returns the full display row directly —
+  // it is the same row the INSERT/UPDATE just touched, in the same
+  // statement — so the response is built from THIS result rather than a
+  // trailing `SELECT … WHERE id = …`. That second round trip used to cost an
+  // extra edge→PostgREST hop (~206ms server-side wait per the load-test
+  // attribution) for SQL `pg_stat_statements` measured at single-digit ms —
+  // see the migration's header for the full account.
   // `inserted` (migration 00011) discriminates a create from an update — the
   // same signal mcp/tools.ts's toolWrite audits on.
-  const row = data as { id: string; created_at: string; inserted?: boolean; expires_at?: string | null } | null;
+  type MemoryWriteRow = {
+    id: string; created_at: string; inserted?: boolean; expires_at: string | null;
+    scope: string; key: string; value: string; tags: string[] | null;
+    source_agent: string | null; trigger: string | null; updated_at: string;
+    archived_at: string | null; origin_repo: string | null; origin_branch: string | null;
+    origin_commit: string | null; origin_pr: number | null; kind: string | null;
+    host: string | null; seen_count: number | null;
+  };
+  const row = data as MemoryWriteRow | null;
   if (!row?.id) {
     span.error('memory_write returned no id');
     throw new Error('memory_write returned no id');
   }
-  const { data: entry, error: fetchErr } = await createTracedClient(db, span)
-    .from('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count')
-    .eq('id', row.id)
-    .single();
-
-  if (fetchErr) { span.error(`DB: ${fetchErr.message}`); throw fetchErr; }
   span.setAttributes({ 'lorekit.memory_id': row.id, 'lorekit.write.inserted': row.inserted !== false });
+  const entry = {
+    id: row.id, scope: row.scope, key: row.key, value: row.value, tags: row.tags ?? [],
+    source_agent: row.source_agent, trigger: row.trigger, created_at: row.created_at,
+    updated_at: row.updated_at, expires_at: row.expires_at, archived_at: row.archived_at,
+    origin_repo: row.origin_repo, origin_branch: row.origin_branch, origin_commit: row.origin_commit,
+    origin_pr: row.origin_pr, kind: row.kind, host: row.host, seen_count: row.seen_count ?? undefined,
+  };
 
   // Queue the embedding. Returns synchronously and is a no-op unless embedding
   // is explicitly enabled AND a key is configured — see `embed-on-write.ts` for
@@ -198,6 +212,7 @@ export async function handleCreate(
       metadata: { scope: body.scope, key: body.key },
     },
     auditUserId(auth),
+    span,
   );
   return created(entry, cors);
 }

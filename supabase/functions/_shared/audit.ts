@@ -63,6 +63,8 @@ import { AUDIT_ACTIONS } from './schemas/audit.ts';
 import type { AuditAction } from './schemas/audit.ts';
 import type { DbClient } from './db-client.ts';
 import type { Json } from './database.types.ts';
+import { createTracedClient } from './otel.ts';
+import type { Span } from './otel.ts';
 
 export { AUDIT_ACTIONS };
 export type { AuditAction };
@@ -103,24 +105,41 @@ export function buildAuditEntry(input: AuditEntryInput): AuditRow {
  * failure (RLS denial, network blip, constraint violation) must not undo it
  * or surface as an error to the caller. Failures are logged via
  * console.error for observability, not rethrown.
+ *
+ * `span` is REQUIRED (not optional) so a new call site cannot silently
+ * regress to the untraced form. Every OTHER outbound call on this path
+ * (`memory_write`, `embed-on-write.ts`, the rate-limit check, …) goes through
+ * `createTracedClient`, which is what makes an outbound call a `CLIENT` span
+ * `traceRequest` can see; a raw `db.from(...)` insert here was invisible to
+ * `lorekit.io.calls`/`lorekit.io.wait_ms`, so `lorekit.self_time_ms` (total −
+ * merged CLIENT-span wait) silently absorbed this insert's real network time
+ * as if it were our own code. On every route EXCEPT the deferred write path
+ * (`recordAuditDeferred` under `EdgeRuntime.waitUntil`, see below) this
+ * insert is AWAITED on the response — `remove.ts`/`restore.ts`/`update.ts`/
+ * `purge.ts`, every `orgs/handlers/**`, and every MCP tool in `mcp/tools.ts`
+ * — so the mislabelling was live on most of the write surface, not a
+ * theoretical gap.
  */
 export async function recordAudit(
   db: DbClient,
   input: AuditEntryInput,
   userId: string | null,
+  span: Span,
 ): Promise<void> {
   try {
     const row = buildAuditEntry(input);
-    const { error } = await db.from('audit_log').insert({
-      ...row,
-      user_id: userId,
-      // `AuditRow.metadata` is `Record<string, unknown> | null` — the CALLER's
-      // shape, shared with packages/mcp-core/src/audit/audit.ts — while the generated
-      // Insert type wants `Json`. The value is JSON-serialisable by contract (it
-      // goes straight into a jsonb column), so state that here rather than
-      // widening AuditRow, which should keep describing what callers may pass.
-      metadata: row.metadata as Json,
-    });
+    const { error } = await createTracedClient(db, span)
+      .from('audit_log')
+      .insert({
+        ...row,
+        user_id: userId,
+        // `AuditRow.metadata` is `Record<string, unknown> | null` — the CALLER's
+        // shape, shared with packages/mcp-core/src/audit/audit.ts — while the generated
+        // Insert type wants `Json`. The value is JSON-serialisable by contract (it
+        // goes straight into a jsonb column), so state that here rather than
+        // widening AuditRow, which should keep describing what callers may pass.
+        metadata: row.metadata as Json,
+      });
     if (error) {
       console.error(`[recordAudit] insert failed for action=${input.action}:`, error.message);
     }
@@ -164,10 +183,39 @@ export function recordAuditDeferred(
   db: DbClient,
   input: AuditEntryInput,
   userId: string | null,
+  span: Span,
 ): Promise<void> {
-  const p = recordAudit(db, input, userId);
   const rt = background();
-  if (!rt) return p;
+  // No backgrounding hook: today's (awaited) behaviour, unchanged — `span` is
+  // still live when this resolves, so tracing straight onto it is correct.
+  if (!rt) return recordAudit(db, input, userId, span);
+
+  // BACKGROUNDED, so a DETACHED span (own batch), not `span` itself.
+  // `traceRequest`'s `finally` stamps `lorekit.io.*`/`self_time_ms` from
+  // `span`'s batch and flushes it the moment the handler returns — before
+  // this promise resolves — so a `span.child(...)` here would both (a) land
+  // in a batch that has already been posted and is never posted again (the
+  // same silent-loss trap `embed-on-write.ts` documents), and (b) end too
+  // late to ever be merged into THIS request's `io.calls`/`self_time_ms`
+  // regardless. That second point is not a shortcoming: the whole reason
+  // this insert is deferred (see the docblock above) is to take it OFF the
+  // response's critical path, so it correctly does NOT count against the
+  // request it was recorded for. Detaching still gives it a real, exportable
+  // CLIENT span — visible in the trace and attributed to its own wait time —
+  // instead of vanishing the way the untraced `db.from(...)` call used to.
+  const { span: bg, flush } = span.detachedChild('lorekit.audit.write', {
+    'lorekit.audit.action': input.action,
+  });
+  const p = (async () => {
+    try {
+      await recordAudit(db, input, userId, bg);
+    } finally {
+      bg.end();
+      // Awaited: this task IS the isolate's keep-alive (EdgeRuntime.waitUntil),
+      // so a fire-and-forget export here can be torn down mid-flight.
+      await flush();
+    }
+  })();
   rt.waitUntil(p);
   return Promise.resolve();
 }

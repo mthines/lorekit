@@ -44,6 +44,7 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
       metadata: { slug: v.data.slug },
     },
     auditUserId(auth),
+    span,
   );
 
   // Read the row back so the 201 body is an Org object, which is what this

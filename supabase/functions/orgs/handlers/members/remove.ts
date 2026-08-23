@@ -85,6 +85,7 @@ export async function handleRemoveMember(
       target: orgId,
     },
     auditUserId(auth),
+    span,
   );
 
   return noContent(cors);

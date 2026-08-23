@@ -64,6 +64,7 @@ export async function handleRenameOrg(
     db,
     { action: 'org.rename', resourceType: 'org', resourceId: orgId, target: v.data.name },
     auditUserId(auth),
+    span,
   );
 
   return ok({ slug, name: v.data.name }, cors);
