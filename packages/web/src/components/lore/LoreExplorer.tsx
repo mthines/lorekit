@@ -58,6 +58,7 @@ import { Search, Loader2 } from 'lucide-react';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
+import { ScopeConsumption } from './ScopeConsumption';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -84,6 +85,7 @@ import {
   type TimeRange,
 } from '@/lib/time-range';
 import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
+import { effectiveStatsRange, statsWindow } from '@/lib/queries/explorer-stats';
 import {
   filtersParamValue,
   removeFilter,
@@ -290,6 +292,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // not be re-read on range changes or every render would chase the clock.
   const insightsNowIso = useMemo(() => new Date().toISOString(), []);
   const rangeKey = JSON.stringify(range);
+  // Same window ExplorerStats' Read card queries (an unbounded "all time"
+  // selection substitutes the same bounded 90-day default there) — the scope
+  // leaderboard below should describe the period the reader can already see the
+  // read card's total for, not a second, independently-chosen window.
+  const scopeConsumptionWindow = useMemo(
+    () => statsWindow(effectiveStatsRange(range, insightsNowIso), insightsNowIso),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rangeKey, insightsNowIso],
+  );
   const resolvedRange = useMemo(
     // Resolve the LIST's window against the SAME mount clock the insights panel
     // uses (`insightsNowIso`), not a fresh `new Date()` — otherwise a relative
@@ -747,6 +758,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         onSelectDate={handleHeatmapDayClick}
         nowIso={insightsNowIso}
       />
+
+      {/* ── Scope consumption ──────────────────────────────────────────────
+          Ranks scopes by records read over the same window as the Read card
+          above — a leaderboard, not a chart, so it sits as its own panel
+          rather than inside ExplorerInsights' disclosure. Account-wide and
+          unfiltered by the current scope selection: ranking "what does the
+          account read" is a different question from "how much was the
+          selected scope read". */}
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+        <ScopeConsumption since={scopeConsumptionWindow.since} until={scopeConsumptionWindow.until} />
+      </div>
 
       {/* ── Results ─────────────────────────────────────────────────────────
           The filter bar (search / filters / date / status) sits above the memory
