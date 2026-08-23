@@ -19,7 +19,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-import { LOREKIT_BIN } from "./paths.mjs";
+import { LOREKIT_BIN } from "../sandbox/paths.mjs";
 
 /** The server key in `mcpServers`, and therefore the tool-name namespace. */
 export const MCP_SERVER_NAME = "lorekit";

@@ -16,18 +16,18 @@ import {
   prepareArm,
   requiresGit,
   scopeForMode,
-} from "../src/arm.mjs";
-import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../src/git-identity.mjs";
-import { readInjectedLessons } from "../src/hook-install.mjs";
+} from "../../src/harness/arm.mjs";
+import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../../src/sandbox/git-identity.mjs";
+import { readInjectedLessons } from "../../src/sandbox/hook-install.mjs";
 import {
   RETRIEVAL_ABSENT,
   RETRIEVAL_INJECTED,
   RETRIEVAL_IN_STORE_NOT_LOADED,
   attributeFailure,
   classifyRetrieval,
-} from "../src/retrieval.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
-import { CANONICAL_LESSON, listAll, seedLesson } from "../src/store-setup.mjs";
+} from "../../src/grading/retrieval.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
+import { CANONICAL_LESSON, listAll, seedLesson } from "../../src/sandbox/store-setup.mjs";
 
 const BRANCH_SCOPE = `branch::${DEFAULT_OWNER_REPO}::${DEFAULT_BRANCH}`;
 

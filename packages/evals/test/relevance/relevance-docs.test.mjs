@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
 // ── AC-7 (sweep): README documents the scale/position sweep (PR5) ────────────
@@ -84,21 +84,29 @@ test("AC-7-nowire: the mine script is NOT wired into any script/target/test that
   );
 
   // No test file IMPORTS the bin in a way that executes its network path. The
-  // one test that imports it (mine-ground-truth.test.mjs) only exercises the
-  // pure exports + the refusal paths (main([]) / unusable connection), never a
-  // real query — asserted by that suite. Here we guard that no OTHER test file
-  // IMPORTS it (matched on an actual import specifier, not a mere mention — this
-  // file names the script in its own assertions and must not match itself), and
-  // that the bin is not auto-run by a test glob.
+  // one test that imports it (test/bin/mine-ground-truth.test.mjs) only
+  // exercises the pure exports + the refusal paths (main([]) / unusable
+  // connection), never a real query — asserted by that suite. Here we guard
+  // that no OTHER test file IMPORTS it (matched on an actual import specifier,
+  // not a mere mention — this file names the script in its own assertions and
+  // must not match itself), and that the bin is not auto-run by a test glob.
+  // Tests live in topic subdirectories (test/<group>/*.test.mjs), so the walk
+  // recurses rather than reading `test/` flat.
   const testDir = path.join(ROOT, "test");
   const IMPORT_SPECIFIER = /from\s+["'][^"']*bin\/mine-ground-truth\.mjs["']/;
-  const importers = fs
-    .readdirSync(testDir)
-    .filter((f) => f.endsWith(".test.mjs"))
-    .filter((f) => IMPORT_SPECIFIER.test(read(path.join("test", f))));
+  function findTestFiles(dir) {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return findTestFiles(full);
+      return entry.name.endsWith(".test.mjs") ? [full] : [];
+    });
+  }
+  const importers = findTestFiles(testDir)
+    .filter((f) => IMPORT_SPECIFIER.test(fs.readFileSync(f, "utf8")))
+    .map((f) => path.relative(testDir, f));
   assert.deepEqual(
     importers,
-    ["mine-ground-truth.test.mjs"],
+    ["bin/mine-ground-truth.test.mjs"],
     "only the dedicated mine test may import the mine script",
   );
 });

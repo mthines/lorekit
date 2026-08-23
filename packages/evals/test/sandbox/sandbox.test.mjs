@@ -11,7 +11,7 @@ import {
   createSandbox,
   isInsideRealHome,
   withSandbox,
-} from "../src/sandbox.mjs";
+} from "../../src/sandbox/sandbox.mjs";
 
 test("scratch LOREKIT_HOME is never the real store (AC-1.1)", async () => {
   const sandbox = await createSandbox();

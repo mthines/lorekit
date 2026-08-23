@@ -33,7 +33,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { seenCountOf } from "../src/ground-truth.mjs";
+import { seenCountOf } from "../src/relevance/ground-truth.mjs";
 
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

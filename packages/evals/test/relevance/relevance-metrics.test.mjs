@@ -11,7 +11,7 @@ import {
   BASELINE_BOOTSTRAP,
   BASELINE_REAL,
   BOOTSTRAP_WARNING,
-} from "../src/relevance-metrics.mjs";
+} from "../../src/relevance/relevance-metrics.mjs";
 
 // A single-relevant scenario with the true item at rank 2 — the canonical
 // worked example the plan pins: mrr = 1/2, precision@1 = 0, recall@2 = 1.

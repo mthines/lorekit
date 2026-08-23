@@ -20,7 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { shouldSurface, buildGroundTruth } from "../src/ground-truth.mjs";
+import { shouldSurface, buildGroundTruth } from "../../src/relevance/ground-truth.mjs";
 import {
   CANDIDATE_LIMIT,
   makeDecoys,
@@ -30,7 +30,7 @@ import {
   targetRank,
   runSweep,
   summarizeCliff,
-} from "../src/sweep.mjs";
+} from "../../src/relevance/sweep.mjs";
 
 // ── Fixed test harness ────────────────────────────────────────────────────────
 
@@ -68,8 +68,8 @@ const POOL_SIZES = [10, 50, 100, 200, 300, 500];
 // ── AC-1: Reuse guard ─────────────────────────────────────────────────────────
 
 test("AC-1: sweep.mjs imports rankLessons from @lorekit/cli/src/lessons-pure.mjs", () => {
-  const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const src = fs.readFileSync(path.join(ROOT, "src", "sweep.mjs"), "utf8");
+  const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const src = fs.readFileSync(path.join(ROOT, "src", "relevance", "sweep.mjs"), "utf8");
 
   // The import must be present.
   assert.ok(

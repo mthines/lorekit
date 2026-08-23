@@ -9,10 +9,11 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "./git-identity.mjs";
+import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../sandbox/git-identity.mjs";
 
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
+  "..",
   "..",
   "fixtures",
 );

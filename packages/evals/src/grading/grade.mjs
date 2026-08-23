@@ -24,8 +24,8 @@
 // lost to whichever mode a run happened to use.
 import { validateScope } from "@lorekit/core/src/scope.ts";
 
-import { TARGET_SCOPE } from "./task.mjs";
-import { storeFor } from "./store-setup.mjs";
+import { TARGET_SCOPE } from "../harness/task.mjs";
+import { storeFor } from "../sandbox/store-setup.mjs";
 
 /** Scores. Exact match is the only success; the rest never reach it. */
 export const SCORE_EXACT = 100;

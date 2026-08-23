@@ -15,7 +15,7 @@
 import { loadControl } from "@lorekit/cli/src/control.mjs";
 import { createStore } from "@lorekit/cli/src/store/index.mjs";
 
-import { canonicalLessonText } from "./task.mjs";
+import { canonicalLessonText } from "../harness/task.mjs";
 
 /**
  * The curated gold lesson for arm B (canonical). Its TEXT lives in

@@ -25,19 +25,19 @@ import {
   MODEL_UNDER_TEST,
   DEFAULT_TIMEOUT_MS,
   runAgent,
-} from "../src/agent.mjs";
-import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/arm.mjs";
+} from "../src/harness/agent.mjs";
+import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/harness/arm.mjs";
 import {
   assertCleanEnvironment,
   describeEnvironment,
   summarizeEnvironment,
-} from "../src/environment.mjs";
-import { gradeSandbox } from "../src/grade.mjs";
-import { readInjectedLessons } from "../src/hook-install.mjs";
-import { classifyRetrieval } from "../src/retrieval.mjs";
-import { createSandbox } from "../src/sandbox.mjs";
-import { listAll } from "../src/store-setup.mjs";
-import { taskById } from "../src/task.mjs";
+} from "../src/grading/environment.mjs";
+import { gradeSandbox } from "../src/grading/grade.mjs";
+import { readInjectedLessons } from "../src/sandbox/hook-install.mjs";
+import { classifyRetrieval } from "../src/grading/retrieval.mjs";
+import { createSandbox } from "../src/sandbox/sandbox.mjs";
+import { listAll } from "../src/sandbox/store-setup.mjs";
+import { taskById } from "../src/harness/task.mjs";
 
 const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
 

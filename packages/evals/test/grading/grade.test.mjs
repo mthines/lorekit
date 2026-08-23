@@ -18,10 +18,10 @@ import {
   isValidScope,
   normalizeScope,
   repoOf,
-} from "../src/grade.mjs";
-import { TARGET_KEY, TARGET_SCOPE } from "../src/task.mjs";
-import { withSandbox } from "../src/sandbox.mjs";
-import { seedLesson } from "../src/store-setup.mjs";
+} from "../../src/grading/grade.mjs";
+import { TARGET_KEY, TARGET_SCOPE } from "../../src/harness/task.mjs";
+import { withSandbox } from "../../src/sandbox/sandbox.mjs";
+import { seedLesson } from "../../src/sandbox/store-setup.mjs";
 
 // AC-3.1: the rubric, over hand-written store states.
 const CASES = [

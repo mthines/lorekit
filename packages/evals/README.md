@@ -174,7 +174,7 @@ A?" before spending a single token.
 ```bash
 pnpm install
 pnpm nx test evals                 # pure-logic units — fast, deterministic, no model
-cd packages/evals && node --test test/*.test.mjs
+cd packages/evals && node --test
 ```
 
 Live runs are manual and spend real tokens:
@@ -214,7 +214,7 @@ why the low-power caveat is embedded in `summary.json` rather than only here.
 ## Isolation
 
 Every repetition gets a throwaway world, and no repetition can see another's.
-`src/sandbox.mjs` creates one `mkdtemp` root holding the working directory, a
+`src/sandbox/sandbox.mjs` creates one `mkdtemp` root holding the working directory, a
 scratch `$LOREKIT_HOME`, a scratch `$LOREKIT_STORE` and an artifact directory,
 then hands children `LOREKIT_MODE=local` plus `LOREKIT_TELEMETRY=0` /
 `DO_NOT_TRACK=1`.
@@ -250,7 +250,7 @@ Two mechanisms now stand against that, and only the second is trusted:
 1. **Ask.** `--disable-slash-commands` drops skills and commands,
    `--strict-mcp-config` admits only the harness's own server, and a
    session-scoped `--settings` file sets `enabledPlugins: {}`.
-2. **Verify.** `src/environment.mjs` reads the run's own
+2. **Verify.** `src/grading/environment.mjs` reads the run's own
    `{"type":"system","subtype":"init"}` event and its `hook_started` events, and
    reports what _actually_ loaded. A rep whose environment is dirty is
    **discarded**, not scored — `summary.json` carries `usableReps` alongside
@@ -286,7 +286,7 @@ invalidating the harness.
   Node ≥ 22.18 strips types on load, so `@lorekit/core/src/scope.ts` imports
   directly — no build step, and crucially no vendored second validator that
   could drift from the one the product enforces. Pinned by
-  `test/cross-package-imports.test.mjs`; the engine floor is in `package.json`.
+  `test/integration/cross-package-imports.test.mjs`; the engine floor is in `package.json`.
 - **Staying out of the TS lint gate.** `@nx/eslint/plugin` _does_ infer a `lint`
   target for a new package (confirmed with `nx show project evals`), so
   `packages/evals/**` is added to the root `eslint.config.mjs` `ignores` beside
@@ -337,7 +337,7 @@ changed underneath it, which is the one failure mode that would make every
 number it prints meaningless.
 
 Everything that knows the shape of an external format is isolated: `claude`
-flags and stream parsing in `src/agent.mjs`, pr-reviewer output parsing in
+flags and stream parsing in `src/harness/agent.mjs`, pr-reviewer output parsing in
 `src/review-grade.mjs` (PR6). A format change then fails one module against one
 fixture rather than the whole suite.
 
@@ -366,7 +366,7 @@ deterministic **precision@k / recall@k / MRR** against a ground-truth set.
 ### Ground truth is pinned to the real outcome signal, in code
 
 The set of lessons that _should_ surface for a query is **not** a hand-authored
-label list — it is computed (`src/ground-truth.mjs`) from the memories the loop
+label list — it is computed (`src/relevance/ground-truth.mjs`) from the memories the loop
 machinery itself treats as outcome/relevance signal:
 
 - a row qualifies iff the shipped `inferKindHost` (from `@lorekit/schemas`)
@@ -455,7 +455,7 @@ size does relevance degrade?**
 
 ### How it works
 
-`src/sweep.mjs` injects **synthetic decoys** at increasing pool sizes around a
+`src/relevance/sweep.mjs` injects **synthetic decoys** at increasing pool sizes around a
 **fixed real-signal-defined target** and measures, for each size, whether the
 target surfaces in the top-50 page (the hard-coded `limit = 50`, not `k`) — in
 two ways:
@@ -467,7 +467,7 @@ two ways:
 
 The ranked arm calls the **real** ranker — the zero-import parity twin of the
 edge function — never a reimplementation. A grep guard (`AC-1` in
-`test/sweep.test.mjs`) fails if a local scoring formula appears in `sweep.mjs`.
+`test/relevance/sweep.test.mjs`) fails if a local scoring formula appears in `sweep.mjs`.
 
 ### The cliff finding
 
@@ -507,15 +507,15 @@ sandbox. It runs under the existing `test` target on every PR:
 
 ```bash
 cd packages/evals
-node --test test/sweep.test.mjs      # just the sweep suite (~100ms)
-node --test test/*.test.mjs          # full evals suite
+node --test test/relevance/sweep.test.mjs      # just the sweep suite (~100ms)
+node --test                     # full evals suite
 pnpm nx test evals                   # via Nx
 ```
 
 To reproduce the cliff curve shown above:
 
 ```js
-import { runSweep, summarizeCliff, CANDIDATE_LIMIT } from './src/sweep.mjs';
+import { runSweep, summarizeCliff, CANDIDATE_LIMIT } from './src/relevance/sweep.mjs';
 const curve = runSweep({ targetRows, query, poolSizes: [10, 50, 100, 200, 300, 500], k: 5, now, seed: 123, targetAgeDays: 400 });
 console.log(summarizeCliff(curve));
 // → { recency: { cliffAt: 100 }, ranked: { cliffAt: 300 } }

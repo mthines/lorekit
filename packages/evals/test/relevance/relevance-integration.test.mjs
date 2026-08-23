@@ -4,11 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { buildGroundTruth } from "../src/ground-truth.mjs";
+import { buildGroundTruth } from "../../src/relevance/ground-truth.mjs";
 import {
   scoreRanking,
   BASELINE_BOOTSTRAP,
-} from "../src/relevance-metrics.mjs";
+} from "../../src/relevance/relevance-metrics.mjs";
 // Import the REAL mock, not a copy. This is the whole point of the "reuse, not
 // re-implementation" invariant: the ground truth is derived from the same rows
 // the dashboard stories render, so a change to the mock's outcome/relevance rows
@@ -23,6 +23,7 @@ import { MEMORY_ROWS } from "@lorekit/web/src/mocks/memories.ts";
 
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
+  "..",
   "..",
   "fixtures",
 );
