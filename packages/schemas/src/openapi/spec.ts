@@ -523,11 +523,18 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     schema: { type: 'boolean', default: true },
   };
   // Attach the client-attribution header to EVERY operation (not just mutating
-  // ones — it exists mainly to label reads). Optional and fail-safe: an absent
-  // or unrecognised value is recorded as "unattributed" and never affects the
+  // ones — it exists mainly to label reads). Optional and fail-safe: an
+  // unrecognised value is recorded as "unattributed" and never affects the
   // response. It matters because `GET /memories/read-activity` excludes the
   // `dashboard` surface, so a client that wants its reads counted should either
   // send its own name or send nothing.
+  //
+  // An ABSENT header is no longer "unattributed" on this transport: this REST
+  // API itself defaults an unlabelled call to `api`, applied by the router
+  // around the (still closed, still fail-safe) validator. The header is now an
+  // OVERRIDE for a caller that wants a more specific label than "the REST API"
+  // — e.g. a caller identifying itself as `cli` — rather than the only source
+  // of the value.
   const clientParam = {
     name: 'X-LoreKit-Client',
     in: 'header',
@@ -535,6 +542,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     description:
       'Which surface is calling. One of `dashboard`, `cli`, `mcp`, `api`; anything else is ' +
       'recorded as unattributed. Purely for usage analytics — it never changes the response. ' +
+      'Optional: an absent header records this transport\'s own default (`api`), so send it only ' +
+      'to identify a MORE SPECIFIC calling surface (e.g. `cli`). ' +
       'Reads attributed to `dashboard` are excluded from `GET /memories/read-activity`.',
     schema: { type: 'string', enum: ['dashboard', 'cli', 'mcp', 'api'] },
   };
