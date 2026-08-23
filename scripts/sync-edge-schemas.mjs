@@ -35,6 +35,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,29 +43,35 @@ const sourceDir = join(repoRoot, 'packages/schemas/src');
 const mirrorDir = join(repoRoot, 'supabase/functions/_shared/schemas');
 
 /**
- * The files the edge functions actually reach, source-relative.
+ * The files the edge functions actually reach, as [source-relative, mirror-relative]
+ * pairs.
  *
  * Deliberately NOT the whole package: `index.ts` is a barrel no function
  * imports, and `openapi/generate.ts` is a build script that imports `node:fs`.
  * Mirroring only what is reachable keeps the copied surface minimal.
+ *
+ * The mirror stays FLAT even though `packages/schemas/src/` is organised into
+ * `domain/`/`shared/` subdirectories — the mirror is a generated artifact
+ * nobody browses for structure, and keeping its layout stable means this
+ * restructuring touches zero files under `supabase/functions/`.
  */
 export const MIRRORED_SCHEMA_FILES = [
-  'audit.ts',
-  'api-key.ts',
-  'common.ts',
-  'filter.ts',
-  'tags.ts',
-  'dimensions.ts',
-  'scope.ts',
-  'tool-catalog.ts',
-  'blog.ts',
-  'memory.ts',
-  'org.ts',
-  'member.ts',
-  'invite.ts',
-  'usage.ts',
-  'relevant.ts',
-  'openapi/spec.ts',
+  ['domain/audit.ts', 'audit.ts'],
+  ['domain/api-key.ts', 'api-key.ts'],
+  ['shared/common.ts', 'common.ts'],
+  ['shared/filter.ts', 'filter.ts'],
+  ['shared/tags.ts', 'tags.ts'],
+  ['shared/dimensions.ts', 'dimensions.ts'],
+  ['shared/scope.ts', 'scope.ts'],
+  ['shared/tool-catalog.ts', 'tool-catalog.ts'],
+  ['domain/blog.ts', 'blog.ts'],
+  ['domain/memory.ts', 'memory.ts'],
+  ['domain/org.ts', 'org.ts'],
+  ['domain/member.ts', 'member.ts'],
+  ['domain/invite.ts', 'invite.ts'],
+  ['domain/usage.ts', 'usage.ts'],
+  ['shared/relevant.ts', 'relevant.ts'],
+  ['openapi/spec.ts', 'openapi/spec.ts'],
 ];
 
 /** Bare specifier → the explicit `npm:` form Deno resolves without a map. */
@@ -72,6 +79,44 @@ export const NPM_SPECIFIERS = {
   zod: 'npm:zod@3',
   '@asteasolutions/zod-to-openapi': 'npm:@asteasolutions/zod-to-openapi@^7.0.0',
 };
+
+const noExt = (p) => p.replace(/\.ts$/, '');
+
+/** source-relative (no extension) → mirror-relative (no extension). */
+const MIRROR_REL_BY_SOURCE = new Map(
+  MIRRORED_SCHEMA_FILES.map(([sourceRel, mirrorRel]) => [noExt(sourceRel), noExt(mirrorRel)]),
+);
+
+/**
+ * Rewrite a relative import so it points at the FLAT mirror layout instead of
+ * the nested source layout. `packages/schemas/src/domain/memory.ts` imports
+ * `../shared/scope.ts`; its mirror (`memory.ts`, flat) must import `./scope.ts`
+ * instead — a byte-for-byte copy of the source specifier would resolve to a
+ * `shared/` directory that does not exist beside the mirror. Only specifiers
+ * that resolve to another file IN `MIRRORED_SCHEMA_FILES` are rewritten; a
+ * relative import to anything else is a mirroring bug this throws on instead
+ * of silently miscopying.
+ */
+export function rewriteRelativeImports(source, sourceRel) {
+  const sourceDirRel = path.posix.dirname(sourceRel);
+  const mirrorRel = MIRROR_REL_BY_SOURCE.get(noExt(sourceRel));
+  const mirrorDirRel = path.posix.dirname(mirrorRel);
+
+  return source.replace(/from\s+(["'])(\.[^"']+)\1/g, (full, quote, spec) => {
+    const targetSourceRel = path.posix.normalize(path.posix.join(sourceDirRel, spec));
+    const targetMirrorRel = MIRROR_REL_BY_SOURCE.get(noExt(targetSourceRel));
+    if (targetMirrorRel === undefined) {
+      throw new Error(
+        `${sourceRel} imports '${spec}', which resolves to '${targetSourceRel}.ts' — ` +
+          'not in MIRRORED_SCHEMA_FILES, so the mirror cannot follow it. Add it to the list.',
+      );
+    }
+    const ext = path.posix.extname(spec) || '.ts';
+    let rel = path.posix.relative(mirrorDirRel, targetMirrorRel);
+    if (!rel.startsWith('.')) rel = './' + rel;
+    return `from ${quote}${rel}${ext}${quote}`;
+  });
+}
 
 const BANNER = `// GENERATED MIRROR — do not edit.
 // Source: packages/schemas/src/{rel}
@@ -90,22 +135,22 @@ export function toEdgeSource(source) {
   return out;
 }
 
-/** The exact content the mirror of `rel` should have. */
-export function expectedMirror(rel, source) {
-  return BANNER.replace('{rel}', rel) + toEdgeSource(source);
+/** The exact content the mirror of source-relative `sourceRel` should have. */
+export function expectedMirror(sourceRel, source) {
+  return BANNER.replace('{rel}', sourceRel) + toEdgeSource(rewriteRelativeImports(source, sourceRel));
 }
 
 function main() {
   const check = process.argv.includes('--check');
   const stale = [];
 
-  for (const rel of MIRRORED_SCHEMA_FILES) {
-    const from = join(sourceDir, rel);
-    const to = join(mirrorDir, rel);
-    const expected = expectedMirror(rel, readFileSync(from, 'utf8'));
+  for (const [sourceRel, mirrorRel] of MIRRORED_SCHEMA_FILES) {
+    const from = join(sourceDir, sourceRel);
+    const to = join(mirrorDir, mirrorRel);
+    const expected = expectedMirror(sourceRel, readFileSync(from, 'utf8'));
 
     if (check) {
-      if (!existsSync(to) || readFileSync(to, 'utf8') !== expected) stale.push(rel);
+      if (!existsSync(to) || readFileSync(to, 'utf8') !== expected) stale.push(mirrorRel);
       continue;
     }
 

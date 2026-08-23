@@ -199,7 +199,7 @@ test('no fixed lesson count cap survives in the SessionStart path', () => {
 // constant was introduced to fix. A test that cannot see the route's number
 // cannot catch that.
 const SCHEMAS_MEMORY = join(
-  dirname(fileURLToPath(import.meta.url)), '..', '..', 'schemas', 'src', 'memory.ts',
+  dirname(fileURLToPath(import.meta.url)), '..', '..', 'schemas', 'src', 'domain', 'memory.ts',
 );
 
 test('MAX_STORE_LIST_LIMIT matches the limit cap GET /memories enforces', () => {

@@ -54,6 +54,58 @@ function stripBanner(source: string): string {
   return lines.slice(i).join('\n');
 }
 
+/**
+ * The mirror is deliberately FLAT (`memory.ts`) even though
+ * `packages/schemas/src/` is organised into `domain/`/`shared/`
+ * subdirectories, so a mirrored file's relative path no longer names its
+ * source's relative path. The banner's `// Source: packages/schemas/src/{rel}`
+ * line is the one place that mapping is recorded — read it from there rather
+ * than duplicating `sync-edge-schemas.mjs`'s FROM/TO list (which
+ * `@nx/enforce-module-boundaries` would refuse to import here anyway) or
+ * assuming the two trees are symmetric.
+ */
+function sourceRelFromBanner(mirror: string): string | null {
+  const match = /^\/\/ Source: packages\/schemas\/src\/(.+)$/m.exec(mirror);
+  return match ? match[1]! : null;
+}
+
+const noExt = (p: string) => p.replace(/\.ts$/, '');
+
+/**
+ * source-relative (no extension) → mirror-relative (no extension), discovered
+ * from every mirror's own banner rather than duplicating
+ * `sync-edge-schemas.mjs`'s FROM/TO list (see `sourceRelFromBanner` above for
+ * why this file cannot just import it).
+ */
+const mirrorRelBySource = new Map(
+  files.map((mirrorRel) => {
+    const sourceRel = sourceRelFromBanner(readFileSync(path.join(mirrorDir, mirrorRel), 'utf8'));
+    return [sourceRel ? noExt(sourceRel) : null, noExt(mirrorRel)] as const;
+  }),
+);
+
+/**
+ * Reshape a relative import in SOURCE content to point at the flat MIRROR
+ * layout, the same transform `sync-edge-schemas.mjs`'s `rewriteRelativeImports`
+ * applies when it generates the mirror. Needed because `packages/schemas/src/`
+ * is nested (`domain/`, `shared/`) while the mirror stays flat, so a source
+ * file's relative imports are legitimately NOT byte-identical to its mirror's
+ * — only the resolved TARGET must agree.
+ */
+function reshapeToMirror(source: string, sourceRel: string): string {
+  const sourceDirRel = path.posix.dirname(sourceRel);
+  const mirrorDirRel = path.posix.dirname(mirrorRelBySource.get(noExt(sourceRel))!);
+  return source.replace(/from\s+(["'])(\.[^"']+)\1/g, (full, quote, spec) => {
+    const targetSourceRel = path.posix.normalize(path.posix.join(sourceDirRel, spec));
+    const targetMirrorRel = mirrorRelBySource.get(noExt(targetSourceRel));
+    if (targetMirrorRel === undefined) return full; // not a mirrored file; leave untouched
+    const ext = path.posix.extname(spec) || '.ts';
+    let rel = path.posix.relative(mirrorDirRel, targetMirrorRel);
+    if (!rel.startsWith('.')) rel = './' + rel;
+    return `from ${quote}${rel}${ext}${quote}`;
+  });
+}
+
 describe('edge schema mirror', () => {
   it('mirrors a non-empty set of files', () => {
     expect(files.length).toBeGreaterThan(0);
@@ -70,21 +122,28 @@ describe('edge schema mirror', () => {
     ).not.toThrow();
   });
 
-  it.each(files)('%s has a corresponding source file', (rel: string) => {
-    expect(existsSync(path.join(sourceDir, rel))).toBe(true);
+  it.each(files)('%s carries a resolvable Source: banner', (rel: string) => {
+    const mirror = readFileSync(path.join(mirrorDir, rel), 'utf8');
+    const sourceRel = sourceRelFromBanner(mirror);
+    expect(sourceRel, `${rel} has no "// Source: packages/schemas/src/..." banner line`).not.toBeNull();
+    expect(existsSync(path.join(sourceDir, sourceRel!))).toBe(true);
   });
 
   // Stated independently of the generator so the contract is readable here:
-  // the ONLY permitted difference is the bare → `npm:` specifier rewrite.
-  it.each(files)('%s differs from its source only by the npm: rewrite', (rel: string) => {
-    const source = readFileSync(path.join(sourceDir, rel), 'utf8');
+  // the only permitted differences are the bare → `npm:` specifier rewrite and
+  // a relative import reshaped for the mirror's flat layout (see
+  // `reshapeToMirror` — the two trees are no longer symmetric, so this is
+  // "resolves to the same file", not "byte-identical text").
+  it.each(files)('%s differs from its source only by the npm: rewrite and mirror-flat imports', (rel: string) => {
     const mirror = readFileSync(path.join(mirrorDir, rel), 'utf8');
+    const sourceRel = sourceRelFromBanner(mirror)!;
+    const source = readFileSync(path.join(sourceDir, sourceRel), 'utf8');
 
     let normalised = stripBanner(mirror);
     for (const [bare, npm] of Object.entries(NPM_SPECIFIERS)) {
       normalised = normalised.split(`'${npm}'`).join(`'${bare}'`);
     }
-    expect(normalised).toBe(source);
+    expect(normalised).toBe(reshapeToMirror(source, sourceRel));
   });
 
   it.each(files)('%s carries the do-not-edit banner', (rel: string) => {

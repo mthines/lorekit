@@ -58,7 +58,7 @@ import { purge, purgeExpired } from './purge.mjs';
  * Every command, in the order the top-level help lists them.
  *
  * `tool` binds a command to a catalog operation (`surfaces.cli` in
- * `packages/schemas/src/tool-catalog.ts`) — the two are cross-checked, so a
+ * `packages/schemas/src/shared/tool-catalog.ts`) — the two are cross-checked, so a
  * catalog op claiming a CLI command that does not exist here fails a test.
  * `native` marks a command with no catalog operation and says why, which is
  * most of them: installing, diagnosing and grooming are CLI concerns that no

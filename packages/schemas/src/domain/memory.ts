@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { ScopeSchema, RawScopeSchema } from './scope.ts';
-import { FilterGroupSchema } from './common.ts';
-import { PURGE_RETENTION_DAYS_DEFAULT } from './tool-catalog.ts';
+import { ScopeSchema, RawScopeSchema } from '../shared/scope.ts';
+import { FilterGroupSchema } from '../shared/common.ts';
+import { PURGE_RETENTION_DAYS_DEFAULT } from '../shared/tool-catalog.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 

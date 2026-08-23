@@ -20,7 +20,7 @@
  * tested directly.
  */
 
-import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../tool-catalog.ts';
+import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../shared/tool-catalog.ts';
 
 /** One entry in the generated docs index, read from an MDX file's frontmatter. */
 export interface DocsIndexEntry {

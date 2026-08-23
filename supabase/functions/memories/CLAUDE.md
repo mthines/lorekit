@@ -158,14 +158,14 @@ containing a comma, brace, quote or backslash, all of which `memories.tags` perm
 containing a comma is unreachable over this parameter by construction (the wire format splits
 on commas); `POST /search`'s `tags` array is the way to express one — its JSON body carries
 the label verbatim and it goes through the same `pgArrayLiteral`. `SearchMemoriesBodySchema`
-requires at least one of `q`, `scopes` or `filter` (`packages/schemas/src/memory.ts:265`) and
+requires at least one of `q`, `scopes` or `filter` (`packages/schemas/src/domain/memory.ts:265`) and
 the `tags` array is none of the three, so a `tags`-only body is a 400 `Validation failed` —
 pair it with a `q` or a `scopes` list.
 
 **The `filter` tree is not a second route to a `tags` predicate.** `serializeFilterGroup` has
-no per-column type dispatch (`packages/schemas/src/filter.ts:136-154`), so a condition naming
+no per-column type dispatch (`packages/schemas/src/shared/filter.ts:136-154`), so a condition naming
 `tags` serialises as if the column were `text`: `tags.ilike."%x%"` for the pattern operators
-(asserted verbatim at `packages/schemas/src/filter.spec.ts:75`) and `tags.eq."x"` for `is`.
+(asserted verbatim at `packages/schemas/src/shared/filter.spec.ts:75`) and `tags.eq."x"` for `is`.
 `memories.tags` is `text[]` (`supabase/migrations/00001_memories.sql:11`) and Postgres has
 neither operator for that type, so the query errors and `handleSearch` re-throws it as a 500;
 only `is_set` / `is_not_set` are valid there, and both are degenerate on a

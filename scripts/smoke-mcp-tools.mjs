@@ -66,7 +66,7 @@
  *
  * The tool set, descriptions and input schemas are read from
  * `packages/cli/src/surfaces.generated.mjs` — the zero-dep view of
- * `packages/schemas/src/tool-catalog.ts`, kept fresh by `gen-surfaces.mjs
+ * `packages/schemas/src/shared/tool-catalog.ts`, kept fresh by `gen-surfaces.mjs
  * --check`. So this asserts the live server against the catalog transitively
  * and never against a second hand-maintained list: a hardcoded `EXPECTED_TOOLS`
  * would be exactly the drift the catalog exists to remove.
@@ -770,7 +770,7 @@ known(
   'REST POST /memories validates the scope it stores',
   async () => {
     // `CreateMemoryBodySchema` swaps the validating/normalising `ScopeSchema`
-    // for `RawScopeSchema` (packages/schemas/src/memory.ts), and create.ts adds
+    // for `RawScopeSchema` (packages/schemas/src/domain/memory.ts), and create.ts adds
     // no check of its own. So a non-canonical scope is stored, shows up in
     // memory.scopes, and is then unreachable: every scope-addressed read and
     // delete on BOTH surfaces refuses the string. Only DELETE /memories/:id

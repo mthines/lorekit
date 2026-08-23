@@ -8,7 +8,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
  * `memory.list`'s `view: "summary"` preview length is declared in FOUR places
  * that cannot import each other:
  *
- *   1. `packages/schemas/src/memory.ts`      — the authoritative declaration.
+ *   1. `packages/schemas/src/domain/memory.ts` — the authoritative declaration.
  *   2. `packages/mcp-core/src/tools/list.ts` — the Node/Fly + CLI stdio path.
  *   3. `supabase/functions/mcp/tools.ts`     — self-contained Deno, the
  *      production path. It cannot cross-import a package, the same constraint
@@ -49,7 +49,7 @@ describe('memory.list summary preview length parity', () => {
   });
 
   it('the documented cap in the tool catalog matches the implementation', () => {
-    const catalog = readFileSync(join(repoRoot, 'packages/schemas/src/tool-catalog.ts'), 'utf8');
+    const catalog = readFileSync(join(repoRoot, 'packages/schemas/src/shared/tool-catalog.ts'), 'utf8');
     const listBlock = /name: 'memory\.list'[\s\S]*?returns:/.exec(catalog)?.[0] ?? '';
     expect(listBlock).toContain(`${SCHEMA_PREVIEW_CHARS}-character \`preview\``);
   });

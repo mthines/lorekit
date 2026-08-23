@@ -5,7 +5,7 @@ import { MCP_TOOLS, MCP_TOOL_NAMES, toWireTool } from '@lorekit/schemas/tool-cat
 import { READ_TOOLS, WRITE_TOOLS, toolRequires } from './permissions.js';
 
 /**
- * The catalog (`packages/schemas/src/tool-catalog.ts`) is the ONE declaration of
+ * The catalog (`packages/schemas/src/shared/tool-catalog.ts`) is the ONE declaration of
  * every MCP tool: `tools/list` renders from it and so does the MCP section of
  * `llms.txt`. Two things it cannot enforce by construction, asserted here:
  *

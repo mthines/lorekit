@@ -1,5 +1,5 @@
 // GENERATED MIRROR — do not edit.
-// Source: packages/schemas/src/org.ts
+// Source: packages/schemas/src/domain/org.ts
 // Regenerate: node scripts/sync-edge-schemas.mjs
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
