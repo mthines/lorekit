@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.55.2](https://github.com/mthines/lorekit/compare/cli-v1.55.1...cli-v1.55.2) (2026-08-23)
+
+
+### Bug Fixes
+
+* **mcp:** a tool-originated failure is an isError result, not a protocol error ([dfa8115](https://github.com/mthines/lorekit/commit/dfa8115b92fbd5e754c1c2f4282a3516485d0c4b))
+* **mcp:** a tool-originated failure is an isError result, not a protocol error ([2d40563](https://github.com/mthines/lorekit/commit/2d405637e1734f7d574146888670f85e1ac8fe54))
+
 ## [1.55.1](https://github.com/mthines/lorekit/compare/cli-v1.55.0...cli-v1.55.1) (2026-08-22)
 
 
