@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { StatCard } from '@/components/dashboard/StatCard';
+import { UsageHealth } from '@/components/dashboard/UsageHealth';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
@@ -203,7 +204,7 @@ export function DashboardStats() {
     );
   }
 
-  const { scopes } = data;
+  const { scopes, usageByTool } = data;
   // One phrase for every card's caption, derived from the same range the grid
   // was, so a drilled-in window reads as its dates rather than as a preset it is
   // not. `rangeCaption` (not `rangeLabel().toLowerCase()`) because only a preset
@@ -300,6 +301,13 @@ export function DashboardStats() {
         </p>
         <ScopeHealthGrid scopes={scopes} />
       </div>
+
+      {/* Operational health — friction, latency, coverage gaps. Its own
+          section, deliberately outside the additive stat grid above: these
+          diagnostics are not bound by (and must not imply) the
+          bars-sum-to-headline invariant every stat card holds. Renders
+          nothing when the account has no usage rows at all. */}
+      <UsageHealth rows={usageByTool} />
     </>
   );
 }
