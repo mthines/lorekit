@@ -365,7 +365,7 @@ export function advertise(dispatch) {
       if (!def) {
         throw new Error(
           `mcp-server dispatches "${name}", which the tool catalog does not declare. `
-          + 'Add it to packages/schemas/src/shared/tool-catalog.ts (and regenerate: node scripts/gen-surfaces.mjs).',
+          + 'Add it to packages/schemas/src/shared/tool-catalog.ts (and regenerate: node scripts/codegen/gen-surfaces.mjs).',
         );
       }
       return def;

@@ -157,18 +157,18 @@ free CI compute and should be jumpy (a dep bump *can* move a pixel, and the
 baselines exist to catch it), while a preview is metered.
 
 The canonical filter — with the rationale for each path — is
-[`scripts/web-preview-filter.mjs`](../scripts/web-preview-filter.mjs). It is
+[`scripts/ci/web-preview-filter.mjs`](../scripts/ci/web-preview-filter.mjs). It is
 written as an extended regex so the one string works under both `grep -E`
 (`ci.yml`) and a JS `RegExp` (the github-script step, which runs *before* its
 checkout and so cannot import the module). Neither consumer can import it, so
-both carry a copy and `scripts/web-preview-filter.test.mjs` holds them to it:
+both carry a copy and `scripts/ci/web-preview-filter.test.mjs` holds them to it:
 the `preview-filter` CI job fails on drift in either copy, and cross-checks that
 `grep -E` and `RegExp` agree on every case.
 
 To ask why a specific PR did or didn't get a preview:
 
 ```bash
-git diff --name-only main... | xargs node scripts/web-preview-filter.mjs
+git diff --name-only main... | xargs node scripts/ci/web-preview-filter.mjs
 ```
 
 ### Forcing a preview (`/web-preview`)
@@ -361,7 +361,7 @@ Three things to know when reading a run:
   `if: always()`) — a failed marker write must not mask the deploy failure that
   triggered the rollback.
 - **The decision is a tested module, not a shell block.**
-  `scripts/resolve-deploy-scope.mjs` with `scripts/resolve-deploy-scope.test.mjs`
+  `scripts/ci/resolve-deploy-scope.mjs` with `scripts/ci/resolve-deploy-scope.test.mjs`
   (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — the same
   extract-and-test treatment `check-remote-migration-drift.mjs` got, for the same
   reason. The test pins both the fixed behaviour and the old one that caused the
@@ -381,7 +381,7 @@ The tag names are declared once, at `deploy.yml`'s top level
 
 | Where | Step | Does |
 |-------|------|------|
-| `changes` | `Resolve the deploy scope` | Runs `scripts/resolve-deploy-scope.mjs` — reads both markers, picks each half's baseline, writes `api` / `web` |
+| `changes` | `Resolve the deploy scope` | Runs `scripts/ci/resolve-deploy-scope.mjs` — reads both markers, picks each half's baseline, writes `api` / `web` |
 | `deploy-production` | `Record the deployed commit` | Advances `deployed/api-production` to `github.sha` |
 | `promote-web-production` | `Capture the previously promoted marker` → `Record the deployed commit` | Exposes the marker's OLD value as `previous_marker` (+ `previous_marker_read`), then advances it to `github.sha` — unless that read failed |
 | `rollback-production` | `Point the API marker at the commit just rolled back to` | Repoints `deployed/api-production` at `HEAD~1` — but only if this run advanced it |
@@ -451,7 +451,7 @@ avoid advancing what it could not undo.
 over
 `^(\.github/workflows/deploy\.yml|scripts/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
 gates a `deploy-scope` job running `node --test
-scripts/resolve-deploy-scope.test.mjs`, and that job is in the `summary` gate's
+scripts/ci/resolve-deploy-scope.test.mjs`, and that job is in the `summary` gate's
 `needs`. Without it the test would never run — `scripts/**` is outside
 `nx affected`, so the `check` job does not reach it.
 
@@ -543,7 +543,7 @@ supabase migration repair --status reverted 00049 00050 00051
 every subsequent deploy of `main` failed on this check, with zero pending work.
 
 `deploy-preview` therefore classifies the drift *before* pushing, via
-[`scripts/check-remote-migration-drift.mjs`](../scripts/check-remote-migration-drift.mjs):
+[`scripts/migrations/check-remote-migration-drift.mjs`](../scripts/migrations/check-remote-migration-drift.mjs):
 
 | Remote state | Local pending | Outcome |
 |---|---|---|
@@ -583,7 +583,7 @@ The classifier is live in the workflows (no manual step — unlike the older
   to the function deploy without pushing. `deploy-production` is left strict.
 - **`.github/workflows/ci.yml`**: the `changes` job's migration path filter also
   matches `scripts/check-remote-migration-drift`, and the `migration-order` job
-  unit-tests the classifier (`node --test scripts/check-remote-migration-drift.test.mjs`)
+  unit-tests the classifier (`node --test scripts/migrations/check-remote-migration-drift.test.mjs`)
   alongside the ordering guard.
 
 If the classifier ever returns `fail`, the interim manual unblock is its own
@@ -655,7 +655,7 @@ A reset wipes **everything**, including the seeded orgs-smoke user (see "Seed th
 orgs-smoke user" below), so the orgs REST smoke self-skips until you re-seed it.
 Re-seeding needs the service-role key and is deliberately **not** wired into the
 workflow (the recurring smoke path never carries that key) — the workflow only
-emits a reminder. After a rebuild, run `scripts/seed-smoke-user.mjs` from a
+emits a reminder. After a rebuild, run `scripts/smoke/seed-smoke-user.mjs` from a
 trusted admin shell against the preview project.
 
 ### Failure notifications (Discord)
@@ -729,7 +729,7 @@ modes:
 | Layer | Covers | Where |
 |-------|--------|-------|
 | **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/smoke-tests/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
-| **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
+| **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
 
 Two rules make the difference between "cleaned up" and "looks cleaned up":
 
@@ -749,7 +749,7 @@ Run the sweep by hand against any project:
 LOREKIT_REST_BASE_URL="https://<ref>.supabase.co/functions/v1" \
 LOREKIT_SMOKE_TOKEN="<lk_rw_* token>" \
 LOREKIT_SMOKE_JWT="<supabase user JWT>" \
-  node scripts/smoke-cleanup.mjs --dry-run
+  node scripts/smoke/smoke-cleanup.mjs --dry-run
 ```
 
 Drop `--dry-run` to delete. `--min-age-minutes` (default 30) protects a smoke
@@ -786,7 +786,7 @@ nothing downstream rolls back on this job.
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
           LOREKIT_SWEEP_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
           LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
 ```
 
 **2. `deploy.yml` → `smoke-preview` job**, as the last step. `if: always()` is
@@ -800,7 +800,7 @@ No `--strict`: cleanup must never red a deploy.
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30
 ```
 
 **3. `deploy.yml` → `smoke-production` job**, as the last step — **report-only**.
@@ -817,7 +817,7 @@ job whose failure triggers `rollback-production`. `--dry-run` +
         env:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
 ```
 
 **Historical residue.** Orgs that earlier runs *soft*-deleted are invisible to
@@ -830,7 +830,7 @@ kept as two separate claims:
 ```bash
 LOREKIT_REST_BASE_URL="https://<ref>.supabase.co/functions/v1" \
 LOREKIT_SWEEP_SERVICE_ROLE_KEY="<service-role key>" \
-  node scripts/smoke-cleanup.mjs --allow-service-role --dry-run
+  node scripts/smoke/smoke-cleanup.mjs --allow-service-role --dry-run
 ```
 
 This is a one-off cleanup — the suites no longer create them.
@@ -874,7 +874,7 @@ never blocked. Set all three to enable it:
 The org endpoints require a real Supabase **user JWT** (`lk_*` tokens and the
 service-role key are rejected), so `smoke-preview` mints one per run by signing
 in as this fixed user. That user must already exist on the project —
-seed it once with [`scripts/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
+seed it once with [`scripts/smoke/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
 below.
 
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
@@ -915,7 +915,7 @@ SUPABASE_URL=https://<preview-ref>.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=<preview-service-role-key> \
 LOREKIT_SMOKE_EMAIL=<email> \
 LOREKIT_SMOKE_PASSWORD='<password>' \
-  node scripts/seed-smoke-user.mjs
+  node scripts/smoke/seed-smoke-user.mjs
 ```
 
 Run it from a trusted admin shell — **not in CI**. Creating a confirmed user
@@ -958,7 +958,7 @@ when `#260` shipped `00042` and `#266` then shipped `00041`.
 
 Two layers keep this from wedging the deploy:
 
-1. **Prevention — the `migration-order` CI job** (`scripts/check-migration-order.mjs`)
+1. **Prevention — the `migration-order` CI job** (`scripts/migrations/check-migration-order.mjs`)
    fails any PR that adds a migration numbered ≤ the highest already on the base
    branch, telling the author the next free number to rebase-and-renumber to.
 2. **Tolerance — `supabase db push --include-all`** in `deploy.yml` applies an

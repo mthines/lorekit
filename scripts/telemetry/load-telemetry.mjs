@@ -28,7 +28,7 @@
  * spans and its `usage_events` rows can both be scoped to it.
  */
 
-import { resolveTelemetryConfig, randHex } from '../packages/cli/src/telemetry/telemetry.mjs';
+import { resolveTelemetryConfig, randHex } from '../../packages/cli/src/telemetry/telemetry.mjs';
 import {
   SPAN_KIND_INTERNAL,
   gauge,

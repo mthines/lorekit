@@ -74,6 +74,6 @@ single sources at `packages/cli/skill/*`. `sync-plugin-skill.mjs` mirrors every 
 skill is vendored automatically. Re-sync after editing any source:
 
 ```bash
-node scripts/sync-plugin-skill.mjs        # copy source → plugin
-node scripts/sync-plugin-skill.mjs --check # CI: fail if they differ
+node scripts/codegen/sync-plugin-skill.mjs        # copy source → plugin
+node scripts/codegen/sync-plugin-skill.mjs --check # CI: fail if they differ
 ```

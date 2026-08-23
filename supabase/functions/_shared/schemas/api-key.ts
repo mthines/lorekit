@@ -1,6 +1,6 @@
 // GENERATED MIRROR — do not edit.
 // Source: packages/schemas/src/domain/api-key.ts
-// Regenerate: node scripts/sync-edge-schemas.mjs
+// Regenerate: node scripts/codegen/sync-edge-schemas.mjs
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
 import { z } from 'npm:zod@3';

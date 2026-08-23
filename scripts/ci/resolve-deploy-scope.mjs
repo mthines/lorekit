@@ -40,7 +40,7 @@
  *
  * Usage (from a full-history checkout):
  *
- *   node scripts/resolve-deploy-scope.mjs
+ *   node scripts/ci/resolve-deploy-scope.mjs
  *
  * Reads DEPLOY_TARGET, BEFORE, API_DEPLOYED_TAG, WEB_DEPLOYED_TAG from the
  * environment; writes `api` and `web` to $GITHUB_OUTPUT when set, and a human
@@ -64,10 +64,10 @@ import { execFileSync } from 'node:child_process';
  * mint both markers.
  */
 export const API_PATHS =
-  /^(packages\/mcp-core\/|packages\/schemas\/|supabase\/functions\/|supabase\/migrations\/|supabase\/tests\/|supabase\/config\.toml|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/resolve-deploy-scope\.mjs|\.github\/workflows\/deploy\.yml)/;
+  /^(packages\/mcp-core\/|packages\/schemas\/|supabase\/functions\/|supabase\/migrations\/|supabase\/tests\/|supabase\/config\.toml|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/ci\/resolve-deploy-scope\.mjs|\.github\/workflows\/deploy\.yml)/;
 
 export const WEB_PATHS =
-  /^(packages\/web\/|packages\/schemas\/|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/resolve-deploy-scope\.mjs|\.github\/actions\/vercel-preview-deploy\/|\.github\/workflows\/deploy\.yml)/;
+  /^(packages\/web\/|packages\/schemas\/|package\.json|pnpm-lock\.yaml|nx\.json|scripts\/ci\/resolve-deploy-scope\.mjs|\.github\/actions\/vercel-preview-deploy\/|\.github\/workflows\/deploy\.yml)/;
 
 /**
  * A `workflow_dispatch` run can force what deploys, bypassing detection.

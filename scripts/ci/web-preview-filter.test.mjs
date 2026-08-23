@@ -24,7 +24,7 @@ import {
   anyWebPreviewPath,
 } from './web-preview-filter.mjs';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 // Every path either deploys a preview or does not; there is no third answer, so
 // one table drives both the behaviour tests and the grep-parity sweep.
@@ -136,7 +136,7 @@ test("web-preview-deploy.yml's `web-path-filter` default is the canonical filter
   assert.equal(
     match[1],
     WEB_PREVIEW_PATH_FILTER,
-    'the reusable workflow drifted from scripts/web-preview-filter.mjs',
+    'the reusable workflow drifted from scripts/ci/web-preview-filter.mjs',
   );
 });
 

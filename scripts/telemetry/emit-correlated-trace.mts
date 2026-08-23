@@ -51,19 +51,19 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
-import { formatTraceparent, parseTraceparent } from '../packages/mcp-core/src/telemetry/trace-context.ts';
+import { formatTraceparent, parseTraceparent } from '../../packages/mcp-core/src/telemetry/trace-context.ts';
 import {
   Span,
   ExportBatch,
   buildOtlpPayload,
   SPAN_KIND_SERVER,
   SPAN_KIND_CLIENT,
-} from '../supabase/functions/_shared/otel.ts';
+} from '../../supabase/functions/_shared/otel.ts';
 import {
   resolveTelemetryConfig,
   buildTracePayload,
   randHex,
-} from '../packages/cli/src/telemetry/telemetry.mjs';
+} from '../../packages/cli/src/telemetry/telemetry.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -207,7 +207,7 @@ export function buildCorrelatedTrace(
 /** Resolve the CLI package version for a realistic `service.version`. */
 function cliVersion(): string {
   try {
-    const pkg = JSON.parse(readFileSync(path.join(here, '../packages/cli/package.json'), 'utf8'));
+    const pkg = JSON.parse(readFileSync(path.join(here, '../../packages/cli/package.json'), 'utf8'));
     return String(pkg.version ?? '0.0.0-harness');
   } catch {
     return '0.0.0-harness';

@@ -5,7 +5,7 @@ Semantic search for lore, in three deliberately separate pieces:
 | Piece | Where | State |
 |-------|-------|-------|
 | Schema | `supabase/migrations/00060_memory_embeddings.sql` | Landed, dormant |
-| Pipeline | `_shared/embed-on-write.ts` + `scripts/backfill-embeddings.mjs` | Landed, **off by default** |
+| Pipeline | `_shared/embed-on-write.ts` + `scripts/migrations/backfill-embeddings.mjs` | Landed, **off by default** |
 | Search | `POST /memories/search?mode=semantic\|hybrid` | Not built |
 
 They are separate because they fail differently. The schema is a migration; the
@@ -266,9 +266,9 @@ Covers everything written before embedding was enabled, plus anything whose
 on-write attempt failed.
 
 ```bash
-node scripts/backfill-embeddings.mjs --dry-run     # plan + cost, no calls
-node scripts/backfill-embeddings.mjs --limit 500   # bounded first run
-node scripts/backfill-embeddings.mjs               # to completion
+node scripts/migrations/backfill-embeddings.mjs --dry-run     # plan + cost, no calls
+node scripts/migrations/backfill-embeddings.mjs --limit 500   # bounded first run
+node scripts/migrations/backfill-embeddings.mjs               # to completion
 ```
 
 Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (it walks every tenant), plus the
@@ -286,7 +286,7 @@ enabling it.
 
 An unrecognised flag, or a flag whose value is missing, flag-shaped, or unreadable as a number, is a usage error — the script never falls back silently on the arguments that decide what a paid run touches. The defaults in this table are what an **omitted** flag means; they are never what a typo means.
 
-That parser is unit-tested — `scripts/backfill-embeddings.test.mjs`, `node --test`, no dependencies — so every row above is an executed assertion rather than a promise. Run it with `node --test scripts/backfill-embeddings.test.mjs` (needs Node >= 22.18, the same floor the script itself asserts).
+That parser is unit-tested — `scripts/migrations/backfill-embeddings.test.mjs`, `node --test`, no dependencies — so every row above is an executed assertion rather than a promise. Run it with `node --test scripts/migrations/backfill-embeddings.test.mjs` (needs Node >= 22.18, the same floor the script itself asserts).
 
 #### Wiring the parser test into CI (one-time, must be committed by a human)
 
@@ -322,7 +322,7 @@ Add to `.github/workflows/ci.yml`, before the `summary` job:
           node-version: 22
 
       - name: Unit-test the backfill argument parser
-        run: node --test scripts/backfill-embeddings.test.mjs
+        run: node --test scripts/migrations/backfill-embeddings.test.mjs
 ```
 
 Then add it to the `summary` gate so a failure is not silently ignored:
@@ -379,7 +379,7 @@ The go/no-go for building semantic search is whether the cost and latency are
 acceptable on a real store. Run the dry run first:
 
 ```bash
-LOREKIT_EMBEDDING_USD_PER_MTOK=0.02 node scripts/backfill-embeddings.mjs --dry-run
+LOREKIT_EMBEDDING_USD_PER_MTOK=0.02 node scripts/migrations/backfill-embeddings.mjs --dry-run
 ```
 
 It reports characters, approximate tokens (chars ÷ 4 — the same zero-dependency
@@ -417,14 +417,14 @@ rewrite rows that never carried a vector.
 
 Two layers, because they catch different things and cost different amounts.
 
-### Offline resilience — `scripts/backfill-embeddings.smoke.test.mjs`
+### Offline resilience — `scripts/migrations/backfill-embeddings.smoke.test.mjs`
 
 Drives the **real backfill script** as a child process against a fake provider
 and a fake PostgREST on localhost. No key, no network, no money, so it is
 deterministic and runs anywhere:
 
 ```bash
-node --test scripts/backfill-embeddings.smoke.test.mjs
+node --test scripts/migrations/backfill-embeddings.smoke.test.mjs
 ```
 
 It exists because the unit specs cover the pure decisions and the argument
@@ -449,15 +449,15 @@ than something to wait for a provider to do:
 > `redactKey` now runs at every point that turns a provider response into a
 > message — in the script and in the edge client.
 
-### Live — `scripts/smoke-embeddings.mjs`
+### Live — `scripts/smoke/smoke-embeddings.mjs`
 
 Proves the path a fake cannot: a wrong model name, a revoked key, a changed
 response shape, a model whose real output width does not match the column, and
 grants that only exist in the real database.
 
 ```bash
-node scripts/smoke-embeddings.mjs          # writes, checks, cleans up
-node scripts/smoke-embeddings.mjs --keep   # leave the artefacts for inspection
+node scripts/smoke/smoke-embeddings.mjs          # writes, checks, cleans up
+node scripts/smoke/smoke-embeddings.mjs --keep   # leave the artefacts for inspection
 ```
 
 It checks that the provider answers at the declared width (reporting latency),
@@ -474,7 +474,7 @@ minted through the same namespace contract the other live suites use — the nam
 is registered at mint time, carries a timestamp, and matches
 `SMOKE_ARTEFACT_PATTERN` (its `embed-` label is part of that closed set), so a
 run that crashes before cleanup is still recognisable to
-`scripts/smoke-cleanup.mjs`. Deletion is a **hard** delete; the default soft
+`scripts/smoke/smoke-cleanup.mjs`. Deletion is a **hard** delete; the default soft
 archive would leave a row behind on every run forever. A leak is reported as a
 warning rather than thrown, so it is visible without turning a passing run red.
 
@@ -494,8 +494,8 @@ reports success is worse than no run.
 | `supabase/functions/_shared/embed-on-write.ts` | The background-and-swallow write path. |
 | `supabase/migrations/00062_memory_embedding_write.sql` | `lorekit_memory_set_embedding` — the ONE authorised path for writing a vector. Authorises inside the function so an org-owned row is embeddable by a write-capable member and refused for a viewer. |
 | `packages/mcp-core/src/mcp-guards/embed-write-authz.spec.ts` | Drift guard: holds the edge module to the RPC and off a direct `UPDATE`. Mutation-verified — restoring the direct update fails three of its cases. |
-| `scripts/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. Exports `parseArgs` behind an `invokedDirectly` seam so importing it never starts a run. |
-| `scripts/backfill-embeddings.test.mjs` | `node --test` cover for `parseArgs` — the guard on what a paid run touches. CI wiring is a one-time human step, above. |
+| `scripts/migrations/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. Exports `parseArgs` behind an `invokedDirectly` seam so importing it never starts a run. |
+| `scripts/migrations/backfill-embeddings.test.mjs` | `node --test` cover for `parseArgs` — the guard on what a paid run touches. CI wiring is a one-time human step, above. |
 
 The pure/impure split is the `github-app-jwt.ts` pattern, and it matters more
 here than usual: this is the first code in the repo that spends money per call,

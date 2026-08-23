@@ -23,7 +23,7 @@ import { z } from 'zod';
  * `@lorekit/schemas` is the right home because it is the repo's leaf package
  * (no `@lorekit/core` dependency, one-way graph) and it is already the thing
  * BOTH runtimes consume: Node imports it directly, and the Deno edge tree gets
- * a generated mirror via `scripts/sync-edge-schemas.mjs`. That makes it the
+ * a generated mirror via `scripts/codegen/sync-edge-schemas.mjs`. That makes it the
  * only place a single list can physically reach the MCP tools, the REST
  * handlers and the migration-drift guard at once.
  *

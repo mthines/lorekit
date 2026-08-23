@@ -31,7 +31,7 @@
     "deno:check": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "node scripts/deno-check-functions.mjs",
+        "command": "node scripts/ci/deno-check-functions.mjs",
         "cwd": "{workspaceRoot}"
       }
     },
@@ -39,7 +39,7 @@
     "sweep": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "node scripts/sweep-rows.mjs",
+        "command": "node scripts/migrations/sweep-rows.mjs",
         "cwd": "{workspaceRoot}"
       }
     },

@@ -41,10 +41,10 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const {
   resolveEmbeddingConfig, embeddingInput, buildEmbeddingRequest, EMBEDDING_DIMENSIONS, redactKey,
-} = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
+} = await import(path.join(HERE, '..', '..', 'packages', 'mcp-core', 'src', 'provenance', 'embedding.ts'));
 const {
   createSmokeNamespace, sweepSmokeArtefacts, describeSweepFailures,
-} = await import(path.join(HERE, '..', 'packages', 'smoke-tests', 'src', 'smoke-cleanup.ts'));
+} = await import(path.join(HERE, '..', '..', 'packages', 'smoke-tests', 'src', 'smoke-cleanup.ts'));
 
 // The label is part of the CLOSED set in `SMOKE_ARTEFACT_PATTERN`. Minting
 // outside it would produce a name the orphan sweeper never recognises, so this

@@ -14,7 +14,7 @@ import path from 'node:path';
  * packages without an import map, which the local runtime is not given.
  *
  * Duplication is only safe while it is enforced. If someone edits
- * `packages/schemas` and forgets `node scripts/sync-edge-schemas.mjs`, this
+ * `packages/schemas` and forgets `node scripts/codegen/sync-edge-schemas.mjs`, this
  * fails in the mocked `check` job — not at boot, in CI, three PRs later.
  *
  * The generator is invoked as a subprocess rather than imported: it lives
@@ -113,9 +113,9 @@ describe('edge schema mirror', () => {
 
   // The authoritative check: the committed mirror is exactly what the
   // generator would produce from the current source.
-  it('is in sync with packages/schemas (scripts/sync-edge-schemas.mjs --check)', () => {
+  it('is in sync with packages/schemas (scripts/codegen/sync-edge-schemas.mjs --check)', () => {
     expect(() =>
-      execFileSync('node', ['scripts/sync-edge-schemas.mjs', '--check'], {
+      execFileSync('node', ['scripts/codegen/sync-edge-schemas.mjs', '--check'], {
         cwd: repoRoot,
         stdio: 'pipe',
       }),

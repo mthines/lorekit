@@ -72,9 +72,9 @@ export function anyWebPreviewPath(filenames) {
 
 // CLI: answer "would these files have deployed a preview?" — the question you
 // ask when a PR deployed one you did not expect, or skipped one you did.
-//   node scripts/web-preview-filter.mjs --print
-//   node scripts/web-preview-filter.mjs <path>...
-//   git diff --name-only main... | xargs node scripts/web-preview-filter.mjs
+//   node scripts/ci/web-preview-filter.mjs --print
+//   node scripts/ci/web-preview-filter.mjs <path>...
+//   git diff --name-only main... | xargs node scripts/ci/web-preview-filter.mjs
 // Exits 0 when at least one path matches (a preview would deploy), 1 when none.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);

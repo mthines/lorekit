@@ -7,7 +7,7 @@ import { serializeFilterGroup } from '../schemas/filter.ts';
  * All of the semantics — operator mapping, the field whitelist, and value
  * encoding — live in `serializeFilterGroup`, next to the `FilterGroupSchema`
  * that validates the input (`packages/schemas/src/shared/filter.ts`, mirrored here by
- * `scripts/sync-edge-schemas.mjs`). This adapter only chains the resulting
+ * `scripts/codegen/sync-edge-schemas.mjs`). This adapter only chains the resulting
  * expressions onto the query builder: PostgREST ANDs successive `.or()` calls,
  * so one call per conjunct reproduces the tree.
  *

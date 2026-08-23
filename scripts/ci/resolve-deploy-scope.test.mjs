@@ -119,7 +119,7 @@ test('shared and pipeline paths force both halves', () => {
     '.github/workflows/deploy.yml',
     // The resolver itself: a change to the decision must exercise both halves,
     // otherwise a bug in it could only be observed on the half it did not skip.
-    'scripts/resolve-deploy-scope.mjs',
+    'scripts/ci/resolve-deploy-scope.mjs',
   ]) {
     assert.equal(halfChanged([f], API_PATHS), true, `${f} should force the API half`);
     assert.equal(halfChanged([f], WEB_PATHS), true, `${f} should force the web half`);

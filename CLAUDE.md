@@ -55,7 +55,7 @@ and a later friction turn can still fire once. `friction: null` (no transcript, 
 back to firing so no lesson is lost where friction can't be measured. The nudge itself is a terse
 one-liner naming the detected reasons — the lore deep-link lives on the write CONFIRMATION, not here. The
 Claude plugin's skill copy is vendored from `packages/cli/skill/` — keep in sync via
-`node scripts/sync-plugin-skill.mjs` (a `--check` mode guards drift).
+`node scripts/codegen/sync-plugin-skill.mjs` (a `--check` mode guards drift).
 
 **Cross-framework validation:** `packages/cli/test/frameworks.test.mjs` replays payload fixtures
 (`test/fixtures/<adapter>-<event>.json`) through the binary and asserts each host's output contract, runs
@@ -138,7 +138,7 @@ rather than inferred. They cost time every time they are rediscovered:
    and that made the ratchet look CI-only. npm is reachable, the `deno` package
    ships the same binary, and the version it lands (2.9.5) satisfies the `v2.x`
    CI pins and reproduces the committed baseline exactly. So
-   `node scripts/deno-check-functions.mjs` is a local gate, not a remote one —
+   `node scripts/ci/deno-check-functions.mjs` is a local gate, not a remote one —
    which is how the 83 baselined errors were driven to 0 rather than guessed at.
    Two traps if you script around it: `deno check` writes errors to stderr with
    ANSI colour, so a `grep -cE '^TS[0-9]+'` counts **zero** on real failures
@@ -147,7 +147,7 @@ rather than inferred. They cost time every time they are rediscovered:
    the way production does, instead of the repo's pnpm `node_modules`.
 6. **Node's built-in `fetch` ignores `HTTPS_PROXY` — run it with
    `NODE_USE_ENV_PROXY=1`.** This bites anything in this repo that exports
-   telemetry over `fetch`: `scripts/sweep-rows.mjs`, the CLI's
+   telemetry over `fetch`: `scripts/migrations/sweep-rows.mjs`, the CLI's
    `packages/cli/src/telemetry/telemetry.mjs`, and the `_shared/otel.ts` exporters when
    exercised locally. The symptom is a **`403 Host not in allowlist: <host>`**
    *even for a host that IS allowlisted*, because without the variable undici
@@ -572,7 +572,7 @@ their rationale inline. **Do not relitigate these.**
 - **Hook scope ordering unified, project scope IS injected** — `readOrder` = `[project, branch, repo, global]`, matching the read commands' `scopeList`. [rationale](./docs/decisions.md#hook-scope-ordering-unified-project-scope-injected)
 - **Hook precedence + match is single source of truth with read commands** — `resolvePrecedence`/`matchesQuery` in dependency-free `lessons-pure.mjs`. [rationale](./docs/decisions.md#hook-precedence--match-is-single-source-of-truth-with-read-commands)
 - **CI/CD is split** — `ci.yml` verifies before merge, `deploy.yml` promotes the verified commit (preview→prod); don't re-merge or re-add a deploy-time test job. [rationale](./docs/decisions.md#cicd-is-split-ciyml-verifies-deployyml-promotes)
-- **The deploy SCOPE is measured against what is deployed** — each half is diffed against the SHA it last reached production at (`deployed/api-production` / `deployed/web-production`), never against the previous commit; a rollback repoints its half's tag at what production went back to, and never leaves it naming a commit production dropped (the one deletion is `rollback-web-production` when there was no previous promotion to restore, which warns loudly); `rollback-production` repoints only a marker that run advanced; the tags fail open; and the decision is the unit-tested `scripts/resolve-deploy-scope.mjs`, called by `deploy.yml`'s `changes` job and unit-tested by ci.yml's `deploy-scope` job. Never reinstate the single-push baseline: it let the web be promoted ahead of an API that had never deployed. [rationale](./docs/decisions.md#cicd-is-split-ciyml-verifies-deployyml-promotes)
+- **The deploy SCOPE is measured against what is deployed** — each half is diffed against the SHA it last reached production at (`deployed/api-production` / `deployed/web-production`), never against the previous commit; a rollback repoints its half's tag at what production went back to, and never leaves it naming a commit production dropped (the one deletion is `rollback-web-production` when there was no previous promotion to restore, which warns loudly); `rollback-production` repoints only a marker that run advanced; the tags fail open; and the decision is the unit-tested `scripts/ci/resolve-deploy-scope.mjs`, called by `deploy.yml`'s `changes` job and unit-tested by ci.yml's `deploy-scope` job. Never reinstate the single-push baseline: it let the web be promoted ahead of an API that had never deployed. [rationale](./docs/decisions.md#cicd-is-split-ciyml-verifies-deployyml-promotes)
 - **Smoke tests clean up after themselves + a sweeper** — hard-delete/purge; name-pattern sweep behind four guards; never revert to soft delete / id tracking / a permissive pattern. [rationale](./docs/decisions.md#smoke-tests-clean-up-after-themselves)
 - **Invite-details modal** — SECURITY DEFINER `lorekit_invite_org_details` gated on `lorekit_invite_addressed_to_caller`; Tier-A fields only, never leaks existence. [rationale](./docs/decisions.md#invite-details-modal)
 - **Docs are a PUBLIC MDX section at `/docs`** — single source `DOCS_SECTIONS`; full-text search derived from the same MDX files. [rationale](./docs/decisions.md#docs-are-a-public-mdx-section-at-docs)

@@ -118,7 +118,7 @@ describe.skipIf(SKIP)('LoreKit MCP smoke tests (integration)', () => {
   //
   // A leftover is reported as a warning, never as a thrown hook — a leaked row
   // must be visible in the log without turning a passing suite red. Anything
-  // this misses is picked up by `node scripts/smoke-cleanup.mjs`.
+  // this misses is picked up by `node scripts/smoke/smoke-cleanup.mjs`.
   afterAll(async () => {
     await runBestEffortCleanup(
       async () => {

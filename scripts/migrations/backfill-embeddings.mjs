@@ -80,7 +80,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // a provider response is trustworthy — the two most expensive things to get
 // subtly different. It is TypeScript, which Node executes directly from v22.18 /
 // v23.6 onward (type stripping); there is no build step to run first.
-const MODULE = path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts');
+const MODULE = path.join(HERE, '..', '..', 'packages', 'mcp-core', 'src', 'provenance', 'embedding.ts');
 const {
   resolveEmbeddingConfig, embeddingInput, isEmbeddable, toVectorLiteral, redactKey,
   buildEmbeddingRequest, parseEmbeddingResponse, batchInputs, estimateCostFromChars,

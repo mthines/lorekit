@@ -3,10 +3,10 @@ import { describe, it, expect } from 'vitest';
 // schemas.mjs); it deliberately lives outside any single package, so this test
 // reaches it by path. Not a package-to-package internal import.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { buildCorrelatedTrace, HARNESS_ENVIRONMENT } from '../../../../scripts/emit-correlated-trace.mts';
+import { buildCorrelatedTrace, HARNESS_ENVIRONMENT } from '../../../../scripts/telemetry/emit-correlated-trace.mts';
 
 /**
- * The correlated-trace harness (`scripts/emit-correlated-trace.mts`) is the
+ * The correlated-trace harness (`scripts/telemetry/emit-correlated-trace.mts`) is the
  * on-demand tool that emits ONE real, correlated cross-service trace to Dash0
  * for visual validation. This suite exercises its pure builder (no network) and
  * asserts the emitted OTLP is a genuinely correlated, `test`-tagged trace built

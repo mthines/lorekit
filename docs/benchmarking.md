@@ -11,7 +11,7 @@ things and knee for different reasons.
 | Needs the edge deployed | No — it is all SQL-level | Yes |
 | Repeatable against a shared environment | **No** — it permanently changes table size and index bloat | Yes — non-destructive |
 | Against production | **Never** | Possible, behind the approval gate |
-| Status | **Built** (`scripts/sweep-rows.mjs`) | **Built** (`scripts/load-test.mjs`) |
+| Status | **Built** (`scripts/migrations/sweep-rows.mjs`) | **Built** (`scripts/load-test/load-test.mjs`) |
 
 A load test measures requests/sec; a per-user cap governs rows. Neither number
 tells you about the other, which is why the memory cap was settled with the
@@ -23,8 +23,8 @@ sweep and not with load.
 
 ```bash
 pnpm nx sweep supabase                                     # defaults
-node scripts/sweep-rows.mjs --rungs 1000,5000,25000 --iterations 40
-node scripts/sweep-rows.mjs --database-url postgresql://…   # bring your own DB
+node scripts/migrations/sweep-rows.mjs --rungs 1000,5000,25000 --iterations 40
+node scripts/migrations/sweep-rows.mjs --database-url postgresql://…   # bring your own DB
 ```
 
 It boots a **throwaway** PostgreSQL 16 cluster, applies
@@ -136,7 +136,7 @@ the daily smoke jobs carry that value too.
 #
 # Or locally:
 SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… SUPABASE_ANON_KEY=… \
-  node scripts/load-test.mjs --target preview --rps 20 --duration 120 --users 5
+  node scripts/load-test/load-test.mjs --target preview --rps 20 --duration 120 --users 5
 ```
 
 | Flag | Default | |
@@ -204,7 +204,7 @@ all, which is what makes the built-in hint ("Double check your `anon` or
 `service_role` API key") misleading — it points at the one thing that is usually
 fine.
 
-`checkServiceCredential()` in `scripts/load-test-lib.mjs` decides the two
+`checkServiceCredential()` in `scripts/load-test/load-test-lib.mjs` decides the two
 decidable ones **offline**, before the first request, by decoding the JWT's
 `role` and `ref` claims:
 
@@ -332,7 +332,7 @@ on:
 - `concurrency: { group: load-${{ inputs.target }}, cancel-in-progress: false }`
   — matching `deploy.yml`'s posture, because a cancelled load test leaves rows.
 - Cleanup happens twice: the script deletes its users in a `finally`, and
-  `scripts/load-test-cleanup.mjs` runs `if: always()` as belt and braces for a
+  `scripts/load-test/load-test-cleanup.mjs` runs `if: always()` as belt and braces for a
   job killed hard enough to skip that. The sweeper carries three independent
   guards — an **anchored** email pattern (not a prefix test), an age floor so it
   cannot delete a concurrently running test's users, and fail-closed handling of
@@ -341,7 +341,7 @@ on:
   `gh-run-<run_id>`, so the run filters apart in Dash0 and `?correlation_id=`
   scopes the usage read to it.
 - **Every `run:` block sets `set -euo pipefail`, and the `pipefail` is
-  load-bearing.** The drive step is `node scripts/load-test.mjs … | tee
+  load-bearing.** The drive step is `node scripts/load-test/load-test.mjs … | tee
   load-report.txt`, and GitHub's default shell is `bash -e` — which takes a
   pipeline's status from its **last** command. Without `pipefail` the step reads
   `tee`'s success, so a load test that died mid-run reported **green**. The one

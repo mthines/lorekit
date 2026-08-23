@@ -40,7 +40,7 @@ import { readFileSync, readdirSync, existsSync, appendFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const functionsDir = join(repoRoot, 'supabase/functions');
 const baselinePath = join(repoRoot, 'supabase/deno-check-baseline.json');
 

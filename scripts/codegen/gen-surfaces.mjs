@@ -21,22 +21,22 @@
  *      script's bare-checkout contract), so it can only name the handler. The
  *      generated module does the importing. (Added in a later commit.)
  *
- * Structure mirrors `scripts/sync-edge-schemas.mjs` deliberately — pure
+ * Structure mirrors `scripts/codegen/sync-edge-schemas.mjs` deliberately — pure
  * exported transforms, a `main()`, a `--check` staleness mode that exits 1, and
  * a self-invoke guard — so the two generators are read and maintained the same
  * way. The one difference: that script reads its source as TEXT and rewrites
  * specifiers, while this one `import()`s the catalog and projects real data.
  *
  * Usage:
- *   node scripts/gen-surfaces.mjs           # write the artifacts
- *   node scripts/gen-surfaces.mjs --check   # fail if any is stale
+ *   node scripts/codegen/gen-surfaces.mjs           # write the artifacts
+ *   node scripts/codegen/gen-surfaces.mjs --check   # fail if any is stale
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const catalogPath = join(repoRoot, 'packages/schemas/src/shared/tool-catalog.ts');
 
 /**
@@ -74,7 +74,7 @@ export async function loadCatalog() {
 
 const BANNER = `// GENERATED — do not edit.
 // Source: packages/schemas/src/shared/tool-catalog.ts
-// Regenerate: node scripts/gen-surfaces.mjs
+// Regenerate: node scripts/codegen/gen-surfaces.mjs
 //
 // Edit the catalog's \`surfaces\` bindings, not this file. \`--check\` fails CI
 // when the two disagree.
@@ -239,7 +239,7 @@ async function main() {
   if (check && stale.length) {
     console.error(
       `Generated surface artifacts are stale:\n  ${stale.join('\n  ')}\n` +
-        'Run: node scripts/gen-surfaces.mjs',
+        'Run: node scripts/codegen/gen-surfaces.mjs',
     );
     process.exit(1);
   }

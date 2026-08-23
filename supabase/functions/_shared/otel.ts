@@ -212,7 +212,7 @@ export function toOtlpValue(v: string | number | boolean) {
  * Priority:
  *   1. `DEPLOYMENT_ENVIRONMENT` — an explicit override. This is the single,
  *      env-driven path every LoreKit component honours so a correlated-trace
- *      run can stamp `test` uniformly (see `scripts/emit-correlated-trace.mts`)
+ *      run can stamp `test` uniformly (see `scripts/telemetry/emit-correlated-trace.mts`)
  *      and any deployment can name its environment directly.
  *   2. `VERCEL_ENV` — mapped to production / preview / development.
  *   3. (absent) → 'local'.

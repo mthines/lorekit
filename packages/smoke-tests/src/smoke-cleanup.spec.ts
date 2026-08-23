@@ -5,7 +5,7 @@
  * cleans up EVERY artefact it minted, even the ones whose tests threw) is
  * exactly what a live run cannot demonstrate without polluting a real project.
  *
- * The last test is a drift guard: `scripts/smoke-cleanup.mjs` carries a verbatim
+ * The last test is a drift guard: `scripts/smoke/smoke-cleanup.mjs` carries a verbatim
  * copy of the artefact pattern because it must run zero-dependency from a bare
  * checkout. A silent divergence there means the sweeper stops recognising the
  * very names the suites mint — the failure mode is a slow leak with no signal,
@@ -34,7 +34,7 @@ describe('SMOKE_ARTEFACT_PATTERN / smokeArtefactTimestamp', () => {
     ['smoke-1717171717171', 1717171717171],
     ['memories-smoke-1717171717171-restore', 1717171717171],
     ['byod-smoke-1717171717171-global', 1717171717171],
-    // The embedding smoke script's label (scripts/smoke-embeddings.mjs).
+    // The embedding smoke script's label (scripts/smoke/smoke-embeddings.mjs).
     ['embed-smoke-1717171717171-write', 1717171717171],
     ['smoke-1717171717171-org-id-form', 1717171717171],
     ['smoke-1717171717171-tok', 1717171717171],
@@ -247,19 +247,19 @@ describe('describeSweepFailures', () => {
     expect(msg).toContain('memories REST smoke');
     expect(msg).toContain('smoke-1700000000000-a');
     expect(msg).toContain('HTTP 500');
-    expect(msg).toContain('scripts/smoke-cleanup.mjs');
+    expect(msg).toContain('scripts/smoke/smoke-cleanup.mjs');
   });
 });
 
-describe('mirror parity with scripts/smoke-cleanup.mjs', () => {
+describe('mirror parity with scripts/smoke/smoke-cleanup.mjs', () => {
   const sweeperSource = readFileSync(
-    fileURLToPath(new URL('../../../scripts/smoke-cleanup.mjs', import.meta.url)),
+    fileURLToPath(new URL('../../../scripts/smoke/smoke-cleanup.mjs', import.meta.url)),
     'utf8',
   );
 
   it('carries a verbatim copy of the artefact pattern', () => {
     const m = /^const SMOKE_ARTEFACT_PATTERN = (.+);$/m.exec(sweeperSource);
-    expect(m, 'scripts/smoke-cleanup.mjs must declare SMOKE_ARTEFACT_PATTERN at top level').not.toBeNull();
+    expect(m, 'scripts/smoke/smoke-cleanup.mjs must declare SMOKE_ARTEFACT_PATTERN at top level').not.toBeNull();
     expect(m?.[1]).toBe(SMOKE_ARTEFACT_PATTERN.toString());
   });
 

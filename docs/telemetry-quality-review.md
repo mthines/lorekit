@@ -56,7 +56,7 @@ existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
 
 The suites above run **offline** — they never boot an exporter, so nothing they
 run reaches Dash0. That is correct for a fast CI, but it leaves no way to
-**visually** confirm correlation in the backend. `scripts/emit-correlated-trace.mts`
+**visually** confirm correlation in the backend. `scripts/telemetry/emit-correlated-trace.mts`
 is the on-demand tool for exactly that: it emits **one** real, correlated
 cross-service trace to Dash0 and prints its `trace_id`.
 
@@ -65,7 +65,7 @@ cross-service trace to Dash0 and prints its `trace_id`.
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com
 export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <ingesting-only-token>, Dash0-Dataset=lorekit-test'
 
-pnpm emit-trace          # → node --experimental-transform-types scripts/emit-correlated-trace.mts
+pnpm emit-trace          # → node --experimental-transform-types scripts/telemetry/emit-correlated-trace.mts
 ```
 
 It prints the emitted `trace_id`, the endpoint host, the dataset, and the

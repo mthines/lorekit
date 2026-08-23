@@ -236,7 +236,7 @@ export function normalizeHostArch(arch) {
  * the attribute by default. It is emitted ONLY when explicitly overridden via
  * `DEPLOYMENT_ENVIRONMENT` (falling back to `OTEL_DEPLOYMENT_ENVIRONMENT`) — the
  * same single, env-driven knob the edge honours, which the correlated-trace
- * harness (`scripts/emit-correlated-trace.mts`) uses to stamp `test`.
+ * harness (`scripts/telemetry/emit-correlated-trace.mts`) uses to stamp `test`.
  * @param {object} [env]  defaults to process.env
  */
 export function resolveDeploymentEnvironment(env = process.env) {

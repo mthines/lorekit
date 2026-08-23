@@ -12,7 +12,7 @@
  *
  * Run with: deno test --no-check supabase/functions/_shared/otel.error-classification.test.ts
  * (--no-check because the surrounding tree needs the full Supabase import-map
- * to typecheck; `node scripts/deno-check-functions.mjs` is the typecheck gate).
+ * to typecheck; `node scripts/ci/deno-check-functions.mjs` is the typecheck gate).
  */
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { createTracedClient, ExportBatch, Span, type TracedSupabaseClient } from './otel.ts';

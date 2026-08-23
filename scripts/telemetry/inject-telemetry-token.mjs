@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const TARGET = fileURLToPath(
-  new URL('../packages/cli/src/telemetry/telemetry-token.mjs', import.meta.url),
+  new URL('../../packages/cli/src/telemetry/telemetry-token.mjs', import.meta.url),
 );
 
 /**

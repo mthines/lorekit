@@ -166,7 +166,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     // runBestEffortCleanup soft-bounds it below the hook ceiling — so a laggy
     // live endpoint can never make cleanup time out the hook and fail a run
     // whose assertions all passed. Anything left is caught by the always-on
-    // scripts/smoke-cleanup.mjs sweep.
+    // scripts/smoke/smoke-cleanup.mjs sweep.
     await runBestEffortCleanup(() => sweepMintedKeys(NS, 'memories REST smoke'), {
       softTimeoutMs: CLEANUP_SOFT_TIMEOUT,
       context: 'memories REST smoke',

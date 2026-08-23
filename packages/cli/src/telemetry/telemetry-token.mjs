@@ -4,7 +4,7 @@
 // source tree and nothing secret is ever committed to git. The release workflow
 // (.github/workflows/release.yml → publish-cli) overwrites this file at publish
 // time from the LOREKIT_TELEMETRY_TOKEN secret via
-// scripts/inject-telemetry-token.mjs, so only the *published npm tarball*
+// scripts/telemetry/inject-telemetry-token.mjs, so only the *published npm tarball*
 // carries the token.
 //
 // The token is public by design once published (anyone can unpack the tarball),
