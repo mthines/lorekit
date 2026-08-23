@@ -28,6 +28,31 @@ export const CORRELATION_HEADER = 'x-lorekit-correlation-id';
 export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
 
 /**
+ * Response header `POST /memories/search` sets with how many scopes its body
+ * named (`body.scopes.length`), for the SAME reason `RESULT_COUNT_HEADER`
+ * exists: the router must not consume the request body to read `scope`
+ * (`safeValidateScope` only ever sees the query string, which a POST body
+ * never populates), but the handler already parsed it to run the search. This
+ * is the handler surfacing a value back through the one channel the router
+ * already reads post-response, not the router reaching into the body itself.
+ * Feeds `usage_events.scope_count` (migration 00076). Fail-safe: an
+ * absent/garbage value records no count.
+ */
+export const SCOPE_COUNT_HEADER = 'x-lorekit-scope-count';
+
+/**
+ * Response header `POST /memories/search` sets to the single scope it
+ * searched, ONLY when its body named exactly one — mirroring
+ * {@link SCOPE_COUNT_HEADER}'s rationale. A search over ONE scope is exactly
+ * as attributable as a singular `?scope=` filter would be, so it is validated
+ * through the SAME `safeValidateScope` the query-string path uses. A search
+ * over several scopes sets no value here — which of several a read "belongs
+ * to" is genuinely ambiguous, and `SCOPE_COUNT_HEADER` is the honest answer
+ * for that case, not a guessed single scope.
+ */
+export const RESOLVED_SCOPE_HEADER = 'x-lorekit-resolved-scope';
+
+/**
  * Request header naming the SURFACE the call came from (`dashboard` / `cli` /
  * `mcp` / `api`). Read once here, validated against the closed vocabulary by
  * the pure `parseUsageClient`, and attached to every usage event this request
@@ -281,12 +306,22 @@ export function createRouter(routes: Route[], functionName: string) {
         if (usageUserId !== null) {
           // Record count from the handler's own header — fail-safe to null.
           const resultCount = parseResultCountHeader(res.headers.get(RESULT_COUNT_HEADER));
+          // How many scopes an array-bearing body (POST /memories/search)
+          // named, and — only when that count is exactly one — the resolved
+          // scope itself. `usageScope` (query-string-derived) wins when
+          // present; only a query-string-less call (search) falls back to the
+          // header. Read AFTER the handler runs, same as `resultCount` above,
+          // because the body — where `scopes` actually lives — is the
+          // handler's to consume, never the router's.
+          const scopeCount = parseResultCountHeader(res.headers.get(SCOPE_COUNT_HEADER));
+          const scope = usageScope ?? safeValidateScope(res.headers.get(RESOLVED_SCOPE_HEADER));
           recordUsageEvent(resolved.db, {
             userId: usageUserId,
             planName,
             toolName,
             scopeType,
-            scope: usageScope,
+            scope,
+            scopeCount,
             authType: usageAuthType(resolved.auth),
             outcome: await responseOutcome(res),
             durationMs,

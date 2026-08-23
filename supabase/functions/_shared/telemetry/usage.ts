@@ -54,6 +54,16 @@ export interface UsageEventParams {
    */
   scope?: string | null;
   /**
+   * How many scopes an ARRAY-bearing call (`memory.search`'s `scopes`) named
+   * (migration 00076). Undefined for a singular-`scope` tool — the RPC's own
+   * `default null` applies. Exists because `scope` above stays null the
+   * moment a search names more than one scope (which of several it "belongs
+   * to" is ambiguous), so a search over 4 scopes would otherwise be
+   * indistinguishable from one that named none at all; this makes that
+   * distinction data instead of a shrug.
+   */
+  scopeCount?: number | null;
+  /**
    * Memory TAXONOMY — the bucket kind (`lesson`/`bus`/`signal`) and owning host
    * — so usage can be grouped by family and owner, not just tool name. Resolved
    * by `resolveKindHost` (schemas/tags) so it matches what the write STORED.
@@ -99,6 +109,7 @@ export function recordUsageEvent(
     p_correlation_id: params.correlationId ?? undefined,
     p_client:      params.client ?? undefined,
     p_scope:       params.scope ?? undefined,
+    p_scope_count: params.scopeCount ?? undefined,
     // `kind`/`host` have been on `UsageEventParams` and on the writer RPC since
     // 00056, and the MCP handler has been resolving and passing them all along —
     // but they were never in this payload, so the RPC used its defaults and

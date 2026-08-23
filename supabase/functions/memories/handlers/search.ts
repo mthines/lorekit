@@ -72,5 +72,16 @@ export async function handleSearch(
   // Record count for the router's usage event — see RESULT_COUNT_HEADER.
   const res = ok({ ...page, entries: page.entries.map(shapeMemoryRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
+  // Scope attribution for the router's usage event — see SCOPE_COUNT_HEADER /
+  // RESOLVED_SCOPE_HEADER (migration 00076). The router cannot read `scopes`
+  // itself (it must not consume this POST body), so this handler — which just
+  // parsed it to run the search — surfaces it back the same way it already
+  // surfaces the result count. A search over exactly one scope is as
+  // attributable as a singular `?scope=` filter; over several, only the count
+  // is honest.
+  if (body.scopes?.length) {
+    res.headers.set('X-LoreKit-Scope-Count', String(body.scopes.length));
+    if (body.scopes.length === 1) res.headers.set('X-LoreKit-Resolved-Scope', body.scopes[0]);
+  }
   return res;
 }
