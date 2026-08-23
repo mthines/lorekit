@@ -885,12 +885,27 @@ export type Database = {
           p_value: string
         }
         Returns: {
+          archived_at: string | null
           binding_org_slug: string
           created_at: string
           expires_at: string
+          host: string | null
           id: string
           inserted: boolean
+          key: string
+          kind: string | null
           org_routed: boolean
+          origin_branch: string | null
+          origin_commit: string | null
+          origin_pr: number | null
+          origin_repo: string | null
+          scope: string
+          seen_count: number
+          source_agent: string | null
+          tags: string[]
+          trigger: string | null
+          updated_at: string
+          value: string
         }[]
       }
       purge_archived_memories: {
