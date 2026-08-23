@@ -77,7 +77,7 @@ let _activeSampled = false;
  *
  * Flags are `01` when the CLI span is exported and `00` when it is not — the
  * trace id is still carried either way, so the server can correlate. This
- * mirrors `formatTraceparent` in `packages/mcp-core/src/trace-context.ts`
+ * mirrors `formatTraceparent` in `packages/mcp-core/src/telemetry/trace-context.ts`
  * (the CLI is zero-dep `.mjs` and cannot import the TS module); keep the two
  * byte-consistent.
  */

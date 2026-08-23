@@ -10,7 +10,7 @@ import {
 
 // Mock createClient so the real Supabase client (which needs native WebSocket
 // or the `ws` package, unavailable on Node 20 in CI) is never instantiated.
-// Same reason as packages/mcp-core/src/storage-adapter.spec.ts.
+// Same reason as packages/mcp-core/src/db/storage-adapter.spec.ts.
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({ _mock: true })),
 }));

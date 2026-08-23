@@ -52,8 +52,8 @@ const CASES = [
   // ── Other packages: a dashboard preview tells you nothing about these ──────
   ['packages/cli/package.json', false],
   ['packages/cli/src/commands.mjs', false],
-  ['packages/mcp-core/src/scope.ts', false],
-  ['packages/mcp-server/src/index.ts', false],
+  ['packages/mcp-core/src/scope/scope.ts', false],
+  ['packages/smoke-tests/src/smoke.integration.spec.ts', false],
   ['supabase/functions/mcp/index.ts', false],
   ['supabase/migrations/00071_example.sql', false],
   ['scripts/sweep-telemetry.test.mjs', false],

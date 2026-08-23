@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { write } from './write.js';
-import { LimitError, MEMORY_CAP_SQLSTATE } from '../limits.js';
+import { LimitError, MEMORY_CAP_SQLSTATE } from '../limits/limits.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 vi.mock('../telemetry.js', () => ({

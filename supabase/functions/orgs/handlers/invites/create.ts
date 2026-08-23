@@ -73,6 +73,7 @@ export async function handleCreateInvite(
       metadata: { invitee: v.data.email ?? v.data.handle, role: v.data.role },
     },
     auditUserId(auth),
+    span,
   );
 
   return created({ inviteId: data }, cors);

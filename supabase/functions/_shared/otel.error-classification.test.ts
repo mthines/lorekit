@@ -4,7 +4,7 @@
  * 14554528595661769145): `DELETE /memories?scope=…&key=…&org=lorekit-smoke-nonexistent`
  * is a well-known, tested, expected 404 ("unknown_org" raised by the
  * `memory_delete` RPC — see `memories/handlers/remove.ts`'s `removeOrgOwned`
- * and `packages/mcp-server/src/memories-api.integration.spec.ts`'s
+ * and `packages/smoke-tests/src/memories-api.integration.spec.ts`'s
  * "never 400s and never 405s" comment), yet `TracedQuery.then()` unconditionally
  * marked the underlying DB span status=ERROR for ANY Postgrest error other than
  * `PGRST116`, inflating the API's span-error-rate alert with requests it was

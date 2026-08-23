@@ -1,5 +1,5 @@
 // Zero-dependency mirror of the TTL (time-to-live) contract used by the hosted
-// MCP server (packages/mcp-core/src/ttl.ts) and the `memory_write` RPC
+// MCP server (packages/mcp-core/src/limits/ttl.ts) and the `memory_write` RPC
 // (migrations 00030/00031). Keeps the local file store's expiry semantics
 // identical to the remote one, so a memory written offline expires the same way
 // it would have online — and a local↔remote migration is lossless.

@@ -1,14 +1,14 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
-import { translateCapError } from '../limits.js';
-import { translateOrgPermissionError } from '../org-permissions.js';
-import { parseCreatedAt } from '../created-at.js';
-import { parseTtl } from '../ttl.js';
-import { parseOrigin } from '../origin.js';
-import { recordAudit } from '../audit.js';
+import { ScopeSchema, scopeType } from '../scope/scope.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
+import { translateCapError } from '../limits/limits.js';
+import { translateOrgPermissionError } from '../auth/org-permissions.js';
+import { parseCreatedAt } from '../limits/created-at.js';
+import { parseTtl } from '../limits/ttl.js';
+import { parseOrigin } from '../provenance/origin.js';
+import { recordAudit } from '../audit/audit.js';
 import { MemoryKindSchema, resolveKindHost } from '@lorekit/schemas';
 
 const MAX_VALUE_BYTES = 65_536;

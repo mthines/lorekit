@@ -1,4 +1,4 @@
-// Mirror of packages/mcp-core/src/origin.ts, self-contained for the Deno edge
+// Mirror of packages/mcp-core/src/provenance/origin.ts, self-contained for the Deno edge
 // tree (which cannot cross-import the Node package — same pattern as
 // created-at.ts and ttl.ts). Keep behaviourally identical to the mcp-core
 // copy; the vitest suite over that copy is the shared guard, and

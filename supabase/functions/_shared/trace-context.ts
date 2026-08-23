@@ -1,4 +1,4 @@
-// Mirror of packages/mcp-core/src/trace-context.ts, self-contained for the
+// Mirror of packages/mcp-core/src/telemetry/trace-context.ts, self-contained for the
 // Deno edge function (which cannot cross-import the Node package — same
 // pattern as auth-token.ts / created-at.ts / org-permissions.ts). Keep
 // behaviourally identical to the mcp-core copy; the vitest suite over that

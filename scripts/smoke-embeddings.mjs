@@ -27,7 +27,7 @@
  *
  * CLEANUP IS THE POINT, not an afterthought. This writes to a live tenant, so
  * every artefact is minted through the same namespace contract the other live
- * suites use (`packages/mcp-server/src/smoke-cleanup.ts`): the name is
+ * suites use (`packages/smoke-tests/src/smoke-cleanup.ts`): the name is
  * registered AT MINT TIME, carries a timestamp, and matches
  * `SMOKE_ARTEFACT_PATTERN` — so even a run that crashes before cleanup is
  * recognisable to `scripts/smoke-cleanup.mjs`, which sweeps orphans by name.
@@ -44,7 +44,7 @@ const {
 } = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
 const {
   createSmokeNamespace, sweepSmokeArtefacts, describeSweepFailures,
-} = await import(path.join(HERE, '..', 'packages', 'mcp-server', 'src', 'smoke-cleanup.ts'));
+} = await import(path.join(HERE, '..', 'packages', 'smoke-tests', 'src', 'smoke-cleanup.ts'));
 
 // The label is part of the CLOSED set in `SMOKE_ARTEFACT_PATTERN`. Minting
 // outside it would produce a name the orphan sweeper never recognises, so this

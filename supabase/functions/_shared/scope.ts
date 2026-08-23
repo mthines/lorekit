@@ -1,6 +1,6 @@
 /**
  * Canonical scope validation — shared across Edge Functions.
- * Mirrors packages/mcp-core/src/scope.ts for the Deno runtime.
+ * Mirrors packages/mcp-core/src/scope/scope.ts for the Deno runtime.
  */
 
 export type ScopePrefix = 'global' | 'project' | 'repo' | 'branch';
@@ -36,7 +36,7 @@ export function validateScope(raw: string): string {
   // structural. A canonical scope only ever uses word chars plus `. : / -`, so
   // reject anything else — otherwise `project::a",value.not.is.null` would break
   // out of the quoted filter value. (This mirror is intentionally lighter than
-  // packages/mcp-core/src/scope.ts, so this guard must live here in its own right.)
+  // packages/mcp-core/src/scope/scope.ts, so this guard must live here in its own right.)
   if (!/^[\w.:/-]+$/.test(normalized)) {
     throw new UserInputError(`Invalid scope "${raw}": contains unsupported characters`);
   }
@@ -92,14 +92,14 @@ export function parseScopeFilter(raw: string | undefined): string | undefined {
 
 /**
  * The ceiling `usage_events.scope` is stored under (`usage_events_scope_len`,
- * migration 00058), mirroring `packages/mcp-core/src/scope.ts`.
+ * migration 00058), mirroring `packages/mcp-core/src/scope/scope.ts`.
  */
 export const USAGE_SCOPE_MAX = 200;
 
 /**
  * Validate a scope for TELEMETRY, never for authorization.
  *
- * HAND-MIRRORED from `packages/mcp-core/src/scope.ts`, NOT generated. This file
+ * HAND-MIRRORED from `packages/mcp-core/src/scope/scope.ts`, NOT generated. This file
  * is deliberately excluded from `edge-parity.spec.ts`'s MIRRORS list because the
  * two `validateScope` BODIES differ (the edge copy is intentionally lighter —
  * see the note inside it), so a whole-file comparison would be permanently red.

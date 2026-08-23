@@ -1,10 +1,10 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
-import { recordAudit } from '../audit.js';
-import { translateOrgPermissionError } from '../org-permissions.js';
+import { ScopeSchema, scopeType } from '../scope/scope.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
+import { recordAudit } from '../audit/audit.js';
+import { translateOrgPermissionError } from '../auth/org-permissions.js';
 
 export const DeleteInputSchema = z.object({
   scope: ScopeSchema,

@@ -10,7 +10,7 @@
  * actions (same note as webhook-secrets.ts).
  *
  * `recordAuditEvent` is the dashboard-side counterpart of
- * `packages/mcp-core/src/audit.ts`'s `recordAudit` — same non-throwing
+ * `packages/mcp-core/src/audit/audit.ts`'s `recordAudit` — same non-throwing
  * contract: a failed audit write must never break the caller's primary
  * operation (token creation, webhook rotation, …), so every path here
  * swallows and logs its own errors rather than propagating them.

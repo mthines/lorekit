@@ -65,7 +65,7 @@ function toPositiveInt(raw) {
  *
  * A deny list, deliberately: a branch is whatever a contributor named it, and
  * `feat/add+x` / `fix/issue#123` / `feat/café` are all legal. The canonical
- * rule lives in `packages/mcp-core/src/origin.ts` (`parseOriginBranch`); this
+ * rule lives in `packages/mcp-core/src/provenance/origin.ts` (`parseOriginBranch`); this
  * is the zero-dependency CLI copy, kept behaviourally identical so a branch the
  * CLI derives is never one the server would reject.
  */
@@ -155,7 +155,7 @@ export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = git
  * Normalise a candidate `owner/name`, or null when it is not one.
  *
  * The single repo rule for every derivation path, matching the server's
- * `parseOriginRepo` (`packages/mcp-core/src/origin.ts`) — including its
+ * `parseOriginRepo` (`packages/mcp-core/src/provenance/origin.ts`) — including its
  * rejection of a dots-only segment, which `[\\w.-]+` alone admits and which
  * would render as a link to a different repository.
  */

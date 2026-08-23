@@ -182,6 +182,7 @@ export async function handleRemove(
         metadata: { scope: row.scope, key: row.key, force },
       },
       actor,
+      span,
     );
   }
   // Record how many rows this archive/delete touched, so the usage ledger's
@@ -292,6 +293,7 @@ async function removeOrgOwned(
       metadata: { scope, key, force, org },
     },
     auditUserId(auth),
+    span,
   );
 
   // Same rule as the personal branch: report the affected-row count so the
@@ -368,6 +370,7 @@ async function removePersonalByKey(
       metadata: { scope, key, force },
     },
     auditUserId(auth),
+    span,
   );
 
   return noContent(cors);

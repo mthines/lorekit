@@ -22,7 +22,7 @@
 // Reading the union means the same grader is correct in both modes, and the
 // `repeatedMistake` signal — the one the whole experiment turns on — cannot be
 // lost to whichever mode a run happened to use.
-import { validateScope } from "@lorekit/core/src/scope.ts";
+import { validateScope } from "@lorekit/core/src/scope/scope.ts";
 
 import { TARGET_SCOPE } from "../harness/task.mjs";
 import { storeFor } from "../sandbox/store-setup.mjs";

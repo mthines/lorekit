@@ -65,7 +65,7 @@ partial credit exists but never becomes success.
 | 20     | something was written, at an invalid or unrelated scope                                                                                                         |
 | 0      | nothing was written                                                                                                                                             |
 
-Validity is decided by `validateScope` from `packages/mcp-core/src/scope.ts`,
+Validity is decided by `validateScope` from `packages/mcp-core/src/scope/scope.ts`,
 the same function the product enforces. `repeatedMistake` fires when the agent
 made one of the scope-format mistakes the grader recognises — that flag is what
 the whole experiment turns on. Only two of the three kinds (`single-colon` and
@@ -283,7 +283,7 @@ invalidating the harness.
 
 - **Importing the canonical scope validator.** `@lorekit/core` ships no build
   output and declares no `exports` map, so there is no built entry to import.
-  Node ≥ 22.18 strips types on load, so `@lorekit/core/src/scope.ts` imports
+  Node ≥ 22.18 strips types on load, so `@lorekit/core/src/scope/scope.ts` imports
   directly — no build step, and crucially no vendored second validator that
   could drift from the one the product enforces. Pinned by
   `test/integration/cross-package-imports.test.mjs`; the engine floor is in `package.json`.
@@ -331,7 +331,7 @@ and an automated version fails on the PR rather than three weeks into a sweep.
 
 The harness is a leaf consumer. It imports `detectFriction` from
 `packages/cli/src/core/friction.mjs` and `validateScope` from
-`packages/mcp-core/src/scope.ts` and never reproduces either. A harness that
+`packages/mcp-core/src/scope/scope.ts` and never reproduces either. A harness that
 graded with its own copy of the scope rules would keep passing while the product
 changed underneath it, which is the one failure mode that would make every
 number it prints meaningless.

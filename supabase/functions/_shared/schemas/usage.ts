@@ -9,7 +9,7 @@ import { z } from 'npm:zod@3';
  * Query + response shapes for `GET /memories/usage` — aggregate usage
  * statistics read back from `usage_events` (migration 00034).
  *
- * The window tokens are duplicated from `packages/mcp-core/src/usage-stats.ts`
+ * The window tokens are duplicated from `packages/mcp-core/src/telemetry/usage-stats.ts`
  * on purpose: that module is import-free so it can be mirrored verbatim into the
  * edge tree, so it cannot import this schema (and this leaf package cannot
  * import mcp-core). The two lists are tiny and both are unit-tested.

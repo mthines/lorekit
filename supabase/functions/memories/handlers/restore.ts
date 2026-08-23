@@ -105,6 +105,7 @@ export async function handleRestore(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
       auditUserId(auth),
+      span,
     );
     return ok({ restored: true }, cors);
   }
@@ -135,6 +136,7 @@ export async function handleRestore(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: row.key, metadata: { scope: row.scope, key: row.key } },
       actor,
+      span,
     );
   }
   return ok({ restored: true }, cors);
