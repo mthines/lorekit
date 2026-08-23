@@ -28,7 +28,7 @@ import path from 'node:path';
  * `../../../supabase/...` specifier is an `@nx/enforce-module-boundaries` error
  * — correctly, since mcp-core must not depend on the edge tree at build time.
  * Nothing here does: this is a test reaching ACROSS the repo to execute a file
- * it does not own, the same shape `scripts/backfill-embeddings.mjs` uses to load
+ * it does not own, the same shape `scripts/migrations/backfill-embeddings.mjs` uses to load
  * the pure module. The sibling guards (`edge-parity`, `otel-conventions`) read
  * these files with `readFileSync` for the same boundary reason; they can only
  * assert on source text, which is precisely the gap this spec exists to close.

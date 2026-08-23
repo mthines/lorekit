@@ -1,7 +1,7 @@
 {
   "$comment": [
     "Per-function `deno check` error ceilings for supabase/functions/**, enforced by",
-    "scripts/deno-check-functions.mjs and the `edge-typecheck` CI job.",
+    "scripts/ci/deno-check-functions.mjs and the `edge-typecheck` CI job.",
     "",
     "EVERY CEILING IS NOW ZERO, and the ratchet's job has changed accordingly: it",
     "is no longer paying down debt, it is keeping a clean tree clean. A new type",

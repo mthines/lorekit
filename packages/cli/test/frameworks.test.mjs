@@ -155,7 +155,7 @@ test('Codex config declares the feature flag, MCP server, and hooks', () => {
 });
 
 test('the vendored Claude skill is in sync with its source', () => {
-  const res = spawnSync('node', [path.join(REPO, 'scripts', 'sync-plugin-skill.mjs'), '--check'], {
+  const res = spawnSync('node', [path.join(REPO, 'scripts', 'codegen', 'sync-plugin-skill.mjs'), '--check'], {
     encoding: 'utf8',
   });
   assert.equal(res.status, 0, res.stdout + res.stderr);

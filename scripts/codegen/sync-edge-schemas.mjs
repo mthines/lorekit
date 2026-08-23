@@ -29,8 +29,8 @@
  * asserts exactly that relationship, so the copies cannot silently drift.
  *
  * Usage:
- *   node scripts/sync-edge-schemas.mjs           # write the mirror
- *   node scripts/sync-edge-schemas.mjs --check   # fail if it is stale
+ *   node scripts/codegen/sync-edge-schemas.mjs           # write the mirror
+ *   node scripts/codegen/sync-edge-schemas.mjs --check   # fail if it is stale
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -38,7 +38,7 @@ import { dirname, join, resolve } from 'node:path';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const sourceDir = join(repoRoot, 'packages/schemas/src');
 const mirrorDir = join(repoRoot, 'supabase/functions/_shared/schemas');
 
@@ -120,7 +120,7 @@ export function rewriteRelativeImports(source, sourceRel) {
 
 const BANNER = `// GENERATED MIRROR — do not edit.
 // Source: packages/schemas/src/{rel}
-// Regenerate: node scripts/sync-edge-schemas.mjs
+// Regenerate: node scripts/codegen/sync-edge-schemas.mjs
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
 `;
@@ -161,7 +161,7 @@ function main() {
   if (check && stale.length) {
     console.error(
       `Edge schema mirror is stale for:\n  ${stale.join('\n  ')}\n` +
-        'Run: node scripts/sync-edge-schemas.mjs',
+        'Run: node scripts/codegen/sync-edge-schemas.mjs',
     );
     process.exit(1);
   }

@@ -171,8 +171,8 @@ jobs:
       - name: Unit-test the load-test logic
         run: |
           set -euo pipefail
-          node --test scripts/load-test-lib.test.mjs
-          node --test scripts/load-telemetry.test.mjs
+          node --test scripts/load-test/load-test-lib.test.mjs
+          node --test scripts/telemetry/load-telemetry.test.mjs
 
       - name: Run the load test
         env:
@@ -205,7 +205,7 @@ jobs:
             args+=(--ramp --max-rps "${{ inputs.max_rps || '160' }}")
           fi
           echo "load-test args: ${args[*]}"
-          node scripts/load-test.mjs "${args[@]}" | tee load-report.txt
+          node scripts/load-test/load-test.mjs "${args[@]}" | tee load-report.txt
 
       # The report is the artefact worth keeping: the client percentiles and the
       # per-statement delta, on a run whose Dash0 trace may be sampled away.
@@ -236,7 +236,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -uo pipefail
-          node scripts/load-test-cleanup.mjs && rc=0 || rc=$?
+          node scripts/load-test/load-test-cleanup.mjs && rc=0 || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::warning::Residue sweep exited $rc; check the '$TARGET' project for leftover loadtest-* users."
           fi

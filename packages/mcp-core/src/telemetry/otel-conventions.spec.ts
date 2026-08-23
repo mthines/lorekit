@@ -265,7 +265,7 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
   const CHARSET = '[A-Za-z0-9_.\\-:]';
   const sites: Array<[string, string]> = [
     ['CLI restFetch (normalizeRunEnvironment)', 'packages/cli/src/shared/mcp.mjs'],
-    ['orphan sweeper (runEnvHeaders)', 'scripts/smoke-cleanup.mjs'],
+    ['orphan sweeper (runEnvHeaders)', 'scripts/smoke/smoke-cleanup.mjs'],
   ];
 
   it.each(sites)('%s uses the shared charset and a 64-char bound', (_label, rel) => {

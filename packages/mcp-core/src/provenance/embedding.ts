@@ -5,7 +5,7 @@
  * embeds as, how a provider request is shaped, how its response is validated,
  * how a batch is sized, what a run costs. The impure half — the actual `fetch`,
  * the API key, the clock — lives in `supabase/functions/_shared/embedding-client.ts`
- * and in `scripts/backfill-embeddings.mjs`, which are the two places that can
+ * and in `scripts/migrations/backfill-embeddings.mjs`, which are the two places that can
  * reach a network.
  *
  * The split is the `github-app-jwt.ts` pattern, and it matters more here than

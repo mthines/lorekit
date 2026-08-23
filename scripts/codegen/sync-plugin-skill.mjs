@@ -3,13 +3,13 @@
 // Source of truth: packages/cli/skill/<skill>
 // Vendored copy:   plugins/lorekit-claude/skills/<skill>
 //
-//   node scripts/sync-plugin-skill.mjs          copy source → plugin (all skills)
-//   node scripts/sync-plugin-skill.mjs --check  exit 1 if they differ (CI)
+//   node scripts/codegen/sync-plugin-skill.mjs          copy source → plugin (all skills)
+//   node scripts/codegen/sync-plugin-skill.mjs --check  exit 1 if they differ (CI)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SRC_ROOT = path.join(ROOT, 'packages/cli/skill');
 const DEST_ROOT = path.join(ROOT, 'plugins/lorekit-claude/skills');
 
@@ -57,7 +57,7 @@ if (check) {
   }
   if (diffs.length) {
     console.error('Plugin skills out of sync with source:\n  ' + diffs.join('\n  '));
-    console.error('Run: node scripts/sync-plugin-skill.mjs');
+    console.error('Run: node scripts/codegen/sync-plugin-skill.mjs');
     process.exit(1);
   }
   console.log(`Plugin skills are in sync (${srcSkills.length}).`);

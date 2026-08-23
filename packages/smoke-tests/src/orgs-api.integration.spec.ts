@@ -59,7 +59,7 @@ const tokenCanRead = isLkToken && (tokenPrefix.startsWith('lk_rw_') || tokenPref
 const tokenCanWrite = isLkToken && (tokenPrefix.startsWith('lk_rw_') || tokenPrefix.startsWith('lk_wo_'));
 
 // Slug must be unique and match ^[a-z0-9][a-z0-9-]*[a-z0-9]$. Minted through the
-// shared namespace so `scripts/smoke-cleanup.mjs` recognises an orphaned org by
+// shared namespace so `scripts/smoke/smoke-cleanup.mjs` recognises an orphaned org by
 // its slug, and so both suites below share one run identifier.
 const NS = createSmokeNamespace('smoke');
 const TEST_SLUG = NS.name('test');
@@ -166,10 +166,10 @@ async function purgeOrg(slug: string, token: string | null | undefined = JWT): P
     // Purge refused (no JWT, or a credential that does not own the org). Fall
     // back to the soft delete so the org at least stops being visible, and say
     // so — the row is now only reachable by the service-role sweep in
-    // scripts/smoke-cleanup.mjs.
+    // scripts/smoke/smoke-cleanup.mjs.
     console.warn(
       `  ⚠ could not purge org ${slug} (HTTP ${res.status}); falling back to a soft delete. ` +
-        'Run `node scripts/smoke-cleanup.mjs` with LOREKIT_SWEEP_SERVICE_ROLE_KEY to remove it.',
+        'Run `node scripts/smoke/smoke-cleanup.mjs` with LOREKIT_SWEEP_SERVICE_ROLE_KEY to remove it.',
     );
     await restFetch('DELETE', `/${slug}`, undefined, token);
   } catch (err) {

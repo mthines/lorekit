@@ -44,9 +44,9 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import { exportSweep } from './sweep-telemetry.mjs';
+import { exportSweep } from '../telemetry/sweep-telemetry.mjs';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 // ── argv ─────────────────────────────────────────────────────────────────────
 

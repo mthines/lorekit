@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Freshness and portability guard for `scripts/gen-surfaces.mjs`.
+ * Freshness and portability guard for `scripts/codegen/gen-surfaces.mjs`.
  *
  * The generator emits the surface artifacts that cannot simply import the tool
  * catalog. A committed generated file has one failure mode — it silently goes
@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../../..');
-const generator = 'scripts/gen-surfaces.mjs';
+const generator = 'scripts/codegen/gen-surfaces.mjs';
 const cliArtifact = 'packages/cli/src/surfaces.generated.mjs';
 const edgeArtifact = 'supabase/functions/mcp/tool-dispatch.generated.ts';
 
@@ -76,7 +76,7 @@ function runGenerator(args: string[], cwd = repoRoot): string {
  */
 function sandbox(): { dir: string; dispose: () => void } {
   const dir = mkdtempSync(path.join(tmpdir(), 'gen-surfaces-'));
-  mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+  mkdirSync(path.join(dir, 'scripts/codegen'), { recursive: true });
   mkdirSync(path.join(dir, 'packages/schemas/src/shared'), { recursive: true });
   copyFileSync(path.join(repoRoot, generator), path.join(dir, generator));
   copyFileSync(
@@ -204,7 +204,7 @@ describe('the published CLI artifact stays publishable', () => {
   it('carries the GENERATED banner naming its source and regenerate command', () => {
     expect(artifact()).toContain('GENERATED — do not edit.');
     expect(artifact()).toContain('packages/schemas/src/shared/tool-catalog.ts');
-    expect(artifact()).toContain('node scripts/gen-surfaces.mjs');
+    expect(artifact()).toContain('node scripts/codegen/gen-surfaces.mjs');
   });
 
   /**

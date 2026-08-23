@@ -117,7 +117,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
   if (method === 'tools/list') {
     // Rendered from the canonical catalog in packages/schemas/src/shared/tool-catalog.ts
-    // (mirrored here by scripts/sync-edge-schemas.mjs). The same catalog renders
+    // (mirrored here by scripts/codegen/sync-edge-schemas.mjs). The same catalog renders
     // the MCP tools section of llms.txt, so the wire contract and the published
     // docs cannot drift. Add a tool there AND to the dispatch maps above.
     return jsonrpc(id, { tools: wireTools() });

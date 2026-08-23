@@ -55,9 +55,9 @@ on:
 
           The CANONICAL definition — with the rationale for every path on it and
           the two notable ones off it (`ci.yml`, `pnpm-lock.yaml`) — is
-          `scripts/web-preview-filter.mjs`. This default and ci.yml's
+          `scripts/ci/web-preview-filter.mjs`. This default and ci.yml's
           `web_preview` grep are copies of that string, held to it by
-          `scripts/web-preview-filter.test.mjs` rather than by discipline;
+          `scripts/ci/web-preview-filter.test.mjs` rather than by discipline;
           neither consumer can import the module (this step runs before the
           checkout, that job runs before any toolchain setup).
         required: false

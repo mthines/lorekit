@@ -78,7 +78,7 @@ import {
   summarize,
   totals,
 } from './load-test-lib.mjs';
-import { exportLoad } from './load-telemetry.mjs';
+import { exportLoad } from '../telemetry/load-telemetry.mjs';
 
 // ── argv ─────────────────────────────────────────────────────────────────────
 

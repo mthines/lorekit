@@ -211,15 +211,15 @@ new Dash0 credentials — the `profiling` function exports through the same
 
 Full runbook, flags and how to read the output: [benchmarking.md](./benchmarking.md).
 
-`scripts/sweep-rows.mjs` is the companion experiment to the metrics above, and
+`scripts/migrations/sweep-rows.mjs` is the companion experiment to the metrics above, and
 it answers a different question. The query metrics tell you what production is
 doing *now*; the sweep tells you what it will do at 10× the rows — by growing
 one user to 100k and measuring the same probes at each rung.
 
 ```bash
 pnpm nx sweep supabase                                   # defaults
-node scripts/sweep-rows.mjs --rungs 1000,5000,25000 --iterations 40
-node scripts/sweep-rows.mjs --database-url postgresql://…  # bring your own DB
+node scripts/migrations/sweep-rows.mjs --rungs 1000,5000,25000 --iterations 40
+node scripts/migrations/sweep-rows.mjs --database-url postgresql://…  # bring your own DB
 ```
 
 Add `--dry-run` to build the payloads and write them to `$TMPDIR` without
@@ -759,7 +759,7 @@ All signals carry these resource attributes:
 | `service.namespace` | `lorekit` |
 | `service.name` | `api` (Edge Functions), `web` (Next.js), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI and the edge (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. On the edge it is set per Supabase project by `deploy.yml` — see below. |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI and the edge (used by `scripts/telemetry/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. On the edge it is set per Supabase project by `deploy.yml` — see below. |
 
 ### The edge's environment is set by the deploy pipeline, not inferred
 
@@ -917,7 +917,7 @@ change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
    secret **`LOREKIT_TELEMETRY_TOKEN`**.
 
 The `publish-cli` job in `.github/workflows/release.yml` runs
-`scripts/inject-telemetry-token.mjs`, which rewrites the committed-empty
+`scripts/telemetry/inject-telemetry-token.mjs`, which rewrites the committed-empty
 `src/telemetry-token.mjs` with the secret just before `npm publish`. Run bare, a
 missing secret is a **silent no-op** and the CLI publishes emitting nothing — the
 exact failure that goes unnoticed for days. Pass `--require` to make that a failed

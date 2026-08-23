@@ -21,7 +21,7 @@ import {
   CLI_OUTCOME_VALUES,
 } from '../src/telemetry/telemetry.mjs';
 import { TELEMETRY_TOKEN } from '../src/telemetry/telemetry-token.mjs';
-import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
+import { injectToken } from '../../../scripts/telemetry/inject-telemetry-token.mjs';
 
 // A base env with the baked-in default endpoint authenticated via explicit
 // headers, so tests don't depend on whether DEFAULT_TOKEN is filled in.
@@ -888,7 +888,7 @@ test('resolveTelemetryTokenSource names the credential source in priority order'
 test('inject-telemetry-token --require refuses to publish a telemetry-blind CLI', async () => {
   const { spawnSync } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
-  const script = fileURLToPath(new URL('../../../scripts/inject-telemetry-token.mjs', import.meta.url));
+  const script = fileURLToPath(new URL('../../../scripts/telemetry/inject-telemetry-token.mjs', import.meta.url));
 
   const withoutSecret = spawnSync(process.execPath, [script, '--require'], {
     encoding: 'utf8',

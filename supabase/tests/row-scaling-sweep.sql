@@ -54,7 +54,7 @@
 --
 -- USAGE
 -- -----
---   scripts/sweep-rows.mjs does all of this for you against a throwaway
+--   scripts/migrations/sweep-rows.mjs does all of this for you against a throwaway
 --   cluster. To drive it by hand, against a database that already has the
 --   bootstrap + every migration applied:
 --
@@ -117,7 +117,7 @@ create table sweep_timings (
 );
 
 -- The four tables below exist so the run is MACHINE-readable, not just
--- printable. `scripts/sweep-telemetry.mjs` reads them as JSON and ships the
+-- printable. `scripts/telemetry/sweep-telemetry.mjs` reads them as JSON and ships the
 -- result to Dash0, which is what makes two runs comparable — a terminal table
 -- answers "how slow is it" once, a time series answers "did the index help".
 drop table if exists sweep_phases;

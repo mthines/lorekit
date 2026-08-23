@@ -21,7 +21,7 @@
  *
  *  2. **The process never reached `afterAll` at all** — a crash, an OOM, a
  *     cancelled workflow, a 6h job timeout. No in-process hook can cover that,
- *     so `scripts/smoke-cleanup.mjs` sweeps leftovers from PREVIOUS runs by
+ *     so `scripts/smoke/smoke-cleanup.mjs` sweeps leftovers from PREVIOUS runs by
  *     matching this module's artefact pattern. That script is standalone
  *     (zero-dep `.mjs`, runnable as an `if: always()` CI step), so the pattern
  *     is mirrored there and `smoke-cleanup.spec.ts` guards the two against
@@ -49,7 +49,7 @@
  * standalone sweeper reads the mint time out of the name: an orphan can only be
  * distinguished from a run that is still in flight by its age.
  *
- * MIRROR: `scripts/smoke-cleanup.mjs` carries a verbatim copy (it is a zero-dep
+ * MIRROR: `scripts/smoke/smoke-cleanup.mjs` carries a verbatim copy (it is a zero-dep
  * standalone script and cannot import this module). `smoke-cleanup.spec.ts`
  * fails if the two diverge.
  */
@@ -122,7 +122,7 @@ export function createSmokeNamespace(label: string, now: number = Date.now()): S
     throw new Error(
       `smoke label "${label}" produces "${prefix}", which SMOKE_ARTEFACT_PATTERN does not match — ` +
         'the orphan sweeper would never clean it up. Add the label to the pattern ' +
-        '(packages/smoke-tests/src/smoke-cleanup.ts AND scripts/smoke-cleanup.mjs) first.',
+        '(packages/smoke-tests/src/smoke-cleanup.ts AND scripts/smoke/smoke-cleanup.mjs) first.',
     );
   }
   const minted: string[] = [];
@@ -220,7 +220,7 @@ export async function sweepSmokeArtefacts(
  * A teardown sweep is not a test: if it is slow or errors, the run must still
  * report the truth about what was under test. This races the cleanup against a
  * soft timeout set well under vitest's hook ceiling — if cleanup overruns, it
- * warns and returns (the always-on `scripts/smoke-cleanup.mjs` sweep removes
+ * warns and returns (the always-on `scripts/smoke/smoke-cleanup.mjs` sweep removes
  * whatever was left); if it throws, that is swallowed with a warning too. Either
  * way the returned promise resolves, so the enclosing `afterAll` can neither
  * time out nor reject on cleanup alone.
@@ -234,7 +234,7 @@ export async function runBestEffortCleanup(
     timer = setTimeout(() => {
       console.warn(
         `\n  ⚠ SMOKE CLEANUP TIMED OUT (${opts.context}) after ${opts.softTimeoutMs}ms — ` +
-          'leaving the rest to `scripts/smoke-cleanup.mjs`.',
+          'leaving the rest to `scripts/smoke/smoke-cleanup.mjs`.',
       );
       resolve();
     }, opts.softTimeoutMs);
@@ -280,8 +280,8 @@ export function describeSweepFailures(
   const followUp =
     opts.sweeperCovers === false
       ? '    Nothing else will remove them: this suite writes to its own project, which\n' +
-        '    `scripts/smoke-cleanup.mjs` does not target. Delete them by hand.\n'
-      : '    They will be removed by the next `node scripts/smoke-cleanup.mjs` sweep.\n';
+        '    `scripts/smoke/smoke-cleanup.mjs` does not target. Delete them by hand.\n'
+      : '    They will be removed by the next `node scripts/smoke/smoke-cleanup.mjs` sweep.\n';
   return (
     `\n  ⚠ SMOKE CLEANUP INCOMPLETE (${context}) — ${report.failed.length} artefact(s) were left behind:\n` +
     `${lines}\n` +

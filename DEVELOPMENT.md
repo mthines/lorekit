@@ -125,8 +125,8 @@ The Claude plugin ships a copy of the skill under
 `plugins/lorekit-claude/skills/`. If you edit `packages/cli/skill/`, re-sync it:
 
 ```bash
-node scripts/sync-plugin-skill.mjs           # apply
-node scripts/sync-plugin-skill.mjs --check   # verify (what CI does)
+node scripts/codegen/sync-plugin-skill.mjs           # apply
+node scripts/codegen/sync-plugin-skill.mjs --check   # verify (what CI does)
 ```
 
 ## Backend (Supabase)

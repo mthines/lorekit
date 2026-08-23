@@ -32,7 +32,7 @@ if (!endpoint || !token) {
 }
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(HERE, '..', 'packages', 'cli', 'bin', 'lorekit.mjs');
+const BIN = path.join(HERE, '..', '..', 'packages', 'cli', 'bin', 'lorekit.mjs');
 const EXPECTED_TOOLS = ['memory.write', 'memory.read', 'memory.list', 'memory.search', 'memory.delete', 'memory.archive'];
 // Watchdog so this can never hang a timeout-less CI job: the per-call fetch abort
 // is ~10s, so a healthy run finishes well under this; if the child stalls or never

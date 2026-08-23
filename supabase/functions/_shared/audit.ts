@@ -30,7 +30,7 @@
  * VOCABULARY: `AUDIT_ACTIONS` / `AuditAction` are NOT declared here. They come
  * from the generated schema mirror `./schemas/audit.ts` (source of truth:
  * `packages/schemas/src/domain/audit.ts`, mirrored by
- * `node scripts/sync-edge-schemas.mjs`) and are re-exported so every existing
+ * `node scripts/codegen/sync-edge-schemas.mjs`) and are re-exported so every existing
  * importer of this module is unchanged. The import path MUST stay relative —
  * `edge-bare-specifier.spec.ts` fails the build on a bare specifier, and the
  * edge runtime is given no import map. Before the list was centralised, the

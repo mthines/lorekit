@@ -14,7 +14,7 @@
  *
  * Zero imports on purpose. It is mirrored verbatim into
  * `supabase/functions/_shared/schemas/tool-catalog.ts` for the self-contained
- * Deno edge runtime (`node scripts/sync-edge-schemas.mjs`, guarded by
+ * Deno edge runtime (`node scripts/codegen/sync-edge-schemas.mjs`, guarded by
  * `edge-schema-parity.spec.ts`), and it is read by a generator that runs on a
  * bare checkout with no `node_modules`. A `zod` import would break both.
  *

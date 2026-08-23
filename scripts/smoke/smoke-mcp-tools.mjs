@@ -77,9 +77,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { MCP_TOOL_DEFS, MCP_TOOL_NAMES } from '../packages/cli/src/surfaces.generated.mjs';
+import { MCP_TOOL_DEFS, MCP_TOOL_NAMES } from '../../packages/cli/src/surfaces.generated.mjs';
 
-const CLI_BIN = fileURLToPath(new URL('../packages/cli/bin/lorekit.mjs', import.meta.url));
+const CLI_BIN = fileURLToPath(new URL('../../packages/cli/bin/lorekit.mjs', import.meta.url));
 // A throwaway home-tier store, so a CLI check can never read or write the
 // operator's real `~/.lorekit`.
 const LOCAL_HOME = mkdtempSync(path.join(tmpdir(), 'lorekit-smoke-'));

@@ -85,7 +85,7 @@ verify_jwt = false
 # tried and did NOT reach the local `supabase start` runtime.
 #
 # The schemas are now mirrored into `supabase/functions/_shared/schemas/`
-# (`node scripts/sync-edge-schemas.mjs`, guarded by `edge-schema-parity.spec.ts`)
+# (`node scripts/codegen/sync-edge-schemas.mjs`, guarded by `edge-schema-parity.spec.ts`)
 # and imported relatively, matching the `limits.ts` / `permissions.ts` mirrors
 # and the "Edge Function is self-contained Deno" decision in CLAUDE.md. mcp and
 # health always followed that rule, which is exactly why they never broke.
