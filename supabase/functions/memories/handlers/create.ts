@@ -212,6 +212,7 @@ export async function handleCreate(
       metadata: { scope: body.scope, key: body.key },
     },
     auditUserId(auth),
+    span,
   );
   return created(entry, cors);
 }

@@ -11,7 +11,7 @@ import { isCanonicalScope } from './scope';
 // is the case it cannot serve. Nothing shipped to the browser imports this —
 // the file is a `.spec.ts`, excluded from the Next.js build. The alternative
 // (re-stating the edge grammar here) is precisely the drift being guarded
-// against. `packages/mcp-core/src/edge-parity.spec.ts` reaches across the same
+// against. `packages/mcp-core/src/edge/edge-parity.spec.ts` reaches across the same
 // boundary for the same reason, via `readFileSync`.
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { parseScopeFilter } from '../../../../supabase/functions/_shared/scope.ts';

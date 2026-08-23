@@ -15,7 +15,7 @@
  * `rest-tool-name.ts` maps `memories POST /purge` to `memory.purge`, so the
  * two surfaces name the same operation the same way and no second list exists.
  *
- * Self-contained mirror of `packages/mcp-core/src/account-wide-tools.ts` (the
+ * Self-contained mirror of `packages/mcp-core/src/auth/account-wide-tools.ts` (the
  * edge tree cannot cross-import that package). Keep the two in sync;
  * `edge-parity.spec.ts` fails when they drift.
  */

@@ -108,7 +108,7 @@ export async function write(args) {
   // string, so this is also the only thing standing between a local write and
   // a scope the hosted API would reject with a 400. It is a PARTIAL gate, not
   // an equivalent one: `scopeIssue` checks the segment SHAPE (`[^/]+/[^/]+`)
-  // where `packages/mcp-core/src/scope.ts` additionally restricts the CHARSET
+  // where `packages/mcp-core/src/scope/scope.ts` additionally restricts the CHARSET
   // (`[\w.-]+/[\w.-]+`), so `repo::a b/c,d` and `branch::o/r::a",x` pass here
   // and still 400 remotely. Tightening the CLI to match would also change what
   // `lint`'s malformed-scope rule flags in existing offline stores, so it is a

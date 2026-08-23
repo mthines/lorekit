@@ -85,7 +85,7 @@ Handlers issue concurrent queries (`Promise.all`); adding two 40 ms queries that
 ran side by side would claim 80 ms of wait in a request that waited 40, and the
 self time computed from it would go negative — reading as "instant" on exactly
 the requests worth investigating. The merge lives in the pure
-`packages/mcp-core/src/io-ledger.ts` (mirrored to `_shared/`) so it is unit
+`packages/mcp-core/src/telemetry/io-ledger.ts` (mirrored to `_shared/`) so it is unit
 tested rather than only observable as a wrong number on a chart.
 
 Useful queries:
@@ -119,9 +119,10 @@ mostly "awaiting fetch". `createTracedClient` already opens a CLIENT span per
 round-trip, so the trace waterfall already attributes request time to specific
 queries — better than a profile would.
 
-**`packages/mcp-server/` is the one component that could be truly profiled**, if
-it were ever deployed to a VM or Kubernetes where the eBPF profiler can attach.
-Nothing deploys it today.
+A prior Node.js MCP server (`packages/mcp-server/`) would have been the one
+component that could be truly profiled, if it were ever deployed to a VM or
+Kubernetes where the eBPF profiler can attach. It was never deployed and has
+since been removed.
 
 ### What we profile instead
 
@@ -756,9 +757,9 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
+| `service.name` | `api` (Edge Functions), `web` (Next.js), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI, the Node MCP server, and the edge (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. On the edge it is set per Supabase project by `deploy.yml` — see below. |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on the CLI and the edge (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below); `web` does **not** read it, and derives the value from `VERCEL_ENV` **cross-checked against `NODE_ENV`** — see below. On the edge it is set per Supabase project by `deploy.yml` — see below. |
 
 ### The edge's environment is set by the deploy pipeline, not inferred
 
@@ -836,7 +837,7 @@ three emitters through one knob:
 - **Edge** (`api` — every REST/MCP request a smoke makes): the client forwards
   the value as the `X-LoreKit-Deployment-Environment` request header — the CLI's
   `restFetch` does it automatically from the same env var, and the REST/MCP smoke
-  specs send it via `testRunHeaders` (`packages/mcp-server/src/smoke-telemetry.ts`).
+  specs send it via `testRunHeaders` (`packages/smoke-tests/src/smoke-telemetry.ts`).
   `traceRequest` applies it to that request's span batch as
   `deployment.environment.name`. The edge's own `deployment.environment.name` is a
   per-deployment resource attribute it cannot change per request, so the header is
@@ -1096,7 +1097,7 @@ Canonical detail for the **OTel attributes** summary in the root [`CLAUDE.md`](.
   parses the inbound header; an invalid one falls back to a new root trace instead of a corrupt
   span. Responses carry a `traceparent` back (exposed via `Access-Control-Expose-Headers`) so a
   client can correlate with the server span.
-- **The parser** is `packages/mcp-core/src/trace-context.ts` (`parseTraceparent` /
+- **The parser** is `packages/mcp-core/src/telemetry/trace-context.ts` (`parseTraceparent` /
   `formatTraceparent` / `isValidTraceId` / `isValidSpanId`), import-free and mirrored verbatim
   to `supabase/functions/_shared/trace-context.ts`; drift is parity-guarded by
   `edge-parity.spec.ts`. Strict W3C validation: lowercase hex only, no all-zero ids, version
@@ -1118,7 +1119,6 @@ unique.
 | `service.name` | Component | Set in |
 |---|---|---|
 | `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
-| `mcp` | Node MCP server (Fly.io) | `OTEL_SERVICE_NAME`, default in `packages/mcp-server/src/instrumentation.ts` |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts` (server), `packages/web/src/lib/dash0-rum.ts` (browser). Both pin the literal `web`; `otel-conventions.spec.ts` asserts the two agree, because server and browser are ONE service told apart by `telemetry.sdk.language`, not by name |
 | `cli` | CLI | `packages/cli/src/telemetry.mjs` |
 
@@ -1133,12 +1133,10 @@ unique.
   project-wide, not per-function, so one value can never name five functions — the previous
   attempt left `mcp` and `health` silently sharing a fallback name. The `SERVICE_NAME` env var
   is still honoured as an escape hatch, but nothing needs to set it and `config.toml` sets none.
-- `service.namespace` is **`lorekit`** everywhere — hard-coded in each component's resource
-  (including `packages/mcp-server/src/instrumentation.ts`, which no longer delegates it to
-  `OTEL_RESOURCE_ATTRIBUTES`), never env-dependent.
-- The Node MCP server is `mcp`: the `lorekit` namespace already carries the product, and the
-  edge functions report `api` (told apart by `faas.name`), so `mcp` names this Fly.io
-  deployment cleanly with no service-map collision. It stays its own service, distinct from the
-  edge `api`, because it is a separate deployment (Fly.io) with its own lifecycle.
+- `service.namespace` is **`lorekit`** everywhere — hard-coded in each component's resource,
+  never env-dependent.
+- A prior Node.js MCP server (`packages/mcp-server/`, reported as its own `mcp` service — a
+  separate Fly.io deployment with its own lifecycle) was never deployed and has since been
+  removed. The `mcp` name is free again; it is not currently in use.
 - The Supabase origin pattern used for browser + server trace-context propagation lives in one
   place: `packages/web/src/lib/otel-origins.ts`.

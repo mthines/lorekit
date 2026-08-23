@@ -62,7 +62,7 @@ export function seenCountOf(row) {
  * Deliberately a small structural read of an already-canonical scope string
  * rather than a re-implementation of scope VALIDATION — the rows come straight
  * from the store, so their scopes are already the canonical `::` form. The
- * validator (`@lorekit/core/src/scope.ts`) remains the authority on validity;
+ * validator (`@lorekit/core/src/scope/scope.ts`) remains the authority on validity;
  * this only extracts the repo segment from a valid one.
  */
 export function repoOfScope(scope) {

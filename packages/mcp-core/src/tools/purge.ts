@@ -1,8 +1,8 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
-import { recordAudit } from '../audit.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
+import { recordAudit } from '../audit/audit.js';
 
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
 

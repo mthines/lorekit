@@ -131,7 +131,7 @@ here:
   [the CLI README](../packages/cli/README.md#default-ttl).
 - The GitHub webhook receiver sets a TTL graded by the delivery's signal tier —
   90 days for a resolved review thread, 30 for a submitted review, 14 for a
-  fresh comment (`packages/mcp-core/src/ttl-defaults.ts`).
+  fresh comment (`packages/mcp-core/src/limits/ttl-defaults.ts`).
 
 An agent calling this tool directly gets neither: it cannot read a config file
 on someone's laptop, so if a lesson should decay it has to say so with
