@@ -247,7 +247,7 @@ jobs:
         # run, so a re-run is safe; a real regression still fails after attempt 2.
         run: |
           for attempt in 1 2; do
-            pnpm nx test mcp-server -- smoke.integration && break
+            pnpm nx test smoke-tests -- smoke.integration && break
             rc=$?
             if [ "$attempt" -eq 2 ]; then
               echo "::error::smoke.integration failed after $attempt attempts"
@@ -270,7 +270,7 @@ jobs:
       #   • byod-smoke.integration.spec.ts absent → --passWithNoTests keeps it green.
       # Only a real BYOD assertion failure fails the step.
       - name: Run BYOD integration test (all four scope types)
-        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        run: pnpm nx test smoke-tests -- byod-smoke.integration --passWithNoTests
         env:
           LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
           LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}

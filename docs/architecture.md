@@ -54,11 +54,11 @@ LoreKit is a shared memory layer for AI coding agents. Agents write lessons they
 | Package | Path | Runtime | Role |
 |---------|------|---------|------|
 | `@lorekit/core` | `packages/mcp-core/` | Node.js | Scope validator, DB client wrappers, 10 tool handlers, OTel tracer/meter |
-| `@lorekit/server` | `packages/mcp-server/` | Node.js | HTTP entry point, auth middleware, GitHub webhook, OTel SDK init (for Fly.io deployment) |
 | `@lorekit/web` | `packages/web/` | Vercel / Next.js 15 | Dashboard: login, lore explorer, activity feed, overview + onboarding |
 | `supabase` | `supabase/` | Deno (Edge Functions) | Self-contained MCP server + health check + migrations |
+| `@lorekit/smoke-tests` | `packages/smoke-tests/` | Node.js (vitest) | Live-endpoint integration tests against the deployed Edge Functions — no application code |
 
-> The Edge Functions (`supabase/functions/mcp/`, `supabase/functions/health/`) are the **production MCP server**. `packages/mcp-server/` is the Node.js variant for deployments where full OTel instrumentation matters (Fly.io).
+> The Edge Functions (`supabase/functions/mcp/`, `supabase/functions/health/`) are the **production MCP server** — the only one. A prior Node.js/Fly.io variant (`packages/mcp-server/`) was never deployed and has been removed; `packages/smoke-tests/` keeps the live-endpoint integration specs that used to live alongside it.
 
 ---
 
@@ -211,7 +211,7 @@ Key columns: `user_id`, `org_id`, `plan_name`, `tool_name`, `scope_type`, `auth_
 `tool_name` draws from ONE vocabulary across both surfaces — a REST route
 reports the MCP tool it is the equivalent of (`rest-tool-name.ts`), so
 `POST /memories` and `memory.write` aggregate as one series. The valid set is
-closed and declared in `packages/mcp-core/src/telemetry-vocabulary.ts`: the
+closed and declared in `packages/mcp-core/src/telemetry/telemetry-vocabulary.ts`: the
 catalog's tool names, plus the REST-only operations, each carrying the reason it
 has no MCP tool. The five dashboard analytics reads (`/usage`, `/tags`,
 `/facets`, `/activity`, `/read-activity`) carry a `restOnly` reason — they are

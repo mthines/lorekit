@@ -47,7 +47,7 @@ export const PURGE_RETENTION_DAYS_DEFAULT = 30;
  * `PURGE_RETENTION_DAYS_DEFAULT` precedent directly above: this file is
  * self-contained Deno and the authoritative declaration is
  * `packages/schemas/src/memory.ts` (`LIST_PREVIEW_CHARS`), kept honest by
- * `packages/mcp-core/src/list-view-parity.spec.ts`.
+ * `packages/mcp-core/src/ranking/list-view-parity.spec.ts`.
  */
 const LIST_PREVIEW_CHARS = 200;
 

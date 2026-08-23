@@ -24,7 +24,7 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 - **`actorUserId(auth)`** — the actor to pass as `p_actor_user_id` to an org RPC. See below.
 - `auditUserId(auth)` — the `audit_log.user_id` actor: **the resolved user for BOTH `api_key`
   and user-JWT callers, `null` only for service-role.** Re-exported from the pure, unit-tested
-  `_shared/rest-audit-actor.ts` (mirror of `packages/mcp-core/src/rest-audit-actor.ts`), so the
+  `_shared/rest-audit-actor.ts` (mirror of `packages/mcp-core/src/audit/rest-audit-actor.ts`), so the
   rule has a test home — this file has none.
   **It used to return `null` for JWT callers, and that was a bug, not a design.** A JWT caller
   gets `userClient(jwt)` (ANON_KEY + `Authorization: Bearer <jwt>`), so RLS applies and
@@ -63,7 +63,7 @@ Rules:
 
 1. **Always the helper, never an inlined `auth.userId ?? null`.** Forgetting the argument breaks
    only the api_key tier, which no JWT-based test exercises — so the consistency has to be
-   structural, not remembered. `packages/mcp-core/src/org-actor-usage.spec.ts` enforces both the
+   structural, not remembered. `packages/mcp-core/src/auth/org-actor-usage.spec.ts` enforces both the
    presence of `p_actor_user_id` and that it comes from `actorUserId`.
 2. **It is not caller input.** `auth.userId` comes from the `api_tokens` row matched by token
    hash, or from the verified JWT — so a caller can only ever act as the identity its credential
@@ -93,22 +93,22 @@ Rules:
   a per-handler call is one the next handler forgets. The writer is `_shared/usage.ts`
   (`recordUsageEvent` / `getUserPlanName`), shared with the MCP handler — `mcp/limits.ts`
   re-exports it, it is not a second copy. The route→`tool_name` mapping is the pure, unit-tested
-  `_shared/rest-tool-name.ts` (mirror of `packages/mcp-core/src/rest-tool-name.ts`), which maps
+  `_shared/rest-tool-name.ts` (mirror of `packages/mcp-core/src/rest/rest-tool-name.ts`), which maps
   each REST route onto the MCP tool name it is the equivalent of (`POST /memories` →
   `memory.write`) so the two surfaces aggregate as one series.   Guard: `auth.type !== 'service'`
   and a resolved user; there is no BYOD/`supportsHostedBilling` equivalent because the REST
   functions have no storage adapter and always target the hosted database.
 - The response→`usage_events.outcome` classification is the pure, unit-tested
   `_shared/rest-response-outcome.ts` (`classifyResponseOutcome(status, bodyCode)`, mirror of
-  `packages/mcp-core/src/rest-response-outcome.ts`). Only the body read for the 429 cap-vs-rate
+  `packages/mcp-core/src/rest/rest-response-outcome.ts`). Only the body read for the 429 cap-vs-rate
   split stays in the router — the decision itself is not inline here any more.
 
 ### cors-origins.ts
 - The pure origin-matching half of CORS, mirrored from
-  `packages/mcp-core/src/cors-origins.ts` (the Deno edge function cannot cross-import the Node
+  `packages/mcp-core/src/rest/cors-origins.ts` (the Deno edge function cannot cross-import the Node
   package). `edge-parity.spec.ts` compares the two copies' executable source with comments
   stripped, so they may document themselves differently but never behave differently, and
-  `packages/mcp-core/src/cors-origins.spec.ts` is their shared test home — `cors.ts` itself has
+  `packages/mcp-core/src/rest/cors-origins.spec.ts` is their shared test home — `cors.ts` itself has
   none, which is why the decision lives here and not there.
 - `expandOriginSiblings(origin)` — expands one configured origin to BOTH its apex and its `www.`
   host, so an allowlist naming only `https://lorekit.io` still admits the canonical
@@ -154,9 +154,9 @@ Rules:
 - `dryRun(cors)` — 200 `{ dry_run: true }` + `X-LoreKit-Dry-Run: applied` header. Returned by a
   mutating handler when the request carries a truthy `X-LoreKit-Dry-Run` header: validate and
   authorize, then short-circuit BEFORE the write. The flag is parsed by `isDryRunHeader`
-  (`_shared/dry-run.ts`, mirror of `packages/mcp-core/src/dry-run.ts`); absent header ⇒ real
+  (`_shared/dry-run.ts`, mirror of `packages/mcp-core/src/limits/dry-run.ts`); absent header ⇒ real
   execution, so existing clients are unaffected. Every mutating route must honour it — enforced by
-  the source-scan `packages/mcp-core/src/dry-run-coverage.spec.ts` (empty `DRY_RUN_EXEMPT`), the
+  the source-scan `packages/mcp-core/src/limits/dry-run-coverage.spec.ts` (empty `DRY_RUN_EXEMPT`), the
   dry-run analogue of `audit-coverage.spec.ts`. The docs default the header to `true`
   (`X-LoreKit-Dry-Run` param on every mutating op, added centrally in `openapi/spec.ts`).
 
@@ -225,7 +225,7 @@ not special-case it into a filter).
   `rls_org_invites_select_manage` shows rows to `invite`-capable callers only). Fails closed.
 
 The org handlers' use of these is drift-guarded by
-`packages/mcp-core/src/org-actor-usage.spec.ts`; the MCP read path's use of `applyTenantScope` by
+`packages/mcp-core/src/auth/org-actor-usage.spec.ts`; the MCP read path's use of `applyTenantScope` by
 `tenant-scope-usage.spec.ts`.
 
 ## Full example: memories/index.ts + one handler

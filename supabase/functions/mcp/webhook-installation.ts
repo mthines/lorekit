@@ -11,7 +11,7 @@
  *                                  injected so the function stays pure and
  *                                  easily testable.
  *
- * Self-contained mirror of packages/mcp-core/src/webhook-installation.ts —
+ * Self-contained mirror of packages/mcp-core/src/webhook/webhook-installation.ts —
  * the edge function has no cross-package imports (Deno / Node.js MCP SDK
  * incompatibility), so this module deliberately duplicates the logic rather
  * than importing it. Keep the two in sync when either changes. This is the

@@ -1,6 +1,6 @@
 // CORS origin allowlist matching for the REST edge functions.
 //
-// Mirror of packages/mcp-core/src/cors-origins.ts, kept behaviourally identical
+// Mirror of packages/mcp-core/src/rest/cors-origins.ts, kept behaviourally identical
 // and verbatim (the Deno edge function cannot cross-import the Node package).
 // edge-parity.spec.ts asserts the two stay in sync; cors-origins.spec.ts in
 // mcp-core is the shared test home.

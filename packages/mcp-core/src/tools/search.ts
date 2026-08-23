@@ -1,8 +1,8 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { expandScopeForSearch } from '../scope.js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
+import { expandScopeForSearch } from '../scope/scope.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
 
 export const SearchInputSchema = z.object({
   q: z.string().min(1).max(512),

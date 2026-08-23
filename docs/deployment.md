@@ -95,7 +95,7 @@ cover here and `smoke-preview` exercises end-to-end against current PostgREST.
 
 Booting a local Supabase is expensive, so a `changes` job diffs the PR and the
 `integration` job only runs when API/backend paths change — `packages/mcp-core/`,
-`packages/mcp-server/`, `supabase/functions/`, `supabase/migrations/`,
+`packages/smoke-tests/`, `supabase/functions/`, `supabase/migrations/`,
 `supabase/config.toml`, `package.json`, `pnpm-lock.yaml`, or `ci.yml` itself. A
 docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
 this way — `nx affected` already scopes itself to the changed packages. A
@@ -728,7 +728,7 @@ modes:
 
 | Layer | Covers | Where |
 |-------|--------|-------|
-| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/mcp-server/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
+| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/smoke-tests/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
 | **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
 
 Two rules make the difference between "cleaned up" and "looks cleaned up":
@@ -897,7 +897,7 @@ Variables), both optional:
   domain.
 - `VERCEL_SCOPE` — the Vercel **team slug** that `vercel promote` / `vercel
   rollback` run under. Defaults to `mads-thines-projects` (this project's team,
-  matching the hardcoded `VERCEL_SCOPE` in `packages/mcp-core/src/cors-origins.ts`).
+  matching the hardcoded `VERCEL_SCOPE` in `packages/mcp-core/src/rest/cors-origins.ts`).
   **A fork MUST set this to its own team slug** — `promote`/`rollback` ignore the
   token's team and the linked project ([Vercel bug #11712](https://github.com/vercel/vercel/issues/11712)),
   so an unset value would try to promote into `mads-thines-projects` and 403.

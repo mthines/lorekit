@@ -16,9 +16,9 @@
 // TTL used to be a flat 30 days for all of them, so the grading informed whether
 // to store and never how long. These constants close that gap.
 //
-// SELF-CONTAINED MIRROR of packages/mcp-core/src/ttl-defaults.ts — the Deno edge
+// SELF-CONTAINED MIRROR of packages/mcp-core/src/limits/ttl-defaults.ts — the Deno edge
 // function cannot cross-import the Node package. Keep the two behaviourally
-// identical; packages/mcp-core/src/edge-parity.spec.ts fails the build when they
+// identical; packages/mcp-core/src/edge/edge-parity.spec.ts fails the build when they
 // drift, and ttl-defaults.spec.ts (on the mcp-core copy) is the shared suite.
 
 /** How durable the signal behind a webhook-sourced memory is. */

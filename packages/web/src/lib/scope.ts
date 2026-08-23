@@ -1,6 +1,6 @@
 /**
  * Lightweight scope utilities for the web package.
- * Duplicated from packages/mcp-core/src/scope.ts to avoid pulling
+ * Duplicated from packages/mcp-core/src/scope/scope.ts to avoid pulling
  * OTel, Supabase, and tool-handler code into the Next.js webpack bundle.
  * Keep in sync with the canonical implementation in mcp-core.
  */
@@ -24,7 +24,7 @@ const CANONICAL_CHARSET = /^[\w.:/-]+$/;
  * This mirrors `parseScopeFilter` in `supabase/functions/_shared/scope.ts` —
  * the entry point five of the six scope-filtering routes now call — and
  * deliberately NOT the stricter per-prefix grammar in
- * `packages/mcp-core/src/scope.ts`. Mirroring the stricter one would have the
+ * `packages/mcp-core/src/scope/scope.ts`. Mirroring the stricter one would have the
  * dashboard refuse a scope the server happily serves (`global::something` is
  * the live example), which is a worse failure than the one this guards against:
  * it would hide real data behind a filter the user can see in the chip strip.

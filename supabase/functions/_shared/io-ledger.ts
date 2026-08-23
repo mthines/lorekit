@@ -1,4 +1,4 @@
-// Mirror of packages/mcp-core/src/io-ledger.ts, self-contained for the Deno
+// Mirror of packages/mcp-core/src/telemetry/io-ledger.ts, self-contained for the Deno
 // edge tree (which cannot cross-import the Node package — same pattern as
 // created-at.ts and scope-type-attribute.ts). Keep behaviourally identical to
 // the mcp-core copy; the vitest suite over that copy is the shared guard, and

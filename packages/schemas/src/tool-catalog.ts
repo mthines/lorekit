@@ -19,7 +19,7 @@
  * bare checkout with no `node_modules`. A `zod` import would break both.
  *
  * The `permission` field is the docs-side statement of the same fact
- * `packages/mcp-core/src/permissions.ts` enforces at runtime. That module
+ * `packages/mcp-core/src/auth/permissions.ts` enforces at runtime. That module
  * cannot import this one (it is mirrored self-contained too, and a relative
  * import would break its byte-for-byte parity guard), so the two are held
  * together by `tool-catalog-parity.spec.ts` instead — the

@@ -16,7 +16,7 @@ test("validateScope is imported from the canonical scope.ts (OQ-1, seam for AC-3
   // TypeScript source is imported directly: Node >= 22.18 strips the types on
   // load (this package declares that engine). No vendored copy, no build step.
   const { validateScope, ScopeValidationError } = await import(
-    "@lorekit/core/src/scope.ts"
+    "@lorekit/core/src/scope/scope.ts"
   );
 
   assert.equal(typeof validateScope, "function");

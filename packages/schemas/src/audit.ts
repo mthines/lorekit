@@ -8,7 +8,7 @@ import { z } from 'zod';
  * -------------------------------------------------------------
  * The vocabulary had drifted three ways, silently:
  *
- *   - `packages/mcp-core/src/audit.ts` (and its edge mirror) declared 11
+ *   - `packages/mcp-core/src/audit/audit.ts` (and its edge mirror) declared 11
  *     actions — no `org.*`, no `member.*`, no `scope.*`.
  *   - The SQL CHECK (`00027_audit_log_scope_actions.sql`) admitted 23.
  *   - `packages/web/src/lib/audit-actions.ts` declared 24 — the 23 plus
@@ -29,7 +29,7 @@ import { z } from 'zod';
  *
  * Who consumes this list
  * ----------------------
- *   - `packages/mcp-core/src/audit.ts`            — imports it (Node).
+ *   - `packages/mcp-core/src/audit/audit.ts`            — imports it (Node).
  *   - `supabase/functions/_shared/audit.ts`       — imports the mirror
  *     (`./schemas/audit.ts`); a bare specifier would break the edge boot, so
  *     the path must stay relative.
