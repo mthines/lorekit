@@ -38,7 +38,7 @@ const GENERATED_BANNER = `<!--
   GENERATED FILE — do not edit by hand.
 
   Editorial prose:  packages/schemas/src/llms/template.md
-  Tool reference:   packages/schemas/src/tool-catalog.ts
+  Tool reference:   packages/schemas/src/shared/tool-catalog.ts
   Docs index:       packages/web/src/content/docs/*.mdx (frontmatter)
 
   Regenerate:  pnpm nx generate:llms schemas

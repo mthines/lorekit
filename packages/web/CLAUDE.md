@@ -101,7 +101,7 @@ or `.rpc(…)` for anything other than **auth**, stop and add an endpoint instea
   mirror of the product (served at `/llms.txt`), and it is built by
   `packages/schemas/src/llms/generate.ts` from three sources: the editorial
   prose in `schemas/src/llms/template.md`, the MCP tool reference in
-  `schemas/src/tool-catalog.ts`, and the `title`/`description`/`order`
+  `schemas/src/shared/tool-catalog.ts`, and the `title`/`description`/`order`
   frontmatter of `src/content/docs/*.mdx` (which is why every page needs all
   three fields — a page missing one fails the generator, not just
   `sections.spec.ts`). Regenerate with `pnpm nx generate:llms schemas`;

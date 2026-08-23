@@ -49,7 +49,7 @@ export default defineConfig({
   // discovered it mid-run and re-optimized, re-hashing the react shim out from
   // under an in-flight import and failing `FilterMenu.test.stories.tsx` on every
   // cold CI run. The trigger is the LINKED PACKAGE, not any one heavy dep:
-  // `tags` (`schemas/src/tags.ts`) is pure and imports nothing, and `filters.ts`
+  // `tags` (`schemas/src/shared/tags.ts`) is pure and imports nothing, and `filters.ts`
   // imports `@lorekit/schemas/memory` (the one that pulls `zod`) TYPE-only, so
   // it is erased at runtime and never loaded here. Force-optimize both
   // resolvable subpaths so the whole linked package is in the cold-start bundle:
