@@ -214,7 +214,7 @@ describe('requestedProtocolVersionAttribute', () => {
 describe('mcp-handler initialize negotiation guard', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const handler = readFileSync(
-    path.resolve(here, '../../../supabase/functions/mcp/mcp-handler.ts'),
+    path.resolve(here, '../../../../supabase/functions/mcp/mcp-handler.ts'),
     'utf8',
   );
 
