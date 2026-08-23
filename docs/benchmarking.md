@@ -132,11 +132,21 @@ the daily smoke jobs carry that value too.
 
 ```bash
 # Dispatch it from the Actions UI (preferred — production runs need the gate):
-#   Actions ▸ Load test ▸ Run workflow ▸ target / rps / duration / users
+#   Actions ▸ Load test ▸ Run workflow ▸ target / surface / auth / rps / … / ramp
 #
-# Or locally:
+# Or locally. The dashboard path (REST + JWT):
 SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… SUPABASE_ANON_KEY=… \
   node scripts/load-test.mjs --target preview --rps 20 --duration 120 --users 5
+
+# The AGENT path (MCP + lk_ token). Note the users: MCP gates every method at
+# 2 rps/user, so 20 rps needs 10 — the script refuses fewer.
+  … node scripts/load-test.mjs --target preview --surface mcp --rps 20 --users 10
+
+# The CLI's remote path (REST + lk_ token — the api_key tier):
+  … node scripts/load-test.mjs --target preview --surface rest --auth token
+
+# Stress: step 20 -> 160 rps and report the highest sustained rate.
+  … node scripts/load-test.mjs --target preview --surface mcp --ramp --rps 20 --max-rps 160 --users 80
 ```
 
 | Flag | Default | |
@@ -146,6 +156,10 @@ SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… SUPABASE_ANON_KEY=… \
 | `--duration <s>` | `60` | drive duration |
 | `--users <n>` | `5` | provisioned users, each with its own 120 rpm budget |
 | `--seed <n>` | `50` | lore rows seeded per user, so reads return rows |
+| `--surface <rest\|mcp>` | `rest` | `rest` = dashboard/CLI path, `mcp` = the **agent** path |
+| `--auth <jwt\|token>` | per surface | `mcp`→`token`, `rest`→`jwt`. `rest`+`token` is the CLI's remote path |
+| `--ramp` | off | stress mode: step the rate until saturation |
+| `--max-rps <n>` | — | the ladder's ceiling; required with `--ramp` |
 | `--dry-run` | off | build the OTLP payloads, send nothing |
 | `--keep-users` | off | skip cleanup — debugging only; leaves real rows behind |
 
@@ -249,6 +263,31 @@ is unavailable. A degraded run, not a failed one.
 - **The per-statement delta is the real output.** It turns "p95 was 240 ms" into
   "these three statements were 62 % of it".
 
+#### Telemetry
+
+**Every span and every datapoint carries `lorekit.load.surface` and
+`lorekit.load.auth_tier`.** Both, on both signal types — a dimension present only
+on the trace cannot filter a metric series, so without them on the datapoints an
+MCP run and a REST run land in the SAME series and silently average together,
+which is the one comparison this harness exists to make. Both are bounded
+(`rest|mcp`, `jwt|token`), so they add no meaningful cardinality.
+
+A **stress** run additionally emits one `lorekit.load.rung` child span per rung
+(mirroring the sweep's rung spans — the waterfall is where a ladder becomes
+readable) plus three series:
+
+| Metric | Unit | Keyed by |
+|---|---|---|
+| `lorekit.load.rung.duration` | `s` | `rps`, `quantile` — the ladder as a curve |
+| `lorekit.load.rung.achieved_rps` | `{request}/s` | `rps` — below requested means the *client* saturated |
+| `lorekit.load.max_sustained_rps` | `{request}/s` | — the headline; **0** when the first rung already failed |
+
+`rps` is a dimension here for the same reason the sweep's `rows` is: it is the
+experiment's independent variable, the x-axis, bounded by the rung count.
+
+The rung that ended the ladder carries `lorekit.load.rung.stop_reason`, which is
+the one thing a bare number cannot convey.
+
 Telemetry: one `lorekit.load` root span (not one per request — 20 rps for two
 minutes is 2,400 spans of a synthetic client, and the per-request detail already
 exists server-side) plus four gauges, under `service.name=load`. The run's
@@ -277,20 +316,75 @@ Coverage is asymmetric, and this is what a load test has to work around:
 
 A naive load script against MCP measures the rate limiter, not the system.
 
-### Which surfaces
+### Which surfaces — `--surface` x `--auth`
 
-**REST as the generator.** REST and MCP converge on the same handlers and the
-same SQL — the expensive part is shared, and REST reads are the only surface
-that can actually be pushed.
+Two dimensions, because the PAIR is what identifies a real caller. All three
+pairings are genuinely different code paths:
 
-**MCP gets a thin arm, not a throughput test.** The dispatcher is a genuinely
-distinct path worth measuring (JSON-RPC parse, tool gating, the usage-event
-write, the concurrent plan + rate-limit round-trip), but the 2 rps ceiling
-forbids more than a fixed low rate.
+| `--surface` | `--auth` | Who this is | Notes |
+|---|---|---|---|
+| `rest` | `jwt` | the **dashboard** (`packages/web/src/lib/api/`) | the default |
+| `rest` | `token` | the **CLI** in remote mode | `lk_*` takes a different branch of `resolveRestAuth`, reached via a DB lookup on `api_tokens` |
+| `mcp` | `token` | **agents** | its own handlers (`mcp/tools.ts`), its own auth span, and it rate-limits every method |
 
-**The CLI gets nothing.** It is a REST client, so it adds no server-side path;
-load-testing it measures node startup on the runner. CLI hook latency is a real
-question but it is a single-shot benchmark, a different instrument.
+Defaults pick the real pairing per surface, so `--surface mcp` alone drives what
+an agent actually does.
+
+**They converge at the RPC/SQL layer and nowhere above it.** Both reach
+`memory_write` and the same tables, so a DATABASE finding generalises. A
+transport or auth finding does not — `lorekit.rest.auth` does not exist on the
+MCP path at all, so the 193 ms it costs per request is invisible to agents.
+
+An earlier version of this document claimed REST alone was sufficient because
+"REST and MCP converge on the same handlers". The SQL and the RPCs, yes; the
+**handlers, no** — MCP has its own. That sentence made the coverage gap look
+smaller than it was, and the first Dash0 read of a real run is what exposed it.
+
+**On MCP, the outcome is in the body, not the status.** JSON-RPC returns
+application errors inside a **200**, so a driver that reads only the status code
+scores every failed tool call as a success — a run can report 100 % ok having
+accomplished nothing. `classifyMcpResponse` reads 429 first (the limiter answers
+above JSON-RPC), then `error`, then a tool-level `isError`.
+
+**The CLI process itself is still not measured.** `rest + token` covers what the
+CLI *causes server-side*, which is the part that scales. Spawning the binary per
+request would measure Node startup on the runner — a real question, but a
+single-shot benchmark and a different instrument.
+
+### Stress mode (`--ramp`)
+
+`--ramp --max-rps N` steps the rate geometrically (20 → 40 → 80 → N) with the
+same users and the same seeded rows, so a difference between rungs is the offered
+rate and nothing else. It stops at the first rung that trips any of:
+
+- **errors** above 1 % — the service is failing, not merely slow;
+- **p99** above 5 s — latency has left the range anyone would ship;
+- **429s** above 1 % — further rungs would measure the limiter, not the service;
+- **achieved rate** below 90 % of requested — the *client* saturated, so a higher
+  requested rate cannot actually be offered and every later rung is the same load.
+
+The report ends with the highest sustained rate. Without `--ramp` a single rung
+runs, which is the plain load test.
+
+#### The rate-limit guard, and why it refuses rather than warns
+
+MCP checks the limit on **every** method; REST checks it in only `create.ts` and
+`purge.ts`, so on REST only the write share of the mix is gated and reads are
+ungated. At the 120/min default that is **2 rps per user** — so on MCP the
+harness's own defaults (20 rps across 5 users) are **2x over**, and half such a
+run would 429.
+
+`checkRateHeadroom` therefore **fails the run** and names the users required:
+
+```
+✗ mcp rate-limits every method, so 20 rps needs at least 10 users at
+  120 req/min/user (20.0 limited rps ÷ 2.00 per user) — got 5.
+  Raise --users to 10, or lower --rps to 10.
+```
+
+A load test that silently measures its own throttling is worse than no load
+test, because the number looks usable. With `--ramp` the check uses the
+**ceiling**, not the starting rate.
 
 ### Scaling users, not limits
 
