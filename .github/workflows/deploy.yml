@@ -46,7 +46,7 @@
 # note in smoke-production for why):
 #   SUPABASE_ANON_KEY, LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD.
 # The fixed smoke user those secrets name must already exist on the project — seed it
-# once with `node scripts/smoke/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
+# once with `node scripts/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
 # the orgs-smoke user"); the mint signs in as it, it is never auto-created.
 # Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
 # a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
@@ -110,7 +110,7 @@ jobs:
   #    one, and `auto` (the default) falls back to the marker diff — so a maintainer
   #    can redeploy an unchanged half from the Actions UI without a no-op commit.
   #
-  #    The decision itself lives in scripts/ci/resolve-deploy-scope.mjs (unit-tested
+  #    The decision itself lives in scripts/resolve-deploy-scope.mjs (unit-tested
   #    by ci.yml's `deploy-scope` job), not in a shell block nobody can run.
   changes:
     name: Detect changes
@@ -141,7 +141,7 @@ jobs:
           DEPLOY_TARGET: ${{ inputs.deploy_target }}
           API_DEPLOYED_TAG: ${{ env.API_DEPLOYED_TAG }}
           WEB_DEPLOYED_TAG: ${{ env.WEB_DEPLOYED_TAG }}
-        run: node scripts/ci/resolve-deploy-scope.mjs
+        run: node scripts/resolve-deploy-scope.mjs
 
   # ── 1. Deploy to PREVIEW (migrations, then functions) ─────────────────────────
   #    No test job here: the commit on main already passed the required PR checks
@@ -229,7 +229,7 @@ jobs:
           # error message included.
           supabase migration list --linked > /tmp/migration-list.txt 2>&1 || true
           cat /tmp/migration-list.txt
-          node scripts/migrations/check-remote-migration-drift.mjs < /tmp/migration-list.txt
+          node scripts/check-remote-migration-drift.mjs < /tmp/migration-list.txt
 
       - name: Push database migrations
         if: steps.drift.outputs.action == 'push'
@@ -239,7 +239,7 @@ jobs:
         # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
         # aborts with "migration files to be inserted before the last migration
         # on remote". Migrations are still applied in on-disk numeric order; the
-        # PR-time guard (scripts/migrations/check-migration-order.mjs, the `migration-order`
+        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
         # CI job) is what stops an out-of-order file from landing in the first
         # place, so this flag only ever applies already-reviewed, CI-tested ones.
         run: supabase db push --include-all
@@ -499,7 +499,7 @@ jobs:
       # memory.list against the endpoint — proving the transport a `.mcp.json`
       # points at launches and reaches the backend. Same script as ci.yml.
       - name: Smoke — robust stdio transport handshakes against preview
-        run: node scripts/smoke/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -517,7 +517,7 @@ jobs:
       # Conformance lane only. `--probe` holds defects that are open on purpose
       # and would red the pipeline; run it by hand, or `--strict` to gate a fix.
       - name: Smoke — hosted MCP tool surface against preview
-        run: node scripts/smoke/smoke-mcp-tools.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke-mcp-tools.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -546,7 +546,7 @@ jobs:
           LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
           LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
         run: |
-          if JWT="$(node scripts/smoke/mint-smoke-jwt.mjs)"; then
+          if JWT="$(node scripts/mint-smoke-jwt.mjs)"; then
             echo "::add-mask::$JWT"
             echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
           else
@@ -567,7 +567,7 @@ jobs:
         # after the second attempt.
         run: |
           for attempt in 1 2; do
-            node scripts/smoke/smoke-rest.mjs && break
+            node scripts/smoke-rest.mjs && break
             rc=$?
             if [ "$attempt" -eq 2 ]; then
               echo "::error::REST smoke failed after $attempt attempts"
@@ -583,7 +583,7 @@ jobs:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30
 
   # ── 3. Deploy to PRODUCTION (only reached if preview is green) ────────────────
   deploy-production:
@@ -640,7 +640,7 @@ jobs:
         # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
         # aborts with "migration files to be inserted before the last migration
         # on remote". Migrations are still applied in on-disk numeric order; the
-        # PR-time guard (scripts/migrations/check-migration-order.mjs, the `migration-order`
+        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
         # CI job) is what stops an out-of-order file from landing in the first
         # place, so this flag only ever applies already-reviewed, CI-tested ones.
         run: supabase db push --include-all
@@ -937,13 +937,13 @@ jobs:
       # adds no synthetic rows to the production tables and its flake profile
       # matches the tools/list curl above; both gate rollback, which is fine.
       - name: Smoke — robust stdio transport handshakes against production
-        run: node scripts/smoke/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
-      # NOTE: the write-heavy smokes (scripts/smoke/smoke-rest.mjs and
-      # scripts/smoke/smoke-mcp-tools.mjs) are deliberately NOT run here — they run in
+      # NOTE: the write-heavy smokes (scripts/smoke-rest.mjs and
+      # scripts/smoke-mcp-tools.mjs) are deliberately NOT run here — they run in
       # smoke-preview only. The MCP tool-surface one enforces this in the script
       # itself: it exits non-zero on the production ref unless
       # `--allow-production` is passed, so adding it here fails loudly rather
@@ -965,7 +965,7 @@ jobs:
         env:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
-        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
 
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only

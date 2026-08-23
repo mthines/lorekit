@@ -11,7 +11,7 @@ on:
       - 'packages/cli/src/telemetry.mjs'
       - 'packages/cli/src/telemetry-token.mjs'
       - 'packages/cli/src/doctor.mjs'
-      - 'scripts/telemetry/inject-telemetry-token.mjs'
+      - 'scripts/inject-telemetry-token.mjs'
       - '.github/workflows/telemetry-smoke.yml'
 
 permissions: {}
