@@ -9,6 +9,14 @@
 # USERS: 20 rps needs 10, 100 rps needs 50. The script REFUSES a configuration
 # that cannot fit rather than reporting the rate limiter as a latency result.
 #
+# WHICH IS WHY `users` DEFAULTS TO `auto`. It previously defaulted to 5 while
+# `max_rps` defaulted to 160 — so the obvious stress dispatch (pick mcp, tick
+# ramp, leave the rest alone) was refused by construction, every time. A default
+# combination that cannot run is a bad default, not operator error. `auto` derives
+# the minimum, and the script prints what it picked. `max_rps` is 40 rather than
+# 160 for the same reason: on MCP, 160 would silently mean provisioning 80 users
+# and seeding all of them before a single measurement.
+#
 # WHY A WORKFLOW RATHER THAN A LOCAL SCRIPT
 # The target must be configurable between preview and production, and a
 # production run needs a human in the loop. GitHub Environments already give us
@@ -67,8 +75,8 @@ on:
         description: 'Drive duration (seconds)'
         default: '120'
       users:
-        description: 'Provisioned users — each carries its own 120 rpm budget. MCP needs rps/2 of them'
-        default: '5'
+        description: 'Provisioned users, or "auto" to derive the minimum the peak rate needs (MCP needs rps/2)'
+        default: auto
       surface:
         description: 'Which transport — rest = dashboard/CLI path, mcp = the AGENT path'
         type: choice
@@ -84,8 +92,8 @@ on:
         type: boolean
         default: false
       max_rps:
-        description: 'Ceiling for the stress ladder (only used when ramp is on)'
-        default: '160'
+        description: 'Ceiling for the stress ladder (only used when ramp is on). On MCP this drives the user count: 160 rps means 80 users, and 80 users means a long seed phase'
+        default: '40'
   schedule:
     # Weekly, Mondays 05:25 UTC. Off the hour on purpose: GitHub queues :00
     # schedules by many minutes. A scheduled run is ALWAYS preview — the target
