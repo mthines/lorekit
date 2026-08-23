@@ -154,7 +154,7 @@ SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… SUPABASE_ANON_KEY=… \
 | `--target <preview\|production>` | **none** | Required. `production` must be typed in full |
 | `--rps <n>` | `20` | arrival rate |
 | `--duration <s>` | `60` | drive duration |
-| `--users <n>` | `5` | provisioned users, each with its own 120 rpm budget |
+| `--users <n\|auto>` | `5` | provisioned users, each with its own 120 rpm budget. `auto` derives the minimum the **peak** rate needs |
 | `--seed <n>` | `50` | lore rows seeded per user, so reads return rows |
 | `--surface <rest\|mcp>` | `rest` | `rest` = dashboard/CLI path, `mcp` = the **agent** path |
 | `--auth <jwt\|token>` | per surface | `mcp`→`token`, `rest`→`jwt`. `rest`+`token` is the CLI's remote path |
@@ -384,7 +384,22 @@ run would 429.
 
 A load test that silently measures its own throttling is worse than no load
 test, because the number looks usable. With `--ramp` the check uses the
-**ceiling**, not the starting rate.
+**ceiling**, not the starting rate — and says so, naming `--max-rps` rather than
+`--rps`, because lowering the starting rate would not help: the ladder climbs to
+the ceiling and fails at the same rung.
+
+**`--users auto` is the other way out**, and it is why the workflow now defaults
+to it. `users: 5` with `max_rps: 160` on `--surface mcp` was refused by
+construction, so the obvious stress dispatch — pick mcp, tick ramp, leave the
+rest alone — always failed ([run 32643090759](https://github.com/mthines/lorekit/actions/runs/32643090759)).
+A default combination that cannot run is a bad default, not operator error.
+
+`auto` is opt-in rather than the silent behaviour because **the cost is real and
+invisible**: user count drives the SEED phase, which already dominated wall clock
+at 5 users. On MCP, 160 rps means 80 users, and seeding 80 users is tens of
+minutes before a single measurement. The script prints what it picked and warns
+above 20. `maxRpsForUsers` is the inverse if you would rather pick the users and
+derive the ceiling: on MCP it is simply `users x 2`.
 
 ### Scaling users, not limits
 
