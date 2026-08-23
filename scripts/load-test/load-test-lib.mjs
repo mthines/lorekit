@@ -114,12 +114,31 @@ export function percentile(samples, p) {
 }
 
 /**
+ * The outcome of one request: an explicit `outcome` when the driver set one,
+ * otherwise derived from the HTTP status.
+ *
+ * MCP needs the explicit form and REST does not, which is the whole reason this
+ * exists. JSON-RPC returns application errors inside a **200**, so a status-only
+ * reading counts every failed tool call as a success — a run can report 100 %
+ * ok having accomplished nothing. The MCP driver therefore classifies each
+ * response (`classifyMcpResponse`) and records the verdict; REST has no such
+ * ambiguity and keeps deriving it from the status, unchanged.
+ */
+export function outcomeOf(r) {
+  if (r.outcome) return r.outcome;
+  if (r.status === 429) return 'rate_limited';
+  if (r.status >= 200 && r.status < 300) return 'ok';
+  if (r.status >= 500 || r.status === 0) return 'error';
+  return 'client_error';
+}
+
+/**
  * Summarise per-op results.
  *
- * `ok` counts 2xx only. `rateLimited` (429) is broken out because it is not a
- * failure — it is the guardrail working, and lumping it into errors would make
- * a correctly-throttled run look broken. `errors` is 5xx plus transport
- * failures: those are the ones that mean something is wrong.
+ * `ok` counts successes only. `rateLimited` (429) is broken out because it is not
+ * a failure — it is the guardrail working, and lumping it into errors would make
+ * a correctly-throttled run look broken. `errors` is 5xx, transport failures,
+ * and (on MCP) a JSON-RPC or tool-level error returned inside a 200.
  */
 export function summarize(results) {
   const byOp = new Map();
@@ -134,14 +153,14 @@ export function summarize(results) {
     // microseconds and a transport failure may return instantly or after a
     // timeout; folding either into the latency distribution moves p95 for
     // reasons that have nothing to do with how fast the service is.
-    const okLatencies = rs.filter((r) => r.status >= 200 && r.status < 300).map((r) => r.ms);
+    const okLatencies = rs.filter((r) => outcomeOf(r) === 'ok').map((r) => r.ms);
     rows.push({
       op,
       count: rs.length,
-      ok: rs.filter((r) => r.status >= 200 && r.status < 300).length,
-      rateLimited: rs.filter((r) => r.status === 429).length,
-      clientErrors: rs.filter((r) => r.status >= 400 && r.status < 500 && r.status !== 429).length,
-      errors: rs.filter((r) => r.status >= 500 || r.status === 0).length,
+      ok: rs.filter((r) => outcomeOf(r) === 'ok').length,
+      rateLimited: rs.filter((r) => outcomeOf(r) === 'rate_limited').length,
+      clientErrors: rs.filter((r) => outcomeOf(r) === 'client_error').length,
+      errors: rs.filter((r) => outcomeOf(r) === 'error').length,
       p50: percentile(okLatencies, 0.5),
       p95: percentile(okLatencies, 0.95),
       p99: percentile(okLatencies, 0.99),
@@ -153,12 +172,12 @@ export function summarize(results) {
 
 /** Aggregate totals across every op, for the headline line. */
 export function totals(results) {
-  const ok = results.filter((r) => r.status >= 200 && r.status < 300);
+  const ok = results.filter((r) => outcomeOf(r) === 'ok');
   return {
     requests: results.length,
     ok: ok.length,
-    rateLimited: results.filter((r) => r.status === 429).length,
-    errors: results.filter((r) => r.status >= 500 || r.status === 0).length,
+    rateLimited: results.filter((r) => outcomeOf(r) === 'rate_limited').length,
+    errors: results.filter((r) => outcomeOf(r) === 'error').length,
     p50: percentile(ok.map((r) => r.ms), 0.5),
     p95: percentile(ok.map((r) => r.ms), 0.95),
     p99: percentile(ok.map((r) => r.ms), 0.99),
@@ -334,4 +353,207 @@ export function checkServiceCredential({ serviceKey, anonKey, supabaseUrl }) {
   }
 
   return { errors, warnings };
+}
+
+// ── surface and auth tier ────────────────────────────────────────────────────
+
+/**
+ * Which transport to drive.
+ *
+ * These are genuinely different code paths, not skins on one handler — which is
+ * why "the load test covers LoreKit" was never true of the REST arm alone:
+ *
+ *   rest — `/functions/v1/memories`, the `memories` function. What the DASHBOARD
+ *          calls (`packages/web/src/lib/api/`) and what the CLI calls in remote
+ *          mode.
+ *   mcp  — `/functions/v1/mcp`, JSON-RPC. What AGENTS call. Its own handlers
+ *          (`mcp/tools.ts`), its own auth span (`lorekit.mcp.auth`), and it
+ *          rate-limits EVERY method where REST gates only writes.
+ *
+ * They converge at the RPC/SQL layer — both reach `memory_write` and the same
+ * tables — so a database finding generalises. A transport or auth finding does
+ * NOT: `lorekit.rest.auth` does not exist on the MCP path at all.
+ */
+export function resolveSurface(argvSurface, env = {}) {
+  const raw = (argvSurface ?? env.LOREKIT_LOAD_SURFACE ?? 'rest').trim().toLowerCase();
+  if (raw !== 'rest' && raw !== 'mcp') {
+    return { ok: false, error: `Unknown surface "${raw}". Expected rest or mcp.` };
+  }
+  return { ok: true, surface: raw };
+}
+
+/**
+ * Which auth tier to authenticate with — the second dimension, orthogonal to
+ * the surface, because the pair is what identifies a real caller:
+ *
+ *   rest + jwt    the dashboard          (user JWT, RLS-enforced client)
+ *   rest + token  the CLI in remote mode (`lk_*`, service-role client + a
+ *                 mandatory user_id filter — a DIFFERENT branch of
+ *                 `resolveRestAuth`, with a DB lookup on `api_tokens`)
+ *   mcp  + token  agents                 (the flow that matters most)
+ *
+ * Defaults per surface pick the real-world pairing rather than a fixed value,
+ * so `--surface mcp` alone drives what an agent actually does.
+ */
+export function resolveAuthMode(argvAuth, surface, env = {}) {
+  const raw = (argvAuth ?? env.LOREKIT_LOAD_AUTH ?? '').trim().toLowerCase();
+  if (!raw) return { ok: true, auth: surface === 'mcp' ? 'token' : 'jwt' };
+  if (raw !== 'jwt' && raw !== 'token') {
+    return { ok: false, error: `Unknown auth "${raw}". Expected jwt or token.` };
+  }
+  return { ok: true, auth: raw };
+}
+
+/** MCP tool name for each op in the mix. */
+export const MCP_TOOL_FOR_OP = Object.freeze({
+  list: 'memory.list',
+  search: 'memory.search',
+  scopes: 'memory.scopes',
+  write: 'memory.write',
+});
+
+/**
+ * The `params.arguments` payload for one op, per the tool catalog's schema.
+ *
+ * Getting an argument NAME wrong here does not fail loudly: MCP answers a bad
+ * tool call with HTTP **200** carrying a JSON-RPC `error`, so a driver that
+ * checks only the status code reports a clean run having measured nothing but
+ * validation errors. `classifyMcpResponse` is the other half of that guard.
+ *
+ * Required args per the catalog: list→scope, search→q, write→scope/key/value,
+ * scopes→none. `search` takes `scopes` (PLURAL, an array); `list` takes `scope`
+ * (singular). They are not interchangeable.
+ */
+export function mcpArgumentsFor(op, { scope, key, value, q } = {}) {
+  switch (op) {
+    case 'list': return { scope, limit: 50 };
+    case 'search': return { q: q ?? 'lesson', scopes: [scope], limit: 20 };
+    case 'scopes': return {};
+    case 'write': return { scope, key, value };
+    default: throw new Error(`no MCP mapping for op "${op}"`);
+  }
+}
+
+/**
+ * Classify one MCP response. THE trap of this transport.
+ *
+ * JSON-RPC carries application errors INSIDE a 200, so status alone cannot tell
+ * success from failure — a run that 200s on every request may have failed every
+ * request. Meanwhile the rate limiter answers at the TRANSPORT layer with a real
+ * 429 before JSON-RPC is reached, so both signals are live at once and must be
+ * read in the right order.
+ *
+ * `isError` on a tool RESULT is distinct again: the call succeeded and the tool
+ * reported a domain failure (a cap rejection, a permission denial). Counted as
+ * an error, because it is one — but it is not a transport fault.
+ */
+export function classifyMcpResponse({ status, body }) {
+  if (status === 429) return 'rate_limited';
+  if (status === 0) return 'error';               // transport failure
+  if (status < 200 || status >= 300) return 'error';
+  if (!body || typeof body !== 'object') return 'error';
+  if (body.error) return 'error';                 // JSON-RPC error in a 200
+  if (body.result?.isError) return 'error';       // tool-level failure
+  return 'ok';
+}
+
+// ── rate-limit headroom ──────────────────────────────────────────────────────
+
+/**
+ * How many of a surface's requests the per-user rate limiter actually counts.
+ *
+ * MCP checks the limit on EVERY method (`mcp/index.ts`, right after auth
+ * resolves). REST checks it in only two handlers — `create.ts` and `purge.ts` —
+ * so on REST only the WRITE share of the mix is limited and reads are ungated.
+ * That asymmetry is why one users-per-rps rule cannot serve both.
+ */
+export function limitedShareOfMix(surface, mix = DEFAULT_MIX) {
+  if (surface === 'mcp') return 1;
+  const total = mix.reduce((n, m) => n + m.weight, 0);
+  if (total <= 0) return 0;
+  return mix.filter((m) => m.op === 'write').reduce((n, m) => n + m.weight, 0) / total;
+}
+
+/**
+ * Does this configuration have the headroom to drive the requested rate without
+ * the rate limiter deciding the result?
+ *
+ * WHY THIS IS A HARD GUARD AND NOT A WARNING
+ * The harness's own defaults (20 rps across 5 users) are 4 rps/user, and the
+ * default ceiling is 120 req/min = 2 rps/user. On MCP that is 2x over: half the
+ * run would 429 and the percentiles would describe the guardrail, not the
+ * service. A load test that silently measures its own throttling is worse than
+ * no load test, because the number looks usable.
+ *
+ * Returns the users actually required so the caller can print a fix rather than
+ * a complaint. `requestsPerMinute` is a parameter because the real ceiling is
+ * `lorekit_get_limit(user_id, 'requests_per_minute')` and a `user_limits` row
+ * can raise it — 120 is only the default.
+ */
+export function checkRateHeadroom({ surface, rps, users, mix = DEFAULT_MIX, requestsPerMinute = 120 }) {
+  const share = limitedShareOfMix(surface, mix);
+  const perUserCeiling = requestsPerMinute / 60;
+  if (share === 0 || perUserCeiling <= 0) return { ok: true, requiredUsers: users, limitedRps: 0, perUserCeiling };
+  const limitedRps = rps * share;
+  const requiredUsers = Math.ceil(limitedRps / perUserCeiling);
+  if (users >= requiredUsers) return { ok: true, requiredUsers, limitedRps, perUserCeiling };
+  return {
+    ok: false,
+    requiredUsers,
+    limitedRps,
+    perUserCeiling,
+    error:
+      `${surface} rate-limits ${share === 1 ? 'every method' : `the write share (${(share * 100).toFixed(0)}%)`}, ` +
+      `so ${rps} rps needs at least ${requiredUsers} users at ${requestsPerMinute} req/min/user ` +
+      `(${limitedRps.toFixed(1)} limited rps ÷ ${perUserCeiling.toFixed(2)} per user) — got ${users}. ` +
+      `Raise --users to ${requiredUsers}, or lower --rps to ${Math.floor(users * perUserCeiling / share)}.`,
+  };
+}
+
+// ── stress mode (ramp) ───────────────────────────────────────────────────────
+
+/**
+ * The rungs of a stress ladder: multiply until the ceiling, inclusive.
+ *
+ * Geometric rather than linear because the interesting region is unknown by
+ * orders of magnitude — a linear +10 rps walk spends its whole budget below the
+ * knee. The ceiling is always included even when the factor overshoots it, so
+ * `--max-rps` means what it says.
+ */
+export function buildRampRungs({ startRps, maxRps, factor = 2 }) {
+  if (!(startRps > 0) || !(maxRps >= startRps) || !(factor > 1)) return [];
+  const rungs = [];
+  for (let r = startRps; r < maxRps; r *= factor) rungs.push(Math.round(r));
+  rungs.push(Math.round(maxRps));
+  return [...new Set(rungs)];
+}
+
+/**
+ * Should the ladder stop after this rung?
+ *
+ * A rung is the LAST GOOD one when the next would tell us nothing new. Three
+ * independent stop conditions, because saturation shows up differently:
+ *
+ *   - errors: the service is failing, not merely slow.
+ *   - p99: latency has left the range anyone would ship.
+ *   - 429s: we hit the guardrail, so further rungs measure the limiter. This is
+ *     NOT a failure of the service — it is the reason `checkRateHeadroom`
+ *     exists — but it does end the useful part of the ladder.
+ *
+ * `achievedRps` below the requested rate ends it too: the CLIENT saturated, so
+ * a higher requested rate cannot actually be offered and every later rung would
+ * silently measure the same load.
+ */
+export function rampVerdict(rung, { maxP99Ms = 5000, maxErrorRate = 0.01, maxRateLimitedRate = 0.01, minAchievedRatio = 0.9 } = {}) {
+  const total = rung.count ?? 0;
+  if (total === 0) return { stop: true, reason: 'no requests completed' };
+  const errorRate = (rung.errors ?? 0) / total;
+  const limitedRate = (rung.rateLimited ?? 0) / total;
+  if (errorRate > maxErrorRate) return { stop: true, reason: `error rate ${(errorRate * 100).toFixed(1)}% > ${(maxErrorRate * 100).toFixed(1)}%` };
+  if ((rung.p99 ?? 0) > maxP99Ms) return { stop: true, reason: `p99 ${rung.p99}ms > ${maxP99Ms}ms` };
+  if (limitedRate > maxRateLimitedRate) return { stop: true, reason: `429 rate ${(limitedRate * 100).toFixed(1)}% > ${(maxRateLimitedRate * 100).toFixed(1)}% — the ladder is now measuring the rate limiter` };
+  if (rung.requestedRps > 0 && (rung.achievedRps ?? 0) / rung.requestedRps < minAchievedRatio) {
+    return { stop: true, reason: `achieved ${rung.achievedRps?.toFixed(1)} of ${rung.requestedRps} rps — the CLIENT saturated, not the service` };
+  }
+  return { stop: false };
 }

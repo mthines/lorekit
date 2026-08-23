@@ -1,5 +1,13 @@
-# Load test — drives the REST surface at a fixed arrival rate and attributes the
-# latency to specific SQL statements.
+# Load and stress test — drives a chosen surface at a fixed arrival rate (or up a
+# ladder of rates) and attributes the latency to specific SQL statements.
+#
+# SURFACE x AUTH is what picks the caller being simulated:
+#   rest + jwt    the dashboard        (default)
+#   rest + token  the CLI remote path  (`lk_*`, the api_key tier)
+#   mcp  + token  AGENTS               — the path that matters most
+# MCP rate-limits EVERY method (120/min/user = 2 rps), so rate is bought with
+# USERS: 20 rps needs 10, 100 rps needs 50. The script REFUSES a configuration
+# that cannot fit rather than reporting the rate limiter as a latency result.
 #
 # WHY A WORKFLOW RATHER THAN A LOCAL SCRIPT
 # The target must be configurable between preview and production, and a
@@ -59,8 +67,25 @@ on:
         description: 'Drive duration (seconds)'
         default: '120'
       users:
-        description: 'Provisioned users — each carries its own 120 rpm budget'
+        description: 'Provisioned users — each carries its own 120 rpm budget. MCP needs rps/2 of them'
         default: '5'
+      surface:
+        description: 'Which transport — rest = dashboard/CLI path, mcp = the AGENT path'
+        type: choice
+        options: [rest, mcp]
+        default: rest
+      auth:
+        description: 'Auth tier. Blank = the real pairing (mcp->token, rest->jwt); rest+token is the CLI path'
+        type: choice
+        options: ['', jwt, token]
+        default: ''
+      ramp:
+        description: 'Stress mode: step the rate up to max_rps until saturation'
+        type: boolean
+        default: false
+      max_rps:
+        description: 'Ceiling for the stress ladder (only used when ramp is on)'
+        default: '160'
   schedule:
     # Weekly, Mondays 05:25 UTC. Off the hour on purpose: GitHub queues :00
     # schedules by many minutes. A scheduled run is ALWAYS preview — the target
@@ -73,12 +98,12 @@ on:
 # and their rows behind, and cleanup only happens if the job reaches its
 # `finally`. Same posture as deploy.yml.
 concurrency:
-  group: load-test-${{ inputs.target || 'preview' }}
+  group: load-test-${{ inputs.target || 'preview' }}-${{ inputs.surface || 'rest' }}
   cancel-in-progress: false
 
 jobs:
   load:
-    name: Load test → ${{ inputs.target || 'preview' }}
+    name: Load test → ${{ inputs.target || 'preview' }} (${{ inputs.surface || 'rest' }})
     runs-on: ubuntu-latest
     # The gate. `production` inherits whatever approval rules that environment
     # carries; `preview` runs freely.
@@ -162,12 +187,25 @@ jobs:
           # command. Without this, `node … | tee` reports tee's success and a
           # load test that died mid-run would have gone GREEN.
           set -euo pipefail
-          node scripts/load-test/load-test.mjs \
-            --target "$TARGET" \
-            --rps "${{ inputs.rps || '20' }}" \
-            --duration "${{ inputs.duration || '120' }}" \
-            --users "${{ inputs.users || '5' }}" \
-            | tee load-report.txt
+          # `--surface`/`--auth` are appended only when set, so a scheduled run
+          # (which has no inputs at all) keeps the script's own defaults rather
+          # than passing empty strings the arg parser would reject.
+          args=(
+            --target "$TARGET"
+            --rps "${{ inputs.rps || '20' }}"
+            --duration "${{ inputs.duration || '120' }}"
+            --users "${{ inputs.users || '5' }}"
+          )
+          # `if` rather than `[ … ] && …`: the latter evaluates to 1 when the
+          # test fails, which under `set -e` fails the step if it is ever the
+          # last command in the block. Same behaviour, no ordering trap.
+          if [ -n "${{ inputs.surface }}" ]; then args+=(--surface "${{ inputs.surface }}"); fi
+          if [ -n "${{ inputs.auth }}" ];    then args+=(--auth "${{ inputs.auth }}"); fi
+          if [ "${{ inputs.ramp }}" = "true" ]; then
+            args+=(--ramp --max-rps "${{ inputs.max_rps || '160' }}")
+          fi
+          echo "load-test args: ${args[*]}"
+          node scripts/load-test/load-test.mjs "${args[@]}" | tee load-report.txt
 
       # The report is the artefact worth keeping: the client percentiles and the
       # per-statement delta, on a run whose Dash0 trace may be sampled away.
@@ -182,7 +220,7 @@ jobs:
         # caller, so the bump is local.
         uses: actions/upload-artifact@v6
         with:
-          name: load-report-${{ inputs.target || 'preview' }}-${{ github.run_id }}
+          name: load-report-${{ inputs.target || 'preview' }}-${{ inputs.surface || 'rest' }}-${{ github.run_id }}
           path: load-report.txt
           if-no-files-found: warn
 
