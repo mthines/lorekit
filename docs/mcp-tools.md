@@ -477,15 +477,58 @@ No arguments required.
 
 ---
 
-## Error codes
+## How failures come back
+
+There are **two** shapes, and which one you get depends on whether the tool ran.
+
+### A tool that ran and failed → a successful result with `isError: true`
+
+```json
+{ "jsonrpc": "2.0", "id": 1,
+  "result": { "content": [{ "type": "text", "text": "Memory cap reached (5000). Archive or delete some lore first." }],
+              "isError": true } }
+```
+
+This is the MCP spec's shape, and the reason is the point of it:
+
+> Any errors that originate from the tool SHOULD be reported inside the result
+> object, with `isError` set to true, *not* as an MCP protocol-level error
+> response. **Otherwise, the LLM would not be able to see that an error occurred
+> and self-correct.**
+
+A protocol error is consumed by the client library and may never reach the
+model — `mcp-remote` surfaces one as a transport failure. So an agent that hit
+the memory cap used to be told nothing it could act on, when "cap reached,
+archive something" is exactly the kind of thing an agent can fix by itself.
+
+You get this shape for anything **the caller can fix**: the memory cap, a
+malformed scope, an invalid `ttl_*` or `created_at`, an org slug that does not
+resolve, and an insufficient org role.
+
+**If you write your own client, check it.** A client that only tests for
+`response.error` reads these as successes — the HTTP status is `200` and there is
+no `error` member. The `lorekit` CLI's own client checks `result.isError`
+(`packages/cli/src/shared/mcp.mjs`); mirror that.
+
+### A call that could not be dispatched → a JSON-RPC error
 
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, or expired token |
 | `-32001` | Read-only token attempted a write operation, or a write-only token attempted a read operation |
-| `-32603` | Tool execution error (DB error, scope validation failure) |
+| `-32603` | Server fault — a DB outage or an unexpected exception. Not something the model can self-correct from, and safe for a client to retry |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown method or tool name |
+| `-32000` | Forbidden — an account-wide tool on a scoped key, or a scope outside the key's allowlist |
+
+These are the spec's "errors in *finding* the tool […] or any other exceptional
+conditions". **Auth-family errors always travel in-band** — HTTP `200` with a
+JSON-RPC error carrying the real request id — because a `401` or an `id: null`
+makes streamable-HTTP clients retry a session handshake and hang. That is a
+hard rule, guarded by `mcp-authz-status.spec.ts`.
+
+`-32040` (a former cap-specific code) **no longer exists**: the cap is
+tool-originated and now returns `isError`.
 
 ---
 

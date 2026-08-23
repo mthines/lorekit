@@ -569,18 +569,43 @@ matched before ranking, so you can tell a shortlist from the whole set.
 | Requests per minute per user | 120 |
 
 Archiving a lesson frees cap headroom immediately. Service-role / CI tokens are exempt.
-When the cap is hit, `memory.write` returns a `memory_cap` error with instructions.
+When the cap is hit, `memory.write` returns a tool error (see below) telling you
+to archive or delete first — you can act on it and retry.
 Rate-limited requests receive HTTP 429 with a `Retry-After` header.
 
-## Error codes
+## How failures come back
+
+Two shapes, decided by whether the tool ran.
+
+**A tool that ran and failed** returns a SUCCESSFUL result carrying `isError`:
+
+```json
+{ "jsonrpc": "2.0", "id": 1,
+  "result": { "content": [{ "type": "text", "text": "Memory cap reached (5000). Archive or delete some lore first." }],
+              "isError": true } }
+```
+
+That is the MCP spec's shape, so the model can see the failure and self-correct
+rather than having the client library swallow it. You get it for anything you can
+fix: the memory cap, a malformed scope, an invalid `ttl_*` or `created_at`, an
+unresolvable org slug, an insufficient org role.
+
+**Writing a client? Check `result.isError`.** The HTTP status is `200` and there
+is no `error` member, so a client that only tests for `response.error` reads
+these as successes.
+
+**A call that could not be dispatched** returns a JSON-RPC error:
 
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, expired, or wrong-permission-tier token (e.g. read-only token on a write, write-only token on a read) |
 | `-32003` | Forbidden — authenticated, but not permitted for this tool (e.g. an `lk_*` token calling an `org.*` tool) |
-| `-32603` | Execution error — DB error, scope validation failure, org permission denied (`LK002`), or memory cap exceeded (`LK001` / `memory_cap`) |
+| `-32603` | Server fault — a DB outage or unexpected exception. Safe to retry |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown tool name |
+
+Auth errors always arrive as HTTP `200` + a JSON-RPC error with the real request
+id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 
 ## Architecture
 
