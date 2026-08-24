@@ -279,7 +279,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // the pure validator; a malformed value degrades to null, never an error.
     const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
     // Calling surface (same header and same fail-safe posture as the REST side).
-    const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
+    // The transport itself IS an MCP call, so an absent/unrecognised header
+    // defaults to 'mcp' here — applied by the CALLER, not by widening
+    // `parseUsageClient` (which stays a closed, fail-safe validator an unknown
+    // value can never smuggle a new member through). An explicit header still
+    // wins: a locally-hosted stdio server forwarding `X-LoreKit-Client: cli`
+    // reports `cli`, never overridden to `mcp`. This is retroactive for NEW
+    // traffic only — historical rows recorded before this change stay NULL.
+    const client = parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'mcp';
     // Memory taxonomy for analytics — resolved the SAME way the write stores it
     // (explicit kind/host, else inferred from the loop tag). A read that carries
     // a loop tag (memory.list / memory.search filtered by it) is attributed too;

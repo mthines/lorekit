@@ -244,7 +244,15 @@ export function createRouter(routes: Route[], functionName: string) {
       // Calling surface (dashboard / cli / mcp / api). Same fail-safe posture:
       // an absent or unrecognised value records no attribution rather than
       // rejecting the request or admitting an unbounded value.
-      const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
+      //
+      // This router IS the REST transport, so an absent/unrecognised header
+      // defaults to 'api' — applied HERE by the caller, not by widening
+      // `parseUsageClient` itself (still a closed, fail-safe validator; an
+      // unknown value still cannot smuggle a new member into the ledger). An
+      // explicit header still wins: the dashboard's own `dashboard` and the
+      // CLI's `cli` are unaffected. Retroactive for NEW traffic only —
+      // historical rows recorded before this change stay NULL.
+      const client = parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'api';
       hs.setAttributes({ 'lorekit.tool.name': toolName, ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}) });
       const startedMs = Date.now();
 
