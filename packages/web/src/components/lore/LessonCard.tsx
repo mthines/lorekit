@@ -34,6 +34,23 @@ export interface LessonEntry extends MemoryOriginFields {
   // Provenance (`origin_repo` / `origin_branch` / `origin_commit` / `origin_pr`)
   // comes from MemoryOriginFields — where the memory was RECORDED FROM, as
   // opposed to `scope`, which says where it applies. See `lib/origin.ts`.
+  /**
+   * Taxonomy — which family the memory belongs to and which agent/skill owns
+   * it. Nullable: a row written before migration 00056 (or an explicit write
+   * that omitted both) carries neither, and `lessonFromMemoryEntry` falls back
+   * to the loop-tag inference (`inferKindHost`) rather than re-parsing tags here.
+   */
+  kind?: string | null;
+  host?: string | null;
+  /**
+   * Recurrence — how many times this lesson has been written (migration
+   * 00059). `>= 3` is LoreKit's own documented promotion threshold (see
+   * `packages/cli/skill/lorekit-setup/rules/self-improvement-loops.md` →
+   * "Promotion (fast → slow)"): the lesson has recurred enough across runs to
+   * be worth hardening into a permanent rule. Optional, never null — a read
+   * either carries a count (>= 1) or omits the field for a pre-00059 backend.
+   */
+  seen_count?: number;
 }
 
 interface LessonCardProps {
