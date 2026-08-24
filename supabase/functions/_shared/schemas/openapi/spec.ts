@@ -323,14 +323,19 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       'dashboard (`X-LoreKit-Client: dashboard`) are EXCLUDED: browsing your own lore in the web UI ' +
       'is visualisation, not consumption, and would otherwise make this series grow every time you ' +
       'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.\n\n' +
-      'Buckets are returned one per `(bucket, scope)` cell, mirroring `GET /memories/activity`. ' +
+      'Buckets are returned one per `(bucket, scope, read_kind)` cell, mirroring `GET /memories/activity`. ' +
       '`scope` is nullable: a read whose scope the server could not resolve (carried in a request ' +
       'body, or ungrammatical) is recorded as unattributed rather than dropped, so it still counts ' +
       'toward the unfiltered total. Pass the optional `scope` query parameter to restrict the ' +
       'series to one exact scope; because the metric is additive, those buckets SUM to the ' +
       'per-scope headline. That per-scope total can legitimately be SMALLER than the account ' +
       'total — the difference is the unattributable reads. An invalid `scope` is a `400`, not a ' +
-      'silently ignored filter.',
+      'silently ignored filter.\n\n' +
+      '`read_kind` (migration 00080) splits retrieved from opened: `\'targeted\'` is `memory.read` ' +
+      '(one exact scope+key — an agent deliberately opening a specific lesson); `\'bulk\'` is ' +
+      '`memory.list`/`memory.search`/`memory.list_archived` (every row a listing call returned, ' +
+      'e.g. a session-start hook injecting lessons). Retrieved + opened sum to the same total this ' +
+      'endpoint always returned — the split refines the series, it does not change it.',
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },

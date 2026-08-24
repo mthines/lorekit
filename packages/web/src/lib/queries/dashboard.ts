@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
-import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
+import { trendRowsFromActivity, type TrendRow } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import { activityRequest, listScopesRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
 import type { UsageStatRow } from '@lorekit/schemas/usage';
+import type { ReadActivityBucket } from '@lorekit/schemas/memory';
 
 export interface DashboardData {
   scopes: ScopeHealth[];
@@ -21,7 +22,14 @@ export interface DashboardData {
    * Kept as buckets rather than expanded into rows: read counts run to tens of
    * thousands of records, and the card only ever sums them (`computeCountTrend`).
    */
-  readBuckets: CountBucketRow[];
+  /**
+   * Widened past `CountBucketRow` to carry `read_kind` (migration 00080) —
+   * `targeted` (memory.read) vs `bulk` (list/search/list_archived) — so the
+   * card can split retrieved from opened without a second fetch. Still
+   * assignable everywhere `CountBucketRow[]` is expected (a structural
+   * superset), so `computeCountTrend` needs no change.
+   */
+  readBuckets: ReadActivityBucket[];
   /**
    * `GET /memories/usage`'s grouped rows, over the SAME trend window as
    * everything above — feeds `UsageHealth`'s friction/latency/coverage-gap

@@ -7533,6 +7533,81 @@ begin
 end;
 $$;
 
+-- ── 88. lorekit_read_activity gains read_kind (00080) ────────────────────────
+-- "Memories read" is 99.7% bulk list/search output in a live sample -- split
+-- retrieved (bulk) from opened (targeted) so the two stop sharing one number.
+-- AC-1: a memory.read event is read_kind='targeted'.
+-- AC-2: memory.list/search/list_archived events are read_kind='bulk'.
+-- AC-3: retrieved + opened sum to the SAME total the function always gave for
+--       this window (the split refines, never changes, the series).
+-- AC-4: the dashboard-client exclusion and key-scope narrowing still apply
+--       per read_kind, not just to the unsplit total.
+do $$
+declare
+  v_targeted   bigint;
+  v_bulk       bigint;
+  v_total_new  bigint;
+  v_total_rows bigint;
+  v_dashboard_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',         'repo', 'jwt', 'ok', 10,  1, 'mcp', timestamptz '2026-08-05 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',         'repo', 'jwt', 'ok', 10, 31, 'mcp', timestamptz '2026-08-05 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search',       'repo', 'jwt', 'ok', 10,  5, 'mcp', timestamptz '2026-08-05 01:10:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list_archived','repo', 'jwt', 'ok', 10,  2, 'mcp', timestamptz '2026-08-05 01:15:00+00'),
+    -- The dashboard's own browsing must stay excluded per read_kind too.
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', 10, 100, 'dashboard', timestamptz '2026-08-05 01:20:00+00');
+
+  -- AC-1: memory.read is targeted.
+  select coalesce(sum(count), 0) into v_targeted from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'targeted';
+  assert v_targeted = 1, format('88 AC-1: memory.read must be read_kind=targeted with count 1, got %s', v_targeted);
+
+  -- AC-2: list/search/list_archived are bulk (31+5+2 = 38; the dashboard's
+  -- 100 must NOT be included per AC-4).
+  select coalesce(sum(count), 0) into v_bulk from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'bulk';
+  assert v_bulk = 38, format('88 AC-2/AC-4: bulk must be 38 (31+5+2, dashboard excluded), got %s', v_bulk);
+
+  -- AC-3: retrieved + opened sum to the function's own total for the window
+  -- (1 + 38 = 39; the dashboard's 100 stays excluded from the total too).
+  select coalesce(sum(count), 0) into v_total_new from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_new = 39,
+    format('88 AC-3: targeted + bulk must sum to 39 (1 + 38), got %s', v_total_new);
+
+  -- AC-4 (direct): the dashboard-attributed row contributes nothing to either
+  -- read_kind, not merely something less than its full 100.
+  select count(*) into v_dashboard_count from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where count = 100;
+  assert v_dashboard_count = 0, '88 AC-4: the dashboard-attributed 100 records must not appear in either read_kind';
+
+  -- Sanity: exactly two rows returned for this bucket/scope (one per
+  -- read_kind) -- not folded into one, not split further.
+  select count(*) into v_total_rows from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_rows = 2,
+    format('88: expected exactly 2 rows (targeted + bulk) for this bucket/scope, got %s', v_total_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
