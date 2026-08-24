@@ -123,6 +123,17 @@ Then drop `npx @lorekit/cli` and call `lorekit` directly:
 lorekit doctor
 ```
 
+**Tab completion (zsh / fish).** Let `install` wire it, or do it by hand:
+
+```bash
+lorekit install --completions auto        # detect $SHELL and set it up
+lorekit completion zsh  > ~/.zsh/completions/_lorekit
+lorekit completion fish > ~/.config/fish/completions/lorekit.fish
+```
+
+It completes commands, each command's flags, and — from your local store —
+scopes and `scope::key` addresses.
+
 ### 3. That's it
 
 Your agent now remembers. Its lessons survive every session, reach every machine
