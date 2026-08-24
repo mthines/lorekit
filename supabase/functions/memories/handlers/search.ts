@@ -11,6 +11,7 @@ import type { Tables } from '../../_shared/db/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { applyFilter } from '../../_shared/api/filter.ts';
+import { safeValidateScope } from '../../_shared/scope/scope.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -81,7 +82,10 @@ export async function handleSearch(
   // is honest.
   if (body.scopes?.length) {
     res.headers.set('X-LoreKit-Scope-Count', String(body.scopes.length));
-    if (body.scopes.length === 1) res.headers.set('X-LoreKit-Resolved-Scope', body.scopes[0]);
+    if (body.scopes.length === 1) {
+      const resolved = safeValidateScope(body.scopes[0]);
+      if (resolved) res.headers.set('X-LoreKit-Resolved-Scope', resolved);
+    }
   }
   return res;
 }
