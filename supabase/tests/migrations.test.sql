@@ -7608,6 +7608,66 @@ begin
 end;
 $$;
 
+-- ── 89. lorekit_usage_memory_count_peak (00081) ──────────────────────────────
+-- usage_events.memory_count is stamped on every write event and exposed by no
+-- endpoint. Surface the window's peak as its own scalar RPC.
+-- AC-1: returns the MAX memory_count over write events in the window.
+-- AC-2: a window with no write events returns null, never a fabricated 0.
+-- AC-3: a service-role caller with no target user returns null.
+-- AC-4: self-only -- a different user's peak is invisible.
+do $$
+declare
+  v_peak bigint;
+  v_peak_none bigint;
+  v_peak_other_scope integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, memory_count, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 40, timestamptz '2026-08-10 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 55, timestamptz '2026-08-10 02:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 47, timestamptz '2026-08-10 03:00:00+00'),
+    -- A different user in the SAME window must not leak into the first user's peak.
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.write', 'repo', 'jwt', 'ok', 9999, timestamptz '2026-08-10 01:30:00+00');
+
+  -- AC-1: the max of 40/55/47 is 55.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak;
+  assert v_peak = 55, format('89 AC-1: expected peak 55, got %s', v_peak);
+
+  -- AC-2: a window with no write events for this user returns null.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2020-01-01 00:00:00+00', timestamptz '2020-01-02 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('89 AC-2: an empty window must return null, got %s', v_peak_none);
+
+  -- AC-3: a service-role caller with no target user (p_user_id null) has no
+  -- single account to report on.
+  select lorekit_usage_memory_count_peak(
+    null, timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('89 AC-3: a NULL target user must return null, got %s', v_peak_none);
+
+  -- AC-4: self-only -- the second user's 9999 must never appear in the first
+  -- user's peak (already proven by AC-1 = 55, not 9999), and querying the
+  -- SECOND user directly must see their own peak, not the first's.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a2',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_other_scope;
+  assert v_peak_other_scope = 9999,
+    format('89 AC-4: the second user must see their own peak (9999), got %s', v_peak_other_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

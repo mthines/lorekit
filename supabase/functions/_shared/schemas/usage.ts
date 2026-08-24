@@ -75,6 +75,19 @@ export const UsageSummarySchema = z.object({
   archived: z.number().int().nonnegative(),
   expired: z.number().int().nonnegative(),
   by_outcome: z.record(z.number().int().nonnegative()),
+  /**
+   * The highest `memories.count` snapshot recorded on a WRITE event
+   * (`usage_events.memory_count`, migration 00034) in this window — migration
+   * 00081 surfaces it. Answers "how full WAS this account over the window",
+   * distinct from the live "how full is it now" the plan page's existing
+   * `lorekit_memory_count()` call answers. `null` when the window has no
+   * write events at all, or for a service-role caller with no target user —
+   * never a fabricated 0, which would read as "empty" rather than "unknown".
+   * No limit accompanies this field: pair it with the caller's own
+   * `lorekit_get_limit`/`lorekit_memory_count` reading, never a hardcoded
+   * number.
+   */
+  peak_memory_count: z.number().int().nonnegative().nullable().optional(),
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 

@@ -86,6 +86,25 @@ export async function handleUsage(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
+  // The highest memory_count snapshot recorded on a write event in this
+  // window (migration 00081/00034) — "how full WAS this account", distinct
+  // from the plan page's existing LIVE count. A separate scalar call: this
+  // value is not derivable from the grouped by_tool rows above (a per-event
+  // snapshot has no sensible sum/group). Fails open to null rather than
+  // failing the whole request — this is a bonus field, not the point of the
+  // call.
+  let peakMemoryCount: number | null = null;
+  const peakResult = await tracedDb.rpc<number | null>('lorekit_usage_memory_count_peak', {
+    p_user_id: auth.userId ?? null,
+    p_since: window.since,
+    p_until: window.until,
+  });
+  if (!peakResult.error) {
+    peakMemoryCount = peakResult.data == null ? null : Number(peakResult.data);
+  } else {
+    span.error(`DB (memory_count_peak, non-fatal): ${peakResult.error.message}`);
+  }
+
   const rows: UsageStatRow[] = ((data ?? []) as RawUsageRow[]).map((r) => ({
     tool_name: r.tool_name,
     outcome: r.outcome,
@@ -103,7 +122,7 @@ export async function handleUsage(
   return ok({
     range: { since: window.since, until: window.until },
     correlation_id: correlationId,
-    summary: summarizeUsageRows(rows),
+    summary: { ...summarizeUsageRows(rows), peak_memory_count: peakMemoryCount },
     by_tool: rows,
     by_scope_type: rollupByScopeType(rows),
   }, cors);
