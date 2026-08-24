@@ -7437,6 +7437,102 @@ begin
 end;
 $$;
 
+-- ── 87. lorekit_usage_stats groups by client, kind, host too (00079) ────────
+-- usage_events has stored client (00054) and kind/host (00056) for months;
+-- GET /memories/usage exposed none of them. Widen the GROUP BY.
+-- AC-1: the new columns actually discriminate rows (two rows with the same
+--       tool/outcome/scope_type but different client stay SEPARATE rows).
+-- AC-2: summing event_count over every returned row reproduces the same
+--       total as the pre-00079 (tool_name, outcome, scope_type)-only grouping
+--       would have -- widening the GROUP BY must never gain or lose events.
+-- AC-3: host is bounded to the window's own top 20 by event count; the 21st
+--       most-frequent host (and everything rarer) collapses to 'other'.
+-- AC-4: a NULL host stays NULL -- it is not "some other host", it has none.
+do $$
+declare
+  v_total_new bigint;
+  v_total_old bigint;
+  v_client_a  bigint;
+  v_client_b  bigint;
+  v_other_count bigint;
+  v_null_host_count bigint;
+  v_distinct_hosts_returned integer;
+  i integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: same (tool_name, outcome, scope_type), different client -- must be
+  -- two rows, not folded into one.
+  insert into usage_events (user_id, tool_name, outcome, scope_type, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '87.memory.list', 'ok', 'repo', 'mcp', timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '87.memory.list', 'ok', 'repo', 'cli', timestamptz '2026-08-01');
+
+  select count into v_client_a from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '87.memory.list' and client = 'mcp';
+  select count into v_client_b from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '87.memory.list' and client = 'cli';
+  assert v_client_a = 1 and v_client_b = 1,
+    format('87 AC-1: client must discriminate rows, got mcp=%s cli=%s', v_client_a, v_client_b);
+
+  -- AC-2: the SUM over every row for this tool_name is 2, matching the two
+  -- events inserted -- widening the group-by refined the buckets, it did not
+  -- change the total.
+  select coalesce(sum(event_count), 0) into v_total_new from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '87.memory.list';
+  select count(*) into v_total_old from usage_events
+   where tool_name = '87.memory.list' and user_id = '00000000-0000-0000-0000-0000000000a1';
+  assert v_total_new = v_total_old,
+    format('87 AC-2: summed event_count (%s) must equal the raw row count (%s)', v_total_new, v_total_old);
+
+  -- AC-3/AC-4: 21 distinct hosts, one event each, plus 3 NULL-host events (a
+  -- scopeless/hostless tool). The rarest host (host-20, alphabetically last
+  -- among ties at count=1) must collapse to 'other'; NULL must stay NULL.
+  for i in 0..20 loop
+    insert into usage_events (user_id, tool_name, outcome, scope_type, host, created_at)
+      values ('00000000-0000-0000-0000-0000000000a1', '87.memory.write', 'ok', 'repo',
+              format('87-host-%s', lpad(i::text, 2, '0')), timestamptz '2026-08-01');
+  end loop;
+  insert into usage_events (user_id, tool_name, outcome, scope_type, host, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '87.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '87.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '87.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01');
+
+  select count(distinct host) into v_distinct_hosts_returned from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '87.memory.write' and host is not null;
+  -- 20 top hosts + the 'other' bucket the 21st collapses into = 21 distinct
+  -- non-null host values, never 21 real host names.
+  assert v_distinct_hosts_returned = 21,
+    format('87 AC-3: expected 20 named hosts + one "other" bucket (21 distinct), got %s', v_distinct_hosts_returned);
+
+  select coalesce(sum(event_count), 0) into v_other_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '87.memory.write' and host = 'other';
+  assert v_other_count = 1,
+    format('87 AC-3: exactly one event must have collapsed into the "other" bucket, got %s', v_other_count);
+
+  select coalesce(sum(event_count), 0) into v_null_host_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '87.memory.write' and host is null;
+  assert v_null_host_count = 3,
+    format('87 AC-4: the 3 NULL-host events must stay NULL, not become "other", got %s', v_null_host_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

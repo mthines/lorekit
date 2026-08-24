@@ -5,6 +5,7 @@ import { BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { UsageHealth } from '@/components/dashboard/UsageHealth';
+import { AgentBreakdown } from '@/components/dashboard/AgentBreakdown';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
@@ -308,6 +309,11 @@ export function DashboardStats() {
           bars-sum-to-headline invariant every stat card holds. Renders
           nothing when the account has no usage rows at all. */}
       <UsageHealth rows={usageByTool} />
+
+      {/* Who's reading + agent family — migration 00079's client/kind/host
+          group-by. Its own section for the same reason UsageHealth is:
+          diagnostics, not additive stat cards. */}
+      <AgentBreakdown rows={usageByTool} />
     </>
   );
 }

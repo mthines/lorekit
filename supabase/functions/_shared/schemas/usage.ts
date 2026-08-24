@@ -36,11 +36,25 @@ export const UsageStatsQuerySchema = z.object({
 });
 export type UsageStatsQuery = z.infer<typeof UsageStatsQuerySchema>;
 
-/** One grouped row: events for a (tool, outcome, scope_type) triple. */
+/**
+ * One grouped row: events for a (tool, outcome, scope_type, client, kind,
+ * host) tuple (migration 00079 added the last three — `client` is which
+ * SURFACE called, `kind`/`host` are the memory taxonomy family/owner).
+ * `client`/`kind`/`host` are nullable: not every call carries them (a
+ * headerless legacy caller, an org.* tool with no memory taxonomy). `host` is
+ * additionally bounded to the window's own top 20 by event count — anything
+ * else arrives as the literal `'other'`, never an unbounded free-text value.
+ */
 export const UsageStatRowSchema = z.object({
   tool_name: z.string(),
   outcome: z.string(),
   scope_type: z.string().nullable(),
+  // Optional (not just nullable) so a fixture/response from before migration
+  // 00079 — and every existing call site that only knew tool_name/outcome/
+  // scope_type — still typechecks without inventing these three.
+  client: z.string().nullable().optional(),
+  kind: z.string().nullable().optional(),
+  host: z.string().nullable().optional(),
   // event_count = tool CALLS; record_count = the RECORDS those calls touched.
   event_count: z.number().int().nonnegative(),
   record_count: z.number().int().nonnegative(),

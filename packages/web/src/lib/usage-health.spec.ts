@@ -5,6 +5,8 @@ import {
   failuresByToolOutcome,
   meanLatencyByToolScope,
   coverageGapsByScopeType,
+  readsByClient,
+  readsByAgentFamily,
 } from './usage-health';
 
 function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
@@ -147,5 +149,62 @@ describe('coverageGapsByScopeType', () => {
     const result = coverageGapsByScopeType(rows);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ scope_type: 'other', event_count: 8, record_count: 2 });
+  });
+});
+
+describe('readsByClient', () => {
+  it('sums event_count and record_count per client', () => {
+    const rows = [
+      row({ client: 'mcp', event_count: 100, record_count: 3100 }),
+      row({ client: 'mcp', event_count: 20, record_count: 600 }),
+      row({ client: 'cli', event_count: 5, record_count: 5 }),
+    ];
+    const result = readsByClient(rows);
+    expect(result).toContainEqual({ client: 'mcp', event_count: 120, record_count: 3700 });
+    expect(result).toContainEqual({ client: 'cli', event_count: 5, record_count: 5 });
+  });
+
+  it('keeps a null client as its own row (unattributed, e.g. pre-B1 rows)', () => {
+    const rows = [row({ client: null, event_count: 10, record_count: 10 })];
+    expect(readsByClient(rows)).toEqual([{ client: null, event_count: 10, record_count: 10 }]);
+  });
+
+  it('ranks by event_count desc', () => {
+    const rows = [
+      row({ client: 'cli', event_count: 5, record_count: 5 }),
+      row({ client: 'mcp', event_count: 500, record_count: 500 }),
+    ];
+    expect(readsByClient(rows).map((r) => r.client)).toEqual(['mcp', 'cli']);
+  });
+});
+
+describe('readsByAgentFamily', () => {
+  it('groups by (kind, host)', () => {
+    const rows = [
+      row({ kind: 'lesson', host: 'reviewer', event_count: 10, record_count: 300 }),
+      row({ kind: 'lesson', host: 'reviewer', event_count: 5, record_count: 150 }),
+      row({ kind: 'bus', host: 'aw', event_count: 2, record_count: 2 }),
+    ];
+    const result = readsByAgentFamily(rows);
+    expect(result).toContainEqual({ kind: 'lesson', host: 'reviewer', event_count: 15, record_count: 450 });
+    expect(result).toContainEqual({ kind: 'bus', host: 'aw', event_count: 2, record_count: 2 });
+  });
+
+  it('excludes rows with neither kind nor host — nothing to attribute', () => {
+    const rows = [row({ kind: null, host: null, event_count: 10, record_count: 10 })];
+    expect(readsByAgentFamily(rows)).toEqual([]);
+  });
+
+  it('keeps a partial pair (kind known, host unknown) as its own row', () => {
+    const rows = [row({ kind: 'signal', host: null, event_count: 3, record_count: 3 })];
+    expect(readsByAgentFamily(rows)).toEqual([{ kind: 'signal', host: null, event_count: 3, record_count: 3 }]);
+  });
+
+  it('ranks by event_count desc', () => {
+    const rows = [
+      row({ kind: 'signal', host: 'reviewer', event_count: 1, record_count: 1 }),
+      row({ kind: 'lesson', host: 'aw', event_count: 100, record_count: 100 }),
+    ];
+    expect(readsByAgentFamily(rows).map((r) => r.kind)).toEqual(['lesson', 'signal']);
   });
 });

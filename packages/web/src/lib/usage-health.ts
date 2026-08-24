@@ -136,3 +136,71 @@ export function coverageGapsByScopeType(rows: readonly UsageStatRow[]): Coverage
     }))
     .sort((a, b) => a.recordsPerCall - b.recordsPerCall);
 }
+
+// ── Who is reading (client) ─────────────────────────────────────────────────
+
+export interface ClientBreakdownRow {
+  /** `null` is genuinely unattributed — a call predating the per-transport default (see PR B1). */
+  client: string | null;
+  event_count: number;
+  record_count: number;
+}
+
+/**
+ * Calls and records grouped by `client` (`dashboard`/`cli`/`mcp`/`api`,
+ * migration 00079's new dimension on `by_tool`). Answers "who is reading" now
+ * that both transports default an unattributed call to their own name (PR
+ * B1) instead of leaving the dominant agent read path silently NULL.
+ */
+export function readsByClient(rows: readonly UsageStatRow[]): ClientBreakdownRow[] {
+  const totals = new Map<string | null, { event_count: number; record_count: number }>();
+  for (const row of rows) {
+    const client = row.client ?? null;
+    const existing = totals.get(client);
+    if (existing) {
+      existing.event_count += row.event_count;
+      existing.record_count += row.record_count;
+    } else {
+      totals.set(client, { event_count: row.event_count, record_count: row.record_count });
+    }
+  }
+  return [...totals.entries()]
+    .map(([client, t]) => ({ client, event_count: t.event_count, record_count: t.record_count }))
+    .sort((a, b) => b.event_count - a.event_count);
+}
+
+// ── Agent family (kind × host) ───────────────────────────────────────────────
+
+export interface AgentFamilyRow {
+  /** The memory taxonomy family (`lesson`/`bus`/`signal`), or `null` when unresolved. */
+  kind: string | null;
+  /** The owning skill/agent (open free-text, bounded to the window's top 20 + 'other' by the RPC). */
+  host: string | null;
+  event_count: number;
+  record_count: number;
+}
+
+/**
+ * Calls and records grouped by `(kind, host)` — which agent FAMILY is
+ * generating the traffic ("reviewer's lessons", "aw's bus events"), not just
+ * how much. `host` is already bounded to this window's own top 20 + `'other'`
+ * by `lorekit_usage_stats` (migration 00079); this only re-groups what the
+ * RPC already returned, it does not impose its own bound.
+ */
+export function readsByAgentFamily(rows: readonly UsageStatRow[]): AgentFamilyRow[] {
+  const totals = new Map<string, { kind: string | null; host: string | null; event_count: number; record_count: number }>();
+  for (const row of rows) {
+    const kind = row.kind ?? null;
+    const host = row.host ?? null;
+    if (kind === null && host === null) continue; // no taxonomy at all — nothing to attribute
+    const key = `${kind ?? ''}\u0000${host ?? ''}`;
+    const existing = totals.get(key);
+    if (existing) {
+      existing.event_count += row.event_count;
+      existing.record_count += row.record_count;
+    } else {
+      totals.set(key, { kind, host, event_count: row.event_count, record_count: row.record_count });
+    }
+  }
+  return [...totals.values()].sort((a, b) => b.event_count - a.event_count);
+}

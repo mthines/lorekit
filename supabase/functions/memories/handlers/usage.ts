@@ -18,6 +18,9 @@ interface RawUsageRow {
   tool_name: string;
   outcome: string;
   scope_type: string | null;
+  client: string | null;
+  kind: string | null;
+  host: string | null;
   event_count: number | string;
   record_count: number | string;
   total_duration_ms: number | string | null;
@@ -87,6 +90,9 @@ export async function handleUsage(
     tool_name: r.tool_name,
     outcome: r.outcome,
     scope_type: r.scope_type,
+    client: r.client,
+    kind: r.kind,
+    host: r.host,
     event_count: Number(r.event_count),
     record_count: Number(r.record_count),
     total_duration_ms: r.total_duration_ms == null ? null : Number(r.total_duration_ms),

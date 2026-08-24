@@ -363,6 +363,14 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     method: 'get', path: '/memories/usage',
     summary: 'Aggregate usage statistics for your own activity (reads, writes, outcomes, per scope-type) over an optional period',
     tags: ['Memories'],
+    description:
+      '`by_tool` rows are grouped by `(tool_name, outcome, scope_type, client, kind, host)` ' +
+      '(migration 00079 added the last three). `client` is which surface called ' +
+      '(`dashboard`/`cli`/`mcp`/`api`); `kind`/`host` are the memory taxonomy family/owner. ' +
+      '`host` is bounded to this window\'s own top 20 by event count — anything else is the ' +
+      'literal `\'other\'`, never an unbounded free-text value. `scope_type` may carry a legacy ' +
+      'free-text value predating validation hardening; group by it defensively rather than ' +
+      'assuming the closed `global|project|repo|branch|mixed|invalid` vocabulary is exhaustive.',
     security, request: { query: UsageStatsQuerySchema },
     responses: {
       200: { description: 'Usage statistics', content: { 'application/json': { schema: UsageStatsResponseSchema } } },
