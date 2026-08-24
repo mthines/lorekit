@@ -79,7 +79,7 @@ export function HotColdLore() {
       {data && (
         <p className="text-xs text-[var(--color-content-tertiary)]">
           {direction === 'cold'
-            ? `Not read since tracking began on ${formatCountingSince(data.counting_since)} — never read that far back is unknown, not zero.`
+            ? `Not read since tracking began on ${formatCountingSince(data.counting_since)} — 0 only means unread since this date, not never.`
             : `Most-read lore since tracking began on ${formatCountingSince(data.counting_since)}.`}
         </p>
       )}
