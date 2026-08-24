@@ -99,16 +99,21 @@ describe('telemetry vocabulary closure', () => {
 });
 
 describe('the analytics reads stay REST-only (D17)', () => {
-  const FIVE = [
+  // Six as of migration 00083's Runs view — the decision's ORIGINAL five plus
+  // one, not a re-litigation of it: `memory.usage-runs` is the same "chart,
+  // not an agent primitive" shape as the other five. See
+  // docs/decisions.md → "Dashboard analytics reads stay REST-only".
+  const RESTONLY_NAMES = [
     'memory.activity',
     'memory.facets',
     'memory.read-activity',
     'memory.tags',
     'memory.usage',
+    'memory.usage-runs',
   ];
 
-  it('records exactly these five as a decision, by name', () => {
-    expect([...REST_ONLY_OP_NAMES].sort()).toEqual(FIVE);
+  it('records exactly these six as a decision, by name', () => {
+    expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
   it('keeps memory.relevant OUT of the five — it is already covered agent-side', () => {

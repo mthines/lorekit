@@ -66,6 +66,8 @@ import {
 import {
   UsageStatsQuerySchema,
   UsageStatsResponseSchema,
+  UsageRunsQuerySchema,
+  UsageRunsResponseSchema,
 } from '../usage.ts';
 import {
   RelevantQuerySchema,
@@ -366,6 +368,27 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { query: UsageStatsQuerySchema },
     responses: {
       200: { description: 'Usage statistics', content: { 'application/json': { schema: UsageStatsResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/usage/runs',
+    summary: 'Enumerate runs (correlation_id values) with what each one read, wrote, and touched',
+    tags: ['Memories'],
+    description:
+      'The payoff view for `?correlation_id=` on `GET /memories/usage`: that filters TO one run, ' +
+      'this is how you discover which ones exist. Each run is a distinct `correlation_id` — a ' +
+      'local session, a CI job, or a PR automation (`session_kind`, migration 00082) — with its ' +
+      'first/last-seen timestamps, read/write event and record counts (the SAME broader ' +
+      '`READ_TOOL_NAMES`/`WRITE_TOOL_NAMES` vocabulary `summarizeUsageRows` uses for `/usage`\'s ' +
+      'own summary, not `GET /memories/read-activity`\'s narrower 4-tool definition), distinct ' +
+      'scopes touched, and total duration.\n\n' +
+      'Keyset-paginated (`cursor`/`next_cursor`), never OFFSET. `range` echoes the window actually ' +
+      'queried — an unbounded request is narrowed to 90 days server-side and captioned here rather ' +
+      'than silently answering less than "all time" implies.',
+    security, request: { query: UsageRunsQuerySchema },
+    responses: {
+      200: { description: 'Runs page', content: { 'application/json': { schema: UsageRunsResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });
