@@ -389,8 +389,13 @@ stdout as their host's protocol, so a span each would be a firehose of
 near-identical traces and an awaited 1500 ms export on the agent's critical path
 — but leaving them silent meant the CLI's highest-volume traffic was the traffic
 nobody could see. The counter carries the same identity attributes the traced
-commands do; `meterCommand` starts the export before the command runs and awaits
-it after, so it overlaps the command's own work.
+commands do. The two commands are counted at different times: `mcp` is a
+long-lived stdio server, so its count fires **before** run (a post-run count on a
+killed server would never report); `hook` is short-lived and counted **after**
+run, so the counter can carry the health dimensions the fire reports
+(`lorekit.hook.event` + `lorekit.hook.outcome`). A hook always exits 0, so those
+dimensions are the only signal a broken or degrading hook (an unusable store, a
+swallowed lesson-lookup error) produces.
 
 Attributes on `lorekit.cli.*` spans + counter points (deliberately narrow — this
 runs on end-users' machines, so **no path, cwd, token, endpoint, repo, or scope
@@ -404,6 +409,8 @@ account-linkable dimension and its opt-out):
 | `lorekit.cli.exit_code` | `0` | Command exit code |
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks`, `json`, `link` |
 | `lorekit.cli.hooks_mode` | `all` | `install` only. Bounded: `all` \| `read-only` \| `none` \| `custom` — which hook wiring the run resolved to (from the flag, the prompt, or the detected state). Counts the CHOICE, not the `--no-hooks` flag |
+| `lorekit.hook.event` | `SessionStart` | `hook` counter only. The host hook event that fired (`SessionStart`, `Stop`, `UserPromptSubmit`, …) — a bounded set defined by the host framework |
+| `lorekit.hook.outcome` | `ok` | `hook` counter only. Bounded: `ok` \| `store_unavailable` (no usable store to read/query) \| `degraded` (a store lookup threw and was swallowed; the host still got output) \| `crash` (an unexpected throw the outer guard caught). The heartbeat that makes a silently-failing hook visible |
 | `user.id` | `a1b2…` / `install:9f3c…` | The LoreKit account once known, else the install id prefixed `install:` — see below |
 
 ### CLI identity
