@@ -31,11 +31,24 @@ export const UsageStatsQuerySchema = z.object({
 });
 export type UsageStatsQuery = z.infer<typeof UsageStatsQuerySchema>;
 
-/** One grouped row: events for a (tool, outcome, scope_type) triple. */
+/**
+ * One grouped row: events for a (tool, outcome, scope_type, client, kind,
+ * host) tuple (migration 00076 added the last three). `client`/`kind`/`host`
+ * mirror the SAME dimensions `usage_events` has stored since 00054/00056 —
+ * widening the group-by only refines existing rows into more, smaller ones
+ * over the same underlying events, so `summary` below still reconciles to
+ * their sum (see `usage-stats.spec.ts`'s reconciliation test).
+ */
 export const UsageStatRowSchema = z.object({
   tool_name: z.string(),
   outcome: z.string(),
   scope_type: z.string().nullable(),
+  /** Calling surface (`dashboard`/`cli`/`mcp`/`api`) — null is unattributed. */
+  client: z.string().nullable(),
+  /** Memory taxonomy family (`lesson`/`bus`/`signal`) — null on non-memory tools. */
+  kind: z.string().nullable(),
+  /** Owning agent/skill — open free-text; null when unresolved. */
+  host: z.string().nullable(),
   // event_count = tool CALLS; record_count = the RECORDS those calls touched.
   event_count: z.number().int().nonnegative(),
   record_count: z.number().int().nonnegative(),
@@ -74,5 +87,14 @@ export const UsageStatsResponseSchema = z.object({
   summary: UsageSummarySchema,
   by_tool: z.array(UsageStatRowSchema),
   by_scope_type: z.array(UsageScopeTallySchema),
+  /**
+   * True when `by_tool` was cut off at `lorekit_usage_stats`' 500-row cap
+   * (migration 00076) — an open `host` dimension on a heavy account is the
+   * one thing that can grow this unboundedly. `summary` is still computed
+   * from the SAME (possibly truncated) `by_tool` rows, so it reconciles with
+   * what is actually shown, but may itself be a partial account of the
+   * window when this is true.
+   */
+  truncated: z.boolean(),
 });
 export type UsageStatsResponse = z.infer<typeof UsageStatsResponseSchema>;

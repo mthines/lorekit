@@ -79,15 +79,15 @@ describe('usageToolKind', () => {
 });
 
 const ROWS: UsageStatRow[] = [
-  { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 600, record_count: 6000, total_duration_ms: 42000 },
-  { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 0, total_duration_ms: 5000 },
-  { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, record_count: 0, total_duration_ms: 40 },
-  { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, record_count: 0, total_duration_ms: 90 },
+  { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 600, record_count: 6000, total_duration_ms: 42000 },
+  { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 100, record_count: 0, total_duration_ms: 5000 },
+  { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', client: null, kind: null, host: null, event_count: 2, record_count: 0, total_duration_ms: 40 },
+  { tool_name: 'memory.read', outcome: 'error', scope_type: null, client: null, kind: null, host: null, event_count: 8, record_count: 0, total_duration_ms: 90 },
   // record_count 0 on purpose: historical archive rows predate the DELETE
   // handler setting the result-count header, so `archived` MUST come from
   // event_count, not record_count, or the window under-reports them.
-  { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 0, total_duration_ms: 120 },
-  { tool_name: 'memory.expired', outcome: 'ok', scope_type: null, event_count: 1, record_count: 6, total_duration_ms: null },
+  { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 3, record_count: 0, total_duration_ms: 120 },
+  { tool_name: 'memory.expired', outcome: 'ok', scope_type: null, client: null, kind: null, host: null, event_count: 1, record_count: 6, total_duration_ms: null },
 ];
 
 describe('summarizeUsageRows', () => {
@@ -106,9 +106,9 @@ describe('summarizeUsageRows', () => {
 
   it('counts refused archives as CALLS but never as archives', () => {
     const refused: UsageStatRow[] = [
-      { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', event_count: 3, record_count: 1, total_duration_ms: 120 },
-      { tool_name: 'memory.archive', outcome: 'permission_denied', scope_type: 'repo', event_count: 4, record_count: 0, total_duration_ms: 20 },
-      { tool_name: 'memory.archive', outcome: 'error', scope_type: 'repo', event_count: 5, record_count: 0, total_duration_ms: 30 },
+      { tool_name: 'memory.archive', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 3, record_count: 1, total_duration_ms: 120 },
+      { tool_name: 'memory.archive', outcome: 'permission_denied', scope_type: 'repo', client: null, kind: null, host: null, event_count: 4, record_count: 0, total_duration_ms: 20 },
+      { tool_name: 'memory.archive', outcome: 'error', scope_type: 'repo', client: null, kind: null, host: null, event_count: 5, record_count: 0, total_duration_ms: 30 },
     ];
     const summary = summarizeUsageRows(refused);
     // Every attempt is still a write CALL — the refusals are real traffic.
@@ -119,8 +119,8 @@ describe('summarizeUsageRows', () => {
 
   it('does not credit a failed read with the records it never returned', () => {
     const summary = summarizeUsageRows([
-      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 1, record_count: 10, total_duration_ms: 5 },
-      { tool_name: 'memory.list', outcome: 'error', scope_type: 'repo', event_count: 1, record_count: 99, total_duration_ms: 5 },
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 1, record_count: 10, total_duration_ms: 5 },
+      { tool_name: 'memory.list', outcome: 'error', scope_type: 'repo', client: null, kind: null, host: null, event_count: 1, record_count: 99, total_duration_ms: 5 },
     ]);
     expect(summary.reads).toBe(2);
     expect(summary.records_read).toBe(10);
@@ -199,5 +199,39 @@ describe('usageToolKind — expiry', () => {
 describe('period lists', () => {
   it('exposes the canonical token set', () => {
     expect([...USAGE_PERIODS]).toEqual(['24h', '7d', '30d', '90d', 'all']);
+  });
+});
+
+describe('widening the group-by cannot change the summary (migration 00076)', () => {
+  // lorekit_usage_stats grouping by client/kind/host in ADDITION to
+  // tool_name/outcome/scope_type only ever REFINES existing groups into more,
+  // smaller ones over the SAME underlying usage_events rows (no join, no
+  // fan-out) — so summing event_count/record_count over the refined rows must
+  // equal summing over the coarser ones. This is the correctness risk the PR
+  // exists to guard: a row set expanded across the new dimensions must
+  // reconcile to an UNCHANGED summary.
+  it('summarizeUsageRows agrees whether the same events arrive as one coarse row or several refined ones', () => {
+    const coarse: UsageStatRow[] = [
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 10, record_count: 100, total_duration_ms: 1000 },
+    ];
+    // The SAME 10 events/100 records/1000ms, now split across three
+    // (client, kind, host) combinations that sum back to the coarse totals.
+    const refined: UsageStatRow[] = [
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'mcp', kind: 'lesson', host: 'reviewer', event_count: 6, record_count: 60, total_duration_ms: 600 },
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'cli', kind: 'lesson', host: 'aw', event_count: 3, record_count: 30, total_duration_ms: 300 },
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: null, kind: null, host: null, event_count: 1, record_count: 10, total_duration_ms: 100 },
+    ];
+    expect(summarizeUsageRows(refined)).toEqual(summarizeUsageRows(coarse));
+  });
+
+  it('rollupByScopeType agrees whether the same events arrive coarse or refined', () => {
+    const coarse: UsageStatRow[] = [
+      { tool_name: 'memory.search', outcome: 'ok', scope_type: 'global', client: null, kind: null, host: null, event_count: 20, record_count: 400, total_duration_ms: 2000 },
+    ];
+    const refined: UsageStatRow[] = [
+      { tool_name: 'memory.search', outcome: 'ok', scope_type: 'global', client: 'mcp', kind: null, host: 'aw', event_count: 12, record_count: 240, total_duration_ms: 1200 },
+      { tool_name: 'memory.search', outcome: 'ok', scope_type: 'global', client: 'api', kind: null, host: null, event_count: 8, record_count: 160, total_duration_ms: 800 },
+    ];
+    expect(rollupByScopeType(refined)).toEqual(rollupByScopeType(coarse));
   });
 });

@@ -7437,6 +7437,65 @@ begin
 end;
 $$;
 
+-- ── 87. lorekit_usage_stats grouped by client/kind/host (00076) ─────────────
+-- Widens the group-by beyond (tool_name, outcome, scope_type). "Who is
+-- reading" (client) and "reads by agent family" (kind × host) were both
+-- STORED since 00054/00056 and both unanswerable from /memories/usage until
+-- now.
+-- AC-1: two events sharing (tool_name, outcome, scope_type) but differing
+--       ONLY by client come back as two SEPARATE rows.
+-- AC-2: client/kind/host are all correctly returned (not silently dropped).
+-- AC-3: the additive invariant — summing event_count over the split rows
+--       equals summing it over what a coarser group-by would have returned.
+--       This is the correctness property the PR exists to guard: refining a
+--       GROUP BY over the SAME rows can only redistribute counts, never
+--       change their total.
+do $$
+declare
+  v_row_count bigint;
+  v_sum       bigint;
+  v_coarse    bigint;
+begin
+  delete from usage_events where user_id = '00000000-0000-0000-0000-0000000000c7';
+
+  insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, kind, host, created_at) values
+    ('00000000-0000-0000-0000-0000000000c7', 'free', 'memory.list', 'repo', 'api_key', 'ok', 10, 5, 'mcp', 'lesson', 'reviewer', now() - interval '10 minutes'),
+    ('00000000-0000-0000-0000-0000000000c7', 'free', 'memory.list', 'repo', 'api_key', 'ok', 10, 5, 'cli', 'lesson', 'aw',       now() - interval '10 minutes'),
+    ('00000000-0000-0000-0000-0000000000c7', 'free', 'memory.list', 'repo', 'api_key', 'ok', 10, 5, null,  null,     null,       now() - interval '10 minutes');
+
+  -- AC-1 + AC-2: three distinct (client, kind, host) combinations for the
+  -- SAME (tool_name, outcome, scope_type) must come back as three rows.
+  select count(*) into v_row_count
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000c7', null, null)
+   where tool_name = 'memory.list' and outcome = 'ok' and scope_type = 'repo';
+  assert v_row_count = 3,
+    format('usage client/kind/host AC-1: 3 distinct combinations must yield 3 rows, got %s', v_row_count);
+
+  assert exists (
+    select 1 from lorekit_usage_stats('00000000-0000-0000-0000-0000000000c7', null, null)
+     where client = 'mcp' and kind = 'lesson' and host = 'reviewer' and event_count = 1
+  ), 'usage client/kind/host AC-2: the mcp/lesson/reviewer row must be returned with its own values, not dropped';
+  assert exists (
+    select 1 from lorekit_usage_stats('00000000-0000-0000-0000-0000000000c7', null, null)
+     where client is null and kind is null and host is null and event_count = 1
+  ), 'usage client/kind/host AC-2: the unattributed row must be returned, not merged into another';
+
+  -- AC-3: the additive invariant. Sum across the three refined rows must equal
+  -- what grouping WITHOUT client/kind/host would have summed (3 events).
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000c7', null, null)
+   where tool_name = 'memory.list' and outcome = 'ok' and scope_type = 'repo';
+  select count(*) into v_coarse
+    from usage_events
+   where user_id = '00000000-0000-0000-0000-0000000000c7'
+     and tool_name = 'memory.list' and outcome = 'ok' and scope_type = 'repo';
+  assert v_sum = v_coarse,
+    format('usage client/kind/host AC-3: refined sum (%s) must equal the coarse total (%s)', v_sum, v_coarse);
+
+  delete from usage_events where user_id = '00000000-0000-0000-0000-0000000000c7';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

@@ -46,10 +46,11 @@ describe('UsageStatsResponseSchema', () => {
       correlation_id: 'pr-42',
       summary: { total_events: 3, reads: 2, writes: 1, other: 0, records_read: 20, archived: 0, expired: 0, by_outcome: { ok: 3 } },
       by_tool: [
-        { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 2, record_count: 20, total_duration_ms: 10 },
-        { tool_name: 'memory.write', outcome: 'ok', scope_type: null, event_count: 1, record_count: 0, total_duration_ms: null },
+        { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'mcp', kind: 'lesson', host: 'reviewer', event_count: 2, record_count: 20, total_duration_ms: 10 },
+        { tool_name: 'memory.write', outcome: 'ok', scope_type: null, client: null, kind: null, host: null, event_count: 1, record_count: 0, total_duration_ms: null },
       ],
       by_scope_type: [{ scope_type: 'repo', event_count: 2 }, { scope_type: null, event_count: 1 }],
+      truncated: false,
     });
     expect(ok.success).toBe(true);
   });
@@ -61,6 +62,7 @@ describe('UsageStatsResponseSchema', () => {
       summary: { total_events: -1, reads: 0, writes: 0, other: 0, records_read: 0, archived: 0, expired: 0, by_outcome: {} },
       by_tool: [],
       by_scope_type: [],
+      truncated: false,
     });
     expect(bad.success).toBe(false);
   });

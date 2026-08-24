@@ -18,10 +18,22 @@ interface RawUsageRow {
   tool_name: string;
   outcome: string;
   scope_type: string | null;
+  client: string | null;
+  kind: string | null;
+  host: string | null;
   event_count: number | string;
   record_count: number | string;
   total_duration_ms: number | string | null;
 }
+
+/**
+ * `lorekit_usage_stats` returns up to 501 rows on purpose (migration 00076) —
+ * the 501st is a truncation sentinel, never rendered. `500`, not the RPC's own
+ * `501`, is this handler's OWN understanding of the cap; if the RPC's limit
+ * ever changes this constant has to change with it, which is why it lives
+ * beside the code that reads the sentinel rather than being re-derived.
+ */
+const USAGE_STATS_ROW_CAP = 500;
 
 /**
  * GET /memories/usage — aggregate usage statistics for the caller's own
@@ -83,16 +95,25 @@ export async function handleUsage(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const rows: UsageStatRow[] = ((data ?? []) as RawUsageRow[]).map((r) => ({
+  // The RPC returns up to 501 rows (500 + one truncation sentinel). Drop the
+  // sentinel and report `truncated: true` rather than silently rendering an
+  // account's usage as complete when the open `host` dimension blew past the
+  // cap — see migration 00076.
+  const rawRows = (data ?? []) as RawUsageRow[];
+  const truncated = rawRows.length > USAGE_STATS_ROW_CAP;
+  const rows: UsageStatRow[] = rawRows.slice(0, USAGE_STATS_ROW_CAP).map((r) => ({
     tool_name: r.tool_name,
     outcome: r.outcome,
     scope_type: r.scope_type,
+    client: r.client,
+    kind: r.kind,
+    host: r.host,
     event_count: Number(r.event_count),
     record_count: Number(r.record_count),
     total_duration_ms: r.total_duration_ms == null ? null : Number(r.total_duration_ms),
   }));
 
-  span.setAttributes({ 'lorekit.result_count': rows.length });
+  span.setAttributes({ 'lorekit.result_count': rows.length, 'lorekit.truncated': truncated });
 
   return ok({
     range: { since: window.since, until: window.until },
@@ -100,5 +121,6 @@ export async function handleUsage(
     summary: summarizeUsageRows(rows),
     by_tool: rows,
     by_scope_type: rollupByScopeType(rows),
+    truncated,
   }, cors);
 }
