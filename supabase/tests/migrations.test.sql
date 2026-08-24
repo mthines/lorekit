@@ -7494,6 +7494,56 @@ begin
 end;
 $$;
 
+-- ── 88. usage_events.session_kind (00082) ────────────────────────────────────
+-- correlation_id was populated only when a human hand-exported
+-- LOREKIT_CORRELATION_ID, so "was this read in a local session, CI, or a PR
+-- automation" was unanswerable. session_kind is the bounded dimension every
+-- chart groups on; correlation_id stays the unbounded drill-down key.
+-- AC-1: the writer RPC persists the new trailing p_session_kind parameter.
+-- AC-2: session_kind is null by default (an older CLI, or no header sent).
+-- AC-3: the length CHECK is a real backstop, not decoration.
+do $$
+declare
+  v_id     uuid;
+  v_kind   text;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a CI run persists session_kind = 'ci'.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.list',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok',
+    p_session_kind => 'ci') into v_id;
+  assert v_id is not null, '88 AC-1: the writer must return the inserted id';
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind = 'ci', format('88 AC-1: p_session_kind must be persisted, got %s', v_kind);
+
+  -- AC-2: omitting p_session_kind leaves the column null.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind is null, format('88 AC-2: session_kind must default to null, got %s', v_kind);
+
+  -- AC-3: the length CHECK is a real backstop -- the app-side parseSessionKind
+  -- is the primary gate, but a direct insert must not be able to put an
+  -- unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, session_kind)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 17));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '88 AC-3: an over-long session_kind value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

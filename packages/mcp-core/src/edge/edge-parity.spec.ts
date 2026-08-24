@@ -79,6 +79,11 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['../webhook/github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
   ['../telemetry/trace-context.ts', '_shared/telemetry/trace-context.ts'],
   ['../rest/rest-tool-name.ts', '_shared/rest/rest-tool-name.ts'],
+  // The `X-LoreKit-Session-Kind` validator (migration 00082). Also has a
+  // SECOND, cross-LANGUAGE twin — the CLI's `deriveSessionContext` in
+  // `packages/cli/src/shared/mcp.mjs` — guarded behaviourally by
+  // `session-kind-parity.spec.ts`, the same split `lesson-rank.ts` uses below.
+  ['../telemetry/session-kind.ts', '_shared/telemetry/session-kind.ts'],
   // The ranking used by GET /memories/relevant. Note this file has a SECOND,
   // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
   // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.

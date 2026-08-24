@@ -7,6 +7,7 @@ import type { UsageEventParams } from '../telemetry/usage.ts';
 import { restToolName } from '../rest/rest-tool-name.ts';
 import { classifyResponseOutcome } from '../rest/rest-response-outcome.ts';
 import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../telemetry/usage-stats.ts';
+import { parseSessionKind } from '../telemetry/session-kind.ts';
 import { safeValidateScope } from '../scope/scope.ts';
 import { scopeTypeAttribute } from '../scope/scope-type-attribute.ts';
 import type { Span } from '../telemetry/otel.ts';
@@ -65,6 +66,17 @@ export const RESOLVED_SCOPE_HEADER = 'x-lorekit-resolved-scope';
  * excludes `dashboard`-attributed reads from `lorekit_read_activity`.
  */
 export const CLIENT_HEADER = 'x-lorekit-client';
+
+/**
+ * Request header naming the SESSION KIND the call came from (`local` / `ci` /
+ * `pr` / `unknown`, migration 00082). The CLI derives this from its own
+ * environment (`GITHUB_ACTIONS`, `GITHUB_REF`, …) and sends it; the router
+ * only validates (`parseSessionKind`), the same fail-safe posture as
+ * `CLIENT_HEADER`. `correlation_id` stays the unbounded drill-down key
+ * (a PR ref, a branch, a session id); this is the bounded dimension every
+ * chart groups on.
+ */
+export const SESSION_KIND_HEADER = 'x-lorekit-session-kind';
 
 /**
  * Response header naming the account the request authenticated as — the
@@ -278,6 +290,11 @@ export function createRouter(routes: Route[], functionName: string) {
       // CLI's `cli` are unaffected. Retroactive for NEW traffic only —
       // historical rows recorded before this change stay NULL.
       const client = parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'api';
+      // Which KIND of session (local/ci/pr/unknown, migration 00082). The CLI
+      // derives and sends this; the router only validates. Null (an older CLI,
+      // or a caller that never set the header) means no attribution, never an
+      // error — same fail-safe posture as CLIENT_HEADER.
+      const sessionKind = parseSessionKind(req.headers.get(SESSION_KIND_HEADER));
       hs.setAttributes({ 'lorekit.tool.name': toolName, ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}) });
       const startedMs = Date.now();
 
@@ -328,6 +345,7 @@ export function createRouter(routes: Route[], functionName: string) {
             resultCount,
             correlationId,
             client,
+            sessionKind,
           });
         }
         return res;
@@ -349,6 +367,7 @@ export function createRouter(routes: Route[], functionName: string) {
             durationMs,
             correlationId,
             client,
+            sessionKind,
           });
         }
         throw e;

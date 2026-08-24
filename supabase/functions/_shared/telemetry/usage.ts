@@ -72,6 +72,14 @@ export interface UsageEventParams {
    */
   kind?: string | null;
   host?: string | null;
+  /**
+   * WAS this call from a local session, CI, or a PR automation
+   * (`local`/`ci`/`pr`/`unknown`, migration 00082) — the CLI derives this
+   * from its own environment and sends it via `X-LoreKit-Session-Kind`; the
+   * edge only validates (`parseSessionKind`), never derives. Null means no
+   * attribution (an older CLI, or a caller that never set the header).
+   */
+  sessionKind?: string | null;
 }
 
 /**
@@ -110,6 +118,7 @@ export function recordUsageEvent(
     p_client:      params.client ?? undefined,
     p_scope:       params.scope ?? undefined,
     p_scope_count: params.scopeCount ?? undefined,
+    p_session_kind: params.sessionKind ?? undefined,
     // `kind`/`host` have been on `UsageEventParams` and on the writer RPC since
     // 00056, and the MCP handler has been resolving and passing them all along —
     // but they were never in this payload, so the RPC used its defaults and
