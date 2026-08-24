@@ -7437,6 +7437,29 @@ begin
 end;
 $$;
 
+-- ── 00076: GIN index on memories.tags must exist and stay a GIN index ───────
+-- The `tags @> ARRAY[...]` containment check in onboarding-server.ts has no
+-- index of its own without this — asserted here for the same reason 00030's
+-- memories_expires_at_idx is (line ~4953 above): "index presence isn't a
+-- behavior the app-layer unit tests can assert", so a future migration that
+-- drops or narrows this index would regress the /overview latency this index
+-- fixes with nothing else catching it.
+do $$
+declare v_idx_method text;
+begin
+  select am.amname into v_idx_method
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+    join pg_am am on am.oid = c.relam
+   where c.relname = 'memories_tags_idx';
+
+  assert v_idx_method is not null,
+    'TAGS-1: memories_tags_idx (00076) must exist — the tags containment filter has no index without it';
+  assert v_idx_method = 'gin',
+    format('TAGS-1: memories_tags_idx must stay a GIN index (array containment needs it), got %s', v_idx_method);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
