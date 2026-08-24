@@ -1,7 +1,7 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { expandScopeForSearch } from '../scope/scope.js';
+import { expandScopeForSearch, scopeType } from '../scope/scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
 
 export const SearchInputSchema = z.object({
@@ -27,6 +27,15 @@ export async function search(
   const tracer = getTracer();
   const hist = getToolDurationHistogram();
   const startTime = Date.now();
+
+  // The duration metric's scope-type label. A search over exactly one scope is
+  // that scope's type; a search over several (or none — the whole store) is
+  // genuinely `mixed`. This used to be hard-coded `mixed`, which made a
+  // single-scope search's latency indistinguishable from an all-scope one and
+  // meant the series could never be sliced by real scope type.
+  const histScopeType = input.scopes && input.scopes.length === 1
+    ? scopeType(input.scopes[0])
+    : 'mixed';
 
   return tracer.startActiveSpan('lorekit.memory.search', { kind: 0 }, async (span) => {
     span.setAttribute('lorekit.tool.name', 'memory.search');
@@ -98,7 +107,7 @@ export async function search(
       span.end();
       hist.record((Date.now() - startTime) / 1000, {
         'lorekit.tool.name': 'memory.search',
-        'lorekit.scope.type': 'mixed',
+        'lorekit.scope.type': histScopeType,
       });
     }
   });
