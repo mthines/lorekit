@@ -36,6 +36,32 @@ import { codex } from '../adapters/codex.mjs';
 
 const ADAPTERS = { claude, cursor, codex };
 
+/**
+ * Bounded health vocabulary for the hook heartbeat. The hook always exits 0, so
+ * these are the only witness that a fire did its work: `ok` (ran clean),
+ * `store_unavailable` (no usable store to read/query), `degraded` (a store
+ * lookup threw and was swallowed — the host still got its output), `crash` (an
+ * unexpected throw the outer guard caught). Kept small so `lorekit.hook.outcome`
+ * stays a low-cardinality metric label.
+ */
+const HOOK_OUTCOME = Object.freeze({
+  OK: 'ok',
+  STORE_UNAVAILABLE: 'store_unavailable',
+  DEGRADED: 'degraded',
+  CRASH: 'crash',
+});
+
+/**
+ * Map the mutable meter run() fills in to the bounded, non-PII counter
+ * dimensions. `event` is the host hook event (SessionStart / Stop / …), itself a
+ * small set; both labels are safe for a metric.
+ */
+function hookMeterAttrs(meter) {
+  const attrs = { 'lorekit.hook.outcome': meter.outcome };
+  if (meter.event) attrs['lorekit.hook.event'] = meter.event;
+  return attrs;
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let data = '';
@@ -48,15 +74,22 @@ function readStdin() {
 }
 
 export async function hook(args) {
+  // The meter run() fills in as it goes. Returned alongside the exit code so the
+  // metric-only dispatch (`meterCommand`) can count this fire with its health —
+  // the hook always exits 0, so this is the only signal a broken or degrading
+  // hook produces.
+  const meter = { event: null, outcome: HOOK_OUTCOME.OK };
   // Guarded so any unexpected error still exits 0 (never break the host agent).
   try {
-    return await run(args);
+    const exitCode = await run(args, meter);
+    return { exitCode, meter: hookMeterAttrs(meter) };
   } catch {
-    return 0;
+    meter.outcome = HOOK_OUTCOME.CRASH;
+    return { exitCode: 0, meter: hookMeterAttrs(meter) };
   }
 }
 
-async function run(args) {
+async function run(args, meter) {
   const adapter = ADAPTERS[args.adapter];
   if (!adapter) {
     // Unknown adapter: stay silent, don't disrupt the host.
@@ -80,6 +113,8 @@ async function run(args) {
   recordFixture(args.adapter, event, raw);
 
   if (!event) return 0;
+
+  meter.event = event;
 
   const intent = adapter.intentFor(event);
   if (intent === 'noop') return 0;
@@ -110,6 +145,8 @@ async function run(args) {
       ? control.hooksInstructions.SessionStart : null;
     if (!store) {
       // No store: emit a minimal header + instruction when present, then return.
+      // A SessionStart that cannot read lore is the highest-value failure to see.
+      meter.outcome = HOOK_OUTCOME.STORE_UNAVAILABLE;
       if (sessionInstruction) {
         emit(formatLessons(null, { repoScope: null }, { instruction: sessionInstruction }));
       }
@@ -163,7 +200,7 @@ async function run(args) {
 
     try {
       const store = createStore(control);
-      if (!store) return 0;
+      if (!store) { meter.outcome = HOOK_OUTCOME.STORE_UNAVAILABLE; return 0; }
       const lessons = await promptLessonsFromStore(store, scope, terms, {
         // Delta only. Includes the SessionStart set, because "already shown"
         // has to mean shown by anything — a hook that only remembered its own
@@ -183,7 +220,9 @@ async function run(args) {
       }));
     } catch {
       // Best-effort, like every other branch: the user's turn proceeds either
-      // way, and a store hiccup must never cost them their prompt.
+      // way, and a store hiccup must never cost them their prompt — but record
+      // that the lookup degraded so a store that always throws is visible.
+      meter.outcome = HOOK_OUTCOME.DEGRADED;
     }
     return 0;
   }
@@ -210,6 +249,7 @@ async function run(args) {
       }
     } catch {
       // best-effort — never break the host
+      meter.outcome = HOOK_OUTCOME.DEGRADED;
     }
     return 0;
   }
@@ -224,6 +264,7 @@ async function run(args) {
     let relevant = null;
     try {
       const store = createStore(control);
+      if (!store) meter.outcome = HOOK_OUTCOME.STORE_UNAVAILABLE;
       if (store) {
         // QUERY the store across the scope hierarchy for lessons matching this
         // failure — not a post-filter of the SessionStart-injected set, which
@@ -235,6 +276,7 @@ async function run(args) {
       }
     } catch {
       relevant = null; // never let a lesson lookup break the failure nudge
+      meter.outcome = HOOK_OUTCOME.DEGRADED;
     }
     const nudge = failureNudge(parsed.toolName, scope, control);
     emit(relevant ? `${relevant}\n\n${nudge}` : nudge);
