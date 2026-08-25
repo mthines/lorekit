@@ -7512,11 +7512,12 @@ begin
   assert v_raised, '88 AC-4: an unrecognised read_kind must violate the CHECK';
 
   -- AC-5: hard-delete (purge) cascades; archive (soft-delete) does not touch
-  -- the rollup at all. Test the CASCADE using m2 (already has no rollup rows
-  -- yet, isolating the assertion from m1's history above) — give it one first.
+  -- the rollup at all. Test the CASCADE using m2 (already has a 'bulk' rollup
+  -- row from AC-1's array[v_m1, v_m2] call above) — give it a second, 'targeted'
+  -- row so the setup count reflects both.
   perform lorekit_record_memory_reads(array[v_m2], 'targeted');
   select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
-  assert v_rollup_rows = 1, '88 AC-5 setup: m2 must have exactly one rollup row before the delete';
+  assert v_rollup_rows = 2, '88 AC-5 setup: m2 must have exactly two rollup rows (bulk + targeted) before the delete';
 
   delete from memories where id = v_m2;
   select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
