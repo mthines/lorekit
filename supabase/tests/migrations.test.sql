@@ -7570,7 +7570,7 @@ declare
   v_m_cold1 uuid;
   v_m_cold2 uuid;
   v_m_archived uuid;
-  v_ids     uuid[];
+  v_ids     text[];
   v_raised  boolean := false;
 begin
   set local role service_role;
@@ -7603,11 +7603,16 @@ begin
   -- from the ranking regardless of how often they were read before archiving.
   perform lorekit_record_memory_reads(array[v_m_archived, v_m_archived], 'bulk');
 
-  -- AC-1: hot ranks strictly by read_count desc.
+  -- AC-1: hot ranks strictly by read_count desc. p_limit=100 (the function's
+  -- own max clamp, same as AC-3/AC-4 below) rather than a small number — by
+  -- this point in the shared-transaction test file the user already has
+  -- dozens of other active memories, most with read_count=0, so a small
+  -- top-N window is not guaranteed to still contain all four `89-*` probe
+  -- rows once filtered down to them.
   select array_agg(key order by ord) into v_ids
     from (
       select key, row_number() over () as ord
-        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 10)
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
        where key like '89-%'
     ) t;
   assert v_ids::text[] = array['89-hot', '89-warm', '89-cold-older', '89-cold-newer']
@@ -7618,7 +7623,7 @@ begin
   select array_agg(key order by ord) into v_ids
     from (
       select key, row_number() over () as ord
-        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'cold', null, 10)
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'cold', null, 100)
        where key like '89-%'
     ) t;
   assert v_ids::text[] = array['89-cold-older', '89-cold-newer', '89-warm', '89-hot'],

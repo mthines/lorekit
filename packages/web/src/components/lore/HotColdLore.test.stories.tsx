@@ -52,7 +52,11 @@ export const ColdIsTheDefaultAndNeverSaysNever: Story = {
     const canvas = within(canvasElement);
     await step('opens on Cold, showing the never-read entry with the counting_since qualifier', async () => {
       await waitFor(() => expect(canvas.getByText('never-used-fallback-branch')).toBeVisible());
-      await expect(canvas.getByText('read 0×')).toBeVisible();
+      // A plain string arg to getByText requires an exact match against the
+      // element's full textContent, which here also carries the " · written
+      // N×" suffix — a regex substring-matches instead (the same pattern
+      // SwitchingToHotShowsTheMostRead already uses for `read 214×` below).
+      await expect(canvas.getByText(/read 0×/)).toBeVisible();
       // The qualifying caption must name the cutover date...
       await expect(canvas.getByText(/not read since tracking began on/i)).toBeVisible();
       // ...and must NEVER render the bare, unqualified word "never".
@@ -79,7 +83,11 @@ export const CopyForGroomCopiesScopeKeyLines: Story = {
     const canvas = within(canvasElement);
     await waitFor(() => expect(canvas.getByText('never-used-fallback-branch')).toBeVisible());
     const writeText = fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    // `navigator.clipboard` is a getter-only accessor in a real browser (this
+    // suite runs in actual Chromium via Playwright, not jsdom), so a plain
+    // `Object.assign` throws "Cannot set property clipboard of #<Navigator>
+    // which has only a getter" — redefine the property instead.
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     await step('Copy for groom copies scope::key lines and confirms', async () => {
       await userEvent.click(canvas.getByRole('button', { name: /copy for groom/i }));
       await waitFor(() => expect(writeText).toHaveBeenCalledWith('repo::mthines/lorekit::never-used-fallback-branch'));
