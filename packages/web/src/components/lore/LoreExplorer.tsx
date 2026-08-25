@@ -58,6 +58,7 @@ import { Search, Loader2 } from 'lucide-react';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
+import { UsageAttribution } from './UsageAttribution';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -84,6 +85,7 @@ import {
   type TimeRange,
 } from '@/lib/time-range';
 import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
+import { effectiveStatsRange, statsWindow } from '@/lib/queries/explorer-stats';
 import {
   filtersParamValue,
   removeFilter,
@@ -290,6 +292,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // not be re-read on range changes or every render would chase the clock.
   const insightsNowIso = useMemo(() => new Date().toISOString(), []);
   const rangeKey = JSON.stringify(range);
+  // Same window ExplorerStats' cards query (an unbounded "all time" selection
+  // substitutes the same bounded 90-day default there) — the usage
+  // attribution panel below should describe the period the reader can
+  // already see the other cards' totals for.
+  const usageAttributionWindow = useMemo(
+    () => statsWindow(effectiveStatsRange(range, insightsNowIso), insightsNowIso),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rangeKey, insightsNowIso],
+  );
   const resolvedRange = useMemo(
     // Resolve the LIST's window against the SAME mount clock the insights panel
     // uses (`insightsNowIso`), not a fresh `new Date()` — otherwise a relative
@@ -747,6 +758,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         onSelectDate={handleHeatmapDayClick}
         nowIso={insightsNowIso}
       />
+
+      {/* ── Usage attribution ───────────────────────────────────────────────
+          "Who is reading" (by client) and "reads by agent family" (by kind ×
+          host) — both stored since 00054/00056, both answerable only after
+          00076 widened lorekit_usage_stats' group-by. Its own panel, since
+          it is a breakdown of calls (usage_events), not of memories. */}
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+        <UsageAttribution since={usageAttributionWindow.since} until={usageAttributionWindow.until} />
+      </div>
 
       {/* ── Results ─────────────────────────────────────────────────────────
           The filter bar (search / filters / date / status) sits above the memory

@@ -361,8 +361,16 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   });
   registry.registerPath({
     method: 'get', path: '/memories/usage',
-    summary: 'Aggregate usage statistics for your own activity (reads, writes, outcomes, per scope-type) over an optional period',
+    summary: 'Aggregate usage statistics for your own activity (reads, writes, outcomes, per scope-type/client/kind/host) over an optional period',
     tags: ['Memories'],
+    description:
+      '`by_tool` rows are grouped by `(tool_name, outcome, scope_type, client, kind, host)`. `client` is the ' +
+      'calling surface (`dashboard`/`cli`/`mcp`/`api`; null is unattributed traffic, including everything ' +
+      'recorded before the per-transport default existed). `kind`/`host` are the memory taxonomy family and ' +
+      'owning agent/skill, null for non-memory tools. `truncated: true` means `by_tool` was cut off at a ' +
+      '500-row cap — an open `host` dimension on a heavy account is the one thing that can grow this past ' +
+      'it — in which case `summary` still reconciles with the rows actually returned, but may itself be a ' +
+      'partial account of the window.',
     security, request: { query: UsageStatsQuerySchema },
     responses: {
       200: { description: 'Usage statistics', content: { 'application/json': { schema: UsageStatsResponseSchema } } },

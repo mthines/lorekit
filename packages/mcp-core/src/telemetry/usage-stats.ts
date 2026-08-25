@@ -274,11 +274,25 @@ export function parseCorrelationId(raw: string | null | undefined): string | nul
   return trimmed;
 }
 
-/** One grouped row as returned by `lorekit_usage_stats` (bigints Number-ised). */
+/**
+ * One grouped row as returned by `lorekit_usage_stats` (bigints Number-ised).
+ *
+ * `client`/`kind`/`host` (migration 00076) widen the group-by beyond
+ * `tool_name`/`outcome`/`scope_type` — `summarizeUsageRows`/`rollupByScopeType`
+ * below sum `event_count`/`record_count` over every row regardless of how many
+ * columns they are split by, so adding dimensions here cannot change either
+ * function's output (see `usage-stats.spec.ts`'s reconciliation test).
+ */
 export interface UsageStatRow {
   tool_name: string;
   outcome: string;
   scope_type: string | null;
+  /** Calling surface (`dashboard`/`cli`/`mcp`/`api`) — null is unattributed. */
+  client: string | null;
+  /** Memory taxonomy family (`lesson`/`bus`/`signal`) — null on non-memory tools. */
+  kind: string | null;
+  /** Owning agent/skill — open free-text; null when unresolved. */
+  host: string | null;
   /** Number of EVENTS (tool calls / routes) in this bucket. */
   event_count: number;
   /** Number of RECORDS those events touched (sum of `result_count`). */
