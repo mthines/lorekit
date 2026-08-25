@@ -23,24 +23,27 @@
 //
 //   `**/{name}`  — ONE capturing group spanning zero or more path segments
 //                  AND the final stem, e.g. `src/**/{name}.ts` captures
-//                  `audit/audit` out of `src/audit/audit.ts`. This is what
-//                  keeps a mirrored pair's directory structure intact when the
-//                  captured name is substituted back into the partner's own
-//                  `**/{name}` slot (`supabase/functions/_shared/**/{name}.ts`
-//                  ↔ `packages/mcp-core/src/**/{name}.ts`): the same captured
-//                  string reconstructs BOTH sides' exact relative path, not
-//                  just a bare basename — a plain per-file `stemOf` capture
-//                  would lose the directory and render an unmet obligation as
-//                  an un-actionable `**`-glob instead of the concrete partner
-//                  path.
+//                  `audit/audit` out of `src/audit/audit.ts`, for reuse in a
+//                  partner pattern's own `**/{name}` slot. This ONLY works
+//                  when the partner's directory structure is a predictable
+//                  function of the source's — e.g. `docs-section`'s
+//                  `sections.ts` entry needs no name at all, so it's not used
+//                  there either. It is NOT used by the seed map's
+//                  `edge-mirror`/`edge-mirror-core` entries (see
+//                  `obligations-map.mjs`): a real edge (Deno) mirror does not
+//                  reliably preserve mcp-core's directory structure — it may
+//                  flatten or rename it — so those two entries instead
+//                  enumerate every KNOWN pair's exact partner from a
+//                  single-source inventory (`mirror-pairs.mjs`) rather than
+//                  reconstruct a partner path via substitution. The token
+//                  remains available here as a general primitive for any
+//                  future map entry whose partner path genuinely IS a
+//                  predictable function of the source's.
 //   `{name}`     — a single-segment capturing group (no preceding `**/`) for
 //                  a flat `{name}.ext` match with no directory component.
 //
 // `stemOf` (below) is the simpler, general-purpose primitive — a plain
-// basename-without-extension — exported for standalone use and unit testing;
-// the combined `**/{name}` capture above is what the matcher actually uses for
-// the seed map's mirrored-module entries, because it must survive a
-// substitution round-trip through TWO independent glob strings.
+// basename-without-extension — exported for standalone use and unit testing.
 
 export const RUN_PREFIX = 'run:';
 export const REGEX_PREFIX = 're:';
@@ -143,13 +146,15 @@ function fileSatisfies(file, globPattern) {
 //                            gates `--strict`.
 //   a string               — a single required path/glob, `kind:'path'`.
 //   an array of strings    — an "any of" group: the obligation is met if ANY
-//                            candidate is present in `changedFiles` (the real
-//                            partner for a name-derived module may live under
-//                            one of several sibling directories — e.g. either
-//                            `_shared/` or `mcp/` mirrors a given mcp-core
-//                            module, never predictably both). Rendered as one
-//                            row whose `target` joins every candidate with
-//                            ` OR `, `met` true iff any candidate matches.
+//                            candidate is present in `changedFiles` (for a
+//                            partner that could legitimately live in more
+//                            than one place). Rendered as one row whose
+//                            `target` joins every candidate with ` OR `,
+//                            `met` true iff any candidate matches. The seed
+//                            map's `edge-mirror`/`edge-mirror-core` entries do
+//                            NOT use this — see `obligations-map.mjs` — since
+//                            enumerating each known pair's exact partner from
+//                            `mirror-pairs.mjs` needs no "either of" guess.
 // A row already present for the same rendered target has its `met` OR'd in
 // (never downgraded from true to false by a later, differently-named match).
 function addOblige(bucket, rawOblige, name, changedFiles) {

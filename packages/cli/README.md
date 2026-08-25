@@ -466,12 +466,21 @@ memory `lessonKey` the partnership encodes.
 An `obliges` element is a required partner path/glob, a `run:<action>`
 advisory that is always reported but never gates `--strict` (some
 partnerships are "regenerate this," not "edit this file"), or an "any of"
-group satisfied by whichever of several candidates is present — used when a
-name-derived module's real partner could live under either of two sibling
-directories, never predictably both. `{name}` (or `**/{name}`) in a `match`/
-`obliges` glob binds a mirrored module's relative path (directories + stem,
-extension stripped), so one entry covers every module instead of needing one
-per file.
+group satisfied by whichever of several candidates is present. `{name}` (or
+`**/{name}`) in a `match`/`obliges` glob binds a mirrored module's relative
+path (directories + stem, extension stripped), for the (rare) case where a
+partner's path genuinely IS a predictable function of the source's, so one
+entry covers every module instead of needing one per file.
+
+The `edge-mirror`/`edge-mirror-core` entries (mcp-core ↔ the self-contained
+Deno edge mirrors) do NOT use that glob mechanism: an edge mirror doesn't
+reliably preserve mcp-core's directory structure (it may flatten or rename
+it), so a symmetric-path reconstruction false-positives on exactly those
+pairs. Instead, both entries are generated — one row per pair — from
+`src/shared/mirror-pairs.mjs`, the single-source inventory
+`packages/mcp-core/src/edge/edge-parity.spec.ts` also reads for its
+byte-comparison drift guard, so the spec and this command can never disagree
+about which files mirror which.
 
 **Cwd-independent by design**: it matches the path STRINGS it is given
 against the map and never reads the filesystem or resolves scope from the

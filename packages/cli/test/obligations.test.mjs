@@ -174,11 +174,12 @@ describe('checkObligations', () => {
     assert.equal(metByNeither.unmet, 1);
   });
 
-  test('the real edge-mirror / edge-mirror-core pair: both directions fire and neither double-counts an OR-satisfied slot', () => {
+  test('the real edge-mirror / edge-mirror-core pair (audit.ts): both directions fire from the enumerated pairs inventory', () => {
     // This is the exact AC-3 scenario at the pure-function layer: both the
     // shared-file and its mcp-core partner in the changed-set must leave
-    // `unmet` at 0, even though edge-mirror-core's obliges is an OR-group over
-    // two sibling directories and only one of them is actually present.
+    // `unmet` at 0. audit.ts is one of the pairs excluded from
+    // edge-parity.spec.ts's byte-comparison drift check (driftChecked: false
+    // in mirror-pairs.mjs) but is still a real obligations partner.
     const files = [
       'supabase/functions/_shared/audit/audit.ts',
       'packages/mcp-core/src/audit/audit.ts',
@@ -191,6 +192,31 @@ describe('checkObligations', () => {
     assert.equal(byId['edge-mirror-core'].obliges.every((o) => o.met !== false), true);
     assert.equal(result.unmet, 0);
     assert.equal(result.ok, true);
+  });
+
+  test('a flattened/renamed edge mirror (auth-token.ts) resolves via the enumerated pairs inventory, not a symmetric-path guess', () => {
+    // Regression for the false positive this fix replaces: the edge copy does
+    // NOT preserve mcp-core's `auth/` subdirectory —
+    // `packages/mcp-core/src/auth/auth-token.ts` mirrors the FLAT
+    // `supabase/functions/mcp/auth-token.ts`. A `{name}` glob substitution
+    // assuming a symmetric path would reconstruct the wrong partner
+    // (`supabase/functions/mcp/auth/auth-token.ts`, which does not exist) and
+    // report a genuinely-present mirror as chronically unmet.
+    const core = 'packages/mcp-core/src/auth/auth-token.ts';
+    const edge = 'supabase/functions/mcp/auth-token.ts';
+
+    const both = checkObligations({ changedFiles: [core, edge], map: SURFACE_PARTNER_MAP });
+    const byIdBoth = Object.fromEntries(both.matched.map((e) => [e.id, e]));
+    const coreRow = byIdBoth['edge-mirror-core'].obliges.find((o) => o.target === edge);
+    assert.ok(coreRow, 'edge-mirror-core should obligate the exact flattened edge path, not a reconstructed one');
+    assert.equal(coreRow.met, true);
+    assert.equal(both.unmet, 0);
+
+    const onlyCore = checkObligations({ changedFiles: [core], map: SURFACE_PARTNER_MAP });
+    const onlyCoreEntry = onlyCore.matched.find((e) => e.id === 'edge-mirror-core');
+    assert.equal(onlyCoreEntry.obliges[0].target, edge);
+    assert.equal(onlyCoreEntry.obliges[0].met, false);
+    assert.equal(onlyCore.unmet, 1);
   });
 
   test('deduped by entry id: a file set hitting the same entry via two files still yields one matched entry', () => {
@@ -211,14 +237,22 @@ describe('checkObligations', () => {
 
 // ── map integrity: every seed entry is well-formed ────────────────────────────
 
+// `edge-mirror`/`edge-mirror-core` intentionally repeat: one row per known
+// mirror pair (`mirror-pairs.mjs`) shares the same logical id so
+// `checkObligations` merges them into a single reported entry (see
+// `obligations-pure.mjs`'s `byId` merge). Every OTHER id must stay unique.
+const GROUPED_IDS = new Set(['edge-mirror', 'edge-mirror-core']);
+
 describe('SURFACE_PARTNER_MAP integrity', () => {
   test('every entry has a stable id, a match, obliges, and a lessonKey', () => {
     assert.ok(SURFACE_PARTNER_MAP.length >= 7, `expected at least 7 seed entries, got ${SURFACE_PARTNER_MAP.length}`);
-    const ids = new Set();
+    const singularIds = new Set();
     for (const entry of SURFACE_PARTNER_MAP) {
       assert.equal(typeof entry.id, 'string', `entry missing a string id: ${JSON.stringify(entry)}`);
-      assert.ok(!ids.has(entry.id), `duplicate entry id: ${entry.id}`);
-      ids.add(entry.id);
+      if (!GROUPED_IDS.has(entry.id)) {
+        assert.ok(!singularIds.has(entry.id), `duplicate entry id: ${entry.id}`);
+        singularIds.add(entry.id);
+      }
       assert.ok(
         typeof entry.match === 'string' || Array.isArray(entry.match),
         `${entry.id}: match must be a string or string[]`,
@@ -226,6 +260,18 @@ describe('SURFACE_PARTNER_MAP integrity', () => {
       assert.ok(Array.isArray(entry.obliges) && entry.obliges.length > 0, `${entry.id}: obliges must be a non-empty array`);
       assert.equal(typeof entry.lessonKey, 'string', `${entry.id}: lessonKey must be a string`);
       assert.ok(entry.lessonKey.length > 0, `${entry.id}: lessonKey must be non-empty`);
+    }
+  });
+
+  test('every generated edge-mirror row derives from mirror-pairs.mjs — one obligated core/edge pair each', () => {
+    const edgeMirrorRows = SURFACE_PARTNER_MAP.filter((e) => e.id === 'edge-mirror');
+    const edgeMirrorCoreRows = SURFACE_PARTNER_MAP.filter((e) => e.id === 'edge-mirror-core');
+    assert.ok(edgeMirrorRows.length >= 20, `expected the full mirror-pairs inventory, got ${edgeMirrorRows.length} edge-mirror rows`);
+    assert.equal(edgeMirrorRows.length, edgeMirrorCoreRows.length, 'both directions are generated 1:1 from the same pairs');
+    for (const row of [...edgeMirrorRows, ...edgeMirrorCoreRows]) {
+      assert.equal(typeof row.match, 'string', 'each generated row matches one exact path, not a glob array');
+      assert.equal(row.obliges.length, 1, 'each generated row obligates exactly its one known partner');
+      assert.equal(typeof row.obliges[0], 'string', 'the obliged partner is a single exact path, not an OR-group');
     }
   });
 

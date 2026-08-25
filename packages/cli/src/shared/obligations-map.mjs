@@ -38,6 +38,23 @@
 //   }
 //
 // See `obligations-pure.mjs` for the matcher and the exact `{name}` grammar.
+//
+// The `edge-mirror` / `edge-mirror-core` rows below are a special case: they
+// are GENERATED, one pair of rows per entry in `mirrorPairs`
+// (`./mirror-pairs.mjs`, the single-source inventory shared with
+// `packages/mcp-core/src/edge/edge-parity.spec.ts`), rather than hand-authored
+// with a `{name}`-substituting glob. A glob assuming the edge copy mirrors
+// mcp-core's directory structure false-positives whenever a real mirror
+// flattens or renames it (e.g. `packages/mcp-core/src/auth/auth-token.ts` ↔
+// the FLAT `supabase/functions/mcp/auth-token.ts`) — the exact-path
+// reconstruction it would need to get right is simply not derivable from the
+// two paths alone. Enumerating each KNOWN pair's real partner has no such
+// assumption to violate. `checkObligations` already merges every map entry
+// that shares an `id` into one reported bucket (see `obligations-pure.mjs`'s
+// `byId` merge in the matcher), so the many generated rows below still
+// surface as the two logical `edge-mirror` / `edge-mirror-core` entries.
+
+import { mirrorPairs } from './mirror-pairs.mjs';
 
 // The flagship recurrence class: a partner copies a CLAIM (a mirrored
 // module's behavior, a generated artifact's content, a documented mechanism)
@@ -52,23 +69,31 @@ const COPIES_A_CLAIM_LESSON =
 // the set and now has a hole.
 const SIBLING_SET_LESSON = 'aw-lessons::docs-drift-grep-must-search-names-not-invocation';
 
-export const SURFACE_PARTNER_MAP = [
+const EDGE_MIRROR_GUARD = 'packages/mcp-core/src/edge/edge-parity.spec.ts';
+
+// One `{ match, obliges }` row PER KNOWN PAIR, in both directions — see the
+// module-level note above for why this replaces a `{name}`-templated glob.
+const EDGE_MIRROR_ENTRIES = mirrorPairs.flatMap(({ core, edge }) => [
   {
     id: 'edge-mirror',
-    match: ['supabase/functions/_shared/**/{name}.ts', 'supabase/functions/mcp/**/{name}.ts'],
-    obliges: ['packages/mcp-core/src/**/{name}.ts'],
+    match: edge,
+    obliges: [core],
     lessonKey: COPIES_A_CLAIM_LESSON,
-    guard: 'packages/mcp-core/src/edge/edge-parity.spec.ts',
-    note: 'An edge (Deno) module mirrored self-contained from mcp-core — edit one, mirror the other.',
+    guard: EDGE_MIRROR_GUARD,
+    note: 'An edge (Deno) module mirrored self-contained from mcp-core — edit one, mirror the other. Partner looked up from the shared mirror-pairs inventory, never reconstructed from an assumed-symmetric path.',
   },
   {
     id: 'edge-mirror-core',
-    match: 'packages/mcp-core/src/**/{name}.ts',
-    obliges: [['supabase/functions/_shared/**/{name}.ts', 'supabase/functions/mcp/**/{name}.ts']],
+    match: core,
+    obliges: [edge],
     lessonKey: COPIES_A_CLAIM_LESSON,
-    guard: 'packages/mcp-core/src/edge/edge-parity.spec.ts',
-    note: 'The reverse direction of edge-mirror — a mcp-core source file changed, its edge mirror (either _shared/ or mcp/, never predictably both) is the partner.',
+    guard: EDGE_MIRROR_GUARD,
+    note: 'The reverse direction of edge-mirror — a mcp-core source file changed, its known edge mirror (from the same mirror-pairs inventory) is the partner.',
   },
+]);
+
+export const SURFACE_PARTNER_MAP = [
+  ...EDGE_MIRROR_ENTRIES,
   {
     id: 'tool-catalog',
     match: 'packages/schemas/src/shared/tool-catalog.ts',
