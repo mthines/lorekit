@@ -122,23 +122,29 @@ export function isScopeString(s) {
 // Split a single `<scope>::<key>` argument, or fall back to treating the whole
 // argument as a scope.
 //
-// The rule: split at the LAST `::` and take it as `<scope>::<key>` ONLY when the
-// left side is itself a COMPLETE valid scope — otherwise the whole arg is the
-// scope. Splitting on the last `::` (not the first) keeps a multi-segment scope
-// whole (`repo::owner/name::key` → scope `repo::owner/name`, key `key`); gating
-// on a valid left side means a bare `repo::owner/name` is NOT mis-split, because
-// its left part `repo` is not a valid scope. This is the fix for the prior
-// first-`::` split, which turned `link repo::acme/widget` into scope="repo" plus
-// a bogus `acme/widget` key — breaking the shorthand for EVERY non-`global`
-// scope. A malformed arg falls through to the scope, never a fabricated key.
+// The rule: scan the `::` boundaries left-to-right and split at the FIRST one
+// whose left side is a COMPLETE valid scope — otherwise the whole arg is the
+// scope. Because `::` is RESERVED as the segment separator (no scope segment may
+// contain it, enforced by `scopeIssue`), no valid scope is a `::`-boundary
+// prefix of another, so the earliest valid-scope prefix is unambiguously THE
+// scope and everything after it is the key — even a key that itself contains
+// `::` (a namespaced key like `implement-suggestion-lessons::documenting-…`).
+//
+// This first-valid scan superseded a plain last-`::` split, which broke exactly
+// that case: `global::foo-lessons::bar` split at the last `::` gave the left
+// side `global::foo-lessons`, not a valid scope, so the whole arg fell through
+// to the scope and `scopeIssue` rejected it. Gating on a valid left side is what
+// keeps a bare `repo::owner/name` from mis-splitting (its `repo` prefix is not a
+// valid scope) and a multi-segment scope whole (`branch::o/n::main::key` → scope
+// `branch::o/n::main`, key `key`, since the shorter prefixes are all invalid). A
+// malformed arg falls through to the scope, never a fabricated key.
 //
 // `isScope` is injected rather than closed over so the module stays trivially
 // testable with a stub predicate; callers pass `isScopeString`.
 export function resolveScopeArg(arg, isScope = isScopeString) {
   const s = typeof arg === 'string' ? arg.trim() : '';
   if (!s) return { scope: null, key: null };
-  const idx = s.lastIndexOf('::');
-  if (idx !== -1) {
+  for (let idx = s.indexOf('::'); idx !== -1; idx = s.indexOf('::', idx + 2)) {
     const left = s.slice(0, idx).trim();
     const right = s.slice(idx + 2).trim();
     if (right && isScope(left)) return { scope: left, key: right };
