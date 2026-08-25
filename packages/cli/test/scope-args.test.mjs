@@ -73,7 +73,7 @@ test('resolveScopeArg: a bare valid scope is never mis-split into a bogus key', 
   });
 });
 
-test('resolveScopeArg: the shorthand splits at the LAST `::`, keeping the scope whole', () => {
+test('resolveScopeArg: the shorthand splits at the FIRST valid-scope prefix, keeping the scope whole', () => {
   assert.deepEqual(resolveScopeArg('global::my-key'), { scope: 'global', key: 'my-key' });
   assert.deepEqual(resolveScopeArg('repo::owner/name::my-key'), {
     scope: 'repo::owner/name',
@@ -83,6 +83,23 @@ test('resolveScopeArg: the shorthand splits at the LAST `::`, keeping the scope 
     scope: 'branch::owner/name::main',
     key: 'my-key',
   });
+});
+
+test('resolveScopeArg: a key that itself contains `::` is kept whole after the scope', () => {
+  // THE regression `lorekit show global::foo-lessons::bar` hit. A namespaced key
+  // makes the arg three `::` segments; a last-`::` split took the left side
+  // `global::foo-lessons` — not a valid scope — so the whole arg fell through
+  // and `scopeIssue` reported "unrecognized scope type". Splitting at the FIRST
+  // valid-scope prefix keeps the namespaced key intact.
+  assert.deepEqual(
+    resolveScopeArg('global::implement-suggestion-lessons::documenting-a-workaround'),
+    { scope: 'global', key: 'implement-suggestion-lessons::documenting-a-workaround' },
+  );
+  assert.deepEqual(resolveScopeArg('repo::owner/name::foo-lessons::bar::baz'), {
+    scope: 'repo::owner/name',
+    key: 'foo-lessons::bar::baz',
+  });
+  assert.deepEqual(resolveScopeArg('global::a::b::c'), { scope: 'global', key: 'a::b::c' });
 });
 
 test('resolveScopeArg: an unresolvable arg becomes the scope, never a fabricated key', () => {
@@ -109,6 +126,14 @@ test('resolveScopeKeyArgs: one positional is the shorthand, and reports consumin
   assert.deepEqual(resolveScopeKeyArgs(['repo::owner/name::my-key']), {
     scope: 'repo::owner/name',
     key: 'my-key',
+    consumed: 1,
+  });
+  // A namespaced key (its own `::`) survives the single-positional shorthand —
+  // the copy-pasteable form `list`/`show` print. This is the exact path
+  // `lorekit show global::foo-lessons::bar` takes.
+  assert.deepEqual(resolveScopeKeyArgs(['global::implement-suggestion-lessons::documenting']), {
+    scope: 'global',
+    key: 'implement-suggestion-lessons::documenting',
     consumed: 1,
   });
 });
@@ -185,9 +210,9 @@ test('resolveScopeKeyArgs: no positionals and no flags yields an empty scope', (
 });
 
 test('resolveScopeKeyArgs: both flags win and consume NO positional', () => {
-  // The escape hatch: a key containing `::` is unrepresentable in the
-  // single-token form (the split would claim part of it as the scope), so the
-  // flags must bypass the parse entirely.
+  // The explicit override: naming both halves bypasses the `::` split entirely.
+  // The shorthand now carries a namespaced key on its own, but the flags stay
+  // the unambiguous way to assert a scope and key without any parsing.
   assert.deepEqual(
     resolveScopeKeyArgs(['ignored'], { scope: 'global', key: 'loop::aw-lessons' }),
     { scope: 'global', key: 'loop::aw-lessons', consumed: 0 },
@@ -225,6 +250,30 @@ test('resolveScopeKeyArgs trims surrounding whitespace on both halves', () => {
     key: 'my-key',
     consumed: 2,
   });
+});
+
+// ── command-level invariant: the shorthand always resolves to a VALID scope ───
+
+test('a copy-pasted `scope::key` shorthand always resolves to a scope that passes scopeIssue', () => {
+  // The exact property `show`/`write`/`link` depend on: they run
+  // `resolveScopeKeyArgs` and then `scopeIssue(scope)`, so a shorthand that
+  // parses into an INVALID scope is the user-visible "unrecognized scope type"
+  // error — the regression `lorekit show global::foo-lessons::bar` produced.
+  // Namespaced keys (their own `::`) are the case that broke; every canonical
+  // scope must survive one.
+  const cases = [
+    'global::exact-string-edit-fails',
+    'global::implement-suggestion-lessons::documenting-a-workaround',
+    'global::a::b::c',
+    'project::widget::some-lessons::deep-key',
+    'repo::owner/name::foo-lessons::bar',
+    'branch::owner/name::main::foo-lessons::bar',
+  ];
+  for (const arg of cases) {
+    const { scope, key } = resolveScopeKeyArgs([arg]);
+    assert.equal(scopeIssue(scope), null, `shorthand ${arg} → invalid scope ${scope}`);
+    assert.ok(key, `shorthand ${arg} → missing key`);
+  }
 });
 
 // ── re-export parity ──────────────────────────────────────────────────────────

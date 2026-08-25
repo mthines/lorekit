@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.55.3](https://github.com/mthines/lorekit/compare/cli-v1.55.2...cli-v1.55.3) (2026-08-25)
+
+
+### Bug Fixes
+
+* **cli:** resolve scope::key shorthand when the key contains :: ([0c37c69](https://github.com/mthines/lorekit/commit/0c37c69542b9b34f533dc1ef111f5934095f4386))
+* **cli:** resolve scope::key shorthand when the key contains :: ([6ddfb9e](https://github.com/mthines/lorekit/commit/6ddfb9e82de707930c551e9d902328769e19a0bc))
+
 ## [1.55.2](https://github.com/mthines/lorekit/compare/cli-v1.55.1...cli-v1.55.2) (2026-08-23)
 
 
