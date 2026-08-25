@@ -709,7 +709,7 @@ export async function meterCommand(command, version, run) {
  * `lint` finding) reports `lorekit.cli.outcome=failure` on a span the exporter
  * emits as STATUS_CODE_OK — never ERROR.
  *
- * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | link | migrate
+ * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | obligations | link | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler
