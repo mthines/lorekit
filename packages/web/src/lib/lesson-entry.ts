@@ -15,6 +15,7 @@
  */
 
 import type { MemoryEntry } from '@lorekit/schemas/memory';
+import { inferKindHost } from '@lorekit/schemas/tags';
 import { scopeType } from '@/lib/scope';
 import { ownerFromMemoryRow } from '@/lib/ownership';
 import type { LessonEntry } from '@/components/lore/LessonCard';
@@ -22,6 +23,13 @@ import type { LessonEntry } from '@/components/lore/LessonCard';
 export function lessonFromMemoryEntry(entry: MemoryEntry): LessonEntry & { id: string } {
   const orgId = entry.org_id ?? null;
   const org = entry.org ?? null;
+
+  // Taxonomy: an explicit `kind`/`host` on the row wins; a row written before
+  // 00056 (or one that omitted both at write time) carries neither, so fall
+  // back to the SAME loop-tag inference the write path and usage recorder use
+  // (`inferKindHost`) rather than re-parsing the tag here — a second,
+  // independent parse of `loop::<host>-lessons` would drift from theirs.
+  const inferred = entry.kind == null && entry.host == null ? inferKindHost(entry.tags) : {};
 
   return {
     id: entry.id,
@@ -40,6 +48,9 @@ export function lessonFromMemoryEntry(entry: MemoryEntry): LessonEntry & { id: s
     origin_branch: entry.origin_branch ?? null,
     origin_commit: entry.origin_commit ?? null,
     origin_pr: entry.origin_pr ?? null,
+    kind: entry.kind ?? inferred.kind ?? null,
+    host: entry.host ?? inferred.host ?? null,
+    seen_count: entry.seen_count,
     org_id: orgId,
     created_by: entry.created_by ?? null,
     updated_by: entry.updated_by ?? null,

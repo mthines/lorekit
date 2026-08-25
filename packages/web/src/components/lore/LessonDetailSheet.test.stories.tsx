@@ -54,6 +54,22 @@ const ARCHIVED: LessonEntry = {
   archived_at: '2026-07-30T10:00:00Z',
 };
 
+/** Recurred often enough to clear the promotion threshold (seen_count >= 3). */
+const RECURRING: LessonEntry = {
+  ...LESSON,
+  key: 'recurring-lesson',
+  kind: 'lesson',
+  host: 'reviewer',
+  seen_count: 5,
+};
+
+/** Recurred, but not enough to clear the promotion threshold. */
+const RECURRING_BELOW_THRESHOLD: LessonEntry = {
+  ...LESSON,
+  key: 'recurring-lesson-below-threshold',
+  seen_count: 1,
+};
+
 /** Controlled open state so a dismissal actually unmounts the panel. */
 function Harness({
   onClose,
@@ -392,6 +408,48 @@ export const KeyboardShortcutsSwitchTabs: Story = {
       await userEvent.keyboard('p');
       await waitFor(() => expect(contentTextarea()).toBeNull());
       await expect(body().getByRole('tab', { name: /preview/i })).toHaveAttribute('aria-selected', 'true');
+    });
+  },
+};
+
+// ── Provenance ───────────────────────────────────────────────────────────────
+
+export const RecurrencePastThresholdShowsPromoteAffordance: Story = {
+  render: (args) => <Harness onClose={args.onClose} lesson={RECURRING} />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('kind, host and a "promote?" badge render for seen_count >= 3', async () => {
+      await expect(body().getByText('lesson')).toBeVisible();
+      await expect(body().getByText('reviewer')).toBeVisible();
+      await expect(body().getByText('seen 5×')).toBeVisible();
+      await expect(body().getByText('promote?')).toBeVisible();
+    });
+  },
+};
+
+export const RecurrenceBelowThresholdShowsNoPromoteAffordance: Story = {
+  render: (args) => <Harness onClose={args.onClose} lesson={RECURRING_BELOW_THRESHOLD} />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('the count renders without the promotion badge below the threshold', async () => {
+      await expect(body().getByText('seen 1×')).toBeVisible();
+      await expect(body().queryByText('promote?')).not.toBeInTheDocument();
+    });
+  },
+};
+
+export const NoProvenanceRendersNoEmptyLabels: Story = {
+  // A memory with no kind/host/source_agent/trigger/seen_count/origin must not
+  // render any of those labels — an empty `<dt>Kind</dt>` with no value would
+  // be clutter, and the whole Source cluster is conditional on this data
+  // existing at all.
+  render: (args) => <Harness onClose={args.onClose} lesson={LESSON} />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('no provenance label renders for a memory that carries none of it', async () => {
+      await expect(body().queryByText('Kind')).not.toBeInTheDocument();
+      await expect(body().queryByText('Host')).not.toBeInTheDocument();
+      await expect(body().queryByText('Recurrence')).not.toBeInTheDocument();
     });
   },
 };

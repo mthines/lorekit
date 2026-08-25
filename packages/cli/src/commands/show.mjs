@@ -10,7 +10,10 @@
 //                            you can copy-paste a key directly from list output)
 //   show <scope> <key>     — the explicit two-positional form
 //   show --scope <s> --key <k>
-//                          — flags win; the only way to name a key containing `::`
+//                          — flags win; an explicit override that skips the `::`
+//                            split (the shorthand already carries a namespaced
+//                            key, since the split lands at the first valid-scope
+//                            prefix — see `resolveScopeArg`)
 //
 // Uses each store's real `read({scope, key})` method (both stores expose it),
 // not a filtered `list` — a single-record lookup is what `read` is for, and it
@@ -60,8 +63,9 @@ export async function show(args) {
   // Positional shapes (all resolved by the shared, validity-gated parser):
   //   show <scope::key>            — canonical shorthand, mirrors `list` output
   //   show <scope> <key>           — explicit two-positional form
-  //   show --scope <s> --key <k>   — flags win; the escape hatch for a key
-  //                                  containing `::`
+  //   show --scope <s> --key <k>   — flags win; an explicit override that skips
+  //                                  the `::` split (the shorthand handles a
+  //                                  namespaced key on its own now)
   const positionals = args._.slice(1);
   const { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
     scope: args.scope,
