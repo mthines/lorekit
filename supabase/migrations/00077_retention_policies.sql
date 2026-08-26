@@ -102,7 +102,9 @@ as $$
        or m.scope = p_scope
        or (
          p_scope like 'repo::%'
-         and m.scope like 'branch::' || substring(p_scope from 7) || '::%'
+         -- starts_with (not LIKE) so `_`/`%` in the repo name are literal, not
+         -- wildcards — an over-match bug this repo hit before (#231, #260).
+         and starts_with(m.scope, 'branch::' || substring(p_scope from 7) || '::')
        )
      )
      and (p_min_age_days is null or m.created_at <= now() - (p_min_age_days * interval '1 day'))
