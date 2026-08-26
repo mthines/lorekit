@@ -55,7 +55,7 @@ export interface UsageEventParams {
   scope?: string | null;
   /**
    * How many scopes an ARRAY-bearing call (`memory.search`'s `scopes`) named
-   * (migration 00076). Undefined for a singular-`scope` tool — the RPC's own
+   * (migration 00077). Undefined for a singular-`scope` tool — the RPC's own
    * `default null` applies. Exists because `scope` above stays null the
    * moment a search names more than one scope (which of several it "belongs
    * to" is ambiguous), so a search over 4 scopes would otherwise be
