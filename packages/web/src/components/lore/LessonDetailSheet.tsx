@@ -763,38 +763,38 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                       </Badge>
                                     )}
                                   </dd>
-                                 </div>
-                               );
-                             })()}
-                              {(() => {
-                                const readCount = lesson.read_count;
-                                if (readCount == null) return null;
-                                return (
-                                  <div
-                                    className={`flex items-center gap-2 text-xs ${
-                                      lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger && lesson.seen_count == null
-                                        ? clusterStart
-                                        : ''
-                                    }`}
-                                  >
-                                    <BookOpenCheck className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                                    <dt className="text-[var(--color-content-tertiary)]">Consumption</dt>
-                                    <dd className="ml-auto">
-                                      <Tooltip
-                                        content="How many times this memory has actually been READ back by a memory.read/list/search/list_archived call, not just written. Counts only SINCE per-memory tracking began — a 0 here means not read since then, not necessarily never."
-                                        side="top"
-                                        align="right"
-                                      >
-                                        <span className="text-[var(--color-content-secondary)]">
-                                          {readCount === 0
-                                            ? 'no reads recorded'
-                                            : `read ${readCount}×${lesson.last_read_at ? ` · last ${new Date(lesson.last_read_at).toLocaleDateString()}` : ''}`}
-                                        </span>
-                                      </Tooltip>
-                                    </dd>
-                                 </div>
-                               );
-                             })()}
+                                </div>
+                              );
+                            })()}
+                            {(() => {
+                              const readCount = lesson.read_count;
+                              if (readCount == null) return null;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger && lesson.seen_count == null
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <BookOpenCheck className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Consumption</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="How many times this memory has actually been READ back by a memory.read/list/search/list_archived call, not just written. Counts only SINCE per-memory tracking began — a 0 here means not read since then, not necessarily never."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {readCount === 0
+                                          ? 'no reads recorded'
+                                          : `read ${readCount}×${lesson.last_read_at ? ` · last ${new Date(lesson.last_read_at).toLocaleDateString()}` : ''}`}
+                                      </span>
+                                    </Tooltip>
+                                  </dd>
+                                </div>
+                              );
+                            })()}
                            </>
                          )}
 
