@@ -136,6 +136,12 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // silent when wrong — a drifted copy exports plausible numbers that are off
   // by 1000x or collapse into an unrateable zero-length series.
   ['../telemetry/db-query-metrics.ts', '_shared/telemetry/db-query-metrics.ts'],
+  // Retention-policy candidate/precedence logic — the SQL RPC
+  // (lorekit_groom_candidates) is authoritative, this is the unit-testable
+  // mirror the edge groom/policy handlers use to resolve a policy_id or
+  // inline request into the conditions struct the RPC takes. Mirrored because
+  // the edge tree cannot cross-import mcp-core.
+  ['../retention/groom.ts', '_shared/retention/groom.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

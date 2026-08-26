@@ -68,20 +68,31 @@ describe('every op declares its surfaces', () => {
     // exemption behind and an exemption cannot appear for an op that has one.
     const exempt = MCP_TOOLS.filter((t) => t.surfaces.cliExempt).map((t) => t.name).sort();
     expect(exempt).toEqual([
+      'groom.run',
       'memory.list_archived',
       'org.create',
       'org.delete',
       'org.list',
       'org.rename',
+      'policy.create',
+      'policy.delete',
+      'policy.update',
     ]);
   });
 
   it('pins which ops the local stdio server does not back', () => {
     const exempt = MCP_TOOLS.filter((t) => t.surfaces.localMcpExempt).map((t) => t.name).sort();
     expect(exempt).toEqual([
+      'groom.preview',
+      'groom.run',
       'memory.list_archived',
+      'memory.protect',
       'memory.purge',
       'memory.purge_expired',
+      'policy.create',
+      'policy.delete',
+      'policy.list',
+      'policy.update',
     ]);
   });
 

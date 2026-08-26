@@ -34,6 +34,10 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   // tools were JWT-only; they now serve `lk_*` tokens, and listing the orgs you
   // belong to is exactly the shape of thing a read token should be able to do.
   'org.list',
+  // Retention policies ("grooming") — listing saved rules and previewing what
+  // a rule would archive are both reads, same family as memory.list_archived.
+  'policy.list',
+  'groom.preview',
 ]);
 
 /** Write-family tools — require `canWrite`. */
@@ -52,6 +56,13 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'org.create',
   'org.rename',
   'org.delete',
+  // Retention policies ("grooming") — saving/changing a rule, running a sweep,
+  // and toggling protection all mutate state.
+  'policy.create',
+  'policy.update',
+  'policy.delete',
+  'groom.run',
+  'memory.protect',
 ]);
 
 /**

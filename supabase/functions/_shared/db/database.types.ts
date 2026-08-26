@@ -608,6 +608,48 @@ export type Database = {
         }
         Relationships: []
       }
+      retention_policies: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          id: string
+          max_seen_count: number | null
+          min_age_days: number | null
+          mode: string
+          name: string
+          scope: string
+          unseen_days: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          max_seen_count?: number | null
+          min_age_days?: number | null
+          mode?: string
+          name: string
+          scope: string
+          unseen_days?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          max_seen_count?: number | null
+          min_age_days?: number | null
+          mode?: string
+          name?: string
+          scope?: string
+          unseen_days?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

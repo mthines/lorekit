@@ -226,6 +226,10 @@ describe('REST audit coverage', () => {
       'memories POST /facets',
       'memories POST /activity',
       'memories POST /search',
+      // Same reasoning: the request body carries a policy_id or inline
+      // conditions that do not fit a query string, and previewing candidates
+      // changes nothing — auditing a preview would be noise, not a trail.
+      'memories POST /groom/preview',
     ]);
     expect(mutatingRoutes.length).toBe(unsafe.length - readOnlyUnsafe.length - AUDIT_EXEMPT.length);
   });
