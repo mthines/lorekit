@@ -77,6 +77,10 @@ export const AUDIT_ACTIONS = [
   'scope.bind',
   'scope.unbind',
   'github_app.installation_linked',
+  'policy.create',
+  'policy.update',
+  'policy.delete',
+  'memory.protect',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

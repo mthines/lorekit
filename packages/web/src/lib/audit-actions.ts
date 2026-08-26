@@ -38,6 +38,8 @@ import {
   Link,
   Unlink,
   Github,
+  ListChecks,
+  ShieldPlus,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -67,6 +69,10 @@ export const AUDIT_ACTIONS = [
   'scope.bind',
   'scope.unbind',
   'github_app.installation_linked',
+  'policy.create',
+  'policy.update',
+  'policy.delete',
+  'memory.protect',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -106,4 +112,8 @@ export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'scope.bind': { label: 'Scope bound', badgeColor: 'green', icon: Link },
   'scope.unbind': { label: 'Scope unbound', badgeColor: 'amber', icon: Unlink },
   'github_app.installation_linked': { label: 'GitHub App installation linked', badgeColor: 'green', icon: Github },
+  'policy.create': { label: 'Retention policy created', badgeColor: 'green', icon: ListChecks },
+  'policy.update': { label: 'Retention policy updated', badgeColor: 'blue', icon: ListChecks },
+  'policy.delete': { label: 'Retention policy deleted', badgeColor: 'red', icon: ListChecks },
+  'memory.protect': { label: 'Memory protection changed', badgeColor: 'purple', icon: ShieldPlus },
 };

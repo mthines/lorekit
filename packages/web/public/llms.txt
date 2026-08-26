@@ -151,6 +151,13 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | `org.list` | ✓ | ✓ | ✗ |
 | `org.rename` | ✓ | ✗ | ✓ |
 | `org.delete` | ✓ | ✗ | ✓ |
+| `policy.list` | ✓ | ✓ | ✗ |
+| `policy.create` | ✓ | ✗ | ✓ |
+| `policy.update` | ✓ | ✗ | ✓ |
+| `policy.delete` | ✓ | ✗ | ✓ |
+| `groom.preview` | ✓ | ✓ | ✗ |
+| `groom.run` | ✓ | ✗ | ✓ |
+| `memory.protect` | ✓ | ✗ | ✓ |
 
 ## Scope format
 
@@ -428,6 +435,132 @@ Delete an organization. Requires owner role. Soft-deletes the org — all org lo
 Requires **write** permission.
 
 Returns: `{ "deleted": true, "slug": "<slug>" }`
+
+---
+
+### policy.list
+
+List every retention policy you own.
+
+No arguments.
+
+Requires **read** permission.
+
+Returns: `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "created_at", "updated_at" }] }`
+
+---
+
+### policy.create
+
+Create a scoped retention policy that auto-archives (never hard-deletes) matching lessons.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `name` | ✓ | string | Human-readable name for the policy. |
+| `mode` |  | string | `review` — surfaced for a human to run manually. `auto` — swept nightly, if enabled. _(default `review`)_ |
+| `enabled` |  | boolean | Whether `auto` mode is active. Always starts false, even when mode is `auto`. _(default `false`)_ |
+| `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
+| `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+
+Requires **write** permission.
+
+Returns: The created policy object.
+
+Every condition is AND-ed together; a policy with no conditions at all matches every non-protected lesson in scope.
+
+---
+
+### policy.update
+
+Update a retention policy. Every field but id is optional.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `id` | ✓ | string | The policy id to update. |
+| `name` |  | string | New name for the policy. |
+| `mode` |  | string | `review` — surfaced for a human to run manually. `auto` — swept nightly, if enabled. |
+| `enabled` |  | boolean | Whether `auto` mode is active. |
+| `min_age_days` |  | integer | Match only lessons at least this many days old. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons unseen for at least this many days. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
+| `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
+
+Requires **write** permission.
+
+Returns: The updated policy object.
+
+An omitted field is left unchanged; an explicit `null` clears that condition.
+
+---
+
+### policy.delete
+
+Delete a retention policy. Deletes the rule only — never touches the lessons it matched.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `id` | ✓ | string | The policy id to delete. |
+
+Requires **write** permission.
+
+Returns: `{ "deleted": boolean }`
+
+---
+
+### groom.preview
+
+Preview the lessons a saved policy or an inline condition set would archive, without changing anything.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `policy_id` |  | string | Preview an existing saved policy. Mutually exclusive with `scope`/conditions. |
+| `scope` |  | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
+| `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+
+Requires **read** permission.
+
+Returns: `{ "count": <number>, "keys": [{ "scope", "key" }] }` — the SAME candidates `groom.run` would archive.
+
+Pass either `policy_id` or `scope` (with optional conditions), never both.
+
+---
+
+### groom.run
+
+Archive every lesson a saved policy or an inline condition set matches. Soft-archive only — never hard-deletes.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `policy_id` |  | string | Run an existing saved policy. Mutually exclusive with `scope`/conditions. |
+| `scope` |  | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
+| `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+
+Requires **write** permission.
+
+Returns: `{ "archived": <count>, "keys": [{ "scope", "key" }] }`
+
+Resolves and archives the SAME candidates `groom.preview` shows, in one transaction. Archived lessons are recoverable via `memory.restore`.
+
+---
+
+### memory.protect
+
+Mark or unmark a lesson as protected — excluded from every grooming candidate set regardless of policy.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+| `protected` | ✓ | boolean | true to protect, false to unprotect. |
+
+Requires **write** permission.
+
+Returns: `{ "protected": boolean }`
 
 ---
 
