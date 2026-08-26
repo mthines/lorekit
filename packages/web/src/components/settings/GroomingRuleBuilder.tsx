@@ -114,6 +114,12 @@ export function GroomingRuleBuilder() {
   const { data: policies = [], isLoading: policiesLoading } = usePolicies();
 
   const request = useMemo(() => toGroomRequest(conditions), [conditions]);
+  const autoScopeOnly =
+    autoEnabled &&
+    conditions.scope.trim() !== '' &&
+    conditions.minAgeDays.trim() === '' &&
+    conditions.unseenDays.trim() === '' &&
+    conditions.maxSeenCount.trim() === '';
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live match count: re-preview PREVIEW_DEBOUNCE_MS after the form settles.
@@ -249,6 +255,16 @@ export function GroomingRuleBuilder() {
             <AutoToggle checked={autoEnabled} label="Auto (nightly)" onToggle={() => setAutoEnabled((v) => !v)} />
             <span className="text-sm text-[var(--color-content-primary)]">Auto (nightly)</span>
           </div>
+
+          {autoScopeOnly && (
+            <p
+              role="alert"
+              className="text-xs text-[var(--color-warning)] sm:col-span-2"
+            >
+              Auto mode with only a scope archives every unprotected lesson in this
+              scope every night. Add an age, unseen, or seen-count condition to narrow it.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
