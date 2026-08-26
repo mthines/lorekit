@@ -701,7 +701,7 @@ class RemoteStore {
 
   // GET /policies → { entries: [...] }
   async policyList() {
-    const res = await this._rest('/policies');
+    const res = await this._rest('/memories/policies');
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, entries: Array.isArray(res.data?.entries) ? res.data.entries : [] };
   }
@@ -709,7 +709,7 @@ class RemoteStore {
   // POST /policies → the created policy object.
   async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count } = {}) {
     const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count });
-    const res = await this._rest('/policies', { method: 'POST', body });
+    const res = await this._rest('/memories/policies', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, policy: res.data };
   }
@@ -720,14 +720,14 @@ class RemoteStore {
   // that distinction, which is the whole point of the RPC's JSONB-patch design).
   async policyUpdate(id, patch = {}) {
     const body = stripUndefined(patch);
-    const res = await this._rest(`/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    const res = await this._rest(`/memories/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, policy: res.data };
   }
 
   // DELETE /policies/:id → deletes the RULE only; never touches the lessons it matched.
   async policyDelete(id) {
-    const res = await this._rest(`/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const res = await this._rest(`/memories/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, deleted: true };
   }
@@ -737,7 +737,7 @@ class RemoteStore {
   // `scope` (+ optional conditions), never both.
   async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count } = {}) {
     const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count });
-    const res = await this._rest('/groom/preview', { method: 'POST', body });
+    const res = await this._rest('/memories/groom/preview', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, count: res.data?.count ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
   }
@@ -746,7 +746,7 @@ class RemoteStore {
   // Soft-archive only (recoverable via restore); never hard-deletes.
   async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count } = {}) {
     const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count });
-    const res = await this._rest('/groom/run', { method: 'POST', body });
+    const res = await this._rest('/memories/groom/run', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, archived: res.data?.archived ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
   }
@@ -754,7 +754,7 @@ class RemoteStore {
   // POST /protect → { protected }. Excludes/includes a lesson from every
   // grooming candidate set regardless of policy.
   async protect({ scope, key, protected: isProtected } = {}) {
-    const res = await this._rest('/protect', { method: 'POST', body: { scope, key, protected: isProtected } });
+    const res = await this._rest('/memories/protect', { method: 'POST', body: { scope, key, protected: isProtected } });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, protected: res.data?.protected ?? isProtected };
   }
