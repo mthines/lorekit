@@ -1144,7 +1144,7 @@ export async function toolPolicyList(
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
   if (error) throw new Error((error as { message: string }).message);
-  const entries = (data ?? []) as RetentionPolicyDbRow[];
+  const entries = (data ?? []) as unknown as RetentionPolicyDbRow[];
   span.setAttributes({ 'lorekit.result.count': entries.length });
   return { entries };
 }
@@ -1213,12 +1213,11 @@ export async function toolPolicyUpdate(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc<RetentionPolicyDbRow>('lorekit_policy_update', { p_user_id: userId, p_id: id, p_patch: patch })
-    .maybeSingle();
+    .rpc('lorekit_policy_update', { p_user_id: userId, p_id: id, p_patch: patch });
   if (error) throw new Error((error as { message: string }).message);
-  if (!data) throw new UserInputError(`no retention policy found for id=${id}`);
+  const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
+  if (!row) throw new UserInputError(`no retention policy found for id=${id}`);
 
-  const row = data as RetentionPolicyDbRow;
   await recordAudit(
     db,
     { action: 'policy.update', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: patch },
@@ -1243,12 +1242,10 @@ export async function toolPolicyDelete(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc<RetentionPolicyDbRow>('lorekit_policy_delete', { p_user_id: userId, p_id: id })
-    .maybeSingle();
+    .rpc('lorekit_policy_delete', { p_user_id: userId, p_id: id });
   if (error) throw new Error((error as { message: string }).message);
-  const deleted = Boolean(data);
-  if (deleted) {
-    const row = data as RetentionPolicyDbRow;
+  const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
+  if (row) {
     await recordAudit(
       db,
       { action: 'policy.delete', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: { scope: row.scope } },
@@ -1256,7 +1253,7 @@ export async function toolPolicyDelete(
       span,
     );
   }
-  return { deleted };
+  return { deleted: Boolean(row) };
 }
 
 /**
@@ -1288,7 +1285,7 @@ async function resolveGroomRequest(
     const tracedDb = createTracedClient(db, span);
     const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
     if (error) throw new Error((error as { message: string }).message);
-    const row = ((data ?? []) as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
+    const row = ((data ?? []) as unknown as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
     if (!row) throw new UserInputError(`no retention policy found for policy_id=${request.policy_id}`);
     policy = toPolicyRow(row);
   }

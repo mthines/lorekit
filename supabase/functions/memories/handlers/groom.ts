@@ -52,7 +52,7 @@ async function resolveConditions(
     const tracedDb = createTracedClient(db, span);
     const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
     if (error) throw error;
-    const row = ((data ?? []) as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
+    const row = ((data ?? []) as unknown as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
     if (!row) return { error: badRequest(`no retention policy found for policy_id=${request.policy_id}`, undefined, {}) };
     policy = toPolicyRow(row);
   }

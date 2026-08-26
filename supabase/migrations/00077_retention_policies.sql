@@ -249,6 +249,16 @@ $$;
 
 grant execute on function lorekit_policy_list(uuid) to authenticated, service_role;
 
+-- Every policy-CRUD RPC below RETURNS SETOF (zero or one row) rather than a
+-- bare composite. A plpgsql function declared `returns retention_policies`
+-- that never assigns its %rowtype OUT variable still returns a NON-NULL
+-- composite with every field null — not SQL NULL — so a caller checking
+-- "found" by nullability would misread a not-found UPDATE/DELETE as a hit.
+-- SETOF sidesteps that ambiguity entirely: zero matching rows is a zero-length
+-- result set, one match is a one-row set, and the postgrest-js caller reads
+-- `data[0]` with no `.single()`/`.maybeSingle()` needed (TracedRpcQuery only
+-- exposes `.single()`, which errors on a zero-row result — the wrong shape for
+-- an expected "not found").
 create or replace function lorekit_policy_create(
   p_user_id        uuid,
   p_scope          text,
@@ -259,20 +269,14 @@ create or replace function lorekit_policy_create(
   p_unseen_days    integer default null,
   p_max_seen_count integer default null
 )
-returns retention_policies
-language plpgsql
+returns setof retention_policies
+language sql
 security definer
 set search_path = public
 as $$
-declare
-  v_row retention_policies%rowtype;
-begin
   insert into retention_policies (user_id, scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count)
   values (p_user_id, p_scope, p_name, p_mode, p_enabled, p_min_age_days, p_unseen_days, p_max_seen_count)
-  returning * into v_row;
-
-  return v_row;
-end;
+  returning *;
 $$;
 
 grant execute on function lorekit_policy_create(uuid, text, text, text, boolean, integer, integer, integer)
@@ -282,22 +286,18 @@ grant execute on function lorekit_policy_create(uuid, text, text, text, boolean,
 -- column unchanged; a key present with a JSON null CLEARS it (sets the
 -- column to NULL); a key present with a value SETS it. The `?` (has-key)
 -- operator is what makes "absent" and "present-but-null" distinguishable —
--- `coalesce(p_patch->>'x', x)` alone could never clear a field. Returns no
--- row (NULL) when p_id does not exist or is not owned by p_user_id, which
--- the caller reads as "not found".
+-- `coalesce(p_patch->>'x', x)` alone could never clear a field. Zero rows
+-- back means p_id does not exist or is not owned by p_user_id — "not found".
 create or replace function lorekit_policy_update(
   p_user_id uuid,
   p_id      uuid,
   p_patch   jsonb
 )
-returns retention_policies
-language plpgsql
+returns setof retention_policies
+language sql
 security definer
 set search_path = public
 as $$
-declare
-  v_row retention_policies%rowtype;
-begin
   update retention_policies
      set name           = case when p_patch ? 'name'           then p_patch ->> 'name'                    else name end,
          mode            = case when p_patch ? 'mode'           then p_patch ->> 'mode'                    else mode end,
@@ -306,29 +306,20 @@ begin
          unseen_days     = case when p_patch ? 'unseen_days'    then (p_patch ->> 'unseen_days')::integer   else unseen_days end,
          max_seen_count  = case when p_patch ? 'max_seen_count' then (p_patch ->> 'max_seen_count')::integer else max_seen_count end
    where id = p_id and user_id = p_user_id
-  returning * into v_row;
-
-  return v_row;
-end;
+  returning *;
 $$;
 
 grant execute on function lorekit_policy_update(uuid, uuid, jsonb) to authenticated, service_role;
 
 create or replace function lorekit_policy_delete(p_user_id uuid, p_id uuid)
-returns retention_policies
-language plpgsql
+returns setof retention_policies
+language sql
 security definer
 set search_path = public
 as $$
-declare
-  v_row retention_policies%rowtype;
-begin
   delete from retention_policies
    where id = p_id and user_id = p_user_id
-  returning * into v_row;
-
-  return v_row;
-end;
+  returning *;
 $$;
 
 grant execute on function lorekit_policy_delete(uuid, uuid) to authenticated, service_role;

@@ -59,7 +59,7 @@ export async function handlePolicyList(
   const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const entries = ((data ?? []) as RetentionPolicyDbRow[]).map(toWire);
+  const entries = ((data ?? []) as unknown as RetentionPolicyDbRow[]).map(toWire);
   span.setAttributes({ 'lorekit.result.count': entries.length });
   return ok({ entries }, cors);
 }
@@ -123,12 +123,11 @@ export async function handlePolicyUpdate(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc<RetentionPolicyDbRow>('lorekit_policy_update', { p_user_id: userId, p_id: params.id, p_patch: patch })
-    .maybeSingle();
+    .rpc('lorekit_policy_update', { p_user_id: userId, p_id: params.id, p_patch: patch });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
-  if (!data) return notFound('Retention policy', cors);
+  const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
+  if (!row) return notFound('Retention policy', cors);
 
-  const row = data as RetentionPolicyDbRow;
   await recordAudit(
     db,
     { action: 'policy.update', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: patch },
@@ -152,12 +151,11 @@ export async function handlePolicyDelete(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc<RetentionPolicyDbRow>('lorekit_policy_delete', { p_user_id: userId, p_id: params.id })
-    .maybeSingle();
+    .rpc('lorekit_policy_delete', { p_user_id: userId, p_id: params.id });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
-  if (!data) return notFound('Retention policy', cors);
+  const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
+  if (!row) return notFound('Retention policy', cors);
 
-  const row = data as RetentionPolicyDbRow;
   await recordAudit(
     db,
     { action: 'policy.delete', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: { scope: row.scope } },
