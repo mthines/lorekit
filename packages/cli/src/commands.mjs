@@ -47,6 +47,7 @@ import { diff } from './commands/diff.mjs';
 import { tree } from './commands/tree.mjs';
 import { lint } from './commands/lint.mjs';
 import { dedupe } from './commands/dedupe.mjs';
+import { obligations } from './commands/obligations.mjs';
 import { link } from './commands/link.mjs';
 import { hook } from './commands/hook.mjs';
 import { migrate } from './commands/migrate.mjs';
@@ -77,6 +78,7 @@ export const COMMANDS = [
   { name: 'tree', run: tree, traced: true, strictFlags: true, native: 'resolves the scope hierarchy for a directory', aliases: ['resolve'] },
   { name: 'lint', run: lint, traced: true, strictFlags: true, native: 'quality pass over stored lessons' },
   { name: 'dedupe', run: dedupe, traced: true, strictFlags: true, native: 'near-duplicate detection across a scope' },
+  { name: 'obligations', run: obligations, traced: true, strictFlags: true, native: 'checks changed files against the surface-partner map' },
   { name: 'link', run: link, traced: true, strictFlags: true, native: 'builds a dashboard deep link', aliases: ['url'] },
   { name: 'migrate', run: migrate, traced: true, strictFlags: true, native: 'moves lore between local and remote stores' },
   { name: 'bootstrap', run: bootstrap, traced: true, strictFlags: true, native: 'seeds a fresh store from a template' },
