@@ -36,6 +36,8 @@ import { rankLessons, selectDiverse } from '../_shared/ranking/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/ranking/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
 import type { DbClient } from '../_shared/db/db-client.ts';
+import { resolveGroomConditions } from '../_shared/retention/groom.ts';
+import type { RetentionPolicyRow, GroomRequestInput } from '../_shared/retention/groom.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -1081,4 +1083,326 @@ export async function toolScopes(
 
   span.setAttributes({ 'lorekit.result_count': scopes.length });
   return { scopes };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Retention policies ("grooming") — policy.*, groom.*, memory.protect.
+//
+// v1 is personal-owned (user_id-keyed) only, so every handler below requires
+// a resolved userId and every raw table read/write carries an explicit
+// `user_id` predicate — the same rule every other api_key-reachable handler
+// in this file follows, because that path runs on a service-role client that
+// bypasses RLS. `retention_policies` itself DOES carry an owner-only RLS
+// policy (00077), which is what protects the JWT/dashboard path; the
+// explicit filter here is what protects the api_key path.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
+ * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00077) rather than a raw
+ * `.from('retention_policies')` call: the table is new enough that the
+ * generated `database.types.ts` mirror does not know it (so a typed `.from()`
+ * call cannot name it), and every other mutable resource in this schema —
+ * memories, orgs, api_tokens — is already reached through a function for the
+ * same api_key/service-role-bypasses-RLS reason. This is the existing
+ * pattern, not a new one.
+ */
+interface RetentionPolicyDbRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  name: string;
+  mode: 'review' | 'auto';
+  enabled: boolean;
+  min_age_days: number | null;
+  unseen_days: number | null;
+  max_seen_count: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
+  return {
+    id: row.id,
+    scope: row.scope,
+    mode: row.mode,
+    enabled: row.enabled,
+    min_age_days: row.min_age_days,
+    unseen_days: row.unseen_days,
+    max_seen_count: row.max_seen_count,
+  };
+}
+
+/** List every retention policy the caller owns. */
+export async function toolPolicyList(
+  db: DbClient,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('policy.list requires a user_id');
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
+  if (error) throw new Error((error as { message: string }).message);
+  const entries = (data ?? []) as RetentionPolicyDbRow[];
+  span.setAttributes({ 'lorekit.result.count': entries.length });
+  return { entries };
+}
+
+/** Create a retention policy. `auto` mode always starts disabled per-policy. */
+export async function toolPolicyCreate(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('policy.create requires a user_id');
+  const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null } = params;
+  if (!rawScope || !name) throw new UserInputError('scope and name are required');
+  if (mode !== 'review' && mode !== 'auto') throw new UserInputError('mode must be "review" or "auto"');
+  const scope = validateScope(rawScope);
+
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.policy.mode': mode });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<RetentionPolicyDbRow>('lorekit_policy_create', {
+      p_user_id: userId,
+      p_scope: scope,
+      p_name: name,
+      p_mode: mode,
+      p_enabled: enabled,
+      p_min_age_days: min_age_days,
+      p_unseen_days: unseen_days,
+      p_max_seen_count: max_seen_count,
+    })
+    .single();
+  if (error) throw new Error((error as { message: string }).message);
+
+  const row = data as RetentionPolicyDbRow;
+  await recordAudit(
+    db,
+    { action: 'policy.create', resourceType: 'retention_policy', resourceId: row.id, target: name, metadata: { scope, mode, enabled } },
+    userId,
+    span,
+  );
+  return row;
+}
+
+/** Update a retention policy — every field but `id` is optional. */
+export async function toolPolicyUpdate(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('policy.update requires a user_id');
+  const { id } = params;
+  if (!id) throw new UserInputError('id is required');
+  if (params.mode !== undefined && params.mode !== 'review' && params.mode !== 'auto') {
+    throw new UserInputError('mode must be "review" or "auto"');
+  }
+
+  const patch: Record<string, unknown> = {};
+  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count'] as const) {
+    if (params[field] !== undefined) patch[field] = params[field];
+  }
+  if (Object.keys(patch).length === 0) throw new UserInputError('at least one field to update is required');
+
+  span.setAttributes({ 'lorekit.policy.id': id });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<RetentionPolicyDbRow>('lorekit_policy_update', { p_user_id: userId, p_id: id, p_patch: patch })
+    .maybeSingle();
+  if (error) throw new Error((error as { message: string }).message);
+  if (!data) throw new UserInputError(`no retention policy found for id=${id}`);
+
+  const row = data as RetentionPolicyDbRow;
+  await recordAudit(
+    db,
+    { action: 'policy.update', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: patch },
+    userId,
+    span,
+  );
+  return row;
+}
+
+/** Delete a retention policy. Deletes the RULE only — never touches memories. */
+export async function toolPolicyDelete(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('policy.delete requires a user_id');
+  const { id } = params;
+  if (!id) throw new UserInputError('id is required');
+
+  span.setAttributes({ 'lorekit.policy.id': id });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<RetentionPolicyDbRow>('lorekit_policy_delete', { p_user_id: userId, p_id: id })
+    .maybeSingle();
+  if (error) throw new Error((error as { message: string }).message);
+  const deleted = Boolean(data);
+  if (deleted) {
+    const row = data as RetentionPolicyDbRow;
+    await recordAudit(
+      db,
+      { action: 'policy.delete', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: { scope: row.scope } },
+      userId,
+      span,
+    );
+  }
+  return { deleted };
+}
+
+/**
+ * Resolve a groom.preview/groom.run request (a policy_id OR inline
+ * conditions) into the concrete conditions struct `lorekit_groom_candidates`
+ * takes — fetching the named policy (owner-scoped) when policy_id is given,
+ * then delegating to the pure `resolveGroomConditions`.
+ */
+async function resolveGroomRequest(
+  db: DbClient,
+  params: Params,
+  userId: string,
+  span: Span,
+): Promise<{ scope: string; min_age_days: number | null; unseen_days: number | null; max_seen_count: number | null }> {
+  const request: GroomRequestInput = params.policy_id
+    ? { policy_id: params.policy_id as string }
+    : {
+        scope: validateScope(params.scope),
+        min_age_days: params.min_age_days,
+        unseen_days: params.unseen_days,
+        max_seen_count: params.max_seen_count,
+      };
+
+  let policy: RetentionPolicyRow | null = null;
+  if ('policy_id' in request) {
+    // No per-id fetch RPC — the owner's policy list is small (a handful of
+    // saved rules), so reuse lorekit_policy_list (already owner-scoped) and
+    // find the one requested rather than adding a fifth RPC for one lookup.
+    const tracedDb = createTracedClient(db, span);
+    const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
+    if (error) throw new Error((error as { message: string }).message);
+    const row = ((data ?? []) as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
+    if (!row) throw new UserInputError(`no retention policy found for policy_id=${request.policy_id}`);
+    policy = toPolicyRow(row);
+  }
+
+  return resolveGroomConditions(request, policy);
+}
+
+/** Preview the candidates a policy or an inline condition set would archive. */
+export async function toolGroomPreview(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('groom.preview requires a user_id');
+  if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
+
+  const conditions = await resolveGroomRequest(db, params, userId, span);
+  span.setAttributes({ 'lorekit.scope': conditions.scope });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('lorekit_groom_candidates', {
+    p_user_id: userId,
+    p_scope: conditions.scope,
+    p_min_age_days: conditions.min_age_days,
+    p_unseen_days: conditions.unseen_days,
+    p_max_seen_count: conditions.max_seen_count,
+  });
+  if (error) throw new Error((error as { message: string }).message);
+
+  const rows = (data ?? []) as { id: string; scope: string; key: string }[];
+  const keys = rows.map((r) => ({ scope: r.scope, key: r.key }));
+  span.setAttributes({ 'lorekit.result.count': keys.length });
+  return { count: keys.length, keys };
+}
+
+/**
+ * Archive every candidate a policy or an inline condition set matches — the
+ * SAME candidates groom.preview would have shown, resolved and archived in
+ * one transaction by lorekit_groom_run. Audits one memory.archive row per
+ * archived lesson (inside the RPC), never deletes.
+ */
+export async function toolGroomRun(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('groom.run requires a user_id');
+  if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
+
+  const conditions = await resolveGroomRequest(db, params, userId, span);
+  span.setAttributes({ 'lorekit.scope': conditions.scope });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<{ archived: number; keys: { scope: string; key: string }[] }>('lorekit_groom_run', {
+      p_user_id: userId,
+      p_scope: conditions.scope,
+      p_min_age_days: conditions.min_age_days,
+      p_unseen_days: conditions.unseen_days,
+      p_max_seen_count: conditions.max_seen_count,
+    })
+    .single();
+  if (error) throw new Error((error as { message: string }).message);
+
+  const row = data as { archived: number; keys: { scope: string; key: string }[] };
+  span.setAttributes({ 'lorekit.result.archived': row.archived });
+
+  // App-layer audit capture (CLAUDE.md "Audit logging is captured at the app
+  // layer") — one memory.archive row per archived lesson, reusing the
+  // existing action rather than minting memory.groom.
+  for (const k of row.keys ?? []) {
+    await recordAudit(
+      db,
+      { action: 'memory.archive', resourceType: 'memory', target: k.key, metadata: { scope: k.scope, key: k.key, via: 'groom.run' } },
+      userId,
+      span,
+    );
+  }
+
+  return { archived: row.archived, keys: row.keys ?? [] };
+}
+
+/** Mark or unmark a lesson as protected from every grooming candidate set. */
+export async function toolProtect(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) throw new UserInputError('memory.protect requires a user_id');
+  const { scope: rawScope, key, protected: isProtected } = params;
+  if (!rawScope || !key || typeof isProtected !== 'boolean') {
+    throw new UserInputError('scope, key, and protected (boolean) are required');
+  }
+  const scope = validateScope(rawScope);
+
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key, 'lorekit.protect.value': isProtected });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<boolean>('lorekit_memory_protect', { p_user_id: userId, p_scope: scope, p_key: key, p_protected: isProtected })
+    .single();
+  if (error) throw new Error((error as { message: string }).message);
+
+  const changed = Boolean(data);
+  if (changed) {
+    await recordAudit(
+      db,
+      { action: 'memory.protect', resourceType: 'memory', target: key, metadata: { scope, key, protected: isProtected } },
+      userId,
+      span,
+    );
+  }
+  return { protected: isProtected };
 }
