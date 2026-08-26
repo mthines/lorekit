@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.56.0](https://github.com/mthines/lorekit/compare/cli-v1.55.3...cli-v1.56.0) (2026-08-26)
+
+
+### Features
+
+* **cli:** add `lorekit obligations` Surface-Partner Map check ([293de50](https://github.com/mthines/lorekit/commit/293de5093c193de91e87cd7ddd96910693b800ca))
+* **cli:** add lorekit obligations Surface-Partner Map check ([99a9c76](https://github.com/mthines/lorekit/commit/99a9c76fb4f89193d684d44397ce51ab2d560fd0))
+
+
+### Bug Fixes
+
+* **cli:** resolve edge-mirror false positive via a shared pair inventory ([a398416](https://github.com/mthines/lorekit/commit/a398416cd6ef64e21918de723d077fbcedd3ee08))
+
+
+### Documentation
+
+* **cli:** add obligations to traceCommand JSDoc bounded list ([58ac037](https://github.com/mthines/lorekit/commit/58ac037c6fcdc8bcd443ef017555bf9a697bc5d5))
+
 ## [1.55.3](https://github.com/mthines/lorekit/compare/cli-v1.55.2...cli-v1.55.3) (2026-08-25)
 
 
