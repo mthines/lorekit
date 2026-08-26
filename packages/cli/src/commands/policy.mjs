@@ -15,6 +15,7 @@ import { resolveProjectRoot } from '../shared/config.mjs';
 import { loadControl, resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import { log, err, c, select } from '../shared/util.mjs';
+import { parseIntFlag } from '../shared/flags.mjs';
 
 function pickRemote({ root, env, args }) {
   const { remoteDenied } = resolveDenies(root, { env });
@@ -45,15 +46,6 @@ async function list(args, store) {
   if (res.entries.length === 0) { log(c.dim('No retention policies yet. Create one with `lorekit policy create`.')); return 0; }
   for (const p of res.entries) log(formatPolicy(p));
   return 0;
-}
-
-/** Parse an optional integer flag; returns { error } on a non-integer value. */
-function parseIntFlag(raw, name) {
-  if (raw === undefined) return { value: undefined };
-  if (!/^\d+$/.test(String(raw).trim())) {
-    return { error: `--${name} must be a whole number, got ${JSON.stringify(String(raw))}` };
-  }
-  return { value: Number(String(raw).trim()) };
 }
 
 async function create(args, store) {

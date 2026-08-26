@@ -67,6 +67,31 @@ function isAutoEnabled(policy: Pick<RetentionPolicy, 'mode' | 'enabled'>): boole
   return policy.mode === 'auto' && policy.enabled;
 }
 
+/** The "Auto (nightly)" switch — shared between the inline form and each saved-policy row. */
+function AutoToggle({ checked, label, onToggle }: { checked: boolean; label: string; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onToggle}
+      className={[
+        'relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]',
+        checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'absolute top-0.5 size-5 rounded-full bg-white transition-transform',
+          checked ? 'translate-x-[22px]' : 'translate-x-0.5',
+        ].join(' ')}
+        aria-hidden
+      />
+    </button>
+  );
+}
+
 export function GroomingRuleBuilder() {
   const { showToast } = useToast();
   const [conditions, setConditions] = useState<Conditions>(EMPTY_CONDITIONS);
@@ -221,25 +246,7 @@ export function GroomingRuleBuilder() {
           </div>
 
           <div className="flex items-center gap-2 pt-6">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autoEnabled}
-              aria-label="Auto (nightly)"
-              onClick={() => setAutoEnabled((v) => !v)}
-              className={[
-                'relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]',
-                autoEnabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]',
-              ].join(' ')}
-            >
-              <span
-                className={[
-                  'absolute top-0.5 size-5 rounded-full bg-white transition-transform',
-                  autoEnabled ? 'translate-x-[22px]' : 'translate-x-0.5',
-                ].join(' ')}
-                aria-hidden
-              />
-            </button>
+            <AutoToggle checked={autoEnabled} label="Auto (nightly)" onToggle={() => setAutoEnabled((v) => !v)} />
             <span className="text-sm text-[var(--color-content-primary)]">Auto (nightly)</span>
           </div>
         </div>
@@ -316,25 +323,11 @@ export function GroomingRuleBuilder() {
                   <p className="truncate text-sm font-medium text-[var(--color-content-primary)]">{policy.name}</p>
                   <p className="truncate text-xs text-[var(--color-content-tertiary)]">{policy.scope}</p>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={isAutoEnabled(policy)}
-                  aria-label={`Auto (nightly) for ${policy.name}`}
-                  onClick={() => { void handleTogglePolicy(policy); }}
-                  className={[
-                    'relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]',
-                    isAutoEnabled(policy) ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]',
-                  ].join(' ')}
-                >
-                  <span
-                    className={[
-                      'absolute top-0.5 size-5 rounded-full bg-white transition-transform',
-                      isAutoEnabled(policy) ? 'translate-x-[22px]' : 'translate-x-0.5',
-                    ].join(' ')}
-                    aria-hidden
-                  />
-                </button>
+                <AutoToggle
+                  checked={isAutoEnabled(policy)}
+                  label={`Auto (nightly) for ${policy.name}`}
+                  onToggle={() => { void handleTogglePolicy(policy); }}
+                />
                 <button
                   type="button"
                   aria-label={`Delete ${policy.name}`}

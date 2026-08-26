@@ -949,6 +949,10 @@ const KNOWN_FLAGS = [
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
+  // groom / policy / protect / pin / unpin
+  'policy-id', 'min-age-days', 'unseen-days', 'max-seen-count', 'run',
+  'name', 'mode', 'enabled', 'disabled',
+  'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'off',
 ];
 
 async function main() {
@@ -961,7 +965,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count'],
     known: KNOWN_FLAGS,
   });
 
