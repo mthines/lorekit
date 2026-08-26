@@ -118,7 +118,7 @@ describe('the analytics reads stay REST-only (D17)', () => {
     expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
-  it('keeps memory.relevant OUT of the five — it is already covered agent-side', () => {
+  it('keeps memory.relevant OUT of the six — it is already covered agent-side', () => {
     // The near-miss, and the reason `restOnly` is a separate field rather than
     // "has no MCP tool". `GET /memories/relevant` has no tool of its own, but
     // the CAPABILITY is on the agent surface twice over (`memory.list
