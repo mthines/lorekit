@@ -1,4 +1,4 @@
-import { Key, Blocks, ShieldCheck, Users, UserCircle, CreditCard, FileCode } from 'lucide-react';
+import { Key, Blocks, ShieldCheck, Users, UserCircle, CreditCard, FileCode, Archive } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
 
 /**
@@ -24,6 +24,7 @@ export const SETTINGS_SECTIONS: readonly SectionNavItem[] = [
   // what it is, and the next connector has somewhere to live.
   { id: 'integrations', label: 'Integrations', href: '/settings/integrations', icon: Blocks },
   { id: 'organization', label: 'Organization', href: '/settings/organization', icon: Users },
+  { id: 'grooming', label: 'Grooming', href: '/settings/grooming', icon: Archive },
   { id: 'audit', label: 'Audit Logs', href: '/settings/audit', icon: ShieldCheck },
   { id: 'plan', label: 'Plan', href: '/settings/plan', icon: CreditCard },
   {
