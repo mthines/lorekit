@@ -74,6 +74,14 @@ ${c.bold('Commands')}
   dedupe      Find likely-duplicate memories via a zero-dep word-overlap HEURISTIC
               (Jaccard >= threshold, not semantic), grouped into clusters per
               store. --json, --scope <s>, --threshold <0..1>.
+  obligations Check a changed-file set against the Surface-Partner Map: known,
+              path-keyed file partnerships (a mirrored module, a doc that
+              copies a claim, a generated artifact) mined from existing CI
+              guards. Prints each matched partnership's obliged partner
+              files/actions and flags any partner NOT in the given set.
+              Cwd-independent — matches path strings, never reads the FS.
+              --files <path>..., positionals, or stdin (newline-separated).
+              --json, --strict (exit non-zero on any unmet obligation).
   link (url)  Print a shareable dashboard deep-link URL for the current context,
               a scope, or a specific lesson (opens its detail sheet). No args
               links to the cwd's most-specific scope. Filter flags mirror the
@@ -123,9 +131,11 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
-      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe / link)
+      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe / obligations / link)
       --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe / link)
                           On show / write it NAMES the scope, overriding the positional
+      --files <path>...   Changed files to check (obligations); also accepted as positionals or newline-separated stdin
+      --strict            Exit non-zero on any unmet obligation (obligations)
       --key <key>         Name the key explicitly (show / write / link) — the way to
                           address a key that itself contains \`::\`
       --link              Print the equivalent dashboard deep-link URL instead of running (show / search / list / tree)
@@ -579,6 +589,41 @@ ${c.bold('Examples')}
   npx @lorekit/cli dedupe --threshold 0.6 --json
   npx @lorekit/cli dedupe --cluster-by-key "(pr\\d+-\\d+)" --json
 `,
+  obligations: `${c.bold('lorekit obligations')} — check a changed-file set against the Surface-Partner Map
+
+${c.bold('Usage')}
+  npx @lorekit/cli obligations <path>... [options]
+  npx @lorekit/cli obligations --files <path>... [options]
+  git diff --name-only | npx @lorekit/cli obligations [options]
+
+Checks a changed-file set against a declarative registry of known, path-keyed
+file partnerships (a mirrored module, a doc that copies a claim, a generated
+artifact) mined from existing CI guards — a machine version of the recurring
+review finding "you fixed one surface and left its partner stale." For each
+matched partnership it prints the obliged partner files/actions and flags any
+partner NOT in the given changed-set, citing the memory lesson the
+partnership encodes.
+
+Cwd-INDEPENDENT: it matches the path STRINGS it is given against the map — it
+never reads the filesystem or resolves scope from the current directory, so
+the changed-set can come from anywhere (a git diff, a PR file list, by hand).
+
+The changed-set is positionals unioned with ${c.cyan('--files')} (its single-value
+form — extra paths after it fall through as positionals); when neither is
+given, it falls back to stdin lines (newline-separated, trimmed, non-empty),
+read only when stdin is piped.
+
+${c.bold('Options')}
+      --files <path>...   Changed files to check (also: positionals, stdin)
+      --strict            Exit non-zero when any path obligation is unmet
+                          (an advisory run: action never gates this)
+      --json              Machine-readable output ({ files, matched, unmet, ok })
+
+${c.bold('Examples')}
+  npx @lorekit/cli obligations supabase/functions/_shared/audit/audit.ts
+  npx @lorekit/cli obligations --files packages/schemas/src/shared/tool-catalog.ts --json
+  git diff --name-only origin/main... | npx @lorekit/cli obligations --strict
+`,
   link: `${c.bold('lorekit link')} — print a shareable dashboard deep-link URL ${c.dim('(alias: url)')}
 
 ${c.bold('Usage')}
@@ -953,6 +998,8 @@ const KNOWN_FLAGS = [
   'policy-id', 'min-age-days', 'unseen-days', 'max-seen-count', 'run',
   'name', 'mode', 'enabled', 'disabled',
   'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'off',
+  // `obligations`
+  'files', 'strict',
 ];
 
 async function main() {
@@ -965,7 +1012,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'strict'],
     known: KNOWN_FLAGS,
   });
 

@@ -5,7 +5,7 @@
 // otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
 // packages. One span + one counter data point per human-facing command
 // (install / uninstall / doctor / list / search / show / stats / scopes / diff /
-// tree / lint / dedupe / link / migrate), fired to Dash0 so the maintainers can
+// tree / lint / dedupe / obligations / link / migrate), fired to Dash0 so the maintainers can
 // see which commands people actually run.
 //
 // Privacy — this runs on end-users' machines, so it is deliberately narrow:
@@ -709,7 +709,7 @@ export async function meterCommand(command, version, run) {
  * `lint` finding) reports `lorekit.cli.outcome=failure` on a span the exporter
  * emits as STATUS_CODE_OK — never ERROR.
  *
- * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | link | migrate
+ * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | obligations | link | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler

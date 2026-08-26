@@ -443,6 +443,57 @@ coincidental overlaps. Any pair scoring at or above `--threshold` links (transit
 into one cluster; only clusters of 2+ members are reported, each with a similarity
 range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store.
 
+### `lorekit obligations`
+
+Check a changed-file set against the **Surface-Partner Map** — a declarative
+registry of known, path-keyed file partnerships (a mirrored module, a doc that
+copies a claim, a generated artifact) mined from existing CI guards — and flag
+any partner the map says the changed-set owes but doesn't contain:
+
+```bash
+lorekit obligations supabase/functions/_shared/audit/audit.ts        # positionals
+lorekit obligations --files packages/schemas/src/shared/tool-catalog.ts --json
+git diff --name-only origin/main... | lorekit obligations --strict   # from a real diff
+```
+
+This is a machine version of a recurring review finding: a fix to one surface
+leaves its partner stale because the lessons documenting the partnership are
+retrieved lexically (full-text search + recency) and rarely surface at edit
+time for the exact file just touched. Each matched entry prints its obliged
+partner files/actions, marks each as met (✓) or unmet (!), and cites the
+memory `lessonKey` the partnership encodes.
+
+An `obliges` element is a required partner path/glob, a `run:<action>`
+advisory that is always reported but never gates `--strict` (some
+partnerships are "regenerate this," not "edit this file"), or an "any of"
+group satisfied by whichever of several candidates is present. `{name}` (or
+`**/{name}`) in a `match`/`obliges` glob binds a mirrored module's relative
+path (directories + stem, extension stripped), for the (rare) case where a
+partner's path genuinely IS a predictable function of the source's, so one
+entry covers every module instead of needing one per file.
+
+The `edge-mirror`/`edge-mirror-core` entries (mcp-core ↔ the self-contained
+Deno edge mirrors) do NOT use that glob mechanism: an edge mirror doesn't
+reliably preserve mcp-core's directory structure (it may flatten or rename
+it), so a symmetric-path reconstruction false-positives on exactly those
+pairs. Instead, both entries are generated — one row per pair — from
+`src/shared/mirror-pairs.mjs`, the single-source inventory
+`packages/mcp-core/src/edge/edge-parity.spec.ts` also reads for its
+byte-comparison drift guard, so the spec and this command can never disagree
+about which files mirror which.
+
+**Cwd-independent by design**: it matches the path STRINGS it is given
+against the map and never reads the filesystem or resolves scope from the
+current directory — the changed-set can come from a real `git diff`, a PR
+file list, or by hand, from anywhere.
+
+Exits 0 by default; `--strict` exits non-zero when any PATH obligation is
+unmet. `--json` → `{ files, matched, unmet, ok }`. CLI-only (`native` — no MCP
+tool, no REST route, no `tool-catalog.ts` entry): a path-matching lint utility
+is not an operation surface. Slice 1 of a larger design — wiring a
+`PreToolUse` hook to call this at edit time, and server-side retrieval
+changes, are named follow-ups, not built here.
+
 ### `lorekit link` (alias `url`)
 
 Print a shareable **dashboard deep-link URL** to stdout — nothing else, so it
@@ -996,12 +1047,14 @@ also returns their headroom against the plan's memory cap.
 | `--mcp-json` | Also write a committable project `.mcp.json` (auth via `${LOREKIT_TOKEN}`, no embedded token) for Claude Code on the web (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link` / `purge` / `purge-expired`) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `purge` / `purge-expired`) |
 | `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. On `show` / `write` it **names** the scope, overriding the positional |
 | `--key <key>` | Name the key outright (`show` / `write` / `link`) — the way to address a key that itself contains `::` |
 | `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
+| `--files <path>...` | Changed files to check (`obligations`); also accepted as positionals or newline-separated stdin |
+| `--strict` | Exit non-zero on any unmet obligation (`obligations`) |
 | `--retention-days <1..365>` | Only purge archived memories older than this (`purge`; default `30`, derived from the tool catalog) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
