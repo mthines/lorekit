@@ -695,6 +695,70 @@ class RemoteStore {
     };
   }
 
+  // ── Retention policies ("grooming") → REST ────────────────────────────────
+  // Server-side only (retention_policies table + pg_cron sweep) — v1 has no
+  // local-store equivalent, matching the account-wide sweeps just above.
+
+  // GET /policies → { entries: [...] }
+  async policyList() {
+    const res = await this._rest('/policies');
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, entries: Array.isArray(res.data?.entries) ? res.data.entries : [] };
+  }
+
+  // POST /policies → the created policy object.
+  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count } = {}) {
+    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count });
+    const res = await this._rest('/policies', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, policy: res.data };
+  }
+
+  // PATCH /policies/:id → the updated policy object. An omitted field is left
+  // unchanged; pass an explicit `null` in the patch to clear a condition —
+  // this method does not strip nulls, only `undefined` (stripUndefined keeps
+  // that distinction, which is the whole point of the RPC's JSONB-patch design).
+  async policyUpdate(id, patch = {}) {
+    const body = stripUndefined(patch);
+    const res = await this._rest(`/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, policy: res.data };
+  }
+
+  // DELETE /policies/:id → deletes the RULE only; never touches the lessons it matched.
+  async policyDelete(id) {
+    const res = await this._rest(`/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, deleted: true };
+  }
+
+  // POST /groom/preview → { count, keys: [{ scope, key }] } — the SAME
+  // candidates a groom() run would archive. Pass either `policy_id` or
+  // `scope` (+ optional conditions), never both.
+  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count });
+    const res = await this._rest('/groom/preview', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, count: res.data?.count ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
+  }
+
+  // POST /groom/run → archives every previewed candidate, in one transaction.
+  // Soft-archive only (recoverable via restore); never hard-deletes.
+  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count });
+    const res = await this._rest('/groom/run', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, archived: res.data?.archived ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
+  }
+
+  // POST /protect → { protected }. Excludes/includes a lesson from every
+  // grooming candidate set regardless of policy.
+  async protect({ scope, key, protected: isProtected } = {}) {
+    const res = await this._rest('/protect', { method: 'POST', body: { scope, key, protected: isProtected } });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, protected: res.data?.protected ?? isProtected };
+  }
+
   // Authentication probe for doctor — does the configured token STILL work?
   //
   // `ping()` deliberately hits the PUBLIC `/health` function, so it stays green
