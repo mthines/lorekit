@@ -1,7 +1,8 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { expandScopeForSearch, scopeType } from '../scope/scope.js';
+import { expandScopeForSearch } from '../scope/scope.js';
+import { scopeTypeAttribute } from '../scope/scope-type-attribute.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
 
 export const SearchInputSchema = z.object({
@@ -33,9 +34,15 @@ export async function search(
   // genuinely `mixed`. This used to be hard-coded `mixed`, which made a
   // single-scope search's latency indistinguishable from an all-scope one and
   // meant the series could never be sliced by real scope type.
-  const histScopeType = input.scopes && input.scopes.length === 1
-    ? scopeType(input.scopes[0])
-    : 'mixed';
+  //
+  // `scopeTypeAttribute` (NOT the raw `scopeType`) does the bucketing: `scopes`
+  // is `z.array(z.string())`, so it is NOT `ScopeSchema`-validated the way
+  // `list.ts`/`write.ts`'s `scope` is. `scopeType` would `split('::')[0]` an
+  // arbitrary caller string straight into this bounded metric label; the
+  // attribute helper maps a single scope to its type (`invalid` for an
+  // ungrammatical one), several to `mixed`, and none to null — coalesced to
+  // `mixed` here to keep the "search over the whole store" semantics above.
+  const histScopeType = scopeTypeAttribute(undefined, input.scopes) ?? 'mixed';
 
   return tracer.startActiveSpan('lorekit.memory.search', { kind: 0 }, async (span) => {
     span.setAttribute('lorekit.tool.name', 'memory.search');
