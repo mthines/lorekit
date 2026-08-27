@@ -795,8 +795,8 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 </div>
                               );
                             })()}
-                           </>
-                         )}
+                          </>
+                        )}
 
                          {/* Timeline — created / updated / expiry / archived.
                             Preceded by ownership and/or source, so the first row
