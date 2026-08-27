@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.57.0](https://github.com/mthines/lorekit/compare/cli-v1.56.0...cli-v1.57.0) (2026-08-27)
+
+
+### Features
+
+* **cli:** add zsh/fish shell completion + install --completions ([7760e11](https://github.com/mthines/lorekit/commit/7760e118ffe36a1ea3f0d0782fd4d5dbafe4e39d))
+* **cli:** zsh/fish shell completion, installable via `install --completions` ([69e17b4](https://github.com/mthines/lorekit/commit/69e17b48fb9ec9f785a1717fc3677a623d99c833))
+
+## [1.56.0](https://github.com/mthines/lorekit/compare/cli-v1.55.3...cli-v1.56.0) (2026-08-26)
+
+
+### Features
+
+* **cli:** add `lorekit obligations` Surface-Partner Map check ([293de50](https://github.com/mthines/lorekit/commit/293de5093c193de91e87cd7ddd96910693b800ca))
+* **cli:** add lorekit obligations Surface-Partner Map check ([99a9c76](https://github.com/mthines/lorekit/commit/99a9c76fb4f89193d684d44397ce51ab2d560fd0))
+
+
+### Bug Fixes
+
+* **cli:** resolve edge-mirror false positive via a shared pair inventory ([a398416](https://github.com/mthines/lorekit/commit/a398416cd6ef64e21918de723d077fbcedd3ee08))
+
+
+### Documentation
+
+* **cli:** add obligations to traceCommand JSDoc bounded list ([58ac037](https://github.com/mthines/lorekit/commit/58ac037c6fcdc8bcd443ef017555bf9a697bc5d5))
+
+## [1.55.3](https://github.com/mthines/lorekit/compare/cli-v1.55.2...cli-v1.55.3) (2026-08-25)
+
+
+### Bug Fixes
+
+* **cli:** resolve scope::key shorthand when the key contains :: ([0c37c69](https://github.com/mthines/lorekit/commit/0c37c69542b9b34f533dc1ef111f5934095f4386))
+* **cli:** resolve scope::key shorthand when the key contains :: ([6ddfb9e](https://github.com/mthines/lorekit/commit/6ddfb9e82de707930c551e9d902328769e19a0bc))
+
 ## [1.55.2](https://github.com/mthines/lorekit/compare/cli-v1.55.1...cli-v1.55.2) (2026-08-23)
 
 
