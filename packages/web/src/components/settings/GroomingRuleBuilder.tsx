@@ -22,6 +22,7 @@ import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { FormDialog } from '@/components/ui/FormDialog';
 import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
+import { Switch } from '@/components/ui/Switch';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { scopeIcon } from '@/components/memory/scope-meta';
 import { useToast } from '@/components/providers/ToastProvider';
@@ -123,31 +124,6 @@ function flattenScopeNodes(nodes: ScopeNode[]): ScopeNode[] {
     if (node.children?.length) out.push(...flattenScopeNodes(node.children));
   }
   return out;
-}
-
-/** The "Auto (nightly)" switch — shared between the form and each saved-policy row. */
-function AutoToggle({ checked, label, onToggle }: { checked: boolean; label: string; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onToggle}
-      className={[
-        'relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]',
-        checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]',
-      ].join(' ')}
-    >
-      <span
-        className={[
-          'absolute top-0.5 size-5 rounded-full bg-white transition-transform',
-          checked ? 'translate-x-[22px]' : 'translate-x-0.5',
-        ].join(' ')}
-        aria-hidden
-      />
-    </button>
-  );
 }
 
 /**
@@ -366,7 +342,7 @@ function PolicyForm({
       </div>
 
       <div className="flex items-center gap-2">
-        <AutoToggle checked={autoEnabled} label="Auto (nightly)" onToggle={() => setAutoEnabled((v) => !v)} />
+        <Switch checked={autoEnabled} label="Auto (nightly)" onChange={setAutoEnabled} />
         <span className="text-sm text-[var(--color-content-primary)]">Auto (nightly)</span>
       </div>
 
@@ -496,10 +472,10 @@ function PolicyRow({
         </span>
       )}
 
-      <AutoToggle
+      <Switch
         checked={auto}
         label={`Auto (nightly) for ${policy.name}`}
-        onToggle={onToggle}
+        onChange={onToggle}
       />
       <button
         type="button"
