@@ -7517,6 +7517,237 @@ begin
 end;
 $$;
 
+-- ── 88. lorekit_usage_stats groups by client, kind, host too (00079) ────────
+-- usage_events has stored client (00054) and kind/host (00056) for months;
+-- GET /memories/usage exposed none of them. Widen the GROUP BY.
+-- AC-1: the new columns actually discriminate rows (two rows with the same
+--       tool/outcome/scope_type but different client stay SEPARATE rows).
+-- AC-2: summing event_count over every returned row reproduces the same
+--       total as the pre-00079 (tool_name, outcome, scope_type)-only grouping
+--       would have -- widening the GROUP BY must never gain or lose events.
+-- AC-3: host is bounded to the window's own top 20 by event count; the 21st
+--       most-frequent host (and everything rarer) collapses to 'other'.
+-- AC-4: a NULL host stays NULL -- it is not "some other host", it has none.
+do $$
+declare
+  v_total_new bigint;
+  v_total_old bigint;
+  v_client_a  bigint;
+  v_client_b  bigint;
+  v_other_count bigint;
+  v_null_host_count bigint;
+  v_distinct_hosts_returned integer;
+  i integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: same (tool_name, outcome, scope_type), different client -- must be
+  -- two rows, not folded into one.
+  insert into usage_events (user_id, tool_name, outcome, scope_type, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'mcp', timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'cli', timestamptz '2026-08-01');
+
+  select count into v_client_a from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list' and client = 'mcp';
+  select count into v_client_b from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list' and client = 'cli';
+  assert v_client_a = 1 and v_client_b = 1,
+    format('88 AC-1: client must discriminate rows, got mcp=%s cli=%s', v_client_a, v_client_b);
+
+  -- AC-2: the SUM over every row for this tool_name is 2, matching the two
+  -- events inserted -- widening the group-by refined the buckets, it did not
+  -- change the total.
+  select coalesce(sum(event_count), 0) into v_total_new from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list';
+  select count(*) into v_total_old from usage_events
+   where tool_name = '88.memory.list' and user_id = '00000000-0000-0000-0000-0000000000a1';
+  assert v_total_new = v_total_old,
+    format('88 AC-2: summed event_count (%s) must equal the raw row count (%s)', v_total_new, v_total_old);
+
+  -- AC-3/AC-4: 21 distinct hosts, one event each, plus 3 NULL-host events (a
+  -- scopeless/hostless tool). The rarest host (host-20, alphabetically last
+  -- among ties at count=1) must collapse to 'other'; NULL must stay NULL.
+  for i in 0..20 loop
+    insert into usage_events (user_id, tool_name, outcome, scope_type, host, created_at)
+      values ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo',
+              format('88-host-%s', lpad(i::text, 2, '0')), timestamptz '2026-08-01');
+  end loop;
+  insert into usage_events (user_id, tool_name, outcome, scope_type, host, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01');
+
+  select count(distinct host) into v_distinct_hosts_returned from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host is not null;
+  -- 20 top hosts + the 'other' bucket the 21st collapses into = 21 distinct
+  -- non-null host values, never 21 real host names.
+  assert v_distinct_hosts_returned = 21,
+    format('88 AC-3: expected 20 named hosts + one "other" bucket (21 distinct), got %s', v_distinct_hosts_returned);
+
+  select coalesce(sum(event_count), 0) into v_other_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host = 'other';
+  assert v_other_count = 1,
+    format('88 AC-3: exactly one event must have collapsed into the "other" bucket, got %s', v_other_count);
+
+  select coalesce(sum(event_count), 0) into v_null_host_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host is null;
+  assert v_null_host_count = 3,
+    format('88 AC-4: the 3 NULL-host events must stay NULL, not become "other", got %s', v_null_host_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 89. lorekit_read_activity gains read_kind (00080) ────────────────────────
+-- "Memories read" is 99.7% bulk list/search output in a live sample -- split
+-- retrieved (bulk) from opened (targeted) so the two stop sharing one number.
+-- AC-1: a memory.read event is read_kind='targeted'.
+-- AC-2: memory.list/search/list_archived events are read_kind='bulk'.
+-- AC-3: retrieved + opened sum to the SAME total the function always gave for
+--       this window (the split refines, never changes, the series).
+-- AC-4: the dashboard-client exclusion and key-scope narrowing still apply
+--       per read_kind, not just to the unsplit total.
+do $$
+declare
+  v_targeted   bigint;
+  v_bulk       bigint;
+  v_total_new  bigint;
+  v_total_rows bigint;
+  v_dashboard_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',         'repo', 'jwt', 'ok', 10,  1, 'mcp', timestamptz '2026-08-05 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',         'repo', 'jwt', 'ok', 10, 31, 'mcp', timestamptz '2026-08-05 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search',       'repo', 'jwt', 'ok', 10,  5, 'mcp', timestamptz '2026-08-05 01:10:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list_archived','repo', 'jwt', 'ok', 10,  2, 'mcp', timestamptz '2026-08-05 01:15:00+00'),
+    -- The dashboard's own browsing must stay excluded per read_kind too.
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', 10, 100, 'dashboard', timestamptz '2026-08-05 01:20:00+00');
+
+  -- AC-1: memory.read is targeted.
+  select coalesce(sum(count), 0) into v_targeted from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'targeted';
+  assert v_targeted = 1, format('89 AC-1: memory.read must be read_kind=targeted with count 1, got %s', v_targeted);
+
+  -- AC-2: list/search/list_archived are bulk (31+5+2 = 38; the dashboard's
+  -- 100 must NOT be included per AC-4).
+  select coalesce(sum(count), 0) into v_bulk from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'bulk';
+  assert v_bulk = 38, format('89 AC-2/AC-4: bulk must be 38 (31+5+2, dashboard excluded), got %s', v_bulk);
+
+  -- AC-3: retrieved + opened sum to the function's own total for the window
+  -- (1 + 38 = 39; the dashboard's 100 stays excluded from the total too).
+  select coalesce(sum(count), 0) into v_total_new from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_new = 39,
+    format('89 AC-3: targeted + bulk must sum to 39 (1 + 38), got %s', v_total_new);
+
+  -- AC-4 (direct): the dashboard-attributed row contributes nothing to either
+  -- read_kind, not merely something less than its full 100.
+  select count(*) into v_dashboard_count from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where count = 100;
+  assert v_dashboard_count = 0, '89 AC-4: the dashboard-attributed 100 records must not appear in either read_kind';
+
+  -- Sanity: exactly two rows returned for this bucket/scope (one per
+  -- read_kind) -- not folded into one, not split further.
+  select count(*) into v_total_rows from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_rows = 2,
+    format('88: expected exactly 2 rows (targeted + bulk) for this bucket/scope, got %s', v_total_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 90. lorekit_usage_memory_count_peak (00081) ──────────────────────────────
+-- usage_events.memory_count is stamped on every write event and exposed by no
+-- endpoint. Surface the window's peak as its own scalar RPC.
+-- AC-1: returns the MAX memory_count over write events in the window.
+-- AC-2: a window with no write events returns null, never a fabricated 0.
+-- AC-3: a service-role caller with no target user returns null.
+-- AC-4: self-only -- a different user's peak is invisible.
+do $$
+declare
+  v_peak bigint;
+  v_peak_none bigint;
+  v_peak_other_scope integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, memory_count, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 40, timestamptz '2026-08-10 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 55, timestamptz '2026-08-10 02:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 47, timestamptz '2026-08-10 03:00:00+00'),
+    -- A different user in the SAME window must not leak into the first user's peak.
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.write', 'repo', 'jwt', 'ok', 9999, timestamptz '2026-08-10 01:30:00+00');
+
+  -- AC-1: the max of 40/55/47 is 55.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak;
+  assert v_peak = 55, format('90 AC-1: expected peak 55, got %s', v_peak);
+
+  -- AC-2: a window with no write events for this user returns null.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2020-01-01 00:00:00+00', timestamptz '2020-01-02 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-2: an empty window must return null, got %s', v_peak_none);
+
+  -- AC-3: a service-role caller with no target user (p_user_id null) has no
+  -- single account to report on.
+  select lorekit_usage_memory_count_peak(
+    null, timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-3: a NULL target user must return null, got %s', v_peak_none);
+
+  -- AC-4: self-only -- the second user's 9999 must never appear in the first
+  -- user's peak (already proven by AC-1 = 55, not 9999), and querying the
+  -- SECOND user directly must see their own peak, not the first's.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a2',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_other_scope;
+  assert v_peak_other_scope = 9999,
+    format('90 AC-4: the second user must see their own peak (9999), got %s', v_peak_other_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

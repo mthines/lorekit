@@ -581,9 +581,21 @@ export type ReadActivityQuery = z.infer<typeof ReadActivityQuerySchema>;
  * — which is exactly why a per-scope total can be SMALLER than the account
  * total, and why a UI showing both should say so.
  */
+/**
+ * `read_kind` (migration 00080): `'targeted'` for a `memory.read` (one exact
+ * scope+key), `'bulk'` for `memory.list`/`memory.search`/`memory.list_archived`
+ * (every row a listing call returned) — `lorekit_read_activity`'s OWN narrow
+ * 4-tool "read" definition, not the broader `READ_TOOL_NAMES` in
+ * `usage-stats.ts`. Optional so a pre-00080 response (and any fixture that
+ * predates the split) still typechecks.
+ */
+export const ReadKindSchema = z.enum(['targeted', 'bulk']);
+export type ReadKind = z.infer<typeof ReadKindSchema>;
+
 export const ReadActivityBucketSchema = z.object({
   bucket: z.string(),
   scope: z.string().nullable(),
+  read_kind: ReadKindSchema.optional(),
   count: z.number().int().nonnegative(),
 });
 export type ReadActivityBucket = z.infer<typeof ReadActivityBucketSchema>;

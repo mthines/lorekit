@@ -323,14 +323,19 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       'dashboard (`X-LoreKit-Client: dashboard`) are EXCLUDED: browsing your own lore in the web UI ' +
       'is visualisation, not consumption, and would otherwise make this series grow every time you ' +
       'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.\n\n' +
-      'Buckets are returned one per `(bucket, scope)` cell, mirroring `GET /memories/activity`. ' +
+      'Buckets are returned one per `(bucket, scope, read_kind)` cell, mirroring `GET /memories/activity`. ' +
       '`scope` is nullable: a read whose scope the server could not resolve (carried in a request ' +
       'body, or ungrammatical) is recorded as unattributed rather than dropped, so it still counts ' +
       'toward the unfiltered total. Pass the optional `scope` query parameter to restrict the ' +
       'series to one exact scope; because the metric is additive, those buckets SUM to the ' +
       'per-scope headline. That per-scope total can legitimately be SMALLER than the account ' +
       'total — the difference is the unattributable reads. An invalid `scope` is a `400`, not a ' +
-      'silently ignored filter.',
+      'silently ignored filter.\n\n' +
+      '`read_kind` (migration 00080) splits retrieved from opened: `\'targeted\'` is `memory.read` ' +
+      '(one exact scope+key — an agent deliberately opening a specific lesson); `\'bulk\'` is ' +
+      '`memory.list`/`memory.search`/`memory.list_archived` (every row a listing call returned, ' +
+      'e.g. a session-start hook injecting lessons). Retrieved + opened sum to the same total this ' +
+      'endpoint always returned — the split refines the series, it does not change it.',
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },
@@ -363,6 +368,18 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     method: 'get', path: '/memories/usage',
     summary: 'Aggregate usage statistics for your own activity (reads, writes, outcomes, per scope-type) over an optional period',
     tags: ['Memories'],
+    description:
+      '`by_tool` rows are grouped by `(tool_name, outcome, scope_type, client, kind, host)` ' +
+      '(migration 00079 added the last three). `client` is which surface called ' +
+      '(`dashboard`/`cli`/`mcp`/`api`); `kind`/`host` are the memory taxonomy family/owner. ' +
+      '`host` is bounded to this window\'s own top 20 by event count — anything else is the ' +
+      'literal `\'other\'`, never an unbounded free-text value. `scope_type` may carry a legacy ' +
+      'free-text value predating validation hardening; group by it defensively rather than ' +
+      'assuming the closed `global|project|repo|branch|mixed|invalid` vocabulary is exhaustive.\n\n' +
+      '`summary.peak_memory_count` (migration 00081) is the highest active-memory-count snapshot ' +
+      'taken on a write event in this window — "how full WAS this account", distinct from the ' +
+      '`/settings/plan` page\'s existing LIVE count. `null` when the window has no write events. ' +
+      'No plan limit accompanies it; pair it with your own limit reading.',
     security, request: { query: UsageStatsQuerySchema },
     responses: {
       200: { description: 'Usage statistics', content: { 'application/json': { schema: UsageStatsResponseSchema } } },

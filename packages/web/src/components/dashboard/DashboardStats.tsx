@@ -1,9 +1,11 @@
 'use client';
 
 import { useMemo } from 'react';
-import { BookOpen, BookOpenCheck, Layers } from 'lucide-react';
+import { BookOpen, BookOpenCheck, Search, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { StatCard } from '@/components/dashboard/StatCard';
+import { UsageHealth } from '@/components/dashboard/UsageHealth';
+import { AgentBreakdown } from '@/components/dashboard/AgentBreakdown';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
@@ -12,7 +14,9 @@ import {
   computeRangeTrends,
   RANGE_BUCKETS,
   type StatTrend,
+  type TrendRow,
 } from '@/lib/aggregations';
+import type { ReadActivityBucket } from '@lorekit/schemas/memory';
 import {
   bucketPlanForRange,
   gridAnchor,
@@ -78,6 +82,17 @@ const DEFAULT_OVERVIEW_RANGE: TimeRange = { preset: '24h' };
 const FALLBACK_PLAN = RANGE_BUCKETS['30d'];
 
 /**
+ * Stable empty fallbacks for `data?.rows`/`data?.readBuckets` while the query
+ * is loading. `?? []` would mint a NEW array every render, which is what made
+ * `retrievedBuckets`/`openedBuckets`'s `useMemo` (both depending on
+ * `readBuckets`) recompute on every render pre-settle — a module-level
+ * constant is referentially stable, so the dependency only changes when the
+ * query actually resolves new data.
+ */
+const EMPTY_ROWS: TrendRow[] = [];
+const EMPTY_READ_BUCKETS: ReadActivityBucket[] = [];
+
+/**
  * The trend chip's tooltip: what this window is being compared against.
  *
  * There is only ONE comparison rule — the immediately preceding window of the
@@ -110,8 +125,8 @@ export function DashboardStatsSkeleton() {
           <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
           <div className="h-6 w-28 animate-pulse rounded-md bg-[var(--color-bg-elevated)]" />
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
               className="h-40 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
@@ -159,8 +174,8 @@ export function DashboardStats() {
   // shareable, which local state never was.
   const [range, setRange] = useUrlState<TimeRange>('range', DEFAULT_OVERVIEW_RANGE);
 
-  const rows = data?.rows ?? [];
-  const readBuckets = data?.readBuckets ?? [];
+  const rows = data?.rows ?? EMPTY_ROWS;
+  const readBuckets = data?.readBuckets ?? EMPTY_READ_BUCKETS;
   // Injected once per data change so the memoised trend computations stay
   // stable across unrelated re-renders (and remain pure/testable).
   const nowIso = useMemo(() => new Date().toISOString(), [rows]);
@@ -188,9 +203,21 @@ export function DashboardStats() {
     () => computeRangeTrends(rows, gridNowIso, plan),
     [rows, gridNowIso, plan],
   );
-  const readTrend = useMemo(
-    () => computeCountTrend(readBuckets, gridNowIso, plan),
-    [readBuckets, gridNowIso, plan],
+  // Split retrieved (bulk: list/search/list_archived) from opened (targeted:
+  // memory.read) — migration 00080's read_kind. Both are computed from the
+  // SAME wide `readBuckets` fetch via simple client-side filters, so this adds
+  // no new request; `computeCountTrend` needs no change since a filtered
+  // `ReadActivityBucket[]` is still a valid `CountBucketRow[]` structurally.
+  // The two sums always reproduce the single number this card used to show.
+  const retrievedBuckets = useMemo(() => readBuckets.filter((b) => b.read_kind !== 'targeted'), [readBuckets]);
+  const openedBuckets = useMemo(() => readBuckets.filter((b) => b.read_kind === 'targeted'), [readBuckets]);
+  const retrievedTrend = useMemo(
+    () => computeCountTrend(retrievedBuckets, gridNowIso, plan),
+    [retrievedBuckets, gridNowIso, plan],
+  );
+  const openedTrend = useMemo(
+    () => computeCountTrend(openedBuckets, gridNowIso, plan),
+    [openedBuckets, gridNowIso, plan],
   );
 
   if (isLoading) return <DashboardStatsSkeleton />;
@@ -203,7 +230,7 @@ export function DashboardStats() {
     );
   }
 
-  const { scopes } = data;
+  const { scopes, usageByTool } = data;
   // One phrase for every card's caption, derived from the same range the grid
   // was, so a drilled-in window reads as its dates rather than as a preset it is
   // not. `rangeCaption` (not `rangeLabel().toLowerCase()`) because only a preset
@@ -243,15 +270,27 @@ export function DashboardStats() {
       unit: 'memories',
     },
     {
-      id: 'read',
-      icon: BookOpenCheck,
-      label: 'Memories read',
-      tag: 'Memory reads',
+      id: 'retrieved',
+      icon: Search,
+      label: 'Memories retrieved',
+      tag: 'Bulk reads',
       tooltip:
-        'Memory records read in the selected range by your agents and tools, across the MCP tools and the REST API — one list call returning 20 memories counts as 20 records, not one read. Browsing your lore in this dashboard does NOT count: reading it here is visualisation, not consumption, so those reads are excluded and reloading a page never moves this number. Unlike the two cards beside it, this counts only YOUR reads: usage is a per-user ledger, so reads by other members of your organization are never included. The bars sum to the number, and the trend chip compares this window against the preceding one.',
-      value: sumPoints(readTrend.points),
+        'Memory records returned by a memory.list / memory.search / memory.list_archived call in the selected range — bulk output, including a session-start hook injecting lessons. One list call returning 20 memories counts as 20 records here, not one call. Browsing your lore in this dashboard does NOT count: reading it here is visualisation, not consumption. Counts only YOUR reads (usage is a per-user ledger). See "Memories opened" beside it for DELIBERATE, single-lesson reads — the two are deliberately different numbers.',
+      value: sumPoints(retrievedTrend.points),
       description: `in ${rangeText}`,
-      trend: readTrend,
+      trend: retrievedTrend,
+      unit: 'memories',
+    },
+    {
+      id: 'opened',
+      icon: BookOpenCheck,
+      label: 'Memories opened',
+      tag: 'Targeted reads',
+      tooltip:
+        'Memory records read via a targeted memory.read call in the selected range — one exact scope+key, an agent (or you) deliberately opening a specific lesson rather than a bulk listing. This is the number that used to be hidden inside "Memories read": most read volume is bulk output ("Memories retrieved" beside it), so a lesson injected 400 times and never opened counted 400 reads until this split. Counts only YOUR reads.',
+      value: sumPoints(openedTrend.points),
+      description: `in ${rangeText}`,
+      trend: openedTrend,
       unit: 'memories',
     },
     {
@@ -282,7 +321,7 @@ export function DashboardStats() {
             nowIso={nowIso}
           />
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {cards.map(({ id, ...card }) => (
             <StatCard
               key={id}
@@ -300,6 +339,18 @@ export function DashboardStats() {
         </p>
         <ScopeHealthGrid scopes={scopes} />
       </div>
+
+      {/* Operational health — friction, latency, coverage gaps. Its own
+          section, deliberately outside the additive stat grid above: these
+          diagnostics are not bound by (and must not imply) the
+          bars-sum-to-headline invariant every stat card holds. Renders
+          nothing when the account has no usage rows at all. */}
+      <UsageHealth rows={usageByTool} />
+
+      {/* Who's reading + agent family — migration 00079's client/kind/host
+          group-by. Its own section for the same reason UsageHealth is:
+          diagnostics, not additive stat cards. */}
+      <AgentBreakdown rows={usageByTool} />
     </>
   );
 }

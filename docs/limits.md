@@ -193,6 +193,29 @@ narrowly-scoped exception to the app-layer capture rule — if an admin UI or
 server action for `user_limits` is ever built, instrument that call site
 directly rather than relying solely on the trigger.
 
+## Historical headroom: `usage_events.memory_count`
+
+`lorekit_memory_count()` above answers "how full is this account **right
+now**" — a live `count(*)`. A second, independent question — "how full **was**
+it over a window" — comes from a column that already existed for months
+without an endpoint: `usage_events.memory_count` (migration 00034) is stamped
+on every **write** event with the active memory count at that moment, so the
+table already carries a free historical trend.
+
+Migration 00081 (`lorekit_usage_memory_count_peak`) surfaces the highest
+snapshot in a window, returned as `GET /memories/usage`'s
+`summary.peak_memory_count` — `null` when the window has no write events, or
+for a service-role caller with no target user, **never** a fabricated `0`.
+It is a separate scalar RPC rather than a column on `lorekit_usage_stats`'s
+grouped rows: a per-event snapshot has no sensible sum or mean across a
+`(tool_name, outcome, scope_type, client, kind, host)` group.
+
+It carries **no limit of its own** — pair it with `lorekit_get_limit`/
+`lorekit_memory_count`'s existing reading client-side, per the "no numeric
+limit hardcoded in app code" rule two sections up. `/settings/plan` renders
+it as a small caption ("Peaked at N memories in the last 30 days") beside
+the existing live `PlanUsageBar`, not as a replacement for it.
+
 ## Where the code lives
 
 | Concern | Deno edge function (production) | Tested/shared logic |

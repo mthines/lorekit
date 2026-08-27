@@ -36,15 +36,19 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import { activityPostRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
-import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
-import type { ActivityBody } from '@lorekit/schemas/memory';
+import { trendRowsFromActivity, type TrendRow } from '@/lib/aggregations';
+import type { ActivityBody, ReadActivityBucket } from '@lorekit/schemas/memory';
 import { resolveRange, type BucketUnit, type TimeRange } from '@/lib/time-range';
 
 export interface ExplorerStatsData {
   /** One row per memory written in the window (scope-filtered when one is selected). */
   rows: TrendRow[];
-  /** Records read per bucket, already restricted to the selected scope server-side. */
-  readBuckets: CountBucketRow[];
+  /**
+   * Records read per bucket, already restricted to the selected scope
+   * server-side. Widened past `CountBucketRow` to carry `read_kind`
+   * (migration 00080) — see `lib/queries/dashboard.ts`'s identical field.
+   */
+  readBuckets: ReadActivityBucket[];
   /** Memory records archived in the window. Account-wide — see the module docblock. */
   archived: number;
   /** Memory records expired in the window. Account-wide — see the module docblock. */
