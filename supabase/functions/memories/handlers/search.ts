@@ -11,6 +11,7 @@ import type { Tables } from '../../_shared/db/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { applyFilter } from '../../_shared/api/filter.ts';
+import { safeValidateScope } from '../../_shared/scope/scope.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -72,5 +73,19 @@ export async function handleSearch(
   // Record count for the router's usage event — see RESULT_COUNT_HEADER.
   const res = ok({ ...page, entries: page.entries.map(shapeMemoryRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
+  // Scope attribution for the router's usage event — see SCOPE_COUNT_HEADER /
+  // RESOLVED_SCOPE_HEADER (migration 00078). The router cannot read `scopes`
+  // itself (it must not consume this POST body), so this handler — which just
+  // parsed it to run the search — surfaces it back the same way it already
+  // surfaces the result count. A search over exactly one scope is as
+  // attributable as a singular `?scope=` filter; over several, only the count
+  // is honest.
+  if (body.scopes?.length) {
+    res.headers.set('X-LoreKit-Scope-Count', String(body.scopes.length));
+    if (body.scopes.length === 1) {
+      const resolved = safeValidateScope(body.scopes[0]);
+      if (resolved) res.headers.set('X-LoreKit-Resolved-Scope', resolved);
+    }
+  }
   return res;
 }
