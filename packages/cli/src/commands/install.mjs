@@ -29,6 +29,7 @@ import {
 } from '../shared/config.mjs';
 import { buildRemoteUrl, splitEndpoint } from '../shared/mcp.mjs';
 import { deriveScope } from '../shared/scope.mjs';
+import { COMPLETION_SHELLS, detectShell, installCompletion } from '../shared/completions.mjs';
 import { log, heading, status, select, err, c } from '../shared/util.mjs';
 
 // The MCP server URL is fixed — there is only one hosted LoreKit endpoint.
@@ -179,6 +180,25 @@ function requestedHookMode(args) {
   return null;
 }
 
+// Shell-completion install modes for `--completions`. `auto` detects the shell
+// from $SHELL; a shell name installs that one; `none` skips. Kept a small closed
+// set so a typo fails loudly rather than silently doing nothing.
+export const COMPLETION_MODES = ['auto', 'none', ...COMPLETION_SHELLS];
+
+// Same sentinel discipline as INVALID_HOOK_MODE: a bare or empty `--completions`
+// is a usage error, not an absent flag, so it never silently falls through to
+// the interactive/skip default.
+export const INVALID_COMPLETION_MODE = '(missing value)';
+
+// Resolve the requested completion mode from the flag, or null when it was not
+// passed (the caller then prompts interactively / skips non-interactively).
+export function requestedCompletionMode(args) {
+  const raw = args.completions;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim().toLowerCase();
+  if (raw !== undefined && raw !== false) return INVALID_COMPLETION_MODE;
+  return null;
+}
+
 export async function install(args) {
   const root = resolveProjectRoot(args.dir);
   const nonInteractive = Boolean(args.yes) || !process.stdin.isTTY;
@@ -206,6 +226,21 @@ export async function install(args) {
   // write step even when the scope is already fully installed.
   const writeWebMcpJson = Boolean(args['mcp-json']);
 
+  // Validate `--completions` up front, same discipline as `--hooks`.
+  const requestedCompletion = requestedCompletionMode(args);
+  if (requestedCompletion === INVALID_COMPLETION_MODE) {
+    err(`\n  --completions needs a mode. Valid modes: ${COMPLETION_MODES.join(' | ')}.`);
+    return 1;
+  }
+  if (requestedCompletion !== null && !COMPLETION_MODES.includes(requestedCompletion)) {
+    err(`\n  Unknown --completions mode "${requestedCompletion}". Valid modes: ${COMPLETION_MODES.join(' | ')}.`);
+    return 1;
+  }
+  // An explicit request to install completion (auto / zsh / fish) must reach the
+  // completion step even on an otherwise complete install. `none` is skip-only,
+  // like `--no-hooks`, so it never justifies the bypass.
+  const completionsExplicit = requestedCompletion !== null && requestedCompletion !== 'none';
+
   heading('LoreKit install');
   log(`  project: ${c.dim(root)}`);
 
@@ -231,7 +266,7 @@ export async function install(args) {
 
   const wiredEvents = installedHookEvents(root, scope);
 
-  if (currentState.isFullyInstalled && !force && !hooksFlagExplicit && !writeWebMcpJson) {
+  if (currentState.isFullyInstalled && !force && !hooksFlagExplicit && !writeWebMcpJson && !completionsExplicit) {
     // Surface a clear, useful already-installed summary.
     log('');
     log(
@@ -474,6 +509,52 @@ export async function install(args) {
     hooks = upsertClaudeHooks(root, scope, resolveHookRunner(), hookEvents);
   }
 
+  // 5c. Shell completion — independent of the project/global scope above, since
+  //     completion lives in the user's shell config, not a repo. Resolve the
+  //     target shell, then write the script (fish auto-loads its dir; zsh gets a
+  //     guarded ~/.zshrc block). Opt-in by default: an interactive run prompts
+  //     for the detected shell, a non-interactive one skips unless
+  //     `--completions` was passed — writing to a shell rc unprompted would be
+  //     too invasive for a plain `install --yes`.
+  let completionResult = null;
+  let completionShell = null;
+  let completionSkipReason = null;
+  {
+    let mode = requestedCompletion; // 'auto' | 'zsh' | 'fish' | 'none' | null
+    if (mode === null) {
+      if (nonInteractive) {
+        mode = 'none';
+      } else {
+        const detected = detectShell(process.env);
+        if (!detected) {
+          completionSkipReason = 'shell not detected ($SHELL is not zsh or fish)';
+          mode = 'none';
+        } else {
+          log('');
+          const answer = await select(`Install ${detected} shell completion?`, [
+            { label: 'Yes', value: 'yes', hint: `write the ${detected} completion and wire it up` },
+            { label: 'No', value: 'no', hint: 'skip — add it later with `lorekit completion`' },
+          ]);
+          mode = answer === 'yes' ? detected : 'none';
+        }
+      }
+    }
+    if (mode === 'auto') {
+      const detected = detectShell(process.env);
+      if (detected) completionShell = detected;
+      else completionSkipReason = 'shell not detected ($SHELL is not zsh or fish)';
+    } else if (mode === 'zsh' || mode === 'fish') {
+      completionShell = mode;
+    }
+    if (completionShell) {
+      try {
+        completionResult = installCompletion(completionShell, { home: homeDir() });
+      } catch (e) {
+        completionSkipReason = e.message;
+      }
+    }
+  }
+
   // Show global paths relative to ~ (a repo-relative path would be a mess of
   // ../../); project paths stay repo-relative.
   const display = (p) =>
@@ -550,6 +631,21 @@ export async function install(args) {
     );
   }
 
+  // Shell completion always lives under ~, so show it relative to home
+  // regardless of the install scope.
+  const homeDisplay = (p) => p.replace(homeDir(), '~');
+  if (completionResult) {
+    const where = completionResult.autoloaded
+      ? `${homeDisplay(completionResult.file)} — auto-loaded by fish`
+      : `${homeDisplay(completionResult.file)}${completionResult.rcUpdated ? ' + ~/.zshrc block' : ''}`;
+    status('pass', `completion ${completionResult.shell}`, `${where}; open a new shell to use it`);
+  } else if (completionShell) {
+    // A shell was resolved but the write failed — surface why, don't stay silent.
+    status('warn', 'completion', completionSkipReason || 'not installed');
+  } else if (completionSkipReason) {
+    status('info', 'completion', `skipped — ${completionSkipReason}; add it with \`lorekit completion\``);
+  }
+
   const kind = tokenKind(token);
   if (scopeWriteOwnedByWeb) {
     // `--project --mcp-json`: the committable web .mcp.json is the ONLY config
@@ -615,5 +711,11 @@ export async function install(args) {
   // Bounded, non-PII: which of the three presets this run landed on. Counting
   // the `--no-hooks` FLAG (as telemetry already did) says nothing about what a
   // user picks when actually asked, which is the whole point of the prompt.
-  return { exitCode: 0, 'lorekit.cli.hooks_mode': hookMode };
+  // `completions` records the shell wired (or 'none') — a bounded enum, never a
+  // path.
+  return {
+    exitCode: 0,
+    'lorekit.cli.hooks_mode': hookMode,
+    'lorekit.cli.completions': completionResult ? completionResult.shell : 'none',
+  };
 }

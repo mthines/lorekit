@@ -54,6 +54,7 @@ import { migrate } from './commands/migrate.mjs';
 import { bootstrap } from './commands/bootstrap.mjs';
 import { mcpServer } from './commands/mcp-server.mjs';
 import { purge, purgeExpired } from './commands/purge.mjs';
+import { completion } from './commands/completion.mjs';
 
 /**
  * Every command, in the order the top-level help lists them.
@@ -90,6 +91,11 @@ export const COMMANDS = [
   { name: 'purge-expired', run: purgeExpired, traced: true, strictFlags: true, tool: 'memory.purge_expired' },
 
   // ── Machine-facing ──────────────────────────────────────────────────────────
+  // `completion` is machine-facing for the same reason hook/mcp are: its stdout
+  // is a contract a shell parses — a completion SCRIPT, or (on the `--complete`
+  // callback the scripts fire on every TAB) a newline-delimited candidate list.
+  // A span per keypress would be a firehose, so it is metered, never traced.
+  { name: 'completion', run: completion, traced: false, strictFlags: false, machine: true, native: 'prints shell completion scripts — stdout is a shell contract' },
   { name: 'hook', run: hook, traced: false, strictFlags: false, machine: true, native: 'host hook engine — stdout is the host\'s JSON contract' },
   { name: 'mcp', run: mcpServer, traced: false, strictFlags: false, machine: true, native: 'local stdio MCP server — stdout is JSON-RPC frames' },
 ];

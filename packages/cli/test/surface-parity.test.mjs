@@ -208,8 +208,10 @@ describe('telemetry is inherited, not per-command', () => {
   });
 
   test('the machine-facing commands stay untraced, but are metered', () => {
-    // The negative assertion is the half that discriminates: `hook` and `mcp`
-    // fire on every agent event and own their stdout, so a SPAN per event is a
+    // The negative assertion is the half that discriminates: `hook`, `mcp` and
+    // `completion` own their stdout (a host JSON contract, JSON-RPC frames, a
+    // shell script / candidate list) and fire on a hot path — the hooks on every
+    // agent event, `completion --complete` on every TAB — so a SPAN per call is a
     // cost their caller never asked for. If a table ever swept them into the
     // traced set, only this notices.
     //
@@ -219,7 +221,7 @@ describe('telemetry is inherited, not per-command', () => {
     // meter makes the CLI's highest-volume traffic invisible again, and reaching
     // for `traceCommand` here puts an awaited 1500 ms export on every agent turn.
     const machine = registry.filter((e) => e.machine);
-    assert.deepEqual(machine.map((e) => e.name).sort(), ['hook', 'mcp']);
+    assert.deepEqual(machine.map((e) => e.name).sort(), ['completion', 'hook', 'mcp']);
     for (const entry of machine) assert.equal(entry.traced, false, `${entry.name} must stay untraced`);
     assert.match(
       binSource,
