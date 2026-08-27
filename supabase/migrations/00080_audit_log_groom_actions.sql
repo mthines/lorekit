@@ -1,6 +1,6 @@
 -- Retention policies, part 2: the audit vocabulary.
 --
--- 00077 added policy.* (create/update/delete) and memory.protect as
+-- 00079 added policy.* (create/update/delete) and memory.protect as
 -- security/data-affecting mutations. Every such action needs a trail, and
 -- `recordAudit`/`recordAuditEvent` deliberately never throw on a rejected
 -- action — a call with an action the CHECK refuses is swallowed and logged to
@@ -8,7 +8,7 @@
 -- rationale). Widening the CHECK before the call sites ship is the whole fix.
 --
 -- `groom.run` reuses the EXISTING `memory.archive` action for its per-lesson
--- audit rows (see 00077's lorekit_groom_run) rather than minting a new
+-- audit rows (see 00079's lorekit_groom_run) rather than minting a new
 -- `memory.groom` — the archive path already has that action, and reusing it
 -- keeps grooming's trail in the existing vocabulary instead of growing a
 -- parallel one for what is, from audit_log's point of view, an archive.
