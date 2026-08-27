@@ -234,9 +234,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // from the SAME `scopes` value `scopeType` above just read, so the two can
     // never disagree about whether the call carried an array at all.
     const rawScopes = toolArgs['scopes'];
-    const scopeCount = Array.isArray(rawScopes)
-      ? rawScopes.filter((s): s is string => typeof s === 'string' && s.trim().length > 0).length
+    // Filter blanks ONCE and reuse for both the count and the single-scope
+    // resolution below, so the two can never name a different entry: a single
+    // real scope preceded by an empty-string entry must still be attributed,
+    // not lost to `rawScopes[0]` being that blank.
+    const cleanScopes = Array.isArray(rawScopes)
+      ? rawScopes.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
       : undefined;
+    const scopeCount = cleanScopes?.length;
     // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
     // "records read from repo::owner/name" answerable, which the deliberately
     // low-cardinality `scopeType` above cannot. Normalised through the canonical
@@ -253,8 +258,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // scope) is the honest answer for that case (see migration 00077).
     const usageScope = rawScope
       ? safeValidateScope(rawScope)
-      : scopeCount === 1 && Array.isArray(rawScopes)
-        ? safeValidateScope(rawScopes[0])
+      : cleanScopes?.length === 1
+        ? safeValidateScope(cleanScopes[0])
         : null;
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
