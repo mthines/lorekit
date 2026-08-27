@@ -108,3 +108,51 @@ export const UsageStatsResponseSchema = z.object({
   by_scope_type: z.array(UsageScopeTallySchema),
 });
 export type UsageStatsResponse = z.infer<typeof UsageStatsResponseSchema>;
+
+/**
+ * `GET /memories/usage/runs` — enumerates runs (distinct `correlation_id`
+ * values), each with what it read, wrote, and touched. The payoff view for
+ * `?correlation_id=`: that filters TO one run; this is how a caller
+ * discovers which ones exist. REST-only (`telemetry-vocabulary.ts`'s
+ * `NON_CATALOG_OPS`) — no MCP tool, no CLI command, by the same "dashboard
+ * analytics, not an agent primitive" decision as `/usage`/`/tags`/etc.
+ */
+export const UsageRunsQuerySchema = z.object({
+  since: z.string().datetime({ offset: true }).optional(),
+  until: z.string().datetime({ offset: true }).optional(),
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(100).optional().default(20),
+});
+export type UsageRunsQuery = z.infer<typeof UsageRunsQuerySchema>;
+
+/**
+ * One run: everything `usage_events` knows about one `correlation_id`.
+ * `read_events`/`records_read`/`write_events` use the SAME broader
+ * `READ_TOOL_NAMES`/`WRITE_TOOL_NAMES` vocabulary `summarizeUsageRows`
+ * (`usage-stats.ts`) does for `/usage`'s own summary — NOT
+ * `lorekit_read_activity`'s narrower 4-tool "read" definition. A run summary
+ * answers "what did this run do overall", not "how many memories did it
+ * read" — pick one per view and say which, per this repo's own rule.
+ */
+export const UsageRunSchema = z.object({
+  correlation_id: z.string(),
+  session_kind: z.string().nullable(),
+  first_seen: z.string().datetime(),
+  last_seen: z.string().datetime(),
+  read_events: z.number().int().nonnegative(),
+  records_read: z.number().int().nonnegative(),
+  write_events: z.number().int().nonnegative(),
+  distinct_scopes: z.number().int().nonnegative(),
+  total_duration_ms: z.number().int().nonnegative(),
+});
+export type UsageRun = z.infer<typeof UsageRunSchema>;
+
+export const UsageRunsResponseSchema = z.object({
+  range: z.object({
+    since: z.string(),
+    until: z.string(),
+  }),
+  runs: z.array(UsageRunSchema),
+  next_cursor: z.string().nullable(),
+});
+export type UsageRunsResponse = z.infer<typeof UsageRunsResponseSchema>;

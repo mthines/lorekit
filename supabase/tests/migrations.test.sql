@@ -7909,6 +7909,163 @@ begin
 end;
 $$;
 
+-- ── 93. usage_events.session_kind (00082) ────────────────────────────────────
+-- correlation_id was populated only when a human hand-exported
+-- LOREKIT_CORRELATION_ID, so "was this read in a local session, CI, or a PR
+-- automation" was unanswerable. session_kind is the bounded dimension every
+-- chart groups on; correlation_id stays the unbounded drill-down key.
+-- AC-1: the writer RPC persists the new trailing p_session_kind parameter.
+-- AC-2: session_kind is null by default (an older CLI, or no header sent).
+-- AC-3: the length CHECK is a real backstop, not decoration.
+do $$
+declare
+  v_id     uuid;
+  v_kind   text;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a CI run persists session_kind = 'ci'.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.list',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok',
+    p_session_kind => 'ci') into v_id;
+  assert v_id is not null, '93 AC-1: the writer must return the inserted id';
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind = 'ci', format('93 AC-1: p_session_kind must be persisted, got %s', v_kind);
+
+  -- AC-2: omitting p_session_kind leaves the column null.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind is null, format('93 AC-2: session_kind must default to null, got %s', v_kind);
+
+  -- AC-3: the length CHECK is a real backstop -- the app-side parseSessionKind
+  -- is the primary gate, but a direct insert must not be able to put an
+  -- unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, session_kind)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 17));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '93 AC-3: an over-long session_kind value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 94. lorekit_usage_runs — enumerate runs (00083) ──────────────────────────
+-- GET /memories/usage?correlation_id= filters TO one run; nothing enumerated
+-- which runs exist. This is the payoff view.
+-- AC-1: two distinct correlation_id values produce two separate run rows,
+--       each aggregating only its own events (read/write counts, distinct
+--       scopes, duration).
+-- AC-2: events with a NULL correlation_id are excluded entirely -- they are
+--       not "one more run", they belong to no run.
+-- AC-3: keyset pagination -- a cursor at the first run's (last_seen,
+--       correlation_id) returns only the OLDER run, never OFFSET-style
+--       skipping.
+-- AC-4: self-only -- a second user's runs are invisible.
+do $$
+declare
+  v_count_a integer;
+  v_count_b integer;
+  v_reads_a bigint;
+  v_writes_a bigint;
+  v_scopes_a bigint;
+  v_null_run_count integer;
+  v_run_a_last_seen timestamptz;
+  v_page1_count integer;
+  v_page2_ids text[];
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- Run A: two reads (one memory.list returning 20, one memory.read
+  -- returning 1) and one write, across two scopes, newer.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, scope, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',  'repo', 'jwt', 'ok', 100, 20, 'repo::acme/a', 'run-a', timestamptz '2026-08-15 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',  'repo', 'jwt', 'ok', 50,   1, 'repo::acme/b', 'run-a', timestamptz '2026-08-15 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 30, null, 'repo::acme/a', 'run-a', timestamptz '2026-08-15 01:10:00+00');
+  -- Run B: one read, older.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, scope, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search', 'global', 'jwt', 'ok', 200, 5, 'global', 'run-b', timestamptz '2026-08-14 01:00:00+00');
+  -- A NULL-correlation event in the same window -- must never surface as a
+  -- third run.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', null, timestamptz '2026-08-15 02:00:00+00');
+  -- A second user's run in the same window -- must never leak into user a1's list.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.list', 'repo', 'jwt', 'ok', 'run-other-user', timestamptz '2026-08-15 01:00:00+00');
+
+  -- AC-1: two runs, aggregated correctly.
+  select count(*) into v_count_a from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id = 'run-a';
+  assert v_count_a = 1, format('94 AC-1: run-a must appear exactly once, got %s rows', v_count_a);
+
+  select read_events, write_events, distinct_scopes, last_seen
+    into v_reads_a, v_writes_a, v_scopes_a, v_run_a_last_seen
+    from lorekit_usage_runs(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+    ) where correlation_id = 'run-a';
+  assert v_reads_a = 2, format('94 AC-1: run-a must have 2 read events, got %s', v_reads_a);
+  assert v_writes_a = 1, format('94 AC-1: run-a must have 1 write event, got %s', v_writes_a);
+  assert v_scopes_a = 2, format('94 AC-1: run-a must touch 2 distinct scopes, got %s', v_scopes_a);
+
+  select count(*) into v_count_b from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id = 'run-b';
+  assert v_count_b = 1, format('94 AC-1: run-b must appear exactly once, got %s rows', v_count_b);
+
+  -- AC-2: the null-correlation event never becomes its own run, and does not
+  -- pollute run-a's counts (run-a's read_events stays 2, not 3).
+  select count(*) into v_null_run_count from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id is null;
+  assert v_null_run_count = 0, format('94 AC-2: a NULL correlation_id must never surface as a run, got %s', v_null_run_count);
+
+  -- AC-3: a cursor positioned at run-a (the newest) returns only run-b.
+  select array_agg(correlation_id) into v_page2_ids from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00',
+    v_run_a_last_seen, 'run-a', 10
+  );
+  assert v_page2_ids = array['run-b'],
+    format('94 AC-3: paging past run-a must return only run-b, got %s', v_page2_ids);
+
+  -- Sanity: the unfiltered first page (no cursor) returns run-a before run-b
+  -- (newest first).
+  select count(*) into v_page1_count from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00',
+    null, null, 1
+  ) where correlation_id = 'run-a';
+  assert v_page1_count = 1, '89: the first unfiltered page (limit 1) must be run-a (newest first)';
+
+  -- AC-4: self-only -- the second user's run never appears for user a1.
+  assert not exists (
+    select 1 from lorekit_usage_runs(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+    ) where correlation_id = 'run-other-user'
+  ), '94 AC-4: a second user''s run must never appear in the first user''s list';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

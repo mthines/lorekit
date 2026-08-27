@@ -65,6 +65,14 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
       'Charts, not agent primitives. Rolls up by scope_type and emits no scope NAME, so it is '
       + 'the one analytics read with no scope-leak surface — and still nothing an agent loop reads.',
   },
+  'memory.usage-runs': {
+    reason: 'Enumerates runs (correlation_id values) for the dashboard\u2019s Runs view.',
+    restOnly:
+      'Charts, not agent primitives — the payoff view for ?correlation_id=, which itself has no '
+      + 'MCP tool either. A correlation_id MAY embed a repo/PR identifier '
+      + '(e.g. `pr:owner/repo#482`), so this is name-bearing the same way tags/facets/activity/'
+      + 'read-ranking are.',
+  },
   'memory.tags': {
     reason: 'Label facets for the Explorer filter bar.',
     restOnly:
