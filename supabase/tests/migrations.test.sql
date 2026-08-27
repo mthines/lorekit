@@ -7713,6 +7713,43 @@ begin
     ('00000000-0000-0000-0000-0000000000a2', 'memory.write', 'repo', 'jwt', 'ok', 9999, timestamptz '2026-08-10 01:30:00+00');
 
 
+  -- AC-1: the max of 40/55/47 is 55.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak;
+  assert v_peak = 55, format('90 AC-1: expected peak 55, got %s', v_peak);
+
+  -- AC-2: a window with no write events for this user returns null.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2020-01-01 00:00:00+00', timestamptz '2020-01-02 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-2: an empty window must return null, got %s', v_peak_none);
+
+  -- AC-3: a service-role caller with no target user (p_user_id null) has no
+  -- single account to report on.
+  select lorekit_usage_memory_count_peak(
+    null, timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-3: a NULL target user must return null, got %s', v_peak_none);
+
+  -- AC-4: self-only -- the second user's 9999 must never appear in the first
+  -- user's peak (already proven by AC-1 = 55, not 9999), and querying the
+  -- SECOND user directly must see their own peak, not the first's.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a2',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_other_scope;
+  assert v_peak_other_scope = 9999,
+    format('90 AC-4: the second user must see their own peak (9999), got %s', v_peak_other_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+
 -- ── 91. Per-memory read counters + daily rollup (00077) ─────────────────────
 -- usage_events records HOW MANY records a call touched, never WHICH -- there
 -- is no memory_id on the read ledger and none of the 17 tables is a
