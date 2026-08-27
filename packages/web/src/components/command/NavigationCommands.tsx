@@ -13,6 +13,7 @@
  * Top-level destinations with "g → X" chained shortcuts (Gmail / Linear style):
  *   g o → Dashboard (Home)
  *   g e → Lore Explorer
+ *   g i → Insights
  *   g s → Settings
  *   g g → Docs
  *
@@ -48,6 +49,7 @@ import {
   CreditCard,
   FileCode,
   Library,
+  Telescope,
 } from 'lucide-react';
 import { useCommand } from './useCommand';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
@@ -190,6 +192,15 @@ export function NavigationCommands() {
     group: 'Navigate',
     shortcut: { keys: ['g', 'e'] },
     onSelect: () => router.push('/lore'),
+  });
+
+  useCommand({
+    id: 'nav-insights',
+    label: 'Go to Insights',
+    icon: <Telescope className="size-4" />,
+    group: 'Navigate',
+    shortcut: { keys: ['g', 'i'] },
+    onSelect: () => router.push('/insights'),
   });
 
   useCommand({

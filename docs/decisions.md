@@ -363,3 +363,13 @@ tests for `response.error` now reads a cap rejection as a success — the status
 (`packages/cli/src/shared/mcp.mjs`) checks `result.isError` and reports a `tool_error`;
 `docs/mcp-tools.md` and `llms.txt` both say so explicitly for third parties. The
 former cap-specific code `-32040` no longer exists.
+
+## Dashboard analytics live on one dedicated Insights page
+
+**"How is my lore actually being used" gets ONE page, `/insights`, not four panels scattered across two others.** Operational health (friction/latency/coverage gaps) and "who's reading" (client/kind/host) used to sit at the bottom of the Overview; scope consumption and hot/cold lore used to sit at the bottom of the Lore Explorer. Each shipped as its own PR against whichever page happened to be open at the time, which is how a reader ended up needing to know to scroll past the Overview's stat cards AND past the Explorer's memory list to find the diagnostics that actually answer "is my lore earning its keep". `InsightsPage.tsx` (`packages/web/src/components/insights/`) now composes all five consumption/usage views — `UsageHealth`, `AgentBreakdown`, `ScopeConsumption`, `HotColdLore`, and `RunsList` (moved off `/settings/runs`, which is deleted) — as named sections on one page, reachable from the sidebar's fourth primary nav slot (`g i`) rather than by scrolling.
+
+**Overview and the Explorer keep their original job.** Overview stays the at-a-glance summary a returning user checks first; the Explorer stays focused on finding and editing lessons. Neither page lost anything a user relied on as a *primary* task — the moved panels were always secondary content below the fold, added incrementally as separate features rather than designed in from the start.
+
+**Not every section shares one range control, and that is deliberate.** `UsageHealth`/`AgentBreakdown` are fed by `useDashboardData()`'s existing 62-day `usageByTool` fetch, which has no range picker of its own; `ScopeConsumption` has a REAL per-scope window and gets its own LOCAL `RangePicker`, not a page-wide one — a single page-level control that only moved one of five sections would be the misleading-UI failure mode this codebase avoids elsewhere (see "The Explorer's Activity panel" decisions above). `HotColdLore` and `RunsList` are account-wide/self-paginated and take no window at all. Each section's caption states its own window outright rather than implying a shared one.
+
+**Settings → Runs is gone, not duplicated.** `RunsList` is a self-contained component with no props; moving its one call site to Insights was a straight relocation, not a fork — there is exactly one place a user finds it now.

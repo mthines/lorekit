@@ -4,8 +4,6 @@ import { useMemo } from 'react';
 import { BookOpen, BookOpenCheck, Search, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { StatCard } from '@/components/dashboard/StatCard';
-import { UsageHealth } from '@/components/dashboard/UsageHealth';
-import { AgentBreakdown } from '@/components/dashboard/AgentBreakdown';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
@@ -230,7 +228,7 @@ export function DashboardStats() {
     );
   }
 
-  const { scopes, usageByTool } = data;
+  const { scopes } = data;
   // One phrase for every card's caption, derived from the same range the grid
   // was, so a drilled-in window reads as its dates rather than as a preset it is
   // not. `rangeCaption` (not `rangeLabel().toLowerCase()`) because only a preset
@@ -340,17 +338,10 @@ export function DashboardStats() {
         <ScopeHealthGrid scopes={scopes} />
       </div>
 
-      {/* Operational health — friction, latency, coverage gaps. Its own
-          section, deliberately outside the additive stat grid above: these
-          diagnostics are not bound by (and must not imply) the
-          bars-sum-to-headline invariant every stat card holds. Renders
-          nothing when the account has no usage rows at all. */}
-      <UsageHealth rows={usageByTool} />
-
-      {/* Who's reading + agent family — migration 00079's client/kind/host
-          group-by. Its own section for the same reason UsageHealth is:
-          diagnostics, not additive stat cards. */}
-      <AgentBreakdown rows={usageByTool} />
+      {/* Operational health, "who's reading", scope consumption and hot/cold
+          lore all moved to the dedicated /insights page — see InsightsPage.tsx.
+          The Overview stays the at-a-glance summary; Insights is where a
+          reader digs deeper. */}
     </>
   );
 }

@@ -4,20 +4,25 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, GraduationCap, Telescope } from 'lucide-react';
 import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
-// Primary content nav — 3 destinations keeps the sidebar scannable and the
-// mobile tab bar comfortably within the 3–5 item guideline.
+// Primary content nav — 4 destinations, still within the mobile tab bar's
+// 3–5 item guideline. Insights joined Overview/Explorer/Getting-started as
+// the single place to dig into consumption and usage — it used to be four
+// panels scattered across Overview and the Explorer (scope leaderboard,
+// hot/cold lore, operational health, who's-reading), which made "how is my
+// lore actually being used" a scavenger hunt across two pages.
 // `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
-// copy the tab bar's column does not: the bar now carries FOUR tabs plus the
+// copy the tab bar's column does not: the bar carries FOUR tabs plus the
 // docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
 // phone) and "Getting started" would wrap or clip there.
 const NAV = [
   { href: '/overview', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
+  { href: '/insights', label: 'Insights', icon: Telescope },
   { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
 ] as const;
 
@@ -140,9 +145,9 @@ export function Sidebar({ user }: SidebarProps) {
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
       {/*
-        Five columns: two destinations, the docked command FAB, two more
+        Six columns: two destinations, the docked command FAB, three more
         destinations. The FAB gets a column of its own rather than floating over
-        the row so the four tabs keep even, predictable hit areas — nothing
+        the row so the five tabs keep even, predictable hit areas — nothing
         shifts under the disc, and there is no tab hiding behind it.
 
         `pb-[env(safe-area-inset-bottom)]` keeps the labels clear of the home
