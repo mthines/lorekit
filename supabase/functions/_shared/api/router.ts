@@ -35,7 +35,7 @@ export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
  * never populates), but the handler already parsed it to run the search. This
  * is the handler surfacing a value back through the one channel the router
  * already reads post-response, not the router reaching into the body itself.
- * Feeds `usage_events.scope_count` (migration 00077). Fail-safe: an
+ * Feeds `usage_events.scope_count` (migration 00078). Fail-safe: an
  * absent/garbage value records no count.
  */
 export const SCOPE_COUNT_HEADER = 'x-lorekit-scope-count';

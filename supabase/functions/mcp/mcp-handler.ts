@@ -229,7 +229,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // `_shared/scope/scope-type-attribute.ts`.
     const scopeType = scopeTypeAttribute(rawScope, toolArgs['scopes']);
     // How many scopes an ARRAY-bearing call (`memory.search`) touched —
-    // `usage_events.scope_count` (migration 00077). Undefined for a
+    // `usage_events.scope_count` (migration 00078). Undefined for a
     // singular-`scope` tool, matching the RPC's own `default null`. Counted
     // from the SAME `scopes` value `scopeType` above just read, so the two can
     // never disagree about whether the call carried an array at all.
@@ -255,7 +255,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // than `memory.list` on the same repo — so that one entry is validated the
     // same way. TWO OR MORE scopes stay null: which of several scopes a read
     // "belongs to" is genuinely ambiguous, and `scope_count` (not a guessed
-    // scope) is the honest answer for that case (see migration 00077).
+    // scope) is the honest answer for that case (see migration 00078).
     const usageScope = rawScope
       ? safeValidateScope(rawScope)
       : cleanScopes?.length === 1

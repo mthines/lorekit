@@ -7437,7 +7437,7 @@ begin
 end;
 $$;
 
--- ── 87. usage_events.scope_count — how many scopes a search named (00077) ───
+-- ── 87. usage_events.scope_count — how many scopes a search named (00078) ───
 -- `memory.search` takes a `scopes` ARRAY; `usage_events.scope` is one text
 -- column and stays null the moment a search names more than one, which is why
 -- the unattributed bucket in the per-scope read series was ~40% of all records
