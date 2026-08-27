@@ -15,7 +15,7 @@ import type { DbClient } from '../../_shared/api/auth.ts';
  * requires a resolved user (a service-role caller is a 403, matching the
  * purge endpoints' `requireUserId` rationale — the request is well-formed,
  * the CREDENTIAL cannot name an owner). CRUD is routed through the
- * `lorekit_policy_*` SECURITY DEFINER RPCs (00077) rather than a raw
+ * `lorekit_policy_*` SECURITY DEFINER RPCs (00079) rather than a raw
  * `.from('retention_policies')` call — see `mcp/tools.ts`'s policy handlers
  * for the full rationale (shared by both surfaces).
  */

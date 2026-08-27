@@ -1093,13 +1093,13 @@ export async function toolScopes(
 // `user_id` predicate — the same rule every other api_key-reachable handler
 // in this file follows, because that path runs on a service-role client that
 // bypasses RLS. `retention_policies` itself DOES carry an owner-only RLS
-// policy (00077), which is what protects the JWT/dashboard path; the
+// policy (00079), which is what protects the JWT/dashboard path; the
 // explicit filter here is what protects the api_key path.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
- * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00077) rather than a raw
+ * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00079) rather than a raw
  * `.from('retention_policies')` call: the table is new enough that the
  * generated `database.types.ts` mirror does not know it (so a typed `.from()`
  * call cannot name it), and every other mutable resource in this schema —
