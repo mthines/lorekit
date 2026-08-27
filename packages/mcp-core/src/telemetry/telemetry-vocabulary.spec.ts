@@ -99,19 +99,26 @@ describe('telemetry vocabulary closure', () => {
 });
 
 describe('the analytics reads stay REST-only (D17)', () => {
-  const FIVE = [
+  // Six as of migration 00077/00078's read-ranking endpoint — the decision's
+  // ORIGINAL five plus one, not a re-litigation of it: `memory.read-ranking`
+  // is the same "name-bearing scope-leak surface nothing agent-side asked
+  // for" shape as `tags`/`facets`/`activity`, so it is added to the SAME
+  // guarded set rather than exempted from it. See docs/decisions.md →
+  // "Dashboard analytics reads stay REST-only".
+  const RESTONLY_NAMES = [
     'memory.activity',
     'memory.facets',
     'memory.read-activity',
+    'memory.read-ranking',
     'memory.tags',
     'memory.usage',
   ];
 
-  it('records exactly these five as a decision, by name', () => {
-    expect([...REST_ONLY_OP_NAMES].sort()).toEqual(FIVE);
+  it('records exactly these six as a decision, by name', () => {
+    expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
-  it('keeps memory.relevant OUT of the five — it is already covered agent-side', () => {
+  it('keeps memory.relevant OUT of the six — it is already covered agent-side', () => {
     // The near-miss, and the reason `restOnly` is a separate field rather than
     // "has no MCP tool". `GET /memories/relevant` has no tool of its own, but
     // the CAPABILITY is on the agent surface twice over (`memory.list

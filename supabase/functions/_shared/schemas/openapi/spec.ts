@@ -39,6 +39,8 @@ import {
   ActivityBodySchema,
   ReadActivityQuerySchema,
   ReadActivityResponseSchema,
+  ReadRankingQuerySchema,
+  ReadRankingResponseSchema,
 } from '../memory.ts';
 import {
   OrgResponseSchema,
@@ -339,6 +341,29 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/read-ranking',
+    summary: 'Memories ranked by how often they have actually been read (hot or cold lore)',
+    tags: ['Memories'],
+    description:
+      'Ranks memories by `read_count` (migration 00077) — how many times a `memory.read` / ' +
+      '`memory.list` / `memory.search` / `memory.list_archived` call actually returned this ' +
+      'exact row, not just how often the account read *something*. `direction=hot` (default) ' +
+      'surfaces the most-consumed lore first; `direction=cold` surfaces the least, oldest-created ' +
+      'first among ties — the prune-list input the `lorekit-groom` skill consumes.\n\n' +
+      '`counting_since` is the date this counter started: a `cold` row with `read_count: 0` means ' +
+      '"not read since that date", never "never read" — a memory written earlier may have been ' +
+      'read plenty under the old, uncounted regime. Render the qualifier; never the bare word ' +
+      '"never". `seen_count` (how many times the memory has been WRITTEN) rides along so a reader ' +
+      'can compare consumption against recurrence in one response. Active memories only ' +
+      '(archived/expired rows are excluded — they are already pruned). An invalid `scope` is a ' +
+      '`400`, not a silently ignored filter.',
+    security, request: { query: ReadRankingQuerySchema },
+    responses: {
+      200: { description: 'Ranked memories', content: { 'application/json': { schema: ReadRankingResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });

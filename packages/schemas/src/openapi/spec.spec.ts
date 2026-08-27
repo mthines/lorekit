@@ -29,6 +29,7 @@ describe('generateSpec', () => {
       '/memories/purge',
       '/memories/purge-expired',
       '/memories/read-activity',
+      '/memories/read-ranking',
       '/memories/relevant',
       '/memories/restore',
       '/memories/scopes',

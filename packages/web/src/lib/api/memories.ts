@@ -24,6 +24,8 @@ import type {
   PurgeResponse,
   ReadActivityQuery,
   ReadActivityResponse,
+  ReadRankingQuery,
+  ReadRankingResponse,
   ScopesResponse,
   UpdateMemoryBody,
 } from '@lorekit/schemas/memory';
@@ -200,6 +202,25 @@ export function readActivityRequest(
   signal?: AbortSignal,
 ): Promise<ReadActivityResponse> {
   return restFetch<ReadActivityResponse>('/memories/read-activity', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/read-ranking` — memories ranked by how often they have
+ * actually been read (`read_count`, migration 00077). `direction: 'hot'`
+ * (default) surfaces the most-consumed lore; `'cold'` the least — the
+ * prune-list input the hot/cold lore panel and `lorekit-groom` skill consume.
+ * REST-only: no MCP tool, no CLI command (`telemetry-vocabulary.ts`).
+ */
+export function readRankingRequest(
+  accessToken: string,
+  params: Partial<ReadRankingQuery>,
+  signal?: AbortSignal,
+): Promise<ReadRankingResponse> {
+  return restFetch<ReadRankingResponse>('/memories/read-ranking', {
     accessToken,
     query: { ...params },
     ...(signal ? { signal } : {}),

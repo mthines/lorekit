@@ -59,6 +59,7 @@ import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
 import { ScopeConsumption } from './ScopeConsumption';
+import { HotColdLore } from './HotColdLore';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -768,6 +769,19 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           selected scope read". */}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
         <ScopeConsumption since={scopeConsumptionWindow.since} until={scopeConsumptionWindow.until} />
+      </div>
+
+      {/* ── Hot / cold lore ─────────────────────────────────────────────────
+          Memories ranked by how often they have actually been READ
+          (read_count, migration 00077) — the prune-list input the
+          lorekit-groom skill consumes. Account-wide, independent of the
+          page's scope selection and range, since "what's gone stale" is a
+          library-wide question. */}
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+          Hot &amp; cold lore
+        </h2>
+        <HotColdLore />
       </div>
 
       {/* ── Results ─────────────────────────────────────────────────────────

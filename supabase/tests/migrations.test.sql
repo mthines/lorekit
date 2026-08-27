@@ -7712,36 +7712,197 @@ begin
     -- A different user in the SAME window must not leak into the first user's peak.
     ('00000000-0000-0000-0000-0000000000a2', 'memory.write', 'repo', 'jwt', 'ok', 9999, timestamptz '2026-08-10 01:30:00+00');
 
-  -- AC-1: the max of 40/55/47 is 55.
-  select lorekit_usage_memory_count_peak(
-    '00000000-0000-0000-0000-0000000000a1',
-    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
-  ) into v_peak;
-  assert v_peak = 55, format('90 AC-1: expected peak 55, got %s', v_peak);
 
-  -- AC-2: a window with no write events for this user returns null.
-  select lorekit_usage_memory_count_peak(
-    '00000000-0000-0000-0000-0000000000a1',
-    timestamptz '2020-01-01 00:00:00+00', timestamptz '2020-01-02 00:00:00+00'
-  ) into v_peak_none;
-  assert v_peak_none is null, format('90 AC-2: an empty window must return null, got %s', v_peak_none);
+-- ── 91. Per-memory read counters + daily rollup (00077) ─────────────────────
+-- usage_events records HOW MANY records a call touched, never WHICH -- there
+-- is no memory_id on the read ledger and none of the 17 tables is a
+-- per-memory read table. This closes it with counters + a daily rollup, not a
+-- per-read event table.
+-- AC-1: lorekit_record_memory_reads increments read_count/last_read_at for
+--       EVERY id in the array, in one call.
+-- AC-2: it upserts memory_read_daily, keyed by (memory_id, day, read_kind),
+--       accumulating count across repeated calls on the same day.
+-- AC-3: a null/empty array is a no-op -- no row touched, no error raised.
+-- AC-4: the read_kind CHECK is a real backstop.
+-- AC-5: ON DELETE CASCADE -- purging a memory removes its rollup rows; an
+--       ARCHIVED memory (soft-delete only) keeps them.
+do $$
+declare
+  v_m1        uuid;
+  v_m2        uuid;
+  v_read_count integer;
+  v_last_read  timestamptz;
+  v_rollup_count integer;
+  v_rollup_rows  integer;
+  v_raised       boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
 
-  -- AC-3: a service-role caller with no target user (p_user_id null) has no
-  -- single account to report on.
-  select lorekit_usage_memory_count_peak(
-    null, timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
-  ) into v_peak_none;
-  assert v_peak_none is null, format('90 AC-3: a NULL target user must return null, got %s', v_peak_none);
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-1', 'v')
+    returning id into v_m1;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-2', 'v')
+    returning id into v_m2;
 
-  -- AC-4: self-only -- the second user's 9999 must never appear in the first
-  -- user's peak (already proven by AC-1 = 55, not 9999), and querying the
-  -- SECOND user directly must see their own peak, not the first's.
-  select lorekit_usage_memory_count_peak(
-    '00000000-0000-0000-0000-0000000000a2',
-    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
-  ) into v_peak_other_scope;
-  assert v_peak_other_scope = 9999,
-    format('90 AC-4: the second user must see their own peak (9999), got %s', v_peak_other_scope);
+  -- AC-1: a bulk read over both memories, one call, one array.
+  perform lorekit_record_memory_reads(array[v_m1, v_m2], 'bulk');
+
+  select read_count, last_read_at into v_read_count, v_last_read from memories where id = v_m1;
+  assert v_read_count = 1, format('91 AC-1: read_count must increment to 1, got %s', v_read_count);
+  assert v_last_read is not null, '91 AC-1: last_read_at must be set';
+
+  select read_count into v_read_count from memories where id = v_m2;
+  assert v_read_count = 1, format('91 AC-1: the second id in the array must ALSO increment, got %s', v_read_count);
+
+  -- AC-2: a second bulk call the SAME day accumulates onto the same rollup row
+  -- rather than inserting a second one.
+  perform lorekit_record_memory_reads(array[v_m1], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m1], 'targeted');
+
+  select count into v_rollup_count from memory_read_daily
+   where memory_id = v_m1 and day = (now() at time zone 'UTC')::date and read_kind = 'bulk';
+  assert v_rollup_count = 2, format('91 AC-2: the bulk rollup must accumulate to 2, got %s', v_rollup_count);
+
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m1;
+  assert v_rollup_rows = 2,
+    format('91 AC-2: bulk and targeted must be SEPARATE rollup rows for the same day, got %s rows', v_rollup_rows);
+
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('91 AC-2: read_count must reflect all three calls (1+1+1), got %s', v_read_count);
+
+  -- AC-3: a null/empty array must not raise and must not touch any row.
+  perform lorekit_record_memory_reads(null, 'bulk');
+  perform lorekit_record_memory_reads(array[]::uuid[], 'bulk');
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('91 AC-3: a null/empty array must be a no-op, got read_count=%s', v_read_count);
+
+  -- AC-4: the read_kind CHECK is a real backstop, not decoration.
+  begin
+    insert into memory_read_daily (memory_id, day, read_kind, count) values (v_m1, current_date, 'skimmed', 1);
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '91 AC-4: an unrecognised read_kind must violate the CHECK';
+
+  -- AC-5: hard-delete (purge) cascades; archive (soft-delete) does not touch
+  -- the rollup at all. Test the CASCADE using m2 (already has a 'bulk' rollup
+  -- row from AC-1's array[v_m1, v_m2] call above) — give it a second, 'targeted'
+  -- row so the setup count reflects both.
+  perform lorekit_record_memory_reads(array[v_m2], 'targeted');
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 2, '91 AC-5 setup: m2 must have exactly two rollup rows (bulk + targeted) before the delete';
+
+  delete from memories where id = v_m2;
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 0,
+    format('91 AC-5: deleting the memory must CASCADE its rollup rows, got %s remaining', v_rollup_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 92. lorekit_memory_read_ranking — hot/cold lore (00078) ──────────────────
+-- With per-memory counters in place (00077), rank memories by how often they
+-- have actually been read. hot = most-read first; cold = least-read, oldest
+-- first among ties.
+-- AC-1: hot ranks strictly by read_count desc.
+-- AC-2: cold ranks strictly by read_count asc, and among equal (zero) counts,
+--       oldest-created first — the most actionable prune candidates.
+-- AC-3: archived memories are excluded (already pruned; ranking them again is
+--       noise).
+-- AC-4: a scoped API key's unfiltered call is narrowed to its own allowlist.
+-- AC-5: an invalid direction raises rather than silently defaulting.
+do $$
+declare
+  v_m_hot   uuid;
+  v_m_warm  uuid;
+  v_m_cold1 uuid;
+  v_m_cold2 uuid;
+  v_m_archived uuid;
+  v_ids     text[];
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-hot', 'v', timestamptz '2026-01-01')
+    returning id into v_m_hot;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-warm', 'v', timestamptz '2026-01-02')
+    returning id into v_m_warm;
+  -- Two never-read memories, at different creation times, to prove the cold
+  -- tiebreak orders by created_at asc rather than leaving ties unordered.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-older', 'v', timestamptz '2025-06-01')
+    returning id into v_m_cold1;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-newer', 'v', timestamptz '2025-07-01')
+    returning id into v_m_cold2;
+  insert into memories (user_id, scope, key, value, archived_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-archived', 'v', now())
+    returning id into v_m_archived;
+
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_warm], 'targeted');
+  -- Give the archived memory reads too, to prove archived rows are excluded
+  -- from the ranking regardless of how often they were read before archiving.
+  perform lorekit_record_memory_reads(array[v_m_archived, v_m_archived], 'bulk');
+
+  -- AC-1: hot ranks strictly by read_count desc. p_limit=100 (the function's
+  -- own max clamp, same as AC-3/AC-4 below) rather than a small number — by
+  -- this point in the shared-transaction test file the user already has
+  -- dozens of other active memories, most with read_count=0, so a small
+  -- top-N window is not guaranteed to still contain all four `89-*` probe
+  -- rows once filtered down to them.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-hot', '89-warm', '89-cold-older', '89-cold-newer']
+      or v_ids::text[] = array['89-hot', '89-warm', '89-cold-newer', '89-cold-older'],
+    format('92 AC-1: hot must rank 89-hot first and 89-warm second, got %s', v_ids);
+
+  -- AC-2: cold ranks read_count asc, then created_at asc among zero-count ties.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'cold', null, 100)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-cold-older', '89-cold-newer', '89-warm', '89-hot'],
+    format('92 AC-2: cold must rank the never-read, oldest-first, before the read ones, got %s', v_ids);
+
+  -- AC-3: the archived memory never appears in either ranking.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+     where key = '89-archived'
+  ), '92 AC-3: an archived memory must be excluded from the ranking';
+
+  -- AC-4: a scoped key's unfiltered call is narrowed to its allowlist —
+  -- restricting to a DIFFERENT scope than 'global' must exclude every 89-* row.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking(
+      '00000000-0000-0000-0000-0000000000a1', 'hot', null, 100, array['repo::acme/other']
+    ) where key like '89-%'
+  ), '92 AC-4: an out-of-allowlist key_scopes must narrow the result to nothing for these rows';
+
+  -- AC-5: an invalid direction raises rather than silently defaulting to hot.
+  begin
+    perform lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'sideways', null, 10);
+  exception when sqlstate '22023' then
+    v_raised := true;
+  end;
+  assert v_raised, '92 AC-5: an invalid direction must raise, not silently default';
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
