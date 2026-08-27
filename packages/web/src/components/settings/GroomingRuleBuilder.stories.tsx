@@ -1,20 +1,28 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import type { ReactNode } from 'react';
+import { userEvent, waitFor, within } from 'storybook/test';
 
 import { GroomingRuleBuilder } from './GroomingRuleBuilder';
-import { groomHandlers, DEFAULT_GROOM_POLICIES } from '@/mocks/memories';
+import { groomHandlers, memoryHandlers, DEFAULT_GROOM_POLICIES } from '@/mocks/memories';
 import { withQueryClient } from '@/mocks/decorators';
 import { ToastProvider } from '@/components/providers/ToastProvider';
+import type { MockRetentionPolicy } from '@/mocks/memories';
 
 /**
  * Visual-regression + Playground stories for {@link GroomingRuleBuilder} —
- * Settings → Grooming's rule builder (live match count, review/auto toggle,
- * Run-now, and the saved-policies list). MSW-mocked per `docs/storybook.md`;
- * `groomHandlers()` mints a fresh in-memory policy list per story mount, so
- * a create/delete round trip in one story never bleeds into another.
+ * Settings → Grooming, now LIST-FIRST: the saved policies and an **Add policy**
+ * button up front, the rule form in a dialog. MSW-mocked per `docs/storybook.md`;
+ * `groomHandlers()` mints a fresh in-memory policy list per story mount and
+ * `memoryHandlers()` supplies the scope catalog the dialog's scope picker reads,
+ * so a create/delete round trip in one story never bleeds into another.
  */
 function WithToast({ children }: { children: ReactNode }) {
   return <ToastProvider>{children}</ToastProvider>;
+}
+
+/** Groom endpoints + the scope catalog the dialog's scope picker reads. */
+function handlers(policies?: MockRetentionPolicy[]) {
+  return [...groomHandlers(policies), ...memoryHandlers()];
 }
 
 const meta: Meta<typeof GroomingRuleBuilder> = {
@@ -22,7 +30,7 @@ const meta: Meta<typeof GroomingRuleBuilder> = {
   component: GroomingRuleBuilder,
   parameters: {
     layout: 'padded',
-    msw: { handlers: groomHandlers() },
+    msw: { handlers: handlers() },
   },
   decorators: [(Story) => <WithToast><Story /></WithToast>, withQueryClient],
 };
@@ -30,19 +38,16 @@ const meta: Meta<typeof GroomingRuleBuilder> = {
 export default meta;
 type Story = StoryObj<typeof GroomingRuleBuilder>;
 
-/** One saved policy, the default fixture set. */
-export const Default: Story = {};
-
-/** No saved policies yet — the empty state. */
-export const NoPolicies: Story = {
-  parameters: { msw: { handlers: groomHandlers([]) } },
+/** No saved policies yet — the teaching empty state + the Add CTA. */
+export const ListEmpty: Story = {
+  parameters: { msw: { handlers: handlers([]) } },
 };
 
 /** Several saved policies, mixing review and auto+enabled modes. */
-export const Playground: Story = {
+export const ListPopulated: Story = {
   parameters: {
     msw: {
-      handlers: groomHandlers([
+      handlers: handlers([
         ...DEFAULT_GROOM_POLICIES,
         {
           id: 'policy-2',
@@ -70,5 +75,16 @@ export const Playground: Story = {
         },
       ]),
     },
+  },
+};
+
+/** The create form open in its dialog — the state Add drops you into. */
+export const DialogOpen: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole('button', { name: /add policy/i }));
+    await waitFor(async () => {
+      await within(document.body).findByText(/new grooming policy/i);
+    });
   },
 };
