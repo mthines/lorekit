@@ -350,16 +350,23 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
       // UserInputError (bad scope, missing required arg), OrgPermissionError
       // (insufficient role), UnknownOrgError (org slug does not resolve),
-      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), and CreatedAtError
-      // (invalid/future created_at override) are all client-caused — the
-      // server handled them correctly. Use clientError() so spans are NOT
+      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), CreatedAtError
+      // (invalid/future created_at override), and LimitError (the account is at
+      // its memory cap — returned in-band as an isError result, see below) are
+      // all client-caused — the server handled them correctly. Use clientError()
+      // so spans are NOT
       // marked ERROR (OTel: server spans are ERROR only for 5xx / server-side
-      // faults, not 4xx client errors).
+      // faults, not 4xx client errors). A cap hit is expected and recorded
+      // separately as usage outcome `cap_exceeded`; flagging the span ERROR too
+      // would inflate the `lorekit.mcp` error rate an operator alerts on.
+      // Rate-limit LimitErrors never reach here — they are handled before the
+      // tool runs (see `index.ts`).
       const isClientError = err instanceof UserInputError
         || err instanceof OrgPermissionError
         || err instanceof UnknownOrgError
         || err instanceof TtlError
-        || err instanceof CreatedAtError;
+        || err instanceof CreatedAtError
+        || err instanceof LimitError;
       if (isClientError) {
         toolSpan.clientError(msg).end();
         span.clientError(msg);
