@@ -25,10 +25,18 @@ const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
 // Run doctor offline (`--mode off` skips connectivity) with an isolated HOME so
 // the global skill dir resolves into our temp home, never the real ~/.claude.
+//
+// `LOREKIT_TELEMETRY: '0'` is load-bearing, not incidental: this helper spreads
+// the real `process.env`, so on a machine that has ever run a real `lorekit`
+// install (or otherwise has an OTLP credential in its shell env) every call
+// phones home to production Dash0 — including the intentional "skill not
+// found" cases this file exists to cover, which then show up as genuine CLI
+// failures in real usage telemetry. `runRemoteDoctor` below already opts out
+// for the same reason; this was the one helper in the file that didn't.
 function runDoctor(dir, home) {
   return spawnSync(process.execPath, [BIN, 'doctor', '--mode', 'off', '--dir', dir], {
     encoding: 'utf8',
-    env: { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home },
+    env: { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home, LOREKIT_TELEMETRY: '0' },
   });
 }
 
