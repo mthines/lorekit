@@ -13,6 +13,7 @@ import {
   removeClaudeHooks,
   homeDir,
 } from '../shared/config.mjs';
+import { COMPLETION_SHELLS, removeCompletion } from '../shared/completions.mjs';
 import { log, heading, status, c } from '../shared/util.mjs';
 
 function ask(question) {
@@ -67,10 +68,20 @@ export async function uninstall(args) {
   // "nothing to remove", other servers in the file are preserved.
   const webMcp = scope === 'global' ? attempt(() => removeWebMcpServer(root)) : null;
   const hooks = attempt(() => removeClaudeHooks(root, scope));
+  // Shell completion is a single user-level artefact (not project/global
+  // scoped), so tear it down for every supported shell regardless of the chosen
+  // scope. Each `removeCompletion` touches only lorekit's own script file and
+  // guarded ~/.zshrc block, so it never disturbs a hand-written completion.
+  const completions = COMPLETION_SHELLS.map((shell) => ({
+    shell,
+    step: attempt(() => removeCompletion(shell, { home: homeDir() })),
+  }));
 
   // Global paths shown relative to ~; project paths repo-relative.
   const display = (p) =>
     scope === 'global' ? p.replace(homeDir(), '~') : path.relative(root, p) || p;
+  // Completion artefacts always live under ~, whatever the uninstall scope.
+  const homeDisplay = (p) => p.replace(homeDir(), '~');
   const mcpLabel = scope === 'global' ? '~/.claude.json' : '.mcp.json';
 
   heading('Done');
@@ -95,15 +106,23 @@ export async function uninstall(args) {
     done: (r) => `${r.removed} removed → ${display(r.file)}`,
     noop: 'no lorekit hooks — nothing to remove',
   });
+  for (const { shell, step } of completions) {
+    report(step, `completion ${shell}`, {
+      done: (r) => `removed → ${homeDisplay(r.file)}${r.rcUpdated ? ' + ~/.zshrc block' : ''}`,
+      noop: 'not installed — nothing to remove',
+    });
+  }
 
   const skillStepList = skillSteps.map((s) => s.step);
   const webSteps = webMcp ? [webMcp] : [];
-  const failed = [...skillStepList, mcp, ...webSteps, hooks].some((s) => !s.ok);
+  const completionSteps = completions.map((s) => s.step);
+  const failed = [...skillStepList, mcp, ...webSteps, hooks, ...completionSteps].some((s) => !s.ok);
   const any =
     (skillStepList.some((s) => s.result?.removed) ||
       mcp.result?.removed ||
       webMcp?.result?.removed ||
-      hooks.result?.removed) && true;
+      hooks.result?.removed ||
+      completionSteps.some((s) => s.result?.removed)) && true;
 
   if (failed) {
     log(`\n  ${c.dim('Some items could not be removed and were left untouched — see above.')}`);

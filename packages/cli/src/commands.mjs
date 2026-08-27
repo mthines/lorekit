@@ -47,12 +47,14 @@ import { diff } from './commands/diff.mjs';
 import { tree } from './commands/tree.mjs';
 import { lint } from './commands/lint.mjs';
 import { dedupe } from './commands/dedupe.mjs';
+import { obligations } from './commands/obligations.mjs';
 import { link } from './commands/link.mjs';
 import { hook } from './commands/hook.mjs';
 import { migrate } from './commands/migrate.mjs';
 import { bootstrap } from './commands/bootstrap.mjs';
 import { mcpServer } from './commands/mcp-server.mjs';
 import { purge, purgeExpired } from './commands/purge.mjs';
+import { completion } from './commands/completion.mjs';
 
 /**
  * Every command, in the order the top-level help lists them.
@@ -77,6 +79,7 @@ export const COMMANDS = [
   { name: 'tree', run: tree, traced: true, strictFlags: true, native: 'resolves the scope hierarchy for a directory', aliases: ['resolve'] },
   { name: 'lint', run: lint, traced: true, strictFlags: true, native: 'quality pass over stored lessons' },
   { name: 'dedupe', run: dedupe, traced: true, strictFlags: true, native: 'near-duplicate detection across a scope' },
+  { name: 'obligations', run: obligations, traced: true, strictFlags: true, native: 'checks changed files against the surface-partner map' },
   { name: 'link', run: link, traced: true, strictFlags: true, native: 'builds a dashboard deep link', aliases: ['url'] },
   { name: 'migrate', run: migrate, traced: true, strictFlags: true, native: 'moves lore between local and remote stores' },
   { name: 'bootstrap', run: bootstrap, traced: true, strictFlags: true, native: 'seeds a fresh store from a template' },
@@ -88,6 +91,11 @@ export const COMMANDS = [
   { name: 'purge-expired', run: purgeExpired, traced: true, strictFlags: true, tool: 'memory.purge_expired' },
 
   // ── Machine-facing ──────────────────────────────────────────────────────────
+  // `completion` is machine-facing for the same reason hook/mcp are: its stdout
+  // is a contract a shell parses — a completion SCRIPT, or (on the `--complete`
+  // callback the scripts fire on every TAB) a newline-delimited candidate list.
+  // A span per keypress would be a firehose, so it is metered, never traced.
+  { name: 'completion', run: completion, traced: false, strictFlags: false, machine: true, native: 'prints shell completion scripts — stdout is a shell contract' },
   { name: 'hook', run: hook, traced: false, strictFlags: false, machine: true, native: 'host hook engine — stdout is the host\'s JSON contract' },
   { name: 'mcp', run: mcpServer, traced: false, strictFlags: false, machine: true, native: 'local stdio MCP server — stdout is JSON-RPC frames' },
 ];
