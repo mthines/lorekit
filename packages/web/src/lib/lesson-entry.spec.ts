@@ -102,7 +102,7 @@ describe('lessonFromMemoryEntry', () => {
     expect(lesson.last_read_at).toBe('2026-08-01T00:00:00.000Z');
   });
 
-  it('leaves read_count undefined and last_read_at null for a pre-00077 response', () => {
+  it('leaves read_count undefined and last_read_at null for a pre-00079 response', () => {
     const lesson = lessonFromMemoryEntry(base);
     expect(lesson.read_count).toBeUndefined();
     expect(lesson.last_read_at).toBeNull();

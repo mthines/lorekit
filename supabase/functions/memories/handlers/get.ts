@@ -43,7 +43,7 @@ export async function handleGet(
   const res = ok(shapeMemoryRow(data as Record<string, unknown>), cors);
   res.headers.set('X-LoreKit-Result-Count', '1');
   // GET /:id is the REST equivalent of memory.read — one exact scope+key —
-  // so it is a TARGETED read for the per-memory counter (migration 00077).
+  // so it is a TARGETED read for the per-memory counter (migration 00079).
   recordMemoryReads(db, [(data as { id: string }).id], 'targeted');
   return res;
 }

@@ -230,7 +230,7 @@ async function respondWithPage(
   const res = ok({ ...page, entries: page.entries.map(shapeRpcRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   // memory.list is a BULK read (every row a listing call returned) for the
-  // per-memory counter (migration 00077) — one statement for the whole page.
+  // per-memory counter (migration 00079) — one statement for the whole page.
   recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
   return res;
 }

@@ -1,6 +1,6 @@
 /**
  * Per-memory read counters (`memories.read_count` / `.last_read_at`) and the
- * daily rollup (`memory_read_daily`) — migration 00077.
+ * daily rollup (`memory_read_daily`) — migration 00079.
  *
  * `usage_events` records HOW MANY records a call touched, never WHICH. There
  * is no `memory_id` on the read ledger, so "is this lesson earning its place"

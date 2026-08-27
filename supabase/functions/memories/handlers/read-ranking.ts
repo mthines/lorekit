@@ -10,12 +10,12 @@ import { ReadRankingQuerySchema } from '../../_shared/schemas/memory.ts';
 
 /**
  * The date `memory_read_daily`/`memories.read_count` STARTED counting
- * (migration 00077's production deploy). Stamped on every response so a
+ * (migration 00079's production deploy). Stamped on every response so a
  * `cold`, `read_count: 0` row reads as "not read since this date", never
  * "never read" — a memory written before it may have been read plenty under
  * the old, uncounted regime. See `ReadRankingResponseSchema.counting_since`.
  *
- * MUST be corrected to migration 00077's actual `deployed/api-production`
+ * MUST be corrected to migration 00079's actual `deployed/api-production`
  * date before/at merge — a sandbox with no deploy visibility cannot know that
  * date, so this is a placeholder marking the migration's authoring day, not a
  * verified production timestamp.
@@ -35,7 +35,7 @@ interface RawReadRankingRow {
 
 /**
  * GET /memories/read-ranking — memories ranked by how often they have
- * actually been READ (`memories.read_count`, migration 00077), not written.
+ * actually been READ (`memories.read_count`, migration 00079), not written.
  *
  * REST-only by decision (`telemetry-vocabulary.ts`'s `NON_CATALOG_OPS`): the
  * response names individual scopes, the same scope-leak surface as

@@ -666,12 +666,12 @@ export const MemoryEntrySchema = z.object({
   // there is no null for the schema to admit.
   seen_count: z.number().int().optional(),
   // Consumption — how many times this memory has actually been READ back
-  // (migration 00077), the read-to-write counterpart to seen_count above.
+  // (migration 00079), the read-to-write counterpart to seen_count above.
   // `read_count` is NOT NULL DEFAULT 0 at the DB level (every row has a real,
   // countable value), but optional here for the same backward-compat reason
   // as seen_count: a client reading a response from a backend deployed before
-  // 00077 sees no field rather than a fabricated 0. `last_read_at` mirrors the
-  // genuinely nullable column (a never-read-since-00077 memory has none).
+  // 00079 sees no field rather than a fabricated 0. `last_read_at` mirrors the
+  // genuinely nullable column (a never-read-since-00079 memory has none).
   read_count: z.number().int().nonnegative().optional(),
   last_read_at: z.string().datetime().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
@@ -860,7 +860,7 @@ export type ActivityBody = z.infer<typeof ActivityBodySchema>;
 
 /**
  * `GET /memories/read-ranking` — memories ranked by how often they have
- * actually been READ (migration 00077's `memories.read_count`), not written.
+ * actually been READ (migration 00079's `memories.read_count`), not written.
  * `hot` (default) surfaces the most-consumed lore; `cold` surfaces the
  * least-consumed — the prune-list input the `lorekit-groom` skill exists to
  * consume. REST-only (`telemetry-vocabulary.ts`'s `NON_CATALOG_OPS`): the
@@ -897,7 +897,7 @@ export type ReadRankingEntry = z.infer<typeof ReadRankingEntrySchema>;
 export const ReadRankingResponseSchema = z.object({
   direction: ReadRankingDirectionSchema,
   /**
-   * The date counting started (migration 00077's deployment). A `cold` row
+   * The date counting started (migration 00079's deployment). A `cold` row
    * with `read_count: 0` means "not read SINCE this date", never "never read
    * in this memory's lifetime" — a memory created before it may have been
    * read plenty under the old, uncounted regime. Every consumer MUST render

@@ -282,7 +282,7 @@ export async function toolRead(
   if (error) throw new Error(error.message);
   if (!data) return null;
   // memory.read is a TARGETED read (one exact scope+key) for the per-memory
-  // counter (migration 00077).
+  // counter (migration 00079).
   recordMemoryReads(db, [data.id], 'targeted');
   const { id: _id, ...rest } = data;
   return rest;
@@ -414,7 +414,7 @@ export async function toolList(
     // pagination. Truncation is inherent to the mode and documented on the
     // tool, not signalled per response.
     // memory.list (order=rank) is a BULK read for the per-memory counter
-    // (migration 00077) — one statement for the whole page.
+    // (migration 00079) — one statement for the whole page.
     recordMemoryReads(db, page.map(({ entry }) => entry.id), 'bulk');
     return { entries, hasMore: false, nextCursor: null };
   }
@@ -446,7 +446,7 @@ export async function toolList(
   // which survive the projection — but it must see the raw row set to do it.
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
-  // memory.list is a BULK read for the per-memory counter (migration 00077).
+  // memory.list is a BULK read for the per-memory counter (migration 00079).
   // `ListRow.id` is optional only because the interface is shared with a
   // legacy shape that predates it — the query above always selects `id`, so
   // filtering `undefined` here is a type narrowing, not an expected drop.
@@ -599,7 +599,7 @@ export async function toolSearch(
   const rows = (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 }));
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
-  // memory.search is a BULK read for the per-memory counter (migration 00077).
+  // memory.search is a BULK read for the per-memory counter (migration 00079).
   recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
   return page;
 }
@@ -688,7 +688,7 @@ export async function toolListArchived(
   const rows = data ?? [];
   span.setAttributes({ 'lorekit.result.count': rows.length });
   // memory.list_archived is a BULK read for the per-memory counter
-  // (migration 00077).
+  // (migration 00079).
   recordMemoryReads(db, rows.map((r) => r.id), 'bulk');
   const entries = rows.map(({ id: _id, ...rest }) => rest);
   return { entries };

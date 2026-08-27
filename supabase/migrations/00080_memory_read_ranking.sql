@@ -1,6 +1,6 @@
 -- ═════════════════════════════════════════════════════════════════════════
 -- lorekit_memory_read_ranking — hot and cold lore, ranked by memories.read_count
--- (migration 00077).
+-- (migration 00079).
 --
 -- THE PAYOFF: with per-memory counters in place, "these 40 lessons have not
 -- been read since <cutover>" becomes a real ranked query instead of a shrug —
@@ -9,7 +9,7 @@
 -- asc, oldest-created first) surfaces the least.
 --
 -- COUNTING_SINCE / THE CUTOVER: `read_count = 0` on a memory created before
--- migration 00077 shipped is NOT "never read" — it is "not read since 00077
+-- migration 00079 shipped is NOT "never read" — it is "not read since 00079
 -- started counting". A memory written last year could have been read 200
 -- times under the old, uncounted regime. This function returns no such date
 -- itself (a SQL function has no honest way to know when its OWN migration was
@@ -101,10 +101,10 @@ revoke execute on function lorekit_memory_read_ranking(uuid, text, text, integer
 grant  execute on function lorekit_memory_read_ranking(uuid, text, text, integer, text[]) to authenticated, service_role;
 
 comment on function lorekit_memory_read_ranking(uuid, text, text, integer, text[]) is
-  'Memories ranked by read_count (migration 00077) — hot (most-read first) or
+  'Memories ranked by read_count (migration 00079) — hot (most-read first) or
    cold (least-read, oldest-created first among ties). Active rows only
    (non-archived, non-expired), same org-shared + self visibility as
-   lorekit_memory_scopes. read_count = 0 means "not read since 00077 started
+   lorekit_memory_scopes. read_count = 0 means "not read since 00079 started
    counting", never "never read" -- the calling handler must stamp and every
    consumer must render the counting_since qualifier. p_limit is clamped to
    [1, 100].';

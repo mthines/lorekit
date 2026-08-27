@@ -99,7 +99,7 @@ describe('telemetry vocabulary closure', () => {
 });
 
 describe('the analytics reads stay REST-only (D17)', () => {
-  // Six as of migration 00077/00078's read-ranking endpoint — the decision's
+  // Six as of migration 00079/00080's read-ranking endpoint — the decision's
   // ORIGINAL five plus one, not a re-litigation of it: `memory.read-ranking`
   // is the same "name-bearing scope-leak surface nothing agent-side asked
   // for" shape as `tags`/`facets`/`activity`, so it is added to the SAME

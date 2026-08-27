@@ -344,7 +344,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     summary: 'Memories ranked by how often they have actually been read (hot or cold lore)',
     tags: ['Memories'],
     description:
-      'Ranks memories by `read_count` (migration 00077) — how many times a `memory.read` / ' +
+      'Ranks memories by `read_count` (migration 00079) — how many times a `memory.read` / ' +
       '`memory.list` / `memory.search` / `memory.list_archived` call actually returned this ' +
       'exact row, not just how often the account read *something*. `direction=hot` (default) ' +
       'surfaces the most-consumed lore first; `direction=cold` surfaces the least, oldest-created ' +

@@ -85,7 +85,7 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
   'memory.read-ranking': {
-    reason: 'Hot/cold lore ranked by memories.read_count (migration 00077) for the dashboard.',
+    reason: 'Hot/cold lore ranked by memories.read_count (migration 00079) for the dashboard.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
 

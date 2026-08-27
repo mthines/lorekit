@@ -210,7 +210,7 @@ export function readActivityRequest(
 
 /**
  * `GET /memories/read-ranking` — memories ranked by how often they have
- * actually been read (`read_count`, migration 00077). `direction: 'hot'`
+ * actually been read (`read_count`, migration 00079). `direction: 'hot'`
  * (default) surfaces the most-consumed lore; `'cold'` the least — the
  * prune-list input the hot/cold lore panel and `lorekit-groom` skill consume.
  * REST-only: no MCP tool, no CLI command (`telemetry-vocabulary.ts`).
