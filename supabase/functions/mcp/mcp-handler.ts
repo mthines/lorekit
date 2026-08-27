@@ -352,7 +352,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       // (insufficient role), UnknownOrgError (org slug does not resolve),
       // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), CreatedAtError
       // (invalid/future created_at override), and LimitError (the account is at
-      // its memory cap — an in-band -32040 rejection) are all client-caused —
+      // its memory cap — an in-band tool-error result) are all client-caused —
       // the server handled them correctly. Use clientError() so spans are NOT
       // marked ERROR (OTel: server spans are ERROR only for 5xx / server-side
       // faults, not 4xx client errors). A cap hit is expected and recorded
