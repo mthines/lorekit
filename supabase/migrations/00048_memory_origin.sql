@@ -26,7 +26,7 @@
 --     know. "Last known origin", never a regression to unknown.
 --   * The application layer validates and normalises all four before they get
 --     here (packages/mcp-core/src/origin.ts, mirrored self-contained into
---     supabase/functions/_shared/origin.ts). The CHECK constraints below are
+--     supabase/functions/_shared/provenance/origin.ts). The CHECK constraints below are
 --     the backstop, deliberately looser than the app-layer regexes so a future
 --     provider with a slightly different ref shape does not require a
 --     migration to accept.

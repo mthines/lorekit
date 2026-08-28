@@ -55,12 +55,12 @@ function handlerBody(src: string, fnName: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Behavioural: the shared helper every handler routes through.
 //
-// `supabase/functions/_shared/scope.ts` is plain TypeScript with no Deno-only
+// `supabase/functions/_shared/scope/scope.ts` is plain TypeScript with no Deno-only
 // imports, so vitest loads it directly — these assert real behaviour, not text.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const edgeScope = (await import(
-  path.join(repoRoot, 'supabase/functions/_shared/scope.ts')
+  path.join(repoRoot, 'supabase/functions/_shared/scope/scope.ts')
 )) as unknown as {
   parseScopeFilter: (raw: string | undefined) => string | undefined;
   validateScope: (raw: string) => string;
@@ -151,7 +151,7 @@ describe('parseScopeFilter', () => {
 //
 // That deferral is a SEMANTICS call about the per-entry outcome, and explicitly
 // not a judgement that the charset check is optional there. Per
-// `_shared/scope.ts:34`, the charset guard exists because a scope is
+// `_shared/scope/scope.ts:34`, the charset guard exists because a scope is
 // interpolated into a PostgREST filter value where `"` `,` `(` `)` are
 // structural — and `.in('scope', …)` is exactly that shape. So whichever
 // per-entry outcome is chosen, every entry still has to pass the grammar; the
@@ -187,6 +187,12 @@ const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]>
   // The one that was already correct, and the one that must NOT move to
   // `parseScopeFilter`: it reads the normalised `usage_events.scope`.
   ['read-activity.ts', 'handleReadActivity', 'validateScope'],
+  // Reads `memories.scope` directly (not the normalised usage_events column),
+  // but follows read-activity's fail-LOUD posture rather than the write
+  // path's parseScopeFilter: a scope filter here IS the question being asked
+  // ("rank THIS scope"), so an ungrammatical one is a 400, matching every
+  // other scope-bearing analytics route.
+  ['read-ranking.ts', 'handleReadRanking', 'validateScope'],
 ];
 
 describe('REST scope filters are validated before they reach a query', () => {
@@ -230,7 +236,7 @@ describe('REST scope filters are validated before they reach a query', () => {
     (file) => {
       const src = read(file);
       expect(src).toMatch(
-        /import \{[^}]*(parseScopeFilter|validateScope)[^}]*\} from '\.\.\/\.\.\/_shared\/scope\.ts'/,
+        /import \{[^}]*(parseScopeFilter|validateScope)[^}]*\} from '\.\.\/\.\.\/_shared\/scope\/scope\.ts'/,
       );
     },
   );
@@ -332,6 +338,18 @@ describe('REST scope filters are validated before they reach a query', () => {
     // the "stays reject-only" tripwire above, which fails if it ever starts
     // normalising without this guard coming down in the same commit.
     listed.add('create.ts');
+    // Retention-policy handlers (`policies.ts`, `groom.ts`, `protect.ts`): every
+    // `p_scope:` in these three reaches a SECURITY DEFINER RPC argument
+    // (`lorekit_policy_create`/`lorekit_groom_candidates`/`lorekit_groom_run`/
+    // `lorekit_memory_protect`), never a PostgREST `.eq()`/`.or()` filter
+    // string — so the injection-avoidance charset check `parseScopeFilter`
+    // exists for does not apply (RPC arguments are bound as parameters, not
+    // interpolated into a filter grammar). Grammar + case handling is done by
+    // the request-boundary `ScopeSchema` zod transform instead (validates and
+    // normalises, same as every other MCP-style tool input in this catalog).
+    listed.add('policies.ts');
+    listed.add('groom.ts');
+    listed.add('protect.ts');
     // `.in('scope', …)` is the array-valued family, excluded by decision above.
     const singleScopePredicate = /\.eq\(\s*'scope'\s*,|p_scope:/;
     const missed: string[] = [];

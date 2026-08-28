@@ -11,7 +11,7 @@
  * REST/API-token clients that never send the header are unaffected.
  *
  * Import-free so it can be mirrored verbatim into
- * `supabase/functions/_shared/dry-run.ts` (Deno cannot import this Node package);
+ * `supabase/functions/_shared/limits/dry-run.ts` (Deno cannot import this Node package);
  * `edge-parity.spec.ts` guards the two copies against drift.
  */
 export const DRY_RUN_HEADER = 'X-LoreKit-Dry-Run';

@@ -66,6 +66,7 @@ export const MIRRORED_SCHEMA_FILES = [
   ['shared/tool-catalog.ts', 'tool-catalog.ts'],
   ['domain/blog.ts', 'blog.ts'],
   ['domain/memory.ts', 'memory.ts'],
+  ['domain/retention.ts', 'retention.ts'],
   ['domain/org.ts', 'org.ts'],
   ['domain/member.ts', 'member.ts'],
   ['domain/invite.ts', 'invite.ts'],

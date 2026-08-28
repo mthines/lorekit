@@ -18,13 +18,13 @@ const readRepo = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8')
  * Every LoreKit component propagates W3C `traceparent` through the SAME two
  * pure functions — `parseTraceparent` (receiver) and `formatTraceparent`
  * (sender) — which are the single seam mirrored verbatim into every edge
- * function (`supabase/functions/_shared/trace-context.ts`) and re-implemented
+ * function (`supabase/functions/_shared/telemetry/trace-context.ts`) and re-implemented
  * byte-for-byte by the zero-dep CLI (`packages/cli/src/telemetry/telemetry.mjs`
  * `getActiveTraceparent`). So the correlation contract is provable purely from
  * that seam, without booting a Deno isolate or an OTel SDK.
  *
  * The reference helpers below RE-STATE the wiring in
- * `supabase/functions/_shared/otel.ts` so the correlation *semantics* can be
+ * `supabase/functions/_shared/telemetry/otel.ts` so the correlation *semantics* can be
  * asserted without a Deno isolate:
  *   - `serverContinue`  ≡ `extractTraceContext` (continue inbound, or new root)
  *   - `echoTraceparent` ≡ `withTraceparent`     (server → response header)
@@ -45,7 +45,7 @@ const freshTraceId = () => randomBytes(16).toString('hex');
 const freshSpanId = () => randomBytes(8).toString('hex');
 
 /**
- * Receiver seam — mirrors `extractTraceContext` in `_shared/otel.ts`.
+ * Receiver seam — mirrors `extractTraceContext` in `_shared/telemetry/otel.ts`.
  * A valid inbound header CONTINUES the trace (same trace id, fresh span id,
  * parent = inbound span). Anything invalid starts a NEW root (AlwaysOn).
  */

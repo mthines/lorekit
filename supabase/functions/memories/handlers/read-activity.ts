@@ -3,15 +3,16 @@ import { keyRestriction } from '../../_shared/api/auth.ts';
 import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { validateScope } from '../../_shared/scope.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { validateScope } from '../../_shared/scope/scope.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { ReadActivityQuerySchema } from '../../_shared/schemas/memory.ts';
 
 /** The raw shape `lorekit_read_activity` returns (bigints arrive as strings). */
 interface RawReadActivityRow {
   bucket: string;
   scope: string | null;
+  read_kind: 'targeted' | 'bulk';
   count: number | string;
 }
 
@@ -124,6 +125,10 @@ export async function handleReadActivity(
     // recorded unattributed rather than dropped, so it still counts toward the
     // account total. `?? null` normalises an absent key to the same thing.
     scope: r.scope ?? null,
+    // targeted (memory.read) vs bulk (list/search/list_archived) — migration
+    // 00080. Retrieved (bulk) + opened (targeted) sum to the same total this
+    // endpoint always returned.
+    read_kind: r.read_kind,
     count: Number(r.count),
   }));
   span.setAttributes({ 'lorekit.result_count': buckets.length });

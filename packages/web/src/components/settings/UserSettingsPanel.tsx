@@ -1,10 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { LogOut, Trash2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { isDeveloperEmail } from '@/lib/developer-users';
+import { registerClick } from '@/lib/click-gesture';
+import { toggleDeveloperNavRevealed } from '@/lib/hooks/useDeveloperNavRevealed';
+
+/**
+ * 5 consecutive clicks (within 2s of each other) toggles the developer nav's
+ * visibility in production for an allowlisted developer — see
+ * `SettingsNav.tsx` and `lib/click-gesture.ts` for the counting rule and
+ * `docs/feature-flags.md` § "Session overrides" for the surrounding design.
+ * No visual affordance is added to the avatar for this — it's a secret
+ * gesture, not a discoverable control, and it does nothing at all for
+ * anyone whose email isn't in `DEVELOPER_EMAILS`.
+ */
+const REVEAL_CLICK_THRESHOLD = 5;
+const REVEAL_CLICK_WINDOW_MS = 2000;
 
 interface UserSettingsPanelProps {
   user: User;
@@ -24,6 +39,28 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
   const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
   const email = user.email;
+
+  // Click-run state for the developer-nav reveal gesture. Refs, not state —
+  // every click is a side effect (maybe toggling the nav), never something
+  // that should trigger a re-render of THIS component by itself.
+  const lastClickAtRef = useRef<number | null>(null);
+  const runLengthRef = useRef(0);
+  const isDeveloper = isDeveloperEmail(email);
+
+  const handleAvatarClick = useCallback(() => {
+    if (!isDeveloper) return; // does nothing at all for anyone else — see the module doc comment.
+    const now = Date.now();
+    const result = registerClick(
+      lastClickAtRef.current,
+      runLengthRef.current,
+      now,
+      REVEAL_CLICK_WINDOW_MS,
+      REVEAL_CLICK_THRESHOLD,
+    );
+    lastClickAtRef.current = now;
+    runLengthRef.current = result.triggered ? 0 : result.runLength;
+    if (result.triggered) toggleDeveloperNavRevealed();
+  }, [isDeveloper]);
 
   async function handleSignOut() {
     setSignOutLoading(true);
@@ -60,7 +97,19 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
     <div className="flex flex-col gap-6">
       {/* ── Identity ───────────────────────────────────────────────────── */}
       <div className="flex items-center gap-4">
-        <div className="size-14 shrink-0 overflow-hidden rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+        {/*
+          A plain button, reset to look identical to the static div it
+          replaces — no hover state, no pointer cursor, no visible hint that
+          it does anything. It only ever does something for an allowlisted
+          developer (`handleAvatarClick` no-ops otherwise), so there is
+          nothing to advertise to anyone else.
+        */}
+        <button
+          type="button"
+          onClick={handleAvatarClick}
+          aria-label="Your avatar"
+          className="size-14 shrink-0 cursor-default overflow-hidden rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0 appearance-none"
+        >
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={avatarUrl} alt="" aria-hidden className="size-full object-cover" />
@@ -69,7 +118,7 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
               {displayName.charAt(0).toUpperCase()}
             </div>
           )}
-        </div>
+        </button>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-[var(--color-content-primary)]">{displayName}</p>
           {email && (

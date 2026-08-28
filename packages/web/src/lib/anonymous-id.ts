@@ -69,7 +69,14 @@ export function isAnonymousId(id: string | null | undefined): boolean {
  * one environment that has Web Crypto but not `randomUUID`, so a missing API
  * can never turn identification into a thrown error on a page load.
  */
-function mintAnonymousId(): string {
+/**
+ * Mint a fresh anonymous id. Exported for the cookie-backed sibling used by
+ * feature-flag targeting (`lib/feature-flags/anon-id.ts`), which needs the
+ * SAME `anon:` prefix and UUID shape but a different storage medium
+ * (`next/headers` cookies, readable server-side — `localStorage` above is
+ * browser-only and invisible to a Server Component).
+ */
+export function mintAnonymousId(): string {
   const uuid =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()

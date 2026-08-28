@@ -14,6 +14,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 import { sendInviteEmail } from '@/lib/invite-email';
@@ -104,7 +105,7 @@ export async function inviteMember(
     },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const trimmed = handleOrEmail.trim().toLowerCase();
@@ -176,7 +177,7 @@ export async function inviteMember(
 /** List an org's invites (all statuses). Owner/admin visibility via RLS. */
 export async function listInvites(orgId: string): Promise<OrgInvite[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -203,7 +204,7 @@ export async function revokeInvite(inviteId: string): Promise<{ error?: string }
     { 'lorekit.invite.id': inviteId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_invite_revoke', { p_invite_id: inviteId });
@@ -238,7 +239,7 @@ export async function acceptInvite(inviteId: string): Promise<{ error?: string }
     { 'lorekit.invite.id': inviteId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_invite_accept', { p_invite_id: inviteId });
@@ -270,7 +271,7 @@ export async function declineInvite(inviteId: string): Promise<{ error?: string 
     { 'lorekit.invite.id': inviteId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_invite_decline', { p_invite_id: inviteId });
@@ -306,7 +307,7 @@ export async function declineInvite(inviteId: string): Promise<{ error?: string 
  */
 export async function getInviteOrgDetails(inviteId: string): Promise<InviteOrgDetails | null> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return null;
 
   const { data, error } = await supabase.rpc('lorekit_invite_org_details', { p_invite_id: inviteId });
@@ -332,7 +333,7 @@ export async function getInviteOrgDetails(inviteId: string): Promise<InviteOrgDe
  */
 export async function listPendingInvitesForMe(): Promise<OrgInvite[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const email = user.email?.toLowerCase();

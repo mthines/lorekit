@@ -1,5 +1,8 @@
 // Minimal MCP-over-HTTP (JSON-RPC 2.0) client for the LoreKit endpoint.
-// Zero dependencies — uses the global fetch (Node 18+).
+// Zero EXTERNAL dependencies — uses the global fetch (Node 18+). Imports
+// below are same-package sibling modules (`./origin.mjs`), not npm deps.
+
+import { prNumberFromEnv, isValidRepo } from './origin.mjs';
 
 // Split a configured server URL like ".../mcp?token=lk_rw_x" into
 // { endpoint: ".../mcp", token: "lk_rw_x" }.
@@ -159,7 +162,7 @@ export function mcpToRestBase(mcpEndpointUrl) {
 /**
  * Normalise a client-supplied usage correlation id (a PR ref, session id, or CI
  * job id). Bounded + charset-restricted to match the server's `parseCorrelationId`
- * (supabase/functions/_shared/usage-stats.ts); returns null for empty/over-long/
+ * (supabase/functions/_shared/telemetry/usage-stats.ts); returns null for empty/over-long/
  * out-of-charset input so a bad value is simply not sent. Zero-dep (the CLI does
  * not import mcp-core), so the small regex is duplicated intentionally.
  */
@@ -168,6 +171,94 @@ export function normalizeCorrelationId(raw) {
   const t = raw.trim();
   if (!t || t.length > 200) return null;
   return /^[A-Za-z0-9_\-./:#@]+$/.test(t) ? t : null;
+}
+
+/**
+ * The bounded `session_kind` vocabulary (migration 00082) — sent via
+ * `X-LoreKit-Session-Kind`, validated edge-side by the CROSS-LANGUAGE twin of
+ * this file's derivation, `packages/mcp-core/src/telemetry/session-kind.ts`
+ * (`parseSessionKind`). Kept here rather than imported: this package has no
+ * dependency on `@lorekit/core`, and the two are guarded for behavioural
+ * parity by `session-kind-parity.spec.ts` rather than a byte comparison,
+ * which is what a cross-language pair (this `.mjs` vs that `.ts`) needs.
+ */
+const SESSION_KINDS = ['local', 'ci', 'pr', 'unknown'];
+
+/**
+ * Derive `{ correlationId, sessionKind }` from the ambient environment, for
+ * every call site that does not have an EXPLICIT `LOREKIT_CORRELATION_ID` —
+ * the caller checks that first and skips this entirely when it is set, since
+ * an explicit value always wins.
+ *
+ * Precedence, first match wins:
+ *   1. PR context — `prNumberFromEnv` (LOREKIT_PR / GITHUB_REF / GITHUB_PR_NUMBER,
+ *      see `origin.mjs`) resolves a PR number AND a repo is known → `pr` +
+ *      `pr:<owner>/<repo>#<n>`.
+ *   2. CI environment (`GITHUB_ACTIONS`/`CI`) — `ci` always; a correlation id
+ *      of `ci:<owner>/<repo>#<run_id>` when both a repo and GITHUB_RUN_ID are
+ *      known, otherwise no correlation id (still `ci` — the session KIND is
+ *      known even when a stable id to group by is not).
+ *   3. A host-provided session id (`LOREKIT_SESSION_ID`, or the handful of
+ *      well-known agent-host env vars below) — `local` +
+ *      `session:<id>`. The raw id itself is never logged or stored anywhere
+ *      beyond this derived correlation id.
+ *   4. Otherwise `unknown`, no correlation id — never a guess.
+ *
+ * TOTAL and fail-safe: reads only `env` (never throws on a missing/odd
+ * value), and every branch degrades to the next rather than throwing. A
+ * derived value that fails `normalizeCorrelationId`'s charset/length check is
+ * dropped (session_kind is still reported; only the drill-down id is not).
+ */
+export function deriveSessionContext(env = process.env) {
+  const repo = isValidRepo(env.GITHUB_REPOSITORY);
+  const prNumber = prNumberFromEnv(env);
+
+  if (prNumber !== null && repo) {
+    const correlationId = normalizeCorrelationId(`pr:${repo}#${prNumber}`);
+    if (correlationId) return { correlationId, sessionKind: 'pr' };
+  }
+
+  const isCI = env.GITHUB_ACTIONS === 'true' || env.CI === 'true' || env.CI === '1';
+  if (isCI) {
+    const runId = typeof env.GITHUB_RUN_ID === 'string' ? env.GITHUB_RUN_ID.trim() : '';
+    if (repo && runId) {
+      const correlationId = normalizeCorrelationId(`ci:${repo}#${runId}`);
+      if (correlationId) return { correlationId, sessionKind: 'ci' };
+    }
+    return { correlationId: null, sessionKind: 'ci' };
+  }
+
+  // Well-known agent-host session id env vars. Best-effort: hosts differ and
+  // this is not an exhaustive registry, so an unrecognised host still falls
+  // through to `unknown` rather than fabricating an id.
+  const sessionId = firstNonEmptyEnv(env, ['LOREKIT_SESSION_ID', 'CLAUDE_SESSION_ID']);
+  if (sessionId) {
+    // A local session IS known even when the specific id fails the
+    // correlation-id charset/length check — report the kind either way, and
+    // let the id itself degrade to null rather than losing the whole reading.
+    return { correlationId: normalizeCorrelationId(`session:${sessionId}`), sessionKind: 'local' };
+  }
+
+  return { correlationId: null, sessionKind: 'unknown' };
+}
+
+function firstNonEmptyEnv(env, keys) {
+  for (const key of keys) {
+    const v = env[key];
+    if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  }
+  return null;
+}
+
+/**
+ * Validate a `session_kind` value against the closed vocabulary. Total and
+ * fail-safe — mirrors `parseSessionKind`'s behaviour (never used to VALIDATE
+ * an incoming value here, since this process only ever sends a value it just
+ * derived itself, but kept as the single place the vocabulary is spelled out
+ * so `deriveSessionContext` and any future caller cannot drift from it).
+ */
+export function isSessionKind(value) {
+  return SESSION_KINDS.includes(value);
 }
 
 /**
@@ -219,11 +310,17 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url = `${baseUrl}${path}`;
-    // Opt-in usage correlation: when LOREKIT_CORRELATION_ID is set (e.g. by a CI
-    // job or a hook to a PR/session id), tag every REST call so GET
-    // /memories/usage?correlation_id=… can report "usage for this PR". Absent env
-    // ⇒ no header ⇒ existing behaviour unchanged.
-    const correlationId = normalizeCorrelationId(process.env.LOREKIT_CORRELATION_ID);
+    // Usage correlation: an EXPLICIT LOREKIT_CORRELATION_ID always wins (e.g. a
+    // CI job or a hook hand-setting a PR/session id). Otherwise, derive one
+    // from the ambient environment (CI/PR/session — see `deriveSessionContext`)
+    // so GET /memories/usage?correlation_id=… and the session_kind dimension
+    // are populated without anyone having to export anything by hand. Both
+    // stay unset only when neither an explicit value nor a derivable one
+    // exists (`sessionKind: 'unknown'`, no correlationId).
+    const explicitCorrelationId = normalizeCorrelationId(process.env.LOREKIT_CORRELATION_ID);
+    const derived = explicitCorrelationId ? null : deriveSessionContext(process.env);
+    const correlationId = explicitCorrelationId ?? derived?.correlationId ?? null;
+    const sessionKind = derived?.sessionKind ?? null;
     // Opt-in test-run marker: when DEPLOYMENT_ENVIRONMENT is set (a deploy/CI
     // smoke sets it to `test`), tell the edge to report that
     // `deployment.environment.name` for this request so Dash0 can filter synthetic
@@ -238,6 +335,7 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(traceparent ? { traceparent } : {}),
       ...(correlationId ? { 'x-lorekit-correlation-id': correlationId } : {}),
+      ...(sessionKind ? { 'x-lorekit-session-kind': sessionKind } : {}),
       ...(runEnv ? { 'x-lorekit-deployment-environment': runEnv } : {}),
       // Name the calling surface so usage analytics can tell a CLI read from a
       // dashboard one. Not cosmetic: `GET /memories/read-activity` EXCLUDES the

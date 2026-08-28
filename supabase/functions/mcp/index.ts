@@ -8,7 +8,7 @@
  *   webhook.ts      — GitHub PR comment → lesson creation
  *   mcp-handler.ts  — MCP JSON-RPC dispatcher (initialize, tools/list, tools/call)
  *
- * Observability via ../functions/_shared/otel.ts:
+ * Observability via ../functions/_shared/telemetry/otel.ts:
  *   traceRequest()           wraps each request in a root span
  *   createTracedClient()     creates child spans per Postgres query (in tools.ts)
  *
@@ -21,7 +21,7 @@
  *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
  */
 
-import { traceRequest } from '../_shared/otel.ts';
+import { traceRequest } from '../_shared/telemetry/otel.ts';
 import { resolveAuth, getDb, credentialTier } from './auth.ts';
 import { extractToken } from './auth-token.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';

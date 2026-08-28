@@ -21,7 +21,7 @@
  * deferred to the Dash0 pipeline).
  *
  * This module is import-free so it can be mirrored verbatim into the Deno
- * edge function (`supabase/functions/_shared/trace-context.ts`) and kept in
+ * edge function (`supabase/functions/_shared/telemetry/trace-context.ts`) and kept in
  * sync by `edge-parity.spec.ts` in `packages/mcp-core`.
  */
 

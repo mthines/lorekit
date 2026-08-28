@@ -26,12 +26,12 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { traceRequest, type Span } from '../_shared/otel.ts';
+import { traceRequest, type Span } from '../_shared/telemetry/otel.ts';
 import { resolveAuth } from './auth.ts';
 import { isAppConfigured, fetchInstallation } from './github-app-client.ts';
 import { reconcileInstallation } from './webhook-installation.ts';
-import type { Database } from '../_shared/database.types.ts';
-import { nullableRpcArg } from '../_shared/db-client.ts';
+import type { Database } from '../_shared/db/database.types.ts';
+import { nullableRpcArg } from '../_shared/db/db-client.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';

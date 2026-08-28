@@ -80,7 +80,7 @@ async function mcpCallInner<T = unknown>(tool: string, args: Record<string, unkn
   const ct = res.headers.get('content-type') ?? '';
 
   let envelope: {
-    result?: { content?: Array<{ type: string; text: string }> };
+    result?: { content?: Array<{ type: string; text: string }>; isError?: boolean };
     error?: { code: number; message: string };
   };
 
@@ -98,6 +98,15 @@ async function mcpCallInner<T = unknown>(tool: string, args: Record<string, unkn
   }
 
   const first = envelope.result?.content?.[0];
+
+  // Tool-originated failures come back as a SUCCESSFUL result with
+  // `isError: true` (MCP spec), not a JSON-RPC error — see mcp-handler.ts.
+  // Without this check a rejected tool call (e.g. an invalid scope) resolves
+  // with the error text instead of throwing.
+  if (envelope.result?.isError) {
+    throw new Error(first?.text ?? 'tool call failed');
+  }
+
   if (!first) return null as T;
 
   try {

@@ -20,7 +20,9 @@ import {
   projectRefFromUrl,
   rampVerdict,
   resolveAuthMode,
+  maxRpsForUsers,
   resolveSurface,
+  resolveUsers,
   resolveTarget,
   summarize,
   totals,
@@ -489,7 +491,9 @@ test('the harness\'s OWN defaults are refused on MCP — the guard that matters'
   assert.equal(r.ok, false);
   assert.equal(r.requiredUsers, 10);
   assert.match(r.error, /needs at least 10 users/);
-  assert.match(r.error, /Raise --users to 10, or lower --rps to 10/);
+  // Both escape routes, asserted separately so adding a third does not break it.
+  assert.match(r.error, /Raise --users to 10/);
+  assert.match(r.error, /lower --rps to 10/);
 });
 
 test('the same settings are fine on REST, because reads are ungated', () => {
@@ -566,4 +570,87 @@ test('REST results with no explicit outcome behave exactly as before', () => {
   assert.equal(outcomeOf({ status: 404 }), 'client_error');
   // An explicit outcome always wins.
   assert.equal(outcomeOf({ status: 200, outcome: 'error' }), 'error');
+});
+
+// ── the run that failed, and the two bugs it exposed ────────────────────────
+
+/**
+ * Run 32643090759 dispatched the workflow's OWN defaults with surface=mcp and
+ * ramp=true: `--rps 20 --users 5 --ramp --max-rps 160`. Two separate problems.
+ */
+
+test('the refusal names --max-rps on a ramp, not --rps', () => {
+  // BUG 1. The guard checked the CEILING (160) and correctly demanded 80 users,
+  // then advised "lower --rps to 10" — advice that cannot work, because the
+  // ladder would still climb to --max-rps and fail again at the same rung.
+  const r = checkRateHeadroom({ surface: 'mcp', rps: 160, users: 5, rateFlag: '--max-rps' });
+  assert.equal(r.ok, false);
+  assert.equal(r.requiredUsers, 80);
+  assert.match(r.error, /lower --max-rps to 10/);
+  assert.ok(!/lower --rps/.test(r.error), 'must not advise the flag that was not binding');
+});
+
+test('the refusal still names --rps when there is no ramp', () => {
+  const r = checkRateHeadroom({ surface: 'mcp', rps: 20, users: 5 });
+  assert.match(r.error, /lower --rps to 10/);
+});
+
+test('the refusal offers `--users auto` as the other way out', () => {
+  assert.match(checkRateHeadroom({ surface: 'mcp', rps: 160, users: 5 }).error, /--users auto/);
+});
+
+test('maxRpsForUsers is the inverse of the guard', () => {
+  // On mcp it is simply users x 2 at the default ceiling.
+  assert.equal(maxRpsForUsers({ surface: 'mcp', users: 5 }), 10);
+  assert.equal(maxRpsForUsers({ surface: 'mcp', users: 80 }), 160);
+  // Whatever it returns must PASS the guard, and one more must fail it.
+  for (const users of [1, 5, 17, 80]) {
+    const max = maxRpsForUsers({ surface: 'mcp', users });
+    assert.equal(checkRateHeadroom({ surface: 'mcp', rps: max, users }).ok, true, `${users} users should sustain ${max} rps`);
+    assert.equal(checkRateHeadroom({ surface: 'mcp', rps: max + 1, users }).ok, false, `${users} users should NOT sustain ${max + 1} rps`);
+  }
+});
+
+test('rest sustains far more per user, because only writes are gated', () => {
+  // 15% write share, so 5 users x 2 rps / 0.15.
+  assert.equal(maxRpsForUsers({ surface: 'rest', users: 5 }), 66);
+});
+
+test('--users auto derives the minimum the PEAK rate needs', () => {
+  // BUG 2. `users: 5` + `max_rps: 160` + surface mcp was the workflow's default
+  // combination and could never run. `auto` makes that dispatch valid.
+  assert.deepEqual(resolveUsers({ users: 'auto', surface: 'mcp', peakRps: 160 }), { ok: true, auto: true, users: 80 });
+  assert.deepEqual(resolveUsers({ users: 'auto', surface: 'mcp', peakRps: 20 }), { ok: true, auto: true, users: 10 });
+  // rest needs far fewer for the same rate.
+  assert.equal(resolveUsers({ users: 'auto', surface: 'rest', peakRps: 160 }).users, 12);
+});
+
+test('whatever auto picks, the guard accepts it — that is the point', () => {
+  for (const surface of ['mcp', 'rest']) {
+    for (const peakRps of [1, 20, 160, 500]) {
+      const u = resolveUsers({ users: 'auto', surface, peakRps }).users;
+      assert.equal(
+        checkRateHeadroom({ surface, rps: peakRps, users: u }).ok, true,
+        `auto gave ${u} users for ${peakRps} rps on ${surface}, which the guard then refused`,
+      );
+    }
+  }
+});
+
+test('auto never returns zero users', () => {
+  // A rate low enough to need no users still needs somebody to make requests.
+  assert.equal(resolveUsers({ users: 'auto', surface: 'rest', peakRps: 1 }).users, 1);
+  assert.equal(resolveUsers({ users: 'auto', surface: 'mcp', peakRps: 1 }).users, 1);
+});
+
+test('an explicit --users is passed through, and case-insensitive AUTO works', () => {
+  assert.deepEqual(resolveUsers({ users: '7', surface: 'mcp', peakRps: 4 }), { ok: true, users: 7, auto: false });
+  assert.equal(resolveUsers({ users: 'AUTO', surface: 'mcp', peakRps: 20 }).auto, true);
+  assert.equal(resolveUsers({ users: ' auto ', surface: 'mcp', peakRps: 20 }).auto, true);
+});
+
+test('a nonsense --users is rejected, not coerced', () => {
+  for (const bad of ['0', '-3', 'many', '', '2.5', undefined]) {
+    assert.equal(resolveUsers({ users: bad, surface: 'mcp', peakRps: 20 }).ok, false, `"${bad}" must be refused`);
+  }
 });

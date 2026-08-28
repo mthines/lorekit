@@ -19,6 +19,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 
@@ -39,7 +40,7 @@ export interface ScopeBinding {
  */
 export async function listAvailableScopes(orgId: string, alreadyBound: string[]): Promise<string[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   // The memories RLS policies (00015 + org read widening) scope this query
@@ -79,7 +80,7 @@ export async function listAvailableScopes(orgId: string, alreadyBound: string[])
  */
 export async function listScopeBindings(orgId: string): Promise<ScopeBinding[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -104,7 +105,7 @@ export async function listScopeBindings(orgId: string): Promise<ScopeBinding[]> 
 export async function listScopeBindingsForOrgs(orgIds: string[]): Promise<ScopeBinding[]> {
   if (orgIds.length === 0) return [];
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -137,7 +138,7 @@ function translateScopeError(message: string, code: string | undefined): string 
  */
 export async function bindScope(orgId: string, scope: string): Promise<{ id: string } | { error: string }> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return { error: 'Not authenticated' };
 
   const trimmed = scope.trim().toLowerCase();
@@ -167,7 +168,7 @@ export async function bindScope(orgId: string, scope: string): Promise<{ id: str
  */
 export async function unbindScope(orgId: string, scope: string): Promise<{ error?: string }> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return { error: 'Not authenticated' };
 
   // Normalise identically to bindScope — a scope is stored lowercased, so an

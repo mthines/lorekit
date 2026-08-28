@@ -263,7 +263,7 @@ cookies never forwarded).
 - **Non-constant-time secret compare** — `token === SERVICE_KEY` in `_shared/api/auth.ts` (~L41),
   `mcp/auth.ts` (~L51). Theoretical timing side-channel on a long static secret; use `timingSafeEqual`.
 - **Telemetry PII** — `createTracedClient` records interpolated filter values (scope, key, `user_id`,
-  raw search `q`) in `db.query.text` (`_shared/otel.ts` ~L483-524). Goes to the operator's Dash0, not
+  raw search `q`) in `db.query.text` (`_shared/telemetry/otel.ts` ~L483-524). Goes to the operator's Dash0, not
   users, and excludes memory *values*, but is more PII than the "no-PII attrs" posture implies.
 - **CLI `__proto__` frontmatter** — `packages/cli/src/store/format.mjs` (`parseEntry`, ~L31-42):
   `meta[key] = …` assigns through `__proto__`. Not exploitable today (no deep-merge of the parsed object),

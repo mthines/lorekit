@@ -2,7 +2,7 @@
  * The time window behind `GET /memories?expiring_within_days=N` — "lore that is
  * about to expire".
  *
- * Pure and shared (mirrored into `supabase/functions/_shared/expiring-window.ts`,
+ * Pure and shared (mirrored into `supabase/functions/_shared/limits/expiring-window.ts`,
  * guarded by `edge-parity.spec.ts`) because the boundary semantics below are the
  * whole feature: an off-by-one here does not throw, it quietly shows the user a
  * row that already expired or hides one that expires tonight.

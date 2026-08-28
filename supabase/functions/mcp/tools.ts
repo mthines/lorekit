@@ -21,21 +21,25 @@
  * decides what a member may do.
  */
 
-import { validateScope, UserInputError } from '../_shared/scope.ts';
-import { createTracedClient, type Span } from '../_shared/otel.ts';
+import { validateScope, UserInputError } from '../_shared/scope/scope.ts';
+import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
-import { parseCreatedAt } from '../_shared/created-at.ts';
+import { parseCreatedAt } from '../_shared/limits/created-at.ts';
 import { parseTtl } from './ttl.ts';
-import { parseOrigin } from '../_shared/origin.ts';
-import { recordAudit } from '../_shared/audit.ts';
-import { applyTenantScope, type KeyRestriction } from '../_shared/tenant-scope.ts';
+import { parseOrigin } from '../_shared/provenance/origin.ts';
+import { recordAudit } from '../_shared/audit/audit.ts';
+import { applyTenantScope, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';
-import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
-import type { RankableLesson } from '../_shared/lesson-rank.ts';
-import { outcomeFromTags } from '../_shared/outcome-signal.ts';
-import type { DbClient } from '../_shared/db-client.ts';
+import { rankLessons, selectDiverse } from '../_shared/ranking/lesson-rank.ts';
+import type { RankableLesson } from '../_shared/ranking/lesson-rank.ts';
+import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
+import type { DbClient } from '../_shared/db/db-client.ts';
+import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
+import { resolveGroomConditions } from '../_shared/retention/groom.ts';
+import type { RetentionPolicyRow, GroomRequestInput } from '../_shared/retention/groom.ts';
+import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -271,12 +275,20 @@ export async function toolRead(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
+  // `id` is selected purely to drive the per-memory read counter below — it is
+  // stripped before the tool's result is returned, so memory.read's wire
+  // contract is unchanged.
+  let query = tracedDb.from('memories').select('id,value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
-  return data ?? null;
+  if (!data) return null;
+  // memory.read is a TARGETED read (one exact scope+key) for the per-memory
+  // counter (migration 00077).
+  recordMemoryReads(db, [data.id], 'targeted');
+  const { id: _id, ...rest } = data;
+  return rest;
 }
 
 export async function toolList(
@@ -404,6 +416,9 @@ export async function toolList(
     // `memories/handlers/relevant.ts`, which likewise never advertises
     // pagination. Truncation is inherent to the mode and documented on the
     // tool, not signalled per response.
+    // memory.list (order=rank) is a BULK read for the per-memory counter
+    // (migration 00077) — one statement for the whole page.
+    recordMemoryReads(db, page.map(({ entry }) => entry.id), 'bulk');
     return { entries, hasMore: false, nextCursor: null };
   }
 
@@ -434,6 +449,11 @@ export async function toolList(
   // which survive the projection — but it must see the raw row set to do it.
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
+  // memory.list is a BULK read for the per-memory counter (migration 00077).
+  // `ListRow.id` is optional only because the interface is shared with a
+  // legacy shape that predates it — the query above always selects `id`, so
+  // filtering `undefined` here is a type narrowing, not an expected drop.
+  recordMemoryReads(db, (page.entries as ListRow[]).map((row) => row.id).filter((id): id is string => id !== undefined), 'bulk');
   return {
     ...page,
     entries: (page.entries as ListRow[]).map((row) => projectListEntry(row, summarize)),
@@ -582,6 +602,8 @@ export async function toolSearch(
   const rows = (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 }));
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
+  // memory.search is a BULK read for the per-memory counter (migration 00077).
+  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
   return page;
 }
 
@@ -653,9 +675,12 @@ export async function toolListArchived(
   span.setAttributes({ 'lorekit.scope': scope });
 
   const tracedDb = createTracedClient(db, span);
+  // `id` is selected purely to drive the per-memory read counter below — it is
+  // stripped from each entry before the tool's result is returned, so
+  // memory.list_archived's wire contract is unchanged.
   let query = tracedDb
     .from('memories')
-    .select('key,value,tags,updated_at,archived_at')
+    .select('id,key,value,tags,updated_at,archived_at')
     .eq('scope', scope)
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
@@ -663,8 +688,12 @@ export async function toolListArchived(
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  const entries = data ?? [];
-  span.setAttributes({ 'lorekit.result.count': entries.length });
+  const rows = data ?? [];
+  span.setAttributes({ 'lorekit.result.count': rows.length });
+  // memory.list_archived is a BULK read for the per-memory counter
+  // (migration 00077).
+  recordMemoryReads(db, rows.map((r) => r.id), 'bulk');
+  const entries = rows.map(({ id: _id, ...rest }) => rest);
   return { entries };
 }
 
@@ -1081,4 +1110,378 @@ export async function toolScopes(
 
   span.setAttributes({ 'lorekit.result_count': scopes.length });
   return { scopes };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Retention policies ("grooming") — policy.*, groom.*, memory.protect.
+//
+// v1 is personal-owned (user_id-keyed) only, so every handler below requires
+// a resolved userId and every raw table read/write carries an explicit
+// `user_id` predicate — the same rule every other api_key-reachable handler
+// in this file follows, because that path runs on a service-role client that
+// bypasses RLS. `retention_policies` itself DOES carry an owner-only RLS
+// policy (00088), which is what protects the JWT/dashboard path; the
+// explicit filter here is what protects the api_key path.
+//
+// Feature flag: when LOREKIT_RETENTION_POLICIES_ENABLED is unset or any
+// value other than 'true', every handler below (and its REST twin in
+// `memories/handlers/{groom,policies,protect}.ts`) rejects with
+// UserInputError instead of touching the RPCs — same posture as
+// GITHUB_APP_ENABLED in `mcp/webhook.ts`, kept dormant until this is rolled
+// out. The nightly `pg_cron` sweep (00088) is unaffected — it only ever
+// touches policies with `mode = 'auto'` AND `enabled = true`, and those can
+// only be created through this same gated surface.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function assertRetentionPoliciesEnabled(): void {
+  if (!RETENTION_POLICIES_ENABLED) {
+    throw new UserInputError('retention policies are not enabled for this instance');
+  }
+}
+
+/**
+ * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
+ * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00088) rather than a raw
+ * `.from('retention_policies')` call: the table is new enough that the
+ * generated `database.types.ts` mirror does not know it (so a typed `.from()`
+ * call cannot name it), and every other mutable resource in this schema —
+ * memories, orgs, api_tokens — is already reached through a function for the
+ * same api_key/service-role-bypasses-RLS reason. This is the existing
+ * pattern, not a new one.
+ */
+interface RetentionPolicyDbRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  name: string;
+  mode: 'review' | 'auto';
+  enabled: boolean;
+  min_age_days: number | null;
+  unseen_days: number | null;
+  max_seen_count: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The same 1–3650 / 0–100000 bounds `GroomConditionsSchema`
+ * (`@lorekit/schemas` / `_shared/schemas/retention.ts`) enforces on the REST
+ * path (`PolicyCreateBodySchema` / `PolicyUpdateBodySchema`, via
+ * `validateBody`). The MCP tools take a raw `Params` object rather than a
+ * validated REST body, so without this an out-of-range value here reached
+ * the RPC unchecked and surfaced as a raw Postgres CHECK-constraint error
+ * instead of a clean `UserInputError` — the manual-check style already used
+ * by `ttl.ts`'s `parseTtlDays` et al., rather than a second zod schema.
+ */
+export function assertGroomConditionsInBounds(conditions: {
+  min_age_days?: number | null;
+  unseen_days?: number | null;
+  max_seen_count?: number | null;
+}): void {
+  const { min_age_days, unseen_days, max_seen_count } = conditions;
+  if (min_age_days != null && (min_age_days < 1 || min_age_days > 3650)) {
+    throw new UserInputError('min_age_days must be between 1 and 3650');
+  }
+  if (unseen_days != null && (unseen_days < 1 || unseen_days > 3650)) {
+    throw new UserInputError('unseen_days must be between 1 and 3650');
+  }
+  if (max_seen_count != null && (max_seen_count < 0 || max_seen_count > 100_000)) {
+    throw new UserInputError('max_seen_count must be between 0 and 100000');
+  }
+}
+
+function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
+  return {
+    id: row.id,
+    scope: row.scope,
+    mode: row.mode,
+    enabled: row.enabled,
+    min_age_days: row.min_age_days,
+    unseen_days: row.unseen_days,
+    max_seen_count: row.max_seen_count,
+  };
+}
+
+/** List every retention policy the caller owns. */
+export async function toolPolicyList(
+  db: DbClient,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('policy.list requires a user_id');
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
+  if (error) throw new Error((error as { message: string }).message);
+  const entries = (data ?? []) as unknown as RetentionPolicyDbRow[];
+  span.setAttributes({ 'lorekit.result.count': entries.length });
+  return { entries };
+}
+
+/** Create a retention policy. `auto` mode always starts disabled per-policy. */
+export async function toolPolicyCreate(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('policy.create requires a user_id');
+  const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null } = params;
+  if (!rawScope || !name) throw new UserInputError('scope and name are required');
+  if (mode !== 'review' && mode !== 'auto') throw new UserInputError('mode must be "review" or "auto"');
+  assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count });
+  const scope = validateScope(rawScope);
+
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.policy.mode': mode });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<RetentionPolicyDbRow>('lorekit_policy_create', {
+      p_user_id: userId,
+      p_scope: scope,
+      p_name: name,
+      p_mode: mode,
+      p_enabled: enabled,
+      p_min_age_days: min_age_days,
+      p_unseen_days: unseen_days,
+      p_max_seen_count: max_seen_count,
+    })
+    .single();
+  if (error) throw new Error((error as { message: string }).message);
+
+  const row = data as RetentionPolicyDbRow;
+  await recordAudit(
+    db,
+    { action: 'policy.create', resourceType: 'retention_policy', resourceId: row.id, target: name, metadata: { scope, mode, enabled } },
+    userId,
+    span,
+  );
+  return row;
+}
+
+/** Update a retention policy — every field but `id` is optional. */
+export async function toolPolicyUpdate(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('policy.update requires a user_id');
+  const { id } = params;
+  if (!id) throw new UserInputError('id is required');
+  if (params.mode !== undefined && params.mode !== 'review' && params.mode !== 'auto') {
+    throw new UserInputError('mode must be "review" or "auto"');
+  }
+  assertGroomConditionsInBounds({
+    min_age_days: params.min_age_days,
+    unseen_days: params.unseen_days,
+    max_seen_count: params.max_seen_count,
+  });
+
+  const patch: Record<string, unknown> = {};
+  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count'] as const) {
+    if (params[field] !== undefined) patch[field] = params[field];
+  }
+  if (Object.keys(patch).length === 0) throw new UserInputError('at least one field to update is required');
+
+  span.setAttributes({ 'lorekit.policy.id': id });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc('lorekit_policy_update', { p_user_id: userId, p_id: id, p_patch: patch });
+  if (error) throw new Error((error as { message: string }).message);
+  const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
+  if (!row) throw new UserInputError(`no retention policy found for id=${id}`);
+
+  await recordAudit(
+    db,
+    { action: 'policy.update', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: patch },
+    userId,
+    span,
+  );
+  return row;
+}
+
+/** Delete a retention policy. Deletes the RULE only — never touches memories. */
+export async function toolPolicyDelete(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('policy.delete requires a user_id');
+  const { id } = params;
+  if (!id) throw new UserInputError('id is required');
+
+  span.setAttributes({ 'lorekit.policy.id': id });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc('lorekit_policy_delete', { p_user_id: userId, p_id: id });
+  if (error) throw new Error((error as { message: string }).message);
+  const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
+  if (row) {
+    await recordAudit(
+      db,
+      { action: 'policy.delete', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: { scope: row.scope } },
+      userId,
+      span,
+    );
+  }
+  return { deleted: Boolean(row) };
+}
+
+/**
+ * Resolve a groom.preview/groom.run request (a policy_id OR inline
+ * conditions) into the concrete conditions struct `lorekit_groom_candidates`
+ * takes — fetching the named policy (owner-scoped) when policy_id is given,
+ * then delegating to the pure `resolveGroomConditions`.
+ */
+async function resolveGroomRequest(
+  db: DbClient,
+  params: Params,
+  userId: string,
+  span: Span,
+): Promise<{ scope: string; min_age_days: number | null; unseen_days: number | null; max_seen_count: number | null }> {
+  const request: GroomRequestInput = params.policy_id
+    ? { policy_id: params.policy_id as string }
+    : {
+        scope: validateScope(params.scope),
+        min_age_days: params.min_age_days,
+        unseen_days: params.unseen_days,
+        max_seen_count: params.max_seen_count,
+      };
+
+  let policy: RetentionPolicyRow | null = null;
+  if ('policy_id' in request) {
+    // No per-id fetch RPC — the owner's policy list is small (a handful of
+    // saved rules), so reuse lorekit_policy_list (already owner-scoped) and
+    // find the one requested rather than adding a fifth RPC for one lookup.
+    const tracedDb = createTracedClient(db, span);
+    const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
+    if (error) throw new Error((error as { message: string }).message);
+    const row = ((data ?? []) as unknown as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
+    if (!row) throw new UserInputError(`no retention policy found for policy_id=${request.policy_id}`);
+    policy = toPolicyRow(row);
+  }
+
+  return resolveGroomConditions(request, policy);
+}
+
+/** Preview the candidates a policy or an inline condition set would archive. */
+export async function toolGroomPreview(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('groom.preview requires a user_id');
+  if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
+
+  const conditions = await resolveGroomRequest(db, params, userId, span);
+  span.setAttributes({ 'lorekit.scope': conditions.scope });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('lorekit_groom_candidates', {
+    p_user_id: userId,
+    p_scope: conditions.scope,
+    p_min_age_days: conditions.min_age_days,
+    p_unseen_days: conditions.unseen_days,
+    p_max_seen_count: conditions.max_seen_count,
+  });
+  if (error) throw new Error((error as { message: string }).message);
+
+  const rows = (data ?? []) as { id: string; scope: string; key: string }[];
+  const keys = rows.map((r) => ({ scope: r.scope, key: r.key }));
+  span.setAttributes({ 'lorekit.result.count': keys.length });
+  return { count: keys.length, keys };
+}
+
+/**
+ * Archive every candidate a policy or an inline condition set matches — the
+ * SAME candidates groom.preview would have shown, resolved and archived in
+ * one transaction by lorekit_groom_run. Audits one memory.archive row per
+ * archived lesson (inside the RPC), never deletes.
+ */
+export async function toolGroomRun(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('groom.run requires a user_id');
+  if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
+
+  const conditions = await resolveGroomRequest(db, params, userId, span);
+  span.setAttributes({ 'lorekit.scope': conditions.scope });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<{ archived: number; keys: { scope: string; key: string }[] }>('lorekit_groom_run', {
+      p_user_id: userId,
+      p_scope: conditions.scope,
+      p_min_age_days: conditions.min_age_days,
+      p_unseen_days: conditions.unseen_days,
+      p_max_seen_count: conditions.max_seen_count,
+    })
+    .single();
+  if (error) throw new Error((error as { message: string }).message);
+
+  const row = data as { archived: number; keys: { scope: string; key: string }[] };
+  span.setAttributes({ 'lorekit.result.archived': row.archived });
+
+  // App-layer audit capture (CLAUDE.md "Audit logging is captured at the app
+  // layer") — one memory.archive row per archived lesson, reusing the
+  // existing action rather than minting memory.groom.
+  for (const k of row.keys ?? []) {
+    await recordAudit(
+      db,
+      { action: 'memory.archive', resourceType: 'memory', target: k.key, metadata: { scope: k.scope, key: k.key, via: 'groom.run' } },
+      userId,
+      span,
+    );
+  }
+
+  return { archived: row.archived, keys: row.keys ?? [] };
+}
+
+/** Mark or unmark a lesson as protected from every grooming candidate set. */
+export async function toolProtect(
+  db: DbClient,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  assertRetentionPoliciesEnabled();
+  if (!userId) throw new UserInputError('memory.protect requires a user_id');
+  const { scope: rawScope, key, protected: isProtected } = params;
+  if (!rawScope || !key || typeof isProtected !== 'boolean') {
+    throw new UserInputError('scope, key, and protected (boolean) are required');
+  }
+  const scope = validateScope(rawScope);
+
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key, 'lorekit.protect.value': isProtected });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc<boolean>('lorekit_memory_protect', { p_user_id: userId, p_scope: scope, p_key: key, p_protected: isProtected })
+    .single();
+  if (error) throw new Error((error as { message: string }).message);
+
+  const changed = Boolean(data);
+  if (changed) {
+    await recordAudit(
+      db,
+      { action: 'memory.protect', resourceType: 'memory', target: key, metadata: { scope, key, protected: isProtected } },
+      userId,
+      span,
+    );
+  }
+  return { protected: isProtected };
 }

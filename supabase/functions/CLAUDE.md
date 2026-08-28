@@ -17,7 +17,7 @@ the public REST contract, and deliberately absent from `openapi`.
 ## Shared utilities
 
 All shared code lives in `_shared/`. Import paths from a function:
-- `import { traceRequest } from '../_shared/otel.ts'` — OTel root span
+- `import { traceRequest } from '../_shared/telemetry/otel.ts'` — OTel root span
 - `import { resolveRestAuth } from '../_shared/api/auth.ts'` — 3-tier auth
 - `import { createRouter } from '../_shared/api/router.ts'` — method+path dispatch
 - See `_shared/api/CLAUDE.md` for the full reference
@@ -42,10 +42,10 @@ span — the split between waiting on Postgres and running our own code. It is f
 by span KIND: anything opened as `SPAN_KIND_CLIENT` counts as an outbound call,
 so wrapping a raw `fetch` in `span.child(name, attrs, SPAN_KIND_CLIENT)` is
 enough to have it attributed. Intervals are MERGED, not summed (concurrent
-queries count once) — see `_shared/io-ledger.ts`.
+queries count once) — see `_shared/telemetry/io-ledger.ts`.
 
-**Metrics** go through `_shared/otlp-metrics.ts`, which imports its resource
-attributes, endpoint and encoding from `_shared/otel.ts`. Never build a second
+**Metrics** go through `_shared/telemetry/otlp-metrics.ts`, which imports its resource
+attributes, endpoint and encoding from `_shared/telemetry/otel.ts`. Never build a second
 resource-attribute list: a metric on a different resource than the spans beside
 it silently stops correlating in Dash0.
 

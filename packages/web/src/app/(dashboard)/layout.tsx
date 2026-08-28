@@ -2,16 +2,17 @@ import { Suspense } from 'react';
 import { boundedReturnTo } from '@/lib/auth-redirect';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { FocusRefetcher } from '@/components/providers/FocusRefetcher';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
-import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
+import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
+import { getAllServerFlagState } from '@/lib/feature-flags/server';
 import { resolveDashboardBootstrap } from '@/lib/dashboard-bootstrap';
 import { Toaster } from 'sonner';
 import { CommandPaletteProvider } from '@/components/command/CommandPaletteProvider';
@@ -19,8 +20,6 @@ import { CommandPalette } from '@/components/command/CommandPalette';
 import { NavigationCommands } from '@/components/command/NavigationCommands';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createServerClient();
-
   // The session check and the onboarding counts are independent reads, so they
   // are OVERLAPPED rather than chained — see `lib/dashboard-bootstrap.ts` for
   // the ordering contract and why it lives there. Serially they cost the sum of
@@ -28,12 +27,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // `RSC GET /lore` showed 0.504s of `auth/v1/user` followed by 0.389s of
   // onboarding counts inside a 0.926s request, with nothing between them.
   //
+  // `getVerifiedUser()` (lib/auth/verified-user.ts) is request-memoized via
+  // React's `cache()`, so this is also the ONE `auth.getUser()` round trip
+  // every other read on this render (feature flags, orgs, tokens, invites,
+  // scope bindings, github installations, audit log) shares — see that
+  // module's header for why: an unmemoized `getUser()` repeated across a
+  // render tree multiplies any Supabase Auth latency spike by however many
+  // times it's called instead of paying it once.
+  //
   // Issuing the counts before the session is verified is safe because they run
   // on the RLS-scoped server client built from this request's cookies: Postgres
   // decides what they can see, an absent or expired session reads nothing, and
   // the result is discarded on the redirect path below.
   const bootstrap = await resolveDashboardBootstrap({
-    getUser: async () => (await supabase.auth.getUser()).data.user,
+    getUser: async () => getVerifiedUser(),
     getOnboardingState,
     onboardingFallback: { hasLessons: false, hasWebhook: false },
   });
@@ -61,11 +68,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // build the checklist reuse this same request's result.
   const { user, onboardingState } = bootstrap;
 
+  // Evaluated ONCE here, server-side, for the whole dashboard tree.
+  // `FeatureFlagsProvider` hands `values` to every Client Component via
+  // `useFeatureFlag`, and forwards `variants` into RUM (`dash0-rum.ts`) so
+  // Web Events can be filtered/grouped by `feature_flag.<key>` — there is no
+  // separate client-side evaluation to drift from this one. `user.id` is
+  // passed through so this does not repeat the `auth.getUser()` call
+  // `resolveDashboardBootstrap` already made above. See
+  // `lib/feature-flags/server.ts`.
+  const { values: flags, variants: flagVariants } = await getAllServerFlagState(user.id);
+
   return (
-    // ToastProvider mounts once at the dashboard root — a thin sibling client
-    // context (no Suspense-dependent hooks), so any settings/lore/dashboard
-    // action can announce an aria-live toast (plan.md Decision D7).
-    <ToastProvider>
+    <FeatureFlagsProvider flags={flags} variants={flagVariants}>
     <OnboardingProvider serverState={onboardingState}>
       {/*
         CommandPaletteProvider wraps the entire dashboard so the palette is
@@ -149,6 +163,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
         />
       </CommandPaletteProvider>
     </OnboardingProvider>
-    </ToastProvider>
+    </FeatureFlagsProvider>
   );
 }

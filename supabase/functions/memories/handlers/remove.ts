@@ -1,17 +1,17 @@
 import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
-import { recordAudit } from '../../_shared/audit.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
 import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
-import { parseScopeFilter } from '../../_shared/scope.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { parseScopeFilter } from '../../_shared/scope/scope.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { DeleteMemoryQuerySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -24,7 +24,7 @@ type MemoryRow = Tables<'memories'>;
  * `lorekit.delete.force` span attribute, so the two surfaces are queryable
  * together in traces.
  *
- * Audits through the one shared edge writer (`_shared/audit.ts`, the same
+ * Audits through the one shared edge writer (`_shared/audit/audit.ts`, the same
  * module `mcp/tools.ts` uses): `memory.delete` on the force branch,
  * `memory.archive` on the soft branch — matching toolDelete's actions,
  * `resourceType`, `target` and `metadata` so the two surfaces produce

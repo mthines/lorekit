@@ -29,7 +29,7 @@
  * Next.js evaluates outside the React tree, and also server-side during static
  * prerendering) can import it as safely as a client component can.
  */
-import { init, identify } from '@dash0/sdk-web';
+import { init, identify, addSignalAttribute } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
 import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
@@ -391,3 +391,61 @@ export function resetDash0Identity(): void {
  * navigation. An app-side `addSignalAttribute('page.url.path', …)` only adds a
  * SECOND entry for the same key on every signal.
  */
+
+/** Attribute-name prefix for the per-flag RUM tags {@link syncFeatureFlagRumAttributes} sets. */
+export const FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX = 'feature_flag.';
+
+/**
+ * Attach the current session's feature-flag state to every subsequent RUM
+ * signal — page views, clicks, custom events, errors — via `addSignalAttribute`.
+ *
+ * ## Why this exists (the gap it closes)
+ *
+ * `@lorekit/feature-flags`' OTel hook (`packages/feature-flags/src/otel-hook.ts`)
+ * only stamps `feature_flag.*` onto SERVER-SIDE spans, at the moment ONE flag
+ * is evaluated. That answers "what did this one server-side evaluation
+ * resolve to", but it is a different signal type and a different question
+ * from what a Web Events / RUM view needs: "which flags were active for this
+ * VISITOR, across every page view and click in their session" — for
+ * correlating a variant to a conversion event days later. Nothing wired the
+ * two together before this; a Web Events search for `feature_flag.*` found
+ * nothing, because RUM signals never carried it.
+ *
+ * ## Why a DIFFERENT attribute shape than the OTel semconv hook uses
+ *
+ * The OTel feature-flag semantic conventions (`feature_flag.key` +
+ * `feature_flag.result.variant`) are scoped to ONE evaluation on ONE span —
+ * exactly one flag's outcome, once. A RUM session has MANY flags active at
+ * once (every flag in the registry, potentially), so reusing those same fixed
+ * attribute names would mean every flag after the first OVERWRITES the one
+ * before it under the identical key. There is no OTel-standard shape for
+ * "here is the whole set of concurrently active flags" — this uses one
+ * DYNAMIC attribute name per flag instead: `feature_flag.<flagKey>` = the
+ * variant. Non-standard, but the only representation that doesn't collide,
+ * and it is what makes `feature_flag.new-onboarding-flow = "treatment"` a
+ * filterable/groupable dimension on the Web Events / RUM explorer — compare
+ * conversion-event rates between `feature_flag.new-onboarding-flow =
+ * "control"` and `"treatment"` sessions directly.
+ *
+ * ## What is attached — the VARIANT, never the raw value
+ *
+ * Always the short, human-readable variant key (`"treatment"`, `"beta"`),
+ * never an `object`-typed flag's whole payload — the same "prefer `variant`
+ * over `value`" reasoning `otel-attributes.ts` documents for the span hook:
+ * an object value is unbounded size and not a useful grouping dimension.
+ *
+ * ## Call site and lifecycle
+ *
+ * Called from `FeatureFlagsProvider` (a `useEffect`, so it re-runs whenever
+ * the server re-evaluates flags — e.g. after a session-override change) with
+ * the variant map `getAllServerFlagVariants()` (`lib/feature-flags/server.ts`)
+ * produced. No-op before RUM init, like every other function in this module —
+ * a flag evaluated during static prerendering (no browser, no SDK) has
+ * nothing to attach to yet; the next real page load calls this again anyway.
+ */
+export function syncFeatureFlagRumAttributes(flagVariants: Readonly<Record<string, string>>): void {
+  if (!initialized) return;
+  for (const [flagKey, variant] of Object.entries(flagVariants)) {
+    addSignalAttribute(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}${flagKey}`, variant);
+  }
+}

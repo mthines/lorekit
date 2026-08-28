@@ -6,6 +6,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { revalidatePath } from 'next/cache';
 import { permissionSuffix } from '@/lib/token-permission';
 import { isScoped, type OrgAccess, type TokenScoping } from '@/lib/token-scoping';
@@ -79,7 +80,7 @@ export async function generateToken(
     },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
       if (!name.trim()) return { error: 'Token name is required' };
 
@@ -218,7 +219,7 @@ export async function generateToken(
 /** List all tokens for the current user. Returns [] on auth failure or DB error. */
 export async function listTokens(): Promise<ApiToken[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -244,7 +245,7 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
     { 'lorekit.api_token.id': tokenId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       // Fetch name + prefix before the delete so the audit event has a
@@ -339,7 +340,7 @@ export async function setTokenScoping(
     },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       // Read the name BEFORE the change so the audit target is human-readable,

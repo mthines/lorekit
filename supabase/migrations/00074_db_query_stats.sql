@@ -41,7 +41,7 @@
 -- `startTimeUnixNano`. Dash0 then does the differencing itself and reads a
 -- reset as a new series rather than as negative traffic. Computing deltas here
 -- would mean persisting the previous snapshot and re-implementing reset
--- detection; see supabase/functions/_shared/otlp-metrics.ts.
+-- detection; see supabase/functions/_shared/telemetry/otlp-metrics.ts.
 --
 -- Dynamic SQL on purpose: a STATIC reference to
 -- `extensions.pg_stat_statements` would make the whole function body

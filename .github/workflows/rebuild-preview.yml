@@ -103,7 +103,13 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned, not `latest`, for consistency with ci.yml (#578): CLI
+          # v2.116.0 changed the local stack's default privileges, tripping a
+          # security assertion under `supabase start`. This job talks to
+          # hosted Supabase, not the local stack, so that specific assertion
+          # doesn't apply here — pinned anyway to avoid unplanned CLI drift
+          # across all workflows until the v2.116.0 grant change is understood.
+          version: 2.115.0
 
       - name: Verify preview environment secrets are set
         run: |

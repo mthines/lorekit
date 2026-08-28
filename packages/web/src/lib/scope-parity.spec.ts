@@ -14,7 +14,7 @@ import { isCanonicalScope } from './scope';
 // against. `packages/mcp-core/src/edge/edge-parity.spec.ts` reaches across the same
 // boundary for the same reason, via `readFileSync`.
 // eslint-disable-next-line @nx/enforce-module-boundaries
-import { parseScopeFilter } from '../../../../supabase/functions/_shared/scope.ts';
+import { parseScopeFilter } from '../../../../supabase/functions/_shared/scope/scope.ts';
 
 /**
  * `isCanonicalScope` (client) must agree with `parseScopeFilter` (edge) about

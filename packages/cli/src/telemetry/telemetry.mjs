@@ -5,7 +5,7 @@
 // otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
 // packages. One span + one counter data point per human-facing command
 // (install / uninstall / doctor / list / search / show / stats / scopes / diff /
-// tree / lint / dedupe / link / migrate), fired to Dash0 so the maintainers can
+// tree / lint / dedupe / obligations / link / migrate), fired to Dash0 so the maintainers can
 // see which commands people actually run.
 //
 // Privacy — this runs on end-users' machines, so it is deliberately narrow:
@@ -183,7 +183,7 @@ export function resolveTelemetryTokenSource(env = process.env) {
   return 'none';
 }
 
-// ── ID + value helpers (mirror _shared/otel.ts) ───────────────────────────────
+// ── ID + value helpers (mirror _shared/telemetry/otel.ts) ───────────────────────────────
 
 export function randHex(bytes) {
   const b = new Uint8Array(bytes);
@@ -655,25 +655,28 @@ function normalizeExitCode(result) {
  * Run a MACHINE-facing command (`hook`, `mcp`) and count the invocation —
  * counter only, no span. Returns the command's exit code unchanged.
  *
- * The export is STARTED BEFORE the command runs and awaited after, so it
- * overlaps the command's own work instead of being serialized behind it. That
- * ordering is what makes this affordable on `hook`, which fires several times
- * per agent turn: by the time there is anything to await, the POST has usually
- * already completed, and {@link METERED_TIMEOUT_MS} caps the worst case.
+ * The two commands are counted at DIFFERENT times, for a reason specific to
+ * each:
  *
- * It also makes the count robust for `mcp`, which is a LONG-LIVED stdio server —
- * `run()` does not return until the server exits, and a killed server would
- * never have reported at all if the export waited for it. Since the counter
- * reports the invocation rather than its outcome (a machine-facing command's
- * verdict belongs to its stdout contract, which the host reads), there is
- * nothing to learn by waiting.
+ *   • `mcp` is a LONG-LIVED stdio server — `run()` does not return until the
+ *     server exits, and a killed server would never report at all if the export
+ *     waited for it. So its count fires BEFORE run and is awaited after, which
+ *     also overlaps the export with the server's own startup. It carries no
+ *     outcome: a server's verdict belongs to its stdout contract.
+ *   • `hook` is short-lived and fires several times per agent turn. It is
+ *     counted AFTER run so the counter can carry the health dimensions run
+ *     reports (`lorekit.hook.event` + `lorekit.hook.outcome`) — the difference
+ *     between a healthy hook and one silently degrading (an unusable store, a
+ *     swallowed lookup error) that a bare invocation ping cannot show. The extra
+ *     latency is run's own duration (a hook is tens of ms); the
+ *     {@link METERED_TIMEOUT_MS} export cap dominates either way.
  *
  * Nothing here can affect the command: the exit code is passed through
  * untouched, and every telemetry failure is swallowed.
  *
  * @param {string} command  `hook` | `mcp`
  * @param {string} version  CLI version
- * @param {() => Promise<number>} run  the command handler
+ * @param {() => Promise<number | { exitCode?: number, meter?: object }>} run  the command handler
  */
 export async function meterCommand(command, version, run) {
   let config;
@@ -688,15 +691,26 @@ export async function meterCommand(command, version, run) {
   // cost nothing at all: no identity read, no timer, no promise.
   if (!config.enabled) return normalizeExitCode(await run());
 
-  // `.catch` attached IMMEDIATELY, before any await: an unawaited rejecting
-  // promise is an unhandled rejection, which on a machine-facing command would
-  // print to stderr and pollute a host's log.
-  const pending = countInvocation(config, command, version).catch(() => {});
-  try {
-    return normalizeExitCode(await run());
-  } finally {
-    await pending;
+  // Long-lived server: count before run (see docblock). `.catch` attached
+  // IMMEDIATELY, before any await: an unawaited rejecting promise is an
+  // unhandled rejection, which on a machine-facing command would print to
+  // stderr and pollute a host's log.
+  if (command === 'mcp') {
+    const pending = countInvocation(config, command, version).catch(() => {});
+    try {
+      return normalizeExitCode(await run());
+    } finally {
+      await pending;
+    }
   }
+
+  // Short-lived hook: count after run so the counter carries what run reported.
+  // A `meter` object on the result is the health payload; anything else (a bare
+  // exit code) counts with no extra dimensions.
+  const result = await run();
+  const meter = (result && typeof result === 'object' && result.meter) ? result.meter : {};
+  await countInvocation(config, command, version, meter).catch(() => {});
+  return normalizeExitCode(result);
 }
 
 /**
@@ -709,7 +723,7 @@ export async function meterCommand(command, version, run) {
  * `lint` finding) reports `lorekit.cli.outcome=failure` on a span the exporter
  * emits as STATUS_CODE_OK — never ERROR.
  *
- * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | link | migrate
+ * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | obligations | link | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler

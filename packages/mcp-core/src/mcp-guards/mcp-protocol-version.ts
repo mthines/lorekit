@@ -27,21 +27,21 @@
 //
 // KNOWN GAPS in the 2025-06-18 claim, recorded rather than glossed. Claiming a
 // revision means claiming its MUSTs, and the same standard used to reject
-// 2025-03-26 has to be applied honestly here. None of the three is a behaviour
-// this module changes — they are all handler-side, and all three are unmet
-// today — but they are NOT inherited obligations either. Each arrives with a
-// revision this server has never claimed until now, so it is the version list
-// on the line below that first puts us on the hook for them (the revision that
-// introduces each is named):
-//   1. `notifications/initialized` answers 204; the Streamable HTTP transport
-//      (2025-03-26) says a notification MUST get 202 Accepted.
-//   2. No `MCP-Protocol-Version` request-header handling (2025-06-18 adds the
-//      header; an unsupported value MUST be answered 400). This one is created
-//      outright by offering 2025-06-18 — before this change nothing asked for it.
-//   3. No `Origin` header validation (Streamable HTTP, 2025-03-26).
-// A caller doing basic tools/list + tools/call is unaffected by all three,
-// which is why offering the version is still the right call — but fix them
-// before treating this list as a conformance statement.
+// 2025-03-26 has to be applied honestly here. Two of the three gaps this list
+// used to carry are now CLOSED, both in `mcp-handler.ts`:
+//   - `notifications/initialized` now answers 202 Accepted, not 204, per the
+//     Streamable HTTP transport MUST (2025-03-26).
+//   - A `MCP-Protocol-Version` request header carrying an unsupported value now
+//     gets 400, per the MUST that arrives with 2025-06-18 itself — this one was
+//     created outright by offering that revision; before this module existed,
+//     nothing asked for it.
+// One remains, unmet today and NOT a behaviour this module changes (it is
+// handler-side) and NOT an inherited obligation — it is created by the same
+// version list below claiming 2025-06-18's Streamable HTTP predecessor:
+//   1. No `Origin` header validation (Streamable HTTP, 2025-03-26).
+// A caller doing basic tools/list + tools/call is unaffected by it, which is
+// why offering the version is still the right call — but fix it before
+// treating this list as a conformance statement.
 //
 // Ordered NEWEST FIRST: index 0 is the newest revision we speak.
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2024-11-05'] as const;

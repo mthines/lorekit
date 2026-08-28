@@ -1,4 +1,4 @@
-import { traceRequest } from '../_shared/otel.ts';
+import { traceRequest } from '../_shared/telemetry/otel.ts';
 import { resolveRestAuth } from '../_shared/api/auth.ts';
 import { createRouter } from '../_shared/api/router.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';

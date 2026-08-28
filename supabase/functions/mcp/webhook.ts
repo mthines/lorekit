@@ -51,9 +51,9 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { validateScope } from '../_shared/scope.ts';
-import { sanitizeOrigin } from '../_shared/origin.ts';
-import { traceRequest, type Span } from '../_shared/otel.ts';
+import { validateScope } from '../_shared/scope/scope.ts';
+import { sanitizeOrigin } from '../_shared/provenance/origin.ts';
+import { traceRequest, type Span } from '../_shared/telemetry/otel.ts';
 import { toolWrite } from './tools.ts';
 import {
   selectWebhookSecrets,
@@ -65,8 +65,8 @@ import {
   reconcileInstallation,
 } from './webhook-installation.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
-import { nullableRpcArg, type DbClient } from '../_shared/db-client.ts';
-import type { Database } from '../_shared/database.types.ts';
+import { nullableRpcArg, type DbClient } from '../_shared/db/db-client.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
 const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
@@ -408,7 +408,12 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       'lorekit.webhook.hmac_fail_reason': 'secret_not_configured',
       'lorekit.webhook.is_app_event': isAppEvent,
     });
-    span.error('HmacError: secret_not_configured');
+    // A 401: the delivery is unauthenticated because no secret is configured
+    // for this repo. That is a caller/config condition, not a server fault, so
+    // record it WITHOUT flipping the span to ERROR — an unconfigured or forged
+    // delivery is expected in the wild and must not inflate the webhook error
+    // rate. The `hmac_fail_reason` attribute keeps it queryable.
+    span.clientError('HmacError: secret_not_configured');
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -432,7 +437,11 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
   if (!hmac.ok) {
     span.setAttributes({ 'lorekit.webhook.hmac_fail_reason': hmac.failReason ?? 'unknown' });
-    span.error(`HmacError: ${hmac.failReason ?? 'signature mismatch'}`);
+    // A 401 signature mismatch is a caller condition (a forged or misconfigured
+    // delivery), not a server fault. Record it WITHOUT flipping the span to
+    // ERROR so routine bad signatures do not inflate the webhook error rate;
+    // `hmac_fail_reason` keeps the failure queryable.
+    span.clientError(`HmacError: ${hmac.failReason ?? 'signature mismatch'}`);
     return new Response('Unauthorized', { status: 401 });
   }
 

@@ -24,7 +24,7 @@
 --      filled from the client-supplied `X-LoreKit-Client` header at the ONE
 --      recording site each surface already has (`_shared/api/router.ts`,
 --      `mcp/mcp-handler.ts`) and validated against a closed vocabulary by the
---      pure `parseUsageClient` (`_shared/usage-stats.ts`). Unattributed stays
+--      pure `parseUsageClient` (`_shared/telemetry/usage-stats.ts`). Unattributed stays
 --      NULL — the 00044 posture: a telemetry dimension can never fail the
 --      call it is measuring.
 --

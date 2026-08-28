@@ -1,0 +1,55 @@
+# PR relevance memory — feeds the reviewer agents' learning loop.
+#
+# Records how each PR review comment was resolved into LoreKit, under this repo's scope. The
+# `reviewer` / `pr-reviewer` agents read those records at the start of every run: a finding shape
+# this repo keeps declining gets suppressed, one that reliably gets fixed gets reinforced. Without
+# it the same dismissed nitpick comes back on every PR, because nothing ever records the dismissal.
+#
+#   thread resolved -> relevant/fixed, or not-relevant/wont-fix on a 👎 or a "by design" reply
+#   PR merged       -> threads still open with no fix and no decline become ignored-at-merge
+#
+# The logic lives in mthines/agent-skills and updates without touching this file; this caller is
+# only the event wiring. Read-only on GitHub — its one side effect is the LoreKit write. Requires
+# the LOREKIT_API_KEY repo secret; without it the run logs that it is unconfigured and skips the
+# write rather than failing.
+#
+# Source: mthines/agent-skills/plugins/pr-relevance-memory/templates/pr-relevance-caller.yml
+# Docs:   mthines/agent-skills/agents/shared/rules/comment-relevance-memory.md
+
+name: PR relevance memory
+
+on:
+  pull_request_review_thread:
+    types: [resolved]
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  thread-resolved:
+    name: Record resolved thread
+    if: github.event_name == 'pull_request_review_thread'
+    uses: mthines/agent-skills/.github/workflows/reviewer-comment-relevance.yml@main
+    with:
+      mode: thread-resolved
+      pr_number: ${{ github.event.pull_request.number }}
+      comment_id: ${{ github.event.thread.comments[0].id }}
+      comment_path: ${{ github.event.thread.comments[0].path }}
+      comment_line: ${{ github.event.thread.comments[0].line }}
+      comment_body: ${{ github.event.thread.comments[0].body }}
+      comment_created_at: ${{ github.event.thread.comments[0].created_at }}
+    secrets:
+      lorekit_api_key: ${{ secrets.LOREKIT_API_KEY }}
+
+  pr-merged:
+    name: Sweep open threads at merge
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    uses: mthines/agent-skills/.github/workflows/reviewer-comment-relevance.yml@main
+    with:
+      mode: pr-merged
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets:
+      lorekit_api_key: ${{ secrets.LOREKIT_API_KEY }}

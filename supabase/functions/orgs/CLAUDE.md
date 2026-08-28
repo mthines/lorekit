@@ -121,7 +121,7 @@ Handler signature: `async function handle{Name}(req, auth, db, span, params, cor
 ## Audit events
 
 Every mutating handler writes to `audit_log` via `recordAudit`
-(`_shared/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
+(`_shared/audit/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
 field layout deliberately matches the equivalent web server action
 (`packages/web/src/lib/orgs.ts`, `org-invites.ts`) so the dashboard and the REST API
 produce comparable rows for the same operation.
@@ -165,7 +165,7 @@ This keeps the URL surface minimal while preserving correct permission semantics
 **All seven mutating routes audit.** `POST /`, `PATCH /:slug`, `DELETE /:slug`,
 `PATCH /:slug/members/:userId`, `DELETE /:slug/members/:userId`, `POST /:slug/invites` and
 `DELETE /:slug/invites/:inviteId` each call `recordAudit(db, {...}, auditUserId(auth))` from
-`_shared/audit.ts` — the single edge audit writer — **after** the RPC succeeded, never on a
+`_shared/audit/audit.ts` — the single edge audit writer — **after** the RPC succeeded, never on a
 validation, 404, permission or RPC-error path. Every `lorekit_org_*` RPC RAISES on each of its
 non-success branches, so `error === null` is a reliable "a row really changed".
 

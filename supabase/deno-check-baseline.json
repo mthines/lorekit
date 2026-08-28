@@ -19,7 +19,7 @@
     "  1. `createClient()` was called with no `Database` generic anywhere, so every",
     "     `.from()` row was `never` and every `.rpc()` argument was `undefined`.",
     "     Fixing it RAISED the count to 104 before removing it — real types see",
-    "     real mismatches. `_shared/db-client.ts` now holds the one alias.",
+    "     real mismatches. `_shared/db/db-client.ts` now holds the one alias.",
     "  2. `.from<Row>('table')` — a supabase-js v1 idiom, 15 occurrences — silently",
     "     overrode the schema.",
     "  3. `validateQuery<T>(schema: z.ZodType<T>)` could bind `T` to a schema's",

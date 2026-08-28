@@ -31,6 +31,18 @@ const here = path.dirname(fileURLToPath(import.meta.url)); // packages/mcp-core/
 const repoRoot = path.resolve(here, '../../../..');
 const functionsDir = path.join(repoRoot, 'supabase', 'functions');
 
+// The mirror-pair inventory is a plain `.mjs` package outside this project's
+// tsconfig (the CLI is zero-dep, no build step), so it is loaded by URL at
+// runtime rather than as a typed import — the same cross-runtime pattern
+// `lesson-rank-parity.spec.ts` uses for `lessons-pure.mjs`. It is also the
+// SAME inventory `lorekit obligations` reads (`packages/cli/src/shared/obligations-map.mjs`),
+// so this spec and that command can never disagree about which files mirror
+// which.
+const mirrorPairsModulePath = path.join(here, '../../../cli/src/shared/mirror-pairs.mjs');
+const { mirrorPairs } = (await import(/* @vite-ignore */ `file://${mirrorPairsModulePath}`)) as {
+  mirrorPairs: ReadonlyArray<{ core: string; edge: string; driftChecked: boolean }>;
+};
+
 // Reduce a source file to its executable lines: trim each line, drop blanks,
 // and drop comment lines (line comments and every line of a block/JSDoc
 // comment — see COMMENT_PREFIXES). Neither mirror uses trailing inline
@@ -47,109 +59,20 @@ function executableSource(file: string): string {
     .join('\n');
 }
 
-// Each entry is [mcp-core file name, edge path relative to supabase/functions].
-// Some mirrors are MCP-only (`mcp/`); the `_shared/` ones are used by more than
-// one edge function — trace-context.ts because every function (REST + MCP)
-// parses the inbound traceparent, created-at.ts because both the MCP
-// `memory.write` tool and the REST `POST /memories` handler validate the
-// optional `created_at` override with it, and rest-tool-name.ts because the
-// REST router derives its usage-event tool name from it.
-//
-// `audit.ts` is mirrored too (packages/mcp-core/src/audit/audit.ts ↔
-// supabase/functions/_shared/audit.ts) but is deliberately ABSENT here: like
-// limits.ts, the edge copy is not import-free — it types the client as
-// `ReturnType<typeof createClient>` off an `npm:` specifier where mcp-core
-// types it as an imported `SupabaseClient`, so a whole-file comparison does not
-// apply. The edge copy additionally carries `recordAuditDeferred`, which hands
-// the insert to `EdgeRuntime.waitUntil` to keep it off the response path — a
-// runtime API that exists only on the edge and so has no mcp-core counterpart
-// to compare against. `buildAuditEntry` (the part that MUST stay
-// byte-consistent) and `recordAudit` are covered by audit.spec.ts on the
-// mcp-core copy.
-const MIRRORS: ReadonlyArray<readonly [string, string]> = [
-  ['../auth/auth-token.ts', 'mcp/auth-token.ts'],
-  ['../limits/created-at.ts', '_shared/created-at.ts'],
-  ['../limits/ttl.ts', 'mcp/ttl.ts'],
-  ['../limits/ttl-defaults.ts', 'mcp/ttl-defaults.ts'],
-  ['../provenance/origin.ts', '_shared/origin.ts'],
-  ['../webhook/webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
-  ['../auth/tenant-scope.ts', '_shared/tenant-scope.ts'],
-  ['../auth/org-permissions.ts', 'mcp/org-permissions.ts'],
-  ['../webhook/webhook-installation.ts', 'mcp/webhook-installation.ts'],
-  ['../webhook/github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
-  ['../telemetry/trace-context.ts', '_shared/trace-context.ts'],
-  ['../rest/rest-tool-name.ts', '_shared/rest-tool-name.ts'],
-  // The ranking used by GET /memories/relevant. Note this file has a SECOND,
-  // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
-  // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.
-  ['../ranking/lesson-rank.ts', '_shared/lesson-rank.ts'],
-  // The tags/origin_pr → outcome-factor mapping the ranked reads feed the
-  // scorer. Mirrored because BOTH ranked edge paths derive it —
-  // memories/handlers/relevant.ts and mcp/tools.ts (order=rank) — and neither
-  // can cross-import mcp-core; hoisted out of both so the two cannot drift.
-  ['../ranking/outcome-signal.ts', '_shared/outcome-signal.ts'],
-  // The pure half of the embedding pipeline. The impure half (`fetch`, the API
-  // key) is `_shared/embedding-client.ts`, which is Deno-only and not mirrored.
-  ['../provenance/embedding.ts', '_shared/embedding.ts'],
-  // The MCP `initialize` version negotiation. Mirrored because the handshake is
-  // decided in the Deno edge handler, which cannot cross-import mcp-core, and a
-  // silent drift here is a whole class of client that connects and then stops.
-  ['../mcp-guards/mcp-protocol-version.ts', '_shared/mcp-protocol-version.ts'],
-  // Two rules lifted OUT of Deno-only files so vitest can assert them:
-  // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
-  // rest-response-outcome.ts is the status→usage_events.outcome
-  // classification (was inline in _shared/api/router.ts). Both edge files now
-  // import their mirror instead of holding a copy.
-  ['../audit/rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
-  ['../rest/rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
-  ['../limits/dry-run.ts', '_shared/dry-run.ts'],
-  // Pure aggregation/window logic for GET /memories/usage — mirrored into the
-  // _shared tree because the usage handler cannot cross-import mcp-core.
-  ['../telemetry/usage-stats.ts', '_shared/usage-stats.ts'],
-  // The `(now, now + days]` bounds behind `GET /memories?expiring_within_days=`.
-  // Mirrored for the usage-stats reason (the list handler cannot cross-import
-  // mcp-core) and guarded here rather than left inline because the asymmetric
-  // boundary — exclusive lower so an already-expired row is never shown,
-  // inclusive upper so "within 7 days" includes day 7 — is the entire feature,
-  // and a drift between the tested copy and the deployed one is silent.
-  ['../limits/expiring-window.ts', '_shared/expiring-window.ts'],
-  // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
-  // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
-  ['../rest/cors-origins.ts', '_shared/api/cors-origins.ts'],
-  // The bounded value behind `lorekit.scope.type`. Mirrored because BOTH
-  // transports resolve it before validation — mcp-handler.ts from the tool
-  // arguments, api/router.ts from the query string — and neither can
-  // cross-import mcp-core.
-  ['../scope/scope-type-attribute.ts', '_shared/scope-type-attribute.ts'],
-  // Which operations sweep the whole account, and the refusal a scoped key
-  // meets. Mirrored into `_shared/` rather than left in `mcp/permissions.ts`
-  // because BOTH transports enforce it — the MCP dispatcher and the REST
-  // `POST /memories/purge` handlers — and the REST tree cannot cross-import the
-  // `mcp/` directory. A second copy is exactly how the REST half shipped
-  // ungated while the docs claimed it was refused.
-  ['../auth/account-wide-tools.ts', '_shared/account-wide-tools.ts'],
-  // The self-time / IO-wait split stamped on every root request span. Mirrored
-  // because `traceRequest` (Deno) is the only caller and cannot cross-import
-  // mcp-core; guarded here because the interval MERGE is the whole point — a
-  // copy that drifts back to summing overlapping calls reports negative self
-  // time on exactly the concurrent requests worth profiling.
-  ['../telemetry/io-ledger.ts', '_shared/io-ledger.ts'],
-  // pg_stat_statements rows → OTel cumulative sums, for the `profiling`
-  // function. Mirrored for the io-ledger.ts reason; guarded here because the
-  // ms→s conversion and the epoch fallback for an unreset counter are both
-  // silent when wrong — a drifted copy exports plausible numbers that are off
-  // by 1000x or collapse into an unrateable zero-length series.
-  ['../telemetry/db-query-metrics.ts', '_shared/db-query-metrics.ts'],
-];
+// The full per-pair rationale (which mirrors are MCP-only vs shared by more
+// than one edge function, and why `audit.ts`/`limits.ts` are real partners
+// but excluded below) now lives in `mirror-pairs.mjs` itself — this spec only
+// derives the subset of the shared inventory it can actually byte-compare.
+const driftCheckedPairs = mirrorPairs.filter((pair) => pair.driftChecked);
 
 describe('edge-function mirror parity', () => {
-  it.each(MIRRORS)('%s stays behaviourally in sync with its edge mirror (%s)', (name, edgePath) => {
-    const core = executableSource(path.join(here, name));
-    const edge = executableSource(path.join(functionsDir, edgePath));
+  it.each(driftCheckedPairs)('$core stays behaviourally in sync with its edge mirror ($edge)', ({ core, edge }) => {
+    const coreSource = executableSource(path.join(repoRoot, core));
+    const edgeSource = executableSource(path.join(repoRoot, edge));
     // Sanity: both files exist and are non-trivial, so an empty-string match
     // can never masquerade as parity.
-    expect(core.length).toBeGreaterThan(0);
-    expect(edge).toBe(core);
+    expect(coreSource.length).toBeGreaterThan(0);
+    expect(edgeSource).toBe(coreSource);
   });
 });
 

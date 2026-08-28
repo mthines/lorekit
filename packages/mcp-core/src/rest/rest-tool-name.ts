@@ -18,7 +18,7 @@
 // No new naming scheme is introduced here.
 //
 // Pure and import-free so it can be mirrored verbatim into
-// `supabase/functions/_shared/rest-tool-name.ts` (the edge tree cannot
+// `supabase/functions/_shared/rest/rest-tool-name.ts` (the edge tree cannot
 // cross-import this package) and unit-tested in Node — the edge functions have
 // no test harness of their own. `edge-parity.spec.ts` guards the two copies.
 
@@ -51,6 +51,7 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories POST /purge-expired': 'memory.purge_expired',
   'memories GET /scopes': 'memory.scopes',
   'memories GET /usage': 'memory.usage',
+  'memories GET /usage/runs': 'memory.usage-runs',
   'memories GET /tags': 'memory.tags',
   'memories GET /facets': 'memory.facets',
   'memories GET /activity': 'memory.activity',
@@ -63,11 +64,20 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories POST /facets': 'memory.facets',
   'memories POST /activity': 'memory.activity',
   'memories GET /read-activity': 'memory.read-activity',
+  'memories GET /read-ranking': 'memory.read-ranking',
   // The ranked shortlist. Its own tool name rather than folding into
   // `memory.search`: the two answer different questions (what matches vs what
   // is worth reading) and collapsing them would make it impossible to tell
   // whether agents actually reach for the ranking.
   'memories GET /relevant': 'memory.relevant',
+  // ── retention policies ("grooming") ─────────────────────────────────────
+  'memories GET /policies': 'policy.list',
+  'memories POST /policies': 'policy.create',
+  'memories PATCH /policies/:id': 'policy.update',
+  'memories DELETE /policies/:id': 'policy.delete',
+  'memories POST /groom/preview': 'groom.preview',
+  'memories POST /groom/run': 'groom.run',
+  'memories POST /protect': 'memory.protect',
   'memories GET /:id': 'memory.read',
   'memories PATCH /:id': 'memory.write',
   'memories POST /:id/restore': 'memory.restore',

@@ -9,6 +9,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { withSpan, logger } from '@/lib/telemetry';
 
 export interface PlanUsage {
@@ -24,9 +25,7 @@ export interface PlanUsage {
 export async function getPlanUsage(): Promise<PlanUsage | null> {
   return withSpan('lorekit.plan.get_usage', {}, async (span) => {
     const supabase = await createServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getVerifiedUser();
 
     if (!user) return null;
 

@@ -19,6 +19,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { createAdminClient, SupabaseAdminConfigError } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
@@ -51,7 +52,7 @@ export interface GithubInstallationRepository {
  */
 export async function listGithubInstallations(): Promise<GithubInstallation[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -122,7 +123,7 @@ export async function handleSetupReturn(
   state?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return { ok: false, error: 'not_authenticated' };
 
   // Forward the caller's session JWT to the edge endpoint so authorization is

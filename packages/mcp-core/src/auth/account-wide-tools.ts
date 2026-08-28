@@ -16,7 +16,7 @@
  * two surfaces name the same operation the same way and no second list exists.
  *
  * Pure and import-free so it can be mirrored verbatim into
- * `supabase/functions/_shared/account-wide-tools.ts`; `edge-parity.spec.ts`
+ * `supabase/functions/_shared/auth/account-wide-tools.ts`; `edge-parity.spec.ts`
  * guards the two copies.
  */
 

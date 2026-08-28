@@ -96,6 +96,10 @@ agent use LoreKit on its own:
   over a store that has grown noisy — finding and merging near-duplicate
   lessons, linting out low-quality ones, and setting expiry on time-bound ones —
   always analysing read-only and proposing a plan before it changes anything.
+  For fully automated, server-side cleanup instead of an agent-driven pass, see
+  [Retention policies](https://lorekit.io/docs/grooming) — saved scoped rules
+  (`lorekit policy create` / `lorekit groom`) that archive stale lore, reviewed
+  manually or swept nightly, and never hard-delete.
 
 ```bash
 npx @lorekit/cli install \
@@ -122,6 +126,17 @@ Then drop `npx @lorekit/cli` and call `lorekit` directly:
 ```bash
 lorekit doctor
 ```
+
+**Tab completion (zsh / fish).** Let `install` wire it, or do it by hand:
+
+```bash
+lorekit install --completions auto        # detect $SHELL and set it up
+lorekit completion zsh  > ~/.zsh/completions/_lorekit
+lorekit completion fish > ~/.config/fish/completions/lorekit.fish
+```
+
+It completes commands, each command's flags, and — from your local store —
+scopes and `scope::key` addresses.
 
 ### 3. That's it
 

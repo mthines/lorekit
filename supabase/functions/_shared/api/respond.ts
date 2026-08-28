@@ -40,7 +40,7 @@ export function internalError(cors: Record<string, string> = {}): Response {
 /**
  * Short-circuit response for a dry-run request: the handler validated and
  * authorized the call but made no changes. Signals via a 200 body flag and the
- * `X-LoreKit-Dry-Run: applied` header. See `_shared/dry-run.ts`.
+ * `X-LoreKit-Dry-Run: applied` header. See `_shared/limits/dry-run.ts`.
  */
 export function dryRun(cors: Record<string, string> = {}): Response {
   return new Response(

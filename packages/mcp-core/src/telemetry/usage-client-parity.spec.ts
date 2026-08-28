@@ -32,6 +32,7 @@ const READ_ACTIVITY_MIGRATION = path.join(
   repoRoot, 'supabase', 'migrations', '00054_usage_event_client.sql',
 );
 const ROUTER = path.join(repoRoot, 'supabase', 'functions', '_shared', 'api', 'router.ts');
+const MCP_HANDLER = path.join(repoRoot, 'supabase', 'functions', 'mcp', 'mcp-handler.ts');
 const CORS = path.join(repoRoot, 'packages', 'mcp-core', 'src', 'rest', 'cors-origins.ts');
 
 const read = (file: string) => readFileSync(file, 'utf8');
@@ -81,5 +82,36 @@ describe('usage client contract parity', () => {
     // 'dashboard'` is null, which would drop every unattributed event —
     // including every row written before the column existed.
     expect(sql).not.toMatch(/ue\.client\s*<>/);
+  });
+});
+
+describe('per-transport client default', () => {
+  // Each transport IS a fixed calling surface, so an absent/unrecognised
+  // header should default to what that transport actually is rather than
+  // recording no attribution at all — the gap this pins is the production MCP
+  // server (the dominant agent read path) recording `client = NULL` because
+  // neither transport applied a default. The default is a `?? '<literal>'`
+  // applied by the CALLER around `parseUsageClient`, never inside it — that
+  // validator stays closed and fail-safe, so an unknown header value still
+  // cannot smuggle a new member into the ledger. If a future refactor moves
+  // the default back into the validator (widening its return type) or drops
+  // it from a transport, these text assertions catch it even though nothing
+  // would throw or 4xx — the exact failure mode `usage-client-parity.spec.ts`
+  // exists to guard against.
+  it('the MCP transport defaults an unattributed call to \'mcp\'', () => {
+    expect(read(MCP_HANDLER)).toContain(
+      "parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'mcp'",
+    );
+  });
+
+  it('the REST transport defaults an unattributed call to \'api\'', () => {
+    expect(read(ROUTER)).toContain(
+      "parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'api'",
+    );
+  });
+
+  it('both defaults are members of the closed vocabulary', () => {
+    expect(USAGE_CLIENTS).toContain('mcp');
+    expect(USAGE_CLIENTS).toContain('api');
   });
 });

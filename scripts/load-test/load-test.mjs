@@ -74,6 +74,7 @@ import {
   rampVerdict,
   resolveAuthMode,
   resolveSurface,
+  resolveUsers,
   resolveTarget,
   summarize,
   totals,
@@ -514,7 +515,9 @@ LoreKit load test — open-loop REST driver with SQL attribution.
                                   typed in full.
   --rps <n>          arrival rate                     (default 20)
   --duration <s>     drive duration in seconds        (default 60)
-  --users <n>        provisioned users; each gets its own 120 rpm budget (5)
+  --users <n|auto>   provisioned users; each gets its own 120 rpm budget (5).
+                     "auto" derives the minimum the peak rate needs — on mcp
+                     that is rps/2, and every user costs a seed phase
   --seed <n>         lore rows seeded per user        (default 50)
   --surface <s>      rest | mcp                        (default rest)
                      rest = dashboard/CLI path, mcp = the AGENT path
@@ -544,7 +547,9 @@ const authResult = resolveAuthMode(opts.auth, surface, process.env);
 if (!authResult.ok) die(authResult.error);
 const authMode = authResult.auth;
 
-for (const [flag, v] of [['--rps', opts.rps], ['--duration', opts.duration], ['--users', opts.users], ['--seed', opts.seed]]) {
+// `--users` is deliberately absent: it accepts the literal `auto` as well as a
+// number, so `resolveUsers` validates it below.
+for (const [flag, v] of [['--rps', opts.rps], ['--duration', opts.duration], ['--seed', opts.seed]]) {
   if (!/^\d+(\.\d+)?$/.test(v) || Number(v) <= 0) die(`${flag} must be a positive number, got "${v}"`);
 }
 
@@ -563,6 +568,16 @@ const cred = checkServiceCredential({ serviceKey, anonKey, supabaseUrl });
 for (const w of cred.warnings) log(`  ! ${w}`);
 if (cred.errors.length) die(`credential check failed:\n  - ${cred.errors.join('\n  - ')}`);
 
+// The PEAK rate the run will reach, which is what the rate limiter has to
+// accommodate — on a ladder that is the ceiling, not the starting rate.
+const peakRps = opts.ramp && opts.maxRps ? Number(opts.maxRps) : Number(opts.rps);
+// Which flag carries it, so a refusal below names the flag that would actually
+// help. Advising "lower --rps" on a ramp is advice that cannot work.
+const rateFlag = opts.ramp && opts.maxRps ? '--max-rps' : '--rps';
+
+const usersResult = resolveUsers({ users: opts.users, surface, peakRps });
+if (!usersResult.ok) die(usersResult.error);
+
 const run = {
   target,
   // Carried into the telemetry: without these two, an MCP run and a REST run
@@ -572,16 +587,25 @@ const run = {
   authTier: authMode,
   rps: Number(opts.rps),
   durationSec: Number(opts.duration),
-  users: Number(opts.users),
+  users: usersResult.users,
 };
+
+if (usersResult.auto) {
+  log(`  --users auto → ${run.users} (the minimum ${peakRps} rps needs on ${surface})`);
+  // Said out loud because it is the cost this flag hides: seeding is per user
+  // and already dominated wall clock at 5.
+  if (run.users > 20) {
+    log(`  ! ${run.users} users means seeding ${run.users} x ${opts.seed} rows before any measurement — expect a long setup.`);
+  }
+}
+
 // REFUSE a configuration the rate limiter would decide. MCP checks the limit on
-// every method (2 rps/user at the 120/min default), so the harness's own
-// defaults — 20 rps across 5 users — are 2x over on that surface: half the run
-// would 429 and the percentiles would describe the guardrail, not the service. A
-// load test that silently measures its own throttling is worse than none,
-// because the number looks usable. Fails with the users actually required.
-const peakRps = opts.ramp && opts.maxRps ? Number(opts.maxRps) : run.rps;
-const headroom = checkRateHeadroom({ surface, rps: peakRps, users: run.users });
+// every method (2 rps/user at the 120/min default), so 20 rps across 5 users is
+// 2x over on that surface: half the run would 429 and the percentiles would
+// describe the guardrail, not the service. A load test that silently measures
+// its own throttling is worse than none, because the number looks usable.
+// Unreachable when `--users auto` resolved the count, by construction.
+const headroom = checkRateHeadroom({ surface, rps: peakRps, users: run.users, rateFlag });
 if (!headroom.ok) die(headroom.error);
 
 const runId = randomUUID().slice(0, 8);

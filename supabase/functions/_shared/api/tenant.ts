@@ -7,14 +7,14 @@
  * so no filtering is needed — RLS handles it automatically.
  *
  * The narrowing arithmetic itself is IMPORTED from the single mirrored
- * supabase/functions/_shared/tenant-scope.ts (shared with the MCP surface); what
+ * supabase/functions/_shared/auth/tenant-scope.ts (shared with the MCP surface); what
  * lives here is the REST-specific plumbing around it — the org-id RPC with its
  * span, and the auth-tier predicates. It used to duplicate
  * packages/mcp-core/src/auth/tenant-scope.ts but is specific to the REST shared
  * API (different import chain, different span naming).
  */
-import { createTracedClient } from '../otel.ts';
-import type { Span, TracedQuery } from '../otel.ts';
+import { createTracedClient } from '../telemetry/otel.ts';
+import type { Span, TracedQuery } from '../telemetry/otel.ts';
 import type { AuthContext, DbClient } from './auth.ts';
 import { keyRestriction } from './auth.ts';
 import { scopeAllowedByKey } from '../schemas/api-key.ts';
@@ -24,7 +24,7 @@ import {
   ownRowsFragment,
   restrictsTenancy,
   type KeyRestriction,
-} from '../tenant-scope.ts';
+} from '../auth/tenant-scope.ts';
 
 /**
  * Resolve the org IDs the user is a member of via the single-source RPC.

@@ -748,6 +748,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         nowIso={insightsNowIso}
       />
 
+      {/* Scope consumption, hot/cold lore, operational health and "who's
+          reading" all moved to the dedicated /insights page — one place to
+          dig into consumption/usage rather than four panels scattered across
+          Overview and the Explorer. See InsightsPage.tsx. */}
+
       {/* ── Results ─────────────────────────────────────────────────────────
           The filter bar (search / filters / date / status) sits above the memory
           list — ownership is a dimension INSIDE the filter menu now, not a

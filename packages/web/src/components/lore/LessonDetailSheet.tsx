@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
+import { Badge } from '@/components/ui/Badge';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
@@ -58,6 +60,15 @@ interface LessonFormValues {
    */
   ttlInput: string;
 }
+
+// ── Promotion threshold ──────────────────────────────────────────────────────
+// LoreKit's own documented promotion gate (packages/cli/skill/lorekit-setup/
+// rules/self-improvement-loops.md → "Promotion (fast → slow)"): a lesson that
+// has recurred at least this many times across runs is promotion-eligible —
+// worth hardening into a permanent host rule rather than staying episodic.
+// Kept as a named constant here (not re-derived) because the rules doc is the
+// authority; this only needs to match its number for the affordance to be honest.
+const PROMOTION_SEEN_COUNT_THRESHOLD = 3;
 
 // ── TTL helpers ───────────────────────────────────────────────────────────────
 
@@ -677,11 +688,39 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                           </>
                         )}
 
-                        {/* Source — which agent recorded this and what triggered it. */}
-                        {(lesson.source_agent || lesson.trigger) && (
+                        {/* Source — the memory's taxonomy (kind/host), which
+                            agent recorded it, what triggered it, and how many
+                            times it has recurred. Every field is nullable: a
+                            row written before migration 00048/00056 (or
+                            00059 for recurrence) carries fewer of them, and
+                            `lessonFromMemoryEntry` has already reused the
+                            shared `inferKindHost` to backfill kind/host from
+                            the legacy `loop::<host>-lessons` tag where
+                            possible, so this section never re-parses tags
+                            itself. First row present starts a new cluster
+                            only when Ownership rendered above it. */}
+                        {(lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null) && (
                           <>
-                            {lesson.source_agent && (
+                            {lesson.kind && (
                               <div className={`flex items-center gap-2 text-xs ${lesson.org ? clusterStart : ''}`}>
+                                <Layers className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Kind</dt>
+                                <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                                  {lesson.kind}
+                                </dd>
+                              </div>
+                            )}
+                            {lesson.host && (
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.kind ? clusterStart : ''}`}>
+                                <Cpu className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Host</dt>
+                                <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                                  {lesson.host}
+                                </dd>
+                              </div>
+                            )}
+                            {lesson.source_agent && (
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.kind && !lesson.host ? clusterStart : ''}`}>
                                 <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
@@ -690,7 +729,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                               </div>
                             )}
                             {lesson.trigger && (
-                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.source_agent ? clusterStart : ''}`}>
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent ? clusterStart : ''}`}>
                                 <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
@@ -698,13 +737,77 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 </dd>
                               </div>
                             )}
-                          </>
-                        )}
+                            {(() => {
+                              const seenCount = lesson.seen_count;
+                              if (seenCount == null) return null;
+                              const eligibleForPromotion = seenCount >= PROMOTION_SEEN_COUNT_THRESHOLD;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <Repeat className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Recurrence</dt>
+                                  <dd className="ml-auto flex items-center gap-1.5">
+                                    <span className="text-[var(--color-content-secondary)]">seen {seenCount}×</span>
+                                    {eligibleForPromotion && (
+                                      <Badge
+                                        variant="amber"
+                                        className="normal-case"
+                                        title={`Recurred ${seenCount} times \u2014 LoreKit's own promotion gate (seen_count >= ${PROMOTION_SEEN_COUNT_THRESHOLD}) suggests hardening this into a permanent rule.`}
+                                      >
+                                        promote?
+                                      </Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                            {(() => {
+                              const readCount = lesson.read_count;
+                              if (readCount == null) return null;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger && lesson.seen_count == null
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <BookOpenCheck className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Consumption</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="How many times this memory has actually been READ back by a memory.read/list/search/list_archived call, not just written. Counts only SINCE per-memory tracking began — a 0 here means not read since then, not necessarily never."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {readCount === 0
+                                          ? 'no reads recorded'
+                                          : `read ${readCount}×${lesson.last_read_at ? ` · last ${new Date(lesson.last_read_at).toLocaleDateString()}` : ''}`}
+                                      </span>
+                                    </Tooltip>
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                           </>
+                         )}
 
-                        {/* Timeline — created / updated / expiry / archived.
+                         {/* Timeline — created / updated / expiry / archived.
                             Preceded by ownership and/or source, so the first row
                             always starts a new cluster. */}
-                        <div className={`flex items-center gap-2 text-xs ${lesson.org || lesson.source_agent || lesson.trigger ? clusterStart : ''}`}>
+                        <div
+                          className={`flex items-center gap-2 text-xs ${
+                            lesson.org || lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null
+                              ? clusterStart
+                              : ''
+                          }`}
+                        >
                           <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                           <dt className="text-[var(--color-content-tertiary)]">Created</dt>
                           <dd className="ml-auto text-[var(--color-content-secondary)]">

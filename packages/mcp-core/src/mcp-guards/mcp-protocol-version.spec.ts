@@ -245,15 +245,52 @@ describe('mcp-handler initialize negotiation guard', () => {
     expect(handler).not.toMatch(/mcp\.protocol_version\.negotiated/);
   });
 
-  it('documents the MUSTs it does not yet meet for the version it claims', () => {
+  it('documents the MUST it does not yet meet for the version it claims', () => {
     // Claiming a revision means claiming its obligations. 2025-03-26 is
-    // rejected here on exactly that basis, so the 2025-06-18 gaps have to be
-    // written down rather than assumed away — otherwise the standard is being
-    // applied in one direction only.
+    // rejected here on exactly that basis, so the remaining 2025-06-18 gap has
+    // to be written down rather than assumed away — otherwise the standard is
+    // being applied in one direction only. The 202/MCP-Protocol-Version pair
+    // this list used to carry is now closed (see the two tests below) and
+    // documented as such, rather than dropped silently.
     const mod = readFileSync(path.resolve(here, './mcp-protocol-version.ts'), 'utf8');
     expect(mod).toMatch(/KNOWN GAPS/);
-    for (const gap of ['202 Accepted', 'MCP-Protocol-Version', 'Origin']) {
-      expect(mod, `known-gap list should mention ${gap}`).toContain(gap);
-    }
+    expect(mod, 'known-gap list should still mention Origin').toContain('Origin');
+    expect(mod, 'known-gap list should record the 202 fix, not just drop it').toMatch(/202 Accepted/);
+    expect(mod, 'known-gap list should record the header fix, not just drop it').toMatch(
+      /MCP-Protocol-Version/,
+    );
+  });
+
+  it('answers notifications/initialized with 202 Accepted, not 204', () => {
+    // The Streamable HTTP transport MUST — closing the first of the two gaps
+    // the module comment used to just document. A notification carries no
+    // `id` and gets no JSON-RPC body either way, so the status code is the
+    // only observable difference.
+    const idx = handler.indexOf("method === 'notifications/initialized'");
+    expect(idx).toBeGreaterThan(-1);
+    const block = handler.slice(idx, idx + 500);
+    expect(block).toMatch(/status: 202/);
+    expect(block).not.toMatch(/status: 204/);
+  });
+
+  it('rejects a present but unsupported MCP-Protocol-Version header with 400', () => {
+    // The second gap the module comment used to just document: 2025-06-18
+    // itself creates this MUST by being claimed at all. Checked via the
+    // negotiator's own `isSupportedProtocolVersion`, never a re-derived list,
+    // so the header check and the negotiation logic cannot silently diverge on
+    // which versions are supported.
+    expect(handler).toMatch(/req\.headers\.get\('mcp-protocol-version'\)/);
+    expect(handler).toMatch(/isSupportedProtocolVersion\(protocolVersionHeader\)/);
+    expect(handler).toMatch(/status: 400/);
+  });
+
+  it('does not reject a request with no MCP-Protocol-Version header at all', () => {
+    // A client still negotiating (its own `initialize` call) or an older
+    // transport that never adopted the header must not be punished for its
+    // absence — only a PRESENT, unsupported value is a violation.
+    const idx = handler.indexOf("req.headers.get('mcp-protocol-version')");
+    expect(idx).toBeGreaterThan(-1);
+    const guardLine = handler.slice(idx, handler.indexOf('\n', idx) + 200);
+    expect(guardLine).toMatch(/protocolVersionHeader !== null/);
   });
 });

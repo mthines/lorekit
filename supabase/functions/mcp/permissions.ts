@@ -34,6 +34,10 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   // tools were JWT-only; they now serve `lk_*` tokens, and listing the orgs you
   // belong to is exactly the shape of thing a read token should be able to do.
   'org.list',
+  // Retention policies ("grooming") — listing saved rules and previewing what
+  // a rule would archive are both reads, same family as memory.list_archived.
+  'policy.list',
+  'groom.preview',
 ]);
 
 /** Write-family tools — require `canWrite`. */
@@ -52,6 +56,13 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'org.create',
   'org.rename',
   'org.delete',
+  // Retention policies ("grooming") — saving/changing a rule, running a sweep,
+  // and toggling protection all mutate state.
+  'policy.create',
+  'policy.update',
+  'policy.delete',
+  'groom.run',
+  'memory.protect',
 ]);
 
 /**
@@ -79,7 +90,7 @@ export function tokenPrefixFor(permissions: readonly Permission[]): 'rw' | 'ro' 
 
 // `ACCOUNT_WIDE_TOOLS` / `isRefusedForScopedKey` deliberately do NOT live here,
 // even though tool-name gating otherwise does. They live in
-// `../_shared/account-wide-tools.ts` because BOTH transports enforce the
+// `../_shared/auth/account-wide-tools.ts` because BOTH transports enforce the
 // decision: the MCP dispatcher and the REST purge endpoints. The REST tree
 // cannot cross-import this directory, so a rule kept in this file could only
 // ever be copied to reach it — and a copied rule is what would let

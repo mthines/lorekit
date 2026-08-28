@@ -490,7 +490,15 @@ export function limitedShareOfMix(surface, mix = DEFAULT_MIX) {
  * `lorekit_get_limit(user_id, 'requests_per_minute')` and a `user_limits` row
  * can raise it — 120 is only the default.
  */
-export function checkRateHeadroom({ surface, rps, users, mix = DEFAULT_MIX, requestsPerMinute = 120 }) {
+export function checkRateHeadroom({
+  surface, rps, users, mix = DEFAULT_MIX, requestsPerMinute = 120,
+  // Which flag actually carried `rps`. On a ramp the binding constraint is the
+  // CEILING, not the starting rate, so advising "lower --rps" is advice that
+  // cannot work: the ladder would still climb to --max-rps and fail again. Run
+  // 32643090759 hit exactly that — refused for a 160 rps ceiling and told to
+  // lower a flag that was already at 20.
+  rateFlag = '--rps',
+} = {}) {
   const share = limitedShareOfMix(surface, mix);
   const perUserCeiling = requestsPerMinute / 60;
   if (share === 0 || perUserCeiling <= 0) return { ok: true, requiredUsers: users, limitedRps: 0, perUserCeiling };
@@ -506,7 +514,57 @@ export function checkRateHeadroom({ surface, rps, users, mix = DEFAULT_MIX, requ
       `${surface} rate-limits ${share === 1 ? 'every method' : `the write share (${(share * 100).toFixed(0)}%)`}, ` +
       `so ${rps} rps needs at least ${requiredUsers} users at ${requestsPerMinute} req/min/user ` +
       `(${limitedRps.toFixed(1)} limited rps ÷ ${perUserCeiling.toFixed(2)} per user) — got ${users}. ` +
-      `Raise --users to ${requiredUsers}, or lower --rps to ${Math.floor(users * perUserCeiling / share)}.`,
+      `Raise --users to ${requiredUsers} (or pass --users auto), ` +
+      `or lower ${rateFlag} to ${maxRpsForUsers({ surface, users, mix, requestsPerMinute })}.`,
+  };
+}
+
+/**
+ * The highest arrival rate `users` can offer without the rate limiter deciding
+ * the result — the inverse of `checkRateHeadroom`.
+ *
+ * On MCP this is simply `users x 2` at the default ceiling, which is worth
+ * internalising before designing a run: a 160 rps ladder needs 80 users, and
+ * seeding 80 users is tens of minutes of setup before any measurement happens.
+ * Rate on that surface is bought with provisioning time, not with a bigger flag.
+ */
+export function maxRpsForUsers({ surface, users, mix = DEFAULT_MIX, requestsPerMinute = 120 }) {
+  const share = limitedShareOfMix(surface, mix);
+  const perUserCeiling = requestsPerMinute / 60;
+  if (share === 0) return Infinity;
+  return Math.floor((users * perUserCeiling) / share);
+}
+
+/**
+ * Resolve `--users`, including the `auto` form.
+ *
+ * `auto` derives the MINIMUM user count the requested peak rate needs. It exists
+ * because the workflow's own default inputs could not run: `users: 5` with
+ * `max_rps: 160` on `--surface mcp` is refused by construction, so the obvious
+ * dispatch — pick mcp, tick ramp, leave the rest alone — always failed. A
+ * default combination that cannot run is a bad default, not operator error.
+ *
+ * It is opt-in rather than the silent behaviour because the cost is real and
+ * invisible: user count drives the SEED phase, which already dominated wall
+ * clock at 5 users. The caller gets told what it picked and what that implies.
+ */
+export function resolveUsers({ users, surface, peakRps, mix = DEFAULT_MIX, requestsPerMinute = 120 }) {
+  const raw = String(users ?? '').trim().toLowerCase();
+  if (raw !== 'auto') {
+    if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+      return { ok: false, error: `--users must be a positive integer or "auto", got "${users}"` };
+    }
+    return { ok: true, users: Number(raw), auto: false };
+  }
+  const share = limitedShareOfMix(surface, mix);
+  const perUserCeiling = requestsPerMinute / 60;
+  if (share === 0 || perUserCeiling <= 0) return { ok: true, users: 1, auto: true };
+  return {
+    ok: true,
+    auto: true,
+    // At least one: a rate low enough to need zero users still needs somebody
+    // to make the requests.
+    users: Math.max(1, Math.ceil((peakRps * share) / perUserCeiling)),
   };
 }
 

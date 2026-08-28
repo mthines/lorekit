@@ -632,7 +632,13 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned, not `latest`: CLI v2.116.0 changed the local stack's default
+          # privileges so `anon` gains EXECUTE on SECURITY DEFINER functions that
+          # migration 00041 only revokes from PUBLIC, tripping the
+          # `lorekit_org_members_list must not be granted to anon` assertion in
+          # migrations.test.sql. v2.115.0 is the last release with the prior
+          # behaviour. Revisit once the CLI's grant change is understood.
+          version: 2.115.0
 
       # Give the LOCAL edge runtime an OTLP endpoint so its smoke spans actually
       # export to Dash0 (tagged `deployment.environment.name=test`), instead of

@@ -9,7 +9,7 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 | Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
 | Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
-| CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link` / `migrate`) |
+| CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `migrate`) |
 
 All signals carry `service.namespace=lorekit` so you can filter the full stack in one Dash0 query.
 
@@ -434,8 +434,13 @@ stdout as their host's protocol, so a span each would be a firehose of
 near-identical traces and an awaited 1500 ms export on the agent's critical path
 — but leaving them silent meant the CLI's highest-volume traffic was the traffic
 nobody could see. The counter carries the same identity attributes the traced
-commands do; `meterCommand` starts the export before the command runs and awaits
-it after, so it overlaps the command's own work.
+commands do. The two commands are counted at different times: `mcp` is a
+long-lived stdio server, so its count fires **before** run (a post-run count on a
+killed server would never report); `hook` is short-lived and counted **after**
+run, so the counter can carry the health dimensions the fire reports
+(`lorekit.hook.event` + `lorekit.hook.outcome`). A hook always exits 0, so those
+dimensions are the only signal a broken or degrading hook (an unusable store, a
+swallowed lesson-lookup error) produces.
 
 Attributes on `lorekit.cli.*` spans + counter points (deliberately narrow — this
 runs on end-users' machines, so **no path, cwd, token, endpoint, repo, or scope
@@ -444,11 +449,13 @@ account-linkable dimension and its opt-out):
 
 | Attribute | Example | Notes |
 |-----------|---------|-------|
-| `lorekit.cli.command` | `install` | Bounded: `install` \| `uninstall` \| `doctor` \| `list` \| `search` \| `show` \| `stats` \| `scopes` \| `diff` \| `tree` \| `lint` \| `dedupe` \| `link` \| `migrate` \| `hook` \| `mcp` (the last two on the counter only) |
+| `lorekit.cli.command` | `install` | Bounded: `install` \| `uninstall` \| `doctor` \| `list` \| `search` \| `show` \| `stats` \| `scopes` \| `diff` \| `tree` \| `lint` \| `dedupe` \| `obligations` \| `link` \| `migrate` \| `hook` \| `mcp` (the last two on the counter only) |
 | `lorekit.cli.outcome` | `ok` | `ok` \| `failure` \| `error` — `failure` is a command that RAN and reported a negative verdict (a failing `doctor` check, a `lint` finding); `error` is a crash. Always `ok` on the metered path, which counts the invocation rather than its verdict |
 | `lorekit.cli.exit_code` | `0` | Command exit code |
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks`, `json`, `link` |
 | `lorekit.cli.hooks_mode` | `all` | `install` only. Bounded: `all` \| `read-only` \| `none` \| `custom` — which hook wiring the run resolved to (from the flag, the prompt, or the detected state). Counts the CHOICE, not the `--no-hooks` flag |
+| `lorekit.hook.event` | `SessionStart` | `hook` counter only. The host hook event that fired (`SessionStart`, `Stop`, `UserPromptSubmit`, …) — a bounded set defined by the host framework |
+| `lorekit.hook.outcome` | `ok` | `hook` counter only. Bounded: `ok` \| `store_unavailable` (no usable store to read/query) \| `degraded` (a store lookup threw and was swallowed; the host still got output) \| `crash` (an unexpected throw the outer guard caught). The heartbeat that makes a silently-failing hook visible |
 | `user.id` | `a1b2…` / `install:9f3c…` | The LoreKit account once known, else the install id prefixed `install:` — see below |
 
 ### CLI identity
@@ -808,7 +815,7 @@ All signals carry these resource attributes:
 
 ### The edge's environment is set by the deploy pipeline, not inferred
 
-`resolveDeploymentEnv()` (`_shared/otel.ts`) reads `DEPLOYMENT_ENVIRONMENT`, then
+`resolveDeploymentEnv()` (`_shared/telemetry/otel.ts`) reads `DEPLOYMENT_ENVIRONMENT`, then
 falls back to `VERCEL_ENV`, then to `'local'`. **A Supabase project has neither
 variable by default** — `VERCEL_ENV` exists only inside Vercel's build and
 runtime — so with nothing set, both the preview and the production Supabase
@@ -947,7 +954,7 @@ change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
 **Dataset precedence** (highest first): an explicit `Dash0-Dataset` passed via
 `OTEL_EXPORTER_OTLP_HEADERS` is preserved and never overwritten; otherwise
 `DASH0_DATASET`; otherwise the `default` fallback. The edge functions
-(`_shared/otel.ts`) follow the same order.
+(`_shared/telemetry/otel.ts`) follow the same order.
 
 > **Note:** the CLI `service.name` was `lorekit-cli` before this and is now `cli`
 > (aligning with the namespace-grouped `api` / `web` / `mcp` names). This is a
@@ -1138,13 +1145,13 @@ Canonical detail for the **OTel attributes** summary in the root [`CLAUDE.md`](.
   fails open to any `*.supabase.co` / `*.supabase.in` host (kept so local/preview setups
   without the var still propagate) and emits a one-time `console.warn` so the widening is
   visible rather than silent.
-- **Who receives it.** Every edge function's `traceRequest` (`supabase/functions/_shared/otel.ts`)
+- **Who receives it.** Every edge function's `traceRequest` (`supabase/functions/_shared/telemetry/otel.ts`)
   parses the inbound header; an invalid one falls back to a new root trace instead of a corrupt
   span. Responses carry a `traceparent` back (exposed via `Access-Control-Expose-Headers`) so a
   client can correlate with the server span.
 - **The parser** is `packages/mcp-core/src/telemetry/trace-context.ts` (`parseTraceparent` /
   `formatTraceparent` / `isValidTraceId` / `isValidSpanId`), import-free and mirrored verbatim
-  to `supabase/functions/_shared/trace-context.ts`; drift is parity-guarded by
+  to `supabase/functions/_shared/telemetry/trace-context.ts`; drift is parity-guarded by
   `edge-parity.spec.ts`. Strict W3C validation: lowercase hex only, no all-zero ids, version
   `ff` rejected, version `00` fixed at four fields, future versions may append fields.
 - **Span kinds.** Root request spans are SERVER (2), `TracedQuery` DB spans are CLIENT (3),
@@ -1163,7 +1170,7 @@ unique.
 
 | `service.name` | Component | Set in |
 |---|---|---|
-| `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
+| `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/telemetry/otel.ts`. No configuration required. |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts` (server), `packages/web/src/lib/dash0-rum.ts` (browser). Both pin the literal `web`; `otel-conventions.spec.ts` asserts the two agree, because server and browser are ONE service told apart by `telemetry.sdk.language`, not by name |
 | `cli` | CLI | `packages/cli/src/telemetry/telemetry.mjs` |
 

@@ -6,15 +6,17 @@
 import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction } from './auth.ts';
 import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
-import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
+import { UserInputError, safeValidateScope } from '../_shared/scope/scope.ts';
 import {
   negotiateProtocolVersion,
   requestedProtocolVersionAttribute,
+  isSupportedProtocolVersion,
+  SUPPORTED_PROTOCOL_VERSIONS,
 } from '../_shared/mcp-protocol-version.ts';
-import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
+import { scopeTypeAttribute } from '../_shared/scope/scope-type-attribute.ts';
 import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
 import { TtlError } from './ttl.ts';
-import { CreatedAtError } from '../_shared/created-at.ts';
+import { CreatedAtError } from '../_shared/limits/created-at.ts';
 import { type Params } from './tools.ts';
 // The dispatch maps are GENERATED from packages/schemas/src/shared/tool-catalog.ts —
 // see tool-dispatch.generated.ts. They were hand-written here, which is why a
@@ -25,12 +27,13 @@ import { type Params } from './tools.ts';
 // Only the maps moved. Every decision below — the auth gate, the span bracket,
 // the try/catch, the usage events — stays here and stays hand-written.
 import { MEMORY_TOOLS, ORG_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
-import { type Span } from '../_shared/otel.ts';
+import { type Span } from '../_shared/telemetry/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
-import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/account-wide-tools.ts';
+import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/auth/account-wide-tools.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
-import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/usage-stats.ts';
+import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/telemetry/usage-stats.ts';
+import { parseSessionKind } from '../_shared/telemetry/session-kind.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 /**
@@ -43,11 +46,21 @@ const CORRELATION_HEADER = 'x-lorekit-correlation-id';
 /**
  * Request header naming the SURFACE the call came from — the same seam the REST
  * router reads (`CLIENT_HEADER`), so both surfaces attribute an event the same
- * way. An MCP caller that names nothing is left unattributed rather than
- * defaulted to `mcp`: a default would be an assumption written into the ledger,
- * and the header is cheap for a real client to send.
+ * way. This transport IS an MCP call, so an absent/unrecognised header
+ * defaults to `mcp` (applied by the caller around the still-closed,
+ * still-fail-safe `parseUsageClient` — see its call site below); an explicit
+ * header still overrides it, e.g. a locally-hosted stdio server forwarding
+ * `cli`.
  */
 const CLIENT_HEADER = 'x-lorekit-client';
+
+/**
+ * Request header naming the SESSION KIND the call came from (`local`/`ci`/
+ * `pr`/`unknown`, migration 00082) — the same seam the REST router reads
+ * (`SESSION_KIND_HEADER`). The CLI derives and sends this; this handler only
+ * validates (`parseSessionKind`), never derives.
+ */
+const SESSION_KIND_HEADER = 'x-lorekit-session-kind';
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
@@ -81,6 +94,32 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
 }
 
 export async function handleMcp(req: Request, auth: AuthContext, span: Span, adapter: StorageAdapter): Promise<Response> {
+  // MCP-Protocol-Version header: 2025-06-18 has the client send this on every
+  // request once initialized, and requires an unsupported value to be answered
+  // 400 — a MUST this module used to only document as a gap (it is created
+  // outright by claiming 2025-06-18; nothing asked for it before). Checked
+  // before `req.json()`, same reasoning as the POST guard above: the header is
+  // knowable from the request line alone, and a client sending garbage here
+  // gains nothing from also having its body parsed. ABSENT is not itself an
+  // error — a client still negotiating (its `initialize` call) or an older
+  // transport that never adopted the header is not in violation; only a
+  // PRESENT, unsupported value is.
+  const protocolVersionHeader = req.headers.get('mcp-protocol-version');
+  if (protocolVersionHeader !== null && !isSupportedProtocolVersion(protocolVersionHeader)) {
+    span.clientError(`UnsupportedProtocolVersion: ${protocolVersionHeader}`).setAttributes({
+      'mcp.method': 'unknown',
+      'mcp.protocol_version.requested': protocolVersionHeader,
+    });
+    return new Response(
+      JSON.stringify({
+        error:
+          `Unsupported MCP-Protocol-Version header: ${protocolVersionHeader}. ` +
+          `Supported protocol versions: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}.`,
+      }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
   // POST-only, and the guard is NOT here — it lives in `index.ts` ABOVE
   // `resolveAuth`, so an SSE-probing client does not pay the authenticated
   // preamble (token + plan + rate-limit, ~319 ms) to be told the method is
@@ -143,7 +182,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   }
 
   if (method === 'notifications/initialized') {
-    return new Response(null, { status: 204 });
+    // 202 Accepted, not 204 No Content: the Streamable HTTP transport (added in
+    // 2025-03-26, one of the revisions this server claims) MUSTs a notification
+    // get 202. A notification carries no `id` and gets no JSON-RPC response
+    // either way, so the only observable change is the status code itself.
+    return new Response(null, { status: 202 });
   }
 
   if (method === 'tools/list') {
@@ -257,15 +300,41 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // dimension declared low-cardinality, and a tool that takes no `scope` at
     // all recorded the literal `unknown`. `memory.search` takes `scopes` (an
     // ARRAY), so EVERY search landed in that placeholder bucket. See
-    // `_shared/scope-type-attribute.ts`.
+    // `_shared/scope/scope-type-attribute.ts`.
     const scopeType = scopeTypeAttribute(rawScope, toolArgs['scopes']);
+    // How many scopes an ARRAY-bearing call (`memory.search`) touched —
+    // `usage_events.scope_count` (migration 00078). Undefined for a
+    // singular-`scope` tool, matching the RPC's own `default null`. Counted
+    // from the SAME `scopes` value `scopeType` above just read, so the two can
+    // never disagree about whether the call carried an array at all.
+    const rawScopes = toolArgs['scopes'];
+    // Filter blanks ONCE and reuse for both the count and the single-scope
+    // resolution below, so the two can never name a different entry: a single
+    // real scope preceded by an empty-string entry must still be attributed,
+    // not lost to `rawScopes[0]` being that blank.
+    const cleanScopes = Array.isArray(rawScopes)
+      ? rawScopes.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+      : undefined;
+    const scopeCount = cleanScopes?.length;
     // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
     // "records read from repo::owner/name" answerable, which the deliberately
     // low-cardinality `scopeType` above cannot. Normalised through the canonical
     // validator but TOTAL: an absent or ungrammatical scope records null rather
     // than failing the tool call it is measuring. Resolved ONCE, before the try,
     // so the success and error recording paths cannot disagree about it.
-    const usageScope = safeValidateScope(rawScope);
+    //
+    // A singular `scope` wins when present (no tool takes both). Otherwise, a
+    // `scopes` array of exactly ONE entry is just as attributable as a singular
+    // scope — `memory.search` searching one repo should not be less attributed
+    // than `memory.list` on the same repo — so that one entry is validated the
+    // same way. TWO OR MORE scopes stay null: which of several scopes a read
+    // "belongs to" is genuinely ambiguous, and `scope_count` (not a guessed
+    // scope) is the honest answer for that case (see migration 00078).
+    const usageScope = rawScope
+      ? safeValidateScope(rawScope)
+      : cleanScopes?.length === 1
+        ? safeValidateScope(cleanScopes[0])
+        : null;
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
       // Omitted when the tool carries no scope at all — the same conditional
@@ -310,7 +379,19 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // the pure validator; a malformed value degrades to null, never an error.
     const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
     // Calling surface (same header and same fail-safe posture as the REST side).
-    const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
+    // The transport itself IS an MCP call, so an absent/unrecognised header
+    // defaults to 'mcp' here — applied by the CALLER, not by widening
+    // `parseUsageClient` (which stays a closed, fail-safe validator an unknown
+    // value can never smuggle a new member through). An explicit header still
+    // wins: a locally-hosted stdio server forwarding `X-LoreKit-Client: cli`
+    // reports `cli`, never overridden to `mcp`. This is retroactive for NEW
+    // traffic only — historical rows recorded before this change stay NULL.
+    const client = parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'mcp';
+    // Which KIND of session (local/ci/pr/unknown, migration 00082). Never
+    // defaulted the way `client` is — there is no "this transport IS a
+    // session kind" fact to fall back to, so an absent/unrecognised header
+    // stays unattributed.
+    const sessionKind = parseSessionKind(req.headers.get(SESSION_KIND_HEADER));
     // Memory taxonomy for analytics — resolved the SAME way the write stores it
     // (explicit kind/host, else inferred from the loop tag). A read that carries
     // a loop tag (memory.list / memory.search filtered by it) is attributed too;
@@ -353,8 +434,16 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           userId: analyticsUserId,
           planName,
           toolName,
-          scopeType: rawScope ? scopeType : null,
+          // `scopeType` is already TOTAL (`scopeTypeAttribute` returns null
+          // when neither `scope` nor `scopes` carries anything) — gating it
+          // behind `rawScope` here would discard the array-derived value
+          // (e.g. `mixed` for a multi-scope search) precisely for the calls
+          // that need it, leaving `usage_events.scope_type` null for every
+          // `memory.search` regardless of how many scopes it named. Passed
+          // through unconditionally, as its own type already guarantees.
+          scopeType,
           scope: usageScope,
+          scopeCount,
           authType: auth.type as 'api_key' | 'jwt',
           outcome: 'ok',
           durationMs,
@@ -363,6 +452,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           client,
           kind: usageKind,
           host: usageHost,
+          sessionKind,
         });
       }
 
@@ -374,16 +464,23 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
       // UserInputError (bad scope, missing required arg), OrgPermissionError
       // (insufficient role), UnknownOrgError (org slug does not resolve),
-      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), and CreatedAtError
-      // (invalid/future created_at override) are all client-caused — the
-      // server handled them correctly. Use clientError() so spans are NOT
+      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), CreatedAtError
+      // (invalid/future created_at override), and LimitError (the account is at
+      // its memory cap — returned in-band as an isError result, see below) are
+      // all client-caused — the server handled them correctly. Use clientError()
+      // so spans are NOT
       // marked ERROR (OTel: server spans are ERROR only for 5xx / server-side
-      // faults, not 4xx client errors).
+      // faults, not 4xx client errors). A cap hit is expected and recorded
+      // separately as usage outcome `cap_exceeded`; flagging the span ERROR too
+      // would inflate the `lorekit.mcp` error rate an operator alerts on.
+      // Rate-limit LimitErrors never reach here — they are handled before the
+      // tool runs (see `index.ts`).
       const isClientError = err instanceof UserInputError
         || err instanceof OrgPermissionError
         || err instanceof UnknownOrgError
         || err instanceof TtlError
-        || err instanceof CreatedAtError;
+        || err instanceof CreatedAtError
+        || err instanceof LimitError;
       if (isClientError) {
         toolSpan.clientError(msg).end();
         span.clientError(msg);
@@ -402,8 +499,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           userId: analyticsUserId,
           planName: null,  // skip plan lookup on error path to keep it fast
           toolName,
-          scopeType: rawScope ? scopeType : null,
+          // See the success branch above — `scopeType` is total, so it is
+          // never re-gated behind `rawScope`.
+          scopeType,
           scope: usageScope,
+          scopeCount,
           authType: auth.type as 'api_key' | 'jwt',
           outcome,
           durationMs,
@@ -411,6 +511,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           client,
           kind: usageKind,
           host: usageHost,
+          sessionKind,
         });
       }
 

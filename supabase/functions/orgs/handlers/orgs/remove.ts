@@ -1,13 +1,13 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
 import { noContent, notFound, dryRun } from '../../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/limits/dry-run.ts';
 import { validateOrgSlug } from '../../../_shared/api/validate.ts';
-import { createTracedClient } from '../../../_shared/otel.ts';
-import type { Span } from '../../../_shared/otel.ts';
+import { createTracedClient } from '../../../_shared/telemetry/otel.ts';
+import type { Span } from '../../../_shared/telemetry/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
 import { auditUserId } from '../../../_shared/api/auth.ts';
-import { recordAudit } from '../../../_shared/audit.ts';
+import { recordAudit } from '../../../_shared/audit/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { isOrgMember } from '../../../_shared/api/tenant.ts';
 

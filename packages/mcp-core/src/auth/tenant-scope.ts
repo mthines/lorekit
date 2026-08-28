@@ -9,7 +9,7 @@
  * SQL side (Requirement R2: exactly one enforced place).
  *
  * Mirrored (self-contained, no cross-package import) in
- * supabase/functions/_shared/tenant-scope.ts for the Deno edge functions (BOTH
+ * supabase/functions/_shared/auth/tenant-scope.ts for the Deno edge functions (BOTH
  * the MCP and REST surfaces import that one copy) — the
  * same pattern used for created-at.ts / webhook-secret-select.ts. Keep the
  * two in sync when either changes (guarded by edge-parity.spec.ts).

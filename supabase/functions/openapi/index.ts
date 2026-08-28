@@ -1,4 +1,4 @@
-import { traceRequest } from '../_shared/otel.ts';
+import { traceRequest } from '../_shared/telemetry/otel.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { internalError } from '../_shared/api/respond.ts';
 import { generateSpec } from '../_shared/schemas/openapi/spec.ts';
