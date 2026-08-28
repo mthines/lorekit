@@ -9,7 +9,6 @@ import { SiteFooter } from '@/components/layout/SiteFooter';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { FocusRefetcher } from '@/components/providers/FocusRefetcher';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
-import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
 import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
@@ -74,10 +73,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { values: flags, variants: flagVariants } = await getAllServerFlagState(user.id);
 
   return (
-    // ToastProvider mounts once at the dashboard root — a thin sibling client
-    // context (no Suspense-dependent hooks), so any settings/lore/dashboard
-    // action can announce an aria-live toast (plan.md Decision D7).
-    <ToastProvider>
     <FeatureFlagsProvider flags={flags} variants={flagVariants}>
     <OnboardingProvider serverState={onboardingState}>
       {/*
@@ -163,6 +158,5 @@ export default async function DashboardLayout({ children }: { children: React.Re
       </CommandPaletteProvider>
     </OnboardingProvider>
     </FeatureFlagsProvider>
-    </ToastProvider>
   );
 }
