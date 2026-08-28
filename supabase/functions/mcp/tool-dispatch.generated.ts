@@ -21,6 +21,13 @@ import {
   toolOrgList,
   toolOrgRename,
   toolOrgDelete,
+  toolPolicyList,
+  toolPolicyCreate,
+  toolPolicyUpdate,
+  toolPolicyDelete,
+  toolGroomPreview,
+  toolGroomRun,
+  toolProtect,
 } from './tools.ts';
 import type { MemoryToolName, OrgToolName } from '../_shared/schemas/tool-catalog.ts';
 
@@ -37,6 +44,7 @@ export const MEMORY_TOOLS = {
   'memory.restore': toolRestore,
   'memory.purge': toolPurge,
   'memory.purge_expired': toolPurgeExpired,
+  'memory.protect': toolProtect,
 } as const satisfies Record<MemoryToolName, unknown>;
 
 // org.* tools — dispatched with (db, args, userId, span), the same shape as

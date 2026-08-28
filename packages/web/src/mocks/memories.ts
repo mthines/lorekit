@@ -522,3 +522,131 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
     http.post('*/auth/v1/user', () => HttpResponse.json(AUTH_USER)),
   ];
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Retention policies ("grooming") — Settings → Grooming's rule builder.
+// Separate from `memoryHandlers()` (a different page's concern), but the SAME
+// pattern: derive every response from an in-memory fixture the caller can
+// override, and mutate it in place so a story's create/update/delete round
+// trips are visible on the next read within the same render.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface MockRetentionPolicy {
+  id: string;
+  scope: string;
+  name: string;
+  mode: 'review' | 'auto';
+  enabled: boolean;
+  min_age_days: number | null;
+  unseen_days: number | null;
+  max_seen_count: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const DEFAULT_GROOM_POLICIES: MockRetentionPolicy[] = [
+  {
+    id: 'policy-1',
+    scope: 'repo::acme/app',
+    name: 'Stale repo lore',
+    mode: 'review',
+    enabled: false,
+    min_age_days: 90,
+    unseen_days: null,
+    max_seen_count: null,
+    created_at: FROZEN_NOW,
+    updated_at: FROZEN_NOW,
+  },
+];
+
+/** The candidates `groom/preview` and `groom/run` report for any scoped request. */
+export const GROOM_CANDIDATE_KEYS: { scope: string; key: string }[] = [
+  { scope: 'repo::acme/app', key: 'stale-onboarding-note' },
+  { scope: 'repo::acme/app', key: 'old-flaky-test-workaround' },
+  { scope: 'repo::acme/app', key: 'deprecated-api-migration' },
+];
+
+/**
+ * Handlers for `/policies`, `/groom/preview`, `/groom/run`, `/protect` —
+ * grooming's page-specific mock server. Each call captures its own mutable
+ * `policies`/`protectedKeys` state (module-scope `let`, closed over by the
+ * returned handlers), so calling this again for a fresh story resets it.
+ */
+export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_GROOM_POLICIES) {
+  let policies = initialPolicies.map((p) => ({ ...p }));
+  const protectedKeys = new Set<string>();
+
+  return [
+    http.get('*/functions/v1/memories/policies', () => HttpResponse.json({ entries: policies })),
+
+    http.post('*/functions/v1/memories/policies', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const policy: MockRetentionPolicy = {
+        id: `policy-${policies.length + 1}`,
+        scope: String(body.scope ?? ''),
+        name: String(body.name ?? ''),
+        mode: body.mode === 'auto' ? 'auto' : 'review',
+        enabled: body.enabled === true,
+        min_age_days: typeof body.min_age_days === 'number' ? body.min_age_days : null,
+        unseen_days: typeof body.unseen_days === 'number' ? body.unseen_days : null,
+        max_seen_count: typeof body.max_seen_count === 'number' ? body.max_seen_count : null,
+        created_at: FROZEN_NOW,
+        updated_at: FROZEN_NOW,
+      };
+      policies = [...policies, policy];
+      return HttpResponse.json(policy);
+    }),
+
+    http.patch('*/functions/v1/memories/policies/:id', async ({ request, params }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idx = policies.findIndex((p) => p.id === params.id);
+      if (idx === -1) return new HttpResponse(null, { status: 404 });
+      const current = policies[idx] as MockRetentionPolicy;
+      const updated: MockRetentionPolicy = {
+        ...current,
+        ...('name' in body ? { name: String(body.name) } : {}),
+        ...('mode' in body ? { mode: (body.mode === 'auto' ? 'auto' : 'review') as 'auto' | 'review' } : {}),
+        ...('enabled' in body ? { enabled: body.enabled === true } : {}),
+        ...('min_age_days' in body ? { min_age_days: body.min_age_days as number | null } : {}),
+        ...('unseen_days' in body ? { unseen_days: body.unseen_days as number | null } : {}),
+        ...('max_seen_count' in body ? { max_seen_count: body.max_seen_count as number | null } : {}),
+        updated_at: FROZEN_NOW,
+      };
+      policies = [...policies.slice(0, idx), updated, ...policies.slice(idx + 1)];
+      return HttpResponse.json(updated);
+    }),
+
+    http.delete('*/functions/v1/memories/policies/:id', ({ params }) => {
+      const before = policies.length;
+      policies = policies.filter((p) => p.id !== params.id);
+      if (policies.length === before) return new HttpResponse(null, { status: 404 });
+      return HttpResponse.json({ deleted: true });
+    }),
+
+    http.post('*/functions/v1/memories/groom/preview', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const hasScope = typeof body.scope === 'string' && body.scope.length > 0;
+      const keys = hasScope
+        ? GROOM_CANDIDATE_KEYS.filter((k) => !protectedKeys.has(`${k.scope}::${k.key}`))
+        : [];
+      return HttpResponse.json({ count: keys.length, keys });
+    }),
+
+    http.post('*/functions/v1/memories/groom/run', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const hasScope = typeof body.scope === 'string' && body.scope.length > 0;
+      const keys = hasScope
+        ? GROOM_CANDIDATE_KEYS.filter((k) => !protectedKeys.has(`${k.scope}::${k.key}`))
+        : [];
+      return HttpResponse.json({ archived: keys.length, keys });
+    }),
+
+    http.post('*/functions/v1/memories/protect', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const key = `${String(body.scope ?? '')}::${String(body.key ?? '')}`;
+      if (body.protected === true) protectedKeys.add(key);
+      else protectedKeys.delete(key);
+      return HttpResponse.json({ protected: body.protected === true });
+    }),
+  ];
+}

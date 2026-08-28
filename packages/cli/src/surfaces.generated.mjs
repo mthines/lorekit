@@ -21,7 +21,14 @@ export const MCP_TOOL_NAMES = [
   "org.create",
   "org.list",
   "org.rename",
-  "org.delete"
+  "org.delete",
+  "policy.list",
+  "policy.create",
+  "policy.update",
+  "policy.delete",
+  "groom.preview",
+  "groom.run",
+  "memory.protect"
 ];
 
 /** The `memory.*` family — dispatched against a store (local or remote). */
@@ -36,7 +43,8 @@ export const MEMORY_TOOL_NAMES = [
   "memory.list_archived",
   "memory.restore",
   "memory.purge",
-  "memory.purge_expired"
+  "memory.purge_expired",
+  "memory.protect"
 ];
 
 /** The `org.*` family — always proxied to the REST API, never the local store. */
@@ -462,6 +470,229 @@ export const MCP_TOOL_DEFS = [
         }
       }
     }
+  },
+  {
+    "name": "policy.list",
+    "description": "List every retention policy you own",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "policy.create",
+    "description": "Create a scoped retention policy that auto-archives (never hard-deletes) matching lessons",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "scope",
+        "name"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for the policy."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "review",
+            "auto"
+          ],
+          "default": "review",
+          "description": "`review` — surfaced for a human to run manually. `auto` — swept nightly, if enabled."
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether `auto` mode is active. Always starts false, even when mode is `auto`."
+        },
+        "min_age_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match only lessons at least this many days old."
+        },
+        "unseen_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match lessons unseen for at least this many days. A never-seen lesson always matches."
+        },
+        "max_seen_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons that have recurred at most this many times."
+        }
+      }
+    }
+  },
+  {
+    "name": "policy.update",
+    "description": "Update a retention policy. Every field but id is optional",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The policy id to update."
+        },
+        "name": {
+          "type": "string",
+          "description": "New name for the policy."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "review",
+            "auto"
+          ],
+          "description": "`review` — surfaced for a human to run manually. `auto` — swept nightly, if enabled."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether `auto` mode is active."
+        },
+        "min_age_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match only lessons at least this many days old. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "unseen_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match lessons unseen for at least this many days. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "max_seen_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear."
+        }
+      }
+    }
+  },
+  {
+    "name": "policy.delete",
+    "description": "Delete a retention policy. Deletes the rule only — never touches the lessons it matched",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The policy id to delete."
+        }
+      }
+    }
+  },
+  {
+    "name": "groom.preview",
+    "description": "Preview the lessons a saved policy or an inline condition set would archive, without changing anything",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "description": "Preview an existing saved policy. Mutually exclusive with `scope`/conditions."
+        },
+        "scope": {
+          "type": "string",
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+        },
+        "min_age_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match only lessons at least this many days old."
+        },
+        "unseen_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match lessons unseen for at least this many days. A never-seen lesson always matches."
+        },
+        "max_seen_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons that have recurred at most this many times."
+        }
+      }
+    }
+  },
+  {
+    "name": "groom.run",
+    "description": "Archive every lesson a saved policy or an inline condition set matches. Soft-archive only — never hard-deletes",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "description": "Run an existing saved policy. Mutually exclusive with `scope`/conditions."
+        },
+        "scope": {
+          "type": "string",
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+        },
+        "min_age_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match only lessons at least this many days old."
+        },
+        "unseen_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Match lessons unseen for at least this many days. A never-seen lesson always matches."
+        },
+        "max_seen_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons that have recurred at most this many times."
+        }
+      }
+    }
+  },
+  {
+    "name": "memory.protect",
+    "description": "Mark or unmark a lesson as protected — excluded from every grooming candidate set regardless of policy",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "scope",
+        "key",
+        "protected"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+        },
+        "key": {
+          "type": "string",
+          "description": "Lesson identifier, unique within the scope. Max 512 characters."
+        },
+        "protected": {
+          "type": "boolean",
+          "description": "true to protect, false to unprotect."
+        }
+      }
+    }
   }
 ];
 
@@ -476,7 +707,10 @@ export const CLI_BINDINGS = {
   "scopes": "memory.scopes",
   "restore": "memory.restore",
   "purge": "memory.purge",
-  "purge-expired": "memory.purge_expired"
+  "purge-expired": "memory.purge_expired",
+  "policy": "policy.list",
+  "groom": "groom.preview",
+  "protect": "memory.protect"
 };
 
 /** CLI alias -> canonical command name. */
@@ -495,14 +729,25 @@ export const CLI_EXEMPT = {
   "org.create": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
   "org.list": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
   "org.rename": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
-  "org.delete": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand"
+  "org.delete": "org management reaches the CLI via the local stdio MCP server (`lorekit mcp`), not a `lorekit` subcommand",
+  "policy.create": "an action of the `lorekit policy` command",
+  "policy.update": "an action of the `lorekit policy` command",
+  "policy.delete": "an action of the `lorekit policy` command",
+  "groom.run": "the `--run` mode of `lorekit groom` (`groom.preview` claims the `groom` binding)"
 };
 
 /** Op -> why the local stdio MCP server does not dispatch it. */
 export const LOCAL_MCP_EXEMPT = {
   "memory.list_archived": "reachable through memory.list's archived filter on the offline store",
   "memory.purge": "account-wide sweep against server-side state; the offline store has no equivalent",
-  "memory.purge_expired": "account-wide sweep against server-side state; the offline store has no equivalent"
+  "memory.purge_expired": "account-wide sweep against server-side state; the offline store has no equivalent",
+  "policy.list": "server-side retention_policies table; the offline store has no equivalent",
+  "policy.create": "server-side retention_policies table; the offline store has no equivalent",
+  "policy.update": "server-side retention_policies table; the offline store has no equivalent",
+  "policy.delete": "server-side retention_policies table; the offline store has no equivalent",
+  "groom.preview": "server-side candidate query against retention_policies + memories; the offline store has no equivalent",
+  "groom.run": "server-side candidate query against retention_policies + memories; the offline store has no equivalent",
+  "memory.protect": "the offline store has no protected column in v1"
 };
 
 /**

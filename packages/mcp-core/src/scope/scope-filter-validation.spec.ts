@@ -338,6 +338,18 @@ describe('REST scope filters are validated before they reach a query', () => {
     // the "stays reject-only" tripwire above, which fails if it ever starts
     // normalising without this guard coming down in the same commit.
     listed.add('create.ts');
+    // Retention-policy handlers (`policies.ts`, `groom.ts`, `protect.ts`): every
+    // `p_scope:` in these three reaches a SECURITY DEFINER RPC argument
+    // (`lorekit_policy_create`/`lorekit_groom_candidates`/`lorekit_groom_run`/
+    // `lorekit_memory_protect`), never a PostgREST `.eq()`/`.or()` filter
+    // string — so the injection-avoidance charset check `parseScopeFilter`
+    // exists for does not apply (RPC arguments are bound as parameters, not
+    // interpolated into a filter grammar). Grammar + case handling is done by
+    // the request-boundary `ScopeSchema` zod transform instead (validates and
+    // normalises, same as every other MCP-style tool input in this catalog).
+    listed.add('policies.ts');
+    listed.add('groom.ts');
+    listed.add('protect.ts');
     // `.in('scope', …)` is the array-valued family, excluded by decision above.
     const singleScopePredicate = /\.eq\(\s*'scope'\s*,|p_scope:/;
     const missed: string[] = [];

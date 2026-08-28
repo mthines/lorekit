@@ -161,3 +161,18 @@ grant execute on function auth.jwt(), auth.uid(), auth.role()
 -- Supabase places some extensions in a dedicated schema; 00060's comment notes
 -- it. Created so a migration that qualifies a type that way still resolves.
 create schema if not exists extensions;
+
+-- Supabase Vault's decrypted view. 00074's §85 (PROF-5) branches on
+-- `to_regclass('vault.decrypted_secrets') is null` inside a single boolean
+-- expression (`if ... is null or not exists (select ... from
+-- vault.decrypted_secrets ...)`) — and a relation named in a FROM clause has
+-- to resolve at PARSE time even when OR's left side would short-circuit it at
+-- runtime, so migrations.test.sql cannot even be parsed without this relation
+-- existing. An empty table is sufficient: `lorekit_export_db_query_stats()`
+-- (00074) already treats "no matching secret rows" as the same disabled state
+-- as "no vault at all", which is exactly the case with zero rows.
+create schema if not exists vault;
+create table if not exists vault.decrypted_secrets (
+  name              text,
+  decrypted_secret  text
+);

@@ -1,14 +1,14 @@
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { SettingsNav } from '@/components/settings/SettingsNav';
 
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   // Only for `SettingsNav`'s developer-nav-visibility check (`isDeveloperEmail`)
   // — the dashboard layout has already gated auth for every route under here,
   // so this is purely "which email", not "is there a session at all".
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getVerifiedUser() is request-cached (lib/auth/verified-user.ts), so this
+  // shares the dashboard layout's own `auth.getUser()` round trip rather than
+  // repeating it.
+  const user = await getVerifiedUser();
 
   return (
     <div className="flex w-full max-w-4xl flex-col gap-6">

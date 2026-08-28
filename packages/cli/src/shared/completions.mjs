@@ -71,6 +71,18 @@ const FLAG = {
   'retention-days': { desc: 'Only purge archived older than n days', arg: 'n' },
   files: { desc: 'Changed files to check', arg: 'path' },
   strict: { desc: 'Exit non-zero on any unmet obligation' },
+  'policy-id': { desc: 'Run/preview a saved policy', arg: 'id' },
+  'min-age-days': { desc: 'Match lessons at least n days old', arg: 'n' },
+  'unseen-days': { desc: 'Match lessons unseen for at least n days', arg: 'n' },
+  'max-seen-count': { desc: 'Match lessons that recurred at most n times', arg: 'n' },
+  run: { desc: 'Archive the matches instead of previewing' },
+  name: { desc: 'Policy name', arg: 'name' },
+  enabled: { desc: 'Turn auto-mode on' },
+  disabled: { desc: 'Turn auto-mode off' },
+  'clear-min-age-days': { desc: 'Remove the min-age-days condition' },
+  'clear-unseen-days': { desc: 'Remove the unseen-days condition' },
+  'clear-max-seen-count': { desc: 'Remove the max-seen-count condition' },
+  off: { desc: 'Unprotect instead of protect' },
 };
 
 // Every command's completion shape, in the top-level help order. `flags` lists
@@ -133,6 +145,19 @@ const COMMANDS = [
     flags: ['retention-days', 'yes', 'json', 'endpoint', 'token'] },
   { name: 'purge-expired', summary: 'Delete every TTL-expired memory',
     flags: ['yes', 'json', 'endpoint', 'token'] },
+  { name: 'groom', summary: 'Preview or run a retention sweep',
+    values: { mode: ['review', 'auto'] },
+    flags: ['policy-id', 'scope', 'min-age-days', 'unseen-days', 'max-seen-count', 'run', 'yes', 'json', 'endpoint', 'token'] },
+  { name: 'policy', summary: 'Manage saved retention rules',
+    values: { mode: ['review', 'auto'] },
+    flags: ['scope', 'name', 'mode', 'enabled', 'disabled', 'min-age-days', 'unseen-days', 'max-seen-count',
+      'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'yes', 'json', 'endpoint', 'token'] },
+  { name: 'protect', summary: 'Mark a memory protected, excluded from every grooming sweep', positional: 'address',
+    flags: ['off', 'scope', 'key', 'json', 'endpoint', 'token'] },
+  { name: 'pin', summary: 'Shorthand for `protect` (protected=true)', positional: 'address',
+    flags: ['json', 'endpoint', 'token'] },
+  { name: 'unpin', summary: 'Shorthand for `protect --off` (protected=false)', positional: 'address',
+    flags: ['json', 'endpoint', 'token'] },
   { name: 'completion', summary: 'Print a shell completion script', positional: 'shell' },
 ];
 

@@ -70,6 +70,14 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   // is worth reading) and collapsing them would make it impossible to tell
   // whether agents actually reach for the ranking.
   'memories GET /relevant': 'memory.relevant',
+  // ── retention policies ("grooming") ─────────────────────────────────────
+  'memories GET /policies': 'policy.list',
+  'memories POST /policies': 'policy.create',
+  'memories PATCH /policies/:id': 'policy.update',
+  'memories DELETE /policies/:id': 'policy.delete',
+  'memories POST /groom/preview': 'groom.preview',
+  'memories POST /groom/run': 'groom.run',
+  'memories POST /protect': 'memory.protect',
   'memories GET /:id': 'memory.read',
   'memories PATCH /:id': 'memory.write',
   'memories POST /:id/restore': 'memory.restore',

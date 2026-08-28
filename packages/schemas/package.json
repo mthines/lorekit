@@ -14,6 +14,7 @@
     "./dimensions": "./src/shared/dimensions.ts",
     "./blog": "./src/domain/blog.ts",
     "./memory": "./src/domain/memory.ts",
+    "./retention": "./src/domain/retention.ts",
     "./org": "./src/domain/org.ts",
     "./member": "./src/domain/member.ts",
     "./invite": "./src/domain/invite.ts",

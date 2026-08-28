@@ -5,7 +5,7 @@ import { FLAG_REGISTRY, evaluateFlagDetails, type FlagKey } from '@lorekit/featu
 import { resolveFeatureFlagContext } from '@/lib/feature-flags/server';
 import { resolveDeploymentEnvironment } from '@/lib/otel-deployment-env';
 import { isDeveloperEmail } from '@/lib/developer-users';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { DeveloperFlagsPanel, type DeveloperFlagRow } from '@/components/settings/DeveloperFlagsPanel';
 import { OnboardingPreview } from '@/components/dashboard/onboarding-preview/OnboardingPreview';
@@ -36,15 +36,14 @@ export default async function DeveloperSettingsPage() {
   const isNonProduction =
     resolveDeploymentEnvironment(process.env.VERCEL_ENV, process.env.NODE_ENV).name !== 'production';
 
-  if (!isNonProduction) {
-    const supabase = await createServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!isDeveloperEmail(user?.email)) notFound();
-  }
+  // Resolved unconditionally (not just inside the production gate below) so
+  // `resolveFeatureFlagContext` can be passed the id and skip its own
+  // `auth.getUser()` round trip — see lib/auth/verified-user.ts's header for
+  // why an un-deduped extra call here would undercut that fix.
+  const user = await getVerifiedUser();
+  if (!isNonProduction && !isDeveloperEmail(user?.email)) notFound();
 
-  const context = await resolveFeatureFlagContext();
+  const context = await resolveFeatureFlagContext(user?.id ?? null);
 
   const rows: DeveloperFlagRow[] = await Promise.all(
     FLAG_REGISTRY.map(async (def) => {

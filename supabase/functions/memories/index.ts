@@ -21,6 +21,9 @@ import { handleActivity, handleActivityPost } from './handlers/activity.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
 import { handleReadRanking } from './handlers/read-ranking.ts';
 import { handleRelevant } from './handlers/relevant.ts';
+import { handlePolicyList, handlePolicyCreate, handlePolicyUpdate, handlePolicyDelete } from './handlers/policies.ts';
+import { handleGroomPreview, handleGroomRun } from './handlers/groom.ts';
+import { handleProtect } from './handlers/protect.ts';
 
 // ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
 // segment COUNT plus literal equality, collects EVERY path match, then picks the
@@ -66,11 +69,19 @@ const router = createRouter([
   { method: 'GET',    path: '/read-activity',  handler: handleReadActivity, requires: 'read'  },
   { method: 'GET',    path: '/read-ranking',   handler: handleReadRanking,  requires: 'read'  },
   { method: 'GET',    path: '/relevant',       handler: handleRelevant,     requires: 'read'  },
+  // ── retention policies ("grooming") — literal routes, precede /:id ─────────
+  { method: 'GET',    path: '/policies',       handler: handlePolicyList,   requires: 'read'  },
+  { method: 'POST',   path: '/policies',       handler: handlePolicyCreate, requires: 'write' },
+  { method: 'POST',   path: '/groom/preview',  handler: handleGroomPreview, requires: 'read'  },
+  { method: 'POST',   path: '/groom/run',      handler: handleGroomRun,     requires: 'write' },
+  { method: 'POST',   path: '/protect',        handler: handleProtect,      requires: 'write' },
   // ── parameterised routes ───────────────────────────────────────────────────
   { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },
   { method: 'PATCH',  path: '/:id',            handler: handleUpdate,       requires: 'write' },
   { method: 'DELETE', path: '/:id',            handler: handleRemove,       requires: 'write' },
   { method: 'POST',   path: '/:id/restore',    handler: handleRestore,      requires: 'write' },
+  { method: 'PATCH',  path: '/policies/:id',   handler: handlePolicyUpdate, requires: 'write' },
+  { method: 'DELETE', path: '/policies/:id',   handler: handlePolicyDelete, requires: 'write' },
 ], 'memories');
 
 Deno.serve(async (req) => {

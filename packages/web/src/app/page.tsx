@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { classifyAuthCallback } from '@/lib/auth-callback-params';
 import { getServerFlag } from '@/lib/feature-flags/server';
 
@@ -34,8 +34,7 @@ export default async function RootPage({
     redirect(`/api/auth/callback?${params.toString()}`);
   }
 
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (user) {
     // While `insights-page` is on, Insights takes Overview's "home" slot —
     // Overview stays reachable by direct URL (it still mints a brand-new
