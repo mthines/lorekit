@@ -8113,6 +8113,37 @@ begin
 end;
 $$;
 
+-- ── memories_tags_idx exists, is valid, and actually covers `tags` (00076 + 00086) ──
+-- 00076 added this GIN index specifically to keep the `tags @> ARRAY[...]`
+-- containment read in getOnboardingState() (packages/web/src/lib/onboarding-server.ts,
+-- awaited by every /overview render) off a sequential scan. It regressed
+-- silently four days later with no schema diff — a migration is not proof an
+-- index stays valid or gets used, only that it was created once — so assert
+-- its live catalog state directly rather than trusting that history. 00086
+-- rebuilt it; this pins the invariant going forward so a future bloat/corruption
+-- regression fails CI instead of reaching the next /overview p95 alert.
+do $$
+declare
+  v_indisvalid  boolean;
+  v_indisready  boolean;
+  v_amname      text;
+  v_indexdef    text;
+begin
+  select i.indisvalid, i.indisready, am.amname, pg_get_indexdef(i.indexrelid)
+    into v_indisvalid, v_indisready, v_amname, v_indexdef
+  from pg_index i
+  join pg_class c on c.oid = i.indexrelid
+  join pg_am am on am.oid = c.relam
+  where c.relname = 'memories_tags_idx';
+
+  assert v_indisvalid is not null, '00076/00086: memories_tags_idx must exist';
+  assert v_indisvalid, '00076/00086: memories_tags_idx must be VALID (not a failed/leftover CONCURRENTLY build)';
+  assert v_indisready, '00076/00086: memories_tags_idx must be READY (visible to the planner)';
+  assert v_amname = 'gin', format('00076/00086: memories_tags_idx must use the gin access method, got %s', v_amname);
+  assert v_indexdef ilike '%(tags)%', format('00076/00086: memories_tags_idx must be defined on the tags column, got: %s', v_indexdef);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
