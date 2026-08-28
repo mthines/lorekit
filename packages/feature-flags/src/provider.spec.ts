@@ -122,4 +122,48 @@ describe('LoreKitFlagProvider', () => {
     expect(result.errorCode).toBe(ErrorCode.TYPE_MISMATCH);
     expect(result.value).toEqual({ a: 1 });
   });
+
+  it('an override on a static flag wins, with reason OVERRIDE', async () => {
+    const provider = new LoreKitFlagProvider([staticFlag]);
+    const result = await provider.resolveBooleanEvaluation(
+      'static-flag',
+      false,
+      { flagOverrides: { 'static-flag': 'on' } },
+      NOOP_LOGGER,
+    );
+    expect(result).toMatchObject({ value: true, variant: 'on', reason: 'OVERRIDE' });
+  });
+
+  it('an override on an experiment flag wins over bucketing, and is deterministic regardless of targetingKey', async () => {
+    const provider = new LoreKitFlagProvider([experimentFlag]);
+    const result = await provider.resolveBooleanEvaluation(
+      'experiment-flag',
+      false,
+      { targetingKey: 'user-123', flagOverrides: { 'experiment-flag': 'control' } },
+      NOOP_LOGGER,
+    );
+    expect(result).toMatchObject({ value: false, variant: 'control', reason: 'OVERRIDE' });
+  });
+
+  it('an override naming a variant that does not exist for this flag is ignored — falls through to normal resolution', async () => {
+    const provider = new LoreKitFlagProvider([staticFlag]);
+    const result = await provider.resolveBooleanEvaluation(
+      'static-flag',
+      false,
+      { flagOverrides: { 'static-flag': 'nonexistent' } },
+      NOOP_LOGGER,
+    );
+    expect(result.reason).toBe(StandardResolutionReasons.STATIC);
+  });
+
+  it('an override for a DIFFERENT flag key does not affect this evaluation', async () => {
+    const provider = new LoreKitFlagProvider([staticFlag]);
+    const result = await provider.resolveBooleanEvaluation(
+      'static-flag',
+      false,
+      { flagOverrides: { 'other-flag': 'on' } },
+      NOOP_LOGGER,
+    );
+    expect(result.reason).toBe(StandardResolutionReasons.STATIC);
+  });
 });

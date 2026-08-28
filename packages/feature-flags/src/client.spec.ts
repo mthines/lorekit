@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { evaluateFlag, resetFeatureFlagClientForTests } from './client.ts';
+import { evaluateFlag, evaluateFlagDetails, resetFeatureFlagClientForTests } from './client.ts';
 
 describe('evaluateFlag', () => {
   beforeEach(() => {
@@ -24,5 +24,23 @@ describe('evaluateFlag', () => {
   it('rejects an unknown flag key at compile time (type-level) — runtime guard for drift', async () => {
     // @ts-expect-error — 'not-a-real-flag' is not a member of the generated FlagKey union.
     await expect(evaluateFlag('not-a-real-flag')).rejects.toThrow(/unknown flag/);
+  });
+});
+
+describe('evaluateFlagDetails', () => {
+  beforeEach(() => {
+    resetFeatureFlagClientForTests();
+  });
+
+  it('returns variant and reason alongside the value', async () => {
+    const details = await evaluateFlagDetails('usage-charts-v2');
+    expect(details).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
+  });
+
+  it('reports OVERRIDE when a session override is present', async () => {
+    const details = await evaluateFlagDetails('usage-charts-v2', {
+      flagOverrides: { 'usage-charts-v2': 'on' },
+    });
+    expect(details).toMatchObject({ value: true, variant: 'on', reason: 'OVERRIDE' });
   });
 });

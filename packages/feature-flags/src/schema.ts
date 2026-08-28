@@ -78,7 +78,11 @@ export const FlagDefinitionSchema = z
     tags: z.array(z.string()).default([]),
   })
   .superRefine((def, ctx) => {
-    if (!(def.defaultVariant in def.variants)) {
+    // `Object.hasOwn`, not `in` — `in` walks the prototype chain, so a
+    // `defaultVariant` of `"constructor"` or `"toString"` would incorrectly
+    // pass (`Object.prototype.constructor` exists) and `def.variants[...]`
+    // would return a function where the type says `boolean | string | number`.
+    if (!Object.hasOwn(def.variants, def.defaultVariant)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['defaultVariant'],
@@ -86,7 +90,7 @@ export const FlagDefinitionSchema = z
       });
     }
     for (const variant of def.experiment?.variants ?? []) {
-      if (!(variant.key in def.variants)) {
+      if (!Object.hasOwn(def.variants, variant.key)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['experiment', 'variants'],

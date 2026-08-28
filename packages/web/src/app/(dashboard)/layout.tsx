@@ -11,7 +11,9 @@ import { FocusRefetcher } from '@/components/providers/FocusRefetcher';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
 import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
+import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
+import { getAllServerFlags } from '@/lib/feature-flags/server';
 import { resolveDashboardBootstrap } from '@/lib/dashboard-bootstrap';
 import { Toaster } from 'sonner';
 import { CommandPaletteProvider } from '@/components/command/CommandPaletteProvider';
@@ -61,11 +63,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // build the checklist reuse this same request's result.
   const { user, onboardingState } = bootstrap;
 
+  // Evaluated ONCE here, server-side, for the whole dashboard tree.
+  // `FeatureFlagsProvider` hands these values to every Client Component via
+  // `useFeatureFlag` — there is no separate client-side evaluation to drift
+  // from this one. `user.id` is passed through so this does not repeat the
+  // `auth.getUser()` call `resolveDashboardBootstrap` already made above.
+  // See `lib/feature-flags/server.ts`.
+  const flags = await getAllServerFlags(user.id);
+
   return (
     // ToastProvider mounts once at the dashboard root — a thin sibling client
     // context (no Suspense-dependent hooks), so any settings/lore/dashboard
     // action can announce an aria-live toast (plan.md Decision D7).
     <ToastProvider>
+    <FeatureFlagsProvider flags={flags}>
     <OnboardingProvider serverState={onboardingState}>
       {/*
         CommandPaletteProvider wraps the entire dashboard so the palette is
@@ -149,6 +160,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         />
       </CommandPaletteProvider>
     </OnboardingProvider>
+    </FeatureFlagsProvider>
     </ToastProvider>
   );
 }

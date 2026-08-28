@@ -77,7 +77,10 @@ describe('featureFlagOtelHook', () => {
     expect(exported.attributes[ATTR_FEATURE_FLAG_KEY]).toBe('new-onboarding-flow');
     expect(exported.attributes[ATTR_FEATURE_FLAG_PROVIDER_NAME]).toBe('lorekit-flags');
     expect(exported.attributes[ATTR_FEATURE_FLAG_RESULT_VARIANT]).toBe('treatment');
-    expect(exported.attributes[ATTR_FEATURE_FLAG_RESULT_REASON]).toBe('SPLIT');
+    // Lowercased to match the OTel semconv well-known values, even though
+    // OpenFeature's own `details.reason` is uppercase ('SPLIT') — see the
+    // comment on this transform in otel-hook.ts.
+    expect(exported.attributes[ATTR_FEATURE_FLAG_RESULT_REASON]).toBe('split');
     expect(exported.events.some((e) => e.name === EVENT_FEATURE_FLAG_EVALUATION)).toBe(true);
   });
 

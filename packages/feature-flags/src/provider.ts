@@ -21,15 +21,50 @@ import type {
 } from '@openfeature/server-sdk';
 import { ErrorCode, StandardResolutionReasons } from '@openfeature/server-sdk';
 import { assignExperimentVariant } from './bucketing.ts';
+import { OVERRIDE_REASON, type FlagOverrideContext } from './overrides.ts';
 import { FLAG_REGISTRY } from './registry.ts';
 import type { FlagDefinition, FlagType } from './schema.ts';
 
+/**
+ * Fallback targeting key when a caller evaluates an experiment flag with no
+ * `context.targetingKey` at all.
+ *
+ * This is a LAST RESORT, not a design a web caller should ever hit: every
+ * anonymous request bucketing on this literal constant means every anonymous
+ * visitor gets the SAME variant forever, which defeats the entire point of an
+ * A/B experiment (100% of anonymous traffic on one arm, not a split). It
+ * exists so a caller with genuinely no identity available (a one-off CLI
+ * script, a test) still gets a deterministic, reproducible answer instead of
+ * a crash — it must never be reached from `packages/web`, which always
+ * supplies a real `targetingKey` (the authenticated user id, or a stable
+ * per-browser anonymous id — see `packages/web/src/lib/feature-flags/`).
+ * `resolveFromDefinition` warns (once per process, dev-only) whenever an
+ * active experiment actually falls back to it, so a missing integration is
+ * loud instead of silently wrong.
+ */
 const ANONYMOUS_TARGETING_KEY = 'anonymous';
+
+const warnedFlags = new Set<string>();
+
+function isDev(): boolean {
+  return typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production';
+}
+
+function warnMissingTargetingKeyOnce(flagKey: string): void {
+  if (!isDev() || warnedFlags.has(flagKey)) return;
+  warnedFlags.add(flagKey);
+  // eslint-disable-next-line no-console -- intentional one-time dev warning, not telemetry
+  console.warn(
+    `[@lorekit/feature-flags] "${flagKey}" is an active experiment but was evaluated with no ` +
+      `context.targetingKey — every such call gets the SAME variant, which is not an A/B split. ` +
+      'Pass a stable per-user or per-visitor id.',
+  );
+}
 
 function resolveFromDefinition<T extends JsonValue>(
   def: FlagDefinition,
   defaultValue: T,
-  context: EvaluationContext,
+  context: FlagOverrideContext,
   expectedType: FlagType,
 ): ResolutionDetails<T> {
   if (def.type !== expectedType) {
@@ -41,10 +76,20 @@ function resolveFromDefinition<T extends JsonValue>(
     };
   }
 
+  const overrideVariant = context.flagOverrides?.[def.key];
+  if (overrideVariant !== undefined && Object.hasOwn(def.variants, overrideVariant)) {
+    return {
+      value: def.variants[overrideVariant] as T,
+      variant: overrideVariant,
+      reason: OVERRIDE_REASON,
+    };
+  }
+
   let variant = def.defaultVariant;
   let reason: ResolutionReason = StandardResolutionReasons.STATIC;
 
   if (def.experiment?.enabled) {
+    if (!context.targetingKey) warnMissingTargetingKeyOnce(def.key);
     const targetingKey = context.targetingKey ?? ANONYMOUS_TARGETING_KEY;
     variant = assignExperimentVariant(def.key, def.experiment, targetingKey);
     reason = StandardResolutionReasons.SPLIT;

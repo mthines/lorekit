@@ -190,6 +190,135 @@ No language-specific generator exists in this repo yet — add one under
 needs flags, following `gen-feature-flags.mjs`'s `--check`-guarded,
 pure-render-function shape.
 
+## `packages/web` integration
+
+The dashboard reads flags on **both** the server and the client, from exactly
+one evaluation per request — there is no independent client-side bucketing.
+
+**Server-side** (Server Components, Server Actions, Route Handlers):
+
+```tsx
+import { getServerFlag } from '@/lib/feature-flags/server';
+
+export default async function SomePage() {
+  const showTreatment = await getServerFlag('new-onboarding-flow');
+  return showTreatment ? <NewOnboarding /> : <LegacyOnboarding />;
+}
+```
+
+**Client-side** (any Client Component under the dashboard layout):
+
+```tsx
+'use client';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
+
+function SomeWidget() {
+  const showTreatment = useFeatureFlag('new-onboarding-flow');
+  return showTreatment ? <NewWidget /> : <LegacyWidget />;
+}
+```
+
+### Why the client hook doesn't evaluate independently
+
+`@openfeature/server-sdk` cannot run in the browser — it's Node-only.
+OpenFeature ships a separate `@openfeature/web-sdk` for that, which this app
+does not depend on. Rather than add a second SDK and a second bucketing code
+path (and risk it disagreeing with the server's evaluation and causing a
+hydration mismatch), the dashboard layout (`app/(dashboard)/layout.tsx`) calls
+`getAllServerFlags()` once per request and seeds `FeatureFlagsProvider`, a
+React context, with the resolved values. `useFeatureFlag` is a plain context
+read — no fetch, no loading state, and structurally unable to disagree with
+whatever the server rendered, because it's reading the same server's answer.
+
+The trade-off: a flag's value is fixed for the lifetime of the current page's
+RSC payload. Changing it (via the developer overrides page, below) needs a
+fresh server render (`revalidatePath`), not a client-side re-evaluation.
+
+### Targeting key resolution
+
+`resolveFeatureFlagContext()` (`lib/feature-flags/server.ts`) builds the
+`targetingKey` as: the authenticated Supabase user id when signed in, else a
+stable per-browser id read from an **httpOnly** cookie
+(`lorekit_flag_anon_id`, minted once by `middleware.ts` for every visitor).
+This closes the gap in `LoreKitFlagProvider`'s own fallback — an experiment
+evaluated with no `targetingKey` at all buckets every caller onto the same
+constant, which is not a split — by guaranteeing the web app always supplies
+a real one, even before sign-in.
+
+## Session overrides
+
+The developer/admin override page — `/settings/developer`, source in
+`app/(dashboard)/settings/developer/` — lets you force a specific variant for
+your own session, for **both** the server and the client, resettable per flag
+or all at once.
+
+### How it works
+
+An **httpOnly** cookie (`lorekit_flag_overrides`, `packages/web/src/lib/feature-flags/overrides-cookie.ts`)
+holds a JSON map of `flagKey -> variantKey`. The Server Actions in
+`overrides-actions.ts` (`setFlagOverrideAction` / `clearFlagOverrideAction` /
+`clearAllFlagOverridesAction`) write it, validating every entry against the
+live `FLAG_REGISTRY` through `@lorekit/feature-flags`' `parseFlagOverrides`
+(a stale or hand-edited cookie value is silently dropped, never trusted).
+`resolveFeatureFlagContext()` reads the cookie on every request and folds it
+into the `EvaluationContext` via `withFlagOverrides`; `LoreKitFlagProvider`
+checks it FIRST, before static/experiment resolution, and reports
+`reason: 'OVERRIDE'`.
+
+Because there is exactly one evaluation site (server-side — see above), the
+override reaches the client automatically: after a Server Action mutates the
+cookie, it calls `revalidatePath('/', 'layout')`, the dashboard layout
+re-evaluates every flag, and `FeatureFlagsProvider` re-renders with the new
+values. No separate cookie read on the client, no separate apply step for
+`useFeatureFlag` — it's the same one context, freshly seeded.
+
+### Why not Vercel Toolbar / the `flags` SDK
+
+Vercel's `flags` SDK (formerly `@vercel/flags`) is a reasonable choice in
+general, but wasn't adopted here for three reasons specific to this app:
+
+1. **A second evaluation model, on top of OpenFeature.** The `flags` SDK
+   wants a `decide()` function per flag and largely displaces the provider
+   abstraction OpenFeature already gives this repo cross-language portability
+   through (see "Why OpenFeature" above). Using both means either running
+   two systems side by side or making `flags` the *only* layer and reducing
+   `LoreKitFlagProvider` to a `decide()` implementation detail — a bigger
+   redesign than a settings page.
+2. **The Toolbar needs a discovery route and override-cookie plumbing this
+   app would still have to write** (`/.well-known/vercel/flags`, encrypted
+   override cookies, `verifyAccess`) — comparable effort to the Settings page
+   built instead, but tied to Vercel's toolbar UI and cookie format rather
+   than this app's own Settings surface, session model, and design system.
+3. **This repo already has an authenticated, styled settings area** with the
+   exact plumbing an override needs (cookies via `next/headers`, Server
+   Actions, `revalidatePath`). Building the override page as one more
+   `SectionPanel` reuses all of it — no new auth surface, no new UI system,
+   no dependency on the Vercel platform (the toolbar is Vercel-hosted
+   tooling; this runs identically in local dev, preview, and self-hosted-off-
+   Vercel scenarios, which matters for a project not permanently committed to
+   one host).
+
+The trade-off, accepted deliberately: no visual "which variant am I seeing"
+overlay in the deployed preview the way the Vercel Toolbar draws one. The
+Settings page shows the same information (current value, variant, reason)
+in a table instead of an overlay.
+
+### Why session overrides gate on environment, not role
+
+`/settings/developer` is hidden from the settings nav (and its own page still
+renders if visited directly) based on `deployment.environment.name !==
+'production'` (`SettingsNav.tsx`, reusing `otel-deployment-env.ts`'s
+cross-checked `NODE_ENV`/`VERCEL_ENV` resolution) rather than an org-role
+check. An override cookie only ever changes what **the browser holding it**
+sees — there is no code path where overriding a flag affects another user's
+session or any shared state — so the risk an org-role gate would mitigate
+(a non-admin affecting other users) doesn't exist here. The environment gate
+exists to keep the entry point out of a customer's nav, not to restrict who
+can flip their own flags. If a future flag ever gates something
+security-sensitive (not the pattern today — every flag here is a UI/rollout
+switch), reconsider stricter gating for that specific case rather than the
+mechanism as a whole.
+
 ## Removing a flag
 
 Delete its entry from `registry.ts`, regenerate, and grep the repo for the

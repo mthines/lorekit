@@ -5,7 +5,13 @@
  * functions) gets the OTel instrumentation "for free" the first time it
  * calls `evaluateFlag`, with no per-call-site setup to forget.
  */
-import { OpenFeature, type Client, type EvaluationContext } from '@openfeature/server-sdk';
+import {
+  OpenFeature,
+  type Client,
+  type EvaluationContext,
+  type EvaluationDetails,
+  type FlagValue as OpenFeatureFlagValue,
+} from '@openfeature/server-sdk';
 import { featureFlagOtelHook } from './otel-hook.ts';
 import { LoreKitFlagProvider } from './provider.ts';
 import { getFlagDefinition } from './registry.ts';
@@ -69,6 +75,39 @@ export async function evaluateFlag<K extends FlagKey>(
         fallback as number,
         context,
       )) as unknown as FlagValue<K>;
+  }
+}
+
+/**
+ * Like {@link evaluateFlag}, but returns the full `EvaluationDetails` —
+ * `variant` and `reason` alongside `value` — instead of just the value.
+ *
+ * For a UI that needs to SHOW how a flag resolved (a developer overrides
+ * page displaying "control, via SPLIT" vs "on, via OVERRIDE"), not for
+ * ordinary call sites — `evaluateFlag`'s plain value is what almost every
+ * caller wants, and is what stays type-inferred without an `EvaluationDetails<T>`
+ * generic to thread through.
+ */
+export async function evaluateFlagDetails<K extends FlagKey>(
+  key: K,
+  context: EvaluationContext = {},
+): Promise<EvaluationDetails<OpenFeatureFlagValue>> {
+  const def = getFlagDefinition(key);
+  if (!def) {
+    throw new Error(
+      `@lorekit/feature-flags: unknown flag "${key}" — run \`nx run feature-flags:generate\`.`,
+    );
+  }
+  const client = getFeatureFlagClient();
+  const fallback = def.variants[def.defaultVariant];
+
+  switch (def.type) {
+    case 'boolean':
+      return client.getBooleanDetails(key, fallback as boolean, context);
+    case 'string':
+      return client.getStringDetails(key, fallback as string, context);
+    case 'number':
+      return client.getNumberDetails(key, fallback as number, context);
   }
 }
 

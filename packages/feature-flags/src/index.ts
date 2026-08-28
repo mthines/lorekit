@@ -12,11 +12,25 @@
  * See `docs/feature-flags.md` for the full guide (authoring a flag, running
  * codegen, reading the A/B split back out of Dash0).
  */
-export { evaluateFlag, getFeatureFlagClient, resetFeatureFlagClientForTests } from './client.ts';
+export {
+  evaluateFlag,
+  evaluateFlagDetails,
+  getFeatureFlagClient,
+  resetFeatureFlagClientForTests,
+} from './client.ts';
 export { LoreKitFlagProvider } from './provider.ts';
 export { featureFlagOtelHook } from './otel-hook.ts';
 export { assignExperimentVariant, bucketOf, fnv1aHash } from './bucketing.ts';
 export { FLAG_REGISTRY, getFlagDefinition } from './registry.ts';
+export {
+  FLAG_OVERRIDES_CONTEXT_KEY,
+  OVERRIDE_REASON,
+  parseFlagOverrides,
+  serializeFlagOverrides,
+  withFlagOverrides,
+  type FlagOverrideContext,
+  type FlagOverrides,
+} from './overrides.ts';
 export {
   FlagDefinitionSchema,
   FlagRegistrySchema,

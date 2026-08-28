@@ -66,7 +66,13 @@ export const featureFlagOtelHook: Hook = {
     const span = trace.getActiveSpan();
     const attrs = baseAttributes(hookContext);
     if (details.variant) attrs[ATTR_FEATURE_FLAG_RESULT_VARIANT] = details.variant;
-    if (details.reason) attrs[ATTR_FEATURE_FLAG_RESULT_REASON] = details.reason;
+    // Lowercased: OpenFeature's own `StandardResolutionReasons` values are
+    // UPPERCASE ("STATIC", "SPLIT") by its own convention, but the OTel
+    // feature-flag semantic conventions' well-known `feature_flag.result.reason`
+    // values are lowercase ("static", "split") — see the spec link in
+    // `otel-attributes.ts`. Transform at this boundary only; `provider.ts` keeps
+    // the idiomatic OpenFeature casing for its own `ResolutionDetails.reason`.
+    if (details.reason) attrs[ATTR_FEATURE_FLAG_RESULT_REASON] = details.reason.toLowerCase();
     if (span) stampSpan(span, attrs);
     recordEvaluationMetric(hookContext.flagKey, details.variant);
   },
