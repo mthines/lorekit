@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { classifyAuthCallback } from '@/lib/auth-callback-params';
+import { getServerFlag } from '@/lib/feature-flags/server';
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -34,6 +35,13 @@ export default async function RootPage({
   }
 
   const user = await getVerifiedUser();
-  if (user) redirect('/overview');
+  if (user) {
+    // While `insights-page` is on, Insights takes Overview's "home" slot —
+    // Overview stays reachable by direct URL (it still mints a brand-new
+    // user's first API token) but is no longer where the root path lands.
+    // See Sidebar.tsx's matching nav filter and insights/page.tsx's gate.
+    const insightsEnabled = await getServerFlag('insights-page', user.id);
+    redirect(insightsEnabled ? '/lore' : '/overview');
+  }
   redirect('/login');
 }

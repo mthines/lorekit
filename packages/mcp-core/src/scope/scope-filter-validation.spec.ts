@@ -187,6 +187,12 @@ const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]>
   // The one that was already correct, and the one that must NOT move to
   // `parseScopeFilter`: it reads the normalised `usage_events.scope`.
   ['read-activity.ts', 'handleReadActivity', 'validateScope'],
+  // Reads `memories.scope` directly (not the normalised usage_events column),
+  // but follows read-activity's fail-LOUD posture rather than the write
+  // path's parseScopeFilter: a scope filter here IS the question being asked
+  // ("rank THIS scope"), so an ungrammatical one is a 400, matching every
+  // other scope-bearing analytics route.
+  ['read-ranking.ts', 'handleReadRanking', 'validateScope'],
 ];
 
 describe('REST scope filters are validated before they reach a query', () => {

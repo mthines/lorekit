@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
 import { Badge } from '@/components/ui/Badge';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
@@ -698,7 +699,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                             possible, so this section never re-parses tags
                             itself. First row present starts a new cluster
                             only when Ownership rendered above it. */}
-                        {(lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null) && (
+                        {(lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null) && (
                           <>
                             {lesson.kind && (
                               <div className={`flex items-center gap-2 text-xs ${lesson.org ? clusterStart : ''}`}>
@@ -765,15 +766,44 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 </div>
                               );
                             })()}
-                          </>
-                        )}
+                            {(() => {
+                              const readCount = lesson.read_count;
+                              if (readCount == null) return null;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger && lesson.seen_count == null
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <BookOpenCheck className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Consumption</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="How many times this memory has actually been READ back by a memory.read/list/search/list_archived call, not just written. Counts only SINCE per-memory tracking began — a 0 here means not read since then, not necessarily never."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {readCount === 0
+                                          ? 'no reads recorded'
+                                          : `read ${readCount}×${lesson.last_read_at ? ` · last ${new Date(lesson.last_read_at).toLocaleDateString()}` : ''}`}
+                                      </span>
+                                    </Tooltip>
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                           </>
+                         )}
 
-                        {/* Timeline — created / updated / expiry / archived.
+                         {/* Timeline — created / updated / expiry / archived.
                             Preceded by ownership and/or source, so the first row
                             always starts a new cluster. */}
                         <div
                           className={`flex items-center gap-2 text-xs ${
-                            lesson.org || lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null
+                            lesson.org || lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null
                               ? clusterStart
                               : ''
                           }`}

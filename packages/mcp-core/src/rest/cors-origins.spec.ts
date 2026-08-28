@@ -178,7 +178,7 @@ describe('corsResponseHeaders', () => {
       // read" metric), so dropping it from this list does not merely lose a
       // telemetry dimension — it breaks every dashboard request.
       expect(headers['Access-Control-Allow-Headers']).toBe(
-        'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id',
+        'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id, X-LoreKit-Session-Kind',
       );
       // Without this a browser cannot read the server span's traceparent, which
       // is what links client-side RUM to the server trace. `X-LoreKit-User-Id`

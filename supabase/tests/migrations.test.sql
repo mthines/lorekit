@@ -27,6 +27,7 @@ begin;
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a1', 'authenticated', 'authenticated', 'lk-mig-a@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a2', 'authenticated', 'authenticated', 'lk-mig-a2@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -4261,7 +4262,11 @@ begin
   -- AC-2: EVERY READ_TOOLS name counts. The 2nd holds memory.read (4) and
   -- memory.list_archived (6). This is the discriminating assertion for the
   -- omitted fourth tool: with a three-name filter it reads 4, not 10.
-  select count into v_count
+  -- Summed with coalesce(sum(...)): 00080 split the function's output by
+  -- read_kind, so memory.read (targeted) and memory.list_archived (bulk) are
+  -- now two separate rows for this bucket — a bare `select count into` would
+  -- only see the first one (see AC-4 below for the same pattern).
+  select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',
       timestamptz '2026-04-02 00:00:00+00', timestamptz '2026-04-03 00:00:00+00');
@@ -4382,7 +4387,10 @@ begin
   -- gone. This single number is the discriminating assertion for all three:
   -- 30 means nothing was excluded, 4 means the NULL row was wrongly dropped
   -- (the `<>` bug), 25 means the filter is inverted.
-  select count into v_count
+  -- Summed with coalesce(sum(...)): the mcp memory.list (bulk) and the
+  -- unattributed memory.read (targeted) are two separate read_kind rows since
+  -- 00080, so a bare `select count into` would only see one of them.
+  select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',
       timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00');
@@ -7514,6 +7522,594 @@ begin
     'TAGS-1: memories_tags_idx (00076) must exist — the tags containment filter has no index without it';
   assert v_idx_method = 'gin',
     format('TAGS-1: memories_tags_idx must stay a GIN index (array containment needs it), got %s', v_idx_method);
+end;
+$$;
+
+-- ── 88. lorekit_usage_stats groups by client, kind, host too (00079) ────────
+-- usage_events has stored client (00054) and kind/host (00056) for months;
+-- GET /memories/usage exposed none of them. Widen the GROUP BY.
+-- AC-1: the new columns actually discriminate rows (two rows with the same
+--       tool/outcome/scope_type but different client stay SEPARATE rows).
+-- AC-2: summing event_count over every returned row reproduces the same
+--       total as the pre-00079 (tool_name, outcome, scope_type)-only grouping
+--       would have -- widening the GROUP BY must never gain or lose events.
+-- AC-3: host is bounded to the window's own top 20 by event count; the 21st
+--       most-frequent host (and everything rarer) collapses to 'other'.
+-- AC-4: a NULL host stays NULL -- it is not "some other host", it has none.
+do $$
+declare
+  v_total_new bigint;
+  v_total_old bigint;
+  v_client_a  bigint;
+  v_client_b  bigint;
+  v_other_count bigint;
+  v_null_host_count bigint;
+  v_distinct_hosts_returned integer;
+  i integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: same (tool_name, outcome, scope_type), different client -- must be
+  -- two rows, not folded into one.
+  -- auth_type is NOT NULL on usage_events (00034) — a raw insert must supply
+  -- it explicitly, unlike the RPC path where it defaults through a parameter.
+  insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'api_key', 'mcp', timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'api_key', 'cli', timestamptz '2026-08-01');
+
+  select coalesce(sum(event_count), 0) into v_client_a from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list' and client = 'mcp';
+  select coalesce(sum(event_count), 0) into v_client_b from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list' and client = 'cli';
+  assert v_client_a = 1 and v_client_b = 1,
+    format('88 AC-1: client must discriminate rows, got mcp=%s cli=%s', v_client_a, v_client_b);
+
+  -- AC-2: the SUM over every row for this tool_name is 2, matching the two
+  -- events inserted -- widening the group-by refined the buckets, it did not
+  -- change the total.
+  select coalesce(sum(event_count), 0) into v_total_new from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list';
+  select count(*) into v_total_old from usage_events
+   where tool_name = '88.memory.list' and user_id = '00000000-0000-0000-0000-0000000000a1';
+  assert v_total_new = v_total_old,
+    format('88 AC-2: summed event_count (%s) must equal the raw row count (%s)', v_total_new, v_total_old);
+
+  -- AC-3/AC-4: 21 distinct hosts, one event each, plus 3 NULL-host events (a
+  -- scopeless/hostless tool). The rarest host (host-20, alphabetically last
+  -- among ties at count=1) must collapse to 'other'; NULL must stay NULL.
+  for i in 0..20 loop
+    insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, host, created_at)
+      values ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key',
+              format('88-host-%s', lpad(i::text, 2, '0')), timestamptz '2026-08-01');
+  end loop;
+  insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, host, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01');
+
+  select count(distinct host) into v_distinct_hosts_returned from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host is not null;
+  -- 20 top hosts + the 'other' bucket the 21st collapses into = 21 distinct
+  -- non-null host values, never 21 real host names.
+  assert v_distinct_hosts_returned = 21,
+    format('88 AC-3: expected 20 named hosts + one "other" bucket (21 distinct), got %s', v_distinct_hosts_returned);
+
+  select coalesce(sum(event_count), 0) into v_other_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host = 'other';
+  assert v_other_count = 1,
+    format('88 AC-3: exactly one event must have collapsed into the "other" bucket, got %s', v_other_count);
+
+  select coalesce(sum(event_count), 0) into v_null_host_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host is null;
+  assert v_null_host_count = 3,
+    format('88 AC-4: the 3 NULL-host events must stay NULL, not become "other", got %s', v_null_host_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 89. lorekit_read_activity gains read_kind (00080) ────────────────────────
+-- "Memories read" is 99.7% bulk list/search output in a live sample -- split
+-- retrieved (bulk) from opened (targeted) so the two stop sharing one number.
+-- AC-1: a memory.read event is read_kind='targeted'.
+-- AC-2: memory.list/search/list_archived events are read_kind='bulk'.
+-- AC-3: retrieved + opened sum to the SAME total the function always gave for
+--       this window (the split refines, never changes, the series).
+-- AC-4: the dashboard-client exclusion and key-scope narrowing still apply
+--       per read_kind, not just to the unsplit total.
+do $$
+declare
+  v_targeted   bigint;
+  v_bulk       bigint;
+  v_total_new  bigint;
+  v_total_rows bigint;
+  v_dashboard_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',         'repo', 'jwt', 'ok', 10,  1, 'mcp', timestamptz '2026-08-05 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',         'repo', 'jwt', 'ok', 10, 31, 'mcp', timestamptz '2026-08-05 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search',       'repo', 'jwt', 'ok', 10,  5, 'mcp', timestamptz '2026-08-05 01:10:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list_archived','repo', 'jwt', 'ok', 10,  2, 'mcp', timestamptz '2026-08-05 01:15:00+00'),
+    -- The dashboard's own browsing must stay excluded per read_kind too.
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', 10, 100, 'dashboard', timestamptz '2026-08-05 01:20:00+00');
+
+  -- AC-1: memory.read is targeted.
+  select coalesce(sum(count), 0) into v_targeted from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'targeted';
+  assert v_targeted = 1, format('89 AC-1: memory.read must be read_kind=targeted with count 1, got %s', v_targeted);
+
+  -- AC-2: list/search/list_archived are bulk (31+5+2 = 38; the dashboard's
+  -- 100 must NOT be included per AC-4).
+  select coalesce(sum(count), 0) into v_bulk from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'bulk';
+  assert v_bulk = 38, format('89 AC-2/AC-4: bulk must be 38 (31+5+2, dashboard excluded), got %s', v_bulk);
+
+  -- AC-3: retrieved + opened sum to the function's own total for the window
+  -- (1 + 38 = 39; the dashboard's 100 stays excluded from the total too).
+  select coalesce(sum(count), 0) into v_total_new from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_new = 39,
+    format('89 AC-3: targeted + bulk must sum to 39 (1 + 38), got %s', v_total_new);
+
+  -- AC-4 (direct): the dashboard-attributed row contributes nothing to either
+  -- read_kind, not merely something less than its full 100.
+  select count(*) into v_dashboard_count from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where count = 100;
+  assert v_dashboard_count = 0, '89 AC-4: the dashboard-attributed 100 records must not appear in either read_kind';
+
+  -- Sanity: exactly two rows returned for this bucket/scope (one per
+  -- read_kind) -- not folded into one, not split further.
+  select count(*) into v_total_rows from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_rows = 2,
+    format('88: expected exactly 2 rows (targeted + bulk) for this bucket/scope, got %s', v_total_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 90. lorekit_usage_memory_count_peak (00081) ──────────────────────────────
+-- usage_events.memory_count is stamped on every write event and exposed by no
+-- endpoint. Surface the window's peak as its own scalar RPC.
+-- AC-1: returns the MAX memory_count over write events in the window.
+-- AC-2: a window with no write events returns null, never a fabricated 0.
+-- AC-3: a service-role caller with no target user returns null.
+-- AC-4: self-only -- a different user's peak is invisible.
+do $$
+declare
+  v_peak bigint;
+  v_peak_none bigint;
+  v_peak_other_scope integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, memory_count, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 40, timestamptz '2026-08-10 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 55, timestamptz '2026-08-10 02:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 47, timestamptz '2026-08-10 03:00:00+00'),
+    -- A different user in the SAME window must not leak into the first user's peak.
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.write', 'repo', 'jwt', 'ok', 9999, timestamptz '2026-08-10 01:30:00+00');
+
+
+  -- AC-1: the max of 40/55/47 is 55.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak;
+  assert v_peak = 55, format('90 AC-1: expected peak 55, got %s', v_peak);
+
+  -- AC-2: a window with no write events for this user returns null.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2020-01-01 00:00:00+00', timestamptz '2020-01-02 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-2: an empty window must return null, got %s', v_peak_none);
+
+  -- AC-3: a service-role caller with no target user (p_user_id null) has no
+  -- single account to report on.
+  select lorekit_usage_memory_count_peak(
+    null, timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-3: a NULL target user must return null, got %s', v_peak_none);
+
+  -- AC-4: self-only -- the second user's 9999 must never appear in the first
+  -- user's peak (already proven by AC-1 = 55, not 9999), and querying the
+  -- SECOND user directly must see their own peak, not the first's.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a2',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_other_scope;
+  assert v_peak_other_scope = 9999,
+    format('90 AC-4: the second user must see their own peak (9999), got %s', v_peak_other_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+
+-- ── 91. Per-memory read counters + daily rollup (00084) ─────────────────────
+-- usage_events records HOW MANY records a call touched, never WHICH -- there
+-- is no memory_id on the read ledger and none of the 17 tables is a
+-- per-memory read table. This closes it with counters + a daily rollup, not a
+-- per-read event table.
+-- AC-1: lorekit_record_memory_reads increments read_count/last_read_at for
+--       EVERY id in the array, in one call.
+-- AC-2: it upserts memory_read_daily, keyed by (memory_id, day, read_kind),
+--       accumulating count across repeated calls on the same day.
+-- AC-3: a null/empty array is a no-op -- no row touched, no error raised.
+-- AC-4: the read_kind CHECK is a real backstop.
+-- AC-5: ON DELETE CASCADE -- purging a memory removes its rollup rows; an
+--       ARCHIVED memory (soft-delete only) keeps them.
+do $$
+declare
+  v_m1        uuid;
+  v_m2        uuid;
+  v_read_count integer;
+  v_last_read  timestamptz;
+  v_rollup_count integer;
+  v_rollup_rows  integer;
+  v_raised       boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-1', 'v')
+    returning id into v_m1;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-2', 'v')
+    returning id into v_m2;
+
+  -- AC-1: a bulk read over both memories, one call, one array.
+  perform lorekit_record_memory_reads(array[v_m1, v_m2], 'bulk');
+
+  select read_count, last_read_at into v_read_count, v_last_read from memories where id = v_m1;
+  assert v_read_count = 1, format('91 AC-1: read_count must increment to 1, got %s', v_read_count);
+  assert v_last_read is not null, '91 AC-1: last_read_at must be set';
+
+  select read_count into v_read_count from memories where id = v_m2;
+  assert v_read_count = 1, format('91 AC-1: the second id in the array must ALSO increment, got %s', v_read_count);
+
+  -- AC-2: a second bulk call the SAME day accumulates onto the same rollup row
+  -- rather than inserting a second one.
+  perform lorekit_record_memory_reads(array[v_m1], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m1], 'targeted');
+
+  select count into v_rollup_count from memory_read_daily
+   where memory_id = v_m1 and day = (now() at time zone 'UTC')::date and read_kind = 'bulk';
+  assert v_rollup_count = 2, format('91 AC-2: the bulk rollup must accumulate to 2, got %s', v_rollup_count);
+
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m1;
+  assert v_rollup_rows = 2,
+    format('91 AC-2: bulk and targeted must be SEPARATE rollup rows for the same day, got %s rows', v_rollup_rows);
+
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('91 AC-2: read_count must reflect all three calls (1+1+1), got %s', v_read_count);
+
+  -- AC-3: a null/empty array must not raise and must not touch any row.
+  perform lorekit_record_memory_reads(null, 'bulk');
+  perform lorekit_record_memory_reads(array[]::uuid[], 'bulk');
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('91 AC-3: a null/empty array must be a no-op, got read_count=%s', v_read_count);
+
+  -- AC-4: the read_kind CHECK is a real backstop, not decoration.
+  begin
+    insert into memory_read_daily (memory_id, day, read_kind, count) values (v_m1, current_date, 'skimmed', 1);
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '91 AC-4: an unrecognised read_kind must violate the CHECK';
+
+  -- AC-5: hard-delete (purge) cascades; archive (soft-delete) does not touch
+  -- the rollup at all. Test the CASCADE using m2 (already has a 'bulk' rollup
+  -- row from AC-1's array[v_m1, v_m2] call above) — give it a second, 'targeted'
+  -- row so the setup count reflects both.
+  perform lorekit_record_memory_reads(array[v_m2], 'targeted');
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 2, '91 AC-5 setup: m2 must have exactly two rollup rows (bulk + targeted) before the delete';
+
+  delete from memories where id = v_m2;
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 0,
+    format('91 AC-5: deleting the memory must CASCADE its rollup rows, got %s remaining', v_rollup_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 92. lorekit_memory_read_ranking — hot/cold lore (00085) ──────────────────
+-- With per-memory counters in place (00084), rank memories by how often they
+-- have actually been read. hot = most-read first; cold = least-read, oldest
+-- first among ties.
+-- AC-1: hot ranks strictly by read_count desc.
+-- AC-2: cold ranks strictly by read_count asc, and among equal (zero) counts,
+--       oldest-created first — the most actionable prune candidates.
+-- AC-3: archived memories are excluded (already pruned; ranking them again is
+--       noise).
+-- AC-4: a scoped API key's unfiltered call is narrowed to its own allowlist.
+-- AC-5: an invalid direction raises rather than silently defaulting.
+do $$
+declare
+  v_m_hot   uuid;
+  v_m_warm  uuid;
+  v_m_cold1 uuid;
+  v_m_cold2 uuid;
+  v_m_archived uuid;
+  v_ids     text[];
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-hot', 'v', timestamptz '2026-01-01')
+    returning id into v_m_hot;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-warm', 'v', timestamptz '2026-01-02')
+    returning id into v_m_warm;
+  -- Two never-read memories, at different creation times, to prove the cold
+  -- tiebreak orders by created_at asc rather than leaving ties unordered.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-older', 'v', timestamptz '2025-06-01')
+    returning id into v_m_cold1;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-newer', 'v', timestamptz '2025-07-01')
+    returning id into v_m_cold2;
+  insert into memories (user_id, scope, key, value, archived_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-archived', 'v', now())
+    returning id into v_m_archived;
+
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_warm], 'targeted');
+  -- Give the archived memory reads too, to prove archived rows are excluded
+  -- from the ranking regardless of how often they were read before archiving.
+  perform lorekit_record_memory_reads(array[v_m_archived, v_m_archived], 'bulk');
+
+  -- AC-1: hot ranks strictly by read_count desc. p_limit=100 (the function's
+  -- own max clamp, same as AC-3/AC-4 below) rather than a small number — by
+  -- this point in the shared-transaction test file the user already has
+  -- dozens of other active memories, most with read_count=0, so a small
+  -- top-N window is not guaranteed to still contain all four `89-*` probe
+  -- rows once filtered down to them.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-hot', '89-warm', '89-cold-older', '89-cold-newer']
+      or v_ids::text[] = array['89-hot', '89-warm', '89-cold-newer', '89-cold-older'],
+    format('92 AC-1: hot must rank 89-hot first and 89-warm second, got %s', v_ids);
+
+  -- AC-2: cold ranks read_count asc, then created_at asc among zero-count ties.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'cold', null, 100)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-cold-older', '89-cold-newer', '89-warm', '89-hot'],
+    format('92 AC-2: cold must rank the never-read, oldest-first, before the read ones, got %s', v_ids);
+
+  -- AC-3: the archived memory never appears in either ranking.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+     where key = '89-archived'
+  ), '92 AC-3: an archived memory must be excluded from the ranking';
+
+  -- AC-4: a scoped key's unfiltered call is narrowed to its allowlist —
+  -- restricting to a DIFFERENT scope than 'global' must exclude every 89-* row.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking(
+      '00000000-0000-0000-0000-0000000000a1', 'hot', null, 100, array['repo::acme/other']
+    ) where key like '89-%'
+  ), '92 AC-4: an out-of-allowlist key_scopes must narrow the result to nothing for these rows';
+
+  -- AC-5: an invalid direction raises rather than silently defaulting to hot.
+  begin
+    perform lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'sideways', null, 10);
+  exception when sqlstate '22023' then
+    v_raised := true;
+  end;
+  assert v_raised, '92 AC-5: an invalid direction must raise, not silently default';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 93. usage_events.session_kind (00082) ────────────────────────────────────
+-- correlation_id was populated only when a human hand-exported
+-- LOREKIT_CORRELATION_ID, so "was this read in a local session, CI, or a PR
+-- automation" was unanswerable. session_kind is the bounded dimension every
+-- chart groups on; correlation_id stays the unbounded drill-down key.
+-- AC-1: the writer RPC persists the new trailing p_session_kind parameter.
+-- AC-2: session_kind is null by default (an older CLI, or no header sent).
+-- AC-3: the length CHECK is a real backstop, not decoration.
+do $$
+declare
+  v_id     uuid;
+  v_kind   text;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a CI run persists session_kind = 'ci'.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.list',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok',
+    p_session_kind => 'ci') into v_id;
+  assert v_id is not null, '93 AC-1: the writer must return the inserted id';
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind = 'ci', format('93 AC-1: p_session_kind must be persisted, got %s', v_kind);
+
+  -- AC-2: omitting p_session_kind leaves the column null.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind is null, format('93 AC-2: session_kind must default to null, got %s', v_kind);
+
+  -- AC-3: the length CHECK is a real backstop -- the app-side parseSessionKind
+  -- is the primary gate, but a direct insert must not be able to put an
+  -- unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, session_kind)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 17));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '93 AC-3: an over-long session_kind value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 94. lorekit_usage_runs — enumerate runs (00083) ──────────────────────────
+-- GET /memories/usage?correlation_id= filters TO one run; nothing enumerated
+-- which runs exist. This is the payoff view.
+-- AC-1: two distinct correlation_id values produce two separate run rows,
+--       each aggregating only its own events (read/write counts, distinct
+--       scopes, duration).
+-- AC-2: events with a NULL correlation_id are excluded entirely -- they are
+--       not "one more run", they belong to no run.
+-- AC-3: keyset pagination -- a cursor at the first run's (last_seen,
+--       correlation_id) returns only the OLDER run, never OFFSET-style
+--       skipping.
+-- AC-4: self-only -- a second user's runs are invisible.
+do $$
+declare
+  v_count_a integer;
+  v_count_b integer;
+  v_reads_a bigint;
+  v_writes_a bigint;
+  v_scopes_a bigint;
+  v_null_run_count integer;
+  v_run_a_last_seen timestamptz;
+  v_page1_count integer;
+  v_page2_ids text[];
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- Run A: two reads (one memory.list returning 20, one memory.read
+  -- returning 1) and one write, across two scopes, newer.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, scope, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',  'repo', 'jwt', 'ok', 100, 20, 'repo::acme/a', 'run-a', timestamptz '2026-08-15 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',  'repo', 'jwt', 'ok', 50,   1, 'repo::acme/b', 'run-a', timestamptz '2026-08-15 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 30, null, 'repo::acme/a', 'run-a', timestamptz '2026-08-15 01:10:00+00');
+  -- Run B: one read, older.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, scope, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search', 'global', 'jwt', 'ok', 200, 5, 'global', 'run-b', timestamptz '2026-08-14 01:00:00+00');
+  -- A NULL-correlation event in the same window -- must never surface as a
+  -- third run.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', null, timestamptz '2026-08-15 02:00:00+00');
+  -- A second user's run in the same window -- must never leak into user a1's list.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.list', 'repo', 'jwt', 'ok', 'run-other-user', timestamptz '2026-08-15 01:00:00+00');
+
+  -- AC-1: two runs, aggregated correctly.
+  select count(*) into v_count_a from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id = 'run-a';
+  assert v_count_a = 1, format('94 AC-1: run-a must appear exactly once, got %s rows', v_count_a);
+
+  select read_events, write_events, distinct_scopes, last_seen
+    into v_reads_a, v_writes_a, v_scopes_a, v_run_a_last_seen
+    from lorekit_usage_runs(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+    ) where correlation_id = 'run-a';
+  assert v_reads_a = 2, format('94 AC-1: run-a must have 2 read events, got %s', v_reads_a);
+  assert v_writes_a = 1, format('94 AC-1: run-a must have 1 write event, got %s', v_writes_a);
+  assert v_scopes_a = 2, format('94 AC-1: run-a must touch 2 distinct scopes, got %s', v_scopes_a);
+
+  select count(*) into v_count_b from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id = 'run-b';
+  assert v_count_b = 1, format('94 AC-1: run-b must appear exactly once, got %s rows', v_count_b);
+
+  -- AC-2: the null-correlation event never becomes its own run, and does not
+  -- pollute run-a's counts (run-a's read_events stays 2, not 3).
+  select count(*) into v_null_run_count from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id is null;
+  assert v_null_run_count = 0, format('94 AC-2: a NULL correlation_id must never surface as a run, got %s', v_null_run_count);
+
+  -- AC-3: a cursor positioned at run-a (the newest) returns only run-b.
+  select array_agg(correlation_id) into v_page2_ids from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00',
+    v_run_a_last_seen, 'run-a', 10
+  );
+  assert v_page2_ids = array['run-b'],
+    format('94 AC-3: paging past run-a must return only run-b, got %s', v_page2_ids);
+
+  -- Sanity: the unfiltered first page (no cursor) returns run-a before run-b
+  -- (newest first).
+  select count(*) into v_page1_count from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00',
+    null, null, 1
+  ) where correlation_id = 'run-a';
+  assert v_page1_count = 1, '89: the first unfiltered page (limit 1) must be run-a (newest first)';
+
+  -- AC-4: self-only -- the second user's run never appears for user a1.
+  assert not exists (
+    select 1 from lorekit_usage_runs(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+    ) where correlation_id = 'run-other-user'
+  ), '94 AC-4: a second user''s run must never appear in the first user''s list';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
