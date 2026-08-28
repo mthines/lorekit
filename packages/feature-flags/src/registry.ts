@@ -84,6 +84,16 @@ const REGISTRY_INPUT = [
     tags: ['dashboard', 'copy'],
   },
   {
+    key: 'insights-page',
+    description:
+      'The consolidated /insights dashboard page (usage health, agent breakdown, scope consumption, hot/cold lore, runs) — gates the page itself (404 when off), its sidebar nav item, and its command-palette entry.',
+    type: 'boolean',
+    variants: { off: false, on: true },
+    defaultVariant: 'off',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'web', 'rollout'],
+  },
+  {
     key: 'usage-empty-state-copy',
     description:
       'Object-valued flag: the title/CTA copy block shown on the dashboard Usage page for an account with no data yet.',

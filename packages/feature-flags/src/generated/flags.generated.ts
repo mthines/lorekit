@@ -13,6 +13,7 @@ export type FlagKey =
   | 'usage-charts-v2'
   | 'cli-completion-engine'
   | 'plan-badge-copy'
+  | 'insights-page'
   | 'usage-empty-state-copy';
 
 /** Flag key -> its evaluated value type. */
@@ -21,6 +22,7 @@ export interface FlagValueMap {
   'usage-charts-v2': boolean;
   'cli-completion-engine': boolean;
   'plan-badge-copy': string;
+  'insights-page': boolean;
   'usage-empty-state-copy': JsonValue;
 }
 
@@ -33,5 +35,6 @@ export const FLAG_KEYS: readonly FlagKey[] = [
     "usage-charts-v2",
     "cli-completion-engine",
     "plan-badge-copy",
+    "insights-page",
     "usage-empty-state-copy"
   ];

@@ -51,13 +51,32 @@ import {
   Library,
   Telescope,
 } from 'lucide-react';
+import { useEffect } from 'react';
 import { useCommand } from './useCommand';
+import { useCommandPalette } from './CommandPaletteProvider';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { useLoreData, searchLessonsByQuery } from '@/lib/queries/lore';
 import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import type { Command } from './types';
+
+// `Command` has no enabled/hidden field, and `useCommand` always registers on
+// mount — so a flag-gated entry (like `nav-insights` below) can't use it
+// directly. This calls `useCommandPalette()` unconditionally (rules of
+// hooks) and only decides INSIDE the effect whether to call `register`,
+// mirroring the page's `notFound()` gate and the Sidebar's nav filter so all
+// three surfaces agree on visibility.
+function useConditionalCommand(enabled: boolean, command: Command): void {
+  const { register } = useCommandPalette();
+
+  useEffect(() => {
+    if (!enabled) return;
+    return register(command);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, register, command.id, command.label, command.onSelect]);
+}
 
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
@@ -194,7 +213,12 @@ export function NavigationCommands() {
     onSelect: () => router.push('/lore'),
   });
 
-  useCommand({
+  // Gated behind the same `insights-page` flag as the page itself
+  // (`notFound()` in insights/page.tsx) and the Sidebar nav item — see
+  // `useConditionalCommand` above for why this can't use `useCommand`
+  // directly.
+  const insightsEnabled = useFeatureFlag('insights-page');
+  useConditionalCommand(insightsEnabled, {
     id: 'nav-insights',
     label: 'Go to Insights',
     icon: <Telescope className="size-4" />,

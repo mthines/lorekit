@@ -7,6 +7,7 @@ import type { User } from '@supabase/supabase-js';
 import { BookOpen, LayoutDashboard, Settings, GraduationCap, Telescope } from 'lucide-react';
 import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
 // Primary content nav — 4 destinations, still within the mobile tab bar's
@@ -50,6 +51,21 @@ export function Sidebar({ user }: SidebarProps) {
   const showProgress = hydrated && !allDone;
   const isUserActive = pathname === '/settings/user';
 
+  // `/insights` is still rolling out — its own page enforces the REAL
+  // access-control boundary (`notFound()` in insights/page.tsx); dropping it
+  // from `nav` here is only a visibility nicety, matching the developer-page
+  // precedent's nav-link-vs-page-check split.
+  const insightsEnabled = useFeatureFlag('insights-page');
+  const nav = insightsEnabled ? NAV : NAV.filter((item) => item.href !== '/insights');
+
+  // The FAB sits between the second and third destination, so the row is
+  // split here rather than at render time — the split point is layout, not
+  // state. Derived from the (possibly Insights-filtered) `nav` so the mobile
+  // bar and desktop rail never disagree about which destinations exist.
+  const mobileTabs = [...nav, SETTINGS];
+  const mobileTabsBeforeFab = mobileTabs.slice(0, 2);
+  const mobileTabsAfterFab = mobileTabs.slice(2);
+
   const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
 
@@ -74,7 +90,7 @@ export function Sidebar({ user }: SidebarProps) {
 
         {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {nav.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link
@@ -158,7 +174,7 @@ export function Sidebar({ user }: SidebarProps) {
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="Main navigation"
       >
-        {MOBILE_TABS_BEFORE_FAB.map((item) => (
+        {mobileTabsBeforeFab.map((item) => (
           <MobileTab
             key={item.href}
             item={item}
@@ -176,7 +192,7 @@ export function Sidebar({ user }: SidebarProps) {
           <CommandPaletteFab />
         </div>
 
-        {MOBILE_TABS_AFTER_FAB.map((item) => (
+        {mobileTabsAfterFab.map((item) => (
           <MobileTab
             key={item.href}
             item={item}
@@ -191,13 +207,7 @@ export function Sidebar({ user }: SidebarProps) {
 
 // ── Mobile tab ────────────────────────────────────────────────────────────────
 
-// The FAB sits between the second and third destination, so the row is split
-// here rather than at render time — the split point is layout, not state.
-const MOBILE_TABS = [...NAV, SETTINGS] as const;
-const MOBILE_TABS_BEFORE_FAB = MOBILE_TABS.slice(0, 2);
-const MOBILE_TABS_AFTER_FAB = MOBILE_TABS.slice(2);
-
-type MobileTabItem = (typeof MOBILE_TABS)[number];
+type MobileTabItem = (typeof NAV)[number] | typeof SETTINGS;
 
 interface MobileTabProps {
   item: MobileTabItem;
