@@ -11,9 +11,10 @@
  *
  * ### Navigate
  * Top-level destinations with "g → X" chained shortcuts (Gmail / Linear style):
- *   g o → Dashboard (Home)
+ *   g o → Overview (Home) — only while `insights-page` is OFF
  *   g e → Lore Explorer
- *   g i → Insights
+ *   g i → Insights — only while `insights-page` is ON, and takes Overview's
+ *         "home" slot (see Sidebar.tsx's matching nav filter)
  *   g s → Settings
  *   g g → Docs
  *
@@ -195,7 +196,13 @@ export function NavigationCommands() {
 
   // ── Navigate ─────────────────────────────────────────────────────────────
 
-  useCommand({
+  // Overview and Insights are mutually exclusive destinations while
+  // `insights-page` rolls out — Insights absorbs Overview's "home" slot, so
+  // exactly one of the two is ever registered (see Sidebar.tsx's matching
+  // `nav`/`mobileTabs` filter and insights/page.tsx's `notFound()` gate).
+  const insightsEnabled = useFeatureFlag('insights-page');
+
+  useConditionalCommand(!insightsEnabled, {
     id: 'nav-overview',
     label: 'Go to Overview',
     icon: <LayoutDashboard className="size-4" />,
@@ -213,11 +220,6 @@ export function NavigationCommands() {
     onSelect: () => router.push('/lore'),
   });
 
-  // Gated behind the same `insights-page` flag as the page itself
-  // (`notFound()` in insights/page.tsx) and the Sidebar nav item — see
-  // `useConditionalCommand` above for why this can't use `useCommand`
-  // directly.
-  const insightsEnabled = useFeatureFlag('insights-page');
   useConditionalCommand(insightsEnabled, {
     id: 'nav-insights',
     label: 'Go to Insights',

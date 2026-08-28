@@ -10,14 +10,17 @@ import { useOnboarding } from '@/components/providers/OnboardingProvider';
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
-// Primary content nav — 4 destinations, still within the mobile tab bar's
-// 3–5 item guideline. Insights joined Overview/Explorer/Getting-started as
-// the single place to dig into consumption and usage — it used to be four
-// panels scattered across Overview and the Explorer (scope leaderboard,
-// hot/cold lore, operational health, who's-reading), which made "how is my
-// lore actually being used" a scavenger hunt across two pages.
+// Primary content nav — 4 entries here, but Overview and Insights are
+// mutually exclusive behind the `insights-page` flag (see the filter in
+// `Sidebar()`), so only 3 ever render at once — still within the mobile tab
+// bar's 3–5 item guideline. Insights joined Explorer/Getting-started as the
+// single place to dig into consumption and usage — it used to be four panels
+// scattered across Overview and the Explorer (scope leaderboard, hot/cold
+// lore, operational health, who's-reading), which made "how is my lore
+// actually being used" a scavenger hunt across two pages. While the flag is
+// on, Insights takes Overview's spot as the first ("home") destination.
 // `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
-// copy the tab bar's column does not: the bar carries FOUR tabs plus the
+// copy the tab bar's column does not: the bar carries up to FOUR tabs plus the
 // docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
 // phone) and "Getting started" would wrap or clip there.
 const NAV = [
@@ -51,12 +54,24 @@ export function Sidebar({ user }: SidebarProps) {
   const showProgress = hydrated && !allDone;
   const isUserActive = pathname === '/settings/user';
 
-  // `/insights` is still rolling out — its own page enforces the REAL
-  // access-control boundary (`notFound()` in insights/page.tsx); dropping it
-  // from `nav` here is only a visibility nicety, matching the developer-page
-  // precedent's nav-link-vs-page-check split.
+  // Overview and Insights are mutually exclusive destinations while
+  // `insights-page` rolls out — Insights absorbs Overview's "home" slot
+  // (first nav item) rather than the two coexisting, so filtering drops
+  // whichever one the flag currently disables. `/insights`'s own page
+  // enforces the REAL access-control boundary (`notFound()` in
+  // insights/page.tsx); this filter — like the matching one in
+  // NavigationCommands.tsx — is only a visibility nicety, matching the
+  // developer-page precedent's nav-link-vs-page-check split. Overview has no
+  // equivalent page-level gate: it still mints a brand-new user's first API
+  // token (`buildOnboardingSteps({ autoGenerateToken: true })`), so it stays
+  // reachable by direct URL even while hidden from nav — see the root page's
+  // matching redirect-target switch.
   const insightsEnabled = useFeatureFlag('insights-page');
-  const nav = insightsEnabled ? NAV : NAV.filter((item) => item.href !== '/insights');
+  const nav = NAV.filter((item) => {
+    if (item.href === '/insights') return insightsEnabled;
+    if (item.href === '/overview') return !insightsEnabled;
+    return true;
+  });
 
   // The FAB sits between the second and third destination, so the row is
   // split here rather than at render time — the split point is layout, not
@@ -161,10 +176,13 @@ export function Sidebar({ user }: SidebarProps) {
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
       {/*
-        Six columns: two destinations, the docked command FAB, three more
-        destinations. The FAB gets a column of its own rather than floating over
-        the row so the five tabs keep even, predictable hit areas — nothing
-        shifts under the disc, and there is no tab hiding behind it.
+        Five columns: two destinations, the docked command FAB, two more
+        destinations. Overview and Insights are mutually exclusive (see the
+        `nav` filter above), so the tab count stays four regardless of the
+        `insights-page` flag. The FAB gets a column of its own rather than
+        floating over the row so the four tabs keep even, predictable hit
+        areas — nothing shifts under the disc, and there is no tab hiding
+        behind it.
 
         `pb-[env(safe-area-inset-bottom)]` keeps the labels clear of the home
         indicator on a notched phone; the dashboard layout's `main` reserves the
