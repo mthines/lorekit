@@ -54,6 +54,12 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/webhook/github-app-jwt.ts', edge: 'supabase/functions/mcp/github-app-jwt.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/trace-context.ts', edge: 'supabase/functions/_shared/telemetry/trace-context.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/rest-tool-name.ts', edge: 'supabase/functions/_shared/rest/rest-tool-name.ts', driftChecked: true },
+  // The `X-LoreKit-Session-Kind` validator (migration 00082). Also has a
+  // SECOND, cross-LANGUAGE twin — the CLI's `deriveSessionContext` in
+  // `packages/cli/src/shared/mcp.mjs` — guarded behaviourally by
+  // `packages/cli/test/session-context.test.mjs`, the same split
+  // `lesson-rank.ts` uses below.
+  { core: 'packages/mcp-core/src/telemetry/session-kind.ts', edge: 'supabase/functions/_shared/telemetry/session-kind.ts', driftChecked: true },
   // Has a SECOND, cross-LANGUAGE twin no byte comparison can cover — the
   // CLI's own `lessons-pure.mjs` — guarded behaviourally by
   // `lesson-rank-parity.spec.ts` instead.

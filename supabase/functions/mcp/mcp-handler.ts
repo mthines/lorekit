@@ -27,6 +27,7 @@ import { toolRequires } from './permissions.ts';
 import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/auth/account-wide-tools.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/telemetry/usage-stats.ts';
+import { parseSessionKind } from '../_shared/telemetry/session-kind.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 /**
@@ -39,11 +40,21 @@ const CORRELATION_HEADER = 'x-lorekit-correlation-id';
 /**
  * Request header naming the SURFACE the call came from — the same seam the REST
  * router reads (`CLIENT_HEADER`), so both surfaces attribute an event the same
- * way. An MCP caller that names nothing is left unattributed rather than
- * defaulted to `mcp`: a default would be an assumption written into the ledger,
- * and the header is cheap for a real client to send.
+ * way. This transport IS an MCP call, so an absent/unrecognised header
+ * defaults to `mcp` (applied by the caller around the still-closed,
+ * still-fail-safe `parseUsageClient` — see its call site below); an explicit
+ * header still overrides it, e.g. a locally-hosted stdio server forwarding
+ * `cli`.
  */
 const CLIENT_HEADER = 'x-lorekit-client';
+
+/**
+ * Request header naming the SESSION KIND the call came from (`local`/`ci`/
+ * `pr`/`unknown`, migration 00082) — the same seam the REST router reads
+ * (`SESSION_KIND_HEADER`). The CLI derives and sends this; this handler only
+ * validates (`parseSessionKind`), never derives.
+ */
+const SESSION_KIND_HEADER = 'x-lorekit-session-kind';
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
@@ -313,6 +324,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // reports `cli`, never overridden to `mcp`. This is retroactive for NEW
     // traffic only — historical rows recorded before this change stay NULL.
     const client = parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'mcp';
+    // Which KIND of session (local/ci/pr/unknown, migration 00082). Never
+    // defaulted the way `client` is — there is no "this transport IS a
+    // session kind" fact to fall back to, so an absent/unrecognised header
+    // stays unattributed.
+    const sessionKind = parseSessionKind(req.headers.get(SESSION_KIND_HEADER));
     // Memory taxonomy for analytics — resolved the SAME way the write stores it
     // (explicit kind/host, else inferred from the loop tag). A read that carries
     // a loop tag (memory.list / memory.search filtered by it) is attributed too;
@@ -373,6 +389,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           client,
           kind: usageKind,
           host: usageHost,
+          sessionKind,
         });
       }
 
@@ -431,6 +448,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           client,
           kind: usageKind,
           host: usageHost,
+          sessionKind,
         });
       }
 

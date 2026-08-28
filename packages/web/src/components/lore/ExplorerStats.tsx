@@ -39,7 +39,7 @@
  */
 
 import { useMemo } from 'react';
-import { Archive, BookOpen, BookOpenCheck, Layers } from 'lucide-react';
+import { Archive, BookOpen, BookOpenCheck, Search, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 import {
   effectiveStatsRange,
@@ -148,9 +148,18 @@ export function ExplorerStats({
     () => computeRangeTrends(rows ?? [], gridNowIso, plan),
     [rows, gridNowIso, plan],
   );
-  const readTrend = useMemo(
-    () => computeCountTrend(readBuckets ?? [], gridNowIso, plan),
-    [readBuckets, gridNowIso, plan],
+  // Split retrieved (bulk) from opened (targeted) — migration 00080's
+  // read_kind. Same filter-then-reuse-computeCountTrend approach as the
+  // Overview; see DashboardStats.tsx for the fuller comment.
+  const retrievedBuckets = useMemo(() => (readBuckets ?? []).filter((b) => b.read_kind !== 'targeted'), [readBuckets]);
+  const openedBuckets = useMemo(() => (readBuckets ?? []).filter((b) => b.read_kind === 'targeted'), [readBuckets]);
+  const retrievedTrend = useMemo(
+    () => computeCountTrend(retrievedBuckets, gridNowIso, plan),
+    [retrievedBuckets, gridNowIso, plan],
+  );
+  const openedTrend = useMemo(
+    () => computeCountTrend(openedBuckets, gridNowIso, plan),
+    [openedBuckets, gridNowIso, plan],
   );
 
   const rangeText = rangeCaption(shown, nowIso);
@@ -188,17 +197,30 @@ export function ExplorerStats({
       unit: 'memories',
     },
     {
-      id: 'read',
+      id: 'retrieved',
+      icon: Search,
+      label: 'Memories retrieved',
+      tag: 'Bulk reads',
+      tooltip: scope
+        ? `Memory RECORDS returned by a memory.list / memory.search / memory.list_archived call under ${scopeLabel} in the selected range — one list call returning 20 memories counts as 20. Only reads LoreKit could attribute to a scope are counted, so a per-scope total can be smaller than the account total. Reads from this dashboard are excluded — browsing your lore is visualisation, not consumption. See "Memories opened" beside it for deliberate, single-lesson reads.`
+        : 'Memory RECORDS returned by a memory.list / memory.search / memory.list_archived call in the selected range — bulk output, including a session-start hook injecting lessons. Reads from this dashboard are excluded. See "Memories opened" beside it for deliberate, single-lesson reads.',
+      value: sumPoints(retrievedTrend.points),
+      description: `in ${rangeText}${scopeText}`,
+      trend: retrievedTrend,
+      unit: 'memories',
+    },
+    {
+      id: 'opened',
       icon: BookOpenCheck,
-      label: 'Memories read',
-      tag: 'Memory reads',
+      label: 'Memories opened',
+      tag: 'Targeted reads',
       // The caveat PR-1 deferred to this card, stated where the number is read.
       tooltip: scope
-        ? `Memory RECORDS read under ${scopeLabel} in the selected range — one list call returning 20 memories counts as 20. Only reads LoreKit could attribute to a scope are counted, so a per-scope total can be smaller than the account total: a read whose scope the server could not resolve is recorded unattributed rather than dropped. Reads from this dashboard are excluded — browsing your lore is visualisation, not consumption — and usage is a per-user ledger, so a co-member's reads are never included.`
-        : 'Memory RECORDS read in the selected range — one list call returning 20 memories counts as 20, not one. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption. Usage is a per-user ledger, so a co-member\u2019s reads are never included.',
-      value: sumPoints(readTrend.points),
+        ? `Memory RECORDS read via a targeted memory.read call under ${scopeLabel} in the selected range — one exact scope+key, a deliberate open rather than a bulk listing. Reads from this dashboard are excluded — browsing your lore is visualisation, not consumption — and usage is a per-user ledger, so a co-member's reads are never included.`
+        : 'Memory RECORDS read via a targeted memory.read call in the selected range — one exact scope+key, a deliberate open rather than a bulk listing ("Memories retrieved" beside it). Reads from this dashboard are excluded. Usage is a per-user ledger, so a co-member\u2019s reads are never included.',
+      value: sumPoints(openedTrend.points),
       description: `in ${rangeText}${scopeText}`,
-      trend: readTrend,
+      trend: openedTrend,
       unit: 'memories',
     },
     {
@@ -250,30 +272,31 @@ export function ExplorerStats({
   const dim = isFetching || isLoading ? 'opacity-60' : 'opacity-100';
 
   // ── One grid at two densities ──────────────────────────────────────────────
-  // The same four cards are ALWAYS mounted; `collapsed` folds each card's
-  // evidence (trend chip + sparkbar) away without unmounting the card, so
-  // expanding reads as one motion — the answer stays put and only the evidence
-  // unfolds — rather than a strip cross-fading into a different set of cards.
+  // The same five cards (migration 00080 split "Memories read" into
+  // retrieved + opened, growing this row from four) are ALWAYS mounted;
+  // `collapsed` folds each card's evidence (trend chip + sparkbar) away
+  // without unmounting the card, so expanding reads as one motion — the
+  // answer stays put and only the evidence unfolds — rather than a strip
+  // cross-fading into a different set of cards.
   //
   // Columns key off the PANEL's own width (`@3xl` against the `@container` on the
   // insights `<section>`), not the viewport. A viewport breakpoint
-  // (`md:grid-cols-4`) can't see that the panel is narrower than the screen — the
-  // sidebar eats width, and a narrow embed is narrower still — so it packed four
-  // full cards into a ~370px column. Sized to the panel, the grid goes four-up
-  // only once the panel can seat four cards and their sparkbars without cramping
-  // (~768px), and stays two-up below that.
+  // (`md:grid-cols-5`) can't see that the panel is narrower than the screen — the
+  // sidebar eats width, and a narrow embed is narrower still — so it packed five
+  // full cards into a ~370px column. Sized to the panel, the grid goes five-up
+  // only once the panel can seat five cards and their sparkbars without cramping,
+  // and stays two-up below that.
   // Columns key off the panel's width AND its density. A COLLAPSED card is a
   // number with a label under it, so it seats two-up even on the narrowest phone
   // — which is the whole point of the folded state: a summary LINE, not a screen
-  // of four stacked tiles. Four one-up cards ran to about half a phone's viewport;
-  // two-up at the tighter collapsed padding is roughly a quarter of it.
+  // of five stacked tiles.
   //
   // Expanded, each card carries a full-width sparkbar and its caption, so the
   // one-up arm below ~384px comes back — two of those side by side crush the
   // number, which is what that breakpoint was always for.
   const columns = expanded
-    ? 'grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4'
-    : 'grid-cols-2 gap-2 @3xl:grid-cols-4';
+    ? 'grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-5'
+    : 'grid-cols-2 gap-2 @3xl:grid-cols-5';
 
   return (
     <div

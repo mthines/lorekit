@@ -38,7 +38,7 @@ import {
 import type { GithubInstallation } from '@/lib/github-installations';
 import type { OrgMembership } from '@/lib/orgs';
 import { bindScope, unbindScope } from '@/lib/scope-bindings';
-import { useToast } from '@/components/providers/ToastProvider';
+import { showToast } from '@/lib/toast';
 import {
   partitionRepos,
   bindingSuggestion,
@@ -285,7 +285,6 @@ function InstallationCard({
 }) {
   const AccountIcon = installation.account_type === 'Organization' ? Building2 : User;
   const repos = installation.repositories;
-  const { showToast } = useToast();
   const [pending, startTransition] = useTransition();
   const orgSelectId = useId();
 

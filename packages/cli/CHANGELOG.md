@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.0](https://github.com/mthines/lorekit/compare/cli-v1.57.0...cli-v1.58.0) (2026-08-28)
+
+
+### Features
+
+* **web:** consolidate memory-consumption analytics into a single Insights page ([ac99e64](https://github.com/mthines/lorekit/commit/ac99e6445d3da0274634ecf4e61b6df40b2659b6))
+
 ## [1.57.0](https://github.com/mthines/lorekit/compare/cli-v1.56.0...cli-v1.57.0) (2026-08-27)
 
 

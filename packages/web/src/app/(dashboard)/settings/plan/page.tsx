@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { CreditCard, ExternalLink } from 'lucide-react';
 import { getPlanUsage } from '@/lib/plan';
 import { PlanUsageBar } from '@/components/settings/PlanUsageBar';
+import { PlanPeakUsage } from '@/components/settings/PlanPeakUsage';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 
 export const metadata: Metadata = { title: 'Plan — Settings' };
@@ -38,7 +39,15 @@ export default async function PlanSettingsPage() {
             Memory usage
           </h3>
           {usage ? (
-            <PlanUsageBar usage={usage} />
+            <>
+              <PlanUsageBar usage={usage} />
+              {/* A live count answers "how full am I now"; this answers "how
+                  full WAS I over the last month" — usage_events.memory_count's
+                  write-time snapshots (migration 00081). Renders nothing when
+                  the window has no write events, so a quiet account shows no
+                  caption rather than a fabricated zero. */}
+              <PlanPeakUsage />
+            </>
           ) : (
             /* Skeleton when usage fetch fails — degrade gracefully */
             <div className="h-2 animate-pulse rounded-full bg-[var(--color-bg-elevated)]" />

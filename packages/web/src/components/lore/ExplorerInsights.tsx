@@ -73,7 +73,8 @@
  *
  * ## Motion
  *
- * The four cards are ALWAYS mounted — one persistent grid that {@link
+ * The five cards (migration 00080 split "Memories read" into retrieved +
+ * opened) are ALWAYS mounted — one persistent grid that {@link
  * ExplorerStats} folds to a compact density when collapsed (or when the heatmap is
  * the chosen view) and unfolds when open. The answer (icon, number, label,
  * caption) never moves; only the evidence unfolds. Height + opacity so the list

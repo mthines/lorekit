@@ -16,6 +16,7 @@
 | [embeddings.md](./embeddings.md) | Developers + operators | Semantic-search embeddings: the dormant schema, the opt-in pipeline, the manual backfill, cost measurement, rollback |
 | [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
+| [feature-flags.md](./feature-flags.md) | Developers | `@lorekit/feature-flags`: OpenFeature evaluation, registry authoring, codegen (TS + cross-language manifest), deterministic A/B bucketing, and reading the experiment result back out of Dash0 via OTel span attributes |
 | [benchmarking.md](./benchmarking.md) | Developers + operators | The two experiments and when each applies: the row-scaling sweep (data shape — runbook, flags, how to read it) and the load test (traffic — surfaces, rate-limit constraints, workflow shape, method) |
 | [telemetry-quality-review.md](./telemetry-quality-review.md) | Developers | Cross-service `traceparent` correlation contract, telemetry-quality review vs OTel semantic conventions, and the tests that guard it |
 | [deployment.md](./deployment.md) | Developers | Step-by-step deployment for all three pieces |

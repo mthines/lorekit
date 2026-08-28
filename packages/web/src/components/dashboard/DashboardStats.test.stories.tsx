@@ -6,9 +6,10 @@ import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 
 /**
- * Interaction tests for {@link DashboardStats} — asserts the three cards
- * resolve against the MSW-mocked REST data and that the ONE shared range
- * selector is a working single-select driving all of them.
+ * Interaction tests for {@link DashboardStats} — asserts the four cards
+ * (migration 00080 split "Memories read" into retrieved + opened, growing
+ * this row from three) resolve against the MSW-mocked REST data and that the
+ * ONE shared range selector is a working single-select driving all of them.
  * `/Tests` namespace, `test`-tagged, and `chromatic.disableSnapshot` so the
  * visual `afterEach` skips these while the `play` functions still run in the
  * browser.
@@ -40,29 +41,31 @@ export const LoadsMockedStats: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
-    await step('All three metric cards resolve from the MSW-mocked queries', async () => {
+    await step('All four metric cards resolve from the MSW-mocked queries', async () => {
       // The card label appears only after the query settles — findBy waits for it.
       await expect(await canvas.findByText('Memories written')).toBeInTheDocument();
       await expect(canvas.getByText('Scopes')).toBeInTheDocument();
-      await expect(canvas.getByText('Memories read')).toBeInTheDocument();
+      await expect(canvas.getByText('Memories retrieved')).toBeInTheDocument();
+      await expect(canvas.getByText('Memories opened')).toBeInTheDocument();
     });
 
     await step('Each card declares the unit AND the verb it counts', async () => {
       // "writes" alone would not say writes of WHAT — and the Scopes card
       // counts scopes written to, not memories.
       await expect(canvas.getByText('Memory writes')).toBeInTheDocument();
-      await expect(canvas.getByText('Memory reads')).toBeInTheDocument();
+      await expect(canvas.getByText('Bulk reads')).toBeInTheDocument();
+      await expect(canvas.getByText('Targeted reads')).toBeInTheDocument();
       await expect(canvas.getByText('Scopes writes')).toBeInTheDocument();
     });
 
-    await step('The two memory cards are adjacent, scopes last', async () => {
+    await step('The three memory cards are adjacent, scopes last', async () => {
       // Read the order off the unit tags: the card LABEL shares its element
       // with the tooltip copy, so its textContent is the label plus a
       // paragraph of prose.
       const order = canvas
-        .getAllByText(/^(Memory writes|Memory reads|Scopes writes)$/)
+        .getAllByText(/^(Memory writes|Bulk reads|Targeted reads|Scopes writes)$/)
         .map((el) => el.textContent?.trim());
-      await expect(order).toEqual(['Memory writes', 'Memory reads', 'Scopes writes']);
+      await expect(order).toEqual(['Memory writes', 'Bulk reads', 'Targeted reads', 'Scopes writes']);
     });
   },
 };

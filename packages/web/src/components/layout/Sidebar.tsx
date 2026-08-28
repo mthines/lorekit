@@ -4,20 +4,29 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, GraduationCap, Telescope } from 'lucide-react';
 import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
-// Primary content nav — 3 destinations keeps the sidebar scannable and the
-// mobile tab bar comfortably within the 3–5 item guideline.
+// Primary content nav — 4 entries here, but Overview and Insights are
+// mutually exclusive behind the `insights-page` flag (see the filter in
+// `Sidebar()`), so only 3 ever render at once — still within the mobile tab
+// bar's 3–5 item guideline. Insights joined Explorer/Getting-started as the
+// single place to dig into consumption and usage — it used to be four panels
+// scattered across Overview and the Explorer (scope leaderboard, hot/cold
+// lore, operational health, who's-reading), which made "how is my lore
+// actually being used" a scavenger hunt across two pages. While the flag is
+// on, Insights takes Overview's spot as the first ("home") destination.
 // `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
-// copy the tab bar's column does not: the bar now carries FOUR tabs plus the
+// copy the tab bar's column does not: the bar carries up to FOUR tabs plus the
 // docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
 // phone) and "Getting started" would wrap or clip there.
 const NAV = [
   { href: '/overview', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
+  { href: '/insights', label: 'Insights', icon: Telescope },
   { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
 ] as const;
 
@@ -45,6 +54,33 @@ export function Sidebar({ user }: SidebarProps) {
   const showProgress = hydrated && !allDone;
   const isUserActive = pathname === '/settings/user';
 
+  // Overview and Insights are mutually exclusive destinations while
+  // `insights-page` rolls out — Insights absorbs Overview's "home" slot
+  // (first nav item) rather than the two coexisting, so filtering drops
+  // whichever one the flag currently disables. `/insights`'s own page
+  // enforces the REAL access-control boundary (`notFound()` in
+  // insights/page.tsx); this filter — like the matching one in
+  // NavigationCommands.tsx — is only a visibility nicety, matching the
+  // developer-page precedent's nav-link-vs-page-check split. Overview has no
+  // equivalent page-level gate: it still mints a brand-new user's first API
+  // token (`buildOnboardingSteps({ autoGenerateToken: true })`), so it stays
+  // reachable by direct URL even while hidden from nav — see the root page's
+  // matching redirect-target switch.
+  const insightsEnabled = useFeatureFlag('insights-page');
+  const nav = NAV.filter((item) => {
+    if (item.href === '/insights') return insightsEnabled;
+    if (item.href === '/overview') return !insightsEnabled;
+    return true;
+  });
+
+  // The FAB sits between the second and third destination, so the row is
+  // split here rather than at render time — the split point is layout, not
+  // state. Derived from the (possibly Insights-filtered) `nav` so the mobile
+  // bar and desktop rail never disagree about which destinations exist.
+  const mobileTabs = [...nav, SETTINGS];
+  const mobileTabsBeforeFab = mobileTabs.slice(0, 2);
+  const mobileTabsAfterFab = mobileTabs.slice(2);
+
   const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
 
@@ -69,7 +105,7 @@ export function Sidebar({ user }: SidebarProps) {
 
         {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {nav.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link
@@ -141,9 +177,12 @@ export function Sidebar({ user }: SidebarProps) {
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
       {/*
         Five columns: two destinations, the docked command FAB, two more
-        destinations. The FAB gets a column of its own rather than floating over
-        the row so the four tabs keep even, predictable hit areas — nothing
-        shifts under the disc, and there is no tab hiding behind it.
+        destinations. Overview and Insights are mutually exclusive (see the
+        `nav` filter above), so the tab count stays four regardless of the
+        `insights-page` flag. The FAB gets a column of its own rather than
+        floating over the row so the four tabs keep even, predictable hit
+        areas — nothing shifts under the disc, and there is no tab hiding
+        behind it.
 
         `pb-[env(safe-area-inset-bottom)]` keeps the labels clear of the home
         indicator on a notched phone; the dashboard layout's `main` reserves the
@@ -153,7 +192,7 @@ export function Sidebar({ user }: SidebarProps) {
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="Main navigation"
       >
-        {MOBILE_TABS_BEFORE_FAB.map((item) => (
+        {mobileTabsBeforeFab.map((item) => (
           <MobileTab
             key={item.href}
             item={item}
@@ -171,7 +210,7 @@ export function Sidebar({ user }: SidebarProps) {
           <CommandPaletteFab />
         </div>
 
-        {MOBILE_TABS_AFTER_FAB.map((item) => (
+        {mobileTabsAfterFab.map((item) => (
           <MobileTab
             key={item.href}
             item={item}
@@ -186,13 +225,7 @@ export function Sidebar({ user }: SidebarProps) {
 
 // ── Mobile tab ────────────────────────────────────────────────────────────────
 
-// The FAB sits between the second and third destination, so the row is split
-// here rather than at render time — the split point is layout, not state.
-const MOBILE_TABS = [...NAV, SETTINGS] as const;
-const MOBILE_TABS_BEFORE_FAB = MOBILE_TABS.slice(0, 2);
-const MOBILE_TABS_AFTER_FAB = MOBILE_TABS.slice(2);
-
-type MobileTabItem = (typeof MOBILE_TABS)[number];
+type MobileTabItem = (typeof NAV)[number] | typeof SETTINGS;
 
 interface MobileTabProps {
   item: MobileTabItem;

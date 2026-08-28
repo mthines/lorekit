@@ -24,10 +24,12 @@ import type {
   PurgeResponse,
   ReadActivityQuery,
   ReadActivityResponse,
+  ReadRankingQuery,
+  ReadRankingResponse,
   ScopesResponse,
   UpdateMemoryBody,
 } from '@lorekit/schemas/memory';
-import type { UsageStatsQuery, UsageStatsResponse } from '@lorekit/schemas/usage';
+import type { UsageStatsQuery, UsageStatsResponse, UsageRunsQuery, UsageRunsResponse } from '@lorekit/schemas/usage';
 import { restFetch } from './rest';
 
 /** The `GET /memories` query, minus the params the schema defaults for us. */
@@ -207,6 +209,25 @@ export function readActivityRequest(
 }
 
 /**
+ * `GET /memories/read-ranking` — memories ranked by how often they have
+ * actually been read (`read_count`, migration 00077). `direction: 'hot'`
+ * (default) surfaces the most-consumed lore; `'cold'` the least — the
+ * prune-list input the hot/cold lore panel and `lorekit-groom` skill consume.
+ * REST-only: no MCP tool, no CLI command (`telemetry-vocabulary.ts`).
+ */
+export function readRankingRequest(
+  accessToken: string,
+  params: Partial<ReadRankingQuery>,
+  signal?: AbortSignal,
+): Promise<ReadRankingResponse> {
+  return restFetch<ReadRankingResponse>('/memories/read-ranking', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
  * `GET /memories/:id` — a single memory addressed by DB row id.
  *
  * Unlike the scope+key list reads, this resolves one row directly, so a
@@ -307,6 +328,24 @@ export function usageRequest(
   signal?: AbortSignal,
 ): Promise<UsageStatsResponse> {
   return restFetch<UsageStatsResponse>('/memories/usage', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/usage/runs` — enumerates runs (distinct `correlation_id`
+ * values), the payoff view for `usageRequest`'s own `correlation_id` filter:
+ * that answers "usage for THIS run"; this answers "which runs exist".
+ * REST-only: no MCP tool, no CLI command.
+ */
+export function usageRunsRequest(
+  accessToken: string,
+  params: Partial<UsageRunsQuery>,
+  signal?: AbortSignal,
+): Promise<UsageRunsResponse> {
+  return restFetch<UsageRunsResponse>('/memories/usage/runs', {
     accessToken,
     query: { ...params },
     ...(signal ? { signal } : {}),
