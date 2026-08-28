@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { FlaskConical } from 'lucide-react';
 import { FLAG_REGISTRY, evaluateFlagDetails, type FlagKey } from '@lorekit/feature-flags';
 import { resolveFeatureFlagContext } from '@/lib/feature-flags/server';
+import { resolveDeploymentEnvironment } from '@/lib/otel-deployment-env';
+import { isDeveloperEmail } from '@/lib/developer-users';
+import { createServerClient } from '@/lib/supabase/server';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { DeveloperFlagsPanel, type DeveloperFlagRow } from '@/components/settings/DeveloperFlagsPanel';
 import { OnboardingPreview } from '@/components/dashboard/onboarding-preview/OnboardingPreview';
@@ -9,16 +13,37 @@ import { OnboardingPreview } from '@/components/dashboard/onboarding-preview/Onb
 export const metadata: Metadata = { title: 'Developer — Settings' };
 
 /**
- * Settings → Developer. Not linked from `SETTINGS_SECTIONS` in production —
- * see `SettingsNav.tsx`'s environment check — because forcing a flag variant
- * is a debugging aid for the team building LoreKit, not a customer-facing
- * setting. The route itself has no additional auth beyond the dashboard
- * layout's own (any signed-in user reaching this URL directly outside
- * production can override their own session's flags); that is an accepted,
- * self-limited blast radius — see `docs/feature-flags.md` §
- * "Session overrides" for the reasoning against a role gate instead.
+ * Settings → Developer. Not linked from `SETTINGS_SECTIONS` — see
+ * `SettingsNav.tsx`'s two-gate visibility check — because forcing a flag
+ * variant is a debugging aid for the team building LoreKit, not a
+ * customer-facing setting.
+ *
+ * **This `notFound()` check is the real access-control boundary** — the nav
+ * link being hidden is only a visibility nicety, and a direct URL visit must
+ * not bypass it. Outside production: reachable by any signed-in user (an
+ * override only ever changes what YOUR OWN session sees — an accepted,
+ * self-limited blast radius; see `docs/feature-flags.md` § "Session
+ * overrides" for the reasoning against a role gate there). In production:
+ * reachable ONLY for an email in `DEVELOPER_EMAILS`
+ * (`lib/developer-users.ts`) — a customer must never reach this page at all,
+ * allowlisted or not, regardless of whether they know the URL or the
+ * avatar-click reveal gesture (which only ever affects the NAV LINK's
+ * visibility, never this check).
  */
 export default async function DeveloperSettingsPage() {
+  // Server Component — the raw `VERCEL_ENV`, not the `NEXT_PUBLIC_` mirror
+  // client code uses (`SettingsNav.tsx`). See `otel-deployment-env.ts`.
+  const isNonProduction =
+    resolveDeploymentEnvironment(process.env.VERCEL_ENV, process.env.NODE_ENV).name !== 'production';
+
+  if (!isNonProduction) {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!isDeveloperEmail(user?.email)) notFound();
+  }
+
   const context = await resolveFeatureFlagContext();
 
   const rows: DeveloperFlagRow[] = await Promise.all(

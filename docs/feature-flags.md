@@ -452,21 +452,51 @@ overlay in the deployed preview the way the Vercel Toolbar draws one. The
 Settings page shows the same information (current value, variant, reason)
 in a table instead of an overlay.
 
-### Why session overrides gate on environment, not role
+### Access in production: an email allowlist, plus a reveal gesture for the nav
 
-`/settings/developer` is hidden from the settings nav (and its own page still
-renders if visited directly) based on `deployment.environment.name !==
-'production'` (`SettingsNav.tsx`, reusing `otel-deployment-env.ts`'s
-cross-checked `NODE_ENV`/`VERCEL_ENV` resolution) rather than an org-role
-check. An override cookie only ever changes what **the browser holding it**
-sees — there is no code path where overriding a flag affects another user's
-session or any shared state — so the risk an org-role gate would mitigate
-(a non-admin affecting other users) doesn't exist here. The environment gate
-exists to keep the entry point out of a customer's nav, not to restrict who
-can flip their own flags. If a future flag ever gates something
-security-sensitive (not the pattern today — every flag here is a UI/rollout
-switch), reconsider stricter gating for that specific case rather than the
-mechanism as a whole.
+Outside production, `/settings/developer` is reachable by any signed-in
+user — an override cookie only ever changes what **the browser holding it**
+sees, so there's no cross-user risk an org-role gate would need to mitigate,
+and gating on environment alone keeps dev/preview frictionless.
+
+In production, that's the wrong bar: a customer should never reach
+flag-override tooling at all. Two independent pieces enforce and surface
+that:
+
+1. **The real access-control boundary — `notFound()` on the page itself**
+   (`app/(dashboard)/settings/developer/page.tsx`). Outside production: no
+   check. In production: the signed-in user's email must be in
+   `DEVELOPER_EMAILS` (`packages/web/src/lib/developer-users.ts`, a small
+   hand-maintained allowlist), or the page 404s. This runs on every request
+   to the URL directly — it is NOT conditional on the reveal gesture below,
+   so a bookmarked link keeps working for a developer across reloads.
+2. **The nav-link visibility toggle — a "5 clicks in a row" gesture, purely
+   cosmetic.** `SettingsNav.tsx` only shows the "Developer" nav item in
+   production when `isDeveloperEmail(userEmail)` is true **and** a
+   client-only, `localStorage`-backed toggle (`useDeveloperNavRevealed` —
+   `lib/hooks/useDeveloperNavRevealed.ts`) is on. That toggle is flipped by
+   clicking the avatar on `/settings/user` (`UserSettingsPanel.tsx`) 5 times
+   within 2 seconds of each other (the counting rule is pure and unit-tested:
+   `lib/click-gesture.ts`) — 5 more clicks flips it off again, so a developer
+   can hide the nav entry before a screenshot or a demo and bring it back
+   after. The click handler does nothing at all for anyone whose email isn't
+   allowlisted; there's no visual affordance on the avatar either — this is
+   a secret gesture for a developer who already knows about it, not a
+   discoverable control.
+
+The reason these are two separate mechanisms rather than one: a gesture
+persisted in `localStorage` is exactly the kind of state that shouldn't ALSO
+gate the page load (a cleared browser profile or a fresh device would lock
+a real developer out of a bookmarked link), and a page-level check is exactly
+the kind of thing that shouldn't be the UX control for "don't show this in my
+screenshot" (reloading the page to re-check a cookie is a worse interaction
+than a local toggle). The email allowlist is small and hand-edited on
+purpose — add an email to `DEVELOPER_EMAILS` to grant access; there is no
+self-service enrolment.
+
+If a future flag ever gates something security-sensitive (not the pattern
+today — every flag here is a UI/rollout switch), reconsider stricter gating
+for that specific flag rather than this page's access model as a whole.
 
 ## Removing a flag
 
