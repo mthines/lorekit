@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { classifyAuthCallback } from '@/lib/auth-callback-params';
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -33,8 +33,7 @@ export default async function RootPage({
     redirect(`/api/auth/callback?${params.toString()}`);
   }
 
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (user) redirect('/overview');
   redirect('/login');
 }

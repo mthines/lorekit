@@ -5,7 +5,7 @@ import { FLAG_REGISTRY, evaluateFlagDetails, type FlagKey } from '@lorekit/featu
 import { resolveFeatureFlagContext } from '@/lib/feature-flags/server';
 import { resolveDeploymentEnvironment } from '@/lib/otel-deployment-env';
 import { isDeveloperEmail } from '@/lib/developer-users';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { DeveloperFlagsPanel, type DeveloperFlagRow } from '@/components/settings/DeveloperFlagsPanel';
 import { OnboardingPreview } from '@/components/dashboard/onboarding-preview/OnboardingPreview';
@@ -37,10 +37,7 @@ export default async function DeveloperSettingsPage() {
     resolveDeploymentEnvironment(process.env.VERCEL_ENV, process.env.NODE_ENV).name !== 'production';
 
   if (!isNonProduction) {
-    const supabase = await createServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getVerifiedUser();
     if (!isDeveloperEmail(user?.email)) notFound();
   }
 
