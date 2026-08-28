@@ -21,20 +21,46 @@
  * payload. Changing it (e.g. via the developer override page) needs a fresh
  * server render — `router.refresh()` — not a client-side re-evaluation. See
  * `DeveloperFlagsPanel.tsx`.
+ *
+ * ## RUM: this is also the ONE place feature flags reach telemetry from the browser
+ *
+ * `variants` — flag key -> variant KEY string, from `getAllServerFlagState()`
+ * (`server.ts`) — is forwarded to `syncFeatureFlagRumAttributes`
+ * (`lib/dash0-rum.ts`) on mount and whenever it changes, so every subsequent
+ * RUM signal (page view, click, custom event) in this session carries
+ * `feature_flag.<key>` = variant. That is what makes "which flags were active
+ * for this visitor" and "which experiment arm" answerable retrospectively
+ * from the Web Events explorer — see `docs/feature-flags.md` §
+ * "Feature flags in telemetry" for why this is a different mechanism than the
+ * server-side OTel span hook (`otel-hook.ts`).
  */
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import type { FlagKey, FlagValueMap } from '@lorekit/feature-flags';
+import { syncFeatureFlagRumAttributes } from '@/lib/dash0-rum';
 
 const FeatureFlagsContext = createContext<FlagValueMap | null>(null);
 
 export interface FeatureFlagsProviderProps {
-  /** The full flag map, evaluated server-side — see `getAllServerFlags()` in `server.ts`. */
+  /** The full flag map, evaluated server-side — see `getAllServerFlagState()` in `server.ts`. */
   flags: FlagValueMap;
+  /** Flag key -> variant, from the SAME evaluation `flags` came from — for RUM tagging only. */
+  variants: Readonly<Record<string, string>>;
   children: ReactNode;
 }
 
 /** Mount once near the dashboard root, seeded with a server-evaluated flag map. */
-export function FeatureFlagsProvider({ flags, children }: FeatureFlagsProviderProps) {
+export function FeatureFlagsProvider({ flags, variants, children }: FeatureFlagsProviderProps) {
+  // Keyed on a stable string, not the `variants` object identity — the
+  // dashboard layout builds a fresh object every render, and re-tagging RUM
+  // signals with identical content on every navigation would be pure churn.
+  const variantsKey = JSON.stringify(variants);
+  useEffect(() => {
+    syncFeatureFlagRumAttributes(variants);
+    // `variantsKey` (not `variants`) is the intentional dependency — content-based,
+    // since the dashboard layout builds a fresh `variants` object every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variantsKey]);
+
   return <FeatureFlagsContext.Provider value={flags}>{children}</FeatureFlagsContext.Provider>;
 }
 

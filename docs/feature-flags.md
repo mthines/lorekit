@@ -113,7 +113,21 @@ A/B test needs to be meaningful. Pass a **stable** `targetingKey` (a user ID,
 not a session ID that changes every visit) or every page view re-randomizes
 the assignment and the conversion comparison becomes noise.
 
-## Reading the A/B result back out of Dash0
+## Feature flags in telemetry
+
+Two, DIFFERENT mechanisms carry flag state into Dash0 — one per evaluation,
+on a server-side span; one per session, on every RUM signal a browser sends.
+Reach for the wrong one and a query returns nothing: a span search finds a
+single evaluation, never "was this flag on for this visitor's whole session,"
+and a Web Events search finds session-wide RUM tags, never a single
+server-side evaluation's outcome.
+
+| Question | Signal | Mechanism |
+|---|---|---|
+| "What did THIS evaluation resolve to?" (debugging one request/render) | Server-side span | `featureFlagOtelHook` — below |
+| "Which flags were active for THIS visitor, across their whole session — and did they convert?" | Web Events / RUM | `syncFeatureFlagRumAttributes` — further down |
+
+### Server-side spans
 
 Every evaluation runs through `featureFlagOtelHook` (`src/otel-hook.ts`), an
 OpenFeature [`Hook`](https://openfeature.dev/specification/sections/hooks)
@@ -139,7 +153,7 @@ Attribute names follow the OTel
 `@opentelemetry/semantic-conventions` version, so they're declared as plain
 string constants in `src/otel-attributes.ts` rather than an extra dependency).
 
-### Span attribute, not Resource attribute — on purpose
+#### Span attribute, not Resource attribute — on purpose
 
 A `Resource` describes _the process_ (service name, version, host) and is
 fixed for the life of one SDK instance. An A/B variant is decided **per
@@ -153,7 +167,7 @@ convert better than control" needs: filter every span in a user's request
 (sign-up, checkout, error spans, whatever the experiment cares about) by
 `feature_flag.result.variant` and compare outcome rates between arms.
 
-### Example query
+#### Example query
 
 Compare evaluation volume per variant (Dash0 PromQL, using the
 `lorekit.feature_flag.evaluations` counter):
@@ -164,14 +178,48 @@ sum by (feature_flag_result_variant) (
 )
 ```
 
-To measure _conversion_, correlate the same `feature_flag.result.variant`
-value against whatever span or event marks conversion in your product (a
-`checkout.completed` span, a RUM event — see the
-[`measurable`](https://github.com/mthines/agent-skills/blob/main/skills/quality/measurable/SKILL.md)
-skill's guidance on RUM/OTel signal design) using Dash0's span/log search:
-filter to spans with `feature_flag.result.variant = "treatment"` vs
-`"control"` within the same trace or session, and compare the rate at which
-each population reaches the conversion span.
+This tells you evaluation VOLUME per variant — useful for confirming the
+split is roughly even — but not conversion. For conversion, use the Web
+Events mechanism below: it's the one built for "did the visitors who saw
+variant X do the thing" questions.
+
+### Web Events / RUM — retrospective, per-visitor flag state
+
+`FeatureFlagsProvider` (`components/providers/FeatureFlagsProvider.tsx`) calls
+`syncFeatureFlagRumAttributes` (`lib/dash0-rum.ts`) on mount and whenever the
+server re-evaluates flags (a session override change, a navigation). It uses
+`@dash0/sdk-web`'s `addSignalAttribute`, which attaches to **every subsequent
+signal the browser SDK emits** — page views, clicks, custom events, errors —
+for the rest of the session:
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `feature_flag.<flagKey>` | `feature_flag.new-onboarding-flow = "treatment"` | One dynamically-named attribute PER FLAG, holding its variant |
+
+This is a genuinely different shape from the server-side span attributes
+above, on purpose: the OTel feature-flag semantic conventions
+(`feature_flag.key` + `feature_flag.result.variant`) describe ONE evaluation,
+but a RUM session has MANY flags active simultaneously (every flag in the
+registry). Reusing the same fixed attribute names for all of them would mean
+each flag overwrites the last one under an identical key — there is no
+OTel-standard shape for "here is the whole set of concurrently active flags."
+`feature_flag.<flagKey>` as a per-flag attribute NAME is the one
+representation that doesn't collide, at the cost of not being spec-standard.
+Only the variant is attached, never an `object`-typed flag's whole payload —
+same "prefer `variant` over `value`" reasoning as the span hook.
+
+**This is what answers "did treatment convert better than control":** search
+or group Web Events by `feature_flag.new-onboarding-flow`, and compare
+whatever conversion event you're tracking (a `sign_up_completed` custom event,
+a specific page reached) between the `"control"` and `"treatment"`
+populations.
+
+**Before this was wired (nothing appears):** if you evaluated flags server-
+side (Server Components) before `FeatureFlagsProvider` existed on this
+codebase, or before a page ever finished a client-side hydration where the
+provider mounts, no `feature_flag.*` attribute reaches RUM at all — only the
+server-side span hook fires. A `feature_flag.*` search on Web Events finding
+nothing is the correct, expected symptom of that gap, not a broken query.
 
 ## Cross-language flags (adding a language)
 

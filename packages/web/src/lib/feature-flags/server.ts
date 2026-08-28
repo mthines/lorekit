@@ -15,6 +15,7 @@ import type { EvaluationContext } from '@openfeature/server-sdk';
 import {
   FLAG_KEYS,
   evaluateFlag,
+  evaluateFlagDetails,
   parseFlagOverrides,
   withFlagOverrides,
   type FlagKey,
@@ -90,4 +91,46 @@ export async function getAllServerFlags(knownUserId?: string | null): Promise<Fl
     FLAG_KEYS.map(async (key) => [key, await evaluateFlag(key, context)] as const),
   );
   return Object.fromEntries(entries) as unknown as FlagValueMap;
+}
+
+/**
+ * Every declared flag's resolved VALUE and VARIANT, in one pass —
+ * `{ values, variants }`. `values` is what `getAllServerFlags` already
+ * returns (`FeatureFlagsProvider`'s `flags` prop, what `useFeatureFlag` reads).
+ * `variants` — flag key -> variant KEY string (`"treatment"`, not `true`) — is
+ * what `FeatureFlagsProvider` forwards into
+ * `syncFeatureFlagRumAttributes` (`lib/dash0-rum.ts`) so a Web Events /
+ * RUM search can filter or group by `feature_flag.<key>`. See
+ * `docs/feature-flags.md` § "Feature flags in telemetry" for why this is a
+ * SEPARATE representation from the OTel semconv attributes the server-side
+ * hook stamps on spans.
+ *
+ * Uses `evaluateFlagDetails` (one call per flag, not two) so this never
+ * double-evaluates — and never double-fires the OTel hook — relative to a
+ * plain `getAllServerFlags()` call for the same request.
+ */
+export async function getAllServerFlagState(
+  knownUserId?: string | null,
+): Promise<{ values: FlagValueMap; variants: Record<FlagKey, string> }> {
+  const context = await resolveFeatureFlagContext(knownUserId);
+  const entries = await Promise.all(
+    FLAG_KEYS.map(async (key) => {
+      const details = await evaluateFlagDetails(key, context);
+      return [key, details] as const;
+    }),
+  );
+
+  const values: Record<string, unknown> = {};
+  const variants: Record<string, string> = {};
+  for (const [key, details] of entries) {
+    values[key] = details.value;
+    // `variant` is optional per the OpenFeature spec, but `LoreKitFlagProvider`
+    // always sets it (static/experiment/override all do) — the fallback only
+    // guards a hypothetical future provider that doesn't.
+    variants[key] = details.variant ?? String(details.value);
+  }
+  return {
+    values: values as unknown as FlagValueMap,
+    variants: variants as Record<FlagKey, string>,
+  };
 }
