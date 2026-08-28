@@ -1120,7 +1120,7 @@ export async function toolScopes(
 // `user_id` predicate — the same rule every other api_key-reachable handler
 // in this file follows, because that path runs on a service-role client that
 // bypasses RLS. `retention_policies` itself DOES carry an owner-only RLS
-// policy (00086), which is what protects the JWT/dashboard path; the
+// policy (00088), which is what protects the JWT/dashboard path; the
 // explicit filter here is what protects the api_key path.
 //
 // Feature flag: when LOREKIT_RETENTION_POLICIES_ENABLED is unset or any
@@ -1128,7 +1128,7 @@ export async function toolScopes(
 // `memories/handlers/{groom,policies,protect}.ts`) rejects with
 // UserInputError instead of touching the RPCs — same posture as
 // GITHUB_APP_ENABLED in `mcp/webhook.ts`, kept dormant until this is rolled
-// out. The nightly `pg_cron` sweep (00086) is unaffected — it only ever
+// out. The nightly `pg_cron` sweep (00088) is unaffected — it only ever
 // touches policies with `mode = 'auto'` AND `enabled = true`, and those can
 // only be created through this same gated surface.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1141,7 +1141,7 @@ function assertRetentionPoliciesEnabled(): void {
 
 /**
  * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
- * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00086) rather than a raw
+ * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00088) rather than a raw
  * `.from('retention_policies')` call: the table is new enough that the
  * generated `database.types.ts` mirror does not know it (so a typed `.from()`
  * call cannot name it), and every other mutable resource in this schema —

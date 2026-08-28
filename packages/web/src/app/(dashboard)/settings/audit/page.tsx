@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { ShieldCheck } from 'lucide-react';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { AuditLogFeed } from '@/components/settings/AuditLogFeed';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { resolveAuditActor } from '@/lib/audit-actor';
 import AuditLogLoading from './loading';
 
@@ -16,8 +16,7 @@ export default async function AuditLogSettingsPage() {
   // row a viewer can see belongs to them, so this ONE session-derived actor
   // applies to every row — no per-row identity, no user_id sent to the
   // client, no new query.
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   const actor = resolveAuditActor(user);
 
   return (

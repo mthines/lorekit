@@ -77,7 +77,7 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/telemetry/io-ledger.ts', edge: 'supabase/functions/_shared/telemetry/io-ledger.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/db-query-metrics.ts', edge: 'supabase/functions/_shared/telemetry/db-query-metrics.ts', driftChecked: true },
   // Retention-policy candidate/precedence logic. The SQL RPC
-  // (`lorekit_groom_candidates`, migration 00086) is authoritative; this is the
+  // (`lorekit_groom_candidates`, migration 00088) is authoritative; this is the
   // unit-testable mirror the edge groom/policy handlers use to resolve a
   // `policy_id` or inline request into the conditions struct the RPC takes.
   // Both copies are import-free, so the byte-comparison drift check applies.
