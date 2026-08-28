@@ -38,6 +38,12 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     summary:
       "Self-healing and self-improving agents sound like an ML problem. They're not. It's a plain read-fail-write loop over shared memory — no fine-tuning, no new model call. Here's how LoreKit does it, guardrails and all.",
   },
+  {
+    id: 'agent-memory-data-model',
+    label: "Agent memory doesn't need embeddings — it needs a schema",
+    summary:
+      "Everyone reached for vector databases. But most of what a coding agent needs to remember is small, specific, and recurring — a scoped note, not a semantic blob. Here's the deterministic, no-AI data model LoreKit runs on, the rationale for every column, and an invitation to converge on a shared shape.",
+  },
 ];
 
 /** URL slugs / MDX filename stems, in listing order (newest first). */
