@@ -27,6 +27,7 @@ begin;
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a1', 'authenticated', 'authenticated', 'lk-mig-a@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a2', 'authenticated', 'authenticated', 'lk-mig-a2@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -4261,7 +4262,11 @@ begin
   -- AC-2: EVERY READ_TOOLS name counts. The 2nd holds memory.read (4) and
   -- memory.list_archived (6). This is the discriminating assertion for the
   -- omitted fourth tool: with a three-name filter it reads 4, not 10.
-  select count into v_count
+  -- Summed with coalesce(sum(...)): 00080 split the function's output by
+  -- read_kind, so memory.read (targeted) and memory.list_archived (bulk) are
+  -- now two separate rows for this bucket — a bare `select count into` would
+  -- only see the first one (see AC-4 below for the same pattern).
+  select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',
       timestamptz '2026-04-02 00:00:00+00', timestamptz '2026-04-03 00:00:00+00');
@@ -4382,7 +4387,10 @@ begin
   -- gone. This single number is the discriminating assertion for all three:
   -- 30 means nothing was excluded, 4 means the NULL row was wrongly dropped
   -- (the `<>` bug), 25 means the filter is inverted.
-  select count into v_count
+  -- Summed with coalesce(sum(...)): the mcp memory.list (bulk) and the
+  -- unattributed memory.read (targeted) are two separate read_kind rows since
+  -- 00080, so a bare `select count into` would only see one of them.
+  select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',
       timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00');
@@ -7545,15 +7553,17 @@ begin
 
   -- AC-1: same (tool_name, outcome, scope_type), different client -- must be
   -- two rows, not folded into one.
-  insert into usage_events (user_id, tool_name, outcome, scope_type, client, created_at) values
-    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'mcp', timestamptz '2026-08-01'),
-    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'cli', timestamptz '2026-08-01');
+  -- auth_type is NOT NULL on usage_events (00034) — a raw insert must supply
+  -- it explicitly, unlike the RPC path where it defaults through a parameter.
+  insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'api_key', 'mcp', timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'api_key', 'cli', timestamptz '2026-08-01');
 
-  select count into v_client_a from lorekit_usage_stats(
+  select coalesce(sum(event_count), 0) into v_client_a from lorekit_usage_stats(
     '00000000-0000-0000-0000-0000000000a1',
     timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
   ) where tool_name = '88.memory.list' and client = 'mcp';
-  select count into v_client_b from lorekit_usage_stats(
+  select coalesce(sum(event_count), 0) into v_client_b from lorekit_usage_stats(
     '00000000-0000-0000-0000-0000000000a1',
     timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
   ) where tool_name = '88.memory.list' and client = 'cli';
@@ -7576,14 +7586,14 @@ begin
   -- scopeless/hostless tool). The rarest host (host-20, alphabetically last
   -- among ties at count=1) must collapse to 'other'; NULL must stay NULL.
   for i in 0..20 loop
-    insert into usage_events (user_id, tool_name, outcome, scope_type, host, created_at)
-      values ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo',
+    insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, host, created_at)
+      values ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key',
               format('88-host-%s', lpad(i::text, 2, '0')), timestamptz '2026-08-01');
   end loop;
-  insert into usage_events (user_id, tool_name, outcome, scope_type, host, created_at) values
-    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01'),
-    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01'),
-    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', null, timestamptz '2026-08-01');
+  insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, host, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01');
 
   select count(distinct host) into v_distinct_hosts_returned from lorekit_usage_stats(
     '00000000-0000-0000-0000-0000000000a1',
