@@ -132,6 +132,23 @@ describe('summarizeUsageRows', () => {
       records_read: 0, archived: 0, expired: 0, by_outcome: {},
     });
   });
+
+  it('reconciles when the SAME rows are split across client/kind/host (migration 00079)', () => {
+    // A single unsplit row and its equivalent split across the three new
+    // dimensions must summarise identically — widening the RPC's GROUP BY
+    // only ever refines existing buckets, it can never change a total. This
+    // is the regression guard for that invariant: nothing about
+    // summarizeUsageRows changed to support the new columns, and this proves
+    // it doesn't need to.
+    const unsplit: UsageStatRow[] = [
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 3100, total_duration_ms: 12_000 },
+    ];
+    const split: UsageStatRow[] = [
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'mcp', kind: 'lesson', host: 'reviewer', event_count: 60, record_count: 1860, total_duration_ms: 7_200 },
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'cli', kind: null, host: null, event_count: 40, record_count: 1240, total_duration_ms: 4_800 },
+    ];
+    expect(summarizeUsageRows(split)).toEqual(summarizeUsageRows(unsplit));
+  });
 });
 
 describe('rollupByScopeType', () => {
@@ -140,6 +157,17 @@ describe('rollupByScopeType', () => {
       { scope_type: 'repo', event_count: 705 }, // list 600 + write 100 + write 2 + archive 3
       { scope_type: null, event_count: 9 },
     ]);
+  });
+
+  it('reconciles when the SAME rows are split across client/kind/host (migration 00079)', () => {
+    const unsplit: UsageStatRow[] = [
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 3100, total_duration_ms: 12_000 },
+    ];
+    const split: UsageStatRow[] = [
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'mcp', kind: 'lesson', host: 'reviewer', event_count: 60, record_count: 1860, total_duration_ms: 7_200 },
+      { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', client: 'cli', kind: null, host: null, event_count: 40, record_count: 1240, total_duration_ms: 4_800 },
+    ];
+    expect(rollupByScopeType(split)).toEqual(rollupByScopeType(unsplit));
   });
 });
 

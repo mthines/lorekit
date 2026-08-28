@@ -95,4 +95,16 @@ describe('lessonFromMemoryEntry', () => {
     expect(lesson.host).toBeNull();
     expect(lesson.seen_count).toBeUndefined();
   });
+
+  it('carries read_count/last_read_at through, normalising an absent last_read_at to null', () => {
+    const lesson = lessonFromMemoryEntry({ ...base, read_count: 7, last_read_at: '2026-08-01T00:00:00.000Z' });
+    expect(lesson.read_count).toBe(7);
+    expect(lesson.last_read_at).toBe('2026-08-01T00:00:00.000Z');
+  });
+
+  it('leaves read_count undefined and last_read_at null for a pre-00077 response', () => {
+    const lesson = lessonFromMemoryEntry(base);
+    expect(lesson.read_count).toBeUndefined();
+    expect(lesson.last_read_at).toBeNull();
+  });
 });

@@ -42,10 +42,10 @@ export interface NonCatalogOp {
    *
    * The distinction matters: `org.get` and the `member.*` operations have no
    * MCP tool because nobody has needed one — a future tool for them would be
-   * an ordinary addition. The `restOnly` five were considered and declined, and
-   * re-proposing one should mean arguing with a recorded decision rather than
-   * filing what looks like a gap. See `docs/decisions.md` →
-   * "Dashboard analytics reads stay REST-only".
+   * an ordinary addition. The `restOnly` members were considered and declined
+   * for the agent surface, and re-proposing one should mean arguing with a
+   * recorded decision rather than filing what looks like a gap. See
+   * `docs/decisions.md` → "Dashboard analytics reads stay REST-only".
    */
   readonly restOnly?: string;
 }
@@ -65,6 +65,14 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
       'Charts, not agent primitives. Rolls up by scope_type and emits no scope NAME, so it is '
       + 'the one analytics read with no scope-leak surface — and still nothing an agent loop reads.',
   },
+  'memory.usage-runs': {
+    reason: 'Enumerates runs (correlation_id values) for the dashboard\u2019s Runs view.',
+    restOnly:
+      'Charts, not agent primitives — the payoff view for ?correlation_id=, which itself has no '
+      + 'MCP tool either. A correlation_id MAY embed a repo/PR identifier '
+      + '(e.g. `pr:owner/repo#482`), so this is name-bearing the same way tags/facets/activity/'
+      + 'read-ranking are.',
+  },
   'memory.tags': {
     reason: 'Label facets for the Explorer filter bar.',
     restOnly:
@@ -82,6 +90,10 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
   },
   'memory.read-activity': {
     reason: 'Read-activity counterpart of memory.activity.',
+    restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
+  },
+  'memory.read-ranking': {
+    reason: 'Hot/cold lore ranked by memories.read_count (migration 00077) for the dashboard.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
 

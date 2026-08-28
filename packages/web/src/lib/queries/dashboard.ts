@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
-import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
+import { trendRowsFromActivity, type TrendRow } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listScopesRequest, readActivityRequest } from '@/lib/api/memories';
+import { activityRequest, listScopesRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
+import type { UsageStatRow } from '@lorekit/schemas/usage';
+import type { ReadActivityBucket } from '@lorekit/schemas/memory';
 
 export interface DashboardData {
   scopes: ScopeHealth[];
@@ -20,7 +22,21 @@ export interface DashboardData {
    * Kept as buckets rather than expanded into rows: read counts run to tens of
    * thousands of records, and the card only ever sums them (`computeCountTrend`).
    */
-  readBuckets: CountBucketRow[];
+  /**
+   * Widened past `CountBucketRow` to carry `read_kind` (migration 00080) —
+   * `targeted` (memory.read) vs `bulk` (list/search/list_archived) — so the
+   * card can split retrieved from opened without a second fetch. Still
+   * assignable everywhere `CountBucketRow[]` is expected (a structural
+   * superset), so `computeCountTrend` needs no change.
+   */
+  readBuckets: ReadActivityBucket[];
+  /**
+   * `GET /memories/usage`'s grouped rows, over the SAME trend window as
+   * everything above — feeds `UsageHealth`'s friction/latency/coverage-gap
+   * diagnostics (pure functions in `lib/usage-health.ts`). The Explorer already
+   * calls `usageRequest`; the Overview did not until now.
+   */
+  usageByTool: UsageStatRow[];
 }
 
 /**
@@ -57,13 +73,14 @@ const DAY_MS = 86_400_000;
  */
 async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> {
   const token = await browserAccessToken();
-  if (!token) return { scopes: [], rows: [], readBuckets: [] };
+  if (!token) return { scopes: [], rows: [], readBuckets: [], usageByTool: [] };
 
   const since = new Date(Date.now() - TREND_WINDOW_DAYS * DAY_MS).toISOString();
-  const [scopesRes, activity, readActivity] = await Promise.all([
+  const [scopesRes, activity, readActivity, usage] = await Promise.all([
     listScopesRequest(token, signal),
     activityRequest(token, { bucket: 'hour', since }, signal),
     readActivityRequest(token, { bucket: 'hour', since }, signal),
+    usageRequest(token, { since }, signal),
   ]);
 
   const scopes: ScopeHealth[] = scopesRes.scopes
@@ -82,6 +99,7 @@ async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> 
     scopes,
     rows: trendRowsFromActivity(activity.buckets),
     readBuckets: readActivity.buckets,
+    usageByTool: usage.by_tool,
   };
 }
 

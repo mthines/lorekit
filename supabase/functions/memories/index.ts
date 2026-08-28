@@ -14,10 +14,12 @@ import { handleRestore } from './handlers/restore.ts';
 import { handlePurge, handlePurgeExpired } from './handlers/purge.ts';
 import { handleScopes } from './handlers/scopes.ts';
 import { handleUsage } from './handlers/usage.ts';
+import { handleUsageRuns } from './handlers/usage-runs.ts';
 import { handleTags } from './handlers/tags.ts';
 import { handleFacets, handleFacetsPost } from './handlers/facets.ts';
 import { handleActivity, handleActivityPost } from './handlers/activity.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
+import { handleReadRanking } from './handlers/read-ranking.ts';
 import { handleRelevant } from './handlers/relevant.ts';
 
 // ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
@@ -57,10 +59,12 @@ const router = createRouter([
   { method: 'POST',   path: '/purge-expired',  handler: handlePurgeExpired, requires: 'write' },
   { method: 'GET',    path: '/scopes',         handler: handleScopes,       requires: 'read'  },
   { method: 'GET',    path: '/usage',          handler: handleUsage,        requires: 'read'  },
+  { method: 'GET',    path: '/usage/runs',     handler: handleUsageRuns,    requires: 'read'  },
   { method: 'GET',    path: '/tags',           handler: handleTags,         requires: 'read'  },
   { method: 'GET',    path: '/facets',         handler: handleFacets,       requires: 'read'  },
   { method: 'GET',    path: '/activity',       handler: handleActivity,     requires: 'read'  },
   { method: 'GET',    path: '/read-activity',  handler: handleReadActivity, requires: 'read'  },
+  { method: 'GET',    path: '/read-ranking',   handler: handleReadRanking,  requires: 'read'  },
   { method: 'GET',    path: '/relevant',       handler: handleRelevant,     requires: 'read'  },
   // ── parameterised routes ───────────────────────────────────────────────────
   { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },

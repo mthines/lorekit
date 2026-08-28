@@ -51,6 +51,17 @@ export interface LessonEntry extends MemoryOriginFields {
    * either carries a count (>= 1) or omits the field for a pre-00059 backend.
    */
   seen_count?: number;
+  /**
+   * Consumption — how many times this memory has actually been READ back
+   * (migration 00077), the read-to-write counterpart to `seen_count`. Not
+   * null (the column defaults to 0), but optional for a pre-00077 backend.
+   * `last_read_at` is genuinely nullable: a memory never read since 00077
+   * started counting has none — see `counting_since` on the ranking response,
+   * which every consumer must render alongside a zero `read_count` rather
+   * than the bare word "never".
+   */
+  read_count?: number;
+  last_read_at?: string | null;
 }
 
 interface LessonCardProps {
