@@ -263,7 +263,27 @@ async function resolveAuthTiers(
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await client.auth.getUser(token);
+  // `auth.getUser()` is an outbound HTTP call to Supabase's GoTrue Auth API —
+  // the JWT tier's ONLY I/O, and until now the only one on this surface NOT
+  // given its own CLIENT span (contrast the api_key tier's `lookupSpan` above).
+  // Without it, GoTrue latency was folded into the parent span's undifferentiated
+  // self time, indistinguishable from CPU-bound auth work — exactly what made a
+  // p95 latency spike on this path unattributable. `finally`, for the same
+  // reason `lookupSpan` uses one: a rejected call must still be exported so the
+  // slow/failing case is visible rather than silently dropped.
+  const getUserSpan = authSpan?.child('lorekit.auth.supabase_get_user', {}, SPAN_KIND_CLIENT);
+  let data: Awaited<ReturnType<typeof client.auth.getUser>>['data'] = { user: null };
+  let error: Awaited<ReturnType<typeof client.auth.getUser>>['error'] = null;
+  try {
+    const result = await client.auth.getUser(token);
+    data = result.data;
+    error = result.error;
+  } catch (err) {
+    getUserSpan?.error((err as Error).name);
+    throw err;
+  } finally {
+    getUserSpan?.setAttributes({ 'db.success': !error && !!data.user }).end();
+  }
   if (error || !data.user) {
     // Use bounded error code, not the free-form message, to avoid PII leaking into span attributes.
     span?.setAttributes({

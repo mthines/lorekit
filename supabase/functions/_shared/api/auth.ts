@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import type { Span } from '../telemetry/otel.ts';
+import { SPAN_KIND_CLIENT, type Span } from '../telemetry/otel.ts';
 import { normalizeKeyRestriction, type KeyRestriction } from '../auth/tenant-scope.ts';
 import type { DbClient } from '../db/db-client.ts';
 import type { Database } from '../db/database.types.ts';
@@ -78,7 +78,29 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
   }
 
   const anonDb = createClient<Database>(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: { user }, error } = await anonDb.auth.getUser(token);
+  // `auth.getUser()` is an outbound HTTP call to Supabase's GoTrue Auth API —
+  // this tier's ONLY I/O, and until now the only one on this surface NOT given
+  // its own CLIENT span (the `lk_` tier's `api_tokens` lookup above goes through
+  // `svcClient()` + `createTracedClient`, which spans DB calls automatically).
+  // Without it, GoTrue latency was folded into `lorekit.rest.auth`'s
+  // undifferentiated self time, indistinguishable from CPU-bound auth work —
+  // exactly what made a p95 latency spike on this path unattributable. `finally`,
+  // for the same reason every other traced call on this surface uses one: a
+  // rejected call must still be exported so the slow/failing case is visible
+  // rather than silently dropped.
+  const getUserSpan = span.child('lorekit.auth.supabase_get_user', {}, SPAN_KIND_CLIENT);
+  let user: Awaited<ReturnType<typeof anonDb.auth.getUser>>['data']['user'] = null;
+  let error: Awaited<ReturnType<typeof anonDb.auth.getUser>>['error'] = null;
+  try {
+    const result = await anonDb.auth.getUser(token);
+    user = result.data.user;
+    error = result.error;
+  } catch (err) {
+    getUserSpan.error((err as Error).name);
+    throw err;
+  } finally {
+    getUserSpan.setAttributes({ 'db.success': !error && !!user }).end();
+  }
   if (error || !user) { span.clientError('invalid_jwt').end(); return null; }
   span.setAttributes({ 'auth.type': 'user', 'auth.outcome': 'ok', 'auth.user_id': user.id }).end();
   return { auth: { type: 'user', userId: user.id, jwt: token }, db: userClient(token) };
