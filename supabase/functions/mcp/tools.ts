@@ -1173,7 +1173,7 @@ interface RetentionPolicyDbRow {
  * instead of a clean `UserInputError` — the manual-check style already used
  * by `ttl.ts`'s `parseTtlDays` et al., rather than a second zod schema.
  */
-function assertGroomConditionsInBounds(conditions: {
+export function assertGroomConditionsInBounds(conditions: {
   min_age_days?: number | null;
   unseen_days?: number | null;
   max_seen_count?: number | null;
