@@ -55,9 +55,12 @@ export const HeadlineSumsToTotalIncludingUnattributed: Story = {
     const canvas = within(canvasElement);
     await step('the headline total equals the sum of every row, including the unattributed bucket', async () => {
       await waitFor(() => expect(canvas.getByText(/records read/i)).toBeVisible());
-      // AnimatedNumber's sr-only node carries the exact, unabbreviated figure —
-      // the house rule is to read that half, never the animated `textContent`.
-      await expect(canvas.getByText(FIXTURE_TOTAL.toLocaleString('en-US'))).toBeInTheDocument();
+      // AnimatedNumber renders the figure TWICE (an aria-hidden animated node
+      // plus a `.sr-only` node with the exact, unabbreviated value) — the house
+      // rule is to read the `.sr-only` half, never the (ambiguous) `textContent`.
+      await expect(
+        canvas.getByText(FIXTURE_TOTAL.toLocaleString('en-US'), { selector: '.sr-only' }),
+      ).toBeInTheDocument();
     });
     await step('the unattributed bucket renders as its own labelled row, not dropped', async () => {
       await expect(canvas.getByText('unattributed')).toBeVisible();
