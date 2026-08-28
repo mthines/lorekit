@@ -1095,7 +1095,24 @@ export async function toolScopes(
 // bypasses RLS. `retention_policies` itself DOES carry an owner-only RLS
 // policy (00079), which is what protects the JWT/dashboard path; the
 // explicit filter here is what protects the api_key path.
+//
+// Feature flag: when LOREKIT_RETENTION_POLICIES_ENABLED is unset or any
+// value other than 'true', every handler below (and its REST twin in
+// `memories/handlers/{groom,policies,protect}.ts`) rejects with
+// UserInputError instead of touching the RPCs — same posture as
+// GITHUB_APP_ENABLED in `mcp/webhook.ts`, kept dormant until this is rolled
+// out. The nightly `pg_cron` sweep (00079) is unaffected — it only ever
+// touches policies with `mode = 'auto'` AND `enabled = true`, and those can
+// only be created through this same gated surface.
 // ═══════════════════════════════════════════════════════════════════════════
+
+const RETENTION_POLICIES_ENABLED = Deno.env.get('LOREKIT_RETENTION_POLICIES_ENABLED') === 'true';
+
+function assertRetentionPoliciesEnabled(): void {
+  if (!RETENTION_POLICIES_ENABLED) {
+    throw new UserInputError('retention policies are not enabled for this instance');
+  }
+}
 
 /**
  * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
@@ -1140,6 +1157,7 @@ export async function toolPolicyList(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.list requires a user_id');
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
@@ -1156,6 +1174,7 @@ export async function toolPolicyCreate(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.create requires a user_id');
   const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null } = params;
   if (!rawScope || !name) throw new UserInputError('scope and name are required');
@@ -1196,6 +1215,7 @@ export async function toolPolicyUpdate(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.update requires a user_id');
   const { id } = params;
   if (!id) throw new UserInputError('id is required');
@@ -1234,6 +1254,7 @@ export async function toolPolicyDelete(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.delete requires a user_id');
   const { id } = params;
   if (!id) throw new UserInputError('id is required');
@@ -1300,6 +1321,7 @@ export async function toolGroomPreview(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('groom.preview requires a user_id');
   if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
 
@@ -1334,6 +1356,7 @@ export async function toolGroomRun(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('groom.run requires a user_id');
   if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
 
@@ -1377,6 +1400,7 @@ export async function toolProtect(
   userId: string | null,
   span: Span,
 ) {
+  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('memory.protect requires a user_id');
   const { scope: rawScope, key, protected: isProtected } = params;
   if (!rawScope || !key || typeof isProtected !== 'boolean') {

@@ -7,6 +7,7 @@ import { validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { Span } from '../../_shared/telemetry/otel.ts';
 import { PolicyCreateBodySchema, PolicyUpdateBodySchema } from '../../_shared/schemas/retention.ts';
+import { RETENTION_POLICIES_ENABLED } from '../../_shared/retention/feature-flag.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 
 /**
@@ -20,6 +21,9 @@ import type { DbClient } from '../../_shared/api/auth.ts';
  * for the full rationale (shared by both surfaces).
  */
 function requireUserId(auth: AuthContext, cors: Record<string, string>): string | Response {
+  if (!RETENTION_POLICIES_ENABLED) {
+    return forbidden('retention policies are not enabled for this instance', cors);
+  }
   if (!auth.userId) {
     return forbidden('Retention policies require a user-scoped credential (service-role tokens have no owner)', cors);
   }

@@ -1,5 +1,6 @@
 import { Key, Blocks, ShieldCheck, Users, UserCircle, CreditCard, FileCode, Archive } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
+import { retentionPoliciesEnabled } from '@/lib/feature-flags';
 
 /**
  * The settings sub-navigation. Add a new section by appending one entry here
@@ -24,7 +25,10 @@ export const SETTINGS_SECTIONS: readonly SectionNavItem[] = [
   // what it is, and the next connector has somewhere to live.
   { id: 'integrations', label: 'Integrations', href: '/settings/integrations', icon: Blocks },
   { id: 'organization', label: 'Organization', href: '/settings/organization', icon: Users },
-  { id: 'grooming', label: 'Grooming', href: '/settings/grooming', icon: Archive },
+  // Behind the retention-policies feature flag — see `lib/feature-flags.ts`.
+  ...(retentionPoliciesEnabled()
+    ? [{ id: 'grooming', label: 'Grooming', href: '/settings/grooming', icon: Archive }]
+    : []),
   { id: 'audit', label: 'Audit Logs', href: '/settings/audit', icon: ShieldCheck },
   { id: 'plan', label: 'Plan', href: '/settings/plan', icon: CreditCard },
   {
