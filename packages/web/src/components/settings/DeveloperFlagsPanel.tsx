@@ -16,7 +16,7 @@ import { useState, useTransition } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { useToast } from '@/components/providers/ToastProvider';
+import { showToast } from '@/lib/toast';
 import {
   clearAllFlagOverridesAction,
   clearFlagOverrideAction,
@@ -51,7 +51,6 @@ export interface DeveloperFlagRow {
 }
 
 export function DeveloperFlagsPanel({ rows }: { rows: readonly DeveloperFlagRow[] }) {
-  const { showToast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const anyOverrideActive = rows.some((row) => row.overrideActive);
