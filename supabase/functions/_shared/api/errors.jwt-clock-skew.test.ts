@@ -40,6 +40,32 @@ Deno.test('translateDbError does not misfire on an unrelated message containing 
   assertEquals(mapped, null);
 });
 
+Deno.test('translateDbError matches the PostgREST JWT pattern case-insensitively', () => {
+  const mapped = translateDbError({ message: 'jwt issued at future' });
+  if (!mapped) throw new Error('expected translateDbError to recognise a lowercase message');
+  assertEquals(mapped.status, 401);
+  assertEquals(mapped.code, 'invalid_jwt');
+});
+
+Deno.test('translateDbError matches a PostgREST JWT message with trailing detail text', () => {
+  // PostgREST sometimes appends extra context after the core message
+  // (e.g. a claim name); the pattern is only anchored at the start.
+  const mapped = translateDbError({ message: 'JWT expired: exp claim' });
+  if (!mapped) throw new Error('expected translateDbError to recognise a message with trailing detail');
+  assertEquals(mapped.status, 401);
+  assertEquals(mapped.code, 'invalid_jwt');
+});
+
+Deno.test('translateDbError reads the PostgREST JWT message from the nested `error.message` shape', () => {
+  // Some call sites surface the PostgREST error wrapped as `{ error: { message } }`
+  // rather than a top-level `message` — translateDbError() already falls back to
+  // e?.error?.message, this locks that fallback in for the JWT branch specifically.
+  const mapped = translateDbError({ error: { message: 'JWT not yet valid' } });
+  if (!mapped) throw new Error('expected translateDbError to recognise the nested error.message shape');
+  assertEquals(mapped.status, 401);
+  assertEquals(mapped.code, 'invalid_jwt');
+});
+
 function newRootSpan(): { span: Span; batch: ExportBatch } {
   const batch = new ExportBatch();
   const span = new Span(
@@ -71,5 +97,23 @@ Deno.test('CALL lorekit_memory_scopes(...) with a JWT clock-skew error does NOT 
   const spans = batch.drain();
   const dbSpan = spans.find((s) => s.name.startsWith('CALL lorekit_memory_scopes'));
   if (!dbSpan) throw new Error('expected a CALL lorekit_memory_scopes(...) span to have been recorded');
+  assertEquals(dbSpan.status, 'ok', 'a JWT clock-skew rejection is caller-addressable, not a server fault');
+});
+
+Deno.test('CALL lorekit_memory_list(...) with a JWT clock-skew error does NOT mark the DB span ERROR', async () => {
+  // Mirrors the lorekit_memory_scopes case above for GET /memories, the other
+  // call site named in the PR description as affected by this same fix.
+  const { span, batch } = newRootSpan();
+  const db: TracedSupabaseClient = createTracedClient(
+    fakeSupabaseRpc({ data: null, error: { message: 'JWT issued at future' } }),
+    span,
+  );
+
+  // deno-lint-ignore no-explicit-any
+  await (db as any).rpc('lorekit_memory_list', {}).single();
+
+  const spans = batch.drain();
+  const dbSpan = spans.find((s) => s.name.startsWith('CALL lorekit_memory_list'));
+  if (!dbSpan) throw new Error('expected a CALL lorekit_memory_list(...) span to have been recorded');
   assertEquals(dbSpan.status, 'ok', 'a JWT clock-skew rejection is caller-addressable, not a server fault');
 });
