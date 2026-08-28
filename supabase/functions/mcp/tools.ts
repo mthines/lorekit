@@ -1137,6 +1137,33 @@ interface RetentionPolicyDbRow {
   updated_at: string;
 }
 
+/**
+ * The same 1–3650 / 0–100000 bounds `GroomConditionsSchema`
+ * (`@lorekit/schemas` / `_shared/schemas/retention.ts`) enforces on the REST
+ * path (`PolicyCreateBodySchema` / `PolicyUpdateBodySchema`, via
+ * `validateBody`). The MCP tools take a raw `Params` object rather than a
+ * validated REST body, so without this an out-of-range value here reached
+ * the RPC unchecked and surfaced as a raw Postgres CHECK-constraint error
+ * instead of a clean `UserInputError` — the manual-check style already used
+ * by `ttl.ts`'s `parseTtlDays` et al., rather than a second zod schema.
+ */
+function assertGroomConditionsInBounds(conditions: {
+  min_age_days?: number | null;
+  unseen_days?: number | null;
+  max_seen_count?: number | null;
+}): void {
+  const { min_age_days, unseen_days, max_seen_count } = conditions;
+  if (min_age_days != null && (min_age_days < 1 || min_age_days > 3650)) {
+    throw new UserInputError('min_age_days must be between 1 and 3650');
+  }
+  if (unseen_days != null && (unseen_days < 1 || unseen_days > 3650)) {
+    throw new UserInputError('unseen_days must be between 1 and 3650');
+  }
+  if (max_seen_count != null && (max_seen_count < 0 || max_seen_count > 100_000)) {
+    throw new UserInputError('max_seen_count must be between 0 and 100000');
+  }
+}
+
 function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
   return {
     id: row.id,
@@ -1178,6 +1205,7 @@ export async function toolPolicyCreate(
   const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null } = params;
   if (!rawScope || !name) throw new UserInputError('scope and name are required');
   if (mode !== 'review' && mode !== 'auto') throw new UserInputError('mode must be "review" or "auto"');
+  assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count });
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.policy.mode': mode });
@@ -1221,6 +1249,11 @@ export async function toolPolicyUpdate(
   if (params.mode !== undefined && params.mode !== 'review' && params.mode !== 'auto') {
     throw new UserInputError('mode must be "review" or "auto"');
   }
+  assertGroomConditionsInBounds({
+    min_age_days: params.min_age_days,
+    unseen_days: params.unseen_days,
+    max_seen_count: params.max_seen_count,
+  });
 
   const patch: Record<string, unknown> = {};
   for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count'] as const) {
