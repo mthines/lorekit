@@ -36,6 +36,7 @@ import { rankLessons, selectDiverse } from '../_shared/ranking/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/ranking/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
 import type { DbClient } from '../_shared/db/db-client.ts';
+import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput } from '../_shared/retention/groom.ts';
 import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
@@ -274,12 +275,20 @@ export async function toolRead(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
+  // `id` is selected purely to drive the per-memory read counter below — it is
+  // stripped before the tool's result is returned, so memory.read's wire
+  // contract is unchanged.
+  let query = tracedDb.from('memories').select('id,value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
-  return data ?? null;
+  if (!data) return null;
+  // memory.read is a TARGETED read (one exact scope+key) for the per-memory
+  // counter (migration 00077).
+  recordMemoryReads(db, [data.id], 'targeted');
+  const { id: _id, ...rest } = data;
+  return rest;
 }
 
 export async function toolList(
@@ -407,6 +416,9 @@ export async function toolList(
     // `memories/handlers/relevant.ts`, which likewise never advertises
     // pagination. Truncation is inherent to the mode and documented on the
     // tool, not signalled per response.
+    // memory.list (order=rank) is a BULK read for the per-memory counter
+    // (migration 00077) — one statement for the whole page.
+    recordMemoryReads(db, page.map(({ entry }) => entry.id), 'bulk');
     return { entries, hasMore: false, nextCursor: null };
   }
 
@@ -437,6 +449,11 @@ export async function toolList(
   // which survive the projection — but it must see the raw row set to do it.
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
+  // memory.list is a BULK read for the per-memory counter (migration 00077).
+  // `ListRow.id` is optional only because the interface is shared with a
+  // legacy shape that predates it — the query above always selects `id`, so
+  // filtering `undefined` here is a type narrowing, not an expected drop.
+  recordMemoryReads(db, (page.entries as ListRow[]).map((row) => row.id).filter((id): id is string => id !== undefined), 'bulk');
   return {
     ...page,
     entries: (page.entries as ListRow[]).map((row) => projectListEntry(row, summarize)),
@@ -585,6 +602,8 @@ export async function toolSearch(
   const rows = (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 }));
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
+  // memory.search is a BULK read for the per-memory counter (migration 00077).
+  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
   return page;
 }
 
@@ -656,9 +675,12 @@ export async function toolListArchived(
   span.setAttributes({ 'lorekit.scope': scope });
 
   const tracedDb = createTracedClient(db, span);
+  // `id` is selected purely to drive the per-memory read counter below — it is
+  // stripped from each entry before the tool's result is returned, so
+  // memory.list_archived's wire contract is unchanged.
   let query = tracedDb
     .from('memories')
-    .select('key,value,tags,updated_at,archived_at')
+    .select('id,key,value,tags,updated_at,archived_at')
     .eq('scope', scope)
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
@@ -666,8 +688,12 @@ export async function toolListArchived(
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  const entries = data ?? [];
-  span.setAttributes({ 'lorekit.result.count': entries.length });
+  const rows = data ?? [];
+  span.setAttributes({ 'lorekit.result.count': rows.length });
+  // memory.list_archived is a BULK read for the per-memory counter
+  // (migration 00077).
+  recordMemoryReads(db, rows.map((r) => r.id), 'bulk');
+  const entries = rows.map(({ id: _id, ...rest }) => rest);
   return { entries };
 }
 
@@ -1094,7 +1120,7 @@ export async function toolScopes(
 // `user_id` predicate — the same rule every other api_key-reachable handler
 // in this file follows, because that path runs on a service-role client that
 // bypasses RLS. `retention_policies` itself DOES carry an owner-only RLS
-// policy (00079), which is what protects the JWT/dashboard path; the
+// policy (00086), which is what protects the JWT/dashboard path; the
 // explicit filter here is what protects the api_key path.
 //
 // Feature flag: when LOREKIT_RETENTION_POLICIES_ENABLED is unset or any
@@ -1102,7 +1128,7 @@ export async function toolScopes(
 // `memories/handlers/{groom,policies,protect}.ts`) rejects with
 // UserInputError instead of touching the RPCs — same posture as
 // GITHUB_APP_ENABLED in `mcp/webhook.ts`, kept dormant until this is rolled
-// out. The nightly `pg_cron` sweep (00079) is unaffected — it only ever
+// out. The nightly `pg_cron` sweep (00086) is unaffected — it only ever
 // touches policies with `mode = 'auto'` AND `enabled = true`, and those can
 // only be created through this same gated surface.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1115,7 +1141,7 @@ function assertRetentionPoliciesEnabled(): void {
 
 /**
  * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
- * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00079) rather than a raw
+ * op is a SECURITY DEFINER RPC (lorekit_policy_*, 00086) rather than a raw
  * `.from('retention_policies')` call: the table is new enough that the
  * generated `database.types.ts` mirror does not know it (so a typed `.from()`
  * call cannot name it), and every other mutable resource in this schema —

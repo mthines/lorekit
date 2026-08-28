@@ -2,7 +2,7 @@
  * Pure candidate/precedence logic for retention policies ("grooming").
  *
  * The AUTHORITATIVE evaluation of "what matches" runs in Postgres
- * (`lorekit_groom_candidates`, migration 00079) — SQL is what `groom.preview`,
+ * (`lorekit_groom_candidates`, migration 00086) — SQL is what `groom.preview`,
  * `groom.run`, and the nightly sweep all call, so a previewed count always
  * equals what a run archives. This module is a BEHAVIOURAL MIRROR of that SQL,
  * kept here so the matching rules (scope hierarchy, the never-seen coalesce,
@@ -107,7 +107,7 @@ export interface GroomCandidateMemory {
   scope: string;
   key: string;
   created_at: string;
-  /** `null` means never seen — see the "unseen_days" header note in 00079. */
+  /** `null` means never seen — see the "unseen_days" header note in 00086. */
   last_seen_at: string | null;
   seen_count: number;
   protected: boolean;

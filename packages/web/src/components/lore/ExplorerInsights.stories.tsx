@@ -58,7 +58,7 @@ type Story = StoryObj<typeof ExplorerInsights>;
 
 /**
  * All scopes, no filters — the Explorer's resting state, which is now EXPANDED on
- * the `charts` view: the four cards with their trends and sparkbars, the view
+ * the `charts` view: the five cards with their trends and sparkbars, the view
  * toggle where the `Activity · <scope>` label used to be, and no heatmap stacked
  * underneath.
  */
@@ -181,7 +181,7 @@ export const Collapsed: Story = {
  * The HEATMAP view, reached the way a reader reaches it.
  *
  * The other half of the view toggle, and the state that replaced the old stacked
- * layout: the calendar gets the panel entirely to itself. The four cards are not
+ * layout: the calendar gets the panel entirely to itself. The five cards are not
  * merely folded here — they are absent, because keeping them above the calendar
  * rebuilt the two-charts-in-one-card stack this panel exists to remove. A play
  * function switches the view before the screenshot so the baseline captures the

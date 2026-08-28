@@ -1,6 +1,6 @@
 import { Key, Blocks, ShieldCheck, Users, UserCircle, CreditCard, FileCode, Archive } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
-import { retentionPoliciesEnabled } from '@/lib/feature-flags';
+import { retentionPoliciesEnabled } from '@/lib/retention-policies-flag';
 
 /**
  * The settings sub-navigation. Add a new section by appending one entry here

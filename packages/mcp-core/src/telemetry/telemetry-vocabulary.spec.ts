@@ -27,8 +27,8 @@ import {
  * from the agent surface on purpose. A decision recorded only in prose is what
  * a future surface audit re-litigates — it reads as a gap, somebody "fixes" it,
  * and `tools/list` grows five entries every session pays for. Recorded as a
- * guarded field it reads as a decision. So the five are pinned by name, the
- * near-miss (`memory.relevant`, which looks like a sixth and is already covered
+ * guarded field it reads as a decision. So the seven are pinned by name, the
+ * near-miss (`memory.relevant`, which looks like an eighth and is already covered
  * agent-side) is pinned as explicitly NOT one of them, and the prose record is
  * checked to still exist.
  *
@@ -99,19 +99,29 @@ describe('telemetry vocabulary closure', () => {
 });
 
 describe('the analytics reads stay REST-only (D17)', () => {
-  const FIVE = [
+  // Seven as of migrations 00077/00078's read-ranking endpoint and 00083's
+  // Runs view — the decision's ORIGINAL five plus two, not a re-litigation of
+  // it: `memory.read-ranking` is the same "name-bearing scope-leak surface
+  // nothing agent-side asked for" shape as `tags`/`facets`/`activity`, and
+  // `memory.usage-runs` is the same "chart, not an agent primitive" shape as
+  // the other five — both added to the SAME guarded set rather than exempted
+  // from it. See docs/decisions.md → "Dashboard analytics reads stay
+  // REST-only".
+  const RESTONLY_NAMES = [
     'memory.activity',
     'memory.facets',
     'memory.read-activity',
+    'memory.read-ranking',
     'memory.tags',
     'memory.usage',
+    'memory.usage-runs',
   ];
 
-  it('records exactly these five as a decision, by name', () => {
-    expect([...REST_ONLY_OP_NAMES].sort()).toEqual(FIVE);
+  it('records exactly these seven as a decision, by name', () => {
+    expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
-  it('keeps memory.relevant OUT of the five — it is already covered agent-side', () => {
+  it('keeps memory.relevant OUT of the seven — it is already covered agent-side', () => {
     // The near-miss, and the reason `restOnly` is a separate field rather than
     // "has no MCP tool". `GET /memories/relevant` has no tool of its own, but
     // the CAPABILITY is on the agent surface twice over (`memory.list
@@ -123,14 +133,14 @@ describe('the analytics reads stay REST-only (D17)', () => {
     expect(REST_ONLY_OP_NAMES).not.toContain('memory.relevant');
   });
 
-  it('gives none of the five an MCP tool', () => {
+  it('gives none of the seven an MCP tool', () => {
     const catalogued = new Set(MCP_TOOLS.map((t) => t.name));
     for (const name of REST_ONLY_OP_NAMES) {
       expect(catalogued.has(name), `${name} is REST-only but the catalog now declares a tool`).toBe(false);
     }
   });
 
-  it('gives none of the five a CLI command either', () => {
+  it('gives none of the seven a CLI command either', () => {
     // Scanned rather than reasoned about: the CLI is free to call any REST
     // endpoint directly (it has no catalog dependency), so "no MCP tool"
     // does not imply "no CLI command". `/relevant` is the proof the scan

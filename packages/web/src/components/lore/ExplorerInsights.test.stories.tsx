@@ -218,13 +218,18 @@ export const CardsReflectTheActiveSelection: Story = {
 };
 
 export const ReadCardUsesTheScopedReadSeries: Story = {
+  // The MSW fixture never sets read_kind (migration 00080), so every
+  // synthesised read bucket defaults to "retrieved" (bulk) here — "Memories
+  // opened" (targeted) has nothing to show against these fixtures, which is
+  // why this story exercises "Memories retrieved" rather than the other half
+  // of the split.
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
     let accountRead = 0;
-    await step('all scopes: the Read card totals the whole ledger', async () => {
+    await step('all scopes: the Retrieved card totals the whole ledger', async () => {
       await waitFor(async () => {
-        accountRead = await headline(canvas, 'Memories read');
+        accountRead = await headline(canvas, 'Memories retrieved');
         await expect(accountRead).toBeGreaterThan(0);
       });
     });
@@ -235,14 +240,14 @@ export const ReadCardUsesTheScopedReadSeries: Story = {
       // keep showing the account total here.
       await userEvent.click(canvas.getByRole('button', { name: 'Select repo' }));
       await waitFor(async () => {
-        await expect(await headline(canvas, 'Memories read')).toBeLessThan(accountRead);
+        await expect(await headline(canvas, 'Memories retrieved')).toBeLessThan(accountRead);
       });
     });
 
     await step('the card explains why a per-scope total can be smaller', async () => {
       // The caveat PR-1 deferred to this card: unattributable reads are recorded
       // with no scope, so the per-scope figures do not sum to the account one.
-      const read = await canvas.findByText('Memories read');
+      const read = await canvas.findByText('Memories retrieved');
       const info = read.parentElement?.querySelector('svg');
       await expect(info).toBeTruthy();
     });
@@ -294,9 +299,9 @@ export const ArchivedTileShowsTheUsageLedger: Story = {
  * The disclosure, which is the point of the redesign.
  *
  * A collapsed panel that showed nothing would be hiding, not disclosing — and
- * that is what the earliest version did: it folded all four figures away and
+ * that is what the earliest version did: it folded all the figures away and
  * left a header reading "Activity". The property under test is that the ANSWER
- * (the four cards' numbers, labels and captions) survives the collapse and only
+ * (the cards' numbers, labels and captions) survives the collapse and only
  * the EVIDENCE (sparkbars, the heatmap) folds.
  *
  * It now opens EXPANDED — showing one body at a time roughly halved the expanded
@@ -337,10 +342,11 @@ export const CollapsedStillShowsTheNumbers: Story = {
       });
     });
 
-    await step('but the four cards keep their numbers and labels', async () => {
+    await step('but the five cards keep their numbers and labels', async () => {
       for (const label of [
         'Memories written',
-        'Memories read',
+        'Memories retrieved',
+        'Memories opened',
         'Scopes active',
         'Memories archived',
       ]) {
@@ -369,11 +375,16 @@ export const CollapsedStillShowsTheNumbers: Story = {
  * far less room than it appeared to. Two-up at the compact density (`StatCard`'s
  * `compact`) is what fixed it, and this is the bound that keeps it fixed.
  *
+ * Migration 00080 split "Memories read" into retrieved + opened, growing the
+ * row from four cards to five — two-up at compact density is now three rows
+ * (2 + 2 + 1) instead of two, so the budget below grew with it.
+ *
  * The budget is stated in CSS pixels rather than as a fraction of the viewport,
- * because the browser runner's iframe is not a phone: 260px sits comfortably under
- * 30% of the ~915px viewport this was measured against, while staying loose enough
+ * because the browser runner's iframe is not a phone: 380px sits comfortably under
+ * 42% of the ~915px viewport this was measured against, while staying loose enough
  * to survive a font-metric difference. It is a REGRESSION bound — the failure it
- * exists to catch is a return to the ~450px one-up stack, not a 10px drift.
+ * exists to catch is a return to the ~450px one-up stack, not a small drift from
+ * five cards' own compact height.
  */
 export const CollapsedPanelFitsAPhone: Story = {
   // A phone's content column. The harness's own `maxWidth` cannot exceed its
@@ -403,13 +414,14 @@ export const CollapsedPanelFitsAPhone: Story = {
         await new Promise((resolve) => setTimeout(resolve, 60));
         await expect(panel.getBoundingClientRect().height).toBe(before);
       });
-      await expect(panel.getBoundingClientRect().height).toBeLessThanOrEqual(260);
+      await expect(panel.getBoundingClientRect().height).toBeLessThanOrEqual(380);
     });
 
-    await step('and it still carries all four numbers', async () => {
+    await step('and it still carries all five numbers', async () => {
       for (const label of [
         'Memories written',
-        'Memories read',
+        'Memories retrieved',
+        'Memories opened',
         'Scopes active',
         'Memories archived',
       ]) {
@@ -478,7 +490,7 @@ export const ViewToggleSwapsChartsAndHeatmap: Story = {
       });
     });
 
-    await step('the four numbers are one chevron away, never lost', async () => {
+    await step('the five numbers are one chevron away, never lost', async () => {
       // Folding must not cost the answer on ANY view: collapsing out of the
       // heatmap brings the summary line back rather than emptying the panel.
       await userEvent.click(canvas.getByRole('button', { name: /hide activity detail/i }));
@@ -487,7 +499,8 @@ export const ViewToggleSwapsChartsAndHeatmap: Story = {
       });
       for (const label of [
         'Memories written',
-        'Memories read',
+        'Memories retrieved',
+        'Memories opened',
         'Scopes active',
         'Memories archived',
       ]) {
@@ -891,30 +904,32 @@ export const UntouchedRangeShowsTheLast24Hours: Story = {
 
 /**
  * The stat grid's layout, which is a real behaviour and not a style: at a wide
- * panel the four cards sit in ONE row of four equal columns. The columns key off
- * the PANEL's width (`@container` + `@3xl`), not the viewport, so a narrow embed
- * drops to two-up instead of cramming four cards into a ~370px column. This
- * story's harness is a wide 72rem panel, so four-up is the expected layout.
+ * panel the five cards (migration 00080 split "Memories read" into retrieved +
+ * opened, growing this row from four) sit in ONE row of five equal columns. The
+ * columns key off the PANEL's width (`@container` + `@3xl`), not the viewport,
+ * so a narrow embed drops to two-up instead of cramming five cards into a
+ * ~370px column. This story's harness is a wide 72rem panel, so five-up is the
+ * expected layout.
  *
- * Asserted from measured geometry rather than class names — a `grid-cols-4` that
+ * Asserted from measured geometry rather than class names — a `grid-cols-5` that
  * something else overrode would still read as the right class.
  */
-export const CardsAreOneRowOfFourEqualColumnsWhenWide: Story = {
+export const CardsAreOneRowOfFiveEqualColumnsWhenWide: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
     await waitFor(async () => {
       await expect(await headline(canvas, 'Memories written')).toBeGreaterThan(0);
     });
 
-    const labels = ['Memories written', 'Memories read', 'Scopes active', 'Memories archived'];
+    const labels = ['Memories written', 'Memories retrieved', 'Memories opened', 'Scopes active', 'Memories archived'];
     const cards = labels.map((label) => cardOf(canvas, label));
-    // Anti-vacuity: four labels must resolve to four DISTINCT cards. If they
+    // Anti-vacuity: five labels must resolve to five DISTINCT cards. If they
     // ever collapsed onto one shared ancestor, the geometry steps below would be
     // comparing a box with itself.
     await expect(new Set(cards).size).toBe(labels.length);
     const items = cards.map((card) => card.getBoundingClientRect());
 
-    await step('all four sit on a single row', async () => {
+    await step('all five sit on a single row', async () => {
       for (const box of items) {
         await expect(Math.abs(box.top - items[0]!.top)).toBeLessThan(1);
       }

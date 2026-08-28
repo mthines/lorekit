@@ -47,6 +47,8 @@ const {
   identifyDash0User,
   resetDash0Identity,
   installExtensionErrorFilter,
+  syncFeatureFlagRumAttributes,
+  FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -281,6 +283,29 @@ describe('signal identity attributes', () => {
 
   it('never writes its own page.url.path — the SDK derives one per signal', () => {
     expect(valuesOf('page.url.path')).toEqual([]);
+  });
+});
+
+describe('syncFeatureFlagRumAttributes', () => {
+  beforeEach(() => {
+    signalAttributes.splice(0, signalAttributes.length, ...AFTER_INIT);
+  });
+
+  it('attaches one feature_flag.<key> attribute per entry, holding the variant', () => {
+    syncFeatureFlagRumAttributes({
+      'new-onboarding-flow': 'treatment',
+      'usage-charts-v2': 'off',
+    });
+    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}new-onboarding-flow`)).toEqual([
+      'treatment',
+    ]);
+    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}usage-charts-v2`)).toEqual(['off']);
+  });
+
+  it('does nothing for an empty flag map', () => {
+    const before = signalAttributes.length;
+    syncFeatureFlagRumAttributes({});
+    expect(signalAttributes).toHaveLength(before);
   });
 });
 

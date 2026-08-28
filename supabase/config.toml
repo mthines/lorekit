@@ -9,6 +9,18 @@ port = 54321
 schemas = ["public", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
+# Explicit, not the CLI default: Supabase CLI 2.116.0 flipped the *unset*
+# meaning of this flag from "revoke the bundled Data API grants on every new
+# public entity" to "keep them" (supabase/cli#6337), so an unset value here
+# now makes `supabase start` re-GRANT anon/authenticated EXECUTE on every
+# function in `public` — silently undoing per-function `revoke ... from
+# public` guards like 00041_org_actor_override.sql's on
+# lorekit_org_members_list, and failing migrations.test.sql's anon-privilege
+# assertions. Pinning it to `false` keeps local/CI matching this schema's
+# actual, migration-authored grants (least-privilege, defense in depth),
+# independent of the CLI's implicit default. Does not affect the deployed
+# project — grants there come only from the migrations that run against it.
+auto_expose_new_tables = false
 
 [db]
 port = 54322

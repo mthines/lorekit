@@ -17,6 +17,7 @@ import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/d
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
 import { likeNeedle } from '../../_shared/schemas/filter.ts';
 import { expiringWindow } from '../../_shared/limits/expiring-window.ts';
+import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
 
@@ -228,6 +229,9 @@ async function respondWithPage(
   // RESULT_COUNT_HEADER in _shared/api/router.ts.
   const res = ok({ ...page, entries: page.entries.map(shapeRpcRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
+  // memory.list is a BULK read (every row a listing call returned) for the
+  // per-memory counter (migration 00077) — one statement for the whole page.
+  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
   return res;
 }
 
