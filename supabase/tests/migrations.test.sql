@@ -8114,7 +8114,7 @@ end;
 $$;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- §95 — 00079/00080: retention policies ("grooming")
+-- §95 — 00086/00087: retention policies ("grooming")
 -- ═════════════════════════════════════════════════════════════════════════
 -- Proves the SQL layer's central invariant: lorekit_groom_candidates is the
 -- SINGLE source of truth "what matches", so a groom.preview count always
@@ -8342,7 +8342,7 @@ begin
   assert v_count = 0, '95-POLICY-10: the policy row must be gone after delete';
 
   -- ── AC-9 (structural): pg_cron guard already proven by every migration in
-  --    this run applying cleanly above (00079's DO block did not error).
+  --    this run applying cleanly above (00086's DO block did not error).
 
   -- ── memory.protect toggling ─────────────────────────────────────────────
   select lorekit_memory_protect(v_user, 'global', 'groom87-recent-global', true) into v_bool;
