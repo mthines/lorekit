@@ -9,6 +9,7 @@ import { useDeveloperNavRevealed } from '@/lib/hooks/useDeveloperNavRevealed';
 import { pendingInviteCount } from '@/lib/org-ui';
 import { resolveDeploymentEnvironment } from '@/lib/otel-deployment-env';
 import { isDeveloperEmail } from '@/lib/developer-users';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 
 /**
  * Not a `SETTINGS_SECTIONS` entry — that list is the customer-facing surface.
@@ -66,10 +67,14 @@ export function SettingsNav({ userEmail }: SettingsNavProps) {
   // 0 until hydrated so the server render and first client paint agree (no
   // badge), then the real count once localStorage-backed dismissals are known.
   const badgeCount = hasHydrated ? pendingInviteCount(invites, dismissedIds) : 0;
+  // `grooming`'s page-level `notFound()` gate (`settings/grooming/page.tsx`)
+  // is the real access-control boundary; this filter is only a visibility
+  // nicety — same split as `Sidebar.tsx`'s `insights-page` filter.
+  const retentionPoliciesEnabled = useFeatureFlag('retention-policies');
 
-  const items = SETTINGS_SECTIONS.map((section) =>
-    section.id === 'organization' ? { ...section, badgeCount } : section,
-  );
+  const items = SETTINGS_SECTIONS.filter(
+    (section) => section.id !== 'grooming' || retentionPoliciesEnabled,
+  ).map((section) => (section.id === 'organization' ? { ...section, badgeCount } : section));
   const showDeveloperNav =
     isNonProductionDeployment() || (isDeveloperEmail(userEmail) && developerNavRevealed);
   if (showDeveloperNav) items.push(DEVELOPER_SECTION);

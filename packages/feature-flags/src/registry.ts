@@ -112,6 +112,16 @@ const REGISTRY_INPUT = [
     owner: '@lorekit/web',
     tags: ['dashboard', 'copy'],
   },
+  {
+    key: 'retention-policies',
+    description:
+      'Settings → Grooming — retention policies that auto-archive stale lore, plus its sidebar nav entry. Gates only the dashboard UI: the MCP/REST surface (policy.*, groom.*, memory.protect) has its own independent backend gate (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret) because the edge functions are self-contained Deno and cannot depend on this Node-only OpenFeature package — see `docs/decisions.md#edge-function-is-self-contained-deno-no-import-map`. Flip this on only after the backend secret is set, same ordering as the GitHub App slug/flag pair.',
+    type: 'boolean',
+    variants: { off: false, on: true },
+    defaultVariant: 'off',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'web', 'rollout'],
+  },
 ] satisfies unknown[];
 
 function parseRegistry(input: unknown): readonly FlagDefinition[] {
