@@ -36,12 +36,14 @@ export default async function DeveloperSettingsPage() {
   const isNonProduction =
     resolveDeploymentEnvironment(process.env.VERCEL_ENV, process.env.NODE_ENV).name !== 'production';
 
-  if (!isNonProduction) {
-    const user = await getVerifiedUser();
-    if (!isDeveloperEmail(user?.email)) notFound();
-  }
+  // Resolved unconditionally (not just inside the production gate below) so
+  // `resolveFeatureFlagContext` can be passed the id and skip its own
+  // `auth.getUser()` round trip — see lib/auth/verified-user.ts's header for
+  // why an un-deduped extra call here would undercut that fix.
+  const user = await getVerifiedUser();
+  if (!isNonProduction && !isDeveloperEmail(user?.email)) notFound();
 
-  const context = await resolveFeatureFlagContext();
+  const context = await resolveFeatureFlagContext(user?.id ?? null);
 
   const rows: DeveloperFlagRow[] = await Promise.all(
     FLAG_REGISTRY.map(async (def) => {
