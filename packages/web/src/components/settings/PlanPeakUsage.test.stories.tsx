@@ -38,8 +38,11 @@ function handlerWithPeak(peak: number | null) {
   );
 }
 
+// MSW resolves handlers in list order (first match wins), so `handlerWithPeak`
+// must come BEFORE `...memoryHandlers()` or its own usage fixture (which
+// carries no `peak_memory_count`) always wins instead.
 export const RendersThePeakCaption: Story = {
-  parameters: { msw: { handlers: [...memoryHandlers(), handlerWithPeak(4123)] } },
+  parameters: { msw: { handlers: [handlerWithPeak(4123), ...memoryHandlers()] } },
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
     await step('shows the peak figure and the window it covers', async () => {
@@ -50,13 +53,18 @@ export const RendersThePeakCaption: Story = {
 };
 
 export const RendersNothingWithNoPeakData: Story = {
-  parameters: { msw: { handlers: [...memoryHandlers(), handlerWithPeak(null)] } },
+  parameters: { msw: { handlers: [handlerWithPeak(null), ...memoryHandlers()] } },
   play: async ({ canvasElement, step }) => {
     await step('a null peak (no write events in the window) renders no caption', async () => {
       // Give the query a moment to settle, then assert the canvas stayed empty
-      // rather than showing a fabricated "Peaked at 0" line.
+      // rather than showing a fabricated "Peaked at 0" line. The global
+      // `ThemeFrame` decorator (`.storybook/preview.tsx`) injects a `<style>`
+      // reset into every story's DOM, whose CSS text is part of `textContent`
+      // — strip it first or the literal `''` compare always fails.
       await new Promise((resolve) => setTimeout(resolve, 100));
-      await expect(canvasElement.textContent).toBe('');
+      const clone = canvasElement.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('style, script').forEach((node) => node.remove());
+      await expect(clone.textContent).toBe('');
     });
   },
 };

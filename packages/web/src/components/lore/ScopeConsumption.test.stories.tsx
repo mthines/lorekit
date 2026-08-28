@@ -40,11 +40,14 @@ const FIXTURE_TOTAL = FIXTURE_BUCKETS.reduce((sum, b) => sum + b.count, 0);
 export const HeadlineSumsToTotalIncludingUnattributed: Story = {
   parameters: {
     msw: {
+      // MSW resolves handlers in list order (first match wins), so the
+      // override must come BEFORE `...memoryHandlers()` or its own
+      // read-activity fixture always wins instead.
       handlers: [
-        ...memoryHandlers(),
         http.get('*/functions/v1/memories/read-activity', () =>
           HttpResponse.json({ bucket: 'day', since: '2026-07-01T00:00:00.000Z', until: FROZEN_NOW, buckets: FIXTURE_BUCKETS }),
         ),
+        ...memoryHandlers(),
       ],
     },
   },
@@ -67,10 +70,10 @@ export const EmptyWindowShowsNoReadsMessage: Story = {
   parameters: {
     msw: {
       handlers: [
-        ...memoryHandlers(),
         http.get('*/functions/v1/memories/read-activity', () =>
           HttpResponse.json({ bucket: 'day', since: '2026-07-01T00:00:00.000Z', until: FROZEN_NOW, buckets: [] }),
         ),
+        ...memoryHandlers(),
       ],
     },
   },

@@ -60,8 +60,10 @@ const RUNS = [
 ];
 
 function handlers() {
+  // MSW resolves handlers in list order (first match wins), so every
+  // override below must come BEFORE `...memoryHandlers()` or its own
+  // (empty) usage fixture always wins instead.
   return [
-    ...memoryHandlers(),
     http.get('*/functions/v1/memories/usage', ({ request }) => {
       const url = new URL(request.url);
       return HttpResponse.json({
@@ -87,6 +89,7 @@ function handlers() {
     http.get('*/functions/v1/memories/usage/runs', () =>
       HttpResponse.json({ range: { since: '2026-05-20T00:00:00.000Z', until: FROZEN_NOW }, runs: RUNS, next_cursor: null }),
     ),
+    ...memoryHandlers(),
   ];
 }
 

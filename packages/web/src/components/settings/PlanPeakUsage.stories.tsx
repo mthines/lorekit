@@ -37,11 +37,14 @@ function handlerWithPeak(peak: number | null) {
   });
 }
 
+// MSW resolves handlers in list order (first match wins), so `handlerWithPeak`
+// must come BEFORE `...memoryHandlers()` or its own usage fixture (which
+// carries no `peak_memory_count`) always wins instead.
 export const Default: Story = {
-  parameters: { msw: { handlers: [...memoryHandlers(), handlerWithPeak(4123)] } },
+  parameters: { msw: { handlers: [handlerWithPeak(4123), ...memoryHandlers()] } },
 };
 
 /** No write events in the window — renders nothing. */
 export const NoPeakData: Story = {
-  parameters: { msw: { handlers: [...memoryHandlers(), handlerWithPeak(null)] } },
+  parameters: { msw: { handlers: [handlerWithPeak(null), ...memoryHandlers()] } },
 };

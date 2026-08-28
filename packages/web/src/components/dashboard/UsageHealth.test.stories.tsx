@@ -42,7 +42,10 @@ export const RendersAllThreeSectionsFromOneRowSet: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
     await step('friction shows the repeated failure as one row with its full count', async () => {
-      await expect(canvas.getByText('org.create')).toBeVisible();
+      // `org.create` also has a duration, so it legitimately appears a second
+      // time in the Latency section (titled `org.create · other`) — getByTitle
+      // disambiguates from the friction row, whose title is the bare tool name.
+      await expect(canvas.getByTitle('org.create')).toBeVisible();
       await expect(canvas.getByText('×155')).toBeVisible();
       await expect(canvas.getByText('error')).toBeVisible();
     });
@@ -78,7 +81,12 @@ export const NoUsageRowsRendersNothing: Story = {
     await step('an account with no usage rows renders no diagnostics section at all', async () => {
       // `UsageHealth` returns null on an empty row set, so the canvas is
       // literally empty rather than showing three "No … in this window" cards.
-      await expect(canvasElement.textContent).toBe('');
+      // The global `ThemeFrame` decorator (`.storybook/preview.tsx`) injects a
+      // `<style>` reset into every story's DOM, whose CSS text is part of
+      // `textContent` — strip it first or the literal `''` compare always fails.
+      const clone = canvasElement.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('style, script').forEach((node) => node.remove());
+      await expect(clone.textContent).toBe('');
     });
   },
 };

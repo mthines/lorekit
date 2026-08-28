@@ -11,8 +11,10 @@ import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
  * `play` functions still run in the browser.
  */
 function handlers() {
+  // MSW resolves handlers in list order (first match wins), so the usage
+  // override must come BEFORE `...memoryHandlers()` or its own (empty)
+  // usage fixture always wins instead.
   return [
-    ...memoryHandlers(),
     http.get('*/functions/v1/memories/usage', ({ request }) => {
       const url = new URL(request.url);
       return HttpResponse.json({
@@ -35,6 +37,7 @@ function handlers() {
     http.get('*/functions/v1/memories/usage/runs', () =>
       HttpResponse.json({ range: { since: null, until: FROZEN_NOW }, runs: [], next_cursor: null }),
     ),
+    ...memoryHandlers(),
   ];
 }
 

@@ -375,11 +375,16 @@ export const CollapsedStillShowsTheNumbers: Story = {
  * far less room than it appeared to. Two-up at the compact density (`StatCard`'s
  * `compact`) is what fixed it, and this is the bound that keeps it fixed.
  *
+ * Migration 00080 split "Memories read" into retrieved + opened, growing the
+ * row from four cards to five — two-up at compact density is now three rows
+ * (2 + 2 + 1) instead of two, so the budget below grew with it.
+ *
  * The budget is stated in CSS pixels rather than as a fraction of the viewport,
- * because the browser runner's iframe is not a phone: 260px sits comfortably under
- * 30% of the ~915px viewport this was measured against, while staying loose enough
+ * because the browser runner's iframe is not a phone: 380px sits comfortably under
+ * 42% of the ~915px viewport this was measured against, while staying loose enough
  * to survive a font-metric difference. It is a REGRESSION bound — the failure it
- * exists to catch is a return to the ~450px one-up stack, not a 10px drift.
+ * exists to catch is a return to the ~450px one-up stack, not a small drift from
+ * five cards' own compact height.
  */
 export const CollapsedPanelFitsAPhone: Story = {
   // A phone's content column. The harness's own `maxWidth` cannot exceed its
@@ -409,7 +414,7 @@ export const CollapsedPanelFitsAPhone: Story = {
         await new Promise((resolve) => setTimeout(resolve, 60));
         await expect(panel.getBoundingClientRect().height).toBe(before);
       });
-      await expect(panel.getBoundingClientRect().height).toBeLessThanOrEqual(260);
+      await expect(panel.getBoundingClientRect().height).toBeLessThanOrEqual(380);
     });
 
     await step('and it still carries all five numbers', async () => {

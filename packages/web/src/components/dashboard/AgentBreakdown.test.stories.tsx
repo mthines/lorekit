@@ -54,7 +54,14 @@ export const NoUsageRowsRendersNothing: Story = {
   args: { rows: [] },
   play: async ({ canvasElement, step }) => {
     await step('an account with no usage rows renders no breakdown at all', async () => {
-      await expect(canvasElement.textContent).toBe('');
+      // The global `ThemeFrame` decorator (`.storybook/preview.tsx`) injects a
+      // `<style>` reset for deterministic snapshots into every story's DOM,
+      // whose CSS text is part of `textContent` — strip it before asserting
+      // the component itself rendered nothing, or the literal `''` compare
+      // always fails regardless of what the component did.
+      const clone = canvasElement.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('style, script').forEach((node) => node.remove());
+      await expect(clone.textContent).toBe('');
     });
   },
 };
