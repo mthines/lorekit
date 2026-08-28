@@ -302,7 +302,23 @@ function PolicyForm({
 
   return (
     <div className="flex flex-col gap-4">
-      <ScopeField value={conditions.scope} onChange={(scope) => setConditions((c) => ({ ...c, scope }))} />
+      {initialPolicy ? (
+        // Editing: the scope combobox stays interactive-looking but `handleSave`'s
+        // update call has no `scope` field (`PolicyUpdateBodySchema` doesn't take one),
+        // so letting the user change it here would silently no-op while the toast
+        // reports success. Show the fixed scope instead until the API supports moving
+        // a saved policy to a different scope.
+        <div className="flex flex-col gap-1.5">
+          <span className={LABEL_CLASS}>Scope</span>
+          <ScopeBadge scope={conditions.scope} label showPath className="text-xs" />
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">
+            A policy&rsquo;s scope can&rsquo;t be changed after it&rsquo;s created — archive this rule and
+            create a new one under a different scope.
+          </p>
+        </div>
+      ) : (
+        <ScopeField value={conditions.scope} onChange={(scope) => setConditions((c) => ({ ...c, scope }))} />
+      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="flex flex-col gap-1.5">
