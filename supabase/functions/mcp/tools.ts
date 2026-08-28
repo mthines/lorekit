@@ -38,6 +38,7 @@ import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
 import type { DbClient } from '../_shared/db/db-client.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput } from '../_shared/retention/groom.ts';
+import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -1105,8 +1106,6 @@ export async function toolScopes(
 // touches policies with `mode = 'auto'` AND `enabled = true`, and those can
 // only be created through this same gated surface.
 // ═══════════════════════════════════════════════════════════════════════════
-
-const RETENTION_POLICIES_ENABLED = Deno.env.get('LOREKIT_RETENTION_POLICIES_ENABLED') === 'true';
 
 function assertRetentionPoliciesEnabled(): void {
   if (!RETENTION_POLICIES_ENABLED) {
