@@ -15,6 +15,7 @@ import {
 import { featureFlagOtelHook } from './otel-hook.ts';
 import { LoreKitFlagProvider } from './provider.ts';
 import { getFlagDefinition } from './registry.ts';
+import type { JsonValue } from './schema.ts';
 import type { FlagKey, FlagValue } from './generated/flags.generated.ts';
 
 const CLIENT_DOMAIN = 'lorekit-feature-flags';
@@ -75,6 +76,12 @@ export async function evaluateFlag<K extends FlagKey>(
         fallback as number,
         context,
       )) as unknown as FlagValue<K>;
+    case 'object':
+      return (await client.getObjectValue(
+        key,
+        fallback as JsonValue,
+        context,
+      )) as unknown as FlagValue<K>;
   }
 }
 
@@ -108,6 +115,8 @@ export async function evaluateFlagDetails<K extends FlagKey>(
       return client.getStringDetails(key, fallback as string, context);
     case 'number':
       return client.getNumberDetails(key, fallback as number, context);
+    case 'object':
+      return client.getObjectDetails(key, fallback as JsonValue, context);
   }
 }
 

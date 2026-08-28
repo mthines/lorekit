@@ -83,6 +83,49 @@ describe('FlagDefinitionSchema', () => {
     );
     expect(result.success).toBe(true);
   });
+
+  it('accepts a string-typed flag', () => {
+    const result = FlagDefinitionSchema.safeParse(
+      baseFlag({
+        type: 'string',
+        variants: { beta: 'Beta', earlyAccess: 'Early Access' },
+        defaultVariant: 'beta',
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an object-typed flag with a nested variant value', () => {
+    const result = FlagDefinitionSchema.safeParse(
+      baseFlag({
+        type: 'object',
+        variants: {
+          default: { title: 'Hello', links: ['/a', '/b'] },
+          playful: { title: 'Hey!', links: [] },
+        },
+        defaultVariant: 'default',
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an object-typed flag whose variant value is a primitive', () => {
+    const result = FlagDefinitionSchema.safeParse(
+      baseFlag({
+        type: 'object',
+        variants: { default: 'not-an-object' },
+        defaultVariant: 'default',
+      }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a boolean-typed flag whose variant value is an object', () => {
+    const result = FlagDefinitionSchema.safeParse(
+      baseFlag({ variants: { off: false, on: { nope: true } } }),
+    );
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('FlagRegistrySchema', () => {

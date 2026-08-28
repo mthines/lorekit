@@ -26,6 +26,15 @@ import {
 /** The "no override — resolve normally" segment. Never a real variant name (kebab-case flag keys can't collide). */
 const AUTO = 'auto' as const;
 
+/**
+ * `String(value)` reads as `"[object Object]"` for an object/array-valued
+ * flag — useless for exactly the case a developer needs it most (confirming
+ * WHICH shape a variant produced). `JSON.stringify` for anything non-primitive.
+ */
+function formatFlagValue(value: unknown): string {
+  return typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
+}
+
 export interface DeveloperFlagRow {
   key: string;
   description: string;
@@ -109,7 +118,7 @@ export function DeveloperFlagsPanel({ rows }: { rows: readonly DeveloperFlagRow[
                 onChange={(selected) => applyOverride(row, selected)}
               />
               <span className="text-[10px] text-[var(--color-content-tertiary)]">
-                Effective: <code>{String(row.value)}</code> ({row.variant} ·{' '}
+                Effective: <code>{formatFlagValue(row.value)}</code> ({row.variant} ·{' '}
                 {row.reason.toLowerCase()})
                 {pendingKey === row.key && isPending ? ' — applying…' : ''}
               </span>

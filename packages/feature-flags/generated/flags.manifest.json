@@ -63,6 +63,46 @@
       "tags": [
         "cli"
       ]
+    },
+    {
+      "key": "plan-badge-copy",
+      "description": "The plan badge label shown at the top of Settings → Plan, during the beta.",
+      "type": "string",
+      "variants": {
+        "beta": "Beta",
+        "earlyAccess": "Early Access"
+      },
+      "defaultVariant": "beta",
+      "experiment": null,
+      "owner": "@lorekit/web",
+      "tags": [
+        "dashboard",
+        "copy"
+      ]
+    },
+    {
+      "key": "usage-empty-state-copy",
+      "description": "Object-valued flag: the title/CTA copy block shown on the dashboard Usage page for an account with no data yet.",
+      "type": "object",
+      "variants": {
+        "default": {
+          "title": "No usage yet",
+          "ctaLabel": "Learn more",
+          "ctaHref": "/docs/limits"
+        },
+        "playful": {
+          "title": "It's quiet in here…",
+          "ctaLabel": "See what counts",
+          "ctaHref": "/docs/limits"
+        }
+      },
+      "defaultVariant": "default",
+      "experiment": null,
+      "owner": "@lorekit/web",
+      "tags": [
+        "dashboard",
+        "copy"
+      ]
     }
   ]
 }

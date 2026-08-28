@@ -44,6 +44,29 @@ const numberFlag: FlagDefinition = {
   tags: [],
 };
 
+const stringFlag: FlagDefinition = {
+  key: 'string-flag',
+  description: 'A string-valued flag.',
+  type: 'string',
+  variants: { beta: 'Beta', earlyAccess: 'Early Access' },
+  defaultVariant: 'beta',
+  owner: '@lorekit/web',
+  tags: [],
+};
+
+const objectFlag: FlagDefinition = {
+  key: 'object-flag',
+  description: 'An object-valued flag.',
+  type: 'object',
+  variants: {
+    default: { title: 'Default', links: ['/a'] },
+    playful: { title: 'Playful!', links: [] },
+  },
+  defaultVariant: 'default',
+  owner: '@lorekit/web',
+  tags: [],
+};
+
 describe('LoreKitFlagProvider', () => {
   it('resolves a static boolean flag with reason STATIC', async () => {
     const provider = new LoreKitFlagProvider([staticFlag]);
@@ -116,7 +139,27 @@ describe('LoreKitFlagProvider', () => {
     expect(['control', 'treatment']).toContain(result.variant);
   });
 
-  it('refuses object evaluation — no object-typed flags are supported yet', async () => {
+  it('resolves a string flag correctly', async () => {
+    const provider = new LoreKitFlagProvider([stringFlag]);
+    const result = await provider.resolveStringEvaluation('string-flag', '', {}, NOOP_LOGGER);
+    expect(result).toMatchObject({
+      value: 'Beta',
+      variant: 'beta',
+      reason: StandardResolutionReasons.STATIC,
+    });
+  });
+
+  it('resolves an object flag correctly, returning the whole nested value', async () => {
+    const provider = new LoreKitFlagProvider([objectFlag]);
+    const result = await provider.resolveObjectEvaluation('object-flag', {}, {}, NOOP_LOGGER);
+    expect(result).toMatchObject({
+      value: { title: 'Default', links: ['/a'] },
+      variant: 'default',
+      reason: StandardResolutionReasons.STATIC,
+    });
+  });
+
+  it('an object flag still type-mismatches against a non-object flag', async () => {
     const provider = new LoreKitFlagProvider([staticFlag]);
     const result = await provider.resolveObjectEvaluation('static-flag', { a: 1 }, {}, NOOP_LOGGER);
     expect(result.errorCode).toBe(ErrorCode.TYPE_MISMATCH);
@@ -165,5 +208,20 @@ describe('LoreKitFlagProvider', () => {
       NOOP_LOGGER,
     );
     expect(result.reason).toBe(StandardResolutionReasons.STATIC);
+  });
+
+  it("an override on an object flag returns the overridden variant's whole nested value", async () => {
+    const provider = new LoreKitFlagProvider([objectFlag]);
+    const result = await provider.resolveObjectEvaluation(
+      'object-flag',
+      {},
+      { flagOverrides: { 'object-flag': 'playful' } },
+      NOOP_LOGGER,
+    );
+    expect(result).toMatchObject({
+      value: { title: 'Playful!', links: [] },
+      variant: 'playful',
+      reason: 'OVERRIDE',
+    });
   });
 });

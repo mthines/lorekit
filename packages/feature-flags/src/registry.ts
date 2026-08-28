@@ -72,6 +72,36 @@ const REGISTRY_INPUT = [
     owner: '@lorekit/cli',
     tags: ['cli'],
   },
+  {
+    key: 'plan-badge-copy',
+    description: 'The plan badge label shown at the top of Settings → Plan, during the beta.',
+    // `type: 'string'` — proves the string-valued path end to end (schema,
+    // codegen, provider, evaluateFlag); every other flag here is boolean.
+    type: 'string',
+    variants: { beta: 'Beta', earlyAccess: 'Early Access' },
+    defaultVariant: 'beta',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'copy'],
+  },
+  {
+    key: 'usage-empty-state-copy',
+    description:
+      'Object-valued flag: the title/CTA copy block shown on the dashboard Usage page for an account with no data yet.',
+    // `type: 'object'` — proves the object-valued path (an arbitrary JSON
+    // structure per variant, not just a primitive) end to end.
+    type: 'object',
+    variants: {
+      default: { title: 'No usage yet', ctaLabel: 'Learn more', ctaHref: '/docs/limits' },
+      playful: {
+        title: "It's quiet in here…",
+        ctaLabel: 'See what counts',
+        ctaHref: '/docs/limits',
+      },
+    },
+    defaultVariant: 'default',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'copy'],
+  },
 ] satisfies unknown[];
 
 function parseRegistry(input: unknown): readonly FlagDefinition[] {

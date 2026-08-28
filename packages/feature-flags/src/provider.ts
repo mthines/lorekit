@@ -137,17 +137,10 @@ export class LoreKitFlagProvider implements Provider {
   async resolveObjectEvaluation<T extends JsonValue>(
     flagKey: string,
     defaultValue: T,
-    _context: EvaluationContext,
+    context: EvaluationContext,
     _logger: Logger,
   ): Promise<ResolutionDetails<T>> {
-    // No `object`-typed flags in the registry yet (see `FlagTypeSchema`) — refuse
-    // rather than silently guessing a shape.
-    return {
-      value: defaultValue,
-      reason: StandardResolutionReasons.ERROR,
-      errorCode: ErrorCode.TYPE_MISMATCH,
-      errorMessage: `flag "${flagKey}": object-typed flags are not supported by LoreKitFlagProvider`,
-    };
+    return this.resolveFor(flagKey, defaultValue, context, 'object');
   }
 
   private resolveFor<T extends JsonValue>(

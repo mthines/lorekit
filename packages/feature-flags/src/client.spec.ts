@@ -25,6 +25,20 @@ describe('evaluateFlag', () => {
     // @ts-expect-error — 'not-a-real-flag' is not a member of the generated FlagKey union.
     await expect(evaluateFlag('not-a-real-flag')).rejects.toThrow(/unknown flag/);
   });
+
+  it('resolves a string-typed flag to a string', async () => {
+    const value = await evaluateFlag('plan-badge-copy');
+    expect(value).toBe('Beta');
+  });
+
+  it('resolves an object-typed flag to its whole nested value', async () => {
+    const value = await evaluateFlag('usage-empty-state-copy');
+    expect(value).toEqual({
+      title: 'No usage yet',
+      ctaLabel: 'Learn more',
+      ctaHref: '/docs/limits',
+    });
+  });
 });
 
 describe('evaluateFlagDetails', () => {

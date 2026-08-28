@@ -72,7 +72,16 @@ const TS_BANNER = `// GENERATED — do not edit.
 // Edit the registry, not this file. \`--check\` fails CI when the two disagree.
 `;
 
-const TS_TYPE_FOR = { boolean: 'boolean', string: 'string', number: 'number' };
+/**
+ * `object` maps to the same recursive `JsonValue` shape `schema.ts` validates
+ * variant values against (re-declared here, not imported — this generated
+ * file is a standalone, zero-import TYPES module by design, same as the
+ * `FlagKey`/`FlagValueMap` it sits next to).
+ */
+const TS_TYPE_FOR = { boolean: 'boolean', string: 'string', number: 'number', object: 'JsonValue' };
+
+const JSON_VALUE_TS = `/** A JSON value — mirrors \`schema.ts\`'s \`JsonValue\`, re-declared here to keep this file import-free. */
+export type JsonValue = boolean | string | number | null | JsonValue[] | { [key: string]: JsonValue };`;
 
 /**
  * The TS client's typed surface: a `FlagKey` union and a `FlagValue<K>`
@@ -82,6 +91,7 @@ const TS_TYPE_FOR = { boolean: 'boolean', string: 'string', number: 'number' };
 export function renderFlagsTs(registry) {
   const { FLAG_REGISTRY } = registry;
   const keys = FLAG_REGISTRY.map((f) => f.key);
+  const usesObjectType = FLAG_REGISTRY.some((f) => f.type === 'object');
 
   const keyUnion = keys.map((k) => `  | '${k}'`).join('\n');
   const valueMapEntries = FLAG_REGISTRY.map((f) => `  '${f.key}': ${TS_TYPE_FOR[f.type]};`).join(
@@ -93,7 +103,7 @@ export function renderFlagsTs(registry) {
     .join('\n');
 
   return `${TS_BANNER}
-/** Every declared flag key. */
+${usesObjectType ? JSON_VALUE_TS + '\n\n' : ''}/** Every declared flag key. */
 export type FlagKey =
 ${keyUnion};
 

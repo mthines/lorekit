@@ -15,7 +15,13 @@ import { z } from 'zod';
 /** Kebab-case, so a flag key is a legal identifier in every target language's naming convention. */
 const FLAG_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
 
-export const FlagTypeSchema = z.enum(['boolean', 'string', 'number']);
+/**
+ * The four value types OpenFeature's own evaluation API distinguishes —
+ * `resolveBooleanEvaluation` / `resolveStringEvaluation` /
+ * `resolveNumberEvaluation` / `resolveObjectEvaluation` on every `Provider`
+ * (see `provider.ts`). Nothing here invents a fifth.
+ */
+export const FlagTypeSchema = z.enum(['boolean', 'string', 'number', 'object']);
 export type FlagType = z.infer<typeof FlagTypeSchema>;
 
 /** One arm of an experiment. `weight` values across all variants must sum to 100. */
@@ -55,11 +61,26 @@ export const ExperimentSchema = z
   });
 export type Experiment = z.infer<typeof ExperimentSchema>;
 
-const jsonValue: z.ZodType<boolean | string | number> = z.union([
-  z.boolean(),
-  z.string(),
-  z.number(),
-]);
+/**
+ * The full JSON value space, matching OpenFeature's own `JsonValue` type
+ * (`@openfeature/server-sdk` / `@openfeature/core`) — needed because an
+ * `object`-typed flag's variant value can be an arbitrary JSON structure, not
+ * just a primitive. `z.lazy` because the type is self-referential (an object
+ * or array can contain further objects/arrays).
+ */
+export type JsonPrimitive = boolean | string | number | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+const jsonValue: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.boolean(),
+    z.string(),
+    z.number(),
+    z.null(),
+    z.array(jsonValue),
+    z.record(z.string(), jsonValue),
+  ]),
+);
 
 export const FlagDefinitionSchema = z
   .object({

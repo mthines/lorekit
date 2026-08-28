@@ -33,7 +33,7 @@ A flag is:
 {
   key: 'new-onboarding-flow',       // kebab-case
   description: '...',
-  type: 'boolean' | 'string' | 'number',
+  type: 'boolean' | 'string' | 'number' | 'object',
   variants: { control: false, treatment: true },  // variant key -> value
   defaultVariant: 'control',        // returned when there's no active experiment
   experiment: {                     // optional — omit for a plain on/off flag
@@ -53,6 +53,34 @@ time: kebab-case keys, `defaultVariant` must be a real variant, variant values
 must match the declared `type`, experiment weights must sum to 100, and no
 duplicate keys across the registry. An invalid registry throws immediately —
 it can never ship a flag that silently resolves to `undefined`.
+
+### Value types
+
+All four types OpenFeature's own evaluation API distinguishes are supported —
+this isn't a subset:
+
+| `type` | Variant value | Example |
+|--------|---------------|---------|
+| `boolean` | `true` / `false` | `new-onboarding-flow` |
+| `string` | any string | `plan-badge-copy` — `{ beta: 'Beta', earlyAccess: 'Early Access' }` |
+| `number` | any number | — |
+| `object` | any JSON value (nested objects/arrays included) | `usage-empty-state-copy` — a whole `{ title, ctaLabel, ctaHref }` copy block per variant |
+
+`object` accepts the full recursive JSON value space (`schema.ts`'s
+`JsonValue` type — booleans, strings, numbers, `null`, arrays, and nested
+objects), not a flat key-value bag — a variant can be an arbitrarily
+structured config. `evaluateFlag('usage-empty-state-copy')` returns the whole
+resolved object, typed via the generated `FlagValueMap` (see
+`flags.generated.ts`'s `JsonValue` type when at least one flag uses it).
+
+There is deliberately no per-flag TypeScript shape for an `object` flag's
+contents beyond `JsonValue` — the registry has no mechanism to declare "this
+object flag's variants are always `{ title: string; ctaLabel: string }`"
+today. If a consumer needs that, narrow it at the call site
+(`evaluateFlag('usage-empty-state-copy') as { title: string; ctaLabel: string; ctaHref: string }`)
+or treat adding a per-flag payload schema as a follow-up to this codegen —
+`FlagDefinitionSchema` already has everywhere such a schema would plug in
+(next to `type`).
 
 `nx run feature-flags:check:generate` (and the `generated-artifacts.spec.ts`
 vitest guard) fails when the generated files have drifted from the registry —
