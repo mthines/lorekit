@@ -37,9 +37,14 @@
 --
 -- `REINDEX INDEX` rebuilds the index from scratch against the current heap,
 -- resolving (1) unconditionally. `ANALYZE` refreshes the planner's
--- statistics on `memories`, resolving (2). Running both costs nothing when
--- neither was the problem — a fresh REINDEX of a healthy index is a no-op
--- in effect, and ANALYZE is always safe to re-run.
+-- statistics on `memories`, resolving (2). `ANALYZE` is always safe and
+-- cheap to re-run even when it wasn't the problem. `REINDEX INDEX` (no
+-- `CONCURRENTLY`) is NOT free in that case, though: it takes an ACCESS
+-- EXCLUSIVE lock on `memories` for the rebuild, briefly blocking reads and
+-- writes to the table regardless of whether the index was already healthy.
+-- `memories` is small enough today that this brief lock is an acceptable
+-- trade-off — consistent with 00076's own reasoning for skipping
+-- `CONCURRENTLY` — but it is a real (if short) cost, not a no-op.
 --
 -- `CONCURRENTLY` is deliberately NOT used, matching 00076's own reasoning:
 -- Supabase migrations run inside a transaction and neither
