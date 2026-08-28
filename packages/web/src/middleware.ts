@@ -5,6 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // three enforce one definition of a safe `?next=` target.
 import { safeNextPath, boundedReturnTo } from '@/lib/auth-redirect';
 import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
+import { ensureFlagAnonIdCookie } from '@/lib/feature-flags/anon-id';
 
 /** 24 hours — matches the Supabase project jwt_expiry so the cookie
  *  outlives the access token and the refresh token can be used. */
@@ -109,9 +110,15 @@ export async function middleware(request: NextRequest) {
   // that would otherwise bypass the same-origin constraint.
   if (user && request.nextUrl.pathname === '/login') {
     const next = safeNextPath(request.nextUrl.searchParams.get('next'));
-    return NextResponse.redirect(new URL(next, request.url));
+    const redirectResponse = NextResponse.redirect(new URL(next, request.url));
+    ensureFlagAnonIdCookie(request.cookies, redirectResponse.cookies);
+    return redirectResponse;
   }
 
+  // Every other response — mint the feature-flag targeting cookie once per
+  // browser so `LoreKitFlagProvider` never falls back to its shared, non-split
+  // "anonymous" constant for a visitor with no session yet (see anon-id.ts).
+  ensureFlagAnonIdCookie(request.cookies, response.cookies);
   return response;
 }
 
