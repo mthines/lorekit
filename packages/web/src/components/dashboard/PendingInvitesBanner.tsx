@@ -21,7 +21,7 @@ import { useDismissedInviteIds } from '@/lib/hooks/useDismissedInviteIds';
 import { visibleInvites } from '@/lib/org-ui';
 import { serialise } from '@/lib/hooks/useUrlState';
 import type { Filter } from '@/lib/filters';
-import { useToast } from '@/components/providers/ToastProvider';
+import { showToast } from '@/lib/toast';
 import { InviteDetailsDialog } from '@/components/dashboard/InviteDetailsDialog';
 
 interface PendingInvitesBannerProps {
@@ -31,7 +31,6 @@ interface PendingInvitesBannerProps {
 export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
   const { data: invites = initialInvites } = usePendingInvitesForMe(initialInvites);
   const [dismissedIds, dismiss, hasHydrated] = useDismissedInviteIds();
