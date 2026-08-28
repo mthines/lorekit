@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.59.0](https://github.com/mthines/lorekit/compare/cli-v1.58.0...cli-v1.59.0) (2026-08-28)
+
+
+### Features
+
+* retention policies for automatic lore grooming ([9107a60](https://github.com/mthines/lorekit/commit/9107a60109fb8336151c5eb634a1fd2baeeca279))
+
+
+### Bug Fixes
+
+* **migrations:** renumber grooming migrations past main's 00079/00080 ([6ad137d](https://github.com/mthines/lorekit/commit/6ad137db004f7c845c3480e253d43e36f6214ca2))
+* resolve merge conflict with main and renumber grooming migrations ([b35b8bc](https://github.com/mthines/lorekit/commit/b35b8bc081172c9999af53cfd67c8d44228abe3b))
+
 ## [1.58.0](https://github.com/mthines/lorekit/compare/cli-v1.57.0...cli-v1.58.0) (2026-08-28)
 
 
