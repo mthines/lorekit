@@ -3,6 +3,7 @@ export * from './domain/api-key.ts';
 export * from './shared/scope.ts';
 export * from './shared/common.ts';
 export * from './domain/memory.ts';
+export * from './domain/retention.ts';
 export * from './domain/org.ts';
 export * from './domain/member.ts';
 export * from './domain/invite.ts';

@@ -55,7 +55,12 @@ describe('READ_TOOLS / WRITE_TOOLS', () => {
       // `org.list` joined the read family when the org tools stopped being
       // JWT-only: listing the orgs you belong to is exactly what a read token
       // should be able to do.
-      ['memory.list', 'memory.list_archived', 'memory.read', 'memory.scopes', 'memory.search', 'org.list'].sort(),
+      [
+        'memory.list', 'memory.list_archived', 'memory.read', 'memory.scopes', 'memory.search', 'org.list',
+        // Retention policies ("grooming") — listing saved rules and previewing
+        // what one would archive are both reads, same family as memory.list_archived.
+        'policy.list', 'groom.preview',
+      ].sort(),
     );
     expect([...WRITE_TOOLS].sort()).toEqual(
       // The org mutations likewise. Token permission is orthogonal to org ROLE
@@ -65,6 +70,9 @@ describe('READ_TOOLS / WRITE_TOOLS', () => {
         'memory.archive', 'memory.delete', 'memory.purge', 'memory.purge_expired',
         'memory.restore', 'memory.write',
         'org.create', 'org.delete', 'org.rename',
+        // Retention policies — saving/changing a rule, running a sweep, and
+        // toggling protection all mutate state.
+        'policy.create', 'policy.update', 'policy.delete', 'groom.run', 'memory.protect',
       ].sort(),
     );
   });

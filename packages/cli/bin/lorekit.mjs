@@ -97,6 +97,18 @@ ${c.bold('Commands')}
               Permanently delete every TTL-EXPIRED memory. Same posture as
               purge: remote only, account-wide, irreversible, --yes required
               non-interactively. Takes no options.
+  groom       Preview (default) or --run a retention sweep: --policy-id <id> or
+              --scope <s> [+ --min-age-days/--unseen-days/--max-seen-count].
+              Remote only. --run soft-archives matches (recoverable via
+              restore); prompts for confirmation, --yes to skip. --json.
+  policy      Manage saved retention rules: list / create / update / delete.
+              policy create --scope <s> --name <n> [--mode review|auto]
+              [--enabled] [conditions...]. policy update <id> [fields...].
+              policy delete <id> [--yes]. Remote only. --json.
+  protect     Mark a memory protected — excluded from every grooming sweep
+              regardless of policy. protect <scope::key> [--off] to unprotect.
+              Remote only. --json.
+  pin / unpin Shorthand for protect / protect --off. Remote only. --json.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
@@ -843,6 +855,108 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (needs write permission, unscoped)
 `,
 
+  groom: `${c.bold('lorekit groom')} — preview or run a retention sweep
+
+${c.bold('Usage')}
+  lorekit groom --policy-id <id> [--run] [--yes] [--json]
+  lorekit groom --scope <s> [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>] [--run] [--yes] [--json]
+
+Resolves the SAME candidates a saved policy or an inline condition set would
+catch, via the retention-policy candidate query — a previewed count always
+equals what --run would archive. Exactly one of --policy-id or --scope is
+required.
+
+Default (no --run) PREVIEWS: prints the count and up to 20 matching keys,
+changes nothing. --run ARCHIVES them (soft-archive, recoverable via
+${c.cyan('lorekit restore')}) — prompts for confirmation first, ${c.cyan('--yes')} to skip
+non-interactively.
+
+Remote only — retention policies have no local-store equivalent.
+
+${c.bold('Options')}
+      --policy-id <id>       Run/preview a saved policy (mutually exclusive with --scope)
+      --scope <s>            Inline scope to match (mutually exclusive with --policy-id)
+      --min-age-days <n>     Match only lessons at least n days old
+      --unseen-days <n>      Match lessons unseen for at least n days (never-seen always matches)
+      --max-seen-count <n>   Match only lessons that recurred at most n times
+      --run                  Archive the matches instead of previewing
+  -y, --yes                  Confirm --run; required when non-interactive
+      --json                 Machine-readable result
+  -e, --endpoint <url>       LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>        LoreKit token (needs write permission for --run)
+`,
+
+  policy: `${c.bold('lorekit policy')} — manage saved retention rules
+
+${c.bold('Usage')}
+  lorekit policy list [--json]
+  lorekit policy create --scope <s> --name <n> [--mode review|auto] [--enabled]
+                         [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>]
+  lorekit policy update <id> [--name <n>] [--mode review|auto] [--enabled|--disabled]
+                         [--min-age-days <n>|--clear-min-age-days] [...] [--json]
+  lorekit policy delete <id> [--yes] [--json]
+
+A policy is a saved retention rule: a scope plus AND-ed conditions
+(min-age-days / unseen-days / max-seen-count). \`mode: review\` surfaces it for
+you to run by hand with ${c.cyan('lorekit groom --policy-id')}; \`mode: auto\` gets swept
+nightly, but ONLY once you also pass --enabled — auto starts disabled on
+every new policy so a saved rule never archives anything unattended.
+
+Remote only — retention_policies has no local-store equivalent.
+
+${c.bold('Options')}
+      --scope <s>            Scope the policy matches (create)
+      --name <n>             Policy name (create) / new name (update)
+      --mode <review|auto>   Match mode (create/update)
+      --enabled / --disabled Turn auto-mode on/off (create/update)
+      --min-age-days <n>, --unseen-days <n>, --max-seen-count <n>
+                             Conditions (create/update)
+      --clear-min-age-days, --clear-unseen-days, --clear-max-seen-count
+                             Remove a condition (update only)
+  -y, --yes                  Confirm delete; required when non-interactive
+      --json                 Machine-readable result
+  -e, --endpoint <url>       LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>        LoreKit token (needs write permission for create/update/delete)
+`,
+
+  protect: `${c.bold('lorekit protect')} — exclude a memory from every grooming sweep
+
+${c.bold('Usage')}
+  lorekit protect <scope::key> [--off] [--json]
+  lorekit protect <scope> <key> [--off] [--json]
+
+Marks (or, with --off, unmarks) a lesson as protected: excluded from
+${c.cyan('lorekit groom')} and every retention policy's candidate set, regardless of
+which policy would otherwise have matched it. See also ${c.cyan('lorekit pin')} /
+${c.cyan('lorekit unpin')}, the same operation under shorter names.
+
+Remote only.
+
+${c.bold('Options')}
+      --off                  Unprotect instead of protect
+      --scope <scope>        Name the scope explicitly, overriding the positional
+      --key <key>            Name the key explicitly
+      --json                 Machine-readable result
+  -e, --endpoint <url>       LoreKit endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>        LoreKit token (needs write permission)
+`,
+
+  pin: `${c.bold('lorekit pin')} — shorthand for \`lorekit protect\`
+
+${c.bold('Usage')}
+  lorekit pin <scope::key> [--json]
+
+Identical to \`lorekit protect <scope::key>\`. See ${c.cyan('lorekit protect --help')}.
+`,
+
+  unpin: `${c.bold('lorekit unpin')} — shorthand for \`lorekit protect --off\`
+
+${c.bold('Usage')}
+  lorekit unpin <scope::key> [--json]
+
+Identical to \`lorekit protect <scope::key> --off\`. See ${c.cyan('lorekit protect --help')}.
+`,
+
   hook: `${c.bold('lorekit hook')} — hook engine for Claude Code / Cursor / Codex
 
 ${c.bold('Usage')}
@@ -914,6 +1028,10 @@ const KNOWN_FLAGS = [
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
+  // groom / policy / protect / pin / unpin
+  'policy-id', 'min-age-days', 'unseen-days', 'max-seen-count', 'run',
+  'name', 'mode', 'enabled', 'disabled',
+  'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'off',
   // `obligations`
   'files', 'strict',
 ];
@@ -928,7 +1046,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'strict'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'strict'],
     known: KNOWN_FLAGS,
   });
 

@@ -54,6 +54,9 @@ import { migrate } from './commands/migrate.mjs';
 import { bootstrap } from './commands/bootstrap.mjs';
 import { mcpServer } from './commands/mcp-server.mjs';
 import { purge, purgeExpired } from './commands/purge.mjs';
+import { groom } from './commands/groom.mjs';
+import { policy } from './commands/policy.mjs';
+import { protect, pin, unpin } from './commands/protect.mjs';
 import { completion } from './commands/completion.mjs';
 
 /**
@@ -89,6 +92,11 @@ export const COMMANDS = [
   { name: 'restore', run: restore, traced: true, strictFlags: true, tool: 'memory.restore' },
   { name: 'purge', run: purge, traced: true, strictFlags: true, tool: 'memory.purge' },
   { name: 'purge-expired', run: purgeExpired, traced: true, strictFlags: true, tool: 'memory.purge_expired' },
+  { name: 'groom', run: groom, traced: true, strictFlags: true, tool: 'groom.preview' },
+  { name: 'policy', run: policy, traced: true, strictFlags: true, tool: 'policy.list' },
+  { name: 'protect', run: protect, traced: true, strictFlags: true, tool: 'memory.protect' },
+  { name: 'pin', run: pin, traced: true, strictFlags: true, native: 'shorthand for `protect` (protected=true)' },
+  { name: 'unpin', run: unpin, traced: true, strictFlags: true, native: 'shorthand for `protect --off` (protected=false)' },
 
   // ── Machine-facing ──────────────────────────────────────────────────────────
   // `completion` is machine-facing for the same reason hook/mcp are: its stdout

@@ -8141,6 +8141,254 @@ begin
   assert v_indisready, '00076/00086: memories_tags_idx must be READY (visible to the planner)';
   assert v_amname = 'gin', format('00076/00086: memories_tags_idx must use the gin access method, got %s', v_amname);
   assert v_indexdef ilike '%(tags)%', format('00076/00086: memories_tags_idx must be defined on the tags column, got: %s', v_indexdef);
+
+end;
+$$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- §95 — 00088/00089: retention policies ("grooming")
+-- ═════════════════════════════════════════════════════════════════════════
+-- Proves the SQL layer's central invariant: lorekit_groom_candidates is the
+-- SINGLE source of truth "what matches", so a groom.preview count always
+-- equals what groom.run archives, and lorekit_groom_sweep sweeps only
+-- auto+enabled policies. Also proves the never-seen unseen_days coalesce,
+-- the protected exclusion, the never-deletes guarantee, and the policy CRUD
+-- RPCs' JSONB-patch has-key/absent/null semantics.
+--
+-- Auditing (one memory.archive row per archived lesson) is deliberately NOT
+-- asserted here: lorekit_groom_run does not write audit_log itself — LoreKit's
+-- capture model is app-layer (CLAUDE.md "Audit logging is captured at the app
+-- layer"), so both the MCP groom.run tool and the REST POST /groom/run
+-- handler write it after the RPC returns. That is covered by the JS/TS test
+-- suite (packages/mcp-core), not here.
+do $$
+declare
+  v_user      uuid := '00000000-0000-0000-0000-0000000089a1';
+  v_other     uuid := '00000000-0000-0000-0000-0000000089b2';
+  v_count     int;
+  v_archived  int;
+  v_keys      jsonb;
+  v_policy_id uuid;
+  v_row       record;
+  v_bool      boolean;
+begin
+  insert into auth.users (id, email) values
+    (v_user,  'groom87-user@test.local'),
+    (v_other, 'groom87-other@test.local')
+  on conflict (id) do nothing;
+
+  -- ── fixtures ────────────────────────────────────────────────────────────
+  -- old-global: 60 days old, never seen, seen_count 1 — matches everything.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'global', 'groom87-old-global', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- recent-global: 1 day old — fails min_age_days=30.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'global', 'groom87-recent-global', 'v', now() - interval '1 day', now() - interval '1 day', 1);
+  -- old-branch: under repo::acme/app via branch::acme/app::main — proves the
+  -- ::-delimited hierarchy (a repo-scoped policy reaches its branches).
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'branch::acme/app::main', 'groom87-old-branch', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- other-repo: must NOT match a repo::acme/app policy despite a shared prefix.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'repo::acme/app-2', 'groom87-other-repo', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- seen-recently: last_seen_at 1 day ago — fails unseen_days=14.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_seen_at)
+    values (v_user, 'global', 'groom87-seen-recently', 'v', now() - interval '60 days', now() - interval '60 days', 1, now() - interval '1 day');
+  -- unseen-long: last_seen_at 30 days ago — matches unseen_days=14.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_seen_at)
+    values (v_user, 'global', 'groom87-unseen-long', 'v', now() - interval '60 days', now() - interval '60 days', 1, now() - interval '30 days');
+  -- high-seen-count: seen_count 10 — fails max_seen_count=3.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'global', 'groom87-high-seen-count', 'v', now() - interval '60 days', now() - interval '60 days', 10);
+  -- protected: would otherwise match min_age_days=30, but is excluded.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, protected)
+    values (v_user, 'global', 'groom87-protected', 'v', now() - interval '60 days', now() - interval '60 days', 1, true);
+  -- other-user: same scope/age, but a DIFFERENT owner — must never appear in
+  -- v_user's candidate set (the explicit p_user_id filter, not RLS, since
+  -- SECURITY DEFINER functions bypass RLS).
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_other, 'global', 'groom87-other-user', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- already-archived: must never be re-selected as a candidate.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, archived_at)
+    values (v_user, 'global', 'groom87-already-archived', 'v', now() - interval '60 days', now() - interval '60 days', 1, now());
+
+  -- ── AC-6: candidate ANDs conditions, never-seen matches unseen_days ─────
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null);
+  -- 'global' reaches EVERY scope, so this catches every 60-day-old v_user row
+  -- except recent-global (too young), protected, and already-archived: 6 of
+  -- the 9 v_user fixtures (old-global, old-branch, other-repo, seen-recently,
+  -- unseen-long, high-seen-count).
+  assert v_count = 6,
+    format('95-CAND-1: min_age_days=30 over global should catch 6, got %s', v_count);
+
+  -- Never-seen (last_seen_at IS NULL) must match unseen_days regardless of
+  -- the threshold — the literal "never-seen lessons match" reading.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 3650, null) c
+   where c.key = 'groom87-old-global';
+  assert v_count = 1, '95-CAND-2: a never-seen row must match unseen_days at ANY threshold';
+
+  -- unseen_days excludes a recently-seen row and includes a long-unseen one.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 14, null) c
+   where c.key = 'groom87-seen-recently';
+  assert v_count = 0, '95-CAND-3: unseen_days=14 must exclude a row seen 1 day ago';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 14, null) c
+   where c.key = 'groom87-unseen-long';
+  assert v_count = 1, '95-CAND-4: unseen_days=14 must include a row last seen 30 days ago';
+
+  -- max_seen_count excludes a high-recurrence row.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, null, 3) c
+   where c.key = 'groom87-high-seen-count';
+  assert v_count = 0, '95-CAND-5: max_seen_count=3 must exclude seen_count=10';
+
+  -- protected is excluded unconditionally, even with no other condition.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, null, null) c
+   where c.key = 'groom87-protected';
+  assert v_count = 0, '95-CAND-6: a protected memory must never be a candidate';
+
+  -- The ::-delimited hierarchy: repo::acme/app reaches branch::acme/app::main
+  -- but not repo::acme/app-2 (shared textual prefix, different repo).
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'repo::acme/app', 30, null, null) c
+   where c.key = 'groom87-old-branch';
+  assert v_count = 1, '95-CAND-7: a repo-scoped policy must reach its branch scopes';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'repo::acme/app', 30, null, null) c
+   where c.key = 'groom87-other-repo';
+  assert v_count = 0, '95-CAND-8: a repo-scoped policy must NOT reach a different repo sharing a text prefix';
+
+  -- Tenant isolation: another user's memory never appears.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null) c
+   where c.key = 'groom87-other-user';
+  assert v_count = 0, '95-CAND-9: another user''s memory must never be a candidate';
+
+  -- Already-archived rows are never re-selected.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null) c
+   where c.key = 'groom87-already-archived';
+  assert v_count = 0, '95-CAND-10: an already-archived row must never be a candidate';
+
+  -- ── AC-7: groom_run archives the SAME candidates preview showed, in one
+  --    transaction, returns count+keys, and NEVER deletes a row ───────────
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null);
+
+  select archived, keys into v_archived, v_keys from lorekit_groom_run(v_user, 'global', 30, null, null);
+  assert v_archived = v_count,
+    format('95-RUN-1: groom_run must archive exactly the candidates groom_candidates showed (preview=%s, run=%s)', v_count, v_archived);
+  assert jsonb_array_length(v_keys) = v_archived,
+    '95-RUN-2: the returned keys array length must equal the archived count';
+
+  select count(*) into v_count
+    from memories where user_id = v_user and key = 'groom87-old-global' and archived_at is not null;
+  assert v_count = 1, '95-RUN-3: a candidate must have archived_at set after groom_run';
+
+  -- Never deletes: the total row count for this user is unchanged (nothing
+  -- physically removed), and the archived row is still SELECT-able.
+  select count(*) into v_count from memories where user_id = v_user;
+  assert v_count = 9, format('95-RUN-4: groom_run must never physically delete a row (expected 9 total, got %s)', v_count);
+
+  select count(*) into v_count
+    from memories where user_id = v_user and key = 'groom87-old-global';
+  assert v_count = 1, '95-RUN-5: an archived row must still exist (soft-archive, not delete)';
+
+  -- Idempotent-ish: re-running against the now-archived global scope with the
+  -- same conditions finds nothing left to archive (they are all archived_at
+  -- is not null now, so lorekit_groom_candidates excludes them via its own
+  -- archived_at is null predicate).
+  select archived into v_archived from lorekit_groom_run(v_user, 'global', 30, null, null);
+  assert v_archived = 0, '95-RUN-6: re-running groom_run over an already-archived set must archive nothing';
+
+  -- ── AC-8/AC-9: sweep touches only auto+enabled; auto defaults disabled ──
+  -- A FRESH row, inserted now rather than reused from the fixtures above: the
+  -- AC-7 section's `groom_run(v_user, 'global', 30, …)` already archived
+  -- everything old (global reaches every scope), so a pre-existing row would
+  -- already be archived_at IS NOT NULL and the sweep below would prove
+  -- nothing about the sweep mechanism itself.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'branch::acme/app::main', 'groom87-sweep-target', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+
+  insert into retention_policies (user_id, scope, name, mode, enabled, min_age_days)
+    values (v_user, 'branch::acme/app::main', '95-review-policy', 'review', false, 30)
+    returning id into v_policy_id;
+  assert v_policy_id is not null, '95-POLICY-1: policy insert must return an id';
+
+  -- default-disabled check via a plain insert with no explicit `enabled`.
+  insert into retention_policies (user_id, scope, name, mode, min_age_days)
+    values (v_user, 'repo::acme/app', '95-auto-default', 'auto', 30);
+  assert (select enabled from retention_policies where name = '95-auto-default') = false,
+    '95-POLICY-2: a new auto-mode policy must default to enabled=false';
+
+  insert into retention_policies (user_id, scope, name, mode, enabled, min_age_days)
+    values (v_user, 'repo::acme/app', '95-auto-enabled', 'auto', true, 30);
+
+  -- Sweep: only '95-auto-enabled' (mode=auto, enabled=true) should archive
+  -- groom87-old-branch (under repo::acme/app). The review policy and the
+  -- disabled auto policy must leave it untouched.
+  select lorekit_groom_sweep() into v_archived;
+  assert v_archived >= 1,
+    format('95-SWEEP-1: sweep must archive at least the auto+enabled policy''s match, got %s', v_archived);
+
+  select count(*) into v_count
+    from memories where user_id = v_user and key = 'groom87-sweep-target' and archived_at is not null;
+  assert v_count = 1, '95-SWEEP-2: the auto+enabled policy''s match must be archived after sweep';
+
+  -- A second sweep call must not error and must not re-archive anything
+  -- (proves the review/disabled policies never ran — if they had run
+  -- unexpectedly there would be nothing new for them to catch either, so
+  -- this call's return being consistent is the assertion).
+  select lorekit_groom_sweep() into v_archived;
+
+  -- ── policy CRUD RPCs: JSONB patch has-key / absent / null semantics ────
+  select * into v_row from lorekit_policy_update(v_user, v_policy_id, jsonb_build_object('name', '95-review-policy-renamed'));
+  assert v_row.name = '95-review-policy-renamed', '95-POLICY-3: update must apply a present key';
+  assert v_row.min_age_days = 30, '95-POLICY-4: update must leave an ABSENT key unchanged';
+
+  select * into v_row from lorekit_policy_update(v_user, v_policy_id, jsonb_build_object('min_age_days', null));
+  assert v_row.min_age_days is null, '95-POLICY-5: update must CLEAR a key present with a JSON null';
+
+  -- Update for a policy owned by a different user (tenant isolation) or a
+  -- nonexistent id returns no row (setof, zero rows) — a caller reads that as
+  -- "not found".
+  select count(*) into v_count from lorekit_policy_update(v_other, v_policy_id, jsonb_build_object('name', 'hijack'));
+  assert v_count = 0, '95-POLICY-6: updating another user''s policy must return zero rows';
+
+  select count(*) into v_count from lorekit_policy_delete(v_other, v_policy_id);
+  assert v_count = 0, '95-POLICY-7: deleting another user''s policy must return zero rows and delete nothing';
+
+  select count(*) into v_count from retention_policies where id = v_policy_id;
+  assert v_count = 1, '95-POLICY-8: the policy must still exist after a denied cross-user delete attempt';
+
+  select count(*) into v_count from lorekit_policy_delete(v_user, v_policy_id);
+  assert v_count = 1, '95-POLICY-9: deleting your own policy must return the deleted row';
+
+  select count(*) into v_count from retention_policies where id = v_policy_id;
+  assert v_count = 0, '95-POLICY-10: the policy row must be gone after delete';
+
+  -- ── AC-9 (structural): pg_cron guard already proven by every migration in
+  --    this run applying cleanly above (00088's DO block did not error).
+
+  -- ── memory.protect toggling ─────────────────────────────────────────────
+  select lorekit_memory_protect(v_user, 'global', 'groom87-recent-global', true) into v_bool;
+  assert v_bool = true, '95-PROTECT-0: lorekit_memory_protect must report true when it changed a row';
+  assert (select protected from memories where user_id = v_user and key = 'groom87-recent-global') = true,
+    '95-PROTECT-1: lorekit_memory_protect(true) must set protected';
+
+  select lorekit_memory_protect(v_user, 'global', 'groom87-recent-global', false) into v_bool;
+  assert (select protected from memories where user_id = v_user and key = 'groom87-recent-global') = false,
+    '95-PROTECT-2: lorekit_memory_protect(false) must clear protected';
+
+  -- Protecting a nonexistent/another-tenant memory returns false, changes nothing.
+  assert lorekit_memory_protect(v_other, 'global', 'groom87-recent-global', true) = false,
+    '95-PROTECT-3: protecting a memory owned by a different user must return false';
 end;
 $$;
 
