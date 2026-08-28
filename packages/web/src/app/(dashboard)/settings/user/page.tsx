@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { KeyRound, UserCircle } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { UserSettingsPanel } from '@/components/settings/UserSettingsPanel';
 import { PasswordPanel } from '@/components/settings/PasswordPanel';
@@ -8,10 +8,7 @@ import { PasswordPanel } from '@/components/settings/PasswordPanel';
 export const metadata: Metadata = { title: 'User — Settings' };
 
 export default async function UserSettingsPage() {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
 
   if (!user) return null;
 

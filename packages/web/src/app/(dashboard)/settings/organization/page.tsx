@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { Users } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { listMyOrgs } from '@/lib/orgs';
 import { OrganizationManager } from '@/components/dashboard/OrganizationManager';
 import { SectionPanel } from '@/components/ui/SectionPanel';
@@ -25,8 +25,7 @@ function OrganizationLoading() {
 }
 
 export default async function OrganizationSettingsPage() {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   const orgs = await listMyOrgs();
 
   return (

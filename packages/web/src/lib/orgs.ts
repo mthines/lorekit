@@ -26,6 +26,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 import { normalizeSlug } from '@/lib/org-slug';
@@ -78,7 +79,7 @@ export async function createOrg(slug: string, name: string): Promise<{ orgId: st
     { 'lorekit.org.slug': slug },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
       if (!name.trim()) return { error: 'Organization name is required' };
 
@@ -122,7 +123,7 @@ export async function createOrg(slug: string, name: string): Promise<{ orgId: st
 /** List the orgs the current user is a member of, with their role in each. */
 export async function listMyOrgs(): Promise<OrgMembership[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -148,7 +149,7 @@ export async function listMyOrgs(): Promise<OrgMembership[]> {
 /** Fetch a single org by id. RLS-scoped — returns null if not a member. */
 export async function getOrg(orgId: string): Promise<Org | null> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return null;
 
   const { data, error } = await supabase
@@ -175,7 +176,7 @@ export async function renameOrg(orgId: string, name: string): Promise<{ error?: 
     { 'lorekit.org.id': orgId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
       if (!name.trim()) return { error: 'Organization name is required' };
 
@@ -212,7 +213,7 @@ export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
     { 'lorekit.org.id': orgId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_delete', { p_org_id: orgId });
@@ -258,7 +259,7 @@ export async function exportOrgLore(
   orgId: string,
 ): Promise<{ rows: MemoryExportRow[]; truncated: boolean } | { error: string }> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return { error: 'Not authenticated' };
 
   // Fetch one past the cap so we can tell the caller the export was truncated
@@ -287,7 +288,7 @@ export async function exportOrgLore(
  */
 export async function listMembers(orgId: string): Promise<OrgMember[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase
@@ -318,7 +319,7 @@ export async function removeMember(orgId: string, targetUserId: string): Promise
     { 'lorekit.org.id': orgId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_member_remove', {
@@ -360,7 +361,7 @@ export async function changeMemberRole(
     },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_member_role', {
@@ -400,7 +401,7 @@ export async function leaveOrg(orgId: string): Promise<{ error?: string }> {
     { 'lorekit.org.id': orgId },
     async (span) => {
       const supabase = await createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getVerifiedUser();
       if (!user) return { error: 'Not authenticated' };
 
       const { error } = await supabase.rpc('lorekit_org_leave', { p_org_id: orgId });

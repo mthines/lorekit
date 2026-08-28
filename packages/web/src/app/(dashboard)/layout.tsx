@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import { boundedReturnTo } from '@/lib/auth-redirect';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { SiteFooter } from '@/components/layout/SiteFooter';
@@ -20,8 +20,6 @@ import { CommandPalette } from '@/components/command/CommandPalette';
 import { NavigationCommands } from '@/components/command/NavigationCommands';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createServerClient();
-
   // The session check and the onboarding counts are independent reads, so they
   // are OVERLAPPED rather than chained — see `lib/dashboard-bootstrap.ts` for
   // the ordering contract and why it lives there. Serially they cost the sum of
@@ -29,12 +27,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // `RSC GET /lore` showed 0.504s of `auth/v1/user` followed by 0.389s of
   // onboarding counts inside a 0.926s request, with nothing between them.
   //
+  // `getVerifiedUser()` (lib/auth/verified-user.ts) is request-memoized via
+  // React's `cache()`, so this is also the ONE `auth.getUser()` round trip
+  // every other read on this render (feature flags, orgs, tokens, invites,
+  // scope bindings, github installations, audit log) shares — see that
+  // module's header for why: an unmemoized `getUser()` repeated across a
+  // render tree multiplies any Supabase Auth latency spike by however many
+  // times it's called instead of paying it once.
+  //
   // Issuing the counts before the session is verified is safe because they run
   // on the RLS-scoped server client built from this request's cookies: Postgres
   // decides what they can see, an absent or expired session reads nothing, and
   // the result is discarded on the redirect path below.
   const bootstrap = await resolveDashboardBootstrap({
-    getUser: async () => (await supabase.auth.getUser()).data.user,
+    getUser: async () => getVerifiedUser(),
     getOnboardingState,
     onboardingFallback: { hasLessons: false, hasWebhook: false },
   });
