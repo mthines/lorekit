@@ -138,6 +138,18 @@ describe('normalizeCommandId', () => {
   });
 });
 
+describe('track — ui.control_activated', () => {
+  it('maps controlId and surface onto their bounded lorekit.* attributes', () => {
+    track({ name: 'ui.control_activated', controlId: 'sign-out', surface: 'top-bar' });
+
+    expect(lastCall().name).toBe('ui.control_activated');
+    expect(lastCall().attributes).toEqual({
+      'lorekit.ui.control.id': 'sign-out',
+      'lorekit.ui.control.surface': 'top-bar',
+    });
+  });
+});
+
 describe('track — best effort', () => {
   it('swallows an SDK failure instead of breaking the caller', () => {
     state.throwNext = true;

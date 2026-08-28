@@ -19,6 +19,7 @@ import { useMemoryTotal } from '@/lib/queries/plan';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { LessonEntry } from '@/components/lore/LessonCard';
+import { track } from '@/lib/analytics/track';
 
 interface MemoryExpandButtonProps {
   /**
@@ -102,7 +103,15 @@ export function MemoryExpandButton({
       {/* Trigger button */}
       <button
         type="button"
-        onClick={() => setIsDropdownOpen((v) => !v)}
+        onClick={() => {
+          // Only the OPEN transition is interesting — closing is the expected
+          // end of every session with this control, so tracking it too would
+          // double the event volume for no extra signal.
+          if (!isDropdownOpen) {
+            track({ name: 'ui.control_activated', controlId: 'memory-expand-toggle', surface: 'top-bar' });
+          }
+          setIsDropdownOpen((v) => !v);
+        }}
         aria-expanded={isDropdownOpen}
         aria-haspopup="listbox"
         aria-label={`${total} ${total === 1 ? 'memory' : 'memories'} — click to expand`}
@@ -166,7 +175,14 @@ export function MemoryExpandButton({
                         keeps it a comfortable touch target on mobile. */}
                     <a
                       href="/lore"
-                      onClick={() => setIsDropdownOpen(false)}
+                      onClick={() => {
+                        track({
+                          name: 'ui.control_activated',
+                          controlId: 'memory-expand-see-all',
+                          surface: 'top-bar',
+                        });
+                        setIsDropdownOpen(false);
+                      }}
                       className="flex min-h-11 w-full items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-medium text-[var(--color-accent)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
                     >
                       See all {total} memories

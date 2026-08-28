@@ -25,6 +25,10 @@
  * - `content.scroll_depth`             — a reader crossed 25/50/75/100 % of an article.
  * - `content.section_read`             — a reader left a section, after dwelling in it.
  * - `content.read`                     — end-of-page-view reading summary (one per view).
+ * - `ui.control_activated`             — a click/tap on a tracked button/control that
+ *                                         does not already surface as one of the events
+ *                                         above (a page navigation is captured by the
+ *                                         SDK's own navigation instrumentation instead).
  *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
@@ -58,6 +62,21 @@ export type InstallCommandId = 'cli-install';
 
 /** Where the copy affordance was rendered. Bounded for the same reason. */
 export type CopySurface = 'login-get-started' | 'blog-cta';
+
+/**
+ * Which generic UI control was activated. A bounded enum, never the button's
+ * visible label or `aria-label` text: those are free-form copy that changes
+ * with a rewrite and would make the id an unstable, unbounded dimension.
+ * Add an id here when you wire up `track({ name: 'ui.control_activated', … })`
+ * on a new control.
+ */
+export type ControlId = 'sign-out' | 'memory-expand-toggle' | 'memory-expand-see-all';
+
+/**
+ * Where the control lives. Bounded for the same reason as {@link ControlId}.
+ * Add a value here when a control gets a second rendering surface.
+ */
+export type ControlSurface = 'top-bar';
 
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
@@ -108,7 +127,8 @@ export type AnalyticsEvent =
       /** The section that held them longest, when any section did. */
       topSectionId?: string;
       completed: boolean;
-    };
+    }
+  | { name: 'ui.control_activated'; controlId: ControlId; surface: ControlSurface };
 
 /**
  * Dynamic lesson commands embed `scope::key` in their id (user content +
@@ -181,6 +201,11 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
       if (event.topSectionId) attrs['lorekit.content.top_section.id'] = event.topSectionId;
       return attrs;
     }
+    case 'ui.control_activated':
+      return {
+        'lorekit.ui.control.id': event.controlId,
+        'lorekit.ui.control.surface': event.surface,
+      };
   }
 }
 

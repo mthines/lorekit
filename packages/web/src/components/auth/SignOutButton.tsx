@@ -4,12 +4,14 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { LogOut } from 'lucide-react';
+import { track } from '@/lib/analytics/track';
 
 export function SignOutButton() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
   async function handleSignOut() {
+    track({ name: 'ui.control_activated', controlId: 'sign-out', surface: 'top-bar' });
     setLoading(true);
     const supabase = createClient();
     await supabase.auth.signOut();

@@ -574,6 +574,7 @@ wrapper. Attributes use the `lorekit.*` namespace.
 | `command_palette.opened` | The palette overlay was shown | `lorekit.command_palette.trigger` |
 | `command_palette.command_selected` | A command was executed | `lorekit.command.id`, `lorekit.command.source`, `lorekit.command.group` (optional — omitted when the command has no group) |
 | `install_command.copied` | A visitor copied a shell command | `lorekit.install_command.id`, `lorekit.install_command.surface`, `lorekit.install_command.succeeded` |
+| `ui.control_activated` | A tracked button/control was clicked or tapped | `lorekit.ui.control.id`, `lorekit.ui.control.surface` |
 
 `install_command.copied` exists because copying `npx @lorekit/cli install` is the
 strongest intent signal a logged-out visitor can produce short of authenticating
@@ -590,6 +591,18 @@ lack of interest rather than a broken affordance.
 Both the command and the surface are reported as **bounded ids**, never the
 command string: `CopyCommand` takes arbitrary text, which would become unbounded
 the moment a call site interpolates into it.
+
+`ui.control_activated` is the general-purpose event for "which buttons are
+people pressing" — clicks/taps on a tracked control that isn't already covered
+by a more specific event above or by a page navigation (navigations are their
+own SDK-level instrumentation, not a product event). Both `controlId` and
+`surface` are closed enums in `lib/analytics/track.ts` (`ControlId`,
+`ControlSurface`), never the button's visible label: labels are free-form copy
+that changes with a rewrite, so using them as the id would make it an unstable,
+unbounded dimension. Wire up a new control by adding its id/surface to those
+enums and calling `track({ name: 'ui.control_activated', controlId, surface })`
+from its `onClick`. Currently wired up: sign-out and the memory-expand
+dropdown's trigger/"see all" link (both `top-bar`).
 
 ---
 
