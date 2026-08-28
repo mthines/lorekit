@@ -7750,7 +7750,7 @@ end;
 $$;
 
 
--- ── 91. Per-memory read counters + daily rollup (00077) ─────────────────────
+-- ── 91. Per-memory read counters + daily rollup (00084) ─────────────────────
 -- usage_events records HOW MANY records a call touched, never WHICH -- there
 -- is no memory_id on the read ledger and none of the 17 tables is a
 -- per-memory read table. This closes it with counters + a daily rollup, not a
@@ -7842,8 +7842,8 @@ begin
 end;
 $$;
 
--- ── 92. lorekit_memory_read_ranking — hot/cold lore (00078) ──────────────────
--- With per-memory counters in place (00077), rank memories by how often they
+-- ── 92. lorekit_memory_read_ranking — hot/cold lore (00085) ──────────────────
+-- With per-memory counters in place (00084), rank memories by how often they
 -- have actually been read. hot = most-read first; cold = least-read, oldest
 -- first among ties.
 -- AC-1: hot ranks strictly by read_count desc.
