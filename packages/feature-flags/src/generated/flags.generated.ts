@@ -14,7 +14,8 @@ export type FlagKey =
   | 'cli-completion-engine'
   | 'plan-badge-copy'
   | 'insights-page'
-  | 'usage-empty-state-copy';
+  | 'usage-empty-state-copy'
+  | 'retention-policies';
 
 /** Flag key -> its evaluated value type. */
 export interface FlagValueMap {
@@ -24,6 +25,7 @@ export interface FlagValueMap {
   'plan-badge-copy': string;
   'insights-page': boolean;
   'usage-empty-state-copy': JsonValue;
+  'retention-policies': boolean;
 }
 
 /** The value type `evaluateFlag(key, ...)` resolves to for a given key. */
@@ -36,5 +38,6 @@ export const FLAG_KEYS: readonly FlagKey[] = [
     "cli-completion-engine",
     "plan-badge-copy",
     "insights-page",
-    "usage-empty-state-copy"
+    "usage-empty-state-copy",
+    "retention-policies"
   ];
