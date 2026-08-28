@@ -1,0 +1,108 @@
+{
+  "$schema": "https://lorekit.dev/schemas/feature-flags-manifest-v1.json",
+  "generatedFrom": "packages/feature-flags/src/registry.ts",
+  "flags": [
+    {
+      "key": "new-onboarding-flow",
+      "description": "Redesigned first-run onboarding wizard for the web dashboard, vs the current three-step flow.",
+      "type": "boolean",
+      "variants": {
+        "control": false,
+        "treatment": true
+      },
+      "defaultVariant": "control",
+      "experiment": {
+        "enabled": true,
+        "variants": [
+          {
+            "key": "control",
+            "description": "Existing three-step onboarding.",
+            "weight": 50
+          },
+          {
+            "key": "treatment",
+            "description": "New single-page onboarding wizard.",
+            "weight": 50
+          }
+        ]
+      },
+      "owner": "@lorekit/web",
+      "tags": [
+        "onboarding",
+        "experiment",
+        "web"
+      ]
+    },
+    {
+      "key": "usage-charts-v2",
+      "description": "New usage-chart rendering pipeline on the dashboard Usage page.",
+      "type": "boolean",
+      "variants": {
+        "off": false,
+        "on": true
+      },
+      "defaultVariant": "off",
+      "experiment": null,
+      "owner": "@lorekit/web",
+      "tags": [
+        "dashboard",
+        "web"
+      ]
+    },
+    {
+      "key": "cli-completion-engine",
+      "description": "Enables the rewritten zsh/fish completion generator in `lorekit completion`.",
+      "type": "boolean",
+      "variants": {
+        "off": false,
+        "on": true
+      },
+      "defaultVariant": "off",
+      "experiment": null,
+      "owner": "@lorekit/cli",
+      "tags": [
+        "cli"
+      ]
+    },
+    {
+      "key": "plan-badge-copy",
+      "description": "The plan badge label shown at the top of Settings → Plan, during the beta.",
+      "type": "string",
+      "variants": {
+        "beta": "Beta",
+        "earlyAccess": "Early Access"
+      },
+      "defaultVariant": "beta",
+      "experiment": null,
+      "owner": "@lorekit/web",
+      "tags": [
+        "dashboard",
+        "copy"
+      ]
+    },
+    {
+      "key": "usage-empty-state-copy",
+      "description": "Object-valued flag: the title/CTA copy block shown on the dashboard Usage page for an account with no data yet.",
+      "type": "object",
+      "variants": {
+        "default": {
+          "title": "No usage yet",
+          "ctaLabel": "Learn more",
+          "ctaHref": "/docs/limits"
+        },
+        "playful": {
+          "title": "It's quiet in here…",
+          "ctaLabel": "See what counts",
+          "ctaHref": "/docs/limits"
+        }
+      },
+      "defaultVariant": "default",
+      "experiment": null,
+      "owner": "@lorekit/web",
+      "tags": [
+        "dashboard",
+        "copy"
+      ]
+    }
+  ]
+}
