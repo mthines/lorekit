@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { Archive } from 'lucide-react';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { GroomingRuleBuilder } from '@/components/settings/GroomingRuleBuilder';
-import { retentionPoliciesEnabled } from '@/lib/feature-flags';
+import { retentionPoliciesEnabled } from '@/lib/retention-policies-flag';
 
 export const metadata: Metadata = { title: 'Grooming — Settings' };
 
