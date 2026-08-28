@@ -122,6 +122,10 @@ ${c.bold('Commands')}
               resolved store (local .lorekit/ offline, or remote passthrough) so
               .mcp.json can point at the CLI instead of mcp-remote. Speaks
               JSON-RPC on stdin/stdout — not run by hand.
+  completion  Print a shell completion script for zsh or fish. Pipe it to your
+              shell's completion dir, or let \`install --completions\` wire it for
+              you. Completes commands, per-command flags, and — from the local
+              store — scopes and scope::key addresses.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -153,6 +157,7 @@ ${c.bold('Options')}
       --no-hooks          Skip wiring the lifecycle hooks (install)
       --mcp-json          Also write a committable project .mcp.json for Claude Code on
                           the web — auth via \${LOREKIT_TOKEN}, no embedded secret (install)
+      --completions <s>   Install shell completion: auto | zsh | fish | none (install)
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor)
       --telemetry         Verify the OTLP export credential works (doctor)
@@ -229,6 +234,10 @@ ${c.bold('Options')}
       --no-hooks          Skip wiring the lifecycle hooks (leaves existing ones alone)
       --mcp-json          Also write a committable project .mcp.json (\${LOREKIT_TOKEN} auth)
                           for Claude Code on the web — always the repo-root file
+      --completions <s>   Install shell completion: auto (detect \$SHELL) | zsh | fish | none.
+                          Interactive runs prompt; non-interactive ones skip it unless
+                          this flag is passed. zsh adds a guarded block to ~/.zshrc; fish
+                          drops a file in ~/.config/fish/completions (auto-loaded).
       --force             Overwrite existing skill files
   -y, --yes               Non-interactive; never prompt (defaults to --project, and to the
                           already-wired hooks — all on a fresh install)
@@ -240,6 +249,7 @@ ${c.bold('Examples')}
   npx @lorekit/cli install --global --mcp-json --yes # local CLI + committable web config
   npx @lorekit/cli install --hooks read-only --yes
   npx @lorekit/cli install --no-hooks --yes
+  npx @lorekit/cli install --completions auto --yes  # detect \$SHELL and wire completion
 `,
   uninstall: `${c.bold('lorekit uninstall')} — reverse install for the chosen scope
 
@@ -973,6 +983,30 @@ Machine-facing: exposes the memory.* tools backed by the resolved store (local
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
 `,
+  completion: `${c.bold('lorekit completion')} — print a shell completion script
+
+${c.bold('Usage')}
+  lorekit completion <zsh|fish>
+
+Prints the completion script for the given shell to stdout. It completes command
+names and aliases, each command's own flags, and — read live from the LOCAL
+store — scope values (\`--scope\`) and \`scope::key\` addresses (\`show\`, \`write\`,
+\`archive\`, \`delete\`, \`restore\`, \`link\`). Dynamic completion is offline: it never
+prompts for a token or hits the network, so a remote-only scope will not appear.
+
+The easiest way to install it is ${c.cyan('lorekit install --completions auto')}, which
+detects your shell and wires it up. To do it by hand:
+
+${c.bold('zsh')}
+  lorekit completion zsh > ~/.zsh/completions/_lorekit
+  # ensure that dir is on \$fpath before \`compinit\` in ~/.zshrc
+
+${c.bold('fish')}
+  lorekit completion fish > ~/.config/fish/completions/lorekit.fish
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+`,
 };
 
 // Every long flag the CLI understands (after alias resolution). Passed to the
@@ -980,7 +1014,7 @@ ${c.bold('Options')}
 // typo like `--gloabl` should fail loudly, not quietly fall back to --project.
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
-  'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'force', 'deep', 'adapter',
+  'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'completions', 'complete', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the

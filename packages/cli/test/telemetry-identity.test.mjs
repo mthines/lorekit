@@ -295,3 +295,79 @@ test('meterCommand propagates a thrown command error unchanged', async () => {
     else process.env.LOREKIT_TELEMETRY = prev;
   }
 });
+
+/**
+ * Run `body` with export ENABLED (a non-default OTLP endpoint enables without a
+ * token) and `global.fetch` captured, so the metrics POST can be inspected
+ * without a real collector. LOREKIT_HOME is redirected to a throwaway dir so the
+ * identity resolution the enabled path performs never touches the real store.
+ */
+async function withEnabledExport(body) {
+  const prev = {
+    LOREKIT_TELEMETRY: process.env.LOREKIT_TELEMETRY,
+    DO_NOT_TRACK: process.env.DO_NOT_TRACK,
+    OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    LOREKIT_HOME: process.env.LOREKIT_HOME,
+  };
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, async text() { return '{}'; } };
+  };
+  delete process.env.LOREKIT_TELEMETRY;
+  delete process.env.DO_NOT_TRACK;
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'https://otel.example.com';
+  process.env.LOREKIT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'lorekit-meter-'));
+  try {
+    return await body(calls);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+/** The single metrics datapoint's attributes, as a plain key→value map. */
+function metricAttrs(call) {
+  const dp = call.body.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];
+  return Object.fromEntries(
+    dp.attributes.map((a) => [a.key, a.value.stringValue ?? a.value.boolValue ?? a.value.intValue]),
+  );
+}
+
+test('meterCommand exports on the enabled HOOK path, and the hook meter attrs reach the counter', async () => {
+  // The hook branch counts AFTER run and threads the result's `meter` object
+  // into countInvocation as extra dimensions. Assert both that the enabled path
+  // fires a metrics POST and that hookMeterAttrs' output (lorekit.hook.outcome
+  // + lorekit.hook.event) actually lands on the datapoint — the path this PR
+  // added and that only the disabled cases covered.
+  await withEnabledExport(async (calls) => {
+    const code = await meterCommand('hook', '1.0.0', () => ({
+      exitCode: 0,
+      meter: { 'lorekit.hook.outcome': 'ok', 'lorekit.hook.event': 'SessionStart' },
+    }));
+    assert.equal(code, 0);
+    const metrics = calls.find((c) => c.url.endsWith('/v1/metrics'));
+    assert.ok(metrics, 'the enabled hook path must POST a metric');
+    const attrs = metricAttrs(metrics);
+    assert.equal(attrs['lorekit.cli.command'], 'hook');
+    assert.equal(attrs['lorekit.hook.outcome'], 'ok');
+    assert.equal(attrs['lorekit.hook.event'], 'SessionStart');
+  });
+});
+
+test('meterCommand exports on the enabled MCP path and passes the exit code through', async () => {
+  // The mcp branch counts BEFORE run (long-lived server) and awaits the pending
+  // count in `finally`. Assert the enabled path fires the metrics POST and the
+  // exit code is still returned unchanged.
+  await withEnabledExport(async (calls) => {
+    const code = await meterCommand('mcp', '1.0.0', () => ({ exitCode: 2, foo: 'bar' }));
+    assert.equal(code, 2);
+    const metrics = calls.find((c) => c.url.endsWith('/v1/metrics'));
+    assert.ok(metrics, 'the enabled mcp path must POST a metric');
+    assert.equal(metricAttrs(metrics)['lorekit.cli.command'], 'mcp');
+  });
+});

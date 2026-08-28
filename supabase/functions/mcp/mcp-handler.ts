@@ -228,13 +228,39 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // ARRAY), so EVERY search landed in that placeholder bucket. See
     // `_shared/scope/scope-type-attribute.ts`.
     const scopeType = scopeTypeAttribute(rawScope, toolArgs['scopes']);
+    // How many scopes an ARRAY-bearing call (`memory.search`) touched —
+    // `usage_events.scope_count` (migration 00078). Undefined for a
+    // singular-`scope` tool, matching the RPC's own `default null`. Counted
+    // from the SAME `scopes` value `scopeType` above just read, so the two can
+    // never disagree about whether the call carried an array at all.
+    const rawScopes = toolArgs['scopes'];
+    // Filter blanks ONCE and reuse for both the count and the single-scope
+    // resolution below, so the two can never name a different entry: a single
+    // real scope preceded by an empty-string entry must still be attributed,
+    // not lost to `rawScopes[0]` being that blank.
+    const cleanScopes = Array.isArray(rawScopes)
+      ? rawScopes.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+      : undefined;
+    const scopeCount = cleanScopes?.length;
     // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
     // "records read from repo::owner/name" answerable, which the deliberately
     // low-cardinality `scopeType` above cannot. Normalised through the canonical
     // validator but TOTAL: an absent or ungrammatical scope records null rather
     // than failing the tool call it is measuring. Resolved ONCE, before the try,
     // so the success and error recording paths cannot disagree about it.
-    const usageScope = safeValidateScope(rawScope);
+    //
+    // A singular `scope` wins when present (no tool takes both). Otherwise, a
+    // `scopes` array of exactly ONE entry is just as attributable as a singular
+    // scope — `memory.search` searching one repo should not be less attributed
+    // than `memory.list` on the same repo — so that one entry is validated the
+    // same way. TWO OR MORE scopes stay null: which of several scopes a read
+    // "belongs to" is genuinely ambiguous, and `scope_count` (not a guessed
+    // scope) is the honest answer for that case (see migration 00078).
+    const usageScope = rawScope
+      ? safeValidateScope(rawScope)
+      : cleanScopes?.length === 1
+        ? safeValidateScope(cleanScopes[0])
+        : null;
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
       // Omitted when the tool carries no scope at all — the same conditional
@@ -329,8 +355,16 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           userId: analyticsUserId,
           planName,
           toolName,
-          scopeType: rawScope ? scopeType : null,
+          // `scopeType` is already TOTAL (`scopeTypeAttribute` returns null
+          // when neither `scope` nor `scopes` carries anything) — gating it
+          // behind `rawScope` here would discard the array-derived value
+          // (e.g. `mixed` for a multi-scope search) precisely for the calls
+          // that need it, leaving `usage_events.scope_type` null for every
+          // `memory.search` regardless of how many scopes it named. Passed
+          // through unconditionally, as its own type already guarantees.
+          scopeType,
           scope: usageScope,
+          scopeCount,
           authType: auth.type as 'api_key' | 'jwt',
           outcome: 'ok',
           durationMs,
@@ -350,16 +384,23 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
       // UserInputError (bad scope, missing required arg), OrgPermissionError
       // (insufficient role), UnknownOrgError (org slug does not resolve),
-      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), and CreatedAtError
-      // (invalid/future created_at override) are all client-caused — the
-      // server handled them correctly. Use clientError() so spans are NOT
+      // TtlError (invalid ttl_days/ttl_minutes/ttl_seconds), CreatedAtError
+      // (invalid/future created_at override), and LimitError (the account is at
+      // its memory cap — returned in-band as an isError result, see below) are
+      // all client-caused — the server handled them correctly. Use clientError()
+      // so spans are NOT
       // marked ERROR (OTel: server spans are ERROR only for 5xx / server-side
-      // faults, not 4xx client errors).
+      // faults, not 4xx client errors). A cap hit is expected and recorded
+      // separately as usage outcome `cap_exceeded`; flagging the span ERROR too
+      // would inflate the `lorekit.mcp` error rate an operator alerts on.
+      // Rate-limit LimitErrors never reach here — they are handled before the
+      // tool runs (see `index.ts`).
       const isClientError = err instanceof UserInputError
         || err instanceof OrgPermissionError
         || err instanceof UnknownOrgError
         || err instanceof TtlError
-        || err instanceof CreatedAtError;
+        || err instanceof CreatedAtError
+        || err instanceof LimitError;
       if (isClientError) {
         toolSpan.clientError(msg).end();
         span.clientError(msg);
@@ -378,8 +419,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           userId: analyticsUserId,
           planName: null,  // skip plan lookup on error path to keep it fast
           toolName,
-          scopeType: rawScope ? scopeType : null,
+          // See the success branch above — `scopeType` is total, so it is
+          // never re-gated behind `rawScope`.
+          scopeType,
           scope: usageScope,
+          scopeCount,
           authType: auth.type as 'api_key' | 'jwt',
           outcome,
           durationMs,

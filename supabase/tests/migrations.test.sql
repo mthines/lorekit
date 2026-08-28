@@ -7437,6 +7437,63 @@ begin
 end;
 $$;
 
+-- ── 87. usage_events.scope_count — how many scopes a search named (00078) ───
+-- `memory.search` takes a `scopes` ARRAY; `usage_events.scope` is one text
+-- column and stays null the moment a search names more than one, which is why
+-- the unattributed bucket in the per-scope read series was ~40% of all records
+-- account-wide. This adds `scope_count` alongside `scope` (kept exactly as
+-- accurate as it already was) rather than replacing either.
+-- AC-1: the writer RPC persists the new trailing p_scope_count parameter.
+-- AC-2: scope_count is null by default (a singular-scope tool never sets it).
+-- AC-3: the range CHECK is a real backstop — a direct insert cannot put a
+--       negative or absurdly large value into a column that gets grouped on.
+do $$
+declare
+  v_id     uuid;
+  v_count  integer;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a search over three scopes persists scope_count = 3 (and, per the
+  -- app-side contract this migration backs, scope stays null for it — that
+  -- half is TypeScript behaviour in router.ts/mcp-handler.ts, not something
+  -- this SQL-only writer call can exercise on its own).
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.search',
+    p_scope_type => 'mixed', p_auth_type => 'jwt', p_outcome => 'ok',
+    p_scope_count => 3) into v_id;
+  assert v_id is not null, '87 AC-1: the writer must return the inserted id';
+  select scope_count into v_count from usage_events where id = v_id;
+  assert v_count = 3, format('87 AC-1: p_scope_count must be persisted, got %s', v_count);
+
+  -- AC-2: omitting p_scope_count (a singular-scope tool, e.g. memory.read)
+  -- leaves the column null rather than defaulting to some placeholder count.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select scope_count into v_count from usage_events where id = v_id;
+  assert v_count is null, format('87 AC-2: scope_count must default to null, got %s', v_count);
+
+  -- AC-3: the range CHECK is a real backstop, not decoration. The app-side
+  -- `scopeCount`/`body.scopes.length` computation is the primary gate, but a
+  -- direct insert must not be able to put an unbounded value into a column
+  -- that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, scope_count)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.search', 'jwt', 'ok', 257);
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '87 AC-3: an out-of-range scope_count must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 00076: GIN index on memories.tags must exist and stay a GIN index ───────
 -- The `tags @> ARRAY[...]` containment check in onboarding-server.ts has no
 -- index of its own without this — asserted here for the same reason 00030's

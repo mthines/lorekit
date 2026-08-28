@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.57.0](https://github.com/mthines/lorekit/compare/cli-v1.56.0...cli-v1.57.0) (2026-08-27)
+
+
+### Features
+
+* **cli:** add zsh/fish shell completion + install --completions ([7760e11](https://github.com/mthines/lorekit/commit/7760e118ffe36a1ea3f0d0782fd4d5dbafe4e39d))
+* **cli:** zsh/fish shell completion, installable via `install --completions` ([69e17b4](https://github.com/mthines/lorekit/commit/69e17b48fb9ec9f785a1717fc3677a623d99c833))
+
 ## [1.56.0](https://github.com/mthines/lorekit/compare/cli-v1.55.3...cli-v1.56.0) (2026-08-26)
 
 
