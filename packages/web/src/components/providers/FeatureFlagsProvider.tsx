@@ -38,12 +38,17 @@ import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import type { FlagKey, FlagValueMap } from '@lorekit/feature-flags';
 import { syncFeatureFlagRumAttributes } from '@/lib/dash0-rum';
 
-const FeatureFlagsContext = createContext<FlagValueMap | null>(null);
+interface FeatureFlagsContextValue {
+  values: FlagValueMap;
+  variants: Readonly<Record<string, string>>;
+}
+
+const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(null);
 
 export interface FeatureFlagsProviderProps {
   /** The full flag map, evaluated server-side — see `getAllServerFlagState()` in `server.ts`. */
   flags: FlagValueMap;
-  /** Flag key -> variant, from the SAME evaluation `flags` came from — for RUM tagging only. */
+  /** Flag key -> variant, from the SAME evaluation `flags` came from. */
   variants: Readonly<Record<string, string>>;
   children: ReactNode;
 }
@@ -61,20 +66,45 @@ export function FeatureFlagsProvider({ flags, variants, children }: FeatureFlags
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variantsKey]);
 
-  return <FeatureFlagsContext.Provider value={flags}>{children}</FeatureFlagsContext.Provider>;
+  return (
+    <FeatureFlagsContext.Provider value={{ values: flags, variants }}>
+      {children}
+    </FeatureFlagsContext.Provider>
+  );
+}
+
+function useFeatureFlagsContext(): FeatureFlagsContextValue {
+  const context = useContext(FeatureFlagsContext);
+  if (context === null) {
+    throw new Error('useFeatureFlag/useFeatureFlagVariant must be used within a <FeatureFlagsProvider>.');
+  }
+  return context;
 }
 
 /**
- * Read one flag's server-evaluated value from a Client Component.
+ * Read one flag's server-evaluated VALUE from a Client Component.
  *
  * Throws outside a `FeatureFlagsProvider` (a missing provider is a wiring bug
  * — the same "fail loudly" choice `evaluateFlag` itself makes for an unknown
  * flag key) rather than silently returning `undefined`.
+ *
+ * For a boolean flag with no experiment, this is almost always what you want
+ * (`if (useFeatureFlag('usage-charts-v2')) ...`). For a flag with an active
+ * experiment where each arm should be its OWN component — the copy-and-suffix
+ * convention in `packages/feature-flags/CLAUDE.md` — use
+ * {@link useFeatureFlagVariant} instead, which returns the variant KEY
+ * ("control"/"treatment") rather than the resolved value.
  */
 export function useFeatureFlag<K extends FlagKey>(key: K): FlagValueMap[K] {
-  const flags = useContext(FeatureFlagsContext);
-  if (flags === null) {
-    throw new Error('useFeatureFlag must be used within a <FeatureFlagsProvider>.');
-  }
-  return flags[key];
+  return useFeatureFlagsContext().values[key];
+}
+
+/**
+ * Read one flag's server-evaluated VARIANT KEY (`"control"`, `"treatment"`,
+ * `"beta"`) rather than its resolved value — the switch a copy-and-suffix
+ * resolver component dispatches on. See `packages/feature-flags/CLAUDE.md`
+ * § "UI variants: copy-and-suffix, never inline branching".
+ */
+export function useFeatureFlagVariant(key: FlagKey): string {
+  return useFeatureFlagsContext().variants[key];
 }

@@ -4,6 +4,7 @@ import { FLAG_REGISTRY, evaluateFlagDetails, type FlagKey } from '@lorekit/featu
 import { resolveFeatureFlagContext } from '@/lib/feature-flags/server';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { DeveloperFlagsPanel, type DeveloperFlagRow } from '@/components/settings/DeveloperFlagsPanel';
+import { OnboardingPreview } from '@/components/dashboard/onboarding-preview/OnboardingPreview';
 
 export const metadata: Metadata = { title: 'Developer — Settings' };
 
@@ -49,6 +50,26 @@ export default async function DeveloperSettingsPage() {
       subtitle="Force a feature-flag variant for your own session — for both the server and the browser. Resets independently per flag, or all at once."
     >
       <DeveloperFlagsPanel rows={rows} />
+
+      {/*
+        Live proof of the copy-and-suffix UI-variant convention
+        (packages/feature-flags/CLAUDE.md) — toggle new-onboarding-flow above
+        and this re-renders through the SAME resolver/useFeatureFlagVariant
+        path a real feature would use. Not (yet) wired into the actual
+        onboarding flow — see docs/feature-flags.md for the scope note.
+      */}
+      <div className="mt-6 border-t border-[var(--color-border)] pt-6">
+        <h3 className="text-sm font-medium text-[var(--color-content-primary)]">
+          Live variant preview — <code>new-onboarding-flow</code>
+        </h3>
+        <p className="mt-1 text-xs text-[var(--color-content-secondary)]">
+          Renders through <code>OnboardingPreview</code>'s resolver, exactly like a real
+          copy-and-suffix component would. Change the override above to see it switch.
+        </p>
+        <div className="mt-3">
+          <OnboardingPreview />
+        </div>
+      </div>
     </SectionPanel>
   );
 }

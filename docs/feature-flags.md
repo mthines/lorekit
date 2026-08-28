@@ -301,10 +301,11 @@ OpenFeature ships a separate `@openfeature/web-sdk` for that, which this app
 does not depend on. Rather than add a second SDK and a second bucketing code
 path (and risk it disagreeing with the server's evaluation and causing a
 hydration mismatch), the dashboard layout (`app/(dashboard)/layout.tsx`) calls
-`getAllServerFlags()` once per request and seeds `FeatureFlagsProvider`, a
-React context, with the resolved values. `useFeatureFlag` is a plain context
-read — no fetch, no loading state, and structurally unable to disagree with
-whatever the server rendered, because it's reading the same server's answer.
+`getAllServerFlagState()` once per request and seeds `FeatureFlagsProvider`, a
+React context, with the resolved values (and variants — see below).
+`useFeatureFlag` is a plain context read — no fetch, no loading state, and
+structurally unable to disagree with whatever the server rendered, because
+it's reading the same server's answer.
 
 The trade-off: a flag's value is fixed for the lifetime of the current page's
 RSC payload. Changing it (via the developer overrides page, below) needs a
@@ -320,6 +321,78 @@ This closes the gap in `LoreKitFlagProvider`'s own fallback — an experiment
 evaluated with no `targetingKey` at all buckets every caller onto the same
 constant, which is not a split — by guaranteeing the web app always supplies
 a real one, even before sign-in.
+
+### UI variants: copy-and-suffix, never inline branching
+
+When a flag changes what renders — not just a boolean read gating one small
+prop — put each arm in its OWN component, in its OWN file, and dispatch
+between them from one small resolver. Never grow a single component with
+`if (flag) { ... } else { ... }` branches threaded through its JSX and logic.
+
+**Naming convention:**
+
+```
+OnboardingPreview.tsx              ← the resolver — the only file everything else imports
+OnboardingPreview.control.tsx      ← one arm, a whole standalone component
+OnboardingPreview.treatment.tsx    ← the other arm, equally standalone
+```
+
+The suffix is the flag's **variant key** — not a hardcoded "a"/"b" — so it
+reads the same regardless of how a given flag names its arms (`control`/
+`treatment`, `off`/`on`, `beta`/`earlyAccess`, ...).
+
+**The resolver** dispatches on the variant KEY via
+{@link useFeatureFlagVariant} (server-side: `evaluateFlagDetails(key,
+context).variant` — see `getAllServerFlagState()` in `server.ts`), never on
+the flag's raw VALUE — a value tells you `true`/`false`, not which arm to
+render, and doesn't generalise past two variants:
+
+```tsx
+'use client';
+import { useFeatureFlagVariant } from '@/components/providers/FeatureFlagsProvider';
+import { OnboardingPreviewControl } from './OnboardingPreview.control';
+import { OnboardingPreviewTreatment } from './OnboardingPreview.treatment';
+
+export function OnboardingPreview() {
+  const variant = useFeatureFlagVariant('new-onboarding-flow');
+  switch (variant) {
+    case 'treatment':
+      return <OnboardingPreviewTreatment />;
+    case 'control':
+    default:
+      return <OnboardingPreviewControl />;
+  }
+}
+```
+
+A real, working instance of exactly this trio lives at
+`packages/web/src/components/dashboard/onboarding-preview/` — rendered live
+on `/settings/developer` so toggling the flag's override visibly swaps the
+two components. It previews `new-onboarding-flow`; it is not (yet) wired into
+the actual onboarding flow — a worked example for the pattern, not a redesign.
+
+**Why this is worth the extra files:** the entire point is what happens when
+the experiment ENDS. With two standalone components, shipping the winner is:
+
+1. Promote the winning file's content into the resolver's filename (or just
+   have the resolver import and re-export it directly).
+2. Delete the losing variant's file.
+3. Delete the resolver's `switch`/dispatch logic.
+4. Remove the flag from `registry.ts` and regenerate.
+
+Every step is a **deletion**, never a diff into shared logic to untangle.
+Compare to the inline-branch alternative: after months of small edits to both
+sides of an `if`, the two branches are no longer clean opposites — shared
+state, interleaved hooks, a bugfix applied to one arm and not the other — and
+"remove the losing variant" becomes "carefully read every line of this
+component to figure out what's actually reachable now."
+
+**When this doesn't apply:** a flag that gates one small prop or a single CSS
+class (`usage-charts-v2` deciding which chart-rendering call to make inside
+an otherwise-identical page) doesn't need two whole components — use
+`useFeatureFlag`/`getServerFlag` directly, per the plain examples above. Reach
+for copy-and-suffix specifically when an experiment's arms diverge enough
+that keeping them in one file means real branching logic, not a single ternary.
 
 ## Session overrides
 
