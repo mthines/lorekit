@@ -3,15 +3,21 @@ import { notFound } from 'next/navigation';
 import { Archive } from 'lucide-react';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { GroomingRuleBuilder } from '@/components/settings/GroomingRuleBuilder';
-import { retentionPoliciesEnabled } from '@/lib/retention-policies-flag';
+import { getServerFlag } from '@/lib/feature-flags/server';
 
 export const metadata: Metadata = { title: 'Grooming — Settings' };
 
-export default function GroomingSettingsPage() {
-  // Behind the retention-policies feature flag — see `lib/feature-flags.ts`.
-  // The nav entry is already hidden (`settings/sections.ts`); this also
-  // closes off direct navigation to the URL while the flag is off.
-  if (!retentionPoliciesEnabled()) notFound();
+/**
+ * Behind the `retention-policies` feature flag (default `off`). This
+ * `notFound()` check is the real access-control boundary — the nav entry
+ * being hidden (`SettingsNav.tsx`, reading the same flag) is only a
+ * visibility nicety, and a direct `/settings/grooming` visit must not bypass
+ * it. Same posture as `/insights`'s gate — see `docs/feature-flags.md` §
+ * "Access in production".
+ */
+export default async function GroomingSettingsPage() {
+  const enabled = await getServerFlag('retention-policies');
+  if (!enabled) notFound();
 
   return (
     <SectionPanel
