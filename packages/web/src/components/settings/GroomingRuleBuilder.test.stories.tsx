@@ -1,12 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import type { ReactNode } from 'react';
 import { http, HttpResponse } from 'msw';
 import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 
 import { GroomingRuleBuilder } from './GroomingRuleBuilder';
 import { groomHandlers, memoryHandlers } from '@/mocks/memories';
 import { withQueryClient } from '@/mocks/decorators';
-import { ToastProvider } from '@/components/providers/ToastProvider';
 
 /**
  * Interaction tests for the LIST-FIRST {@link GroomingRuleBuilder}: Add opens
@@ -16,10 +14,11 @@ import { ToastProvider } from '@/components/providers/ToastProvider';
  * `chromatic.disableSnapshot` so the visual `afterEach` skips these (per
  * `docs/storybook.md`). Portaled surfaces (the combobox popover) are queried via
  * `document.body`; the dialog and its confirm render inline in the canvas.
+ *
+ * No toast decorator needed — the component calls sonner's `showToast`
+ * (`@/lib/toast`) directly, and sonner renders nothing without a mounted
+ * `<Toaster>`, so a toast call here is simply a no-op rather than an error.
  */
-function WithToast({ children }: { children: ReactNode }) {
-  return <ToastProvider>{children}</ToastProvider>;
-}
 
 const meta: Meta<typeof GroomingRuleBuilder> = {
   title: 'Settings/GroomingRuleBuilder/Tests',
@@ -30,7 +29,7 @@ const meta: Meta<typeof GroomingRuleBuilder> = {
     layout: 'padded',
     msw: { handlers: [...groomHandlers(), ...memoryHandlers()] },
   },
-  decorators: [(Story) => <WithToast><Story /></WithToast>, withQueryClient],
+  decorators: [withQueryClient],
 };
 
 export default meta;

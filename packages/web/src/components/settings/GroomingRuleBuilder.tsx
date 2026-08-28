@@ -25,7 +25,7 @@ import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
 import { Switch } from '@/components/ui/Switch';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { scopeIcon } from '@/components/memory/scope-meta';
-import { useToast } from '@/components/providers/ToastProvider';
+import { showToast } from '@/lib/toast';
 import { isCanonicalScope } from '@/lib/scope';
 import { useScopeTree } from '@/lib/queries/lore';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
@@ -197,7 +197,6 @@ function PolicyForm({
   initialPolicy: RetentionPolicy | null;
   onClose: () => void;
 }) {
-  const { showToast } = useToast();
   const [conditions, setConditions] = useState<Conditions>(() =>
     initialPolicy ? conditionsFromPolicy(initialPolicy) : EMPTY_CONDITIONS,
   );
@@ -498,7 +497,6 @@ function PolicyRow({
 }
 
 export function GroomingRuleBuilder() {
-  const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
 
   const [dialogOpen, setDialogOpen] = useState(false);

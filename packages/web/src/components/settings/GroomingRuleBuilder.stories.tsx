@@ -1,11 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import type { ReactNode } from 'react';
 import { userEvent, waitFor, within } from 'storybook/test';
 
 import { GroomingRuleBuilder } from './GroomingRuleBuilder';
 import { groomHandlers, memoryHandlers, DEFAULT_GROOM_POLICIES } from '@/mocks/memories';
 import { withQueryClient } from '@/mocks/decorators';
-import { ToastProvider } from '@/components/providers/ToastProvider';
 import type { MockRetentionPolicy } from '@/mocks/memories';
 
 /**
@@ -15,10 +13,11 @@ import type { MockRetentionPolicy } from '@/mocks/memories';
  * `groomHandlers()` mints a fresh in-memory policy list per story mount and
  * `memoryHandlers()` supplies the scope catalog the dialog's scope picker reads,
  * so a create/delete round trip in one story never bleeds into another.
+ *
+ * No toast decorator needed — the component calls sonner's `showToast`
+ * (`@/lib/toast`) directly, and sonner renders nothing without a mounted
+ * `<Toaster>`, so a toast call here is simply a no-op rather than an error.
  */
-function WithToast({ children }: { children: ReactNode }) {
-  return <ToastProvider>{children}</ToastProvider>;
-}
 
 /** Groom endpoints + the scope catalog the dialog's scope picker reads. */
 function handlers(policies?: MockRetentionPolicy[]) {
@@ -32,7 +31,7 @@ const meta: Meta<typeof GroomingRuleBuilder> = {
     layout: 'padded',
     msw: { handlers: handlers() },
   },
-  decorators: [(Story) => <WithToast><Story /></WithToast>, withQueryClient],
+  decorators: [withQueryClient],
 };
 
 export default meta;
