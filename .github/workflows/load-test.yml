@@ -226,7 +226,7 @@ jobs:
         # declares node24 — so v5 would not have cleared the deprecation. Same
         # three inputs in both. This workflow is the repo's only upload-artifact
         # caller, so the bump is local.
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: load-report-${{ inputs.target || 'preview' }}-${{ inputs.surface || 'rest' }}-${{ github.run_id }}
           path: load-report.txt
