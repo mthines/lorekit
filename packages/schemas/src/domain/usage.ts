@@ -116,7 +116,10 @@ export const UsageRunsQuerySchema = z.object({
   since: z.string().datetime({ offset: true }).optional(),
   until: z.string().datetime({ offset: true }).optional(),
   cursor: z.string().optional(),
-  limit: z.number().int().min(1).max(100).optional().default(20),
+  // `z.coerce` — query params arrive as strings (`validateQuery` parses
+  // `URLSearchParams`), so a bare `z.number()` 400s on every caller that
+  // sends the param. Same defect, same fix as `ReadRankingQuerySchema`.
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
 });
 export type UsageRunsQuery = z.infer<typeof UsageRunsQuerySchema>;
 

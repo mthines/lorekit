@@ -231,7 +231,19 @@ export function deriveSessionContext(env = process.env) {
   // Well-known agent-host session id env vars. Best-effort: hosts differ and
   // this is not an exhaustive registry, so an unrecognised host still falls
   // through to `unknown` rather than fabricating an id.
-  const sessionId = firstNonEmptyEnv(env, ['LOREKIT_SESSION_ID', 'CLAUDE_SESSION_ID']);
+  //
+  // `CLAUDE_CODE_SESSION_ID` is the name Claude Code actually exports (verified
+  // against a live session's env); `CLAUDE_SESSION_ID` was a guess and is not
+  // set by any Claude Code version, so before it was joined here EVERY local
+  // Claude session fell through to `unknown` with no correlation id — which is
+  // why `GET /memories/usage/runs` returned an empty list on an account with
+  // ~44K usage events. Kept alongside rather than replaced: it costs nothing,
+  // and dropping a name is how the same blind spot comes back.
+  const sessionId = firstNonEmptyEnv(env, [
+    'LOREKIT_SESSION_ID',
+    'CLAUDE_CODE_SESSION_ID',
+    'CLAUDE_SESSION_ID',
+  ]);
   if (sessionId) {
     // A local session IS known even when the specific id fails the
     // correlation-id charset/length check — report the kind either way, and
