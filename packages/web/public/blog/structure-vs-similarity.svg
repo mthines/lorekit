@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" role="img" aria-label="Two ways to find a memory, side by side. Left, structure: a task starts, resolved by scope precedence, then ranked by recency, recurrence, relevance and outcome, giving the lessons that fit — tagged deterministic, inspectable, free, offline. Right, similarity: the lesson text is embedded into a vector, stored in a vector index, queried by nearest-neighbor, giving the nearest chunks — tagged semantic, opaque, metered, needs a service. A caption says the two are complementary: structure first, embeddings as an optional layer on top.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <defs>
+    <marker id="ars" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8892a4"/></marker>
+  </defs>
+  <rect x="0" y="0" width="720" height="380" fill="#0d0e11"/>
+
+  <!-- LEFT — structure -->
+  <text x="80" y="34" class="lbl" font-size="12" fill="#f5a623">STRUCTURE · how LoreKit reads</text>
+  <rect x="80" y="46" width="240" height="30" rx="8" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="200" y="65" text-anchor="middle" font-size="11.5">a task starts — no query yet</text>
+  <line x1="200" y1="76" x2="200" y2="92" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="80" y="94" width="240" height="34" rx="8" fill="#1a1d24" stroke="#f5a623" stroke-opacity="0.4"/>
+  <text x="200" y="115" text-anchor="middle" font-size="11.5">scope precedence — narrowest wins</text>
+  <line x1="200" y1="128" x2="200" y2="144" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="80" y="146" width="240" height="42" rx="8" fill="#1a1d24" stroke="#f5a623" stroke-opacity="0.4"/>
+  <text x="200" y="165" text-anchor="middle" font-size="11">rank by the columns:</text>
+  <text x="200" y="180" text-anchor="middle" class="k" font-size="9.5" fill="#8892a4">recency · recurrence · relevance · outcome</text>
+  <line x1="200" y1="188" x2="200" y2="204" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="80" y="206" width="240" height="34" rx="8" fill="#2a2010" stroke="#f5a623"/>
+  <text x="200" y="227" text-anchor="middle" font-size="11.5" font-weight="600" fill="#f5a623">the lessons that fit the budget</text>
+  <text x="200" y="270" text-anchor="middle" class="k" font-size="10.5" fill="#7ce6bf">deterministic · inspectable · free · offline</text>
+
+  <line x1="360" y1="40" x2="360" y2="300" stroke="#2a2d38" stroke-dasharray="3 4"/>
+
+  <!-- RIGHT — similarity -->
+  <text x="400" y="34" class="lbl" font-size="12" fill="#7c8cf8">SIMILARITY · the vector way</text>
+  <rect x="400" y="46" width="240" height="28" rx="8" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="520" y="64" text-anchor="middle" font-size="11.5">the lesson text</text>
+  <line x1="520" y1="74" x2="520" y2="88" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="400" y="90" width="240" height="28" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.4"/>
+  <text x="520" y="108" text-anchor="middle" font-size="11.5">embed → vector</text>
+  <line x1="520" y1="118" x2="520" y2="132" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="400" y="134" width="240" height="28" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.4"/>
+  <text x="520" y="152" text-anchor="middle" font-size="11.5">vector index</text>
+  <line x1="520" y1="162" x2="520" y2="176" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="400" y="178" width="240" height="28" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.4"/>
+  <text x="520" y="196" text-anchor="middle" font-size="11.5">nearest-neighbor query</text>
+  <line x1="520" y1="206" x2="520" y2="220" stroke="#8892a4" stroke-width="1.4" marker-end="url(#ars)"/>
+  <rect x="400" y="222" width="240" height="30" rx="8" fill="#13151a" stroke="#7c8cf8"/>
+  <text x="520" y="242" text-anchor="middle" font-size="11.5" font-weight="600" fill="#aeb9ff">the nearest chunks</text>
+  <text x="520" y="270" text-anchor="middle" class="k" font-size="10.5" fill="#8892a4">semantic · opaque · metered · needs a service</text>
+
+  <line x1="40" y1="300" x2="680" y2="300" stroke="#2a2d38"/>
+  <text x="360" y="326" text-anchor="middle" class="lbl" font-size="11.5" fill="#c5ccd6">Complementary, not opposed — structure first,</text>
+  <text x="360" y="344" text-anchor="middle" class="lbl" font-size="11.5" fill="#c5ccd6">and embeddings as a layer on top only if paraphrase recall earns its cost.</text>
+</svg>

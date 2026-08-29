@@ -173,7 +173,7 @@ Honest boundary while you're deciding: there's no semantic search here, and noth
 
 The obvious worry about a store that only grows: it gets worse the more it learns. A folder with six lessons injects six lines. A year-old team store with sixty thousand can't inject sixty thousand.
 
-It doesn't. The read spends a fixed slice of your context window — not a fixed number of lessons — on the highest-signal, de-duplicated ones, and tells you exactly what it left out. Same code, both ends of the range. That's the next post: [Your agent's memory should scale from 6 lessons to 60,000](/blog/agent-memory-working-set).
+It doesn't. The read spends a fixed slice of your context window — not a fixed number of lessons — on the highest-signal, de-duplicated ones, and tells you exactly what it left out. Same code, both ends of the range. The deterministic model that makes that work — scopes, a stable key, no embeddings — is its own post: [Agent memory doesn't need embeddings — it needs a schema](/blog/agent-memory-data-model).
 
 ## Start local today
 
