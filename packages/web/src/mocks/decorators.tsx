@@ -12,7 +12,9 @@
 import type { Decorator } from '@storybook/nextjs-vite';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
+import type { FlagValueMap } from '@lorekit/feature-flags';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
+import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 
 /**
  * Wrap a story in a fresh `QueryClientProvider` tuned for deterministic tests.
@@ -102,4 +104,47 @@ export const withMemorySidebar: Decorator = (Story) => (
   <MemorySidebarProvider>
     <Story />
   </MemorySidebarProvider>
+);
+
+/**
+ * Every flag's REGISTRY default (`defaultVariant`'s value) — see
+ * `packages/feature-flags/src/registry.ts`. Stories render outside the
+ * dashboard layout, so nothing evaluates a flag server-side for them; this is
+ * a plain, deterministic seed rather than a live `evaluateFlag` call, which
+ * can't run in the browser anyway (`@openfeature/server-sdk` is Node-only —
+ * see `FeatureFlagsProvider.tsx`'s file header).
+ */
+const DEFAULT_FLAG_VALUES: FlagValueMap = {
+  'new-onboarding-flow': false,
+  'usage-charts-v2': false,
+  'cli-completion-engine': false,
+  'plan-badge-copy': 'Beta',
+  'insights-page': false,
+  'usage-empty-state-copy': { title: 'No usage yet', ctaLabel: 'Learn more', ctaHref: '/docs/limits' },
+  'retention-policies': false,
+  'lore-explorer-instruments': false,
+};
+
+const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = {
+  'new-onboarding-flow': 'control',
+  'usage-charts-v2': 'off',
+  'cli-completion-engine': 'off',
+  'plan-badge-copy': 'beta',
+  'insights-page': 'off',
+  'usage-empty-state-copy': 'default',
+  'retention-policies': 'off',
+  'lore-explorer-instruments': 'off',
+};
+
+/**
+ * Seed `FeatureFlagsProvider` with the registry's defaults so components
+ * reading `useFeatureFlag`/`useFeatureFlagVariant` (e.g. `LoreExplorer`'s
+ * `lore-explorer-instruments` gate) resolve instead of throwing "must be
+ * used within a <FeatureFlagsProvider>" when rendered outside the dashboard
+ * layout, which is the only place a real provider is mounted.
+ */
+export const withFeatureFlags: Decorator = (Story) => (
+  <FeatureFlagsProvider flags={DEFAULT_FLAG_VALUES} variants={DEFAULT_FLAG_VARIANTS}>
+    <Story />
+  </FeatureFlagsProvider>
 );
