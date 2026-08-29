@@ -105,21 +105,13 @@ That's retrieval from *structure* — scope precedence, a stable key, an honest 
   <figcaption>Two ways to find a memory. Structure is deterministic, inspectable, and free; similarity is semantic but opaque and metered. For recurring, specific gotchas, structure wins — and nothing stops you layering embeddings on top later.</figcaption>
 </figure>
 
-## Where I'll be honest about the limits
-
-A schema post that only lists wins isn't honest, so:
-
-- **Lexical, not semantic.** Relevance is recurrence, recency, and word-overlap with your branch name — no embeddings on the read path. A genuine paraphrase can miss. That's the real cost of determinism, and it's the thing embeddings would fix if you added them as a layer.
-- **"Relevant" means your branch, not your task.** At session start there's no task yet, so the relevance signal is a coarse hint from the branch name. A well-named branch helps; `wip` does nothing.
-- **Single-writer, whole-record model.** This is a store of small facts, not a CRDT. It's the right model for lore and the wrong one for live co-editing.
-
-None of these need a vector database to fix. They're honest edges of a deliberately small model.
-
 ## An invitation, not a decree
 
 Here's the part I'm actually unsure about, and want dialogue on.
 
 Every agent tool is quietly reinventing this shape — some file of remembered facts, addressed somehow, with some idea of freshness and recurrence. We're all solving the same small problem in mutually incompatible ways, so lore is trapped in whatever tool wrote it.
+
+I spend my days working with OpenTelemetry, so I've watched this exact movie before. Telemetry used to be locked inside whatever agent emitted it, until a shared shape — spans, attributes, one wire format — let any tool read any other tool's data. Nobody had to win; they just had to agree on the shape. That's where the instinct here comes from: not one winning memory product, but one shape everyone can write to.
 
 The part worth agreeing on, I think, isn't the storage engine or the ranking algorithm — those should vary freely. It's the **two things that make lore portable**: a **record shape** (`scope`, `key`, `value`, plus `tags`, `ttl`, provenance) and a **scope grammar** (`global` / `project::…` / `repo::…` / `branch::…`) that addresses a lesson the same way regardless of which agent wrote it. Get those shared, and a lesson your CI agent learns is one your editor agent can read — across tools, over MCP, without an import step.
 
