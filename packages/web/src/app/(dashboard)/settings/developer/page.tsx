@@ -8,7 +8,6 @@ import { isDeveloperEmail } from '@/lib/developer-users';
 import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 import { DeveloperFlagsPanel, type DeveloperFlagRow } from '@/components/settings/DeveloperFlagsPanel';
-import { OnboardingPreview } from '@/components/dashboard/onboarding-preview/OnboardingPreview';
 
 export const metadata: Metadata = { title: 'Developer — Settings' };
 
@@ -73,27 +72,16 @@ export default async function DeveloperSettingsPage() {
       title="Developer"
       subtitle="Force a feature-flag variant for your own session — for both the server and the browser. Resets independently per flag, or all at once."
     >
-      <DeveloperFlagsPanel rows={rows} />
-
       {/*
-        Live proof of the copy-and-suffix UI-variant convention
-        (packages/feature-flags/CLAUDE.md) — toggle new-onboarding-flow above
-        and this re-renders through the SAME resolver/useFeatureFlagVariant
-        path a real feature would use. Not (yet) wired into the actual
-        onboarding flow — see docs/feature-flags.md for the scope note.
+        The panel is the whole page. A "live variant preview" section used to
+        sit below it, rendering an `OnboardingPreview` resolver purely to
+        demonstrate the copy-and-suffix convention for the `new-onboarding-flow`
+        demo flag. Both went when the demo flags did: the convention is
+        documented (docs/feature-flags.md § "UI variants"), and a preview of a
+        flag that gates nothing is a maintenance cost that teaches the reader a
+        component exists when it does not.
       */}
-      <div className="mt-6 border-t border-[var(--color-border)] pt-6">
-        <h3 className="text-sm font-medium text-[var(--color-content-primary)]">
-          Live variant preview — <code>new-onboarding-flow</code>
-        </h3>
-        <p className="mt-1 text-xs text-[var(--color-content-secondary)]">
-          Renders through <code>OnboardingPreview</code>'s resolver, exactly like a real
-          copy-and-suffix component would. Change the override above to see it switch.
-        </p>
-        <div className="mt-3">
-          <OnboardingPreview />
-        </div>
-      </div>
+      <DeveloperFlagsPanel rows={rows} />
     </SectionPanel>
   );
 }

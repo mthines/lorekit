@@ -33,8 +33,8 @@ describe('fnv1aHash / bucketOf', () => {
 
 describe('assignExperimentVariant', () => {
   it('is stable for the same (flagKey, targetingKey) pair', () => {
-    const a = assignExperimentVariant('new-onboarding-flow', experiment, 'user-42');
-    const b = assignExperimentVariant('new-onboarding-flow', experiment, 'user-42');
+    const a = assignExperimentVariant('example-experiment', experiment, 'user-42');
+    const b = assignExperimentVariant('example-experiment', experiment, 'user-42');
     expect(a).toBe(b);
   });
 

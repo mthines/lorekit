@@ -48,7 +48,7 @@ function formatDuration(ms: number): string {
 export function RunsList() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([]);
-  const { data, isLoading } = useUsageRuns(cursor);
+  const { data, isLoading, isError } = useUsageRuns(cursor);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const runs = data?.runs ?? [];
@@ -74,6 +74,18 @@ export function RunsList() {
           <div key={i} className="h-14 animate-pulse rounded-lg bg-[var(--color-bg-elevated)]" />
         ))}
       </div>
+    );
+  }
+
+  // A failed request is NOT an empty account. `GET /memories/usage/runs?limit=20`
+  // 400d for as long as its `limit` was validated as a bare number, and this
+  // panel reported that as "No runs recorded yet" — an explanation of why there
+  // is no data, offered for a request that never returned any.
+  if (isError) {
+    return (
+      <p className="text-sm text-[var(--color-content-secondary)]">
+        Failed to load runs. Please refresh the page to try again.
+      </p>
     );
   }
 

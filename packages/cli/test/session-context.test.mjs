@@ -46,6 +46,29 @@ test('a local session id resolves to sessionKind "local"', () => {
   assert.deepEqual(ctx, { correlationId: 'session:abc123', sessionKind: 'local' });
 });
 
+// Regression: `CLAUDE_SESSION_ID` was the only Claude name checked, and Claude
+// Code does not export it — it exports `CLAUDE_CODE_SESSION_ID`. Every local
+// Claude session therefore derived `unknown`/no correlation id, which is why
+// the dashboard's Runs view was empty on an account with tens of thousands of
+// usage events.
+test('Claude Code\'s own CLAUDE_CODE_SESSION_ID resolves to sessionKind "local"', () => {
+  const ctx = deriveSessionContext({ CLAUDE_CODE_SESSION_ID: 'cc-abc123' });
+  assert.deepEqual(ctx, { correlationId: 'session:cc-abc123', sessionKind: 'local' });
+});
+
+test('the legacy CLAUDE_SESSION_ID name still resolves', () => {
+  const ctx = deriveSessionContext({ CLAUDE_SESSION_ID: 'legacy-1' });
+  assert.deepEqual(ctx, { correlationId: 'session:legacy-1', sessionKind: 'local' });
+});
+
+test('an explicit LOREKIT_SESSION_ID outranks the host-provided names', () => {
+  const ctx = deriveSessionContext({
+    LOREKIT_SESSION_ID: 'explicit',
+    CLAUDE_CODE_SESSION_ID: 'cc-abc123',
+  });
+  assert.equal(ctx.correlationId, 'session:explicit');
+});
+
 test('no derivable context at all resolves to "unknown" with no correlation id', () => {
   const ctx = deriveSessionContext({});
   assert.deepEqual(ctx, { correlationId: null, sessionKind: 'unknown' });

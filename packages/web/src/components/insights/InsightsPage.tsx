@@ -96,7 +96,7 @@ export function InsightsPage() {
     [scopeRange, nowIso],
   );
 
-  const { data, isLoading } = useDashboardData();
+  const { data, isLoading, isError } = useDashboardData();
   const usageByTool = data?.usageByTool ?? [];
 
   return (
@@ -115,6 +115,11 @@ export function InsightsPage() {
       >
         {isLoading ? (
           <SectionSkeleton />
+        ) : isError ? (
+          // NEVER fold a failed request into the empty state — see HotColdLore.tsx's
+          // comment on the same anti-pattern. A broken `usageByTool` fetch must read
+          // as broken, not as "no usage recorded".
+          <EmptySection message="Failed to load usage data. Please refresh the page to try again." />
         ) : usageByTool.length === 0 ? (
           <EmptySection message="No usage recorded in the last 62 days." />
         ) : (
@@ -129,6 +134,8 @@ export function InsightsPage() {
       >
         {isLoading ? (
           <SectionSkeleton />
+        ) : isError ? (
+          <EmptySection message="Failed to load usage data. Please refresh the page to try again." />
         ) : usageByTool.length === 0 ? (
           <EmptySection message="No usage recorded in the last 62 days." />
         ) : (
