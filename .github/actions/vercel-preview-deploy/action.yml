@@ -82,6 +82,18 @@ inputs:
       'false' the `url` output is empty. Defaults to 'true' (build + deploy).
     required: false
     default: 'true'
+  deploy-timeout:
+    description: >-
+      Max wall-clock time for `vercel deploy` before it is treated as a hung /
+      blocked deployment and failed. A GNU `timeout` duration ('15m', '900s').
+
+      `vercel deploy` polls until the deployment is READY or ERROR; a BLOCKED
+      one — most often because the commit author's email can't be matched to a
+      GitHub account with project access — never resolves, so without a bound the
+      CLI hangs until the 6-hour job default. This turns that hang into a fast,
+      reported failure. Ignored when deploy is 'false'.
+    required: false
+    default: '15m'
   alias-label:
     description: >-
       When set (e.g. 'pr-42'), assign a STABLE alias to this deployment —
@@ -209,20 +221,48 @@ runs:
         VERCEL_TOKEN: ${{ inputs.vercel-token }}
         VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
         VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+        DEPLOY_TIMEOUT: ${{ inputs.deploy-timeout }}
       run: |
-        set -euo pipefail
-        # Vercel prints the deployment URL to stdout and progress to stderr;
-        # keep them separate (no 2>&1) and grep the URL so a trailing stderr
-        # line can never be mistaken for the deployment URL.
-        out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
+        # NOT `set -e`: we capture `vercel`'s exit code and report the reason
+        # ourselves rather than aborting on it. `timeout` bounds a BLOCKED
+        # deployment (which `vercel deploy` would otherwise poll on forever, up to
+        # the 6-hour job default) so a hang becomes a fast, reported failure —
+        # `--kill-after` force-kills if the CLI ignores the initial SIGTERM.
+        set -uo pipefail
+        # Vercel prints the deployment URL to stdout and progress + any block
+        # reason to stderr; keep them SEPARATE (no 2>&1) so a stderr line can
+        # never be mistaken for the URL, and capture stderr to a file so the
+        # failure reason below can quote it.
+        err_file="$(mktemp)"
+        out="$(timeout --kill-after=30s "$DEPLOY_TIMEOUT" vercel deploy --prebuilt --token="$VERCEL_TOKEN" 2>"$err_file")"
+        code=$?
+        err="$(cat "$err_file")"; rm -f "$err_file"
         echo "$out"
-        # `|| true` so grep's no-match exit (1) doesn't abort under pipefail/set -e
-        # before the guard below runs — an empty URL is handled by that guard,
-        # which prints a clear ::error:: and exits 1, so nothing is swallowed.
+        [ -n "$err" ] && printf '%s\n' "$err" >&2
+
+        # Persist a concise reason to the shared workspace so the CALLER can post
+        # it in a PR comment on failure (a composite action cannot comment, and a
+        # step output does not reliably survive a non-zero exit). Then exit 1.
+        reason_file="${GITHUB_WORKSPACE}/vercel-deploy-error.txt"
+        fail() {
+          printf '%s\n' "$1" > "$reason_file"
+          echo "::error::$1"
+          exit 1
+        }
+
+        if [ "$code" -eq 124 ]; then
+          fail "Vercel deploy timed out after ${DEPLOY_TIMEOUT}. A deployment that never becomes Ready is almost always BLOCKED by Vercel — most commonly because the commit author's email can't be matched to a GitHub account with access to the project. Check the commit author and the project's Git deployment-protection settings."
+        fi
+        if [ "$code" -ne 0 ]; then
+          # Prefer Vercel's own stated cause; fall back to the tail of its output.
+          detail="$(printf '%s\n' "$err" "$out" | grep -iE 'block|could not be matched|not authorized|error' | tail -3 || true)"
+          [ -z "$detail" ] && detail="$(printf '%s\n' "$out" "$err" | grep -vE '^[[:space:]]*$' | tail -3 || true)"
+          fail "Vercel deploy failed (exit ${code}).${detail:+$'\n'$detail}"
+        fi
+
         URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1 || true)"
         if [ -z "$URL" ]; then
-          echo "::error::Could not parse Vercel preview deployment URL"
-          exit 1
+          fail "Could not parse the Vercel deployment URL from the CLI output — the deployment may not have completed."
         fi
         echo "url=$URL" >> "$GITHUB_OUTPUT"
 

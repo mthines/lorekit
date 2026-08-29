@@ -355,7 +355,10 @@ jobs:
   #    Non-blocking by design: it is deliberately NOT in the `summary` gate's
   #    `needs`, so a transient Vercel failure can never block a merge (the old
   #    Vercel preview check wasn't a merge gate either). It self-skips green on a
-  #    fork PR where the Vercel secrets are unavailable.
+  #    fork PR where the Vercel secrets are unavailable. A deploy Vercel BLOCKS
+  #    (e.g. the commit author's email isn't matched to a GitHub account) now
+  #    fails FAST — bounded by a `vercel deploy` timeout instead of hanging to the
+  #    job default — and posts the reason as a sticky PR comment.
   web-preview:
     name: Web — Vercel preview (changed)
     needs: [changes]
