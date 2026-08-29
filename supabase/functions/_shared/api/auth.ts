@@ -79,9 +79,10 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
 
   const anonDb = createClient<Database>(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   // `auth.getUser()` is an outbound HTTP call to Supabase's GoTrue Auth API —
-  // this tier's ONLY I/O, and until now the only one on this surface NOT given
-  // its own CLIENT span (the `lk_` tier's `api_tokens` lookup above goes through
-  // `svcClient()` + `createTracedClient`, which spans DB calls automatically).
+  // this tier's ONLY I/O, and until now it had no span of its own (the `lk_`
+  // tier's `api_tokens` lookup above is likewise a raw `svcClient()` call with
+  // no dedicated span of its own — it is only traced if a caller later wraps
+  // the returned `db` in `createTracedClient`).
   // Without it, GoTrue latency was folded into `lorekit.rest.auth`'s
   // undifferentiated self time, indistinguishable from CPU-bound auth work —
   // exactly what made a p95 latency spike on this path unattributable. `finally`,
