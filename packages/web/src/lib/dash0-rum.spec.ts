@@ -293,13 +293,13 @@ describe('syncFeatureFlagRumAttributes', () => {
 
   it('attaches one feature_flag.<key> attribute per entry, holding the variant', () => {
     syncFeatureFlagRumAttributes({
-      'new-onboarding-flow': 'treatment',
-      'usage-charts-v2': 'off',
+      'example-onboarding-flow': 'treatment',
+      'example-usage-charts': 'off',
     });
-    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}new-onboarding-flow`)).toEqual([
+    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}example-onboarding-flow`)).toEqual([
       'treatment',
     ]);
-    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}usage-charts-v2`)).toEqual(['off']);
+    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}example-usage-charts`)).toEqual(['off']);
   });
 
   it('does nothing for an empty flag map', () => {

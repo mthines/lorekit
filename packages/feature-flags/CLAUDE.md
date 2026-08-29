@@ -32,11 +32,12 @@ it before touching this package if you haven't already.
 - **A UI-affecting experiment's arms are separate components, never inline
   branches.** The copy-and-suffix convention
   (`ComponentName.tsx` resolver + `ComponentName.<variant>.tsx` per arm) is
-  documented in `docs/feature-flags.md` § "UI variants" — a real, working
-  instance lives at
-  `packages/web/src/components/dashboard/onboarding-preview/`. Reach for a
-  plain `useFeatureFlag`/`getServerFlag` boolean read instead when a flag only
-  gates one small prop or class, not a component's whole shape.
+  documented in `docs/feature-flags.md` § "UI variants", which carries the
+  complete snippet — there is no reference implementation in the tree, and
+  adding one back means adding a registry flag that gates nothing (see
+  `registry.ts`'s header). Reach for a plain `useFeatureFlag`/`getServerFlag`
+  boolean read instead when a flag only gates one small prop or class, not a
+  component's whole shape.
 - **Overrides select a VARIANT KEY, never a raw value.** `parseFlagOverrides`
   validates every override against the live registry (unknown flag, unknown
   variant → silently dropped) — never trust an override cookie's contents

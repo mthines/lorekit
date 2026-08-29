@@ -28,61 +28,26 @@
  */
 import { FlagRegistrySchema, type FlagDefinition } from './schema.ts';
 
+/**
+ * Every entry here must gate something real. This file shipped with five
+ * demonstration flags alongside the two live ones — an A/B experiment
+ * (`new-onboarding-flow`) whose only consumer was a preview widget on
+ * `/settings/developer`, two toggles nothing read (`usage-charts-v2`,
+ * `cli-completion-engine`), and two that existed to exercise the non-boolean
+ * value paths (`plan-badge-copy` for `string`, `usage-empty-state-copy` for
+ * `object`). They have been removed.
+ *
+ * The machinery they demonstrated is unchanged and still fully covered — just
+ * at the layer that can test it without a production flag standing in as a
+ * fixture. `provider.spec.ts` declares its own `FlagDefinition`s and exercises
+ * all four value types, the weighted experiment split and the override path
+ * against them; `bucketing.spec.ts` covers the FNV-1a assignment directly. So
+ * do NOT re-add a flag "so the string/object/experiment path has an example":
+ * a registry entry is a live product decision, and one that gates nothing is
+ * indistinguishable at a call site from one that was left behind after a
+ * rollout finished.
+ */
 const REGISTRY_INPUT = [
-  {
-    key: 'new-onboarding-flow',
-    description:
-      'Redesigned first-run onboarding wizard for the web dashboard, vs the current three-step flow.',
-    type: 'boolean',
-    variants: { control: false, treatment: true },
-    defaultVariant: 'control',
-    experiment: {
-      enabled: true,
-      variants: [
-        {
-          key: 'control',
-          description: 'Existing three-step onboarding.',
-          weight: 50,
-        },
-        {
-          key: 'treatment',
-          description: 'New single-page onboarding wizard.',
-          weight: 50,
-        },
-      ],
-    },
-    owner: '@lorekit/web',
-    tags: ['onboarding', 'experiment', 'web'],
-  },
-  {
-    key: 'usage-charts-v2',
-    description: 'New usage-chart rendering pipeline on the dashboard Usage page.',
-    type: 'boolean',
-    variants: { off: false, on: true },
-    defaultVariant: 'off',
-    owner: '@lorekit/web',
-    tags: ['dashboard', 'web'],
-  },
-  {
-    key: 'cli-completion-engine',
-    description: 'Enables the rewritten zsh/fish completion generator in `lorekit completion`.',
-    type: 'boolean',
-    variants: { off: false, on: true },
-    defaultVariant: 'off',
-    owner: '@lorekit/cli',
-    tags: ['cli'],
-  },
-  {
-    key: 'plan-badge-copy',
-    description: 'The plan badge label shown at the top of Settings → Plan, during the beta.',
-    // `type: 'string'` — proves the string-valued path end to end (schema,
-    // codegen, provider, evaluateFlag); every other flag here is boolean.
-    type: 'string',
-    variants: { beta: 'Beta', earlyAccess: 'Early Access' },
-    defaultVariant: 'beta',
-    owner: '@lorekit/web',
-    tags: ['dashboard', 'copy'],
-  },
   {
     key: 'insights-page',
     description:
@@ -92,25 +57,6 @@ const REGISTRY_INPUT = [
     defaultVariant: 'off',
     owner: '@lorekit/web',
     tags: ['dashboard', 'web', 'rollout'],
-  },
-  {
-    key: 'usage-empty-state-copy',
-    description:
-      'Object-valued flag: the title/CTA copy block shown on the dashboard Usage page for an account with no data yet.',
-    // `type: 'object'` — proves the object-valued path (an arbitrary JSON
-    // structure per variant, not just a primitive) end to end.
-    type: 'object',
-    variants: {
-      default: { title: 'No usage yet', ctaLabel: 'Learn more', ctaHref: '/docs/limits' },
-      playful: {
-        title: "It's quiet in here…",
-        ctaLabel: 'See what counts',
-        ctaHref: '/docs/limits',
-      },
-    },
-    defaultVariant: 'default',
-    owner: '@lorekit/web',
-    tags: ['dashboard', 'copy'],
   },
   {
     key: 'retention-policies',

@@ -422,9 +422,9 @@ export const FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX = 'feature_flag.';
  * "here is the whole set of concurrently active flags" — this uses one
  * DYNAMIC attribute name per flag instead: `feature_flag.<flagKey>` = the
  * variant. Non-standard, but the only representation that doesn't collide,
- * and it is what makes `feature_flag.new-onboarding-flow = "treatment"` a
+ * and it is what makes `feature_flag.example-onboarding-flow = "treatment"` a
  * filterable/groupable dimension on the Web Events / RUM explorer — compare
- * conversion-event rates between `feature_flag.new-onboarding-flow =
+ * conversion-event rates between `feature_flag.example-onboarding-flow =
  * "control"` and `"treatment"` sessions directly.
  *
  * ## What is attached — the VARIANT, never the raw value
