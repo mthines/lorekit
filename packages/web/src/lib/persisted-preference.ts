@@ -35,6 +35,10 @@ export const PREFERENCE_KEYS = {
   explorerInsightsOpen: 'lorekit:explorer-insights-open',
   /** Which body the Lore Explorer's Activity panel shows when expanded. */
   explorerInsightsView: 'lorekit:explorer-insights-view',
+  /** Whether the Lore Explorer's instrument panel (matrix / timeline) is expanded. */
+  explorerInstrumentsOpen: 'lorekit:explorer-instruments-open',
+  /** Which instrument that panel shows. */
+  explorerInstrument: 'lorekit:explorer-instrument',
 } as const;
 
 export type PreferenceKey = (typeof PREFERENCE_KEYS)[keyof typeof PREFERENCE_KEYS];

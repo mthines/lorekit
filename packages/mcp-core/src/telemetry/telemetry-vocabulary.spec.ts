@@ -27,7 +27,7 @@ import {
  * from the agent surface on purpose. A decision recorded only in prose is what
  * a future surface audit re-litigates — it reads as a gap, somebody "fixes" it,
  * and `tools/list` grows five entries every session pays for. Recorded as a
- * guarded field it reads as a decision. So the seven are pinned by name, the
+ * guarded field it reads as a decision. So the eight are pinned by name, the
  * near-miss (`memory.relevant`, which looks like an eighth and is already covered
  * agent-side) is pinned as explicitly NOT one of them, and the prose record is
  * checked to still exist.
@@ -110,6 +110,7 @@ describe('the analytics reads stay REST-only (D17)', () => {
   const RESTONLY_NAMES = [
     'memory.activity',
     'memory.facets',
+    'memory.pivot',
     'memory.read-activity',
     'memory.read-ranking',
     'memory.tags',
@@ -117,11 +118,11 @@ describe('the analytics reads stay REST-only (D17)', () => {
     'memory.usage-runs',
   ];
 
-  it('records exactly these seven as a decision, by name', () => {
+  it('records exactly these eight as a decision, by name', () => {
     expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
-  it('keeps memory.relevant OUT of the seven — it is already covered agent-side', () => {
+  it('keeps memory.relevant OUT of the eight — it is already covered agent-side', () => {
     // The near-miss, and the reason `restOnly` is a separate field rather than
     // "has no MCP tool". `GET /memories/relevant` has no tool of its own, but
     // the CAPABILITY is on the agent surface twice over (`memory.list

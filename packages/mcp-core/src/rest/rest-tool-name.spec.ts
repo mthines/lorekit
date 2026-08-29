@@ -86,6 +86,7 @@ describe('restToolName', () => {
       'memory.activity',
       'memory.facets',
       'memory.list',
+      'memory.pivot',
       'memory.restore',
       'memory.write',
     ]);

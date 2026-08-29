@@ -32,6 +32,9 @@ import {
   TagsResponseSchema,
   ListFacetsQuerySchema,
   FacetsResponseSchema,
+  PivotBodySchema,
+  PivotQuerySchema,
+  PivotResponseSchema,
   ActivityQuerySchema,
   ActivityResponseSchema,
   ListMemoriesBodySchema,
@@ -294,6 +297,33 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { body: { content: { 'application/json': { schema: ListFacetsBodySchema } } } },
     responses: {
       200: { description: 'Facet values', content: { 'application/json': { schema: FacetsResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/pivot',
+    summary: 'Cross-tabulate two filterable dimensions and count the memories in each cell',
+    tags: ['Memories'],
+    description:
+      '`GET /memories/facets` with a second group-by. `row` and `col` name any two of the ' +
+      'facet dimensions (they may be the same, giving that dimension’s diagonal). ' +
+      '**Both axes are self-excluded from the filters**, so a caller that turns a cell into ' +
+      '`row in [x] AND col in [y]` and asks again still gets every other cell back — that ' +
+      'is what keeps a drilled-in grid navigable instead of collapsing to the clicked cell. ' +
+      'A pair counting zero emits no cell. `truncated` reports whether `limit` cut the grid.',
+    security, request: { query: PivotQuerySchema },
+    responses: {
+      200: { description: 'Pivot cells', content: { 'application/json': { schema: PivotResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/pivot',
+    summary: 'Cross-tabulate two dimensions (filters in a JSON body)', tags: ['Memories'],
+    description: 'The same cross-tabulation as `GET /memories/pivot`.' + bodyTransportNote,
+    security, request: { body: { content: { 'application/json': { schema: PivotBodySchema } } } },
+    responses: {
+      200: { description: 'Pivot cells', content: { 'application/json': { schema: PivotResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });

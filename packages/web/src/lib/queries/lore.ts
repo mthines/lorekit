@@ -26,15 +26,22 @@ import {
   listFacetsPostRequest,
   listMemoriesRequest,
   listScopesRequest,
+  pivotPostRequest,
 } from '@/lib/api/memories';
 import { RestApiError } from '@/lib/api/rest';
 import {
   filtersToFacetBody,
+  filtersToPivotBody,
   normalizeFilters,
   type FacetValue,
   type Filter,
 } from '@/lib/filters';
-import type { ListFacetsBody } from '@lorekit/schemas/memory';
+import type {
+  ListFacetsBody,
+  MemoryFacet,
+  PivotBody,
+  PivotResponse,
+} from '@lorekit/schemas/memory';
 
 export interface LoreData {
   scopes: ScopeNode[];
@@ -174,6 +181,62 @@ async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
 // populations, so a catalog pinned to one shows the wrong counts and hides the
 // other's values from their own filter.
 // ---------------------------------------------------------------------------
+
+/**
+ * The Explorer's matrix instrument: how many memories sit at each intersection
+ * of two dimensions.
+ *
+ * The whole filter bar is forwarded, axis dimensions included — the endpoint
+ * self-excludes whichever two the axes name (migration 00090), so the grid
+ * narrows with every OTHER filter while still showing every cell you could move
+ * to. Sending a bar with the axes stripped out would look equivalent and is not:
+ * it would drop a same-dimension filter the user set from the MENU.
+ */
+async function fetchPivot(
+  body: Partial<PivotBody> & Pick<PivotBody, 'row' | 'col'>,
+  signal?: AbortSignal,
+): Promise<PivotResponse> {
+  const token = await requireBrowserToken();
+  return pivotPostRequest(token, body, signal);
+}
+
+export function usePivot(
+  row: MemoryFacet,
+  col: MemoryFacet,
+  options: {
+    enabled?: boolean;
+    showArchived?: boolean;
+    filters?: readonly Filter[];
+    scope?: string | null;
+  } = {},
+) {
+  const { enabled = true, showArchived = false, filters = [], scope = null } = options;
+  // Normalised for the stable-query-key reason `useFacetCatalog` documents.
+  const bar = normalizeFilters(filters as Filter[]);
+  return useQuery<PivotResponse>({
+    queryKey: ['lore-pivot', row, col, showArchived, scope, bar],
+    queryFn: ({ signal }) =>
+      fetchPivot(
+        {
+          row,
+          col,
+          archived: showArchived,
+          ...(scope ? { scope } : {}),
+          ...filtersToPivotBody(bar),
+        },
+        signal,
+      ),
+    // Only fetch while the instrument is actually on screen: this is a second
+    // aggregate over the same rows the list already reads, so a collapsed or
+    // unselected instrument must not pay for it.
+    enabled,
+    // Clicking a cell changes the key. Without this the grid blanks to a
+    // skeleton on every click — losing the very context you clicked FROM, which
+    // is the one thing a drill-down instrument must not do.
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
 
 async function fetchFacets(
   body: Partial<ListFacetsBody>,

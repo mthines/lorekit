@@ -15,7 +15,8 @@ export type FlagKey =
   | 'plan-badge-copy'
   | 'insights-page'
   | 'usage-empty-state-copy'
-  | 'retention-policies';
+  | 'retention-policies'
+  | 'lore-explorer-instruments';
 
 /** Flag key -> its evaluated value type. */
 export interface FlagValueMap {
@@ -26,6 +27,7 @@ export interface FlagValueMap {
   'insights-page': boolean;
   'usage-empty-state-copy': JsonValue;
   'retention-policies': boolean;
+  'lore-explorer-instruments': boolean;
 }
 
 /** The value type `evaluateFlag(key, ...)` resolves to for a given key. */
@@ -39,5 +41,6 @@ export const FLAG_KEYS: readonly FlagKey[] = [
     "plan-badge-copy",
     "insights-page",
     "usage-empty-state-copy",
-    "retention-policies"
+    "retention-policies",
+    "lore-explorer-instruments"
   ];

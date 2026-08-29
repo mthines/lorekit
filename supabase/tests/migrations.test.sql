@@ -8392,6 +8392,124 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §96 — 00090: lorekit_memory_pivot (the two-dimensional facet count)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- §69 pins the ONE-dimensional catalog (lorekit_memory_facets) and its
+-- drill-down self-exclusion. This pins the two-dimensional one, and the single
+-- assertion worth having is PIVOT-3: BOTH axes must be excluded from the
+-- filters, because a matrix counted under its own axes blacks out the moment a
+-- cell is clicked and the instrument has no second click. The rest of the
+-- section holds the pivot to the SAME row-visibility rules the facet catalog
+-- already has, so the two cannot answer differently about the same rows.
+do $$
+declare
+  v_user  uuid := '96000000-0000-0000-0000-000000000001';
+  v_other uuid := '96000000-0000-0000-0000-000000000002';
+  v_count bigint;
+  v_rows  bigint;
+begin
+  insert into auth.users (id) values (v_user), (v_other) on conflict do nothing;
+
+  insert into memories (user_id, scope, key, value, tags, kind, host, origin_repo)
+  values
+    (v_user, 'repo::a/b', 'pivot96-1', 'v', '{x,y}', 'lesson', 'reviewer', 'a/b'),
+    (v_user, 'repo::a/b', 'pivot96-2', 'v', '{x}',   'lesson', 'aw',       'a/b'),
+    (v_user, 'repo::a/b', 'pivot96-3', 'v', '{y}',   'signal', 'reviewer', 'a/b'),
+    (v_user, 'repo::c/d', 'pivot96-4', 'v', '{}',    'signal', 'reviewer', 'c/d'),
+    (v_user, 'repo::c/d', 'pivot96-5', 'v', '{x}',   'lesson', null,       'c/d'),
+    (v_user, 'repo::a/b', 'pivot96-6', 'v', '{x}',   'lesson', 'reviewer', 'a/b'),
+    (v_user, 'repo::a/b', 'pivot96-7', 'v', '{x}',   'lesson', 'reviewer', 'a/b');
+  update memories set archived_at = now() where user_id = v_user and key = 'pivot96-6';
+  update memories set expires_at = now() - interval '1 day' where user_id = v_user and key = 'pivot96-7';
+
+  -- The RPC resolves its actor from the JWT claims (a service_role caller may
+  -- name the user it acts for; anyone else is only ever themselves), so the
+  -- reads below run in the service_role context §94 uses. Seeding stays as the
+  -- session role — `auth.users` is not writable from service_role.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- ── PIVOT-1: the active partition excludes archived AND expired ─────────
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user);
+  assert v_count = 4,
+    '96-PIVOT-1: the active partition must exclude archived and expired rows (expected 4, got ' || v_count || ')';
+
+  -- ── PIVOT-2: a `tag` axis unnests, so a two-label row lands in two cells.
+  --    Matches lorekit_memory_facets' own unnest, which is what makes a matrix
+  --    row total agree with that value's facet count (see PIVOT-10).
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('tag', 'kind', v_user) where row_value = 'x';
+  assert v_count = 3,
+    '96-PIVOT-2: a tag axis must unnest labels (expected x=3, got ' || v_count || ')';
+
+  -- ── PIVOT-3: BOTH axes are self-excluded. THE load-bearing one. ─────────
+  -- `kind` is an axis AND carries a filter; the `signal` cells must survive,
+  -- or clicking a cell empties every other cell and the grid is a dead end.
+  select count(*) into v_rows
+    from lorekit_memory_pivot('kind', 'host', v_user, false, null, 400,
+         null, 'any', null, 'in', null, 'in', array['lesson'], 'in')
+   where row_value = 'signal';
+  assert v_rows > 0,
+    '96-PIVOT-3: an axis must be excluded from its OWN filter, or a drilled-in matrix blacks out';
+
+  -- ── PIVOT-4: a NON-axis filter still narrows ────────────────────────────
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user, false, null, 400,
+         null, 'any', null, 'in', null, 'in', null, 'in', null, 'in',
+         array['c/d'], 'in');
+  assert v_count = 1,
+    '96-PIVOT-4: a filter on a dimension that is NOT an axis must narrow (expected 1, got ' || v_count || ')';
+
+  -- ── PIVOT-5: a null column value yields no cell (as in the facet catalog) ─
+  select count(*) into v_rows
+    from lorekit_memory_pivot('host', 'kind', v_user) where row_value is null;
+  assert v_rows = 0, '96-PIVOT-5: a null column value must yield no cell';
+
+  -- ── PIVOT-6: the archived partition is its own population ───────────────
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user, true);
+  assert v_count = 1,
+    '96-PIVOT-6: archived=true must count only archived rows (expected 1, got ' || v_count || ')';
+
+  -- ── PIVOT-7: p_limit bounds the response ────────────────────────────────
+  select count(*) into v_rows from lorekit_memory_pivot('kind', 'host', v_user, false, null, 1);
+  assert v_rows = 1, '96-PIVOT-7: p_limit must bound the number of cells returned';
+
+  -- ── PIVOT-8: tenant isolation ───────────────────────────────────────────
+  select count(*) into v_rows from lorekit_memory_pivot('kind', 'host', v_other);
+  assert v_rows = 0, '96-PIVOT-8: a different tenant must see none of these rows';
+
+  -- ── PIVOT-9: the calling key's scope allowlist narrows the pivot ────────
+  -- `origin_repo` is a repository name by construction, so an unnarrowed
+  -- pivot would leak exactly what the scope catalog hides (00068/00069).
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user, false, null, 400,
+         null,'any', null,'in', null,'in', null,'in', null,'in',
+         null,'in', null,'in', null,'in', null,'in',
+         array['repo::c/d']);
+  assert v_count = 1,
+    '96-PIVOT-9: p_key_scopes must narrow the pivot (expected 1, got ' || v_count || ')';
+
+  -- ── PIVOT-10: agreement with the one-dimensional catalog ────────────────
+  -- The pivot is the facet count with a second group-by, so summing one axis
+  -- must reproduce that value's facet count exactly. This is the assertion
+  -- that stops the two drifting into a second implementation of one question.
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('host', 'kind', v_user) where row_value = 'reviewer';
+  select count into v_rows
+    from lorekit_memory_facets(v_user) where facet = 'host' and value = 'reviewer';
+  assert v_count = v_rows,
+    '96-PIVOT-10: a pivot axis total must equal that value''s facet count (pivot ' || v_count
+      || ' vs facets ' || v_rows || ')';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

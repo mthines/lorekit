@@ -182,6 +182,7 @@ const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]>
   ['list.ts', 'respondWithPage', 'parseScopeFilter'],
   ['activity.ts', 'runActivity', 'parseScopeFilter'],
   ['facets.ts', 'runFacets', 'parseScopeFilter'],
+  ['pivot.ts', 'runPivot', 'parseScopeFilter'],
   ['remove.ts', 'handleRemove', 'parseScopeFilter'],
   ['restore.ts', 'handleRestore', 'parseScopeFilter'],
   // The one that was already correct, and the one that must NOT move to

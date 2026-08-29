@@ -211,6 +211,55 @@ function tagsFrom(rows: MemoryRow[], archived: boolean) {
  * Derived from the same `MEMORY_ROWS` as every other handler, so a fixture
  * added above appears in the filter menu without a second place to update.
  */
+/**
+ * The values a row carries for one facet — the mock's counterpart to
+ * `lorekit_memory_facet_value` (migration 00090): one value for a scalar
+ * dimension, one per label for `tag`, none when the column is null.
+ */
+function facetValues(r: MemoryRow, facet: string): string[] {
+  if (facet === 'tag') return r.tags.map((t) => String(t).trim()).filter(Boolean);
+  const raw: Record<string, unknown> = {
+    source_agent: r.source_agent,
+    trigger: r.trigger,
+    kind: r.kind,
+    host: r.host,
+    origin_repo: r.origin_repo,
+    origin_branch: r.origin_branch,
+    origin_pr: r.origin_pr,
+    owner: 'personal',
+  };
+  const v = raw[facet];
+  if (v === null || v === undefined) return [];
+  const text = String(v).trim();
+  return text ? [text] : [];
+}
+
+/**
+ * `POST /memories/pivot`, mocked.
+ *
+ * Deliberately does NOT apply the request's dimension filters: the real endpoint
+ * self-excludes both axes, and the stories drive the grid through the axis
+ * selects rather than the filter bar. A half-implemented filter here would agree
+ * with itself and with nothing else.
+ */
+function pivotFrom(rows: MemoryRow[], row: string, col: string, archived: boolean) {
+  const counts = new Map<string, number>();
+  for (const r of activeRows(rows, archived)) {
+    for (const rowValue of facetValues(r, row)) {
+      for (const colValue of facetValues(r, col)) {
+        const cellKey = `${rowValue}\u0000${colValue}`;
+        counts.set(cellKey, (counts.get(cellKey) ?? 0) + 1);
+      }
+    }
+  }
+  return [...counts.entries()]
+    .map(([cellKey, count]) => {
+      const [rowValue = '', colValue = ''] = cellKey.split('\u0000');
+      return { row: rowValue, col: colValue, count };
+    })
+    .sort((a, b) => b.count - a.count || a.row.localeCompare(b.row) || a.col.localeCompare(b.col));
+}
+
 function facetsFrom(rows: MemoryRow[], archived: boolean) {
   const counts = new Map<string, number>();
   const bump = (facet: string, value: string | number | null) => {
@@ -505,6 +554,17 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
       const all = facetsFrom(rows, body.archived === true);
       return HttpResponse.json({
         facets: only.length ? all.filter((f) => only.includes(f.facet)) : all,
+      });
+    }),
+    http.post('*/functions/v1/memories/pivot', async ({ request }) => {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const row = String(body.row ?? 'host');
+      const col = String(body.col ?? 'kind');
+      return HttpResponse.json({
+        row,
+        col,
+        cells: pivotFrom(rows, row, col, body.archived === true),
+        truncated: false,
       });
     }),
     http.post('*/functions/v1/memories/activity', async ({ request }) => {

@@ -12,6 +12,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | /list | list.ts | read |
 | POST | /facets | facets.ts | read |
 | POST | /activity | activity.ts | read |
+| POST | /pivot | pivot.ts | read |
 | POST | /search | search.ts | read |
 | POST | /restore | restore.ts | write |
 | POST | /purge | purge.ts | write |
@@ -20,6 +21,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | /tags | tags.ts | read |
 | GET | /facets | facets.ts | read |
 | GET | /activity | activity.ts | read |
+| GET | /pivot | pivot.ts | read |
 | GET | /read-activity | read-activity.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
@@ -30,11 +32,11 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
 `/list`, `/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`,
-`/activity` and `/read-activity` all collide with `/:id`.
+`/pivot`, `/activity` and `/read-activity` all collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
 
-**A POST here does not imply a write.** `POST /list`, `POST /facets`, `POST /activity` and
+**A POST here does not imply a write.** `POST /list`, `POST /facets`, `POST /pivot`, `POST /activity` and
 `POST /search` are all `requires: 'read'` and none of them records an audit event — the verb
 says "the request does not fit in a URL", not "this changes something". `audit-coverage.spec.ts`
 pins that exact list, so a fifth read-only POST is a deliberate edit rather than a silent one.
