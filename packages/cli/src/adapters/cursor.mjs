@@ -28,7 +28,7 @@ export const cursor = {
       cwd:
         input.cwd ||
         (Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : null),
-      sessionId: input.generation_id || input.conversation_id || null,
+      sessionId: input.conversation_id || input.generation_id || null,
       toolName: 'command',
       toolResponse: null,
       event: input.hook_event_name || null,
