@@ -31,8 +31,11 @@ describe('evaluateFlag', () => {
   });
 
   it('resolves the same flag identically across calls (no per-call state)', async () => {
-    const a = await evaluateFlag('retention-policies', { targetingKey: 'user-1' });
-    const b = await evaluateFlag('retention-policies', { targetingKey: 'user-1' });
+    // `retention-policies` is a static flag (no `experiment` in registry.ts), so
+    // a targetingKey is inert here — omitted deliberately, so this test can't be
+    // misread as exercising bucketing. That path belongs to provider.spec.ts.
+    const a = await evaluateFlag('retention-policies');
+    const b = await evaluateFlag('retention-policies');
     expect(a).toBe(b);
     expect(typeof a).toBe('boolean');
   });
