@@ -111,7 +111,7 @@ Here's the part I'm actually unsure about, and want dialogue on.
 
 Every agent tool is quietly reinventing this shape — some file of remembered facts, addressed somehow, with some idea of freshness and recurrence. We're all solving the same small problem in mutually incompatible ways, so lore is trapped in whatever tool wrote it.
 
-I spend my days working with OpenTelemetry, so I've watched this exact movie before. Telemetry used to be locked inside whatever agent emitted it, until a shared shape — spans, attributes, one wire format — let any tool read any other tool's data. Nobody had to win; they just had to agree on the shape. That's where the instinct here comes from: not one winning memory product, but one shape everyone can write to.
+I work with OpenTelemetry every day at [Dash0](https://www.dash0.com), so I've watched this exact movie before. Telemetry used to be locked inside whatever agent emitted it, until a shared shape — spans, attributes, one wire format — let any tool read any other tool's data. Nobody had to win; they just had to agree on the shape. That's where the instinct here comes from: not one winning memory product, but one shape everyone can write to.
 
 The part worth agreeing on, I think, isn't the storage engine or the ranking algorithm — those should vary freely. It's the **two things that make lore portable**: a **record shape** (`scope`, `key`, `value`, plus `tags`, `ttl`, provenance) and a **scope grammar** (`global` / `project::…` / `repo::…` / `branch::…`) that addresses a lesson the same way regardless of which agent wrote it. Get those shared, and a lesson your CI agent learns is one your editor agent can read — across tools, over MCP, without an import step.
 
