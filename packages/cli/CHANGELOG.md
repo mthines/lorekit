@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.59.1](https://github.com/mthines/lorekit/compare/cli-v1.59.0...cli-v1.59.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **cli:** prefer Cursor's conversation_id over generation_id for session grouping ([d7a50da](https://github.com/mthines/lorekit/commit/d7a50dad22aa52233f5445a69d1672838a8a3795))
+* **insights:** unblock Hot & cold lore and Runs; drop the demo feature flags ([5d8feeb](https://github.com/mthines/lorekit/commit/5d8feebe13cf8f6f707665c302342e0bbc28dce3))
+
 ## [1.59.0](https://github.com/mthines/lorekit/compare/cli-v1.58.0...cli-v1.59.0) (2026-08-28)
 
 
