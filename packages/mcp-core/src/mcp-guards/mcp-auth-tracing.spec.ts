@@ -8,13 +8,17 @@ import path from 'node:path';
  * (`supabase/functions/mcp/auth.ts`) — the `tenant-scope-usage.spec.ts`
  * pattern, because the Deno edge tree has no test harness of its own.
  *
- * Three properties, none of which anything else in the suite can see:
+ * Four properties, none of which anything else in the suite can see:
  *
- * 1. AUTH RESOLUTION IS TIMED. Two of the three tiers make a network round-trip
- *    (an `api_tokens` select for `lk_*`, a GoTrue call for a JWT) and neither
- *    emitted a span, so the cost was unattributable wall clock inside the
- *    request span. Absent telemetry is not a wrong value, so no assertion
- *    anywhere else goes red when it disappears again.
+ * 1. AUTH RESOLUTION IS TIMED. Both network-round-trip tiers — an `api_tokens`
+ *    select for `lk_*`, a GoTrue `auth.getUser()` call for a JWT — now emit
+ *    their own CLIENT span. The GoTrue call was the last unattributed one: its
+ *    latency used to fold into the parent span's undifferentiated self time,
+ *    indistinguishable from CPU-bound auth work, which is what made a p95
+ *    latency spike on the JWT tier unattributable (`api — elevated p95
+ *    latency`, `dash0.issue.identifier` 16742799362499951900). Absent
+ *    telemetry is not a wrong value, so no assertion anywhere else goes red
+ *    when it disappears again.
  *
  * 2. THE SPAN IS ENDED ON EVERY PATH. The tier logic has six return paths. An
  *    `.end()` per path is one refactor away from being dropped on exactly the
@@ -25,6 +29,10 @@ import path from 'node:path';
  *    (`buildSql` over `eq()` arguments), and the filter on this query is the
  *    token hash — the stored credential. This is the security half of the
  *    guard: it must stay a hand-rolled span over the raw client.
+ *
+ * 4. THE GOTRUE CALL'S SPAN CARRIES NO CLAIM OR TOKEN DATA. Only a boolean
+ *    `db.success` — never the JWT, the resolved user id, or the raw error
+ *    message (which could echo caller-supplied input).
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // packages/mcp-core/src/mcp-guards
@@ -109,5 +117,22 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
     // timing must not quietly relocate them onto the new child.
     expect(executable).toMatch(/span\?\.setAttributes\(\{\s*'auth\.outcome': 'api_key_valid'/);
     expect(executable).toMatch(/span\?\.setAttributes\(\{\s*'auth\.outcome': 'missing_token'/);
+  });
+
+  it('emits a CLIENT span for the GoTrue auth.getUser() call', () => {
+    expect(executable).toMatch(/authSpan\?\.child\(\s*'lorekit\.auth\.supabase_get_user'/);
+  });
+
+  it('ends the GoTrue span in a finally, so a rejected call still exports it', () => {
+    expect(executable).toMatch(/finally\s*\{\s*getUserSpan\?\.setAttributes\([^)]*\)\.end\(\);\s*\}/);
+  });
+
+  it('records db.success on the GoTrue span, never the JWT or the resolved user', () => {
+    expect(executable).toMatch(/getUserSpan\?\.setAttributes\(\{\s*'db\.success':\s*!error\s*&&\s*!!data\.user\s*\}\)/);
+  });
+
+  it('marks the GoTrue span errored on rejection with a bounded value, never the free-form message', () => {
+    expect(executable).toMatch(/getUserSpan\?\.error\(\(err as Error\)\.name\)/);
+    expect(executable).not.toMatch(/getUserSpan\?\.error\([^;]*\.message/);
   });
 });
