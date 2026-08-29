@@ -5,8 +5,11 @@
 # (the composite action). The composite owns the pull → build → deploy → alias
 # sequence; THIS workflow owns everything around it that only makes sense for a
 # PR preview: the fork-secret guard, the incremental "is a redeploy needed?"
-# decision, checking out the PR head, and the sticky status comment. A composite
-# action cannot express that — it has no `jobs:` — so it lives here.
+# decision, checking out the PR head, and the sticky status comment — posted on
+# a successful deploy AND on a failed one (e.g. a deployment Vercel BLOCKED
+# because the commit author's email isn't matched to a GitHub account), so a
+# block is visible on the PR instead of a silent hang. A composite action cannot
+# express that — it has no `jobs:` — so it lives here.
 #
 # Callers:
 #   - ci.yml               → on every PR push, force: false (quota-friendly)
@@ -90,6 +93,11 @@ jobs:
   deploy:
     name: Deploy Vercel preview
     runs-on: ubuntu-latest
+    # Backstop above the composite's own `vercel deploy` timeout (15m) plus
+    # install + build, so even a hang OUTSIDE the deploy step can't run to the
+    # 6-hour job default. The deploy-command timeout fires first, so the failure
+    # comment step below still gets to run.
+    timeout-minutes: 30
     # Serialize every preview for this PR — CI's automatic deploy and a manual
     # `/web-preview` must not race, or two `vercel alias set` calls can leave the
     # stable pr-<n> alias pointing at the older of the two deployments.
@@ -292,12 +300,69 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
 
-      # One line in the run summary either way, so an agent or human reading the
-      # job knows what it decided without opening the step logs.
+      # The deploy was decided AND attempted, but the composite action failed —
+      # e.g. Vercel BLOCKED the deployment (commit author's email not matched to
+      # a GitHub account) and `vercel deploy` hit the timeout. Without this, the
+      # only signal was a red (non-blocking) job most people never open. Post the
+      # captured reason to the PR so the failure is visible where the work is.
+      #
+      # Reuses the same sticky marker as the success comment so a previously-green
+      # preview flips to "❌ Failed" in place rather than stacking — but writes NO
+      # `sha=` in the marker, on purpose: the "Decide" step keys its incremental
+      # skip off that sha, so omitting it makes the next web push RE-ATTEMPT the
+      # deploy instead of treating this failed commit as already deployed.
+      - name: Comment on preview failure
+        if: failure() && steps.preview.outcome == 'failure'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_SHA: ${{ inputs.head-sha }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const sha = process.env.PR_SHA.slice(0, 7);
+            const findMarker = '<!-- lorekit-web-preview';
+            const markerLine = '<!-- lorekit-web-preview -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let reason = '';
+            try {
+              reason = fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/vercel-deploy-error.txt`, 'utf8').trim();
+            } catch { /* no reason file — fall back to a generic message */ }
+            const detail = reason || 'The Vercel deployment did not complete. See the workflow logs for the CLI output.';
+            const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
+            const body = [
+              markerLine,
+              'The dashboard preview for this PR — redeployed on each push that changes the web app.',
+              '',
+              '| Name | Status | Preview | Deployment (this commit) | Updated (UTC) |',
+              '| :--- | :----- | :------ | :----------------------- | :------------ |',
+              `| **lorekit** | ❌ Failed | — | \`${sha}\` | ${updated} |`,
+              '',
+              '> [!WARNING]',
+              '> **The preview deploy for this commit failed — no preview is available.**',
+              '>',
+              ...detail.split('\n').map((l) => `> ${l}`),
+              '',
+              `<sub>A blocked deployment is most often the commit author's email not matching a GitHub account with project access. Fix the cause, then push again or comment \`/web-preview\` to retry. · [Workflow logs](${runUrl})</sub>`,
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find((c) => c.body?.includes(findMarker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      # One line in the run summary for every outcome — deployed, failed, or
+      # skipped — so an agent or human reading the job knows what happened without
+      # opening the step logs.
       - name: Summarize the outcome
         if: always()
         env:
-          DEPLOYED: ${{ steps.gate.outputs.deploy }}
+          DECIDED: ${{ steps.gate.outputs.deploy }}
+          OUTCOME: ${{ steps.preview.outcome }}
           REASON: ${{ steps.gate.outputs.reason }}
           URL: ${{ steps.preview.outputs.url }}
           ALIAS: ${{ steps.preview.outputs.alias-url }}
@@ -307,10 +372,18 @@ jobs:
           {
             echo "### Web preview"
             echo ""
-            if [ "$DEPLOYED" = "true" ]; then
+            if [ "$DECIDED" = "true" ] && [ "$OUTCOME" = "success" ]; then
               echo "Deployed \`${PR_SHA:0:7}\`."
               [ -n "$ALIAS" ] && echo "- Preview (stable): $ALIAS"
               [ -n "$URL" ] && echo "- Deployment (this commit): $URL"
+            elif [ "$DECIDED" = "true" ]; then
+              echo "❌ Deploy FAILED for \`${PR_SHA:0:7}\` — a status comment was posted on the PR."
+              if [ -f "${GITHUB_WORKSPACE}/vercel-deploy-error.txt" ]; then
+                echo ""
+                echo '```text'
+                cat "${GITHUB_WORKSPACE}/vercel-deploy-error.txt"
+                echo '```'
+              fi
             else
               echo "No deployment this run — ${REASON:-no reason recorded}."
             fi
