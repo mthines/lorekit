@@ -48,6 +48,9 @@ import {
   usePolicies,
   useUpdatePolicy,
 } from '@/lib/queries/groom';
+// Shared with the Explorer's retention-preview control (`lib/retention-filter.ts`)
+// so the same example numbers appear wherever these three fields do.
+import { RETENTION_CONDITION_PLACEHOLDERS } from '@/lib/retention-filter';
 
 const LABEL_CLASS = 'text-xs font-medium text-[var(--color-content-secondary)]';
 const INPUT_CLASS =
@@ -364,21 +367,25 @@ function PolicyForm({
             id={minAgeId}
             type="number"
             min={1}
+            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.minAgeDays)}
             className={INPUT_CLASS}
             value={conditions.minAgeDays}
             onChange={(e) => setConditions((c) => ({ ...c, minAgeDays: e.target.value }))}
           />
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">Created at least this long ago</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={unseenId} className={LABEL_CLASS}>Unseen for (days)</label>
+          <label htmlFor={unseenId} className={LABEL_CLASS}>Not seen in (days)</label>
           <input
             id={unseenId}
             type="number"
             min={1}
+            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.unseenDays)}
             className={INPUT_CLASS}
             value={conditions.unseenDays}
             onChange={(e) => setConditions((c) => ({ ...c, unseenDays: e.target.value }))}
           />
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">Not opened in at least this many days</p>
         </div>
         <div className="flex flex-col gap-1.5">
           <label htmlFor={maxSeenId} className={LABEL_CLASS}>Seen at most (times)</label>
@@ -386,10 +393,12 @@ function PolicyForm({
             id={maxSeenId}
             type="number"
             min={0}
+            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.maxSeenCount)}
             className={INPUT_CLASS}
             value={conditions.maxSeenCount}
             onChange={(e) => setConditions((c) => ({ ...c, maxSeenCount: e.target.value }))}
           />
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">Recurred this many times or fewer</p>
         </div>
       </div>
 

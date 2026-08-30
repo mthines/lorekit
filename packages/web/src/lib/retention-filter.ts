@@ -47,6 +47,21 @@ export const RETENTION_CONDITION_BOUNDS = {
 export const NO_RETENTION_CONDITIONS: RetentionConditions = {};
 
 /**
+ * Example values shown as INPUT PLACEHOLDERS, never applied as a filter on
+ * their own — a blank field still means "not narrowed" (see
+ * {@link normalizeRetentionConditions}). They exist purely so a reader who has
+ * never used the three fields sees a concrete, sensible example of what to
+ * type rather than an unlabelled blank box: a week-old lesson nobody has
+ * opened in three months and has recurred at most once is the shape of lore
+ * this feature is typically built to catch.
+ */
+export const RETENTION_CONDITION_PLACEHOLDERS = {
+  minAgeDays: 7,
+  unseenDays: 90,
+  maxSeenCount: 1,
+} as const;
+
+/**
  * Parse one field: an in-bounds integer, or `undefined` for anything else — never `NaN`
  * out. Exported so the control's own per-keystroke `setField` enforces the exact same
  * range this module's `normalizeRetentionConditions` does, rather than a looser

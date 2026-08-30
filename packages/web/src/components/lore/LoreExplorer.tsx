@@ -44,6 +44,9 @@
  *   retention policy matches on. Narrows the list to what a policy with these
  *   conditions would catch, so a reader can verify before ever saving one.
  *   Server-side (migration 00090), shareable, absent means no narrowing.
+ *   Resolves to no conditions while the `retention-policies` flag is off —
+ *   the whole feature is gated together with its Settings → Retention
+ *   Policies destination, which 404s while the flag is off.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
  *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
@@ -60,7 +63,8 @@
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Loader2, Archive } from 'lucide-react';
+import { Search, Loader2 } from 'lucide-react';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
@@ -171,6 +175,7 @@ function ControlRow({
   dateActive,
   status,
   onStatusChange,
+  retentionEnabled,
   retentionConditions,
   retentionPanelOpen,
   onToggleRetentionPanel,
@@ -191,6 +196,10 @@ function ControlRow({
   dateActive?: boolean;
   status: MemoryStatus;
   onStatusChange: (status: MemoryStatus) => void;
+  /** Behind the `retention-policies` flag — its destination (Settings →
+   *  Retention Policies) 404s while the flag is off, so the entry point stays
+   *  hidden alongside it rather than dead-ending. */
+  retentionEnabled: boolean;
   retentionConditions: RetentionConditions;
   retentionPanelOpen: boolean;
   onToggleRetentionPanel: () => void;
@@ -221,11 +230,13 @@ function ControlRow({
         onEditField={onEditField}
         variant={variant}
       />
-      <RetentionConditionsTrigger
-        conditions={retentionConditions}
-        open={retentionPanelOpen}
-        onToggle={onToggleRetentionPanel}
-      />
+      {retentionEnabled && (
+        <RetentionConditionsTrigger
+          conditions={retentionConditions}
+          open={retentionPanelOpen}
+          onToggle={onToggleRetentionPanel}
+        />
+      )}
       <DateRangePicker
         value={range}
         onChange={onRangeChange}
@@ -416,18 +427,28 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Ephemeral — a request, not state worth sharing, so never in the URL.
   const [editingField, setEditingField] = useState<FilterField | null>(null);
 
+  // Settings → Retention Policies (`/settings/grooming`) is gated behind this
+  // flag and 404s while it is off — the SAME check `SettingsNav.tsx` and the
+  // page's own `notFound()` use. The Explorer's whole retention-preview
+  // feature stays behind it too, so the entry point can never dead-end at a
+  // 404 for a reader who does not have it enabled.
+  const retentionPoliciesEnabled = useFeatureFlag('retention-policies');
+
   // URL-backed retention-preview trio (`lib/retention-filter.ts`) — narrows the
   // list to what a retention policy with these conditions would catch. `null`
   // is the default (no narrowing); `useUrlState` drops the param entirely once
-  // the last condition is cleared (`retentionConditionsParamValue`).
+  // the last condition is cleared (`retentionConditionsParamValue`). Resolves
+  // to NO conditions while the flag is off, so a stale `?retention=` from
+  // before the flag was disabled (or a link shared by someone who has it)
+  // cannot silently narrow the list for a reader with no way to see or clear it.
   const [rawRetention, setRawRetention] = useUrlState<RetentionConditions | null>(
     'retention',
     null,
     { cleanOnPathname: '/lore', navigationMode: 'push' },
   );
   const retentionConditions = useMemo(
-    () => normalizeRetentionConditions(rawRetention),
-    [rawRetention],
+    () => (retentionPoliciesEnabled ? normalizeRetentionConditions(rawRetention) : {}),
+    [rawRetention, retentionPoliciesEnabled],
   );
   const setRetentionConditions = useCallback(
     (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
@@ -853,16 +874,18 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
+          retentionEnabled={retentionPoliciesEnabled}
           retentionConditions={retentionConditions}
           retentionPanelOpen={retentionPanelOpen}
           onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
 
-        {retentionPanelOpen && (
+        {retentionPoliciesEnabled && retentionPanelOpen && (
           <RetentionConditionsPanel
             conditions={retentionConditions}
             onChange={setRetentionConditions}
             onClose={() => setRetentionPanelOpen(false)}
+            onCreatePolicy={handleCreatePolicy}
           />
         )}
 
@@ -873,22 +896,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onClearAll={handleClearFilters}
           onEditField={setEditingField}
         />
-
-        {hasRetentionConditions(retentionConditions) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2">
-            <p className="text-xs text-[var(--color-content-secondary)]">
-              Showing lessons a retention policy with these conditions would catch.
-            </p>
-            <button
-              type="button"
-              onClick={handleCreatePolicy}
-              className="flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90"
-            >
-              <Archive className="size-3.5" aria-hidden />
-              Create retention policy
-            </button>
-          </div>
-        )}
 
         <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
       </div>
@@ -911,17 +918,19 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
+          retentionEnabled={retentionPoliciesEnabled}
           retentionConditions={retentionConditions}
           retentionPanelOpen={retentionPanelOpen}
           onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
 
-        {retentionPanelOpen && (
+        {retentionPoliciesEnabled && retentionPanelOpen && (
           <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
             <RetentionConditionsPanel
               conditions={retentionConditions}
               onChange={setRetentionConditions}
               onClose={() => setRetentionPanelOpen(false)}
+              onCreatePolicy={handleCreatePolicy}
             />
           </div>
         )}
@@ -935,22 +944,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onEditField={setEditingField}
           />
         </div>
-
-        {hasRetentionConditions(retentionConditions) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2">
-            <p className="text-xs text-[var(--color-content-secondary)]">
-              Showing lessons a retention policy with these conditions would catch.
-            </p>
-            <button
-              type="button"
-              onClick={handleCreatePolicy}
-              className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90"
-            >
-              <Archive className="size-3.5" aria-hidden />
-              Create retention policy
-            </button>
-          </div>
-        )}
 
         <div>{renderResults()}</div>
       </div>
