@@ -59,7 +59,7 @@ export const AddSaveAndRun: Story = {
 
     await step('Add opens the dialog', async () => {
       await userEvent.click(await canvas.findByRole('button', { name: /add policy/i }));
-      await expect(await canvas.findByText(/new grooming policy/i)).toBeInTheDocument();
+      await expect(await canvas.findByText(/new retention policy/i)).toBeInTheDocument();
     });
 
     await step('the scope combobox accepts a creatable value + preview updates', async () => {
@@ -84,7 +84,7 @@ export const AddSaveAndRun: Story = {
       await userEvent.click(canvas.getByRole('button', { name: /save policy/i }));
       await waitFor(
         async () => {
-          await expect(canvas.queryByText(/new grooming policy/i)).not.toBeInTheDocument();
+          await expect(canvas.queryByText(/new retention policy/i)).not.toBeInTheDocument();
         },
         { timeout: 3000 },
       );

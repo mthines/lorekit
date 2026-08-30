@@ -89,7 +89,7 @@ export const DialogOpen: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByRole('button', { name: /add policy/i }));
     await waitFor(async () => {
-      await within(document.body).findByText(/new grooming policy/i);
+      await within(document.body).findByText(/new retention policy/i);
     });
   },
 };
