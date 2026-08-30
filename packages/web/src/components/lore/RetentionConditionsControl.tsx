@@ -22,6 +22,8 @@ import { useId } from 'react';
 import { Clock, X } from 'lucide-react';
 import {
   hasRetentionConditions,
+  parseCondition,
+  RETENTION_CONDITION_BOUNDS,
   retentionConditionsCount,
   retentionConditionsPhrase,
   type RetentionConditions,
@@ -91,8 +93,12 @@ export function RetentionConditionsPanel({
       onChange(rest);
       return;
     }
-    const n = Number(trimmed);
-    if (Number.isInteger(n) && n >= 0) onChange({ ...conditions, [field]: n });
+    // Same per-field bounds `normalizeRetentionConditions` enforces (min 1 for
+    // age/unseen, min 0 for seen-count) — checking only `n >= 0` here let an
+    // out-of-range value pass this guard and then silently revert to blank on
+    // the next render, since normalization would drop it right back out.
+    const n = parseCondition(trimmed, RETENTION_CONDITION_BOUNDS[field]);
+    if (n !== undefined) onChange({ ...conditions, [field]: n });
   }
 
   return (

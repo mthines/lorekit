@@ -19,14 +19,27 @@
 -- migration adds a second SQL caller of the same rule rather than changing it.
 --
 -- Purely ADDITIVE: three new trailing parameters, all defaulting to `null`
--- ("not filtered"), so `create or replace` changes no existing caller's
--- behaviour — the CLI, the MCP surface, and every caller that does not pass
--- them see the exact same rows as before. Callers use PostgREST's named-
--- argument RPC form (a JSON object, not a positional call), so appending
--- parameters at the END of the signature — rather than inserting them in
--- reading order — needs no renumbering of any `$N` placeholder already in the
--- function body; the three new placeholders are likewise appended to the end
--- of the `using (...)` list.
+-- ("not filtered"), so behaviour is unchanged for every existing caller —
+-- the CLI, the MCP surface, and every caller that does not pass them see the
+-- exact same rows as before. Callers use PostgREST's named-argument RPC form
+-- (a JSON object, not a positional call), so appending parameters at the END
+-- of the signature — rather than inserting them in reading order — needs no
+-- renumbering of any `$N` placeholder already in the function body; the
+-- three new placeholders are likewise appended to the end of the
+-- `using (...)` list.
+--
+-- `create or replace` only replaces a function with the SAME argument list;
+-- it cannot change a signature. The existing 35-arg overload (00069) has to
+-- be dropped first, or it and this new 38-arg one coexist as two overloads —
+-- PostgREST's named-argument RPC form then can't pick one and every call
+-- through `lorekit_memory_list` becomes ambiguous.
+drop function if exists lorekit_memory_list(
+  uuid, boolean, text, text, text, text, timestamptz, timestamptz, timestamptz,
+  timestamptz, text[], text, text[], text, text[], text, text[], text, text[],
+  text, text[], text, text[], text, text[], text, text[], text, text,
+  timestamptz, uuid, integer, text[], text, uuid[]
+);
+
 create or replace function lorekit_memory_list(
   p_user_id              uuid,
   p_archived             boolean     default false,

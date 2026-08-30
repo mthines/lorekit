@@ -31,8 +31,13 @@ export interface RetentionConditions {
   maxSeenCount?: number;
 }
 
-/** The bounds each condition accepts — mirrors `GroomConditionsSchema` exactly. */
-const BOUNDS = {
+/**
+ * The bounds each condition accepts — mirrors `GroomConditionsSchema` exactly.
+ * Exported so the impure shell (`RetentionConditionsControl`) can enforce the
+ * SAME per-field range while the user is typing, rather than re-deriving it
+ * and drifting from what `normalizeRetentionConditions` accepts.
+ */
+export const RETENTION_CONDITION_BOUNDS = {
   minAgeDays: { min: 1, max: 3650 },
   unseenDays: { min: 1, max: 3650 },
   maxSeenCount: { min: 0, max: 100_000 },
@@ -41,8 +46,13 @@ const BOUNDS = {
 /** An empty condition set — nothing narrowed. Module-scoped for reference stability. */
 export const NO_RETENTION_CONDITIONS: RetentionConditions = {};
 
-/** Parse one field: an in-bounds integer, or `undefined` for anything else — never `NaN` out. */
-function parseCondition(raw: unknown, bounds: { min: number; max: number }): number | undefined {
+/**
+ * Parse one field: an in-bounds integer, or `undefined` for anything else — never `NaN`
+ * out. Exported so the control's own per-keystroke `setField` enforces the exact same
+ * range this module's `normalizeRetentionConditions` does, rather than a looser
+ * `n >= 0` check that silently reverts an out-of-range value on the next render.
+ */
+export function parseCondition(raw: unknown, bounds: { min: number; max: number }): number | undefined {
   const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
   if (!Number.isInteger(n) || n < bounds.min || n > bounds.max) return undefined;
   return n;
@@ -58,11 +68,11 @@ export function normalizeRetentionConditions(raw: unknown): RetentionConditions 
   const { minAgeDays, unseenDays, maxSeenCount } = raw as Record<string, unknown>;
 
   const out: RetentionConditions = {};
-  const min = parseCondition(minAgeDays, BOUNDS.minAgeDays);
+  const min = parseCondition(minAgeDays, RETENTION_CONDITION_BOUNDS.minAgeDays);
   if (min !== undefined) out.minAgeDays = min;
-  const unseen = parseCondition(unseenDays, BOUNDS.unseenDays);
+  const unseen = parseCondition(unseenDays, RETENTION_CONDITION_BOUNDS.unseenDays);
   if (unseen !== undefined) out.unseenDays = unseen;
-  const maxSeen = parseCondition(maxSeenCount, BOUNDS.maxSeenCount);
+  const maxSeen = parseCondition(maxSeenCount, RETENTION_CONDITION_BOUNDS.maxSeenCount);
   if (maxSeen !== undefined) out.maxSeenCount = maxSeen;
   return out;
 }

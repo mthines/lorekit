@@ -28,6 +28,12 @@ const meta: Meta<typeof GroomingRuleBuilder> = {
     chromatic: { disableSnapshot: true },
     layout: 'padded',
     msw: { handlers: [...groomHandlers(), ...memoryHandlers()] },
+    // The component reads `useRouter`/`useSearchParams` to consume the
+    // one-shot `?prefillScope=…` handoff from the Lore Explorer.
+    // `appDirectory: true` mounts `@storybook/nextjs-vite`'s App Router
+    // context so those hooks resolve instead of throwing "expected app
+    // router to be mounted".
+    nextjs: { appDirectory: true },
   },
   decorators: [withQueryClient],
 };
