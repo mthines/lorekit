@@ -1,14 +1,17 @@
+import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
-import { recordAudit } from '../../_shared/audit.ts';
-import { ok, notFound, dryRun } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
+import { badRequest, ok, notFound, dryRun, forbidden } from '../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateBody, validateUuid } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { RestoreMemoryBodySchema } from '../../_shared/schemas/memory.ts';
+import { parseScopeFilter } from '../../_shared/scope/scope.ts';
+import { translateDbError } from '../../_shared/api/errors.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -31,7 +34,7 @@ type MemoryRow = Tables<'memories'>;
  * 404, never `{ restored: false }`.
  *
  * Audits `memory.restore` through the one shared edge writer
- * (`_shared/audit.ts`), with toolRestore's exact resourceType/target/metadata
+ * (`_shared/audit/audit.ts`), with toolRestore's exact resourceType/target/metadata
  * shape, and only when a row was actually restored.
  */
 export async function handleRestore(
@@ -41,33 +44,86 @@ export async function handleRestore(
   const tracedDb = createTracedClient(db, span);
   span.setAttributes({ 'lorekit.operation': 'memories.restore' });
 
-  let q: TracedQuery<MemoryRow> = tracedDb
-    .from<MemoryRow>('memories')
-    .update({ archived_at: null }, { count: 'exact' })
-    .not('archived_at', 'is', null);
-
-  if (params.id) {
-    const v = validateUuid(params.id, cors);
-    if (!v.ok) return v.response;
-    span.setAttributes({ 'lorekit.memory_id': v.data });
-    q = q.eq('id', v.data);
-  } else {
+  // The scope+key (body) form routes through the restore_memory RPC (00072), so
+  // a scoped key restores any writer's row within its allowlist — symmetric with
+  // memory.delete / memory.archive — and `existed` distinguishes 403 (present,
+  // not this token's to restore) from 404. The `/:id` form has no scope+key for
+  // the RPC's natural key, so it stays a direct own-row update below.
+  if (!params.id) {
     const validated = await validateBody(req, RestoreMemoryBodySchema, cors);
     if (!validated.ok) return validated.response;
-    const { scope, key } = validated.data;
+    const { scope: rawScope, key } = validated.data;
+    // Natural-key restore addresses a row by scope+key, so the same rule as
+    // DELETE applies: an ungrammatical scope must be named as bad input, not
+    // reported back as "no such memory".
+    // `RestoreMemoryBodySchema.scope` is required, so `parseScopeFilter` — whose
+    // signature is `undefined` in, `undefined` out — cannot return undefined
+    // here. Narrow once at the assignment rather than asserting at each use.
+    let scope: string;
+    try {
+      scope = parseScopeFilter(rawScope) as string;
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
     span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
-    q = q.eq('scope', scope).eq('key', key);
+    const denied = firstDeniedScope(auth, [scope]);
+    if (denied !== null) {
+      span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+      return forbidden(
+        `This token is not allowed to use the scope "${denied}". It is restricted to specific scopes.`,
+        cors,
+      );
+    }
+
+    if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
+
+    const { data, error } = await tracedDb
+      .rpc<{ restored: boolean; existed: boolean }>('restore_memory', {
+        p_user_id: auth.userId ?? null,
+        p_scope: scope,
+        p_key: key,
+        p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+        p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+        p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+      })
+      .single();
+    if (error) {
+      const mapped = translateDbError(error);
+      if (mapped) return mapped.toResponse(cors);
+      span.error(`DB: ${error.message}`);
+      throw error;
+    }
+    const row = data as { restored: boolean; existed: boolean } | null;
+    const restored = row?.restored === true;
+    span.setAttributes({ 'lorekit.result.restored': restored });
+    if (!restored) {
+      return row?.existed
+        ? forbidden('This token is not allowed to restore that memory.', cors)
+        : notFound('Archived memory', cors);
+    }
+    await recordAudit(
+      db,
+      { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
+      auditUserId(auth),
+      span,
+    );
+    return ok({ restored: true }, cors);
   }
 
-  // api_key auth uses service-role client — restrict to caller's own rows.
-  // JWT auth uses RLS-scoped client — RLS handles access control.
+  // `/:id` form: direct own-row update, narrowed by user_id + the key allowlist.
+  const v = validateUuid(params.id, cors);
+  if (!v.ok) return v.response;
+  span.setAttributes({ 'lorekit.memory_id': v.data });
+  let q: TracedQuery<MemoryRow> = tracedDb
+    .from('memories')
+    .update({ archived_at: null }, { count: 'exact' })
+    .not('archived_at', 'is', null)
+    .eq('id', v.data);
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  q = applyKeyScopeFilter(q, auth);
 
-  // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
-  // `.select()` returns the affected rows: the `/:id` form has no scope+key of
-  // its own, and the audit row needs them to match the MCP surface's shape.
   const { data, count, error } = await q.select('id,scope,key');
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   const restored = (count ?? 0) > 0;
@@ -80,6 +136,7 @@ export async function handleRestore(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: row.key, metadata: { scope: row.scope, key: row.key } },
       actor,
+      span,
     );
   }
   return ok({ restored: true }, cors);

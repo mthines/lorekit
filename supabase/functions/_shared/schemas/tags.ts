@@ -1,6 +1,6 @@
 // GENERATED MIRROR — do not edit.
-// Source: packages/schemas/src/tags.ts
-// Regenerate: node scripts/sync-edge-schemas.mjs
+// Source: packages/schemas/src/shared/tags.ts
+// Regenerate: node scripts/codegen/sync-edge-schemas.mjs
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
 /**
@@ -45,6 +45,97 @@ export function normalizeTagList(values: readonly unknown[] | undefined | null):
 export function parseTagsParam(raw: string | undefined | null): string[] {
   if (!raw) return [];
   return normalizeTagList(raw.split(','));
+}
+
+/**
+ * Coerce an untrusted `tags` input of ANY shape into a normalized label list.
+ *
+ * The MCP surface takes its params as raw JSON-RPC (`Record<string, unknown>`),
+ * so `tags` arrives exactly as the client sent it — an array on the happy path,
+ * but a bare string, a number, or an object when a client gets the shape wrong.
+ * A bare string is the dangerous one: it is truthy, it has a `.length`, and it
+ * therefore survives an `if (tags?.length)` guard all the way into
+ * postgrest-js's `.overlaps(column, string)` overload, which forwards it
+ * verbatim as `ov.<string>` — no braces — and Postgres rejects the request with
+ * `malformed array literal: "<tag>"`. The caller gets a 400 and the server
+ * records an ERROR span for what is really a shape mismatch.
+ *
+ * Routing every label filter through this function makes the shape total:
+ *   - an array  → {@link normalizeTagList} (trim / drop empties / dedupe)
+ *   - a string  → {@link parseTagsParam}, i.e. the same comma-separated form
+ *                 the `GET /memories?tags=` query param accepts
+ *   - anything else → `[]`, which callers read as "no label filter"
+ *
+ * Pair it with {@link pgArrayLiteral} at the query site so the wire value is a
+ * correctly quoted Postgres array literal in every case.
+ */
+export function toTagList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return normalizeTagList(raw);
+  if (typeof raw === 'string') return parseTagsParam(raw);
+  return [];
+}
+
+/**
+ * Derive `{ kind, host }` from a memory's loop tags — the back-compat bridge
+ * for the taxonomy columns (migration 00056).
+ *
+ * A loop bucket has always encoded its kind and host in a `loop::…` tag. When a
+ * write does not carry explicit `kind`/`host`, the write path calls this to
+ * recover them from the tags so a memory written by an older client is still
+ * attributable. Pure and total: an absent, unrecognised, or malformed tag set
+ * yields `{}` rather than throwing — the two columns simply stay NULL.
+ *
+ * The mapping (authoritative reference: agent-skills'
+ * `agents/shared/rules/memory-buckets.md`):
+ *   `loop::<host>-lessons`             → { kind: 'lesson', host: '<host>' }
+ *   `loop::review-outcomes`            → { kind: 'bus',    host: 'review' }
+ *   `loop::reviewer-comment-relevance` → { kind: 'signal', host: 'reviewer' }
+ *
+ * First recognised tag wins, so a stray extra `loop::` tag cannot flip the
+ * classification of a bucket that already matched.
+ *
+ * A host longer than the `memories.host` column bound (64) is skipped, not
+ * returned: inferring an over-long host would turn a write that previously
+ * succeeded into a CHECK-constraint error, and inference must stay
+ * non-destructive. Such a tag simply leaves the columns NULL.
+ */
+export function inferKindHost(
+  tags: readonly unknown[] | undefined | null,
+): { kind?: 'lesson' | 'bus' | 'signal'; host?: string } {
+  for (const tag of normalizeTagList(tags as readonly unknown[] | undefined | null)) {
+    if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };
+    if (tag === 'loop::reviewer-comment-relevance') return { kind: 'signal', host: 'reviewer' };
+    const m = /^loop::(.+)-lessons$/.exec(tag);
+    if (m && m[1] && m[1].length <= 64) return { kind: 'lesson', host: m[1] };
+  }
+  return {};
+}
+
+/**
+ * Resolve the effective `{ kind, host }` for a write: an explicit, valid value
+ * wins; otherwise fall back to what {@link inferKindHost} recovers from the
+ * loop tags; otherwise `null`.
+ *
+ * Shared by every write surface (Node server, edge MCP, and the usage-tracking
+ * recorder) so the family/owner STORED on the memory and the family/owner
+ * TRACKED in usage_events are classified identically — a write that omits
+ * `kind` but carries `loop::reviewer-lessons` is a `lesson`/`reviewer` in both
+ * the row and the analytics event. An explicit `kind` outside the closed
+ * vocabulary is ignored (falls through to inference) rather than stored.
+ */
+export function resolveKindHost(params: {
+  kind?: unknown;
+  host?: unknown;
+  tags?: readonly unknown[] | null;
+}): { kind: 'lesson' | 'bus' | 'signal' | null; host: string | null } {
+  const inferred = inferKindHost(params.tags ?? null);
+  const kind =
+    params.kind === 'lesson' || params.kind === 'bus' || params.kind === 'signal'
+      ? params.kind
+      : (inferred.kind ?? null);
+  const host =
+    typeof params.host === 'string' && params.host ? params.host : (inferred.host ?? null);
+  return { kind, host };
 }
 
 /**

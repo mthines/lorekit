@@ -1,4 +1,4 @@
-// Mirror of packages/mcp-core/src/ttl.ts, self-contained for the Deno edge
+// Mirror of packages/mcp-core/src/limits/ttl.ts, self-contained for the Deno edge
 // function (which cannot cross-import the Node package — same pattern as
 // created-at.ts, limits.ts, and webhook-secret-select.ts). Keep behaviourally
 // identical to the mcp-core copy; the vitest suite over that copy is the

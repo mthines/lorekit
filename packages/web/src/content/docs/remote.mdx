@@ -2,7 +2,7 @@
 title: "Remote storage"
 description: "Sync lore to the hosted LoreKit MCP server so your memories are available on every machine, from every agent, without any extra setup on each device."
 order: 3
-keywords: ["remote", "hosted", "mcp server", "api token", "lk_rw", "lk_ro", "lk_wo", "doctor", "ci", "github actions", "webhook", "memory.write", "memory.read"]
+keywords: ["remote", "hosted", "mcp server", "api token", "lk_rw", "lk_ro", "lk_wo", "token scoping", "scoped token", "doctor", "ci", "github actions", "webhook", "memory.write", "memory.read", "migrate"]
 ---
 
 <TutorialCallout variant="tip">
@@ -26,6 +26,20 @@ Go to [Settings → API keys](/settings/api-keys) and click **Generate new token
 - `lk_wo_…` — write only (one-way memory feeders)
 
 The token is shown **once only** — copy it before closing the modal.
+
+Optionally open **Scoping** to narrow what the token can reach — an allowlist of
+scopes, and whether it may touch your organisations at all:
+
+- **Scopes** — pick specific scopes, or an owner wildcard like `repo::mthines/*`
+  that keeps covering new repos under that owner as they appear. Leave it empty
+  for any scope.
+- **Organisations** — *All my orgs* (the default), *Personal only*, or a
+  specific list. Your own memories stay reachable under all three.
+
+A scoped token that names a scope outside its allowlist is refused outright
+rather than answering with an empty list, and it cannot enumerate scope names it
+is not allowed to read. Scoping is optional: a token you never scope behaves
+exactly as before.
 
 </TutorialStep>
 
@@ -76,7 +90,36 @@ Seeing `authentication — token REJECTED`? The token was revoked or deleted. Ge
 
 </TutorialStep>
 
-<TutorialStep number={4} title="Write and read a memory">
+<TutorialStep number={4} title="(Coming from offline?) Bring your local lessons up">
+
+If you started with [offline storage](/docs/offline), everything your agent learned so far lives in a local store. One command copies it into the hosted one:
+
+```bash
+npx @lorekit/cli migrate --from .lorekit --to remote         # preview the plan
+npx @lorekit/cli migrate --from .lorekit --to remote --yes   # push it
+```
+
+Point `--from` at whichever store holds your lore. `~/.lorekit` is the default home tier and the right answer unless you opted a repo in; `<repo>/.lorekit` is the project tier, which only exists if you created it.
+
+It is a dry run by default: it prints how many memories it would add, update, or leave unchanged in each scope, and writes nothing until you pass `--yes`. It is also idempotent — re-running it after a push reports everything as unchanged, so it is safe to run again after learning more offline.
+
+The command checks the connection and the token **before** it writes anything, so a misconfigured run fails in one line instead of halfway through. Migrating writes, so a read-only `lk_ro_…` token is rejected outright — use `lk_rw_…` (a write-only `lk_wo_…` also works, though it cannot read the hosted store, so every memory is reported as new). A `"deny": ["remote"]` setting in your config is refused here too, by design.
+
+<TutorialCallout variant="info">
+
+**What carries over.** The scope, key, value, source agent and trigger of every memory transfer as-is, and a memory the hosted store has never seen keeps its **original creation date**, so recency-based ranking still works after the move (one it already holds keeps the date it has). A few things do not carry over, and the command names every affected memory rather than leaving you to find out: the last-updated timestamp is set to the moment of the push, the times-seen count starts at 1 for a new memory and otherwise counts up from the hosted one's own tally, labels replace whatever the hosted copy had, and an expiry further out than a year is shortened to the hosted maximum. Archived and expired memories are skipped rather than pushed, so nothing you retired comes back to life.
+
+</TutorialCallout>
+
+<TutorialCallout variant="tip">
+
+Migrating a large store? The command paces itself under the hosted rate limit and waits out the ones it hits — it says when pacing starts, so a slow run is never a mystery — and it retries a passing server error rather than dropping the memory. A few retries is the budget, though: a memory that keeps failing is reported and the run exits non-zero, and five failures in a row stop it early with a count of what made it. Reaching the memory limit on your plan stops it the same way. In every case the migration is safe to re-run — it picks up where it left off.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Write and read a memory">
 
 Write a test memory via the MCP endpoint:
 
@@ -100,7 +143,7 @@ memory.read {
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Use in CI / GitHub Actions">
+<TutorialStep number={6} title="Use in CI / GitHub Actions">
 
 Store a read-only token as `LOREKIT_TOKEN` in your repo secrets, then inject global memories before any AI step:
 
@@ -126,7 +169,7 @@ Store a read-only token as `LOREKIT_TOKEN` in your repo secrets, then inject glo
 
 </TutorialStep>
 
-<TutorialStep number={6} title="(Optional) Install the GitHub App">
+<TutorialStep number={7} title="(Optional) Install the GitHub App">
 
 To have LoreKit automatically learn from PR review comments, go to [Settings → Integrations](/settings/integrations) and install the LoreKit GitHub App. Every repository you grant it is covered instantly — there is no per-repo secret to copy and no webhook to configure on GitHub:
 

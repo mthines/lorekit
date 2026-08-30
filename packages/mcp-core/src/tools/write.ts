@@ -1,14 +1,15 @@
 import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
-import { getTracer, getToolDurationHistogram } from '../telemetry.js';
-import { translateCapError } from '../limits.js';
-import { translateOrgPermissionError } from '../org-permissions.js';
-import { parseCreatedAt } from '../created-at.js';
-import { parseTtl } from '../ttl.js';
-import { parseOrigin } from '../origin.js';
-import { recordAudit } from '../audit.js';
+import { ScopeSchema, scopeType } from '../scope/scope.js';
+import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
+import { translateCapError } from '../limits/limits.js';
+import { translateOrgPermissionError } from '../auth/org-permissions.js';
+import { parseCreatedAt } from '../limits/created-at.js';
+import { parseTtl } from '../limits/ttl.js';
+import { parseOrigin } from '../provenance/origin.js';
+import { recordAudit } from '../audit/audit.js';
+import { MemoryKindSchema, resolveKindHost } from '@lorekit/schemas';
 
 const MAX_VALUE_BYTES = 65_536;
 
@@ -19,6 +20,11 @@ export const WriteInputSchema = z.object({
   tags: z.array(z.string()).optional().default([]),
   source_agent: z.string().optional(),
   trigger: z.string().optional(),
+  // Taxonomy — the bucket KIND and owning HOST. Both optional: when omitted
+  // they are derived from a `loop::<host>-lessons` tag by inferKindHost below,
+  // so an older client that only sets tags still records them.
+  kind: MemoryKindSchema.optional(),
+  host: z.string().max(64).optional(),
   // Optional creation-date override for migrating pre-existing memories. When
   // omitted the DB applies its now() default. Validated (and future-dates
   // rejected) by parseCreatedAt below, not by zod, so the error message and the
@@ -68,6 +74,10 @@ export async function write(
     ttl_seconds: input.ttl_seconds,
   });
   const origin = parseOrigin(input);
+  // Explicit kind/host win; otherwise recover them from the loop tag (the shared
+  // resolver owns the vocabulary check + host-length clamp). Null when neither is
+  // available, leaving the columns NULL (a non-loop write).
+  const { kind, host } = resolveKindHost({ kind: input.kind, host: input.host, tags: input.tags });
   const tracer = getTracer();
   const hist = getToolDurationHistogram();
   const startTime = Date.now();
@@ -82,6 +92,8 @@ export async function write(
       span.setAttribute('lorekit.key', input.key);
       if (input.source_agent) span.setAttribute('lorekit.source_agent', input.source_agent);
       if (input.trigger) span.setAttribute('lorekit.trigger', input.trigger);
+      if (kind) span.setAttribute('lorekit.kind', kind);
+      if (host) span.setAttribute('lorekit.host', host);
       if (createdAt) span.setAttribute('lorekit.created_at', createdAt);
       // Span attribute renamed from lorekit.ttl_days to lorekit.ttl_seconds (intentional:
       // TTL is now stored and forwarded to the DB in seconds; update any dashboards or
@@ -123,6 +135,8 @@ export async function write(
             p_origin_branch: origin.branch,
             p_origin_commit: origin.commit,
             p_origin_pr: origin.pr,
+            p_kind: kind,
+            p_host: host,
           })
           .single();
 

@@ -29,11 +29,25 @@ type Story = StoryObj<typeof LessonDetailSheet>;
 
 const noop = () => undefined;
 
-/** Personal lesson (no org) so no member-identity fetch fires; fixed timestamps. */
+/** Personal lesson (no org) so no member-identity fetch fires; fixed timestamps.
+ *  The value is markdown so the default Preview tab shows a rendered README-style
+ *  block (heading, list, inline + fenced code, link) rather than raw source. */
 const LESSON: LessonEntry = {
   key: 'prefer-server-actions',
-  value:
-    'Reach for a server action over a route handler for dashboard mutations — it keeps the auth context and RLS in one place and avoids a second fetch layer.',
+  value: [
+    '## Prefer server actions',
+    '',
+    'Reach for a **server action** over a route handler for dashboard mutations:',
+    '',
+    '- keeps the auth context and RLS in one place',
+    '- avoids a second `fetch` layer',
+    '',
+    '```ts',
+    'await updateLesson(scope, key, { value });',
+    '```',
+    '',
+    'See the [docs](https://lorekit.io/docs) for the full rationale.',
+  ].join('\n'),
   tags: ['auth', 'performance', 'nextjs'],
   created_at: '2026-06-15T09:00:00Z',
   updated_at: '2026-07-28T14:30:00Z',
@@ -74,6 +88,84 @@ export const Default: Story = {
         <LessonDetailSheet lesson={LESSON} onClose={noop} layout="drawer" />
       </DeviceFrame>
     </div>
+  ),
+};
+
+/**
+ * Full provenance — kind, host, source agent, trigger, recurrence past the
+ * promotion threshold, expiry, and a complete origin (repo different from the
+ * scope, so the origin's Repo row renders alongside the PR/branch/commit links).
+ * Exercises every field the detail sheet's provenance block can show at once.
+ */
+const FULL_PROVENANCE_LESSON: LessonEntry = {
+  ...LESSON,
+  scope: 'global',
+  scope_type: 'global',
+  kind: 'lesson',
+  host: 'reviewer',
+  seen_count: 7,
+  origin_repo: 'mthines/lorekit',
+  origin_branch: 'feat/Provenance-Casing',
+  origin_commit: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+  origin_pr: 482,
+};
+
+export const FullProvenance: Story = {
+  render: () => (
+    <DeviceFrame w={720} h={680}>
+      <LessonDetailSheet lesson={FULL_PROVENANCE_LESSON} onClose={noop} layout="drawer" />
+    </DeviceFrame>
+  ),
+};
+
+/**
+ * All-NULL provenance — no kind, host, source agent, trigger, recurrence,
+ * expiry, or origin. The provenance rows must disappear entirely rather than
+ * render as empty labels, and the panel must not shift height/layout relative
+ * to a populated one purely from the missing section.
+ */
+const NO_PROVENANCE_LESSON: LessonEntry = {
+  key: 'legacy-memory-no-provenance',
+  value: 'A memory written before provenance columns existed.',
+  tags: [],
+  created_at: '2026-01-10T09:00:00Z',
+  updated_at: '2026-01-10T09:00:00Z',
+  scope: 'project::lorekit-web',
+  scope_type: 'project',
+};
+
+export const NoProvenance: Story = {
+  render: () => (
+    <DeviceFrame w={720} h={560}>
+      <LessonDetailSheet lesson={NO_PROVENANCE_LESSON} onClose={noop} layout="drawer" />
+    </DeviceFrame>
+  ),
+};
+
+/**
+ * Recurrence just below the promotion threshold (`seen_count: 1`) next to a
+ * lesson at/above it (`seen_count: 3`) — the "promote?" affordance must appear
+ * only for the latter.
+ */
+export const RecurrenceBelowAndAtThreshold: Story = {
+  render: () => (
+    <div style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
+      <DeviceFrame w={360} h={560}>
+        <LessonDetailSheet lesson={{ ...LESSON, seen_count: 1 }} onClose={noop} layout="drawer" />
+      </DeviceFrame>
+      <DeviceFrame w={360} h={560}>
+        <LessonDetailSheet lesson={{ ...LESSON, seen_count: 3 }} onClose={noop} layout="drawer" />
+      </DeviceFrame>
+    </div>
+  ),
+};
+
+/** The Edit tab pinned open — the raw-markdown textarea (drawer presentation). */
+export const EditView: Story = {
+  render: () => (
+    <DeviceFrame w={720} h={560}>
+      <LessonDetailSheet lesson={LESSON} onClose={noop} layout="drawer" initialContentTab="edit" />
+    </DeviceFrame>
   ),
 };
 

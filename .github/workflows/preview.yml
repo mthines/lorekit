@@ -128,7 +128,13 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
-          version: latest
+          # Pinned, not `latest`, for consistency with ci.yml (#578): CLI
+          # v2.116.0 changed the local stack's default privileges, tripping a
+          # security assertion under `supabase start`. This job talks to
+          # hosted Supabase, not the local stack, so that specific assertion
+          # doesn't apply here — pinned anyway to avoid unplanned CLI drift
+          # across all workflows until the v2.116.0 grant change is understood.
+          version: 2.115.0
 
       - name: Verify required secrets
         run: |
@@ -174,83 +180,27 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.pr_sha }}
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Vercel CLI
-        run: pnpm add -g vercel
-
-      - name: Pull Vercel environment
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: vercel pull --yes --environment=preview
-
-      # Overrides the Vercel-pulled preview vars with staging values by
-      # rewriting the env file `vercel pull` produced and `vercel build`
-      # actually reads (.vercel/.env.preview.local). Editing this file — not
-      # .env.local — is what guarantees the override: `vercel build` injects
-      # these values into process.env, and Next.js never lets a .env.local
-      # entry override a variable already set in process.env. We strip any
-      # pulled NEXT_PUBLIC_SUPABASE_* lines first so ours are the only
-      # definitions. This mutates only the runner's local copy for this one
-      # build; push-triggered Vercel previews never run this workflow, so
-      # their env is unchanged.
-      - name: Override Supabase config with staging values
-        env:
-          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-          ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          ENV_FILE=".vercel/.env.preview.local"
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
-            exit 1
-          fi
-          # Drop any pulled Supabase vars so ours are the only definitions.
-          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
-            "$ENV_FILE" > "$ENV_FILE.tmp" || true
-          mv "$ENV_FILE.tmp" "$ENV_FILE"
-          {
-            echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
-            echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
-            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
-          } >> "$ENV_FILE"
-
-      - name: Build Vercel preview
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: vercel build
-
-      - name: Deploy to Vercel preview
+      # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
+      # Overrides the pulled preview env with the staging Supabase project so the
+      # /preview build talks to staging, in lock-step with deploy.yml's
+      # smoke-preview. This mutates only the runner's local copy for this one
+      # build; nothing is written back to Vercel's stored env.
+      - name: Deploy Vercel preview
         id: deploy
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          # Vercel prints the deployment URL to stdout and progress to stderr;
-          # keep them separate (no 2>&1) and grep the URL so a trailing stderr
-          # line can never be mistaken for the deployment URL.
-          deploy_out="$(vercel deploy --prebuilt)"
-          echo "$deploy_out"
-          URL="$(printf '%s\n' "$deploy_out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
-          if [ -z "$URL" ]; then
-            echo "::error::Could not parse Vercel deployment URL"
-            exit 1
-          fi
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/vercel-preview-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          supabase-project-ref: ${{ secrets.SUPABASE_PROJECT_REF }}
+          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Always overrides at the staging Supabase project — warn (not silently
+          # fall back to the pulled env) if either secret is missing.
+          require-supabase-override: 'true'
+          git-repo-owner: ${{ github.repository_owner }}
+          git-repo-slug: ${{ github.event.repository.name }}
+          git-commit-ref: ${{ needs.guard.outputs.pr_branch }}
+          git-commit-sha: ${{ needs.guard.outputs.pr_sha }}
 
   smoke:
     name: Smoke test → preview API
@@ -267,6 +217,18 @@ jobs:
       # here so a step `if:` can read it — a step `if:` cannot reference secrets
       # via env of the same step. Unset → the suite self-skips (announced).
       HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
+      # ── Smoke telemetry (job-wide) ────────────────────────────────────────────
+      # Same as deploy.yml's smoke jobs: make the /preview smoke observable in
+      # Dash0, tagged apart from real traffic. LOREKIT_TELEMETRY_TOKEN turns ON
+      # CLI OTLP export (off by default in a source checkout); DEPLOYMENT_ENVIRONMENT=test
+      # stamps `deployment.environment.name=test` on the CLI's own spans AND —
+      # via the `X-LoreKit-Deployment-Environment` header the CLI/`restFetch` and
+      # the REST/MCP smoke specs forward — on the edge (`api`) spans for every
+      # smoke request; LOREKIT_CORRELATION_ID keys the run in `usage_events`. The
+      # preview project has OTLP configured, so cli + api + mcp telemetry all flow.
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: preview-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -286,7 +248,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run MCP server smoke tests
-        run: pnpm nx test mcp-server -- smoke.integration
+        # Retry once on a transient live-endpoint flake (kept in lockstep with
+        # deploy.yml's smoke-preview). The suite self-cleans and re-mints keys per
+        # run, so a re-run is safe; a real regression still fails after attempt 2.
+        run: |
+          for attempt in 1 2; do
+            pnpm nx test smoke-tests -- smoke.integration && break
+            rc=$?
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::smoke.integration failed after $attempt attempts"
+              exit "$rc"
+            fi
+            echo "::warning::smoke.integration failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
+            sleep 10
+          done
         env:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -301,7 +276,7 @@ jobs:
       #   • byod-smoke.integration.spec.ts absent → --passWithNoTests keeps it green.
       # Only a real BYOD assertion failure fails the step.
       - name: Run BYOD integration test (all four scope types)
-        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        run: pnpm nx test smoke-tests -- byod-smoke.integration --passWithNoTests
         env:
           LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
           LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
@@ -320,7 +295,24 @@ jobs:
       # memory.list against the endpoint — proving the transport a `.mcp.json`
       # points at launches and reaches the backend. Same script as deploy.yml.
       - name: Smoke — robust stdio transport handshakes against preview
-        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
+      # The hosted MCP tool surface, behaviourally — every op the catalog
+      # declares, driven against the preview this run just deployed. Same script
+      # deploy.yml's smoke-preview and ci.yml run, so a `/preview` on the PR
+      # asserts the same contract the post-merge gate will.
+      #
+      # It WRITES, and cleans up after itself (per-run scope + org slug, removed
+      # in a `finally`), reporting anything it could not remove; a soft-deleted
+      # org is expected residue, since no purge exists on either public surface.
+      # The script refuses the production ref outright without
+      # `--allow-production`. Conformance lane only — `--probe` holds defects
+      # that are open on purpose and would red the run.
+      - name: Smoke — hosted MCP tool surface against preview
+        run: node scripts/smoke/smoke-mcp-tools.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -347,7 +339,7 @@ jobs:
           LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
           LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
         run: |
-          if JWT="$(node scripts/mint-smoke-jwt.mjs)"; then
+          if JWT="$(node scripts/smoke/mint-smoke-jwt.mjs)"; then
             echo "::add-mask::$JWT"
             echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
           else
@@ -363,7 +355,19 @@ jobs:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-rest.mjs
+        # Retry once on a transient live-endpoint flake (lockstep with deploy.yml).
+        # Specs self-clean with per-run timestamped keys, so a re-run is safe.
+        run: |
+          for attempt in 1 2; do
+            node scripts/smoke/smoke-rest.mjs && break
+            rc=$?
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::REST smoke failed after $attempt attempts"
+              exit "$rc"
+            fi
+            echo "::warning::REST smoke failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
+            sleep 10
+          done
 
   report:
     name: Post result comment

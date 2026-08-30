@@ -1,8 +1,8 @@
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
 import { ok, badRequest } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { UsageStatsQuerySchema } from '../../_shared/schemas/usage.ts';
 import {
   parseUsageWindow,
@@ -11,13 +11,16 @@ import {
   rollupByScopeType,
   UsageStatsError,
   type UsageStatRow,
-} from '../../_shared/usage-stats.ts';
+} from '../../_shared/telemetry/usage-stats.ts';
 
 /** The raw shape `lorekit_usage_stats` returns (bigints arrive as strings). */
 interface RawUsageRow {
   tool_name: string;
   outcome: string;
   scope_type: string | null;
+  client: string | null;
+  kind: string | null;
+  host: string | null;
   event_count: number | string;
   record_count: number | string;
   total_duration_ms: number | string | null;
@@ -83,10 +86,32 @@ export async function handleUsage(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
+  // The highest memory_count snapshot recorded on a write event in this
+  // window (migration 00081/00034) — "how full WAS this account", distinct
+  // from the plan page's existing LIVE count. A separate scalar call: this
+  // value is not derivable from the grouped by_tool rows above (a per-event
+  // snapshot has no sensible sum/group). Fails open to null rather than
+  // failing the whole request — this is a bonus field, not the point of the
+  // call.
+  let peakMemoryCount: number | null = null;
+  const peakResult = await tracedDb.rpc<number | null>('lorekit_usage_memory_count_peak', {
+    p_user_id: auth.userId ?? null,
+    p_since: window.since,
+    p_until: window.until,
+  });
+  if (!peakResult.error) {
+    peakMemoryCount = peakResult.data == null ? null : Number(peakResult.data);
+  } else {
+    span.error(`DB (memory_count_peak, non-fatal): ${peakResult.error.message}`);
+  }
+
   const rows: UsageStatRow[] = ((data ?? []) as RawUsageRow[]).map((r) => ({
     tool_name: r.tool_name,
     outcome: r.outcome,
     scope_type: r.scope_type,
+    client: r.client,
+    kind: r.kind,
+    host: r.host,
     event_count: Number(r.event_count),
     record_count: Number(r.record_count),
     total_duration_ms: r.total_duration_ms == null ? null : Number(r.total_duration_ms),
@@ -97,7 +122,7 @@ export async function handleUsage(
   return ok({
     range: { since: window.since, until: window.until },
     correlation_id: correlationId,
-    summary: summarizeUsageRows(rows),
+    summary: { ...summarizeUsageRows(rows), peak_memory_count: peakMemoryCount },
     by_tool: rows,
     by_scope_type: rollupByScopeType(rows),
   }, cors);

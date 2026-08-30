@@ -1,17 +1,48 @@
 'use client';
 
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
 import { dayCountsFromActivity } from '@/lib/aggregations';
+import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
-import type { DateRange } from '@/components/ui/DateRangePicker';
+import { NO_RETENTION_CONDITIONS, type RetentionConditions } from '@/lib/retention-filter';
+import type { AbsoluteRange } from '@/lib/time-range';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
+import { parseScopeKeyQuery } from '@/lib/scope-key-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listFacetsRequest, listMemoriesRequest, listScopesRequest } from '@/lib/api/memories';
-import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
+import {
+  activityRequest,
+  getMemoryByIdRequest,
+  getMemoryByRefRequest,
+  listFacetsPostRequest,
+  listMemoriesRequest,
+  listScopesRequest,
+  pivotPostRequest,
+} from '@/lib/api/memories';
+import { RestApiError } from '@/lib/api/rest';
+import {
+  filtersToFacetBody,
+  filtersToPivotBody,
+  normalizeFilters,
+  type FacetValue,
+  type Filter,
+} from '@/lib/filters';
+import type {
+  ListFacetsBody,
+  MemoryFacet,
+  PivotBody,
+  PivotResponse,
+} from '@lorekit/schemas/memory';
 
 export interface LoreData {
   scopes: ScopeNode[];
@@ -76,6 +107,27 @@ export function retryUnlessSignedOut(failureCount: number, error: unknown): bool
   return !isNotAuthenticated(error) && failureCount < 3;
 }
 
+/**
+ * True when the API answered that the REQUEST cannot succeed, whoever asks and
+ * however often: the id is not a UUID (`400`, `GET /memories/:id` validates it)
+ * or it names no memory this account can see (`404` — an archived, purged or
+ * foreign row). Both are documented outcomes of a hand-built `?memoryId=` deep
+ * link, not transport failures.
+ */
+export function isUnretryableRequest(error: unknown): boolean {
+  return error instanceof RestApiError && (error.status === 400 || error.status === 404);
+}
+
+/**
+ * {@link useMemoryById}'s retry policy: {@link retryUnlessSignedOut} plus the two
+ * answers a by-id read gets when the id itself is the problem. The signed-out
+ * rule alone retries everything else, so a deep link to an archived or bad id
+ * spent four requests and four renders reaching the same 404.
+ */
+export function retryMemoryById(failureCount: number, error: unknown): boolean {
+  return !isUnretryableRequest(error) && retryUnlessSignedOut(failureCount, error);
+}
+
 async function requireBrowserToken(): Promise<string> {
   const token = await browserAccessToken();
   if (!token) throw new NotAuthenticatedError();
@@ -85,8 +137,10 @@ async function requireBrowserToken(): Promise<string> {
 // ---------------------------------------------------------------------------
 // Scope-tree-only fetch (used by the Lore Explorer sidebar).
 // One row per scope from `GET /memories/scopes`, already counted and sorted by
-// the database — this stays its own lightweight query so the tree renders
-// immediately while the paginated lesson list streams in separately.
+// the database (count desc, scope asc — 00065), which is the order the chip
+// strip renders since this maps but never re-sorts. Stays its own lightweight
+// query so the tree renders immediately while the paginated lesson list streams
+// in separately.
 // ---------------------------------------------------------------------------
 
 async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
@@ -107,30 +161,124 @@ async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
 // ---------------------------------------------------------------------------
 // Facet catalog — every filterable value, per dimension, for the filter menu.
 //
-// A SEPARATE query from the lesson list — the reason the single-dimension label
-// catalog it replaced was one too, and it only gets stronger with six
-// dimensions: derived from the loaded pages, the menu's options would shrink to
-// whatever the current filter happened to
-// return, so you could narrow but never widen or switch — and cross-dimension
-// type-ahead ("type `main`, get Branch → main") would only ever surface values
-// already visible in the list, which is precisely the case where you did not
-// need the menu.
+// A SEPARATE query from the lesson list, NOT derived from the loaded pages —
+// the reason the single-dimension label catalog it replaced was one too, and it
+// only gets stronger with six dimensions: derived from the loaded pages, the
+// menu's options would shrink to whatever the current filter happened to return,
+// so you could narrow but never widen or switch — and cross-dimension type-ahead
+// ("type `main`, get Branch → main") would only ever surface values already
+// visible in the list, which is precisely the case where you did not need the
+// menu.
 //
-// Archived-aware for the same reason too: active and archived are different
+// But the catalog IS filter-aware: it passes the active filters to the endpoint
+// (`GET /memories/facets`, drill-down since migration 00057), so once you pick
+// `agent=claude` the counts shown for repo, branch, … narrow to "how many
+// claude memories also carry this value". The endpoint self-excludes each
+// dimension from its own filter, so a filtered dimension still lists its
+// alternatives to switch between — the one thing deriving from the loaded pages
+// could never do. Keyed on the filter bar so the counts refresh as it changes.
+//
+// Archived-aware for the same reason: active and archived are different
 // populations, so a catalog pinned to one shows the wrong counts and hides the
 // other's values from their own filter.
 // ---------------------------------------------------------------------------
 
-async function fetchFacets(showArchived: boolean, signal?: AbortSignal): Promise<FacetValue[]> {
+/**
+ * The Explorer's matrix instrument: how many memories sit at each intersection
+ * of two dimensions.
+ *
+ * The whole filter bar is forwarded, axis dimensions included — the endpoint
+ * self-excludes whichever two the axes name (migration 00090), so the grid
+ * narrows with every OTHER filter while still showing every cell you could move
+ * to. Sending a bar with the axes stripped out would look equivalent and is not:
+ * it would drop a same-dimension filter the user set from the MENU.
+ */
+async function fetchPivot(
+  body: Partial<PivotBody> & Pick<PivotBody, 'row' | 'col'>,
+  signal?: AbortSignal,
+): Promise<PivotResponse> {
   const token = await requireBrowserToken();
-  const { facets } = await listFacetsRequest(token, showArchived, signal);
+  return pivotPostRequest(token, body, signal);
+}
+
+export function usePivot(
+  row: MemoryFacet,
+  col: MemoryFacet,
+  options: {
+    enabled?: boolean;
+    showArchived?: boolean;
+    filters?: readonly Filter[];
+    scope?: string | null;
+  } = {},
+) {
+  const { enabled = true, showArchived = false, filters = [], scope = null } = options;
+  // Normalised for the stable-query-key reason `useFacetCatalog` documents.
+  const bar = normalizeFilters(filters as Filter[]);
+  return useQuery<PivotResponse>({
+    queryKey: ['lore-pivot', row, col, showArchived, scope, bar],
+    queryFn: ({ signal }) =>
+      fetchPivot(
+        {
+          row,
+          col,
+          archived: showArchived,
+          ...(scope ? { scope } : {}),
+          ...filtersToPivotBody(bar),
+        },
+        signal,
+      ),
+    // Only fetch while the instrument is actually on screen: this is a second
+    // aggregate over the same rows the list already reads, so a collapsed or
+    // unselected instrument must not pay for it.
+    enabled,
+    // Clicking a cell changes the key. Without this the grid blanks to a
+    // skeleton on every click — losing the very context you clicked FROM, which
+    // is the one thing a drill-down instrument must not do.
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
+
+async function fetchFacets(
+  body: Partial<ListFacetsBody>,
+  signal?: AbortSignal,
+): Promise<FacetValue[]> {
+  const token = await requireBrowserToken();
+  const { facets } = await listFacetsPostRequest(token, body, signal);
   return facets;
 }
 
-export function useFacetCatalog(showArchived = false) {
+export function useFacetCatalog(
+  showArchived = false,
+  filters: readonly Filter[] = [],
+  scope: string | null = null,
+) {
+  // Normalise so the query key is stable across the equivalent-but-differently-
+  // shaped filter arrays a render can produce, exactly as `useMemories` does.
+  const bar = normalizeFilters(filters as Filter[]);
+  const facetBody = filtersToFacetBody(bar);
   return useQuery<FacetValue[]>({
-    queryKey: ['lore-facets', showArchived],
-    queryFn: ({ signal }) => fetchFacets(showArchived, signal),
+    queryKey: ['lore-facets', showArchived, scope, bar],
+    queryFn: ({ signal }) =>
+      fetchFacets(
+        {
+          archived: showArchived,
+          // Scope the catalog to the selected scope, matching the list
+          // (`useMemories` sends the same `scope`). Without it the counts would
+          // reflect every scope while the list shows one, overstating the yield;
+          // a null scope omits the param, so the all-scopes view is unchanged.
+          ...(scope ? { scope } : {}),
+          ...facetBody,
+        },
+        signal,
+      ),
+    // Toggling a filter changes the key, which would otherwise blank `data` to
+    // `undefined` while the drilled-down counts load — so every other value in
+    // the group the user is standing in flickers out and back. Keep the previous
+    // catalog on screen until the new one arrives: the counts update in place
+    // rather than disappearing. (`isPlaceholderData` is available if a caller
+    // ever wants to dim them mid-refetch; the flicker fix needs only this.)
+    placeholderData: keepPreviousData,
     // Matches the scope tree and the label catalog: read-heavy, changes only
     // when an agent writes.
     staleTime: 90_000,
@@ -165,7 +313,13 @@ async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
   const [scopesRes, page, activity] = await Promise.all([
     listScopesRequest(token, signal),
     listMemoriesRequest(token, { limit: LEGACY_PAGE_SIZE, sort: 'created_at' }, signal),
-    activityRequest(token, { bucket: 'day' }, signal),
+    // `since` is EXPLICIT, not left to the endpoint's default. That default is
+    // 200 days, sized when the heatmap was a fixed 26 weeks; the desktop grid
+    // is a year now, so a bare call would return nothing for its oldest ~164
+    // days and the chart would draw them as empty — reading as "no memories",
+    // not as "not fetched". `heatmapSince` derives the bound from the same
+    // constant the grid renders, so the two cannot drift apart again.
+    activityRequest(token, { bucket: 'day', since: heatmapSince(new Date().toISOString()) }, signal),
   ]);
 
   const scopes: ScopeNode[] = scopesRes.scopes.map(({ scope, count }) => {
@@ -196,6 +350,108 @@ export function useLoreData() {
 }
 
 // ---------------------------------------------------------------------------
+// Single memory by DB row id.
+//
+// Resolves a `/lore?memoryId=…` deep link directly, so the detail sheet opens
+// regardless of whether the row is in the Explorer's recent/active window — the
+// limitation the `?lesson=` scope+key form has, since it only resolves against
+// the loaded page set. Disabled (no fetch) when `id` is null.
+// ---------------------------------------------------------------------------
+
+export function useMemoryById(id: string | null) {
+  return useQuery<LessonEntry | null>({
+    queryKey: ['memory-by-id', id],
+    enabled: id !== null,
+    queryFn: async ({ signal }) => {
+      if (!id) return null;
+      const token = await requireBrowserToken();
+      const entry = await getMemoryByIdRequest(token, id, signal);
+      return lessonFromMemoryEntry(entry);
+    },
+    staleTime: 90_000,
+    retry: retryMemoryById,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Single memory by its natural key (scope + key).
+//
+// Resolves a `/lore?lesson={scope,key}` deep link directly via
+// `getMemoryByRefRequest` (a precise one-row read — see its doc), so the detail
+// sheet opens even when the memory is outside the Explorer's recent/active
+// window — the "opens blank" case for a shared `?lesson=` link to any older
+// memory. Disabled (no fetch) when `ref` is null.
+// ---------------------------------------------------------------------------
+
+export function useLessonByRef(ref: { scope: string; key: string } | null) {
+  return useQuery<LessonEntry | null>({
+    queryKey: ['lesson-by-ref', ref?.scope, ref?.key],
+    enabled: ref !== null,
+    queryFn: async ({ signal }) => {
+      if (!ref) return null;
+      const token = await requireBrowserToken();
+      const entry = await getMemoryByRefRequest(token, ref.scope, ref.key, signal);
+      return entry ? lessonFromMemoryEntry(entry) : null;
+    },
+    staleTime: 90_000,
+    retry: retryUnlessSignedOut,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Live search — backs the command palette's "Open Lesson…" search-as-you-type,
+// which has to reach beyond `useLoreData`'s 20-most-recent cache to any memory
+// by (a prefix of) its full `scope::key` identifier.
+// ---------------------------------------------------------------------------
+
+/** The command palette caps its live search results at this many rows. */
+export const MEMORY_SEARCH_LIMIT = 50;
+
+/**
+ * Resolve a pasted or partially-typed `scope::key` string (or a plain
+ * substring) to the matching active lessons, capped at
+ * {@link MEMORY_SEARCH_LIMIT}.
+ *
+ * `raw` parses two ways, tried in order:
+ * 1. {@link parseScopeKeyQuery} — a recognized scope prefix (`repo::owner/repo`,
+ *    `project::name`, `branch::owner/repo::branch`, `global`) followed by `::`
+ *    and a key or key prefix. Matched server-side as an EXACT `scope` plus a
+ *    `key_prefix` ILIKE, so `repo::mthines/lorekit::sandbox-lessons::lorekit-mcp-`
+ *    resolves every key starting with that prefix in that one scope.
+ * 2. Otherwise, `raw` is sent as `q` — the substring match against `key` OR
+ *    `value` that already backs the Lore Explorer's search box — so a plain
+ *    word still finds something even without the `::` grammar.
+ *
+ * Returns `[]` (never throws) when the caller has no session, so an
+ * unauthenticated render of the palette sees an empty result instead of an
+ * unhandled rejection — the same shape a "no matches" query would return.
+ */
+export async function searchLessonsByQuery(
+  raw: string,
+  signal?: AbortSignal,
+): Promise<LessonEntry[]> {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  let token: string;
+  try {
+    token = await requireBrowserToken();
+  } catch {
+    return [];
+  }
+
+  const scopeKey = parseScopeKeyQuery(trimmed);
+  const page = await listMemoriesRequest(
+    token,
+    scopeKey
+      ? { scope: scopeKey.scope, key_prefix: scopeKey.keyPrefix || undefined, limit: MEMORY_SEARCH_LIMIT }
+      : { q: trimmed, limit: MEMORY_SEARCH_LIMIT },
+    signal,
+  );
+  return page.entries.map(lessonFromMemoryEntry);
+}
+
+// ---------------------------------------------------------------------------
 // Paginated lesson list — mirrors `useAuditLog` exactly.
 // ---------------------------------------------------------------------------
 
@@ -204,8 +460,22 @@ export interface UseMemoriesFilters {
   scope: string | null;
   /** Substring search applied to key and value. */
   search: string;
-  /** Date range filter on created_at. */
-  range: DateRange | null;
+  /**
+   * Resolved window filter on `created_at`, half-open `[from, to)`, or `null`
+   * for unbounded.
+   *
+   * `AbsoluteRange` (`lib/time-range.ts`), NOT the calendar picker's
+   * `DateRange`. The two are structurally identical — both are `{from, to}`
+   * strings, which is why the wrong one type-checked — but they mean opposite
+   * things at the upper bound: `DateRange` is an INCLUSIVE pair of
+   * `YYYY-MM-DD` UTC days, while what the Explorer actually passes is
+   * `resolveRange`'s output, whose `to` is an EXCLUSIVE ISO instant (an hour
+   * drilled in from a chart bucket). `dateRangeBounds` already reads both
+   * shapes correctly, so this is the contract catching up with the value, not
+   * a behaviour change. `toDayRange` is the one conversion in the other
+   * direction, for the surfaces that only speak days.
+   */
+  range: AbsoluteRange | null;
   /**
    * Labels a memory must ALL carry. Empty means no label filter.
    *
@@ -221,8 +491,24 @@ export interface UseMemoriesFilters {
    * Empty means no dimension filter.
    */
   filters?: Filter[];
+  /**
+   * The retention-preview trio (`lib/retention-filter.ts`) — narrows the list
+   * to what a retention policy with these conditions would catch. Empty means
+   * no narrowing.
+   */
+  retentionConditions?: RetentionConditions;
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
+  /**
+   * "Expiring soon" horizon in days (`GET /memories?expiring_within_days=`).
+   * Absent means no expiry narrowing.
+   *
+   * Kept as its own field rather than folded into `showArchived` because the
+   * two are orthogonal on the wire, and because the archive mutations select
+   * their cache pages by the BOOLEAN at key index 4 — collapsing the two into
+   * one tri-state field would break that contract silently.
+   */
+  expiringWithinDays?: number;
 }
 
 /**
@@ -262,6 +548,15 @@ export function useMemories(filters: UseMemoriesFilters) {
       filters.range,
       filters.showArchived ?? false,
       bar,
+      // APPENDED, per the rule above: index 4 must stay the archived boolean the
+      // mutations match on. Present in the key because the active and the
+      // expiring views are different result sets over the same population — a
+      // key that ignored it would serve the unfiltered page when the user
+      // switched to Expiring and never refetch.
+      filters.expiringWithinDays ?? null,
+      // APPENDED at the end, per the rule above — a NEW segment, not a
+      // reordering of the fixed five before it.
+      filters.retentionConditions ?? NO_RETENTION_CONDITIONS,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
@@ -269,8 +564,10 @@ export function useMemories(filters: UseMemoriesFilters) {
         search: filters.search || undefined,
         range: filters.range,
         filters: bar,
+        retentionConditions: filters.retentionConditions,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
+        expiringWithinDays: filters.expiringWithinDays,
       };
       return listMemories(args);
     },

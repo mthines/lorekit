@@ -14,6 +14,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 
 export interface SessionToken {
   /** The Supabase access token (JWT). */
@@ -27,10 +28,11 @@ export async function getSessionToken(): Promise<SessionToken | null> {
 
   // Validate the session against the auth server first (getUser verifies the
   // JWT; getSession alone trusts the cookie), then read the access token to hand
-  // back. No session → nothing to reveal.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // back. No session → nothing to reveal. Routed through the request-cached
+  // getVerifiedUser() (see lib/auth/verified-user.ts) so this doesn't pay a
+  // second auth/v1/user round trip when another read on the same page already
+  // resolved the session.
+  const user = await getVerifiedUser();
   if (!user) return null;
 
   const {

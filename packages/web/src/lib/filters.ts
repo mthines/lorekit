@@ -3,10 +3,10 @@
  *
  * This is `tag-filter.ts` generalised. The Explorer used to filter on exactly
  * one dimension (labels), so a single multi-select popover was the whole
- * story. It now filters on six — label, agent, trigger, repo, branch, pull
- * request — which is a different problem: one control per dimension would put
- * six triggers in a row that is already crowded, and would still not answer
- * "what can I filter by?" for the next dimension after that.
+ * story. It now filters on nine — label, kind, host, owner, agent, trigger,
+ * repo, branch, pull request — which is a different problem: one control per
+ * dimension would put nine triggers in a row that is already crowded, and would
+ * still not answer "what can I filter by?" for the next dimension after that.
  *
  * The model is Linear's, because it is the one that scales: a **filter bar** of
  * committed conditions, each rendered as a three-segment pill, fed by ONE
@@ -20,16 +20,48 @@
  * is unit-testable in the node vitest project, mirroring `tag-filter.ts` and
  * `org-ui.ts`. The impure shells are `components/lore/FilterMenu.tsx` (the
  * menu), `components/lore/FilterPill.tsx` (the pills) and the `useMemories`
- * query that consumes {@link filtersToQueryParams}.
+ * query that consumes {@link filtersToBody} — the BODY transport, because a
+ * filter bar's value sets are unbounded and a query string caps each dimension
+ * at 2048 characters.
+ *
+ * {@link filtersToQueryParams} and {@link filtersToFacetParams} are the
+ * equivalent GET encodings. **No caller in this package reaches them any more**
+ * — the Explorer is body-only since the transport move, so their only consumers
+ * are `filters.spec.ts` and `filters-transport.spec.ts`. They are kept, not
+ * dead: `GET /memories` and `GET /memories/facets` remain fully supported for
+ * the CLI, MCP and API-token callers, a link carrying a few filters is still
+ * better as a URL, and these functions are where the UI vocabulary → query
+ * mapping is pinned against `ListMemoriesQuerySchema` / `ListFacetsQuerySchema`
+ * (the `as`-cast in `filtersToFacetParams` is sound only because a spec asserts
+ * every key it emits exists in the facets schema). Delete them and that
+ * contract check goes with them.
  */
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
-import type { ListMemoriesQuery, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
+import type {
+  ActivityBody,
+  ListFacetsBody,
+  PivotBody,
+  ListFacetsQuery,
+  ListMemoriesBody,
+  ListMemoriesQuery,
+  ScalarFilterMode,
+  TagsMode,
+} from '@lorekit/schemas/memory';
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
 /** A filterable dimension, named for the user-facing word rather than the column. */
-export type FilterField = 'label' | 'agent' | 'trigger' | 'repo' | 'branch' | 'pr';
+export type FilterField =
+  | 'label'
+  | 'kind'
+  | 'host'
+  | 'owner'
+  | 'agent'
+  | 'trigger'
+  | 'repo'
+  | 'branch'
+  | 'pr';
 
 /**
  * How a dimension's values combine.
@@ -48,14 +80,32 @@ export interface Filter {
   values: string[];
 }
 
-/** The `GET /memories/facets` dimension a field's values are catalogued under. */
+/**
+ * The `GET /memories/facets` dimension a field's values are catalogued under.
+ *
+ * This mirrors `MemoryFacetSchema` (`@lorekit/schemas/memory`) exactly — the
+ * endpoint's response is assigned to `FacetValue[]` in `queries/lore.ts`, so a
+ * dimension the server can emit and this union cannot name is a type error, not
+ * a silent narrowing.
+ *
+ * It is now one-to-one with {@link FilterField}: `kind` and `host` (migration
+ * 00056, catalogued by 00057) were the last two facets the server emitted with
+ * no descriptor to map them, so their rows arrived and were silently ignored.
+ * They have pills now. Keep the two in step — a facet with no descriptor is not
+ * a type error, it is a dimension that quietly does nothing.
+ */
 export type FacetName =
   | 'tag'
   | 'source_agent'
   | 'trigger'
+  | 'kind'
+  | 'host'
   | 'origin_repo'
   | 'origin_branch'
-  | 'origin_pr';
+  | 'origin_pr'
+  // Ownership (migration 00064) — `personal` plus one value per org the caller
+  // belongs to, keyed by slug. Folded in from the old client-side owner bar.
+  | 'owner';
 
 export interface FilterFieldDescriptor {
   field: FilterField;
@@ -94,6 +144,53 @@ export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
     facet: 'tag',
     operators: ['all', 'in', 'nin'],
     format: (v) => v,
+  },
+  {
+    // The coarsest partition of the store, so it sits high: `bus` events are
+    // transient outcome records and `signal`s are per-repo filters, and neither
+    // is what someone browsing lessons means to be reading. Its vocabulary is
+    // CLOSED (`MemoryKindSchema` — lesson / bus / signal), unlike every other
+    // dimension here, so the value list is short by construction and the search
+    // box is vestigial rather than load-bearing. That is not worth a second
+    // descriptor shape: the facet catalog still supplies the values (and their
+    // counts), so a kind nobody has written does not appear, which a hardcoded
+    // list of three would get wrong.
+    field: 'kind',
+    label: 'Kind',
+    searchPlaceholder: 'Search kinds…',
+    facet: 'kind',
+    operators: ['in', 'nin'],
+    format: (v) => v,
+  },
+  {
+    // Beside Kind because the two form the phrase the taxonomy exists for —
+    // `?kind=lesson&host=reviewer` reads "reviewer's lessons".
+    //
+    // Distinct from Agent, and deliberately not merged with it: `host` is the
+    // skill or agent that OWNS the bucket (`reviewer`, `aw`, `ci-auto-fix`),
+    // while `source_agent` is whoever WROTE the row. They usually agree and
+    // sometimes do not, which is exactly when you want to be able to ask.
+    field: 'host',
+    label: 'Host',
+    searchPlaceholder: 'Search hosts…',
+    facet: 'host',
+    operators: ['in', 'nin'],
+    format: (v) => v,
+  },
+  {
+    // Ownership — the coarse "whose lore is this" partition, so it sits beside
+    // the other identity dimensions. Its value space is CLOSED-ish: `personal`
+    // plus one value per org the caller belongs to, keyed by the org SLUG
+    // (stable across renames). This used to be a separate client-side bar; it is
+    // a server-side facet now (migration 00064), mechanically identical to the
+    // scalar dimensions. `format` renders the literal `personal` as `Personal`;
+    // an org value is shown by its slug (a follow-up can map it to the org name).
+    field: 'owner',
+    label: 'Owner',
+    searchPlaceholder: 'Search owners…',
+    facet: 'owner',
+    operators: ['in', 'nin'],
+    format: (v) => (v === 'personal' ? 'Personal' : v),
   },
   {
     field: 'agent',
@@ -219,19 +316,53 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
 }
 
 /**
- * The bar's filters, given both URL params.
+ * Translate a legacy `?owner=` selection into an owner filter.
+ *
+ * Ownership is a server-side facet dimension now (migration 00064), keyed by the
+ * `personal` partition or an org SLUG. The legacy `?owner=` param folds into an
+ * `owner` filter — the CLI (`lorekit link --owner …`) and the accept-invite deep
+ * link write a string here (`personal` or a slug), so any string BUT `all`
+ * becomes a one-value owner filter:
+ *
+ * - `'all'` (or absent) was "no constraint", so it produces no filter.
+ * - `'personal'` / a slug string maps straight to that owner facet value.
+ * - `{ orgId }` — the pre-00064 OBJECT form — carried the org UUID, and the facet
+ *   keys on the stable SLUG, not the id; resolving one to the other needs an org
+ *   lookup this pure function has no access to, so it degrades to NO filter
+ *   rather than a wrong one. Nothing writes that form any more (the CLI and the
+ *   invite link both emit a slug), so only links shared before this change lose
+ *   the org pre-selection.
+ */
+export function filtersFromLegacyOwner(owner: unknown): Filter[] {
+  if (typeof owner !== 'string' || !owner || owner === 'all') return [];
+  return [{ field: 'owner', operator: 'in', values: [owner] }];
+}
+
+/**
+ * The bar's filters, given the `?filters=` param and the legacy shorthands.
  *
  * `rawFilters` is `null` when `?filters=` is ABSENT from the URL and an array
  * (possibly empty) when it is present. That distinction is the whole point:
- * "absent" means the user has never touched the bar, so a legacy `?tags=` link
- * may still speak for it; "present but empty" means the user emptied the bar,
- * and the legacy shorthand must NOT speak over that. Collapsing the two — the
- * bar's first shape — made the last pill on a `?tags=` link unremovable: the
- * write dropped the param, the fallback re-derived the label filter, and the ×
- * the user had just clicked did nothing.
+ * "absent" means the user has never touched the bar, so a legacy `?tags=` /
+ * `?owner=` link may still speak for it; "present but empty" means the user
+ * emptied the bar, and the legacy shorthands must NOT speak over that.
+ * Collapsing the two — the bar's first shape — made the last pill on a `?tags=`
+ * link unremovable: the write dropped the param, the fallback re-derived the
+ * filter, and the × the user had just clicked did nothing. The legacy `?owner=`
+ * param rides the same "absent only" rule, so it cannot resurrect an owner pill
+ * the user removed once the bar has been touched.
  */
-export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter[] {
-  if (rawFilters === null || rawFilters === undefined) return filtersFromLegacyTags(legacyTags);
+export function resolveFilters(
+  rawFilters: unknown,
+  legacyTags: unknown,
+  legacyOwner: unknown = null,
+): Filter[] {
+  if (rawFilters === null || rawFilters === undefined) {
+    return normalizeFilters([
+      ...filtersFromLegacyTags(legacyTags),
+      ...filtersFromLegacyOwner(legacyOwner),
+    ]);
+  }
   return normalizeFilters(rawFilters);
 }
 
@@ -248,9 +379,13 @@ export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter
 export function filtersParamValue(
   next: readonly Filter[],
   legacyTags: unknown,
+  legacyOwner: unknown = null,
 ): Filter[] | null {
   if (next.length > 0) return [...next];
-  return filtersFromLegacyTags(legacyTags).length > 0 ? [] : null;
+  return filtersFromLegacyTags(legacyTags).length > 0 ||
+    filtersFromLegacyOwner(legacyOwner).length > 0
+    ? []
+    : null;
 }
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -607,6 +742,24 @@ export function filtersToQueryParams(
         params.trigger = joined;
         params.trigger_mode = scalarModeFor(filter.operator);
         break;
+      // The taxonomy pair. `GET /memories` has accepted these since 00056 and
+      // the handler has always filtered on them — the only thing that was
+      // missing was a descriptor to turn a pill into the param.
+      case 'kind':
+        params.kind = joined;
+        params.kind_mode = scalarModeFor(filter.operator);
+        break;
+      case 'host':
+        params.host = joined;
+        params.host_mode = scalarModeFor(filter.operator);
+        break;
+      // Ownership (00064). `personal` plus org slugs; the handler resolves the
+      // slugs against the caller's member orgs. Same conjunct-of-disjunction
+      // shape as the scalar dimensions.
+      case 'owner':
+        params.owner = joined;
+        params.owner_mode = scalarModeFor(filter.operator);
+        break;
       case 'repo':
         params.origin_repo = joined;
         params.origin_repo_mode = scalarModeFor(filter.operator);
@@ -630,4 +783,127 @@ export function filtersToQueryParams(
   }
 
   return params;
+}
+
+/**
+ * The active filters as `GET /memories/facets` drill-down params.
+ *
+ * The facets route mirrors `GET /memories`' DIMENSION filter params under the
+ * same names (`ListFacetsQuerySchema`, migration 00057), so this is exactly
+ * {@link filtersToQueryParams} — every key it sets is one the facets route also
+ * accepts. Passing them turns the catalog's counts into drill-down figures: the
+ * endpoint counts each dimension with every OTHER active filter applied but not
+ * its own (self-exclusion, done server-side), so a value's count is what
+ * selecting it would actually yield while the dimension you are standing in
+ * still shows its alternatives. Absent filters → the global catalog, unchanged.
+ *
+ * The cast is sound because `filtersToQueryParams` only ever sets dimension
+ * keys; the two query types differ only in the NON-dimension keys (`q`, `key`,
+ * `sort`, …) it never touches — which the facets route deliberately does not
+ * mirror.
+ */
+export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFacetsQuery> {
+  return filtersToQueryParams(filters) as Partial<ListFacetsQuery>;
+}
+
+/**
+ * Translate the bar into a `POST /memories/list` BODY.
+ *
+ * The same seam as {@link filtersToQueryParams}, onto the transport the
+ * dashboard actually uses — and the reason there are two. The query form joins
+ * a dimension's values into one string, which `ValueListSchema` caps at 2048
+ * characters: with production-length host names that is roughly 50-75 values,
+ * a different number for every dimension, and past it the route answers 400 and
+ * the Explorer shows "Failed to load memories". Nothing guards the URL as a
+ * whole either, so eight dimensions individually under the cap still compose a
+ * request a gateway rejects without a LoreKit error envelope.
+ *
+ * Values are NOT joined here, so a value containing a comma survives — which
+ * over the query transport is unreachable by construction. The return type is
+ * `Partial<ListMemoriesBody>`, the schema the handler validates against, so a
+ * contract change is a type error rather than a silent mismatch.
+ */
+export function filtersToBody(filters: readonly Filter[]): Partial<ListMemoriesBody> {
+  const body: Partial<ListMemoriesBody> = {};
+
+  for (const filter of normalizeFilters(filters as unknown[])) {
+    const values = [...filter.values];
+    switch (filter.field) {
+      case 'label':
+        body.tags = values;
+        body.tags_mode = tagsModeFor(filter.operator);
+        break;
+      case 'agent':
+        body.source_agent = values;
+        body.source_agent_mode = scalarModeFor(filter.operator);
+        break;
+      case 'trigger':
+        body.trigger = values;
+        body.trigger_mode = scalarModeFor(filter.operator);
+        break;
+      case 'kind':
+        body.kind = values;
+        body.kind_mode = scalarModeFor(filter.operator);
+        break;
+      case 'host':
+        body.host = values;
+        body.host_mode = scalarModeFor(filter.operator);
+        break;
+      case 'owner':
+        body.owner = values;
+        body.owner_mode = scalarModeFor(filter.operator);
+        break;
+      case 'repo':
+        body.origin_repo = values;
+        body.origin_repo_mode = scalarModeFor(filter.operator);
+        break;
+      case 'branch':
+        body.origin_branch = values;
+        body.origin_branch_mode = scalarModeFor(filter.operator);
+        break;
+      case 'pr': {
+        // Digits only, exactly as the query form does: the column is an integer
+        // and a non-numeric value can only have come from a hand-edited URL, so
+        // the request never carries one the handler would drop anyway.
+        const digits = values.filter((v) => /^\d+$/.test(v));
+        if (digits.length > 0) {
+          body.origin_pr = digits;
+          body.origin_pr_mode = scalarModeFor(filter.operator);
+        }
+        break;
+      }
+    }
+  }
+
+  return body;
+}
+
+/**
+ * The active filters as a `POST /memories/facets` drill-down body.
+ *
+ * The facets route mirrors the list route's dimension fields by name, so this
+ * is exactly {@link filtersToBody} — the drill-down (self-exclusion) is
+ * entirely the endpoint's job. The cast is sound for {@link filtersToFacetParams}'
+ * reason: only dimension keys are ever set, and the two body types differ only
+ * in the non-dimension keys this function never touches.
+ */
+export function filtersToFacetBody(filters: readonly Filter[]): Partial<ListFacetsBody> {
+  return filtersToBody(filters) as Partial<ListFacetsBody>;
+}
+
+/** The active filters as a `POST /memories/activity` body. Same mapping again. */
+export function filtersToActivityBody(filters: readonly Filter[]): Partial<ActivityBody> {
+  return filtersToBody(filters) as Partial<ActivityBody>;
+}
+
+/**
+ * The active filters as a `POST /memories/pivot` body. Same mapping again.
+ *
+ * `row`/`col` are NOT set here: the encoder's job is the filter bar, and the
+ * two axes are the instrument's own state. The endpoint self-excludes whichever
+ * dimensions the axes name, so passing the whole bar — axis dimensions included
+ * — is correct and is what keeps a drilled-in grid navigable.
+ */
+export function filtersToPivotBody(filters: readonly Filter[]): Partial<PivotBody> {
+  return filtersToBody(filters) as Partial<PivotBody>;
 }

@@ -1,0 +1,218 @@
+// `lorekit show <scope::key>` — inspect ONE lesson in full: its complete
+// (untruncated) value, scope, key, updated timestamp, tags, and which store(s)
+// it lives in. When the same scope::key exists in BOTH the offline and remote
+// stores — possibly with different values — both are shown and the divergence is
+// flagged.
+//
+// Positional shapes accepted (see `resolveScopeKeyArgs` in `lessons-pure.mjs`
+// for the one shared, scope-validity-gated disambiguation rule):
+//   show <scope::key>      — canonical form (the same format `list` prints, so
+//                            you can copy-paste a key directly from list output)
+//   show <scope> <key>     — the explicit two-positional form
+//   show --scope <s> --key <k>
+//                          — flags win; an explicit override that skips the `::`
+//                            split (the shorthand already carries a namespaced
+//                            key, since the split lands at the first valid-scope
+//                            prefix — see `resolveScopeArg`)
+//
+// Uses each store's real `read({scope, key})` method (both stores expose it),
+// not a filtered `list` — a single-record lookup is what `read` is for, and it
+// already hides archived entries. Graceful by design (mirrors `list`/`search`):
+// an unconfigured remote is a short note, never an error. Read-only. Human-facing,
+// so the bin wraps it in `traceCommand`.
+import process from 'node:process';
+import { resolveProjectRoot } from '../shared/config.mjs';
+import { resolveDenies } from '../shared/control.mjs';
+import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
+import {
+  normalizeEntry,
+  shortDate,
+  describeError,
+  recordsDiverge,
+  resolveScopeKeyArgs,
+  scopeIssue,
+} from '../shared/lessons-view.mjs';
+import { resolveAppBase } from '../shared/deeplink-pure.mjs';
+import { emitLink } from './link.mjs';
+import { log, err, heading, status, c } from '../shared/util.mjs';
+
+// Read one scope::key from a store, normalizing the result into a small,
+// uniform shape: { available:true, found, record } on success, or
+// { available:true, found:false, error } when the read itself failed (network /
+// server). A per-store read failure is captured, never thrown, so one bad store
+// never aborts the other section.
+async function readOne(store, scope, key) {
+  let res;
+  try {
+    res = await store.read({ scope, key });
+  } catch (e) {
+    return { available: true, found: false, record: null, error: (e && e.message) || 'error' };
+  }
+  if (!res || res.ok === false) {
+    return { available: true, found: false, record: null, error: describeError(res) };
+  }
+  const record = res.entry ? normalizeEntry(res.entry) : null;
+  return { available: true, found: Boolean(record), record, error: null };
+}
+
+export async function show(args) {
+  const root = resolveProjectRoot(args.dir);
+  const env = { ...process.env };
+  if (args.store) env.LOREKIT_STORE = args.store;
+
+  // Positional shapes (all resolved by the shared, validity-gated parser):
+  //   show <scope::key>            — canonical shorthand, mirrors `list` output
+  //   show <scope> <key>           — explicit two-positional form
+  //   show --scope <s> --key <k>   — flags win; an explicit override that skips
+  //                                  the `::` split (the shorthand handles a
+  //                                  namespaced key on its own now)
+  const positionals = args._.slice(1);
+  const { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
+    scope: args.scope,
+    key: args.key,
+  });
+  // Scope validity is checked FIRST, for the same reason as in `write`: a bad
+  // scope is the root cause, and "a key is required" is downstream noise.
+  const badScope = scope ? scopeIssue(scope) : null;
+  if (badScope) {
+    err(`${c.red('Error:')} invalid scope ${c.cyan(scope)} — ${badScope}`);
+    err(`Valid scopes: global | project::<name> | repo::<owner>/<name> | branch::<owner>/<name>::<branch>`);
+    err(`Run ${c.cyan('lorekit show --help')} for options.`);
+    return 1;
+  }
+  if (!scope || !key) {
+    err(`${c.red('Usage:')} lorekit show <scope::key> [--json]`);
+    err(`       lorekit show <scope> <key> [--json]`);
+    err(`Both a scope and a key are required. Run ${c.cyan('lorekit show --help')} for options.`);
+    return 1;
+  }
+  // `show` consumes every positional it is given — unlike `write`, it has no
+  // trailing value — so a leftover one means the caller's mental model differs
+  // from what was parsed. Say so instead of silently reading a different key.
+  if (positionals.length > consumed) {
+    err(`${c.red('Error:')} unexpected argument ${c.cyan(positionals[consumed])}`);
+    err(`Parsed scope ${c.cyan(scope)} and key ${c.cyan(key)} from the arguments before it.`);
+    err(`Run ${c.cyan('lorekit show --help')} for options.`);
+    return 1;
+  }
+
+  // `--link` short-circuits: print the deep link that opens THIS lesson's detail
+  // sheet (`?scope=…&lesson=…`) for the current args, without touching a store.
+  if (args.link) {
+    const base = resolveAppBase({ base: args.base, env });
+    return emitLink({ params: { scope, lesson: { scope, key } }, base, json: args.json });
+  }
+
+  const { local, remote, connection } = resolveStores(root, {
+    env,
+    endpoint: args.endpoint,
+    token: args.token,
+  });
+
+  // Deny-wins section suppression, identical to `list`/`search`.
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
+
+  const offline = localDenied
+    ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }
+    : await readOne(local, scope, key);
+
+  const remoteAvailable = !remoteDenied && remote.usable();
+  const remote_ = remoteDenied
+    ? { available: false, reason: `disabled by deny constraint (${remoteDenied.source})` }
+    : remoteAvailable
+      ? await readOne(remote, scope, key)
+      : { available: false, reason: remoteUnavailableReason(connection) };
+
+  const foundOffline = Boolean(offline.available && offline.found);
+  const foundRemote = Boolean(remote_.available && remote_.found);
+  const diverged = foundOffline && foundRemote && recordsDiverge(offline.record, remote_.record);
+  // "Not found" is only definitive across the stores we could actually consult.
+  const found = foundOffline || foundRemote;
+
+  if (args.json) {
+    log(JSON.stringify(buildJson({ scope, key, offline, remote_, diverged }), null, 2));
+  } else {
+    heading('LoreKit memory');
+    log(`  scope:  ${c.dim(scope)}`);
+    log(`  key:    ${c.dim(key)}`);
+
+    renderRecordSection('Offline', offline);
+    renderRecordSection(
+      'Remote',
+      remote_,
+      remoteAvailable ? connection.endpoint : undefined,
+    );
+
+    if (diverged) {
+      log('');
+      status('warn', 'divergence', 'the offline and remote values differ');
+    }
+    if (!found) {
+      log('');
+      log(`  ${c.dim(`no memory found for ${scope}::${key} in the readable store(s)`)}`);
+    }
+    log('');
+  }
+
+  // Bounded, non-PII telemetry — booleans only, never the scope string or key.
+  return {
+    exitCode: found ? 0 : 1,
+    'lorekit.cli.show.found_offline': foundOffline,
+    'lorekit.cli.show.found_remote': foundRemote,
+    'lorekit.cli.show.diverged': diverged,
+  };
+}
+
+// Render one store's slot: an unavailable note, a "no such key here" line, or the
+// full record (untruncated value).
+function renderRecordSection(title, section, subtitle) {
+  heading(title);
+  if (subtitle) log(`  ${c.dim(subtitle)}`);
+
+  if (!section.available) {
+    status('warn', 'unavailable', section.reason);
+    return;
+  }
+  if (section.error) {
+    status('warn', 'unreadable', section.error);
+    return;
+  }
+  if (!section.found) {
+    log(`  ${c.dim('no such key in this store')}`);
+    return;
+  }
+
+  const e = section.record;
+  if (e.updated) log(`  ${c.dim('updated')} ${shortDate(e.updated)}`);
+  if (e.tags && e.tags.length) log(`  ${c.dim('tags')}    ${e.tags.join(', ')}`);
+  log(`  ${c.dim('value')}`);
+  // The full, untruncated body — indented, line by line, so multi-line lessons
+  // read as written.
+  for (const line of String(e.value ?? '').split('\n')) {
+    log(`    ${line}`);
+  }
+}
+
+// The `--json` payload: the full normalized record(s) plus which store each came
+// from and whether they diverge.
+function buildJson({ scope, key, offline, remote_, diverged }) {
+  return {
+    scope,
+    key,
+    offline: recordJson(offline),
+    remote: recordJson(remote_),
+    diverged,
+  };
+}
+
+function recordJson(section) {
+  if (!section.available) {
+    return { available: false, reason: section.reason, found: false, record: null };
+  }
+  return {
+    available: true,
+    found: Boolean(section.found),
+    record: section.record || null,
+    ...(section.error ? { error: section.error } : {}),
+  };
+}

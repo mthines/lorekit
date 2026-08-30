@@ -15,8 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { tokenize, similarity, clusterDuplicates } from '../src/lessons-view.mjs';
-import { parseThreshold, repoThreshold } from '../src/dedupe.mjs';
+import { tokenize, similarity, clusterDuplicates, clusterByKeyPattern, compileKeyPattern } from '../src/shared/lessons-view.mjs';
+import { parseThreshold, repoThreshold } from '../src/commands/dedupe.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -110,8 +110,81 @@ test('parseThreshold clamps, defaults, and rejects garbage', () => {
   assert.equal(parseThreshold(true), 0.8); // bare `--threshold` with no value
   assert.equal(parseThreshold('0.6'), 0.6);
   assert.equal(parseThreshold('2'), 1); // clamped high
-  assert.equal(parseThreshold('-1'), 0); // clamped low
+  // Floored just above 0 (Number.EPSILON), never a literal 0: the blocked
+  // clusterer's equivalence to the oracle holds only for threshold > 0.
+  assert.equal(parseThreshold('-1'), Number.EPSILON); // clamped to the positive floor
+  assert.equal(parseThreshold('0'), Number.EPSILON); // 0 is floored, not accepted
   assert.equal(parseThreshold('nope'), 0.8); // unparseable → default
+});
+
+// ── unit: compileKeyPattern + clusterByKeyPattern ─────────────────────────────
+
+test('compileKeyPattern returns a RegExp for valid input, null for bad input', () => {
+  assert.ok(compileKeyPattern('(pr\\d+-\\d+)') instanceof RegExp);
+  assert.equal(compileKeyPattern(''), null);
+  assert.equal(compileKeyPattern(true), null); // bare flag, no value
+  assert.equal(compileKeyPattern(undefined), null);
+  assert.equal(compileKeyPattern('(unclosed'), null); // unparseable regex → null, never throws
+});
+
+test('clusterByKeyPattern strips global/sticky flags so exec stays stateless', () => {
+  // A string source can carry no flags at all, so the stateless guarantee for
+  // compileKeyPattern is structural — record it, then exercise the branch that
+  // actually strips: clusterByKeyPattern's RegExp input.
+  assert.equal(compileKeyPattern('(pr\\d+)').flags, '');
+  // A deliberately /g regex must not desync exec state across entries. With
+  // `(pr\d+-\d+)` the two keys capture pr9-1 vs pr9-2 (distinct) → no cluster;
+  // a stateful lastIndex bug would make the second exec miss and change the count.
+  const distinct = clusterByKeyPattern(
+    [
+      { scope: 'repo::x', key: 'b::pr9-1-alpha', value: 'a' },
+      { scope: 'repo::x', key: 'b::pr9-2-beta', value: 'b' },
+    ],
+    /(pr\d+-\d+)/g,
+  );
+  assert.equal(distinct.length, 0); // pr9-1 vs pr9-2 differ → no cluster
+  // Same keys, a coarser capture (pr\d+) → both capture pr9 → one cluster, proving
+  // the /g regex still matched on the second entry (no lastIndex carry-over).
+  const shared = clusterByKeyPattern(
+    [
+      { scope: 'repo::x', key: 'b::pr9-1-alpha', value: 'a' },
+      { scope: 'repo::x', key: 'b::pr9-2-beta', value: 'b' },
+    ],
+    /(pr\d+)/g,
+  );
+  assert.equal(shared.length, 1);
+  assert.equal(shared[0].keyGroup, 'pr9');
+});
+
+test('clusterByKeyPattern groups by shared first capture, ignoring value overlap', () => {
+  const entries = [
+    // same pr+comment id, DIFFERENT values (Jaccard would never link these)
+    { scope: 'repo::x', key: 'crm::pr16855-3758467267-clinerules-link-not-added', value: 'wont fix per author reply' },
+    { scope: 'repo::x', key: 'crm::pr16855-3758467267-promised-link-never-added', value: 'fixed by a later commit touching the hunk' },
+    // a different comment — its own family of one → not a cluster
+    { scope: 'repo::x', key: 'crm::pr16855-3758467260-carve-out-omitted', value: 'unrelated finding' },
+  ];
+  const clusters = clusterByKeyPattern(entries, '(pr\\d+-\\d+)');
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].size, 2);
+  assert.equal(clusters[0].keyGroup, 'pr16855-3758467267');
+  assert.deepEqual(
+    clusters[0].members.map((m) => m.key).sort(),
+    ['crm::pr16855-3758467267-clinerules-link-not-added', 'crm::pr16855-3758467267-promised-link-never-added'],
+  );
+});
+
+test('clusterByKeyPattern: no capture group falls back to the full match; bad pattern → []', () => {
+  const entries = [
+    { scope: 'g', key: 'reviewer-comment-relevance::a', value: '1' },
+    { scope: 'g', key: 'reviewer-comment-relevance::b', value: '2' },
+    { scope: 'g', key: 'other::c', value: '3' },
+  ];
+  const clusters = clusterByKeyPattern(entries, 'reviewer-comment-relevance');
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].keyGroup, 'reviewer-comment-relevance');
+  assert.equal(clusters[0].size, 2);
+  assert.deepEqual(clusterByKeyPattern(entries, '(unclosed'), []); // unparseable → empty
 });
 
 // ── integration fixtures ──────────────────────────────────────────────────────
@@ -231,6 +304,81 @@ test('dedupe degrades an unconfigured remote to a note, never an error', () => {
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /Remote/);
   assert.match(res.stdout, /unavailable/);
+});
+
+// ── --cluster-by-key (key-shape clustering) ───────────────────────────────────
+
+// A project whose keys share a `pr{N}-{commentId}` coordinate across entries with
+// DELIBERATELY disjoint values — the value heuristic must NOT cluster them, but
+// --cluster-by-key must.
+function seedCoordKeys() {
+  const root = tmp('lk-dedupe-coord-');
+  const home = tmp('lk-dedupe-home-');
+  const store = path.join(root, '.lorekit');
+  fs.mkdirSync(path.join(store, 'global'), { recursive: true });
+  const write = (rel, e) => fs.writeFileSync(path.join(store, rel), entry(e));
+  write('global/a.md', { scope: 'global', key: 'crm::pr100-200-wont-fix-slug', value: 'author declined by design intentional' });
+  write('global/b.md', { scope: 'global', key: 'crm::pr100-200-fixed-slug', value: 'commit touched the region resolving it' });
+  write('global/c.md', { scope: 'global', key: 'crm::pr100-999-other', value: 'a totally separate finding entirely' });
+  return { root, home };
+}
+
+test('value-mode leaves coordinate-key duplicates unclustered (the gap --cluster-by-key fills)', () => {
+  const { root, home } = seedCoordKeys();
+  const res = runDedupe(root, home, ['--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.mode, 'value');
+  assert.equal(out.offline.clusters.length, 0); // disjoint values → no value cluster
+});
+
+test('dedupe --cluster-by-key groups the coordinate-key family the value heuristic misses', () => {
+  const { root, home } = seedCoordKeys();
+  const res = runDedupe(root, home, ['--cluster-by-key', '(pr\\d+-\\d+)', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.mode, 'key');
+  assert.equal(out.keyPattern, '(pr\\d+-\\d+)');
+  assert.equal(out.offline.clusters.length, 1);
+  const cluster = out.offline.clusters[0];
+  assert.equal(cluster.keyGroup, 'pr100-200');
+  assert.deepEqual(
+    cluster.members.map((m) => m.key).sort(),
+    ['crm::pr100-200-fixed-slug', 'crm::pr100-200-wont-fix-slug'],
+  );
+});
+
+test('dedupe --cluster-by-key with no regex value is a usage error (exit 1)', () => {
+  const { root, home } = seedCoordKeys();
+  // `--cluster-by-key --json` → the flag consumes no value (next token is a flag).
+  const res = runDedupe(root, home, ['--cluster-by-key', '--json']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /needs a regex value/);
+});
+
+test('the empty summary names the pattern in key mode, never a threshold', () => {
+  const { root, home } = seedCoordKeys();
+  const res = runDedupe(root, home, ['--cluster-by-key', '(nomatch\\d+)']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /no key-shape clusters for \/\(nomatch\\d\+\)\//);
+  assert.equal(/at this threshold/.test(res.stdout), false);
+});
+
+test('dedupe --cluster-by-key with an explicit --threshold is a usage error (exit 1)', () => {
+  const { root, home } = seedCoordKeys();
+  const res = runDedupe(root, home, ['--cluster-by-key', '(pr\\d+-\\d+)', '--threshold', '0.6', '--json']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /--threshold is not used with --cluster-by-key/);
+});
+
+test('a repo-level dedupe.threshold never breaks a --cluster-by-key run', () => {
+  const { root, home } = seedCoordKeys();
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'dedupe.threshold': 0.6 }));
+  const res = runDedupe(root, home, ['--cluster-by-key', '(pr\\d+-\\d+)', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.mode, 'key');
+  assert.equal(out.threshold, undefined);
 });
 
 // ── dedupe.threshold in .lorekit.json ─────────────────────────────────────────

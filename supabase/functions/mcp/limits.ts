@@ -2,7 +2,7 @@
  * Abuse guardrails for the production Deno MCP edge function: a per-user cap
  * on stored (active) memories, and a per-user request rate limit.
  *
- * Self-contained mirror of packages/mcp-core/src/limits.ts — the edge
+ * Self-contained mirror of packages/mcp-core/src/limits/limits.ts — the edge
  * function has no cross-package imports (Deno / Node.js MCP SDK
  * incompatibility), so this module deliberately duplicates the logic rather
  * than importing it. Keep the two in sync when either changes.
@@ -15,8 +15,8 @@
  * structured usage events for plan-sizing analytics.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
-import { createTracedClient, type Span } from '../_shared/otel.ts';
+import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
+import type { DbClient } from '../_shared/db/db-client.ts';
 
 export type LimitErrorCode = 'memory_cap' | 'rate_limited';
 
@@ -80,7 +80,7 @@ export function translateCapError(err: unknown, limit?: number): unknown {
  * throttling; the cap trigger still protects storage during an outage.
  */
 export async function checkRateLimit(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   userId: string,
   span: Span,
   windowSeconds = 60,
@@ -112,7 +112,7 @@ export async function checkRateLimit(
 
 // ── Usage event recording ─────────────────────────────────────────────────────
 //
-// MOVED to ../_shared/usage.ts. The REST router records usage events too
+// MOVED to ../_shared/telemetry/usage.ts. The REST router records usage events too
 // (one per dispatched route), and it must use the SAME writer — two copies
 // would drift the moment either side gained a field. Re-exported here so
 // mcp-handler.ts's existing `from './limits.ts'` import sites are unchanged
@@ -125,5 +125,5 @@ export async function checkRateLimit(
 // recording is edge-only. The parity that does exist (LimitError,
 // translateCapError, the message builders, checkRateLimit — all above this
 // line) is untouched.
-export { recordUsageEvent, getUserPlanName, type UsageEventParams } from '../_shared/usage.ts';
+export { recordUsageEvent, getUserPlanName, type UsageEventParams } from '../_shared/telemetry/usage.ts';
 

@@ -14,7 +14,11 @@ keywords: ["tags", "scopes", "global", "project", "repo", "branch", "namespace",
 | `repo` | `repo::{owner}/{repo}` | Memories about this repo's codebase |
 | `branch` | `branch::{owner}/{repo}::{branch}` | Experimental learnings on a feature branch |
 
-`::` is the only valid separator. Single `:` or `/` returns a 400 error. All segments are lowercased on ingest.
+`::` is the only valid separator. Single `:` or `/` returns a 400 error. The MCP tools lowercase every segment on ingest; the REST write path (`POST /memories`) stores the scope exactly as you send it, which is why a filter matches the stored string rather than a lowercased copy of it.
+
+The same grammar applies when you *filter* by a scope, not only when you write one. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/pivot`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all return a **400** for an ungrammatical `?scope=` — and so do the body-transport forms `POST /memories/list`, `POST /memories/activity`, `POST /memories/facets` and `POST /memories/pivot`, which read the same `scope` out of the JSON body. They used to pass the value straight into the query, so a typo matched nothing and came back as an empty page — or, on delete and restore, as "no such memory". A scope filter is the question you are asking, so a malformed one is rejected instead of quietly answering a different question. On those routes a filter with leading or trailing whitespace is a **400** too, since the padded form is compared literally and could never match anything. `GET /memories/read-activity` is the exception here as well: it normalises before comparing, so it trims the padding and answers **200**.
+
+On the five `/memories` routes the filter is validated but **not** lowercased, so it matches exactly the scope string that was stored — the write path keeps your capitalisation, so the filter has to as well. `GET /memories/read-activity` is the exception: it filters recorded read events, whose scope was already lowercased when the event was recorded, so it lowercases your filter to match. Same grammar everywhere; the case rule follows whatever wrote the value.
 
 <TutorialStep number={1} title="Choose the right scope">
 
@@ -75,16 +79,21 @@ memory.list {
 
 <TutorialStep number={4} title="Filter the Explorer by more than tags">
 
-The [Explorer](/lore) filters on six dimensions, not just tags. Press the **Filter** button, pick a dimension, then pick values:
+The [Explorer](/lore) filters on nine dimensions, not just tags. Press the **Filter** button, pick a dimension, then pick values:
 
 | Dimension | Comes from | Example |
 | --- | --- | --- |
 | Label | `tags` | `loop::aw-lessons` |
+| Kind | `kind` | `lesson` (also `bus`, `signal`) |
+| Host | `host` | `reviewer` |
+| Owner | `org_id` | `Personal` (or an org you belong to) |
 | Agent | `source_agent` | `aw-executor` |
 | Trigger | `trigger` | `stuck-loop` |
 | Repository | `origin_repo` | `mthines/lorekit` |
 | Branch | `origin_branch` | `feat/new-auth` |
 | Pull request | `origin_pr` | `311` |
+
+**Owner** partitions lore by who it belongs to — your own `Personal` lore, or one of the organizations you are a member of (shown by its slug). It filters server-side like every other dimension, so the list, the filter-menu counts and the stats header all agree.
 
 Values inside one dimension combine with **OR**; dimensions combine with **AND**. So "Agent is either of `aw`, `claude`" **and** "Branch is `main`" is one filter set, and every filter is in the URL — copy the address to share the exact view.
 
@@ -97,7 +106,38 @@ The last three dimensions come from **provenance** — the repo, branch and PR a
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Search across scopes with wildcards">
+<TutorialStep number={5} title="Read the stats header above the list">
+
+The Explorer opens with four cards above the memory list, describing **the scope, filters, and time range you have selected** rather than your whole account:
+
+| Card | Counts |
+| --- | --- |
+| Memories written | New memories in the range, under the selected scope **and filters** |
+| Memories read | Memory *records* read — one list call returning 20 memories counts as 20 |
+| Scopes active | Distinct scopes with at least one memory written in the range, **under your filters** |
+| Memories expired | Records deleted because their TTL ran out |
+
+A **Stat charts / Heatmap** switch in the panel header chooses which of the two you get — one or the other, never both stacked:
+
+- **Stat charts** shows the four cards and unfolds each one's evidence: a period-over-period trend chip and a bar per hour or day. Every card with bars is **additive** — summing the bars reproduces the number above them, so the chart and the total can never tell different stories. A very large change is abbreviated to keep the badge on one line (`+8.8K%`); hovering it shows the exact percentage.
+- **Heatmap** gives the write calendar the panel to itself — a quarter of activity on a phone, a full year on a desktop, sized to the width it has. The cards step aside rather than stacking above it, so the calendar is all you scroll past. It is deliberately **account-wide and unfiltered**, because you use it to *pick* a window rather than to read the one you already picked. Hover or tab to a day for its exact count.
+
+The panel opens **expanded**, and the chevron folds it away to just the four numbers — from either view, so the figures are always one chevron away and folded is a compact summary line rather than a screen of tiles. **Your choice is remembered** — collapse it once and it stays collapsed on every visit, in every tab, until you open it again; the same goes for which of the two views you were last on. It is a preference for you and this browser, not part of the page's address, so a `/lore` link you share carries what you were looking at and not how tall you left the panel. When a number changes because you picked a different scope, range, or filter, it counts to its new value rather than swapping, so you can see which figures moved.
+
+The **time range** picker sits in the same header and offers the same presets as the Overview (24h / 7d / 30d) plus **All**.
+
+Before you touch it, it describes **the last 24 hours** — recent activity is what an activity panel is for, and an all-time total has no preceding period to compare against. That opening view applies to the panel only: **the list below still shows all time**, so nothing is hidden by default and every `/lore` link you have already shared still opens on everything.
+
+Once you *do* pick a range it drives the whole page — the cards, the heatmap highlight, and the list below — and an empty list caused by the window says so and offers a one-click way back to all time.
+
+**Memories written** and **Scopes active** follow your full selection — scope, time range, and every filter in the bar — so they always agree with the list beneath them. The other two cards can only go part-way, each stated in its own tooltip:
+
+- **Memories read follows the scope and range, but not the filter bar.** A read is a query, not a per-memory event, so a label or repo filter cannot narrow it — the card stays scope-level. It also counts only your own reads, and only those LoreKit could attribute to a scope, so per-scope totals can be smaller than the account total. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption.
+- **Memories expired is account-wide** even with a scope selected. Expiry is recorded when the nightly purge removes a row, and that purge runs per user across every scope, so there is no scope on the event to filter by.
+
+</TutorialStep>
+
+<TutorialStep number={6} title="Search across scopes with wildcards">
 
 `memory.search` supports owner-level wildcards in the `scopes` parameter:
 
@@ -114,7 +154,7 @@ Wildcards only work in `memory.search` — not in `memory.read`, `memory.list`, 
 
 </TutorialStep>
 
-<TutorialStep number={6} title="Read narrow-to-broad before a task">
+<TutorialStep number={7} title="Read narrow-to-broad before a task">
 
 Agents should read from specific scopes first, then merge with broader ones. More-specific scopes win when the same key exists at multiple levels:
 
@@ -128,7 +168,7 @@ memory.list { scope: "global" }
 
 </TutorialStep>
 
-<TutorialStep number={7} title="Inspect with the CLI">
+<TutorialStep number={8} title="Inspect with the CLI">
 
 The CLI offers several commands that respect the same scope/tag logic. You can also browse memories visually in the [Explorer](/lore).
 

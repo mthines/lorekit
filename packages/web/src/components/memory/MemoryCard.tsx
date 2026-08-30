@@ -18,11 +18,12 @@
 import type { ReactNode } from 'react';
 import { memo } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Clock, Bot, Zap, Timer } from 'lucide-react';
+import { Clock, Bot, Zap, Timer, GitPullRequest } from 'lucide-react';
 import { ScopeBadge } from './ScopeBadge';
 import { OwnershipBadge } from './OwnershipBadge';
 import type { ScopePrefix } from './scope-meta';
 import type { MemoryOwner } from '@/lib/ownership';
+import { originPullRequestUrl } from '@/lib/origin';
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,12 @@ export interface MemoryCardModel {
   org?: MemoryOwner;
   /** ISO expiry timestamp. Null/undefined = never expires. */
   expiresAt?: string | null;
+  /**
+   * GitHub pull-request link, derived from the origin (`origin_repo` + `origin_pr`).
+   * Null when the memory has no PR provenance — the card shows the chip only when
+   * both are present, so you can jump to the PR without opening the memory.
+   */
+  pr?: { url: string; label: string } | null;
 }
 
 /** Adapt a Lore Explorer lesson (LessonEntry-shaped) into the card model. */
@@ -60,7 +67,12 @@ export function memoryFromLesson(lesson: {
   archived_at?: string | null;
   org?: MemoryOwner;
   expires_at?: string | null;
+  origin_repo?: string | null;
+  origin_pr?: number | null;
 }): MemoryCardModel {
+  // A PR chip needs both a valid repo and PR number; `originPullRequestUrl`
+  // returns null unless both are present and well-formed.
+  const prUrl = originPullRequestUrl(lesson);
   return {
     scope: lesson.scope,
     scopeType: lesson.scope_type,
@@ -75,6 +87,7 @@ export function memoryFromLesson(lesson: {
     archived: Boolean(lesson.archived_at),
     org: lesson.org,
     expiresAt: lesson.expires_at ?? null,
+    pr: prUrl ? { url: prUrl, label: `#${lesson.origin_pr}` } : null,
   };
 }
 
@@ -109,7 +122,9 @@ function MetaChip({ icon: Icon, children }: { icon: typeof Bot; children: ReactN
 function Tags({ tags, max = 4 }: { tags: string[]; max?: number }) {
   if (tags.length === 0) return null;
   return (
-    <div className="mt-2 flex flex-wrap gap-1">
+    // Spacing from the card body's flex `gap`, not a margin here — see the card
+    // layout's note on why the whole body uses gaps rather than stacked margins.
+    <div className="flex flex-wrap gap-1">
       {tags.slice(0, max).map((tag) => (
         <span
           key={tag}
@@ -142,13 +157,18 @@ export function expiryStatus(iso: string | null | undefined): { label: string; u
   return null;
 }
 
-function ExpiryBadge({ expiresAt }: { expiresAt?: string | null }) {
+// `pointer-events-auto` is load-bearing: the card layout renders the badge inside
+// a `pointer-events-none` body, which would also suppress the native `title`
+// tooltip below. Re-enabling pointer events makes the badge its own hit target,
+// so it forwards `onClick` to keep the whole-card "open" action intact.
+function ExpiryBadge({ expiresAt, onClick }: { expiresAt?: string | null; onClick?: () => void }) {
   const status = expiryStatus(expiresAt);
   if (!status) return null;
   return (
     <span
+      onClick={onClick}
       className={[
-        'flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs',
+        'pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs',
         status.urgent
           ? 'border-amber-400/30 bg-amber-400/10 text-amber-400'
           : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
@@ -225,6 +245,7 @@ export const MemoryCard = memo(function MemoryCard({
     timestamp,
     org,
     expiresAt,
+    pr,
   } = memory;
 
   const keyCode = (
@@ -243,6 +264,26 @@ export const MemoryCard = memo(function MemoryCard({
       <Clock className="size-3" aria-hidden />
       {formatRelativeTime(timestamp)}
     </span>
+  );
+
+  // A real link (not nested in the card's open-button), so a click jumps to the
+  // PR instead of opening the memory. Rendered by the card layout only.
+  // `pointer-events-auto` lets it sit above that layout's stretched open-button
+  // overlay; `stopPropagation` keeps a chip click from reaching any clickable
+  // ancestor a caller may wrap the card in.
+  const prChip = pr && (
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      aria-label={`Open pull request ${pr.label} on GitHub`}
+      title={`Open pull request ${pr.label} on GitHub`}
+      className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+    >
+      <GitPullRequest className="size-3" aria-hidden />
+      {pr.label}
+    </a>
   );
 
   // ── Compact (dropdown row) ──────────────────────────────────────────────────
@@ -348,45 +389,71 @@ export const MemoryCard = memo(function MemoryCard({
   // ── Card (lore explorer) ────────────────────────────────────────────────────
   // Header mirrors the row layout — [scope pill] key … timestamp — so the card
   // and the activity row read the same; only the leading icon and density differ.
+  //
+  // The card root is a <div>, not a <button>, so the PR chip can be a real <a>
+  // inside it — an anchor nested in a button is invalid HTML. The whole-card
+  // "open" action is a stretched <button> overlay behind the content; the content
+  // is pointer-events-none so clicks fall through to that button, except the two
+  // elements that re-enable pointer events and sit on top: the PR chip (its own
+  // link target) and the expiry badge (so its native tooltip still shows on
+  // hover — it forwards the click back to the open action).
   const withPath = showScopePath ?? false;
   const hasMeta = showMeta && Boolean(sourceAgent || trigger);
   return (
-    <motion.button
-      type="button"
-      onClick={onClick}
-      aria-pressed={selected}
+    <motion.div
       {...motionProps}
       className={[
-        'group w-full rounded-xl border p-4 text-left transition-all duration-150',
+        'group relative w-full rounded-xl border transition-all duration-150',
         selected
           ? SELECTED_CARD
           : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
         className,
       ].join(' ')}
     >
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {showScope && <ScopeBadge scope={scope} type={type} label />}
-        <OwnershipBadge org={org} />
-        {keyCode}
-        <ExpiryBadge expiresAt={expiresAt} />
-        {timeEl && <span className="ml-auto">{timeEl}</span>}
-      </div>
-
-      {showPreview && (
-        <p className="mb-3 line-clamp-2 text-xs text-[var(--color-content-secondary)]">{preview}</p>
-      )}
-
-      {(hasMeta || withPath) && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
-          {showMeta && sourceAgent && <MetaChip icon={Bot}>{sourceAgent}</MetaChip>}
-          {showMeta && trigger && <MetaChip icon={Zap}>{trigger}</MetaChip>}
-          {withPath && (
-            <ScopeBadge scope={scope} type={type} showBadge={false} showPath className="min-w-0" />
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={selected}
+        aria-label={`Open memory ${memoryKey}`}
+        className="absolute inset-0 z-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      />
+      {/* `flex-col gap-2` rather than per-child `mb-*`/`mt-*`: a fixed bottom
+          margin on a section that may not render (no preview, no meta, no tags)
+          leaves an orphan gap, and two adjacent margins (preview's `mb-3` +
+          tags' `mt-2`) stacked into ~20px of dead space. A flex gap only falls
+          between the sections actually present, so the card is as tall as its
+          content and no taller — short lore reads tight, long lore keeps the
+          same rhythm. */}
+      <div className="pointer-events-none relative z-10 flex flex-col gap-2 p-4 text-left">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {showScope && <ScopeBadge scope={scope} type={type} label />}
+          <OwnershipBadge org={org} />
+          {keyCode}
+          <ExpiryBadge expiresAt={expiresAt} onClick={onClick} />
+          {(prChip || timeEl) && (
+            <span className="ml-auto flex items-center gap-1.5">
+              {prChip}
+              {timeEl}
+            </span>
           )}
         </div>
-      )}
 
-      {showTags && <Tags tags={tags} />}
-    </motion.button>
+        {showPreview && (
+          <p className="line-clamp-2 text-xs text-[var(--color-content-secondary)]">{preview}</p>
+        )}
+
+        {(hasMeta || withPath) && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
+            {showMeta && sourceAgent && <MetaChip icon={Bot}>{sourceAgent}</MetaChip>}
+            {showMeta && trigger && <MetaChip icon={Zap}>{trigger}</MetaChip>}
+            {withPath && (
+              <ScopeBadge scope={scope} type={type} showBadge={false} showPath className="min-w-0" />
+            )}
+          </div>
+        )}
+
+        {showTags && <Tags tags={tags} />}
+      </div>
+    </motion.div>
   );
 });

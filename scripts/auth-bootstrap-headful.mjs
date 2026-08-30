@@ -21,7 +21,7 @@
 // Examples:
 //   AUTH_LOGIN_URL=http://localhost:3000/login \
 //     AUTH_STORAGE_STATE=./.auth/local.json \
-//     AUTH_POST_LOGIN_URL_PATTERN='/dashboard' \
+//     AUTH_POST_LOGIN_URL_PATTERN='/overview' \
 //     node scripts/auth-bootstrap-headful.mjs
 //
 //   # In aw-target.yml:

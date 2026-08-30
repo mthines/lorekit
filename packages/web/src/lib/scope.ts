@@ -1,11 +1,109 @@
 /**
  * Lightweight scope utilities for the web package.
- * Duplicated from packages/mcp-core/src/scope.ts to avoid pulling
+ * Duplicated from packages/mcp-core/src/scope/scope.ts to avoid pulling
  * OTel, Supabase, and tool-handler code into the Next.js webpack bundle.
  * Keep in sync with the canonical implementation in mcp-core.
  */
 
 export type ScopePrefix = 'global' | 'project' | 'repo' | 'branch';
+
+const VALID_PREFIXES: readonly string[] = ['global', 'project', 'repo', 'branch'];
+
+/**
+ * The canonical charset a scope may use, mirroring the edge validator's
+ * `/^[\w.:/-]+$/` guard (`supabase/functions/_shared/scope/scope.ts`). A canonical
+ * scope only ever uses word chars plus `. : / -`; the edge rejects anything
+ * else because a scope is interpolated into a PostgREST `.or()` filter where
+ * `"` `,` `(` `)` are structural.
+ */
+const CANONICAL_CHARSET = /^[\w.:/-]+$/;
+
+/**
+ * Is `raw` a scope the API will ACCEPT as a filter?
+ *
+ * This mirrors `parseScopeFilter` in `supabase/functions/_shared/scope/scope.ts` —
+ * the entry point five of the six scope-filtering routes now call — and
+ * deliberately NOT the stricter per-prefix grammar in
+ * `packages/mcp-core/src/scope/scope.ts`. Mirroring the stricter one would have the
+ * dashboard refuse a scope the server happily serves (`global::something` is
+ * the live example), which is a worse failure than the one this guards against:
+ * it would hide real data behind a filter the user can see in the chip strip.
+ *
+ * `scope-parity.spec.ts` executes that agreement against the edge module rather
+ * than asserting it in prose, so the two cannot drift into a 400 again.
+ *
+ * The asymmetry this originally existed to absorb is GONE as of the
+ * scope-filter-validation change: `GET /memories`, `/activity`, `/facets`,
+ * `/read-activity`, `DELETE /memories` and `POST /memories/restore` now ALL
+ * validate `?scope=` and answer 400 on an ungrammatical value (the deliberate
+ * "a filter is the question itself" rule — see
+ * `supabase/functions/memories/CLAUDE.md`). They share the GRAMMAR only:
+ * `/read-activity` reaches it through the normalising `validateScope`, the
+ * other five through `parseScopeFilter`, so the six agree on what is legal and
+ * differ on what is done with a legal value. An ungrammatical scope therefore
+ * fails the page uniformly rather than breaking one card next to four that look
+ * merely empty. This guard matters MORE after that change, not less: it is what
+ * keeps the client from ever sending one, so the uniform failure stays
+ * theoretical.
+ *
+ * MIXED CASE IS CANONICAL HERE, and that inverted with the reject-only change.
+ * This guard used to refuse anything not already lowercased, on the ground that
+ * the edge normalised and so only the normalised form described what the server
+ * would filter on. `parseScopeFilter` does not normalise — it returns the
+ * caller's own string, which is what reaches `.eq('scope', …)` — so the raw
+ * value IS what the server filters on, and refusing it was the one thing
+ * stopping the Explorer from reaching the mixed-case rows the REST write path
+ * stores verbatim. Refusing it hid real data behind a filter the UI offers,
+ * which is the quieter and worse of the two failure directions.
+ *
+ * PADDING IS NOT canonical, and that also follows the edge: `parseScopeFilter`
+ * rejects surrounding whitespace outright, because the grammar check trims it
+ * away while the predicate does not.
+ *
+ * One card reads differently, by design: `GET /memories/read-activity` filters
+ * `usage_events.scope`, which is lowercased when the event is recorded, so it
+ * normalises the filter. A mixed-case scope therefore charts reads for its
+ * lowercased form while the list shows the exact rows. Each side matches how
+ * its own column is written; see `supabase/functions/memories/CLAUDE.md`.
+ */
+export function isCanonicalScope(raw: string): boolean {
+  if (!raw) return false;
+  // Padding is rejected by the edge filter, so it is not canonical here either.
+  if (raw !== raw.trim()) return false;
+  if (/^(project|repo|branch):[^:]/i.test(raw)) return false;
+  // Case is carried through to the predicate, so the GRAMMAR is checked against
+  // the lowercased form (as the edge does) while the VALUE stays the caller's.
+  const lower = raw.toLowerCase();
+  if (lower === 'global') return true;
+  const sepIdx = lower.indexOf('::');
+  if (sepIdx === -1) return false;
+  if (!VALID_PREFIXES.includes(lower.slice(0, sepIdx))) return false;
+  return CANONICAL_CHARSET.test(raw);
+}
+
+/**
+ * What the Explorer should do with a `?scope=` it just read off the URL.
+ *
+ * `scope` is the value to filter by (`null` = all scopes) and `rejected` is the
+ * value that was thrown away, so the page can SAY it ignored the filter instead
+ * of silently answering a wider question than the link asked for. Exactly one
+ * of the two is ever non-null.
+ *
+ * Pure and exported because this is the seam the bug lived at: a `?scope=` is
+ * fanned out to five endpoints on every render, and it is only worth reasoning
+ * about once, here.
+ */
+export interface ResolvedScopeParam {
+  scope: string | null;
+  rejected: string | null;
+}
+
+export function resolveScopeParam(raw: string | null): ResolvedScopeParam {
+  if (raw === null || raw === '') return { scope: null, rejected: null };
+  return isCanonicalScope(raw)
+    ? { scope: raw, rejected: null }
+    : { scope: null, rejected: raw };
+}
 
 /**
  * Return the scope type for use as a low-cardinality attribute/badge label.

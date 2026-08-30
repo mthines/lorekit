@@ -1,0 +1,7 @@
+{
+  "name": "@lorekit/smoke-tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Live-endpoint integration/smoke tests against the deployed LoreKit Supabase Edge Functions (memories, orgs, MCP, BYOD). No application code, no runtime dependencies beyond Node built-ins — each spec self-skips when its required env vars are absent."
+}

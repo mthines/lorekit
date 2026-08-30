@@ -22,10 +22,17 @@ context into the agent — none of them writes memory (the write is still the
 model calling `memory.write`). Three modes, selectable non-interactively with
 `--hooks <mode>`:
 
-- `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
+- `all` — `SessionStart` (inject lessons), `UserPromptSubmit` (inject the few
+  that match what you just typed, if any), `PostToolUseFailure` and `Stop`
   (nudge to record one). Preselected on a fresh install.
-- `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
+- `read-only` — `SessionStart` only: lessons are injected ONCE, nothing ever
+  nudges, and nothing runs per turn.
 - `none` — skills + MCP only; memory stays model-invoked.
+
+`UserPromptSubmit` fires on every prompt, so it is deliberately quiet: it skips
+trivial prompts, stays silent when nothing matches, and never re-shows a memory
+already injected this session. `hooks.userPrompt: "off"` disables just that
+event while keeping the rest of `all`.
 
 An interactive re-run preselects whatever is already wired, so it never
 resurrects hooks you declined. `--yes` / a non-TTY run takes that same
@@ -36,6 +43,21 @@ pass `--hooks <mode>` when you need a specific wiring.
 `--hooks none` removes hooks that are already there; the older `--no-hooks` flag
 only skips wiring new ones. `npx @lorekit/cli doctor` reports which events are
 wired and in which scope.
+
+The `SessionStart` block is bounded by a character budget
+(`hooks.sessionStart.maxChars`, default 3000 — roughly 25 index lines) and, from
+the other direction, by a line count (`hooks.sessionStart.maxLessons`, default
+100, range 3–200) — whichever binds first, which at the default budget is almost
+always `maxChars`. `maxLessons` is therefore best read as the DEPTH of the read:
+it sets the per-scope candidate fetch (100 memories per scope by default, capped
+at the API's 100-per-page maximum), so the ranker picks its ~25 rendered lines
+from up to 400 candidates rather than from the newest handful. Memories are
+ranked by recurrence and recency, then de-duplicated, before the budget is spent. A header
+reading `9 of 50 memories loaded` means the block was truncated — the trailing
+`More lore: …` line names which scopes hold the rest, and `memory.search` /
+`memory.read` reach them. `hooks.sessionStart` picks the shape:
+`hybrid` (default, list + that map), `index` (list only) or `map`
+(map + the three most salient).
 
 Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
 
@@ -71,7 +93,26 @@ lk_wo_<32 chars>   # write only
 ```
 
 Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
-Maximum 20 tokens per account. Generate and revoke at lorekit.io.
+Maximum 20 tokens per account. Generate, scope, and revoke at lorekit.io.
+
+### Scoping
+
+Beyond the read/write tier, a token can be narrowed to an allowlist of scope
+patterns and to a tenancy. Both default to unrestricted; an unscoped token
+behaves exactly as it always has.
+
+- **Scopes** — exact scopes, or an owner wildcard (`repo::owner/*`). Empty = any
+  scope. Max 50 patterns.
+- **Organisations** — `all` (default) | `personal` (no org memories) | `selected`.
+  Personal memories are reachable under all three.
+
+A request that NAMES a scope outside the allowlist is refused (`-32003` on MCP,
+`403` on REST) rather than answered with an empty list. A request that names no
+scope is narrowed instead. `memory.scopes` is narrowed too, so a scoped token
+cannot enumerate scope names it may not read. An operation that carries no scope
+at all (`memory.purge_expired`) is refused for a token that has an allowlist.
+
+For a scope INSIDE the allowlist, a scoped token can archive, delete, or restore any writer's row for that scope+key — the management authority the owner granted by scoping the key — reporting `404` (nothing there) vs `403` (present, but not this token's to touch); an unscoped token stays own-rows-only.
 
 A revoked token is rejected with HTTP 401 (`{"error":"Authentication required","code":"unauthorized"}`)
 on REST and `-32001` on MCP. `npx @lorekit/cli doctor` verifies this directly: its
@@ -86,7 +127,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 
 ## Scope format
 
-`::` is the only valid separator. Segments are lowercased on ingest.
+`::` is the only valid separator. The MCP tools lowercase every segment on ingest; the REST write path (`POST /memories`) stores the scope verbatim, so `memories.scope` can hold mixed case and a filter matches it exactly.
 
 | Type | Format | Example |
 |------|--------|---------|
@@ -95,7 +136,13 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | Repository | `repo::{owner}/{repo}` | `repo::mthines/gw-tools` |
 | Branch | `branch::{owner}/{repo}::{branch}` | `branch::mthines/gw-tools::feat/x` |
 
-Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400.
+Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400; a segment containing a further `::` → 400 (`::` is reserved as the separator).
+
+The same grammar applies when a scope is used as a FILTER, not just when it is written. `GET /memories`, `GET /memories/activity`, `GET /memories/facets`, `GET /memories/read-activity`, `DELETE /memories?scope=…&key=…` and `POST /memories/restore` all answer **400** for an ungrammatical `?scope=`. The body-transport forms `POST /memories/list`, `POST /memories/activity` and `POST /memories/facets` answer **400** for the same value in their JSON body: each decodes into the same reader as its `GET` twin, so the two transports cannot disagree about which scopes are legal. They previously passed the raw value through, so a bad scope matched nothing and the route answered `200` with an empty page (or, on delete/restore, `404`) — the same input getting a 400 from one route and a cheerful empty result from the others. A scope filter is the question being asked, so a malformed one is rejected rather than answered with a different question's result.
+
+On those routes a filter carrying leading or trailing whitespace is a **400** as well: the grammar check trims before it looks, but the predicate does not, so the padded form could only ever match nothing. `GET /memories/read-activity` is the exception — it normalises the filter before comparing, so it trims the padding and answers **200**.
+
+On the five `/memories` routes the filter is validated but **not** normalised: the write path stores `scope` verbatim over REST, so a filter matches exactly the string that was written. Lowercasing a filter would make a mixed-case row unmatchable by `GET /memories` and undeletable by its natural key. `GET /memories/read-activity` is the deliberate exception — it filters `usage_events`, whose `scope` is lowercased when the event is recorded, so it lowercases the filter to match its own column. The grammar is shared by all six; the case rule follows whichever path wrote the value. The array-valued `scopes` of `POST /memories/search` and `GET /memories/relevant` are not covered by this yet.
 
 ### Scope resolution (read order)
 
@@ -126,13 +173,15 @@ global                             # least specific
 
 ## Filtering lore (dashboard Explorer + REST)
 
-The Explorer at lorekit.io/lore filters on six dimensions. Values combine with **OR inside one
+The Explorer at lorekit.io/lore filters on eight dimensions. Values combine with **OR inside one
 dimension** and **AND across dimensions**, and the whole filter set is in the URL, so a filtered
 view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
 | Label | `tags` | includes all (default), includes any, includes none |
+| Kind | `kind` | is / is either of, is not |
+| Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |
 | Trigger | `trigger` | is / is either of, is not |
 | Repository | `origin_repo` | is / is either of, is not |
@@ -151,11 +200,98 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
 
+`kind` and `host` are the memory TAXONOMY: `kind` is the bucket type — a closed vocabulary of
+`lesson`, `bus` and `signal` — and `host` is the skill or agent that owns the bucket. Together they
+read as the phrase they exist for: `?kind=lesson&host=reviewer` is "reviewer's lessons". Note that
+`host` is not `source_agent`: the host OWNS the bucket, the agent WROTE the row, and they can
+differ.
+
+### Finding lore that is about to expire
+
+`?expiring_within_days=N` (1–365) narrows the list to memories whose TTL runs out soon — those
+with an `expires_at` strictly after now and at or before now + N days. Memories with no TTL are
+never included, and neither are ones that have already expired.
+
+```bash
+# What am I about to lose this week?
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?expiring_within_days=7"
+```
+
+It is a relative horizon on purpose: "expiring in the next 7 days" still asks the same question
+tomorrow, where a saved link with an absolute date would quietly become a view of the past. Use it
+to review what is about to lapse and either let it go or refresh the TTL with `memory.write`
+(`ttl_days`, or `clear_ttl` to make it permanent).
+
 `GET /memories/facets` returns every filterable value with its memory count
 (`{ "facets": [{ "facet": "origin_branch", "value": "main", "count": 27 }] }`), partitioned by
 `?archived=true|false` and narrowable with `?facets=tag,trigger`. Use it to discover what can be
 filtered on instead of listing memories and tallying them client-side — the tally is silently
 truncated past the row cap.
+
+### When the filters do not fit a URL (`POST /memories/list`, `/facets`, `/activity`)
+
+Each of those three reads has a POST twin taking the SAME filters in a JSON body:
+
+```bash
+curl -X POST -H "Authorization: Bearer lk_ro_…" -H "Content-Type: application/json" \
+  -d '{"scope":"global","host":["reviewer","aw"],"host_mode":"in","limit":50}' \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories/list"
+```
+
+Reach for these when a dimension carries more values than a query string can hold, or when a
+value contains a comma. The query form joins a dimension's values into one comma-separated
+parameter capped at 2048 characters, so how many values fit depends on how long they happen to
+be, and a comma inside a value is read as a separator. In the body every dimension is a real
+array (`"host": [...]`, with its `host_mode`) bounded by a COUNT — 1000 values of up to 512
+characters each — and a comma is just a character. `archived` and `limit` take their real JSON
+types (`true`, not `"true"`).
+
+Both transports decode to one filter shape server-side and report under the same
+`memory.list` / `memory.facets` / `memory.activity` usage name, so the choice is purely about
+what fits. The GET forms are unchanged and remain the right call for anything link-shaped. The
+body is optional — a bodiless `POST /memories/list` is the unfiltered first page, not an error.
+
+## Which lore matters right now (`GET /memories/relevant`)
+
+Listing and searching tell you what EXISTS. They do not tell you what is worth reading:
+`GET /memories` orders by `updated_at`, `POST /memories/search` by full-text match, and neither
+knows that a lesson learned twelve times matters more than one written once. On an active repo
+that difference is the whole game — the newest writes are usually one task's iteration log.
+
+`GET /memories/relevant` is the ranked shortlist. It scores each candidate on **recency**
+(exponential decay, 14-day half-life), **salience** (`log1p(seen_count)`, normalised across the
+candidates), **relevance** (full-text match on `q`) and **outcome** (applied/resolution history —
+`1` on an outcome bus, `0.75` carried to a PR, `0.5` cold-start prior when unproven), and returns a
+compact index:
+
+```bash
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories/relevant?\
+q=migration+backfill&scopes=repo::acme/app,global&limit=5"
+```
+
+```json
+{
+  "entries": [
+    { "scope": "repo::acme/app", "key": "migration-order",
+      "hook": "Always add the column before the backfill runs.",
+      "score": 0.74, "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1, "outcome": 0.5 },
+      "seen_count": 9, "updated_at": "2026-07-30T09:12:00.000Z" }
+  ],
+  "candidates": 47
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `q` | — | Free-text query. **Optional** — omit it and the ranking is recency + salience, i.e. "what matters generally". |
+| `scopes` | all visible | Comma-separated, **most-specific first**; the order breaks ties, so a project lesson wins over the global one it ties with. |
+| `limit` | `10` | 1–50. |
+| `min_score` | `0` | Drop weak hits when injecting automatically — an irrelevant lesson every turn is worse than none. Note: with `q` set, matched hits floor at `(1 + 0.5) / 4 = 0.375` (relevance is binary and outcome never sinks below its `0.5` prior today), so a value ≤ `0.375` is a no-op; finer gating arrives with graded relevance. |
+
+Bodies are not returned — fetch the ones you want with `memory.read`. `candidates` is how many
+matched before ranking, so you can tell a shortlist from the whole set.
 
 ## Limits
 
@@ -165,18 +301,43 @@ truncated past the row cap.
 | Requests per minute per user | 120 |
 
 Archiving a lesson frees cap headroom immediately. Service-role / CI tokens are exempt.
-When the cap is hit, `memory.write` returns a `memory_cap` error with instructions.
+When the cap is hit, `memory.write` returns a tool error (see below) telling you
+to archive or delete first — you can act on it and retry.
 Rate-limited requests receive HTTP 429 with a `Retry-After` header.
 
-## Error codes
+## How failures come back
+
+Two shapes, decided by whether the tool ran.
+
+**A tool that ran and failed** returns a SUCCESSFUL result carrying `isError`:
+
+```json
+{ "jsonrpc": "2.0", "id": 1,
+  "result": { "content": [{ "type": "text", "text": "Memory cap reached (5000). Archive or delete some lore first." }],
+              "isError": true } }
+```
+
+That is the MCP spec's shape, so the model can see the failure and self-correct
+rather than having the client library swallow it. You get it for anything you can
+fix: the memory cap, a malformed scope, an invalid `ttl_*` or `created_at`, an
+unresolvable org slug, an insufficient org role.
+
+**Writing a client? Check `result.isError`.** The HTTP status is `200` and there
+is no `error` member, so a client that only tests for `response.error` reads
+these as successes.
+
+**A call that could not be dispatched** returns a JSON-RPC error:
 
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, expired, or wrong-permission-tier token (e.g. read-only token on a write, write-only token on a read) |
 | `-32003` | Forbidden — authenticated, but not permitted for this tool (e.g. an `lk_*` token calling an `org.*` tool) |
-| `-32603` | Execution error — DB error, scope validation failure, org permission denied (`LK002`), or memory cap exceeded (`LK001` / `memory_cap`) |
+| `-32603` | Server fault — a DB outage or unexpected exception. Safe to retry |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown tool name |
+
+Auth errors always arrive as HTTP `200` + a JSON-RPC error with the real request
+id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 
 ## Architecture
 

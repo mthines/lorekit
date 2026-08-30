@@ -1,7 +1,7 @@
 ---
 title: "Deep links"
 description: "Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag."
-order: 9
+order: 10
 keywords: ["deep link", "deeplink", "share link", "shareable url", "explorer", "scope link", "memory link", "lesson link", "lorekit link", "--link flag", "url command", "LOREKIT_APP_URL", "--base", "self-hosting", "useUrlState", "query params", "tags filter"]
 ---
 
@@ -12,7 +12,8 @@ The LoreKit dashboard keeps its entire view state in the URL. Every scope filter
 | Destination | Path |
 | --- | --- |
 | The memory Explorer | `/lore` |
-| One memory's detail sheet | `/lore?lesson=…` |
+| One memory by id (robust) | `/lore?memoryId=…` |
+| One memory's detail sheet (scope + key) | `/lore?lesson=…` |
 | A scope-filtered Explorer | `/lore?scope=…` |
 
 ## How dashboard URLs are encoded
@@ -28,15 +29,28 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | --- | --- | --- |
 | `scope` | `null` | Filter to one scope. `null` means all scopes. |
 | `q` | `""` | Search query (pre-fills the search box). |
-| `range` | `null` | Date range `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. |
-| `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
-| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `null` means the param is absent and the legacy `tags` shorthand still applies; `[]` means the bar was explicitly emptied. |
+| `range` | `null` | Time range. Either a **relative** preset — `{ "preset": "24h" \| "7d" \| "30d" \| "90d" \| "all" }` — or an **absolute** window `{ "from", "to" }`. `null` means all time. See below. |
+| `owner` | `"all"` | **Superseded.** Ownership is a dimension inside `filters` now (`owner`, keyed by org slug). This legacy param is still *read* so old links land — `"personal"` maps to an `owner` filter; `"all"` and the legacy `{ "orgId": "…" }` form resolve to no owner filter — but it is never written. |
+| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `kind`, `host`, `owner`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `owner` values are `personal` or an org **slug**. `null` means the param is absent and the legacy `tags` / `owner` shorthands still apply; `[]` means the bar was explicitly emptied. |
 | `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
-| `view` | `"scope"` | Explorer view: `"scope"` or `"time"`. |
-| `archived` | `false` | Include archived memories. |
+| `status` | `null` | Explorer Status: `"active"` (default), `"archived"`, or `"expiring"` (live memories whose TTL runs out within 7 days). `null` means the param is absent and the legacy `archived` flag still applies. |
+| `archived` | `false` | Legacy archived toggle. Superseded by `status`, still read so older links keep working. |
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
 
 > The CLI mirrors this exact table in `deeplink-pure.mjs` (`LORE_PARAM_DEFAULTS`), and a cross-package test reads the real `useUrlState` parameters from the web source so the two can never drift.
+
+### `range`: relative links stay live, absolute links stay put
+
+A time range is one of two different things, and the parameter keeps them apart on purpose:
+
+- A **preset** is a question that stays true — `{"preset":"7d"}` means "the last seven days" whenever the link is opened, so a range you share in a PR or a runbook keeps answering it next week.
+- An **absolute window** is a moment you are pointing at — `{"from":"2026-07-01T14:00:00.000Z","to":"2026-07-01T15:00:00.000Z"}` is that hour, forever, which is what you want when you are showing someone a spike.
+
+Both resolve to exact instants when the page loads; only the preset is re-resolved against the current clock. Windows are half-open — `from` is included, `to` is not.
+
+**The Overview reads the same `range`, over less data.** `range` is the one parameter the Explorer and the Overview share, so a link means the same window on both pages — but they do not fetch the same amount. The Explorer's memory **list** queries exactly the window you name, with no upper bound; its **stats header** charts the last 90 days when the range is unbounded (`all`), because "all time" is a sensible thing to list and not a sensible thing to plot. When it substitutes, it says so — the cards are captioned "in the last 90 days", never "in all time". The Overview's stat cards are re-bucketed in the browser from a single fetch covering the **last 62 days**, sized for its own widest picker preset (`30d`) plus the equal preceding window each card's trend chip compares against. A range that reaches outside those 62 days — `{"preset":"90d"}`, or an absolute window older than that — still resolves exactly as documented here and lists correctly in the Explorer, but charts partial or empty bars on the Overview. The Overview's own picker offers `24h` / `7d` / `30d` for this reason.
+
+The `{ "from", "to" }` arm accepts **either** ISO timestamps (precise to the hour) **or** the `YYYY-MM-DD` day strings this parameter has always used. A bare day means the whole UTC day, and the `to` day is **inclusive**: `{"from":"2026-07-01","to":"2026-07-03"}` is three days. Every `?range=` link written before timestamps were supported therefore still resolves to exactly the window it always did.
 
 ## Link to a scope
 
@@ -50,16 +64,41 @@ https://lorekit.io/lore?scope=%22global%22
 https://lorekit.io/lore?scope=%22repo%3A%3Aacme%2Fwidget%22
 ```
 
-## Link to a specific memory
+## Link to a specific memory by id (recommended)
 
-Open a memory's detail sheet directly. The link sets `lesson` (which opens the sheet) plus `scope`, so the list behind the sheet is filtered to the memory's own scope:
+The robust way to open one memory is by its **id** — a plain, un-encoded query parameter:
+
+```text
+https://lorekit.io/lore?memoryId=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+```
+
+The id is the memory's UUID (the `id` column) — `GET /memories/:id` validates it, so a non-UUID value 400s. Unlike every other Explorer parameter, `memoryId` is **not** JSON-encoded — it is the raw UUID, so there is nothing to double-encode and nothing to get wrong when a tool builds the link by hand (`{base}/lore?memoryId=<uuid>`). The dashboard fetches that memory **by id directly**, so the detail sheet opens even when the memory is outside the Explorer's recent/active window. Archived memories are the one exception: `GET /memories/:id` skips archived rows, so `memoryId` returns nothing for them — open them from the archived list.
+
+## Link to a specific memory by scope + key
+
+The older form opens a memory's detail sheet via its `scope` + `key`. The link sets `lesson` (which opens the sheet) plus `scope`, so the list behind the sheet is filtered to the memory's own scope:
 
 ```text
 # opens the "prefer-guard-clauses" memory in the global scope
 https://lorekit.io/lore?scope=%22global%22&lesson=%7B%22scope%22%3A%22global%22%2C%22key%22%3A%22prefer-guard-clauses%22%7D
 ```
 
-The detail sheet reads from a recent, unfiltered set, so a memory older than that window or an archived one can still open blank — a dashboard limitation the link itself cannot fix.
+The detail sheet resolves this form from the active-memory cache, and when the memory is outside that recent window it fetches it by scope + key — so any **active** memory opens, however old. An **archived** memory is the exception: the by-key read returns only active rows, so an archived deep link opens blank; open it from the archived list instead. (`?memoryId=` above has the same archived limitation, since `GET /memories/:id` also skips archived rows.)
+
+### A UUID in `lesson` also works
+
+`lesson` expects the JSON `{scope, key}` object above, but if you put a **memory UUID** there it is treated as `memoryId` instead — raw or JSON-quoted, both resolve:
+
+```text
+# all three open the same memory
+https://lorekit.io/lore?memoryId=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+https://lorekit.io/lore?lesson=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+https://lorekit.io/lore?lesson=%229b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d%22
+```
+
+This exists because the mistake was easy to make and impossible to notice: `lesson` is the parameter everything else points at, so anyone holding an `id` reached for it, and a UUID is not valid JSON — the parameter was ignored, the page loaded normally with nothing open, and no error said why. Both readings now land on the same view.
+
+**`memoryId` is still the parameter to write.** It is explicit, it is what tools should generate, and it wins if a link somehow carries both. The tolerance in `lesson` is a safety net, not a second interface. A value that is neither a valid `{scope, key}` nor a UUID stays ignored — a non-UUID id would only be rejected by the API anyway.
 
 ## Link to a search or a filtered view
 
@@ -72,8 +111,8 @@ https://lorekit.io/lore?q=%22flaky%20test%22&owner=%22personal%22
 # global scope, filtered to the "perf" and "ci" labels
 https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D
 
-# global scope, time view, including archived
-https://lorekit.io/lore?scope=%22global%22&view=%22time%22&archived=true
+# global scope, including archived memories
+https://lorekit.io/lore?scope=%22global%22&archived=true
 ```
 
 ## Generate links from the CLI
@@ -92,12 +131,12 @@ lorekit url --q "flaky test" --owner personal  # search + ownership filter
 lorekit link global::prefer-guards --json      # { url, surface, base, params }
 ```
 
-With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); a scope **and** a key (or the `scope::key` shorthand) links to that memory's detail sheet. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--view`, `--archived`.
+With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); the `scope::key` shorthand — or a scope **and** a key as two arguments, or `--scope` / `--key` — links to that memory's detail sheet. `show`, `write` and `link` all address a memory this same way. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--archived`.
 
 **The `--link` flag** short-circuits a read command to the deep link for the view you just ran — same builder, no query:
 
 ```bash
-lorekit show global prefer-guard-clauses --link   # link to that memory
+lorekit show global::prefer-guard-clauses --link  # link to that memory
 lorekit search "flaky test" --scope global --link # link to that search
 lorekit list --scope global --link                # link to that scope's Explorer
 lorekit tree --scope global --link                # same, from the scope tree
@@ -124,7 +163,7 @@ These dashboard pages are plain routes — no encoding needed:
 | Page | Path |
 | --- | --- |
 | Memory Explorer | `/lore` |
-| Dashboard overview | `/dashboard` |
+| Dashboard overview | `/overview` |
 | API keys & tokens | `/settings/api-keys` |
 | Audit log | `/settings/audit` |
 | Organization | `/settings/organization` |

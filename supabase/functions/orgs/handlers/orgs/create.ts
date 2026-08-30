@@ -1,14 +1,14 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
 import { created, dryRun } from '../../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/limits/dry-run.ts';
 import { validateBody } from '../../../_shared/api/validate.ts';
-import { createTracedClient } from '../../../_shared/otel.ts';
-import type { Span } from '../../../_shared/otel.ts';
+import { createTracedClient } from '../../../_shared/telemetry/otel.ts';
+import type { Span } from '../../../_shared/telemetry/otel.ts';
 import { CreateOrgBodySchema } from '../../../_shared/schemas/org.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
 import { auditUserId } from '../../../_shared/api/auth.ts';
-import { recordAudit } from '../../../_shared/audit.ts';
+import { recordAudit } from '../../../_shared/audit/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbClient, span: Span, _p: Record<string,string>, cors: Record<string,string>): Promise<Response> {
@@ -44,6 +44,7 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
       metadata: { slug: v.data.slug },
     },
     auditUserId(auth),
+    span,
   );
 
   // Read the row back so the 201 body is an Org object, which is what this
@@ -54,7 +55,7 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
   // unnoticed because the orgs smoke suite needs a JWT credential CI does not
   // set. `created_at` is server-generated, so it can only come from a read.
   const { data: org, error: readErr } = await tracedDb
-    .from<{ id: string; slug: string; name: string; created_at: string }>('orgs')
+    .from('orgs')
     .select('id,slug,name,created_at')
     .eq('id', orgId)
     .maybeSingle();

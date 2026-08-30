@@ -52,14 +52,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Dash0Provider />
         <ReactQueryProvider>{children}</ReactQueryProvider>
 
-        {/* Register the service worker for PWA offline-shell support */}
-        <Script id="sw-register" strategy="afterInteractive">
-          {`if ('serviceWorker' in navigator) {
-              window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js').catch(() => {});
-              });
-            }`}
-        </Script>
+        {/* Register the service worker for PWA offline-shell support.
+            Production only: in `next dev` the SW caches Turbopack `_next/static`
+            chunks cache-first in the browser, which makes env/code changes stick
+            (a stale bundle survives `.next` deletion and hard-refresh). */}
+        {process.env.NODE_ENV === 'production' && (
+          <Script id="sw-register" strategy="afterInteractive">
+            {`if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                  navigator.serviceWorker.register('/sw.js').catch(() => {});
+                });
+              }`}
+          </Script>
+        )}
       </body>
     </html>
   );

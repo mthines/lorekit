@@ -44,6 +44,10 @@ export function BlogProse({ children }: { children: ReactNode }) {
         '[&_td]:border [&_td]:border-[var(--color-border)] [&_td]:px-3 [&_td]:py-2 [&_td]:align-top',
         // Horizontal rule
         '[&_hr]:my-10 [&_hr]:border-[var(--color-border)]',
+        // Figures + images (e.g. embedded SVG diagrams)
+        '[&_figure]:my-7',
+        '[&_img]:mx-auto [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-[var(--color-border)]',
+        '[&_figcaption]:mt-2.5 [&_figcaption]:text-center [&_figcaption]:text-sm [&_figcaption]:italic [&_figcaption]:text-[var(--color-content-secondary)]',
       ].join(' ')}
     >
       {children}

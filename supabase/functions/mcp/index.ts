@@ -8,7 +8,7 @@
  *   webhook.ts      — GitHub PR comment → lesson creation
  *   mcp-handler.ts  — MCP JSON-RPC dispatcher (initialize, tools/list, tools/call)
  *
- * Observability via ../functions/_shared/otel.ts:
+ * Observability via ../functions/_shared/telemetry/otel.ts:
  *   traceRequest()           wraps each request in a root span
  *   createTracedClient()     creates child spans per Postgres query (in tools.ts)
  *
@@ -21,8 +21,8 @@
  *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
  */
 
-import { traceRequest } from '../_shared/otel.ts';
-import { resolveAuth, getDb } from './auth.ts';
+import { traceRequest } from '../_shared/telemetry/otel.ts';
+import { resolveAuth, getDb, credentialTier } from './auth.ts';
 import { extractToken } from './auth-token.ts';
 import {
   isProtectedResourceMetadataPath,
@@ -86,6 +86,72 @@ Deno.serve(async (req: Request) => {
   // request produces at least one span. resolveAuth is intentionally inside
   // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
+    // POST-only, checked BEFORE authentication.
+    //
+    // A request's method is knowable from the request line alone — nothing
+    // about "GET is not supported here" depends on who is asking. This guard
+    // used to live at the top of `handleMcp`, which meant every SSE-transport
+    // probe (`GET /mcp` is the first thing such a client sends) paid the full
+    // authenticated preamble — a token lookup, a plan lookup and a rate-limit
+    // RPC, ~319 ms of fixed cost — to receive a constant 405.
+    //
+    // Answering early also means an unauthenticated GET flood costs no database
+    // work at all. It stays inside `traceRequest`, so the probe is still one
+    // span and remains countable.
+    //
+    // `clientError` (not `error`) — a client probing for SSE against a server
+    // that does not offer it is behaving reasonably; OTel marks a server span
+    // ERROR only for 5xx faults.
+    if (req.method !== 'POST') {
+      // Identify the probe as far as is possible for free. Returning here skips
+      // `resolveAuth`, which is what normally puts `auth.*` on the request span
+      // — so without this a probe span would carry no caller signal at all and
+      // a future SSE-probing customer could not be picked out of the traffic
+      // the way this change's own evidence picked out the one real caller.
+      //
+      // `credentialTier` is the classification `resolveAuthTiers` performs
+      // BEFORE its first query, so one mapping serves both and it costs a
+      // string comparison. It reports the credential SHAPE presented, which
+      // matches the final `auth.type` of a completed request in every case but
+      // one: a VALID JWT ends at `user`, because the `span.setAttributes` below
+      // overwrites the tier with `AuthContext.type` once auth succeeds. That
+      // gap is inherent — knowing the JWT is valid costs the GoTrue call this
+      // guard exists to skip — and `credentialTier`'s docblock tabulates it.
+      //
+      // `auth.user_id` is deliberately NOT recovered: it exists only in the
+      // `api_tokens` row, and reading it is the 149 ms this guard exists to
+      // skip. `auth.outcome: 'not_attempted'` says so explicitly rather than
+      // leaving the attribute absent and ambiguous — a probe is therefore
+      // attributable to a credential SHAPE and a source, not to an account.
+      // `url` is the one already parsed at the top of the handler and reused by
+      // `resolveAuth` below. Parsing the request URL a second time here would
+      // put that cost back onto the exact path this change exists to make free.
+      // (Named in prose, not as a code literal, so the ordering spec can simply
+      // count occurrences of the constructor and require exactly one.)
+      const probeToken = extractToken(req.headers.get('Authorization'), url.searchParams.get('token'));
+      span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
+        'mcp.method': 'unknown',
+        'auth.type': credentialTier(probeToken),
+        'auth.outcome': 'not_attempted',
+      });
+      // Name the protocol version this server actually negotiates, not a
+      // transport name. `initialize` answers `protocolVersion: '2024-11-05'`
+      // (mcp-handler.ts), whose transport is HTTP+SSE — so telling a client it
+      // is talking to Streamable HTTP contradicts the handshake the same server
+      // performs one request later. What is true regardless of version, and is
+      // the only thing the probing client needs, is: POST only.
+      return new Response(
+        JSON.stringify({
+          error:
+            'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05); GET/SSE is not supported.',
+        }),
+        {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+        },
+      );
+    }
+
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     // Pass the root span so auth outcome attributes (auth.type, auth.outcome,
     // auth.user_id) land on the request span — no separate child span needed.
@@ -161,10 +227,24 @@ Deno.serve(async (req: Request) => {
 
       // Resolve the user's plan name once per request — used for rate-limit
       // messages and usage-event annotation. Fails open (null → 'free').
-      const planName = await getUserPlanName(db, auth.userId);
+      //
+      // Issued CONCURRENTLY with the rate-limit check, not before it. Both are
+      // keyed only on `auth.userId` and neither reads the other's result, so
+      // awaiting them in sequence bought nothing and put TWO serial Supabase
+      // round-trips in front of every MCP message — including the ones that go
+      // on to do no work at all (`notifications/initialized` answers 204). This
+      // is the same reasoning `_shared/api/router.ts` already applies to the
+      // REST surface, where the plan lookup is deliberately not awaited inline;
+      // the MCP transport was the surface that still paid for it serially.
+      // `getUserPlanName` fails open to null and `checkRateLimit` fails open to
+      // allowed, so neither promise rejects and `Promise.all` cannot reject.
+      const [planName, rateLimit] = await Promise.all([
+        getUserPlanName(db, auth.userId, span),
+        checkRateLimit(db, auth.userId, span),
+      ]);
       span.setAttributes({ 'lorekit.plan': planName ?? 'free' });
 
-      const { allowed, retryAfterSeconds, currentCount, limitValue } = await checkRateLimit(db, auth.userId, span);
+      const { allowed, retryAfterSeconds, currentCount, limitValue } = rateLimit;
       span.setAttributes({
         'rate_limit.allowed': allowed,
         ...(currentCount != null ? { 'rate_limit.current_count': currentCount } : {}),

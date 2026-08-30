@@ -14,7 +14,9 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { extractToken } from './auth-token.ts';
-import type { Span } from '../_shared/otel.ts';
+import { SPAN_KIND_CLIENT, type Span } from '../_shared/telemetry/otel.ts';
+import { normalizeKeyRestriction, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -27,15 +29,17 @@ export interface AuthContext {
   /** api_key only: ['read'], ['write'], or ['read', 'write'] */
   permissions?: string[];
   /**
-   * api_key only. The org allow-list the user picked on the OAuth consent
-   * screen, or `null` for a personal dashboard token (and for every token
-   * minted before OAuth existed), which means "every org the user belongs to".
+   * api_key only: the key's scope/org restriction (migration 00068), which an
+   * OAuth-issued token (00055) populates the same way a scoped dashboard token
+   * does — the consent screen's per-org checkboxes map onto `org_access` +
+   * `org_ids`, never a second scoping mechanism.
    *
-   * It is an INTERSECTION applied on top of `lorekit_member_org_ids`, never a
-   * substitute for it: a token may narrow what the user can reach, never widen
-   * it, so leaving an org still revokes access even while the token names it.
+   * Absent for every other tier, and absent is NOT "restricted to nothing" — a
+   * JWT or service-role caller has no key to restrict. `keyRestriction(auth)`
+   * below is the one place that distinction is read, so no call site has to
+   * remember it.
    */
-  orgIds?: string[] | null;
+  keyScoping?: KeyRestriction;
 }
 
 async function sha256hex(text: string): Promise<string> {
@@ -43,42 +47,189 @@ async function sha256hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Resolve the caller's auth context, TIMED.
+ *
+ * The outcome attributes still land on the caller's span exactly as before —
+ * `mcp/index.ts` passes the root request span on purpose so `auth.type` /
+ * `auth.outcome` / `auth.user_id` are queryable on the request itself. That
+ * decision is unchanged; what is added here is the missing DURATION.
+ *
+ * Auth resolution is a network round-trip on two of the three tiers (an
+ * `api_tokens` select for `lk_*`, a GoTrue call for a JWT) and it emitted no
+ * span at all, so its cost was unattributable wall clock inside the request
+ * span: `lorekit.mcp` spans reporting 0.885s with 0.084s accounted for by
+ * children. The REST surface has had this since it shipped (`lorekit.rest.auth`,
+ * `_shared/api/auth.ts`); this is the MCP counterpart.
+ *
+ * The `try`/`finally` is what makes it safe: the tier logic has six return
+ * paths and an `.end()` per path is one refactor away from being dropped on the
+ * one that matters.
+ */
 export async function resolveAuth(
   authHeader: string | null,
   queryToken: string | null = null,
   span?: Span,
 ): Promise<AuthContext | null> {
+  const authSpan = span?.child('lorekit.mcp.auth');
+  try {
+    return await resolveAuthTiers(authHeader, queryToken, span, authSpan);
+  } catch (err) {
+    // Without this arm the span's status stays at its `ok` default, so a failed
+    // resolution renders as an OK `lorekit.mcp.auth` parent above an errored
+    // child — the one shape that makes the tree lie about which hop broke.
+    // `traceRequest` uses exactly this catch-record-rethrow-finally form.
+    // The error NAME only, for the reason the token lookup states: a fetch
+    // failure's message carries the request URL, and that URL carries the
+    // token hash.
+    authSpan?.error((err as Error).name);
+    throw err;
+  } finally {
+    authSpan?.end();
+  }
+}
+
+/**
+ * Which auth tier a token belongs to, decided from the token STRING ALONE —
+ * no database read, no GoTrue call.
+ *
+ * This is the classification `resolveAuthTiers` performs before it does any
+ * I/O, lifted out so a caller that deliberately does not authenticate can still
+ * report `auth.type`. `mcp/index.ts`'s pre-auth method guard is that caller: it
+ * answers a non-POST before `resolveAuth` runs, and without this the probe span
+ * carried no `auth.*` attribute at all.
+ *
+ * It is exported so there is exactly ONE mapping: `resolveAuthTiers` below
+ * branches on this same function, so the guard can never disagree with the tier
+ * this module itself writes.
+ *
+ * The tier is NOT a verification result: `api_key` means "presented a token
+ * shaped like `lk_*`", not "presented a valid one". `resolveAuthTiers` reports
+ * it the same way — it sets `auth.type: 'api_key'` on `api_key_invalid` too —
+ * so pair it with `auth.outcome` to tell presented from accepted.
+ *
+ * ### Where this diverges from a completed request — read before querying
+ *
+ * `auth.type` is written TWICE on a successful request. This module writes the
+ * tier, and then `mcp/index.ts` OVERWRITES it from the resolved
+ * `AuthContext.type` once auth succeeds. Of the six outcomes below, five agree
+ * and one does not:
+ *
+ * | presented              | this function | final `auth.type` on the span |
+ * |------------------------|---------------|-------------------------------|
+ * | nothing                | `none`        | `none`                        |
+ * | service-role key       | `service`     | `service`                     |
+ * | `lk_*`, valid          | `api_key`     | `api_key`                     |
+ * | `lk_*`, invalid        | `api_key`     | `api_key` (no overwrite — auth failed) |
+ * | anything else, invalid | `jwt`         | `jwt` (no overwrite — auth failed) |
+ * | **anything else, VALID** | **`jwt`**   | **`user`** — `AuthContext.type` for a JWT is `user` |
+ *
+ * The last row is inherent, not an oversight: the only way to know a JWT is
+ * valid is the GoTrue call, which is precisely what a caller using this
+ * function has chosen not to make. So a span carrying
+ * `auth.outcome: 'not_attempted'` reports `jwt` where the same credential on a
+ * POST would end at `user`. Filter on `auth.outcome` before comparing
+ * `auth.type` across the two.
+ */
+export function credentialTier(token: string | null): 'none' | 'service' | 'api_key' | 'jwt' {
+  if (!token) return 'none';
+  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return 'service';
+  if (token.startsWith('lk_')) return 'api_key';
+  return 'jwt';
+}
+
+async function resolveAuthTiers(
+  authHeader: string | null,
+  queryToken: string | null,
+  span: Span | undefined,
+  authSpan: Span | undefined,
+): Promise<AuthContext | null> {
   // Accept token from Authorization: Bearer header (preferred — keeps the token
   // out of server logs) or ?token= query param (legacy fallback for MCP clients
   // that cannot inject custom headers). extractToken() implements the precedence.
   const token = extractToken(authHeader, queryToken);
+  const tier = credentialTier(token);
+  // `!token` rather than `tier === 'none'` only so TypeScript narrows `token` to
+  // `string` for the tiers below; the two conditions are the same by definition.
   if (!token) {
     span?.setAttributes({ 'auth.outcome': 'missing_token', 'auth.type': 'none' });
     return null;
   }
 
   // 1. Service-role key — CI / internal use only
-  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) {
+  if (tier === 'service') {
     span?.setAttributes({ 'auth.outcome': 'service_role', 'auth.type': 'service' });
     return { type: 'service' };
   }
 
   // 2. LoreKit API token (lk_rw_..., lk_ro_..., or lk_wo_...)
-  if (token.startsWith('lk_')) {
+  if (tier === 'api_key') {
     const hash = await sha256hex(token);
-    const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    const serviceDb = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data } = await serviceDb
-      .from('api_tokens')
-      .select('user_id, permissions, expires_at, org_ids')
-      .eq('token_hash', hash)
-      .maybeSingle();
+    // The token lookup gets its own CLIENT span, like every other edge DB call,
+    // so a slow `api_tokens` read is distinguishable from a slow hash or a slow
+    // GoTrue call rather than being one undifferentiated auth cost.
+    //
+    // Deliberately NOT `createTracedClient`: it renders filter VALUES into the
+    // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
+    // and the filter here is the token hash — the stored credential. The query
+    // therefore runs on the raw client and only the timing is spanned.
+    const lookupSpan = authSpan?.child('SELECT user_id,permissions,scopes,org_access,org_ids,expires_at FROM api_tokens', {
+      'db.system': 'postgresql',
+      'db.operation.name': 'SELECT',
+      'db.collection.name': 'api_tokens',
+    }, SPAN_KIND_CLIENT);
+    // `finally`, for the reason the outer `authSpan` uses one: `Span.end()` is
+    // the only thing that enqueues a span for export, so a lookup that REJECTS
+    // (transport failure, abort) would drop the child entirely and the failing
+    // case — the one this span exists to make visible — would vanish. This
+    // mirrors `TracedQuery`'s rejection handler in `_shared/telemetry/otel.ts`. The
+    // rejection is rethrown untouched: an infra outage must not be reported as
+    // an invalid key.
+    //
+    // `db.success` (and the error status) is what keeps a FAILED read
+    // distinguishable from a genuine token miss: both leave `data` null and
+    // both end in `api_key_invalid`, so rows-0 alone reports an outage as a bad
+    // key. `TracedQuery` records the same pair for every other edge DB call.
+    // The bounded error CODE goes on the span, never the free-form message —
+    // the same rule the JWT tier below states explicitly, and the reason this
+    // query avoids `createTracedClient` in the first place.
+    let data: Record<string, unknown> | null = null;
+    let success = false;
+    try {
+      const result = await serviceDb
+        .from('api_tokens')
+        .select('user_id, permissions, scopes, org_access, org_ids, expires_at')
+        .eq('token_hash', hash)
+        .maybeSingle();
+      data = result.data;
+      success = !result.error;
+      if (result.error) {
+        lookupSpan?.error(`PostgrestError: ${result.error.code ?? 'unknown'}`);
+      }
+    } catch (err) {
+      // The error NAME only — same bounded-value rule as the PostgREST arm
+      // above, and for a sharper reason: a Deno fetch failure renders the
+      // request URL into its message, and this request's URL carries
+      // `token_hash=eq.<sha256>`. The free-form message would publish the
+      // stored credential to telemetry — the exact leak this query avoids
+      // `createTracedClient` to prevent. Name plus `db.success: false` plus the
+      // span's own duration already separate a transport failure from a miss.
+      lookupSpan?.error((err as Error).name);
+      throw err;
+    } finally {
+      lookupSpan?.setAttributes({
+        'db.response.rows': data ? 1 : 0,
+        'db.success': success,
+      }).end();
+    }
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
       return null;
     }
-    // OAuth-issued tokens expire (00055_oauth.sql). Checked here rather than
+    // OAuth-issued tokens expire (00095_oauth.sql). Checked here rather than
     // left to the nightly sweeper so an expired credential stops working at
     // the instant it expires, not whenever housekeeping next runs. Personal
     // dashboard tokens have a NULL expires_at and are unaffected.
@@ -91,7 +242,7 @@ export async function resolveAuth(
     // it to EdgeRuntime.waitUntil so the isolate stays alive until the write
     // commits. A bare fire-and-forget is dropped when the isolate freezes right
     // after the response returns, so the timestamp never lands (same reason the
-    // OTel flush in _shared/otel.ts uses waitUntil).
+    // OTel flush in _shared/telemetry/otel.ts uses waitUntil).
     const lastUsedUpdate = Promise.resolve(
       serviceDb
         .from('api_tokens')
@@ -115,16 +266,36 @@ export async function resolveAuth(
       type: 'api_key',
       userId: data.user_id as string,
       permissions: data.permissions as string[],
-      orgIds: (data.org_ids as string[] | null) ?? null,
+      keyScoping: normalizeKeyRestriction(data),
     };
   }
 
   // 3. Supabase user JWT (browser session)
-  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await client.auth.getUser(token);
+  // `auth.getUser()` is an outbound HTTP call to Supabase's GoTrue Auth API —
+  // the JWT tier's ONLY I/O, and until now the only one on this surface NOT
+  // given its own CLIENT span (contrast the api_key tier's `lookupSpan` above).
+  // Without it, GoTrue latency was folded into the parent span's undifferentiated
+  // self time, indistinguishable from CPU-bound auth work — exactly what made a
+  // p95 latency spike on this path unattributable. `finally`, for the same
+  // reason `lookupSpan` uses one: a rejected call must still be exported so the
+  // slow/failing case is visible rather than silently dropped.
+  const getUserSpan = authSpan?.child('lorekit.auth.supabase_get_user', {}, SPAN_KIND_CLIENT);
+  let data: Awaited<ReturnType<typeof client.auth.getUser>>['data'] = { user: null };
+  let error: Awaited<ReturnType<typeof client.auth.getUser>>['error'] = null;
+  try {
+    const result = await client.auth.getUser(token);
+    data = result.data;
+    error = result.error;
+  } catch (err) {
+    getUserSpan?.error((err as Error).name);
+    throw err;
+  } finally {
+    getUserSpan?.setAttributes({ 'db.success': !error && !!data.user }).end();
+  }
   if (error || !data.user) {
     // Use bounded error code, not the free-form message, to avoid PII leaking into span attributes.
     span?.setAttributes({
@@ -145,12 +316,12 @@ export async function resolveAuth(
 export function getDb(auth: AuthContext) {
   // service + api_key both use service-role; api_key queries MUST add .eq('user_id', userId)
   if (auth.type === 'service' || auth.type === 'api_key') {
-    return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    return createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
   // User JWT — RLS enforced automatically
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${auth.jwt!}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -171,6 +342,17 @@ export function canRead(auth: AuthContext): boolean {
 /** userId to pass to tool handlers — null means RLS handles scoping. */
 export function getUserId(auth: AuthContext): string | null {
   return auth.type === 'api_key' ? (auth.userId ?? null) : null;
+}
+
+/**
+ * The calling key's restriction, or `undefined` when there is no key.
+ *
+ * The mirror of `getUserId`, and the ONE place "a JWT caller has no key
+ * restriction" is expressed — so no call site can accidentally read a missing
+ * restriction as an empty one and start denying a dashboard session.
+ */
+export function keyRestriction(auth: AuthContext): KeyRestriction | undefined {
+  return auth.type === 'api_key' ? auth.keyScoping : undefined;
 }
 
 /**

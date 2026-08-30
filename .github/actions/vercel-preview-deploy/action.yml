@@ -1,0 +1,305 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Composite action: build + deploy a Vercel PREVIEW deployment.
+#
+# The pull → (optional Supabase override) → build → deploy → parse-URL sequence
+# used to be copy-pasted across three jobs — ci.yml's `web-preview`, deploy.yml's
+# `deploy-web-preview`, and preview.yml's `deploy-web`. This is the single source
+# of truth for that flow; the callers supply only what differs (which env values
+# to pin, which git ref to attribute, and what to do with the resulting URL).
+#
+# The runner does the `next build` (`vercel build`) and uploads a prebuilt
+# deployment (`vercel deploy --prebuilt`), so Vercel spends no build minutes.
+#
+# The caller MUST check out the repo BEFORE invoking this action (a local
+# composite action needs its own files on disk, and `cache: pnpm` needs the
+# lockfile). The checkout ref differs per caller, so it stays in the caller.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Vercel preview deploy
+description: Build on the runner and deploy a prebuilt Vercel preview; returns the deployment URL.
+
+inputs:
+  vercel-token:
+    description: Vercel access token (repo secret VERCEL_TOKEN).
+    required: true
+  vercel-org-id:
+    description: Vercel org id (repo secret VERCEL_ORG_ID).
+    required: true
+  vercel-project-id:
+    description: Vercel project id (repo secret VERCEL_PROJECT_ID).
+    required: true
+  environment:
+    description: Vercel environment to pull/build against.
+    required: false
+    default: preview
+  vercel-cli-version:
+    description: Vercel CLI version to install (pinned so local and CI render on the same CLI).
+    required: false
+    default: '58'
+  supabase-project-ref:
+    description: >-
+      Supabase project ref to pin the FE at. When set together with
+      supabase-anon-key, the pulled NEXT_PUBLIC_SUPABASE_* vars are overwritten
+      so the build talks to this project. Leave empty to use Vercel's own pulled
+      environment values unchanged.
+    required: false
+    default: ''
+  supabase-anon-key:
+    description: Supabase anon key paired with supabase-project-ref. Empty ⇒ no override.
+    required: false
+    default: ''
+  require-supabase-override:
+    description: >-
+      Set 'true' by callers that ALWAYS intend a Supabase override
+      (deploy.yml's deploy-web-preview, preview.yml's deploy-web). When true, an
+      incomplete override (either supabase-* input empty, including both) becomes
+      a ::warning:: instead of a silent fallback to Vercel's pulled env. Leave
+      'false' for callers that deliberately use the pulled env (ci.yml).
+    required: false
+    default: 'false'
+  git-repo-owner:
+    description: VERCEL_GIT_REPO_OWNER for the build (a CLI build gets no auto-injected VERCEL_GIT_* vars).
+    required: false
+    default: ''
+  git-repo-slug:
+    description: VERCEL_GIT_REPO_SLUG for the build.
+    required: false
+    default: ''
+  git-commit-ref:
+    description: VERCEL_GIT_COMMIT_REF for the build (branch name).
+    required: false
+    default: ''
+  git-commit-sha:
+    description: VERCEL_GIT_COMMIT_SHA for the build.
+    required: false
+    default: ''
+  deploy:
+    description: >-
+      Set 'false' to run pull → override → build as a build-only GATE and skip
+      `vercel deploy` (so NO Vercel deployment is created and no quota is spent).
+      Used by deploy.yml's deploy-web-preview, whose deployment was never
+      smoke-tested — the build succeeding is the only signal it needs. When
+      'false' the `url` output is empty. Defaults to 'true' (build + deploy).
+    required: false
+    default: 'true'
+  deploy-timeout:
+    description: >-
+      Max wall-clock time for `vercel deploy` before it is treated as a hung /
+      blocked deployment and failed. A GNU `timeout` duration ('15m', '900s').
+
+      `vercel deploy` polls until the deployment is READY or ERROR; a BLOCKED
+      one — most often because the commit author's email can't be matched to a
+      GitHub account with project access — never resolves, so without a bound the
+      CLI hangs until the 6-hour job default. This turns that hang into a fast,
+      reported failure. Ignored when deploy is 'false'.
+    required: false
+    default: '15m'
+  alias-label:
+    description: >-
+      When set (e.g. 'pr-42'), assign a STABLE alias to this deployment —
+      `lorekit-<alias-label>-<scope>.vercel.app` — re-pointed on every run, the
+      way Vercel's Git integration auto-aliases a branch. Emitted as `alias-url`.
+      The `<scope>` is derived from the deployment URL so it matches the repo's
+      CORS allowlist. Empty ⇒ no alias (only the immutable per-deploy `url`).
+      Ignored when deploy is 'false'. `vercel alias set` re-points, never
+      deploys, so it costs no deployment quota; a failure degrades to no alias.
+    required: false
+    default: ''
+
+outputs:
+  url:
+    description: The immutable per-deployment Vercel URL (empty when deploy is 'false').
+    value: ${{ steps.deploy.outputs.url }}
+  alias-url:
+    description: The stable alias URL (empty when alias-label is unset or aliasing failed).
+    value: ${{ steps.alias.outputs.alias-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 20
+        cache: pnpm
+
+    - name: Verify Vercel secrets are set
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+      run: |
+        missing=""
+        [ -z "$VERCEL_TOKEN" ] && missing="$missing VERCEL_TOKEN"
+        [ -z "$VERCEL_ORG_ID" ] && missing="$missing VERCEL_ORG_ID"
+        [ -z "$VERCEL_PROJECT_ID" ] && missing="$missing VERCEL_PROJECT_ID"
+        if [ -n "$missing" ]; then
+          echo "::error::Missing repo-level Vercel secrets:$missing. Add them under Settings ▸ Secrets and variables ▸ Actions."
+          exit 1
+        fi
+
+    - name: Install Vercel CLI
+      shell: bash
+      run: pnpm add -g vercel@${{ inputs.vercel-cli-version }}
+
+    - name: Pull Vercel environment
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+      run: vercel pull --yes --environment="${{ inputs.environment }}" --token="$VERCEL_TOKEN"
+
+    # Rewrite the env file `vercel build` actually reads
+    # (.vercel/.env.<environment>.local) — the only file whose values win over a
+    # .env.local entry — so the build talks to the caller-named Supabase project.
+    # Runs only when BOTH inputs are supplied (a partial pair can't form a valid
+    # URL); otherwise the pulled Vercel env values remain. "override ran" ⟺ both
+    # present, so the warn step below fires on exactly the incomplete cases.
+    - name: Override Supabase config
+      if: ${{ inputs.supabase-anon-key != '' && inputs.supabase-project-ref != '' }}
+      shell: bash
+      env:
+        PROJECT_REF: ${{ inputs.supabase-project-ref }}
+        ANON_KEY: ${{ inputs.supabase-anon-key }}
+        ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        ENV_FILE=".vercel/.env.${ENVIRONMENT}.local"
+        if [ ! -f "$ENV_FILE" ]; then
+          echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
+          exit 1
+        fi
+        # Drop any pulled Supabase vars so ours are the only definitions.
+        grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
+          "$ENV_FILE" > "$ENV_FILE.tmp" || true
+        mv "$ENV_FILE.tmp" "$ENV_FILE"
+        {
+          echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
+          echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
+        } >> "$ENV_FILE"
+
+    # A caller that declared it always overrides Supabase but supplied an
+    # incomplete pair — either input empty, INCLUDING both — meant to override
+    # and could not: the Override step above self-skipped, so the build silently
+    # keeps Vercel's pulled env (production for a prod-pulled project). Flag it;
+    # deploy.yml emitted this same signal (on an empty anon key) before the flow
+    # was shared. Gated on require-supabase-override, so the deliberate
+    # no-override caller (ci.yml, which passes neither input nor the flag) stays
+    # quiet while deploy-web-preview / deploy-web still catch a missing secret.
+    - name: Warn on incomplete Supabase override
+      if: ${{ inputs.require-supabase-override == 'true' && (inputs.supabase-project-ref == '' || inputs.supabase-anon-key == '') }}
+      shell: bash
+      run: echo "::warning::require-supabase-override is set but supabase-project-ref and/or supabase-anon-key is empty — the Supabase override was skipped and the preview build uses Vercel's pulled ${{ inputs.environment }} env, which may point at production Supabase."
+
+    # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
+    # vars, so pass them through — instrumentation-client.ts bakes them into
+    # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
+    - name: Build
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+        VERCEL_GIT_REPO_OWNER: ${{ inputs.git-repo-owner }}
+        VERCEL_GIT_REPO_SLUG: ${{ inputs.git-repo-slug }}
+        VERCEL_GIT_COMMIT_REF: ${{ inputs.git-commit-ref }}
+        VERCEL_GIT_COMMIT_SHA: ${{ inputs.git-commit-sha }}
+      run: vercel build --token="$VERCEL_TOKEN"
+
+    # Skipped in build-only mode (deploy: 'false') — the build above is the gate,
+    # and no deployment is created, so no Vercel quota is spent.
+    - name: Deploy (prebuilt)
+      id: deploy
+      if: ${{ inputs.deploy == 'true' }}
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+        DEPLOY_TIMEOUT: ${{ inputs.deploy-timeout }}
+      run: |
+        # NOT `set -e`: we capture `vercel`'s exit code and report the reason
+        # ourselves rather than aborting on it. `timeout` bounds a BLOCKED
+        # deployment (which `vercel deploy` would otherwise poll on forever, up to
+        # the 6-hour job default) so a hang becomes a fast, reported failure —
+        # `--kill-after` force-kills if the CLI ignores the initial SIGTERM.
+        set -uo pipefail
+        # Vercel prints the deployment URL to stdout and progress + any block
+        # reason to stderr; keep them SEPARATE (no 2>&1) so a stderr line can
+        # never be mistaken for the URL, and capture stderr to a file so the
+        # failure reason below can quote it.
+        err_file="$(mktemp)"
+        out="$(timeout --kill-after=30s "$DEPLOY_TIMEOUT" vercel deploy --prebuilt --token="$VERCEL_TOKEN" 2>"$err_file")"
+        code=$?
+        err="$(cat "$err_file")"; rm -f "$err_file"
+        echo "$out"
+        [ -n "$err" ] && printf '%s\n' "$err" >&2
+
+        # Persist a concise reason to the shared workspace so the CALLER can post
+        # it in a PR comment on failure (a composite action cannot comment, and a
+        # step output does not reliably survive a non-zero exit). Then exit 1.
+        reason_file="${GITHUB_WORKSPACE}/vercel-deploy-error.txt"
+        fail() {
+          printf '%s\n' "$1" > "$reason_file"
+          echo "::error::$1"
+          exit 1
+        }
+
+        if [ "$code" -eq 124 ]; then
+          fail "Vercel deploy timed out after ${DEPLOY_TIMEOUT}. A deployment that never becomes Ready is almost always BLOCKED by Vercel — most commonly because the commit author's email can't be matched to a GitHub account with access to the project. Check the commit author and the project's Git deployment-protection settings."
+        fi
+        if [ "$code" -ne 0 ]; then
+          # Prefer Vercel's own stated cause; fall back to the tail of its output.
+          detail="$(printf '%s\n' "$err" "$out" | grep -iE 'block|could not be matched|not authorized|error' | tail -3 || true)"
+          [ -z "$detail" ] && detail="$(printf '%s\n' "$out" "$err" | grep -vE '^[[:space:]]*$' | tail -3 || true)"
+          fail "Vercel deploy failed (exit ${code}).${detail:+$'\n'$detail}"
+        fi
+
+        URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1 || true)"
+        if [ -z "$URL" ]; then
+          fail "Could not parse the Vercel deployment URL from the CLI output — the deployment may not have completed."
+        fi
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+    # Assign a STABLE alias that always points at the newest deployment, the way
+    # Vercel's Git integration aliases a branch. `vercel alias set` RE-POINTS an
+    # existing name — it creates no deployment, so it spends no quota. The scope
+    # is lifted from the just-produced deployment host
+    # (lorekit-<hash>-<scope>.vercel.app) so the alias matches the repo's CORS
+    # allowlist (isVercelPreviewOrigin: lorekit-…-<scope>.vercel.app). Best-effort:
+    # if aliasing is not permitted on this plan the step warns and leaves
+    # alias-url empty — the immutable per-deploy `url` still works.
+    - name: Alias the preview to a stable URL
+      id: alias
+      if: ${{ inputs.deploy == 'true' && inputs.alias-label != '' }}
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+        DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        ALIAS_LABEL: ${{ inputs.alias-label }}
+      run: |
+        set -uo pipefail
+        host="${DEPLOY_URL#https://}"; host="${host%%/*}"   # lorekit-<hash>-<scope>.vercel.app
+        base="${host%.vercel.app}"                           # lorekit-<hash>-<scope>
+        rest="${base#lorekit-}"                              # <hash>-<scope>
+        scope="${rest#*-}"                                   # <scope> (strip the first <hash>- segment)
+        if [ -z "$scope" ] || [ "$scope" = "$rest" ]; then
+          echo "::warning::Could not derive the Vercel scope from '$DEPLOY_URL' — skipping the stable alias (per-commit URL still works)."
+          exit 0
+        fi
+        ALIAS="lorekit-${ALIAS_LABEL}-${scope}.vercel.app"
+        echo "Aliasing $DEPLOY_URL -> https://$ALIAS"
+        if out="$(vercel alias set "$DEPLOY_URL" "$ALIAS" --token="$VERCEL_TOKEN" 2>&1)"; then
+          echo "$out"
+          echo "alias-url=https://$ALIAS" >> "$GITHUB_OUTPUT"
+        else
+          echo "$out"
+          echo "::warning::vercel alias set failed for $ALIAS (plan/permissions?) — the stable PR preview URL is unavailable this run; the per-commit URL still works."
+        fi

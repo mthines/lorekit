@@ -1,0 +1,134 @@
+---
+title: "Agent memory doesn't need embeddings — it needs a schema"
+description: "Everyone reached for vector databases. But most of what a coding agent needs to remember is small, specific, and recurring — a scoped note, not a semantic blob. Here's the deterministic, no-AI data model LoreKit runs on, the rationale for every column, and an invitation to converge on a shared shape."
+date: "2026-08-29"
+author: "Mads Thines"
+readingMinutes: 9
+tags: ["agent-memory", "data-model", "deterministic", "no-embeddings", "lorekit"]
+order: 4
+keywords: ["agent memory", "data model", "schema", "deterministic", "no embeddings", "scopes", "labels", "lorekit", "memory standard", "MCP memory", "scope grammar"]
+---
+
+## The reach for a vector database
+
+When agent memory got popular, almost everyone reached for the same thing: embed the text, store the vectors, query by similarity. Obvious move — it's how retrieval works everywhere else.
+
+For a coding agent, it's mostly the wrong tool. The things an agent needs to remember aren't fuzzy documents you find by vibe. They're small, specific, and *recurring*: the integration tests need a database up first; this API returns `[]`, not a 404; use the shared client, not a raw query. A scoped note, not a semantic blob. And for a scoped note, similarity search is a heavy, non-deterministic, opaque way to do what a `WHERE` clause does exactly.
+
+So LoreKit went the boring way: a deterministic data model, no embeddings, no model call on the read path. This post is the rationale for every column in that model — and, at the end, an honest question: is a shape like this worth agreeing on?
+
+## What "good" means for this kind of memory
+
+Before the columns, the constraints they're chosen against. Agent memory for coding should be:
+
+- **Deterministic.** The same store and the same task produce the same read, every time. You can reason about it, test it, and reproduce a bug.
+- **Inspectable.** It's plain records you can `cat`, `grep`, `diff`, and commit. When the agent recalls something wrong, you can see exactly which row and why.
+- **Cheap.** No embedding bill, no vector index to build or re-build, nothing to keep warm.
+- **Portable.** It runs offline against files on disk, or against a hosted store, with the same shape. No service is required to get value.
+- **Boring.** A junior engineer can predict what it will and won't surface. Predictability is a feature.
+
+Embedding-based memory buys you real things — genuine semantic recall, paraphrase tolerance — at the cost of every item on that list. It's non-deterministic, opaque, metered, and drifts as you re-embed. For a pile of recurring, specific gotchas, that's a bad trade. So the design question is: *what's the smallest set of columns that gets you most of the value, deterministically?*
+
+## The record you write
+
+A write is three required fields and a few optional ones:
+
+```json
+memory.write {
+  scope: "repo::acme/checkout",
+  key:   "tests-need-local-postgres",
+  value: "Integration tests need Postgres up first: docker compose up -d db.",
+  tags:  ["ci", "gotcha"],
+  ttl_days: 30                 // optional — auto-expire
+}
+```
+
+That's the whole contract an agent has to honor. Everything else the store derives or keeps for you. Let me take the load-bearing fields one at a time — the question each answers, and what breaks without it.
+
+### `scope` — *where does this knowledge belong?*
+
+Scope is the idea the whole model hangs on. A lesson is true somewhere specific: on this branch, in this repo, across a project, or everywhere. LoreKit encodes that as a canonical, collision-free address:
+
+```text
+global
+project::{name}
+repo::{owner}/{repo}
+branch::{owner}/{repo}::{branch}
+```
+
+The `::` double-colon is the only separator — deliberately, so a `/` in a repo path and a `:` in a branch name never get confused for structure. Scopes are read **most-specific-first**: a branch lesson beats a repo lesson beats a global one on the same key. That precedence is what lets a spike's findings stay on its branch while a hard-won global rule follows you everywhere.
+
+Without scope you have one flat pile, and it gets *worse* as it grows — every project's quirks bleed into every read. Scope is how the same store serves a fresh repo and a shared, org-wide corpus without tuning.
+
+<figure>
+  <img src="/blog/scope-hierarchy.svg" alt="Four nested scope levels drawn as bands from widest to narrowest: global at the base, then project, then repo, then branch at the top. An arrow labeled 'read most-specific first' points from branch down through the stack, and a note shows that a branch lesson shadows a repo lesson with the same key. The canonical address grammar is shown beside each level: global, project::name, repo::owner/repo, branch::owner/repo::branch." width="640" height="440" />
+  <figcaption>Scope is an address, not a folder. Four levels, read narrowest-first, so the most specific lesson on a key wins — and a `::` grammar that can't collide with the `/` in a repo path or the `:` in a branch name.</figcaption>
+</figure>
+
+### `key` — *what is this lesson's stable identity?*
+
+The key is what makes memory a store and not a log. Write the same key twice and the second write *updates* the first — same lesson, one row. That's what keeps a store from filling with a thousand near-identical captures of "the DB wasn't running." A good key is a slug for the lesson (`tests-need-local-postgres`), stable across the times you re-learn it.
+
+Without a stable key you get append-only noise, and the signal you actually want — *this keeps happening* — is buried instead of counted.
+
+### `value` — *the lesson itself*
+
+Plain text, and deliberately advisory. The read block that surfaces these literally labels them *"considerations, not rules."* A lesson is a note your agent left for its future self; it can be ignored when it's wrong. That's the difference between lore and a linter — and why lore complements your `CLAUDE.md` rules rather than competing with them.
+
+### `tags` — *a second axis that isn't scope*
+
+Scope says *where*; tags say *what kind*. They're orthogonal on purpose. A `loop::reviewer-lessons` tag buckets one automated writer's output; `wip` marks a throwaway; `source::pr-webhook` records that a lesson was harvested from a PR review. You can filter or cap by tag without touching the scope hierarchy. Collapsing the two axes into one — folders that mean both "where" and "what" — is exactly the tangle scopes-plus-tags avoids.
+
+## The columns the store keeps
+
+Beyond what you write, the store maintains a few system columns. You don't set them; they're what make the *read* smart without a model in the loop.
+
+- **`seen_count` (recurrence).** Every re-write of a key increments it. A lesson you've re-learned five times is worth more than a one-off, and this is the column that knows. It's the single most useful signal a deterministic store has — salience without semantics.
+- **`created` / `updated` (recency).** Timestamps, decayed on a two-week half-life at read time. Recent lessons lean up; ancient ones fade without being deleted.
+- **`expires_at` (TTL).** Some facts are true for a week — "skip the flaky test until Friday's fix." Set `ttl_days` on the write and the row goes invisible on its own. No cleanup task, no stale note steering you in November.
+- **`archived_at` (soft delete).** Retiring a lesson hides it from reads without destroying the history.
+- **Provenance (`source_agent`, `trigger`, `origin_repo` / `origin_branch` / `origin_commit` / `origin_pr`).** Where the lesson came from — which agent, what prompted it, the exact commit or PR. This is the audit trail: when a lesson is wrong, you can trace it to its origin instead of guessing.
+
+<figure>
+  <img src="/blog/memory-record.svg" alt="A single memory record drawn as a labeled card, split into two zones. The top zone, 'what you write', holds scope, key, value, and optional tags and ttl_days. The bottom zone, 'what the store keeps', holds seen_count, created and updated, expires_at, archived_at, and provenance fields source_agent, trigger, origin_repo, origin_branch, origin_commit, origin_pr. Callouts mark seen_count as the salience signal and scope-plus-key as the identity." width="680" height="460" />
+  <figcaption>The whole record. Three fields you write, a handful the store keeps — every one there to answer a specific question at read time, none of it a vector.</figcaption>
+</figure>
+
+## The read is structure, not similarity
+
+Here's the surprise: with those columns, you don't need embeddings to rank well. At the start of a task there's no query yet, so the read scores the candidates on signals the columns already carry — recurrence (`seen_count`), recency (`updated`), a cheap relevance pull from the branch name, and outcome (whether applying a lesson has helped, derived from its tags, with a neutral prior so a new lesson isn't buried). Equal weights by default, all deterministic, all inspectable.
+
+That's retrieval from *structure* — scope precedence, a stable key, an honest recurrence count — rather than from vector similarity. Same store, same task, same result, every time, for a fraction of a cent.
+
+<figure>
+  <img src="/blog/structure-vs-similarity.svg" alt="Two columns compared. Left, 'structure', shows a query resolved by scope precedence plus a rank over the columns recency, recurrence, relevance, and outcome, tagged deterministic, inspectable, free, offline. Right, 'similarity', shows text embedded into a vector, stored in a vector index, and queried by nearest-neighbor, tagged semantic, opaque, metered, needs a service. A caption notes the two are complementary: structure first, embeddings as an optional layer on top." width="720" height="380" />
+  <figcaption>Two ways to find a memory. Structure is deterministic, inspectable, and free; similarity is semantic but opaque and metered. For recurring, specific gotchas, structure wins — and nothing stops you layering embeddings on top later.</figcaption>
+</figure>
+
+## An invitation, not a decree
+
+Here's the part I'm actually unsure about, and want dialogue on.
+
+Every agent tool is quietly reinventing this shape — some file of remembered facts, addressed somehow, with some idea of freshness and recurrence. We're all solving the same small problem in mutually incompatible ways, so lore is trapped in whatever tool wrote it.
+
+I work with OpenTelemetry every day at [Dash0](https://www.dash0.com), so I've watched this exact movie before. Telemetry used to be locked inside whatever agent emitted it, until a shared shape — spans, attributes, one wire format — let any tool read any other tool's data. Nobody had to win; they just had to agree on the shape. That's where the instinct here comes from: not one winning memory product, but one shape everyone can write to.
+
+The part worth agreeing on, I think, isn't the storage engine or the ranking algorithm — those should vary freely. It's the **two things that make lore portable**: a **record shape** (`scope`, `key`, `value`, plus `tags`, `ttl`, provenance) and a **scope grammar** (`global` / `project::…` / `repo::…` / `branch::…`) that addresses a lesson the same way regardless of which agent wrote it. Get those shared, and a lesson your CI agent learns is one your editor agent can read — across tools, over MCP, without an import step.
+
+I'm not declaring a standard. I'm proposing a shape that has earned its keep in one real system, putting it out in the open, and asking the obvious questions:
+
+- Is a deterministic, no-embeddings model enough for your use, or does it break somewhere I haven't hit?
+- Is the four-level scope grammar the right set of levels — too many, too few, wrong names?
+- What's missing from the record? What's there that shouldn't be?
+
+The schema and the scope validator are open in the repo. Tell me where it's wrong — that's the point of writing it down.
+
+## Start local, poke holes
+
+If you want to see the model in your own repo before you argue with it, that's one command and a folder you own:
+
+```bash
+npx @lorekit/cli install
+```
+
+It writes the records as plain files you can read. Then break it, and tell me how.

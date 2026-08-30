@@ -1,12 +1,34 @@
 # MCP Tools Reference
 
-LoreKit exposes ten `memory.*` tools and four `org.*` tools via the MCP protocol.
+LoreKit exposes eleven `memory.*` tools and four `org.*` tools via the MCP protocol.
 
-`memory.*` tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
+Every tool requires a valid API token or a dashboard session (see
+[api-tokens.md](./api-tokens.md)), and every tool is gated by **token
+permission**: read tools need `lk_rw_*` or `lk_ro_*`, write tools need `lk_rw_*`
+or `lk_wo_*`.
 
-`org.*` **MCP** tools require a **Supabase user JWT** (browser/dashboard session) — they are not available via `lk_*` API tokens, because these tool handlers call the org management RPCs without naming an actor, and those RPCs then derive it from `auth.uid()` inside `SECURITY DEFINER` functions (NULL on the service-role connection an API token gets).
+`org.*` tools accept `lk_*` tokens as well as a dashboard JWT. They used to be
+JWT-only, because their handlers called the org RPCs without naming an actor and
+those RPCs derive one from `auth.uid()` — NULL on the service-role connection an
+API token gets. They now pass the token owner explicitly as `p_actor_user_id`,
+the same path the REST `/orgs` routes have used since
+`supabase/migrations/00041_org_actor_override.sql`, which the RPCs honour **only**
+on a verified service-role connection. So MCP and REST no longer disagree about
+who may manage an org, and there is no reason to prefer one over the other for
+authentication reasons.
 
-**The REST `orgs` endpoints do accept `lk_*` tokens**, as of `supabase/migrations/00041_org_actor_override.sql` — the handlers there pass the token owner explicitly as `p_actor_user_id`, which the RPCs honour only on a verified service-role connection. Prefer `GET/POST/PATCH/DELETE /functions/v1/orgs` over these MCP tools when you are authenticating with an API token. Bringing the MCP `org.*` tools onto the same path is a follow-up.
+**Token permission is not an org role.** `org.list` needs read permission and
+the three mutations need write, but that only says what the KEY may attempt.
+What the PERSON may do is still decided by `lorekit_org_can` inside the RPCs: a
+`lk_rw_*` token held by a viewer passes the permission gate and is then denied
+the rename, with `LK002`. The two gates are independent and both apply.
+
+**Analytics reads are REST-only on purpose.** `GET /memories/usage`, `/tags`,
+`/facets`, `/activity` and `/read-activity` have no MCP tool and no CLI command.
+They power the dashboard's charts and drill-downs; they are not agent
+primitives, and five extra entries in `tools/list` is context every session pays
+for. See [decisions.md](./decisions.md). `/relevant` is the exception that is
+already covered — `memory.list order=rank` answers the same question.
 
 **Endpoint:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
 
@@ -43,6 +65,8 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `tags` | | Array of tag strings, e.g. `["skill::aw", "source::manual"]` |
 | `source_agent` | | Name of the agent writing this lesson |
 | `trigger` | | What triggered the write (`stuck-loop`, `pr-webhook`, `manual`) |
+| `kind` | | Bucket kind: `lesson`, `bus`, or `signal`. Omit to have it inferred from a `loop::<host>-lessons` tag. See **Taxonomy** below. |
+| `host` | | Owning skill/agent (e.g. `reviewer`, `aw`). Omit to have it inferred from a `loop::<host>-lessons` tag. |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
 | `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged. |
 | `ttl_minutes` | | Integer 1–525600 (365 days in minutes). The memory auto-expires after this many minutes. Mutually exclusive with `ttl_days` and `ttl_seconds`. |
@@ -80,6 +104,18 @@ friends to override. Over the hosted MCP server the client has to supply them �
 the server can only see what the call carries. The GitHub webhook receiver
 records the PR, head branch, and head SHA of the delivery it ingested.
 
+**Taxonomy (`kind` / `host`).** A self-improvement loop's bucket carries two
+facts: WHAT KIND of memory it is and WHICH HOST owns it. `kind` is a closed
+vocabulary — `lesson` (procedural, read every run), `bus` (a transient outcome
+event, read only at promotion time), or `signal` (a durable per-repo filter,
+read every run) — and `host` is the owning skill or agent. Both are first-class
+columns, so a caller can filter (`GET /memories?kind=lesson&host=reviewer`) and
+usage analytics can group by family and owner. You may set them explicitly; if
+you omit them the server infers them from a `loop::<host>-lessons` tag
+(`loop::review-outcomes` → `bus`/`review`, `loop::reviewer-comment-relevance` →
+`signal`/`reviewer`), so a tagged write records them without extra arguments. On
+an update the last KNOWN value wins, exactly like `origin_*`.
+
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
 
 **Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
@@ -95,7 +131,7 @@ here:
   [the CLI README](../packages/cli/README.md#default-ttl).
 - The GitHub webhook receiver sets a TTL graded by the delivery's signal tier —
   90 days for a resolved review thread, 30 for a submitted review, 14 for a
-  fresh comment (`packages/mcp-core/src/ttl-defaults.ts`).
+  fresh comment (`packages/mcp-core/src/limits/ttl-defaults.ts`).
 
 An agent calling this tool directly gets neither: it cannot read a config file
 on someone's laptop, so if a lesson should decay it has to say so with
@@ -125,7 +161,7 @@ Read a single lesson by scope + key.
 
 ## memory.list
 
-List all lessons for a scope, newest first.
+List all lessons for a scope — newest first by default, or best-first with `order: "rank"`.
 
 ```json
 {
@@ -134,7 +170,8 @@ List all lessons for a scope, newest first.
     "arguments": {
       "scope": "global",
       "tags": ["skill::aw"],
-      "limit": 20
+      "limit": 20,
+      "order": "rank"
     }
   }
 }
@@ -145,8 +182,69 @@ List all lessons for a scope, newest first.
 | `scope` | required | Scope to list |
 | `tags` | `[]` | Filter — only return lessons with at least one of these tags |
 | `limit` | `50` | Max results (cap: 100) |
+| `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
+| `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — scores recency, salience, and outcome over a bounded candidate window, returned as a single top-N page. (The scorer's fourth factor, relevance, needs a query string; `memory.list` supplies none, so relevance is a constant 0 here and only contributes on the search/`q` path.) |
+| `kind` | | Filter to one bucket family — `lesson`, `bus`, or `signal`. Rows written before migration 00056 have a `NULL` kind and are excluded when this is set |
+| `host` | | Filter to the owning skill/agent, e.g. `reviewer`, `aw`, `ci-auto-fix` |
+| `view` | `full` | `full` returns each entry's complete `value`. `summary` omits `value` and returns `value_bytes` + a 200-character `preview` instead |
 
-**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }] }`
+**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — with `view: "summary"` each entry is `{ "key", "tags", "updated_at", "value_bytes", "preview" }` instead, and `value` is omitted entirely.
+
+- `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
+- `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
+  Raise `limit` (cap 100) rather than paginating.
+  Ranking scores at most the **200 most recently updated** rows in the scope (a bounded candidate
+  window); in a scope with more than 200 active lessons the ranking is over that recency window,
+  not the whole scope, and `hasMore: false` reflects the page — not that the scope is exhausted.
+
+### Filtering by bucket
+
+`kind` and `host` are the taxonomy columns added in migration 00056. Until they were accepted here,
+kind/host filtering was reachable only over REST — an MCP client had to list a whole scope and
+discard the wrong buckets itself. Both filters are applied **before** ranking, so `order: "rank"`
+scores the bucket you asked for rather than whatever filled the 200-row candidate window first.
+
+```json
+{ "scope": "repo::mthines/lorekit", "kind": "lesson", "host": "reviewer", "limit": 20 }
+```
+
+**Pagination caveat on the `lorekit mcp` stdio server.** The hosted edge function narrows kind/host
+in SQL, so cursor pagination behaves normally there. The local stdio server cannot: `GET /memories`
+is its remote backend and the local file store has no kind/host columns, so it fetches the largest
+page the route allows (100), filters client-side, and slices. A taxonomy-filtered list is therefore
+a **single bounded page** on that surface — an inbound `cursor` is ignored and `nextCursor` is
+always `null`, because no server-side keyset describes "the next filtered row". `hasMore` still
+reports whether the page was cut; raise `limit` rather than paginating.
+
+### Discovery reads: `view: "summary"`
+
+A `full` list returns every body. At a ~1.9 KB median lesson that is ~95 KB of caller context for a
+50-entry read, most of which an agent never consults — it is deciding *which* lessons apply, not
+reading them all. `summary` answers that question directly:
+
+```json
+{ "scope": "repo::mthines/lorekit", "tags": ["loop::reviewer-lessons"], "view": "summary" }
+```
+
+```json
+{
+  "entries": [
+    {
+      "key": "reviewer-lessons::prefer-explicit-null-checks",
+      "tags": ["loop::reviewer-lessons"],
+      "updated_at": "2026-08-14T09:12:04.221Z",
+      "value_bytes": 1873,
+      "preview": "## Prefer an explicit null check over a truthiness guard when the value can legitimately be 0…"
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
+}
+```
+
+`value` is **omitted**, not emptied — a summary entry is structurally distinguishable from a lesson
+with an empty body. Follow up with `memory.read` for the handful of keys that matched.
+`value_bytes` is the UTF-8 byte length, comparable with the 65,536-byte `value` cap.
 
 ---
 
@@ -251,6 +349,58 @@ Restore a soft-archived lesson back to active. Requires a token with write permi
 
 ---
 
+## memory.scopes
+
+List every scope the caller can see, with how many active memories it holds and when it was
+last written to. Takes no arguments. Requires a token with read permission (`lk_rw_*` or
+`lk_ro_*`).
+
+This is the one read tool that takes **no scope**, and that is the point of it: every other
+read tool requires a scope up front (`memory.read` / `memory.list` take a `scope`,
+`memory.search` a `scopes` list), so without an inventory an agent can only reach lore whose
+scope it could already name. Reach for it before a `memory.list`/`memory.search` when you do
+not already know which scope to ask about.
+
+It is **store-wide**, not limited to any working directory — unlike the `lorekit list` /
+`search` / `stats` commands, which are scoped to the current repo. It is the same inventory
+`GET /memories/scopes` and the `lorekit scopes` command return.
+
+```json
+{
+  "params": {
+    "name": "memory.scopes",
+    "arguments": {}
+  }
+}
+```
+
+**Returns:** `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first).
+
+```json
+{
+  "scopes": [
+    { "scope": "global", "count": 12, "last_activity": "2026-07-30T09:12:00.000Z" },
+    { "scope": "repo::acme/app", "count": 3, "last_activity": "2026-07-28T17:04:00.000Z" }
+  ]
+}
+```
+
+- `count` is **active** memories only — non-archived and non-expired.
+- `last_activity` is the newest `created_at` among exactly those counted rows, or `null`.
+  It lets you judge which scopes are live without listing their rows to find out.
+
+The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), not by listing
+rows and deduping client-side — a client-side count is silently truncated past the row cap,
+so whole scopes go missing for exactly the accounts with the most lore.
+
+> The local stdio server (`lorekit mcp`) exposes this tool too, over whichever store is
+> configured, and honours the same scope-ascending ordering — the offline store enumerates in
+> walk order, so the server sorts before answering. When a store cannot enumerate — an
+> unreachable or unconfigured remote — it answers `{ "scopes": [], "note": "<reason>" }`
+> rather than failing the call, matching how the `lorekit scopes` command degrades.
+
+---
+
 ## memory.list_archived
 
 List soft-archived lessons for a scope, newest archived first. Requires a token with read permission (`lk_rw_*` or `lk_ro_*`).
@@ -327,21 +477,64 @@ No arguments required.
 
 ---
 
-## Error codes
+## How failures come back
+
+There are **two** shapes, and which one you get depends on whether the tool ran.
+
+### A tool that ran and failed → a successful result with `isError: true`
+
+```json
+{ "jsonrpc": "2.0", "id": 1,
+  "result": { "content": [{ "type": "text", "text": "Memory cap reached (5000). Archive or delete some lore first." }],
+              "isError": true } }
+```
+
+This is the MCP spec's shape, and the reason is the point of it:
+
+> Any errors that originate from the tool SHOULD be reported inside the result
+> object, with `isError` set to true, *not* as an MCP protocol-level error
+> response. **Otherwise, the LLM would not be able to see that an error occurred
+> and self-correct.**
+
+A protocol error is consumed by the client library and may never reach the
+model — `mcp-remote` surfaces one as a transport failure. So an agent that hit
+the memory cap used to be told nothing it could act on, when "cap reached,
+archive something" is exactly the kind of thing an agent can fix by itself.
+
+You get this shape for anything **the caller can fix**: the memory cap, a
+malformed scope, an invalid `ttl_*` or `created_at`, an org slug that does not
+resolve, and an insufficient org role.
+
+**If you write your own client, check it.** A client that only tests for
+`response.error` reads these as successes — the HTTP status is `200` and there is
+no `error` member. The `lorekit` CLI's own client checks `result.isError`
+(`packages/cli/src/shared/mcp.mjs`); mirror that.
+
+### A call that could not be dispatched → a JSON-RPC error
 
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, or expired token |
 | `-32001` | Read-only token attempted a write operation, or a write-only token attempted a read operation |
-| `-32603` | Tool execution error (DB error, scope validation failure) |
+| `-32603` | Server fault — a DB outage or an unexpected exception. Not something the model can self-correct from, and safe for a client to retry |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown method or tool name |
+| `-32000` | Forbidden — an account-wide tool on a scoped key, or a scope outside the key's allowlist |
+
+These are the spec's "errors in *finding* the tool […] or any other exceptional
+conditions". **Auth-family errors always travel in-band** — HTTP `200` with a
+JSON-RPC error carrying the real request id — because a `401` or an `id: null`
+makes streamable-HTTP clients retry a session handshake and hang. That is a
+hard rule, guarded by `mcp-authz-status.spec.ts`.
+
+`-32040` (a former cap-specific code) **no longer exists**: the cap is
+tool-originated and now returns `isError`.
 
 ---
 
 ## Connecting your agent
 
-The fastest path is `npx @lorekit/cli install` — it scaffolds the `lorekit-memory` and `lorekit-setup` skills, wires the MCP server, and installs the lifecycle hooks in one command. See the [CLI README](../packages/cli/README.md) for flags.
+The fastest path is `npx @lorekit/cli install` — it scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills, wires the MCP server, and installs the lifecycle hooks in one command. See the [CLI README](../packages/cli/README.md) for flags.
 
 For a manual `.mcp.json` entry (any MCP-compatible agent):
 

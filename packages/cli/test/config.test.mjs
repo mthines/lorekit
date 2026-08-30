@@ -16,13 +16,49 @@ import {
   CLAUDE_HOOK_EVENTS,
   hookEventsForMode,
   hookModeFromEvents,
+  missingHookEvents,
   installedHookEvents,
   upsertClaudeHooks,
-} from '../src/config.mjs';
+  isMcpJsonGitIgnored,
+  upsertWebMcpServer,
+  isWebMcpServerEntry,
+  removeWebMcpServer,
+} from '../src/shared/config.mjs';
+import { execFileSync } from 'node:child_process';
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-cfg-'));
 }
+
+function gitAvailable() {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The committable web .mcp.json (`install --mcp-json`) only reaches a fresh
+// Claude-Code-on-the-web clone if it is committed, and .mcp.json is commonly
+// git-ignored. `isMcpJsonGitIgnored` is what lets install warn about that.
+test('isMcpJsonGitIgnored detects an ignored vs tracked .mcp.json', { skip: !gitAvailable() }, () => {
+  // Ignored: a repo whose .gitignore lists .mcp.json.
+  const ignored = tmpRoot();
+  execFileSync('git', ['-C', ignored, 'init'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(ignored, '.gitignore'), '.mcp.json\n');
+  assert.equal(isMcpJsonGitIgnored(ignored), true, 'listed in .gitignore → ignored');
+
+  // Not ignored: a repo with no such rule.
+  const tracked = tmpRoot();
+  execFileSync('git', ['-C', tracked, 'init'], { stdio: 'ignore' });
+  assert.equal(isMcpJsonGitIgnored(tracked), false, 'no rule → not ignored');
+});
+
+test('isMcpJsonGitIgnored returns null when the dir is not a git repo', () => {
+  // Unknown, not a throw — the caller stays silent rather than warning wrongly.
+  assert.equal(isMcpJsonGitIgnored(tmpRoot()), null);
+});
 
 // Regression: `npx @lorekit/cli install` stages a `lorekit` symlink into an
 // ephemeral …/_npx/<hash>/node_modules/.bin dir and prepends it to PATH. That
@@ -123,8 +159,8 @@ test('copyDir reports how many files it actually wrote', () => {
 });
 
 // ── mcp.endpoint in .lorekit.json ─────────────────────────────────────────────
-import { resolveProjectConnection } from '../src/config.mjs';
-import { splitEndpoint } from '../src/mcp.mjs';
+import { resolveProjectConnection } from '../src/shared/config.mjs';
+import { splitEndpoint } from '../src/shared/mcp.mjs';
 
 test('resolveProjectConnection uses mcp.endpoint from .lorekit.json as fallback', () => {
   const root = tmpRoot();
@@ -184,6 +220,21 @@ test('hookModeFromEvents is the inverse, and reports an unrecognised set as cust
   assert.equal(hookModeFromEvents([...CLAUDE_HOOK_EVENTS].reverse()), 'all');
 });
 
+test('missingHookEvents names the gap a legacy wiring still reports as its mode', () => {
+  // The whole point: hookModeFromEvents says `all` for the pre-UserPromptSubmit
+  // triple, so the mode alone cannot tell a current install from a stale one.
+  const legacy = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+  assert.equal(hookModeFromEvents(legacy), 'all', 'precondition: it still reads as all');
+  assert.deepEqual(missingHookEvents(legacy), ['UserPromptSubmit']);
+
+  assert.deepEqual(missingHookEvents(CLAUDE_HOOK_EVENTS), [], 'a current install has no gap');
+  assert.deepEqual(missingHookEvents(['SessionStart']), [], 'read-only is complete for its mode');
+  assert.deepEqual(missingHookEvents([]), [], 'none is complete for its mode');
+  // custom means a human hand-wired it; there is no upgrade to advertise.
+  assert.deepEqual(missingHookEvents(['Stop']), []);
+  assert.deepEqual(missingHookEvents(undefined), []);
+});
+
 test('installedHookEvents reads only lorekit entries, and never throws', () => {
   const root = tmpRoot();
   assert.deepEqual(installedHookEvents(root, 'project'), [], 'absent settings file → none');
@@ -214,7 +265,9 @@ test('upsertClaudeHooks prunes lorekit entries for events outside the selected s
   // Downgrading must REMOVE, not just stop adding — otherwise the nudges keep
   // firing after the user asked for read-only.
   const result = upsertClaudeHooks(root, 'project', 'lorekit', hookEventsForMode('read-only'));
-  assert.equal(result.removed, 2);
+  // DERIVED, never a literal: an assertion that restates the size of
+  // CLAUDE_HOOK_EVENTS goes vacuous the moment a lifecycle event is added.
+  assert.equal(result.removed, CLAUDE_HOOK_EVENTS.length - hookEventsForMode('read-only').length);
   assert.deepEqual(installedHookEvents(root, 'project'), ['SessionStart']);
 });
 
@@ -308,7 +361,14 @@ test('a version-pinned or extension-suffixed runner is recognised as ours, not a
   });
 
   const result = upsertClaudeHooks(root, 'project', 'lorekit');
-  assert.equal(result.added, 1, 'only PostToolUseFailure is genuinely new');
+  // Two of the four events were already wired (in forms the matcher has to
+  // recognise), so only the remainder is genuinely new. Derived so adding a
+  // lifecycle event does not silently make this assertion about nothing.
+  assert.equal(
+    result.added,
+    CLAUDE_HOOK_EVENTS.length - 2,
+    'only the events not already wired are added',
+  );
   assert.equal(lorekitCommandsFor(root, 'SessionStart').length, 1, 'pinned runner updated in place');
   assert.equal(lorekitCommandsFor(root, 'Stop').length, 1, 'windows runner updated in place');
 });
@@ -325,4 +385,106 @@ test('the lorekit hook matcher does not claim an unrelated command that merely e
     commands.includes('lorekit hook --adapter claude --event Stop --dir "${CLAUDE_PROJECT_DIR}"'),
     'our own entry is still wired',
   );
+});
+
+// ── Web .mcp.json (`install --mcp-json`) config helpers ──────────────────────
+
+const WEB_ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
+
+test('resolveProjectConnection: a tokenless web .mcp.json does not shadow the global token', () => {
+  // Regression: install --global --mcp-json writes a token-free project
+  // .mcp.json AND the real token into ~/.claude.json. The project entry must not
+  // rob the token from the global one, or the local CLI/doctor/hooks resolve null.
+  const home = tmpRoot();
+  const root = tmpRoot();
+  upsertWebMcpServer(root, WEB_ENDPOINT); // project: web form, no token
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({
+      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${WEB_ENDPOINT}?token=lk_rw_global`] } },
+    }),
+  );
+
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, TOK: process.env.LOREKIT_TOKEN };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.LOREKIT_TOKEN; // prove the token comes from the global config, not env
+  try {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.token, 'lk_rw_global', 'global token used, not shadowed by the tokenless web entry');
+    assert.equal(conn.endpoint, WEB_ENDPOINT);
+  } finally {
+    for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['LOREKIT_TOKEN', prev.TOK]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('resolveProjectConnection: the winning token brings its own endpoint, not the closer tokenless one', () => {
+  // A tokenless project source and a token-bearing global source with DISTINCT
+  // endpoints: the global token wins (project stored none) and MUST be paired
+  // with the global endpoint — a token authenticates one endpoint, so the closer
+  // tokenless project endpoint is not used when a later source carries a token.
+  const PROJECT_ENDPOINT = 'https://project.supabase.co/functions/v1/mcp';
+  const GLOBAL_ENDPOINT = 'https://global.supabase.co/functions/v1/mcp';
+  const home = tmpRoot();
+  const root = tmpRoot();
+  upsertWebMcpServer(root, PROJECT_ENDPOINT); // project: web form, no token
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({
+      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${GLOBAL_ENDPOINT}?token=lk_rw_global`] } },
+    }),
+  );
+
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, TOK: process.env.LOREKIT_TOKEN };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.LOREKIT_TOKEN;
+  try {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.token, 'lk_rw_global', 'global token wins — project stored none');
+    assert.equal(conn.endpoint, GLOBAL_ENDPOINT, 'endpoint travels with the winning token, not the closer tokenless one');
+  } finally {
+    for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['LOREKIT_TOKEN', prev.TOK]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('isWebMcpServerEntry recognises the committable web form only', () => {
+  assert.equal(
+    isWebMcpServerEntry({ args: ['-y', 'mcp-remote', WEB_ENDPOINT, '--header', 'Authorization:Bearer ${LOREKIT_TOKEN}'] }),
+    true,
+    'env-ref header is the web form',
+  );
+  assert.equal(
+    isWebMcpServerEntry({ args: ['-y', 'mcp-remote', `${WEB_ENDPOINT}?token=lk_rw_x`] }),
+    false,
+    'embedded-token URL is not the web form',
+  );
+  assert.equal(isWebMcpServerEntry({ args: ['-y', 'mcp-remote', WEB_ENDPOINT] }), false, 'plain URL is not the web form');
+  assert.equal(
+    isWebMcpServerEntry({ args: ['-y', 'mcp-remote', WEB_ENDPOINT, '--header', 'Authorization:Bearer lk_rw_literal'] }),
+    false,
+    'a literal header token is not the env-ref web form',
+  );
+  assert.equal(isWebMcpServerEntry(null), false);
+});
+
+test('removeWebMcpServer removes the web form but leaves an embedded-token entry intact', () => {
+  const web = tmpRoot();
+  upsertWebMcpServer(web, WEB_ENDPOINT);
+  assert.equal(removeWebMcpServer(web).removed, true, 'web form removed');
+  assert.ok(!readMcpConfig(web).config?.mcpServers?.lorekit, 'lorekit entry gone');
+
+  const embedded = tmpRoot();
+  fs.writeFileSync(
+    path.join(embedded, '.mcp.json'),
+    JSON.stringify({ mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${WEB_ENDPOINT}?token=lk_rw_x`] } } }),
+  );
+  assert.equal(removeWebMcpServer(embedded).removed, false, 'embedded-token entry is not the web form');
+  assert.ok(readMcpConfig(embedded).config.mcpServers.lorekit, 'embedded-token entry preserved');
 });

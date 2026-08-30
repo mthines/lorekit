@@ -7,7 +7,7 @@ import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 /**
  * Full-view visual-regression stories for the Overview page's main content.
  *
- * `/dashboard` is a **server component** — it `await`s server actions and the
+ * `/overview` is a **server component** — it `await`s server actions and the
  * Supabase *server* client, so it cannot render in Storybook's browser. Its
  * largest client subtree, {@link DashboardStats}, can: it fetches scope health
  * over TanStack Query → the Supabase *browser* client → PostgREST, which MSW
@@ -28,6 +28,12 @@ const meta: Meta<typeof DashboardStats> = {
   parameters: {
     layout: 'fullscreen',
     msw: { handlers: memoryHandlers() },
+    // The range selector is URL-backed (`useUrlState` → `useRouter` /
+    // `usePathname` / `useSearchParams`), so the story has to provide
+    // `@storybook/nextjs-vite`'s App Router context or those hooks throw
+    // "invariant expected app router to be mounted" before a single card
+    // renders. Same reason `LorePage.stories.tsx` sets it.
+    nextjs: { appDirectory: true },
   },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
   render: () => (

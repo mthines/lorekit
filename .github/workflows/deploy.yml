@@ -1,12 +1,30 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Deploy — preview-first promotion pipeline, runs on merge to main.
 #
-#   deploy-preview ─▶ smoke-preview ─▶ deploy-production ─▶ smoke-production
-#                                              └─▶ rollback-production (on failure)
-#   any job fails ─▶ notify-failure (Discord webhook)
+# Both the API (Supabase edge functions + migrations) AND the web dashboard
+# (Next.js on Vercel) are deployed here, in lockstep, so the frontend and backend
+# flip to production together instead of skewing apart. Vercel's native Git
+# auto-deploy is disabled entirely (packages/web/vercel.json →
+# git.deploymentEnabled = false); this workflow is the ONLY path the dashboard
+# reaches production, and ci.yml deploys PR previews. The shared Vercel
+# build+deploy flow lives in .github/actions/vercel-preview-deploy.
+#
+#   deploy-preview (API) ────────┐
+#   deploy-web-preview (FE) ──────┤
+#   stage-web-production (FE build)┘
+#            └─▶ smoke-preview ─▶ deploy-production (API) ─▶ promote-web-production (FE)
+#                                          └────────────────────────┴─▶ smoke-production
+#                                                                            ├─▶ rollback-production (functions)
+#                                                                            └─▶ rollback-web-production (Vercel)
+#   any job fails ─▶ notify-failure (Discord + Dash0)
 #
 # "preview" is the pre-production environment (a dedicated Supabase project);
-# production is only touched after preview is deployed and smoke-tested.
+# production is only touched after preview is deployed and smoke-tested. The web
+# production build is PRE-BUILT and uploaded during the preview phase
+# (stage-web-production, `--skip-domain`) so the final flip (promote-web-production)
+# is a near-instant alias swap that runs right after the API's deploy-production —
+# the production DOMAIN is never assigned until preview is green and the production
+# environment gate is cleared.
 #
 # Tests are NOT re-run here — the merged commit already passed the required PR
 # checks in ci.yml (unit + integration). Each job `needs:` the previous one, so a
@@ -16,13 +34,19 @@
 #   preview     → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 #   production  → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 # Repo-level secret shared by both: SUPABASE_ACCESS_TOKEN (personal access token).
+# Repo-level Vercel secrets (used by every web job): VERCEL_TOKEN, VERCEL_ORG_ID,
+# VERCEL_PROJECT_ID — the same three preview.yml already uses.
+# Optional repo-level variable: WEB_PROD_URL (the production dashboard origin the
+# production smoke curls; defaults to https://lorekit.io).
 # Optional (preview only) — enables the orgs REST smoke suite in smoke-preview
 # (see its "Mint a user JWT" step); unset → that suite is announced-skipped and
-# the memories suite still runs. The write-heavy REST smoke runs against preview
-# only, never production (see the note in smoke-production for why):
+# the memories suite still runs. SUPABASE_ANON_KEY additionally points the
+# preview web build at the preview Supabase project (deploy-web-preview). The
+# write-heavy REST smoke runs against preview only, never production (see the
+# note in smoke-production for why):
 #   SUPABASE_ANON_KEY, LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD.
 # The fixed smoke user those secrets name must already exist on the project — seed it
-# once with `node scripts/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
+# once with `node scripts/smoke/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
 # the orgs-smoke user"); the mint signs in as it, it is never auto-created.
 # Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
 # a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
@@ -35,8 +59,27 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'What to deploy (overrides the change-detection step for a manual run)'
+        type: choice
+        default: auto
+        options:
+          - auto        # Use the change-detection step (same as a push to main)
+          - all         # Force BOTH halves — API + web
+          - api         # API only (Supabase edge functions + migrations)
+          - web         # Web only (Next.js dashboard on Vercel)
 
 permissions: {}
+
+# The deployed-SHA markers the `changes` job diffs each half against. ONE place
+# names them; `deploy-production` / `promote-web-production` advance them on a
+# successful flip and the two rollback jobs repoint them at what production went
+# back to. See docs/deployment.md → "The deploy scope is measured against what is
+# DEPLOYED, not the last commit".
+env:
+  API_DEPLOYED_TAG: deployed/api-production
+  WEB_DEPLOYED_TAG: deployed/web-production
 
 # Never cancel an in-flight deploy — a half-applied migration is worse than a queue.
 concurrency:
@@ -44,14 +87,73 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── 0. Detect what changed — gate the API and web halves independently ────────
+  #    A merge that touches only the web (or only the API, or only docs) should not
+  #    redeploy the unchanged half. `packages/schemas/` maps to BOTH (the edge
+  #    functions mirror it and the web transpiles it); the workspace files, the
+  #    resolver and deploy.yml itself force BOTH, so a change to this pipeline
+  #    exercises the whole thing.
+  #
+  #    Each half is diffed against THE COMMIT THAT HALF IS ACTUALLY SERVING —
+  #    its `deployed/*-production` marker — not against this push. Diffing one
+  #    push is what broke production once: #492 changed both halves and its
+  #    smoke-preview failed (nothing shipped, lockstep held), then #504 changed
+  #    only packages/web/**, reported api=false against its own parent, and
+  #    promoted a bundle carrying #492's client over edge functions that had never
+  #    been deployed — every production Lore Explorer read answered 405. Undeployed
+  #    work stays in the diff until it deploys. The markers are advisory and fail
+  #    OPEN (a missing or non-ancestor marker falls back to the push baseline);
+  #    doubt never resolves to "this half has no changes".
+  #
+  #    A MANUAL run (workflow_dispatch) can override the detection with the
+  #    `deploy_target` input: `all` forces both halves, `api`/`web` force exactly
+  #    one, and `auto` (the default) falls back to the marker diff — so a maintainer
+  #    can redeploy an unchanged half from the Actions UI without a no-op commit.
+  #
+  #    The decision itself lives in scripts/ci/resolve-deploy-scope.mjs (unit-tested
+  #    by ci.yml's `deploy-scope` job), not in a shell block nobody can run.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      # `fetch-depth: 0` brings the markers with it — a shallow checkout would
+      # need `fetch-tags: true`, and a marker that never arrives falls back to
+      # the push baseline rather than skipping a half.
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js (for the deploy-scope resolver)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Resolve the deploy scope
+        id: filter
+        env:
+          BEFORE: ${{ github.event.before }}
+          DEPLOY_TARGET: ${{ inputs.deploy_target }}
+          API_DEPLOYED_TAG: ${{ env.API_DEPLOYED_TAG }}
+          WEB_DEPLOYED_TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: node scripts/ci/resolve-deploy-scope.mjs
+
   # ── 1. Deploy to PREVIEW (migrations, then functions) ─────────────────────────
   #    No test job here: the commit on main already passed the required PR checks
   #    in ci.yml (unit + integration). Re-running them would just duplicate that
   #    work. Protect main with those required checks so only verified commits ever
-  #    reach this pipeline.
+  #    reach this pipeline. Gated on `changes.api` — a web-only or docs-only merge
+  #    skips the whole API preview→smoke→prod cycle.
   deploy-preview:
     name: Deploy → preview
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     environment: preview
     permissions:
       contents: read
@@ -66,7 +168,13 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned, not `latest`, for consistency with ci.yml (#578): CLI
+          # v2.116.0 changed the local stack's default privileges, tripping a
+          # security assertion under `supabase start`. This job talks to
+          # hosted Supabase, not the local stack, so that specific assertion
+          # doesn't apply here — pinned anyway to avoid unplanned CLI drift
+          # across all workflows until the v2.116.0 grant change is understood.
+          version: 2.115.0
 
       - name: Verify preview environment secrets are set
         run: |
@@ -78,9 +186,26 @@ jobs:
             exit 1
           fi
 
-      - name: Tag deploy in Dash0 (VCS resource attributes)
+      # `DEPLOYMENT_ENVIRONMENT` is what `_shared/otel.ts` reads to stamp
+      # `deployment.environment.name` on every edge span and metric. Set HERE,
+      # on every deploy, rather than by hand once: neither Supabase project has
+      # a `VERCEL_ENV` (that variable exists only in Vercel's build/runtime), so
+      # with the secret unset `resolveDeploymentEnv()` falls through to its
+      # `'local'` default — which is what BOTH projects reported, making preview
+      # and production edge traffic indistinguishable in Dash0. Re-asserting it
+      # per deploy also means a project restored from a snapshot, or one whose
+      # secrets were cleared, self-heals on the next promotion instead of
+      # silently going back to `local`.
+      #
+      # The value is `preview`, not `staging`: it matches the vocabulary the
+      # rest of the system already uses — this job's own GitHub environment, the
+      # web side's `VERCEL_ENV` mapping, and the bounded value list in
+      # docs/otel.md. A second spelling for the same environment would fragment
+      # every query that filters on it.
+      - name: Tag deploy in Dash0 (VCS + environment resource attributes)
         run: |
           supabase secrets set \
+            DEPLOYMENT_ENVIRONMENT="preview" \
             VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
             VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
             VCS_REF_HEAD_REVISION="${{ github.sha }}" \
@@ -110,7 +235,7 @@ jobs:
           # error message included.
           supabase migration list --linked > /tmp/migration-list.txt 2>&1 || true
           cat /tmp/migration-list.txt
-          node scripts/check-remote-migration-drift.mjs < /tmp/migration-list.txt
+          node scripts/migrations/check-remote-migration-drift.mjs < /tmp/migration-list.txt
 
       - name: Push database migrations
         if: steps.drift.outputs.action == 'push'
@@ -120,7 +245,7 @@ jobs:
         # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
         # aborts with "migration files to be inserted before the last migration
         # on remote". Migrations are still applied in on-disk numeric order; the
-        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
+        # PR-time guard (scripts/migrations/check-migration-order.mjs, the `migration-order`
         # CI job) is what stops an out-of-order file from landing in the first
         # place, so this flag only ever applies already-reviewed, CI-tested ones.
         run: supabase db push --include-all
@@ -140,11 +265,145 @@ jobs:
             sleep 10
           done
 
+  # ── 1b. Verify WEB build → PREVIEW (Vercel, BUILD-ONLY) ───────────────────────
+  #    Builds the dashboard against the PREVIEW Supabase project as a GATE — if
+  #    web changed, prove the FE still builds before we touch production — but
+  #    does NOT deploy (deploy: 'false'), so it spends ZERO Vercel deployment
+  #    quota. The deployment this used to create was pure waste: smoke-preview
+  #    tests the API only (it never hit the web URL — this job has no job-level
+  #    output), and production is promoted from the SEPARATE stage-web-production
+  #    build, never from this preview. Runs in parallel with deploy-preview — the
+  #    build needs no freshly-deployed functions to compile.
+  deploy-web-preview:
+    name: Verify web build → preview (Vercel, build-only)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    environment: preview
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      # Shared flow (see .github/actions/vercel-preview-deploy) in BUILD-ONLY mode
+      # (deploy: 'false' below): builds the FE against the PREVIEW Supabase project
+      # as a gate, creating no Vercel deployment. require-supabase-override warns
+      # if either preview secret is missing.
+      - name: Verify web build (preview, build-only)
+        id: deploy
+        uses: ./.github/actions/vercel-preview-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          supabase-project-ref: ${{ secrets.SUPABASE_PROJECT_REF }}
+          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Always overrides at the PREVIEW Supabase project — warn (not silently
+          # fall back to the pulled env) if either secret is missing.
+          require-supabase-override: 'true'
+          git-repo-owner: ${{ github.repository_owner }}
+          git-repo-slug: ${{ github.event.repository.name }}
+          git-commit-ref: ${{ github.ref_name }}
+          git-commit-sha: ${{ github.sha }}
+          # Build-only gate: prove the FE builds against the preview backend, but
+          # create NO Vercel deployment — this preview was never smoke-tested and
+          # production promotes the separate stage-web-production build.
+          deploy: 'false'
+
+      - name: Note build result
+        run: |
+          echo "### Web build (preview backend)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Built the dashboard against the preview Supabase project as a gate (build-only — no Vercel deployment created)." >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 1c. STAGE web production build (Vercel, pre-built, no domain) ──────────────
+  #    Builds the production dashboard bundle (against Vercel's PRODUCTION env, so
+  #    it targets the production Supabase project) and uploads it as a
+  #    production-target deployment WITHOUT applying the production domain
+  #    (--skip-domain). Doing the slow `next build` here, during the preview phase,
+  #    makes the later flip (promote-web-production) a near-instant alias swap that
+  #    lands together with the API's deploy-production. No `environment:` — this
+  #    only STAGES (nothing serves on the domain yet), so it must not sit behind the
+  #    production approval gate; it authenticates to Vercel with the repo token.
+  stage-web-production:
+    name: Stage web → production (Vercel, pre-built)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    outputs:
+      deployment_url: ${{ steps.stage.outputs.url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Verify Vercel secrets are set
+        run: |
+          missing=""
+          [ -z "$VERCEL_TOKEN" ] && missing="$missing VERCEL_TOKEN"
+          [ -z "$VERCEL_ORG_ID" ] && missing="$missing VERCEL_ORG_ID"
+          [ -z "$VERCEL_PROJECT_ID" ] && missing="$missing VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo-level Vercel secrets:$missing. Add them under Settings ▸ Secrets and variables ▸ Actions."
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@58
+
+      - name: Pull Vercel environment (production)
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build (production)
+        env:
+          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
+          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
+          VERCEL_GIT_COMMIT_REF: ${{ github.ref_name }}
+          VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Upload prebuilt production output (staged, no domain)
+        id: stage
+        run: |
+          # Create a PRODUCTION-target deployment but do NOT assign the production
+          # domain yet (--skip-domain). Uploads + builds here, in the preview phase;
+          # the domain is applied only by promote-web-production, which is gated
+          # behind deploy-production (API) + the production environment approval —
+          # so the production domain is never touched until preview is green.
+          out="$(vercel deploy --prebuilt --prod --skip-domain --token="$VERCEL_TOKEN")"
+          echo "$out"
+          URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+          if [ -z "$URL" ]; then
+            echo "::error::Could not parse staged Vercel production deployment URL"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Web production (staged)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Built and uploaded: $URL (domain not yet applied)" >> "$GITHUB_STEP_SUMMARY"
+
   # ── 2. Integration test against PREVIEW (the gate before prod) ────────────────
   smoke-preview:
     name: Smoke tests → preview
     runs-on: ubuntu-latest
-    needs: deploy-preview
+    needs: [deploy-preview, deploy-web-preview]
+    # Runs when the API was deployed to preview (it smoke-tests the API). A skipped
+    # web job (web unchanged) is fine; a FAILED web-preview build halts the whole
+    # prod deploy — don't half-ship a merge that changed both.
+    if: always() && needs.deploy-preview.result == 'success' && needs.deploy-web-preview.result != 'failure'
     environment: preview
     permissions:
       contents: read
@@ -155,6 +414,24 @@ jobs:
       # here so a step `if:` can read it — a step `if:` cannot reference secrets
       # via env of the same step. Unset → the suite self-skips (announced).
       HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
+      # ── Smoke telemetry (job-wide, inherited by every step) ───────────────────
+      # Make the smoke run OBSERVABLE in Dash0 so a failure is diagnosable from
+      # the telemetry, not just the CI log. Three knobs, all read by the code
+      # the smokes already run:
+      #   • LOREKIT_TELEMETRY_TOKEN — turns ON CLI OTLP export (off by default in
+      #     a source checkout: the baked-in token is injected only at npm publish),
+      #     so `install` / `doctor --deep` emit their `cli` spans + metrics.
+      #   • DEPLOYMENT_ENVIRONMENT=test — stamps `deployment.environment.name=test`
+      #     on the CLI's own spans AND, via the `X-LoreKit-Deployment-Environment`
+      #     header the CLI/`restFetch` + the REST/MCP smoke specs forward, on the
+      #     edge (`api`) spans for every smoke request — so ALL synthetic smoke
+      #     telemetry (cli + api + mcp) filters apart from real traffic. The edge
+      #     honours only `test` (supabase/functions/_shared/otel.ts).
+      #   • LOREKIT_CORRELATION_ID — a per-run key on every REST call's
+      #     `usage_events.correlation_id`, so one run's calls are greppable.
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: smoke-preview-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -172,7 +449,21 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run integration test against preview endpoint
-        run: pnpm nx test mcp-server -- smoke.integration
+        # Retry once on a transient live-endpoint flake before failing the deploy.
+        # The suite self-cleans and re-mints keys per run, so a re-run is safe; a
+        # real regression still fails after the second attempt. (The specs' own
+        # teardown is also soft-bounded so a slow sweep never fails a green run.)
+        run: |
+          for attempt in 1 2; do
+            pnpm nx test smoke-tests -- smoke.integration && break
+            rc=$?
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::smoke.integration failed after $attempt attempts"
+              exit "$rc"
+            fi
+            echo "::warning::smoke.integration failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
+            sleep 10
+          done
         env:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -185,7 +476,7 @@ jobs:
       #     order so a mis-ordered merge can't red the deploy/rollback pipeline).
       # Only a real BYOD assertion failure fails the step.
       - name: Run BYOD integration test (all four scope types)
-        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        run: pnpm nx test smoke-tests -- byod-smoke.integration --passWithNoTests
         env:
           LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
           LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
@@ -214,7 +505,25 @@ jobs:
       # memory.list against the endpoint — proving the transport a `.mcp.json`
       # points at launches and reaches the backend. Same script as ci.yml.
       - name: Smoke — robust stdio transport handshakes against preview
-        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
+      # The hosted MCP tool surface, behaviourally: every op the catalog declares,
+      # driven against the deploy that just landed. Same script ci.yml runs against
+      # the local stack, so the merge gate and the deploy gate assert one contract.
+      #
+      # Preview only, and the script enforces that itself — it refuses the
+      # production ref without `--allow-production`, because it WRITES. It cleans
+      # up after itself (per-run scope + org slug, removed in a `finally`) and
+      # reports anything it could not remove; a soft-deleted org is expected
+      # residue, since no purge exists on either public surface.
+      #
+      # Conformance lane only. `--probe` holds defects that are open on purpose
+      # and would red the pipeline; run it by hand, or `--strict` to gate a fix.
+      - name: Smoke — hosted MCP tool surface against preview
+        run: node scripts/smoke/smoke-mcp-tools.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -243,7 +552,7 @@ jobs:
           LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
           LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
         run: |
-          if JWT="$(node scripts/mint-smoke-jwt.mjs)"; then
+          if JWT="$(node scripts/smoke/mint-smoke-jwt.mjs)"; then
             echo "::add-mask::$JWT"
             echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
           else
@@ -259,7 +568,20 @@ jobs:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-rest.mjs
+        # Retry once on a transient live-endpoint flake. The specs self-clean with
+        # per-run timestamped keys, so a re-run is safe; a real failure still fails
+        # after the second attempt.
+        run: |
+          for attempt in 1 2; do
+            node scripts/smoke/smoke-rest.mjs && break
+            rc=$?
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::REST smoke failed after $attempt attempts"
+              exit "$rc"
+            fi
+            echo "::warning::REST smoke failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
+            sleep 10
+          done
 
       - name: Smoke cleanup — sweep orphaned artefacts from preview
         if: always()
@@ -267,7 +589,7 @@ jobs:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30
 
   # ── 3. Deploy to PRODUCTION (only reached if preview is green) ────────────────
   deploy-production:
@@ -276,7 +598,8 @@ jobs:
     needs: smoke-preview
     environment: production
     permissions:
-      contents: read
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -288,7 +611,13 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned, not `latest`, for consistency with ci.yml (#578): CLI
+          # v2.116.0 changed the local stack's default privileges, tripping a
+          # security assertion under `supabase start`. This job talks to
+          # hosted Supabase, not the local stack, so that specific assertion
+          # doesn't apply here — pinned anyway to avoid unplanned CLI drift
+          # across all workflows until the v2.116.0 grant change is understood.
+          version: 2.115.0
 
       - name: Verify production environment secrets are set
         run: |
@@ -300,9 +629,13 @@ jobs:
             exit 1
           fi
 
-      - name: Tag deploy in Dash0 (VCS resource attributes)
+      # See the preview job's twin of this step for why `DEPLOYMENT_ENVIRONMENT`
+      # is set on every deploy rather than once by hand. This is the production
+      # Supabase project, so it pins `production`.
+      - name: Tag deploy in Dash0 (VCS + environment resource attributes)
         run: |
           supabase secrets set \
+            DEPLOYMENT_ENVIRONMENT="production" \
             VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
             VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
             VCS_REF_HEAD_REVISION="${{ github.sha }}" \
@@ -319,7 +652,7 @@ jobs:
         # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
         # aborts with "migration files to be inserted before the last migration
         # on remote". Migrations are still applied in on-disk numeric order; the
-        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
+        # PR-time guard (scripts/migrations/check-migration-order.mjs, the `migration-order`
         # CI job) is what stops an out-of-order file from landing in the first
         # place, so this flag only ever applies already-reviewed, CI-tested ones.
         run: supabase db push --include-all
@@ -339,14 +672,190 @@ jobs:
             sleep 10
           done
 
+      # LAST step, deliberately with NO `if:` — that is what makes the marker
+      # advance only when every step above succeeded. `if: always()` here would
+      # move it after a FAILED deploy, the one thing this placement prevents.
+      #
+      # Moved through the API rather than `git push --force`: this checkout is
+      # shallow, and force-pushing a moving tag from a shallow clone is exactly
+      # what goes wrong quietly. Create-or-update (POST, falling back to PATCH) —
+      # a PATCH alone 404s while the marker does not exist yet.
+      #
+      # Its own failure is a WARNING, not a red job: the deploy has already
+      # succeeded, and failing here would skip promote-web-production and trip
+      # rollback-production, reverting a healthy production API over a bookkeeping
+      # hiccup. A marker that fails to advance is the safe error — the next run
+      # diffs from an older baseline and redeploys an unchanged half.
+      - name: Record the deployed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ env.API_DEPLOYED_TAG }}
+        run: |
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${SHA}" -F force=true >/dev/null 2>&1; then
+            echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} to ${SHA} — the next run diffs this half from an older baseline and redeploys it."
+          fi
+
+  # ── 3b. Promote WEB to PRODUCTION (Vercel alias swap) ─────────────────────────
+  #    The FE half of the production flip. Runs right after deploy-production (API),
+  #    so the frontend goes live in lockstep with the backend it depends on. Because
+  #    stage-web-production already built + uploaded the bundle, this is just an alias
+  #    swap — near-instant. `needs` deploy-production so the API is in production
+  #    BEFORE the new FE is served (a client should never front an older backend);
+  #    shares the `production` environment gate.
+  promote-web-production:
+    name: Promote web → production (Vercel)
+    runs-on: ubuntu-latest
+    needs: [changes, deploy-production, stage-web-production]
+    # Flip the web when it changed (stage-web-production ran) AND either the API
+    # did not change (nothing to wait for) or the API's prod deploy succeeded (so
+    # the API is live before the FE fronts it). `changes.outputs.api` disambiguates
+    # deploy-production's 'skipped' (API unchanged, fine) from a real upstream stop
+    # (API changed but its deploy failed / smoke-preview failed → not 'success').
+    if: always() && needs.stage-web-production.result == 'success' && (needs.changes.outputs.api == 'false' || needs.deploy-production.result == 'success')
+    environment: production
+    permissions:
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
+    outputs:
+      # What the web marker named BEFORE this run overwrote it — the commit whose
+      # bundle the production domain was serving. `vercel rollback` returns to that
+      # deployment, which can be many commits back (the web half is skipped on
+      # merges that do not touch it), so rollback-web-production cannot derive it
+      # from HEAD~1 the way the API half can.
+      previous_marker: ${{ steps.prev_marker.outputs.sha }}
+      # Whether `previous_marker` is an ANSWER or an absence of one. An empty
+      # `previous_marker` with this false means "unknown", not "never promoted".
+      previous_marker_read: ${{ steps.prev_marker.outputs.read_ok }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      STAGED_URL: ${{ needs.stage-web-production.outputs.deployment_url }}
+      # The team slug `vercel promote` must run under. See the promote step for
+      # why this is REQUIRED (Vercel bug #11712). Defaults to the project's team;
+      # matches the hardcoded VERCEL_SCOPE in packages/mcp-core/src/rest/cors-origins.ts.
+      # Override with a repo variable if the project moves Vercel accounts.
+      VERCEL_SCOPE: ${{ vars.VERCEL_SCOPE || 'mads-thines-projects' }}
+    steps:
+      # Checkout is required BEFORE pnpm/action-setup — it reads `packageManager`
+      # from the repo's package.json (no `version:` is pinned on the action).
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      # An empty read has two very different meanings — "no marker exists, nothing
+      # was ever promoted" and "the read failed" — and they must not collapse into
+      # one value: the first is an answer, the second is ignorance, and the
+      # rollback acts on them differently. `git/matching-refs` is what separates
+      # them: it answers 200 with an EMPTY ARRAY when nothing matches, so a
+      # non-zero exit means a real failure rather than an absent tag (`git/ref`
+      # 404s for both). Retried, because an unreadable marker costs this run its
+      # ability to advance one at all.
+      - name: Capture the previously promoted marker
+        id: prev_marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+        run: |
+          PREV=""; READ_OK=false
+          for attempt in 1 2 3; do
+            if REFS="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG}" 2>/dev/null)"; then
+              PREV="$(printf '%s' "$REFS" | jq -r --arg r "refs/tags/${TAG}" 'map(select(.ref == $r)) | .[0].object.sha // ""')"
+              READ_OK=true
+              break
+            fi
+            echo "::notice::could not read ${TAG} (attempt ${attempt}/3)"
+            sleep 3
+          done
+          echo "sha=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "read_ok=${READ_OK}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@58
+
+      - name: Promote staged build to production
+        run: |
+          if [ -z "$STAGED_URL" ]; then
+            echo "::error::No staged production deployment URL from stage-web-production"
+            exit 1
+          fi
+          # Assign the production domain to the already-built, already-uploaded
+          # deployment — the instant alias swap that flips the FE to production.
+          #
+          # `--scope` is REQUIRED, not optional: `vercel promote` ignores both a
+          # team-scoped token AND a linked .vercel/project.json (Vercel bug
+          # https://github.com/vercel/vercel/issues/11712), so without it the CLI
+          # falls back to the token's DEFAULT team and 403s with "Trying to access
+          # resource under scope '<default-team>'". `vercel deploy` (in the stage
+          # job) does NOT have this bug, which is why staging worked and only the
+          # flip failed. Passing the team slug forces the correct scope.
+          vercel promote "$STAGED_URL" --scope="$VERCEL_SCOPE" --token="$VERCEL_TOKEN" --yes
+          echo "### Web production promoted" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Promoted \`$STAGED_URL\` to the production domain (scope \`$VERCEL_SCOPE\`)." >> "$GITHUB_STEP_SUMMARY"
+
+      # LAST step, no `if:` — same contract as deploy-production's marker step:
+      # it advances only when the promote above actually succeeded, and its own
+      # failure is a warning rather than a red job that would trip a rollback of
+      # a healthy production web.
+      - name: Record the deployed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+          READ_OK: ${{ steps.prev_marker.outputs.read_ok }}
+        run: |
+          # Never advance a marker whose previous value was not captured: the
+          # rollback restores that value, so overwriting it here would make the
+          # old commit unrecoverable. Leaving the marker where it is costs one
+          # redundant web deploy on the next merge — the recoverable error — and
+          # keeps the marker correct if this run ends up rolled back instead.
+          if [ "$READ_OK" != true ]; then
+            echo "::warning::not advancing ${TAG} — its previous value could not be read, so a rollback could not restore it. The next merge redeploys this half from the older baseline."
+            exit 0
+          fi
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${SHA}" -F force=true >/dev/null 2>&1; then
+            echo "- Deployed marker \`${TAG}\` → \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} to ${SHA} — the next run diffs this half from an older baseline and redeploys it."
+          fi
+
   # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
     name: Smoke test → production
     runs-on: ubuntu-latest
-    needs: deploy-production
+    needs: [deploy-production, promote-web-production]
+    # Run when EITHER half reached production. The health/MCP curls hit the API
+    # (live either way) and the dashboard curl hits the web, so it validates
+    # whichever side just flipped and passes against the unchanged side.
+    if: always() && (needs.deploy-production.result == 'success' || needs.promote-web-production.result == 'success')
     environment: production
     permissions:
       contents: read
+    env:
+      # Smoke telemetry — same three knobs as smoke-preview (see the comment
+      # there). DEPLOYMENT_ENVIRONMENT=test stamps ALL of this run's smoke spans
+      # (cli + api + mcp) with `deployment.environment.name=test` so they filter
+      # apart from real PRODUCTION traffic, even though they run against the
+      # production deployment; the edge honours only the synthetic `test` value.
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: smoke-production-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -366,7 +875,9 @@ jobs:
       - name: Verify health endpoint
         run: |
           URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/health"
-          STATUS=$(curl -sf "$URL" | jq -r '.status // "unknown"')
+          # Tag this smoke request so its edge span reports env=test (job-wide
+          # DEPLOYMENT_ENVIRONMENT); the edge honours only the synthetic `test`.
+          STATUS=$(curl -sf -H "x-lorekit-deployment-environment: $DEPLOYMENT_ENVIRONMENT" "$URL" | jq -r '.status // "unknown"')
           echo "### Production deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Health endpoint status: **${STATUS}**" >> "$GITHUB_STEP_SUMMARY"
@@ -382,10 +893,27 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.LOREKIT_SMOKE_TOKEN }}" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
+            -H "x-lorekit-deployment-environment: $DEPLOYMENT_ENVIRONMENT" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
           echo "- MCP tools/list HTTP: **${CODE}**" >> "$GITHUB_STEP_SUMMARY"
           if [ "$CODE" != "200" ]; then
             echo "::error::Production MCP endpoint returned HTTP ${CODE} for tools/list"
+            exit 1
+          fi
+
+      # The FE half of the production gate: the promoted dashboard must serve. A
+      # failure here trips BOTH rollback-production (functions) and
+      # rollback-web-production (Vercel), so the FE and API revert together.
+      # WEB_PROD_URL overrides the origin for a self-hosted fork; defaults to the
+      # canonical dashboard domain.
+      - name: Verify web dashboard responds (production)
+        env:
+          URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
+          echo "- Web dashboard: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" -ge 400 ]; then
+            echo "::error::Production web dashboard returned HTTP $CODE"
             exit 1
           fi
 
@@ -410,7 +938,7 @@ jobs:
       #     order so a mis-ordered merge can't red the deploy/rollback pipeline).
       # Only a real BYOD assertion failure fails the step.
       - name: Run BYOD integration test (all four scope types)
-        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        run: pnpm nx test smoke-tests -- byod-smoke.integration --passWithNoTests
         env:
           LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
           LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
@@ -421,14 +949,18 @@ jobs:
       # adds no synthetic rows to the production tables and its flake profile
       # matches the tools/list curl above; both gate rollback, which is fine.
       - name: Smoke — robust stdio transport handshakes against production
-        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        run: node scripts/smoke/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
-      # NOTE: the write-heavy REST smoke (scripts/smoke-rest.mjs) is deliberately
-      # NOT run here — it runs in smoke-preview only. Do NOT "restore parity" by
-      # re-adding it to production:
+      # NOTE: the write-heavy smokes (scripts/smoke/smoke-rest.mjs and
+      # scripts/smoke/smoke-mcp-tools.mjs) are deliberately NOT run here — they run in
+      # smoke-preview only. The MCP tool-surface one enforces this in the script
+      # itself: it exits non-zero on the production ref unless
+      # `--allow-production` is passed, so adding it here fails loudly rather
+      # than quietly writing to the live tenant. Do NOT "restore parity" by
+      # re-adding either to production:
       #   • It writes append-only rows (audit_log / usage_events) that no cleanup
       #     can remove, so every prod deploy would leave synthetic audit trail in
       #     the live tenant (the orgs sub-suite adds org.create/member.* on top).
@@ -445,23 +977,32 @@ jobs:
         env:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
 
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
   #    (expand/contract + PITR is the DB safety net) so they are intentionally not
-  #    reverted here. Gated strictly on a PRODUCTION-job failure: a failure earlier
-  #    in the pipeline (preview) skips deploy-production, so neither prod job
-  #    reports 'failure' and this rollback does NOT run — prod is never touched
+  #    reverted here. Gated on ANY production-phase failure — the API deploy, the
+  #    web promote, or the shared smoke gate — so the API is reverted whenever the
+  #    frontend is (rollback-web-production), keeping FE and API in lockstep. A
+  #    failure earlier in the pipeline (preview) skips deploy-production, so none of
+  #    these report 'failure' and this rollback does NOT run — prod is never touched
   #    unless a prod deploy was actually attempted.
   rollback-production:
     name: Rollback → production functions
     runs-on: ubuntu-latest
-    needs: [deploy-production, smoke-production]
-    if: always() && (needs.deploy-production.result == 'failure' || needs.smoke-production.result == 'failure')
+    needs: [deploy-production, promote-web-production, smoke-production]
+    # Revert functions ONLY when the API was actually deployed this run
+    # (deploy-production ran) and a production-phase failure occurred — its own
+    # deploy failed, or (having succeeded) the web promote or the shared smoke
+    # then failed, so the API reverts in lockstep with the web. If the API was
+    # unchanged (deploy-production skipped), the functions were never touched and
+    # are left alone even if the web half failed.
+    if: always() && (needs.deploy-production.result == 'failure' || (needs.deploy-production.result == 'success' && (needs.promote-web-production.result == 'failure' || needs.smoke-production.result == 'failure')))
     environment: production
     permissions:
-      contents: read
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
@@ -477,10 +1018,75 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned, not `latest`, for consistency with ci.yml (#578): CLI
+          # v2.116.0 changed the local stack's default privileges, tripping a
+          # security assertion under `supabase start`. This job talks to
+          # hosted Supabase, not the local stack, so that specific assertion
+          # doesn't apply here — pinned anyway to avoid unplanned CLI drift
+          # across all workflows until the v2.116.0 grant change is understood.
+          version: 2.115.0
 
       - name: Redeploy previous edge functions
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+
+      # BEFORE `Report rollback`, which ends in `exit 1`.
+      #
+      # When deploy-production SUCCEEDED, its last step already advanced the
+      # marker to this run's SHA — it runs before smoke-production, so the marker
+      # names HEAD by the time the smoke gate fails, and the rollback does not
+      # undo that by itself. Leaving it there is not a safe error: it is a commit
+      # on main, so it stays an ANCESTOR of every later HEAD and the non-ancestor
+      # fallback never fires; the next merge would diff this half against
+      # something production never kept. Deleting it is not enough either — with
+      # no marker the next merge falls back to `github.event.before`, the
+      # rolled-back commit itself. So repoint it at HEAD~1, exactly the function
+      # code this job just redeployed.
+      #
+      # But undo ONLY a marker this run advanced. On the deploy-production=FAILURE
+      # arm nothing advanced it: it still names the last commit this half actually
+      # deployed, which can be many merges back (the API half is skipped on merges
+      # that do not touch it, and a failed both-halves merge leaves it behind).
+      # Writing HEAD~1 there would move it FORWARD — over migrations `db push`
+      # never applied and functions production never received — and the next merge
+      # could then skip an API half production lacks. That is the incident this
+      # whole mechanism exists to prevent. Leaving it alone is correct there: it
+      # already names what production is serving. `needs` answers that locally and
+      # cannot itself fail, so it is the gate rather than anything read at runtime.
+      #
+      # Best-effort throughout: a failed marker write must not mask the deploy
+      # failure that triggered the rollback.
+      - name: Point the API marker at the commit just rolled back to
+        if: always() && needs.deploy-production.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.API_DEPLOYED_TAG }}
+          SHA: ${{ github.sha }}
+        run: |
+          # A successful deploy-production proves its record step RAN; it does not
+          # prove the API write LANDED, since that step warns instead of failing.
+          # Read the marker to tell those apart — and read an UNREADABLE marker as
+          # "it landed", never as "it did not". The two mistakes are not
+          # symmetric: leaving a marker that names $SHA while production serves
+          # HEAD~1 is the skip-a-half incident, whereas repointing one that was
+          # already older costs a redundant deploy of an unchanged half. Doubt
+          # resolves toward the redundant deploy, as it does everywhere else here.
+          if CUR="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null)"; then
+            if [ "$CUR" != "$SHA" ]; then
+              echo "- API marker \`${TAG}\` left at \`${CUR:-none}\` — the record step never landed it, so it already names what production deployed." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          else
+            echo "::warning::could not read ${TAG} before repointing it — assuming deploy-production advanced it to ${SHA} and moving it back, which is the fail-open direction."
+          fi
+          PREV="$(git rev-parse HEAD~1)"
+          if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+               -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
+             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+               -f "sha=${PREV}" -F force=true >/dev/null 2>&1; then
+            echo "- API marker \`${TAG}\` → \`${PREV}\` (production rolled back)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not move ${TAG} back to ${PREV} — it still names ${SHA}, which production is no longer serving, so the next merge could skip this half. Move the tag by hand."
+          fi
 
       - name: Report rollback
         run: |
@@ -491,9 +1097,120 @@ jobs:
           echo "::error::Production deploy failed — functions rolled back to the previous commit."
           exit 1
 
+  # ── 5b. Rollback PRODUCTION web on a production failure (Vercel) ──────────────
+  #    Reverts the production domain to the deployment that was live before this
+  #    pipeline promoted the new one, so the FE reverts in lockstep with the edge
+  #    functions. Runs ONLY when the web was actually promoted this run: the
+  #    promote failed, or the promote succeeded but the shared production smoke
+  #    then failed. If deploy-production (API) failed first, promote is skipped and
+  #    the web was never touched — so this stays out and only the functions revert.
+  rollback-web-production:
+    name: Rollback → production web (Vercel)
+    runs-on: ubuntu-latest
+    needs: [promote-web-production, smoke-production]
+    # Roll back the web ONLY when the promote SUCCEEDED (the alias was actually
+    # swapped to this run's deployment) and the shared production smoke then failed.
+    # A FAILED promote never swapped the alias — production is still on the previous
+    # healthy deployment — so `vercel rollback` there would revert a good deployment
+    # to an even-older one. On a failed promote the functions revert instead
+    # (rollback-production), which is what restores FE↔API lockstep (old web that
+    # never moved + reverted functions).
+    if: always() && needs.promote-web-production.result == 'success' && needs.smoke-production.result == 'failure'
+    environment: production
+    permissions:
+      # `write` for this job's own deployed-SHA marker, nothing else.
+      contents: write
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      # Same team-scope requirement as promote-web-production (Vercel bug #11712).
+      VERCEL_SCOPE: ${{ vars.VERCEL_SCOPE || 'mads-thines-projects' }}
+    steps:
+      # Checkout is required BEFORE pnpm/action-setup — it reads `packageManager`
+      # from the repo's package.json (no `version:` is pinned on the action).
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@58
+
+      - name: Roll back production web to the previous deployment
+        run: |
+          # `vercel rollback` with no target reverts to the deployment immediately
+          # prior to the current production deployment — i.e. the one live before
+          # this run's (now-promoted) deployment. `--scope` is REQUIRED for the
+          # same reason as promote (Vercel bug #11712 — rollback ignores the
+          # token's team and the linked project). Best-effort: rollback-production
+          # already fails the run loudly, so a rollback hiccup here is a warning,
+          # not a second hard fail.
+          if vercel rollback --scope="$VERCEL_SCOPE" --token="$VERCEL_TOKEN" --yes; then
+            echo "### ⚠️ Production web rolled back" >> "$GITHUB_STEP_SUMMARY"
+            echo "The production domain was reverted to the previous Vercel deployment." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::vercel rollback failed — roll the production web back manually from the Vercel dashboard."
+          fi
+
+      # `vercel rollback` reverted the DOMAIN to the previously promoted
+      # deployment, whose commit the marker no longer names — so restore the value
+      # promote-web-production captured before overwriting it. The one case with no
+      # answer (nothing was ever promoted before) drops the marker and warns
+      # loudly: detection genuinely cannot cover it, so the next deploy of this
+      # half has to be forced by hand. Best-effort throughout — a failed marker
+      # write must not mask the failure that triggered the rollback.
+      #
+      # Deliberately NOT conditioned on the `vercel rollback` above succeeding,
+      # even though that step swallows its own failure. Restoring anyway leaves
+      # the marker naming a commit OLDER than what the domain serves, which
+      # over-reports the web half on the next merge — a redundant deploy. Gating
+      # on the rollback would instead leave it on this run's commit, and the
+      # manual rollback that step's warning demands would then make it name
+      # something the domain no longer serves — the skip-a-half direction. Of the
+      # two, restore unconditionally.
+      - name: Restore the promoted-web marker to what the domain serves again
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.WEB_DEPLOYED_TAG }}
+          PREV: ${{ needs.promote-web-production.outputs.previous_marker }}
+          READ_OK: ${{ needs.promote-web-production.outputs.previous_marker_read }}
+        run: |
+          # Unreadable capture → promote-web-production declined to advance the
+          # marker, so it still names what the domain has gone back to. Nothing to
+          # restore, and writing anything here would be a guess.
+          if [ "$READ_OK" != true ]; then
+            echo "- Web marker \`${TAG}\` left alone — its previous value was never read, so this run never advanced it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -n "$PREV" ]; then
+            if gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+                 -f "ref=refs/tags/${TAG}" -f "sha=${PREV}" >/dev/null 2>&1 ||
+               gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                 -f "sha=${PREV}" -F force=true >/dev/null 2>&1; then
+              echo "- Restored web marker \`${TAG}\` → \`${PREV}\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::could not restore ${TAG} to ${PREV} — it still names this run's commit, which the production domain no longer serves, so the next merge could skip the web half. Move the tag by hand."
+            fi
+          else
+            if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "- Dropped web marker \`${TAG}\` (no previous promotion recorded)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::could not drop ${TAG} — check what it names by hand before trusting the next automatic scope."
+            fi
+            echo "::warning::no previous web marker to restore — run deploy.yml manually with deploy_target: web before trusting the next automatic scope."
+          fi
+
   # ── 6. Notify Discord on ANY deploy-pipeline failure ─────────────────────────
   #    Fires when any job above reports 'failure' — a deploy step, a smoke gate, or
-  #    the rollback. Posts a single embed to the DISCORD_WEBHOOK_URL webhook so a
+  #    a rollback. Posts a single embed to the DISCORD_WEBHOOK_URL webhook so a
   #    red production deploy reaches you outside the Actions UI (the failure the
   #    smoke tests would otherwise report only there). If the webhook secret is
   #    unset the job no-ops with a warning and never fails the run itself — the
@@ -505,7 +1222,7 @@ jobs:
   notify-failure:
     name: Notify on failure (Discord + Dash0)
     runs-on: ubuntu-latest
-    needs: [deploy-preview, smoke-preview, deploy-production, smoke-production, rollback-production]
+    needs: [changes, deploy-preview, deploy-web-preview, stage-web-production, smoke-preview, deploy-production, promote-web-production, smoke-production, rollback-production, rollback-web-production]
     if: always() && contains(needs.*.result, 'failure')
     permissions:
       contents: read # checkout, so the local composite action is available
@@ -516,20 +1233,30 @@ jobs:
       - name: Identify the failed stage
         id: stage
         env:
+          RESULT_CHANGES: ${{ needs.changes.result }}
           RESULT_DEPLOY_PREVIEW: ${{ needs.deploy-preview.result }}
+          RESULT_DEPLOY_WEB_PREVIEW: ${{ needs.deploy-web-preview.result }}
+          RESULT_STAGE_WEB_PRODUCTION: ${{ needs.stage-web-production.result }}
           RESULT_SMOKE_PREVIEW: ${{ needs.smoke-preview.result }}
           RESULT_DEPLOY_PRODUCTION: ${{ needs.deploy-production.result }}
+          RESULT_PROMOTE_WEB_PRODUCTION: ${{ needs.promote-web-production.result }}
           RESULT_SMOKE_PRODUCTION: ${{ needs.smoke-production.result }}
           RESULT_ROLLBACK: ${{ needs.rollback-production.result }}
+          RESULT_ROLLBACK_WEB: ${{ needs.rollback-web-production.result }}
         run: |
           # Name the first pipeline stage that failed (top-to-bottom = root cause;
           # rollback failing is a symptom of a prod-job failure listed before it).
           failed="an unknown stage"
-          if   [ "$RESULT_DEPLOY_PREVIEW"    = "failure" ]; then failed="deploy → preview"
-          elif [ "$RESULT_SMOKE_PREVIEW"     = "failure" ]; then failed="smoke tests → preview"
-          elif [ "$RESULT_DEPLOY_PRODUCTION" = "failure" ]; then failed="deploy → production"
-          elif [ "$RESULT_SMOKE_PRODUCTION"  = "failure" ]; then failed="smoke test → production"
-          elif [ "$RESULT_ROLLBACK"          = "failure" ]; then failed="production (rolled back to previous commit)"
+          if   [ "$RESULT_CHANGES"                = "failure" ]; then failed="detect changes"
+          elif [ "$RESULT_DEPLOY_PREVIEW"         = "failure" ]; then failed="deploy → preview"
+          elif [ "$RESULT_DEPLOY_WEB_PREVIEW"     = "failure" ]; then failed="web deploy → preview"
+          elif [ "$RESULT_STAGE_WEB_PRODUCTION"   = "failure" ]; then failed="web build (production staging)"
+          elif [ "$RESULT_SMOKE_PREVIEW"          = "failure" ]; then failed="smoke tests → preview"
+          elif [ "$RESULT_DEPLOY_PRODUCTION"      = "failure" ]; then failed="deploy → production"
+          elif [ "$RESULT_PROMOTE_WEB_PRODUCTION" = "failure" ]; then failed="web promote → production"
+          elif [ "$RESULT_SMOKE_PRODUCTION"       = "failure" ]; then failed="smoke test → production"
+          elif [ "$RESULT_ROLLBACK"               = "failure" ]; then failed="production (functions rolled back to previous commit)"
+          elif [ "$RESULT_ROLLBACK_WEB"           = "failure" ]; then failed="production web rollback"
           fi
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
 

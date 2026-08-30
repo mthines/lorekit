@@ -1,9 +1,41 @@
 import type { NextConfig } from 'next';
+// Relative import, not the `@/` alias: next.config.ts is loaded outside the
+// app's module graph, so the tsconfig path mapping does not apply here.
+import { resolveDeploymentId } from './src/lib/deployment-id';
 
 const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // Pin every asset URL and Server Action request to the deployment that built
+  // the bundle making it (Vercel Skew Protection).
+  //
+  // Server Actions are a POST to the page route carrying a build-time action ID
+  // (see src/middleware.ts). `deploy.yml` flips production with an alias swap on
+  // every push to main, so a tab opened before the swap posts the OLD build's
+  // action ID to the NEW deployment, which 404s it — the Overview's Accept /
+  // Decline / onboarding buttons go silently dead until a hard reload.
+  //
+  // Inert today, on both of the two possible build paths:
+  //   - Built by Vercel: Next.js >= 14.1.4 gets Skew Protection with no
+  //     `next.config.ts` change at all, so this line is redundant there.
+  //   - Built with `vercel build` + `vercel deploy --prebuilt` (today's
+  //     stage-web-production): the ID is assigned at upload time, so
+  //     VERCEL_DEPLOYMENT_ID does not exist during the build. Vercel's route
+  //     for prebuilt is a *custom* deployment ID — not VERCEL_DEPLOYMENT_ID —
+  //     so this resolves to `undefined` and nothing is stamped.
+  // Kept as the single seam a custom deployment ID would be read through once
+  // the build-path decision is made; a no-op until then.
+  // See src/lib/deployment-id.ts and docs/deployment.md for the full rationale.
+  deploymentId: resolveDeploymentId(process.env),
+
+  // `/dashboard` was renamed to `/overview` — the page has always been titled
+  // "Overview" in its metadata, its `<h1>`, and the sidebar, so the URL was the
+  // only thing still calling it a dashboard. The old path is in bookmarks, docs,
+  // invite emails already delivered, and any link shared before the rename, so
+  // it redirects rather than 404s. Not permanent (308): a browser caches a 308
+  // indefinitely, and `/dashboard` may be reused later.
+  //
   // `/settings/webhooks` was renamed to `/settings/integrations`. The old path
   // is in bookmarks, docs, and any link shared before the rename, so it
   // redirects rather than 404s.
@@ -19,6 +51,7 @@ const nextConfig: NextConfig = {
   // 308 would be cached by browsers indefinitely.
   async redirects() {
     return [
+      { source: '/dashboard', destination: '/overview', permanent: false },
       { source: '/settings/webhooks', destination: '/settings/integrations', permanent: true },
       { source: '/settings', destination: '/settings/api-keys', permanent: false },
     ];

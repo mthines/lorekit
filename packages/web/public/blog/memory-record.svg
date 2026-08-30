@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 460" role="img" aria-label="A single memory record as a labeled card in two zones. Top zone, what you write: scope and key form the identity, value is the lesson, tags and ttl_days are optional. Bottom zone, what the store keeps: seen_count is the recurrence and salience signal, created and updated give recency, expires_at is auto-expiry, archived_at is a soft delete, and source_agent, trigger and origin fields are provenance and audit.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <rect x="0" y="0" width="680" height="460" fill="#0d0e11"/>
+
+  <rect x="80" y="22" width="520" height="416" rx="14" fill="#13151a" stroke="#2a2d38"/>
+  <text x="100" y="50" class="k" font-size="13" font-weight="700" fill="#e7ebf2">one memory record</text>
+  <line x1="100" y1="60" x2="580" y2="60" stroke="#2a2d38"/>
+
+  <!-- ZONE A -->
+  <text x="100" y="82" class="lbl" font-size="10.5" fill="#f5a623">WHAT YOU WRITE</text>
+
+  <text x="112" y="108" class="k" font-size="12.5" fill="#f5a623">scope</text>
+  <text x="560" y="108" text-anchor="end" class="lbl" font-size="11">where it belongs (an address)</text>
+  <text x="112" y="136" class="k" font-size="12.5" fill="#f5a623">key</text>
+  <text x="560" y="136" text-anchor="end" class="lbl" font-size="11">stable id → upsert, not append</text>
+  <rect x="150" y="94" width="150" height="50" rx="8" fill="none" stroke="#f5a623" stroke-opacity="0.35" stroke-dasharray="4 3"/>
+  <text x="225" y="159" text-anchor="middle" class="k" font-size="9" fill="#f5a623">scope + key = identity</text>
+
+  <text x="112" y="190" class="k" font-size="12.5" fill="#e7ebf2">value</text>
+  <text x="560" y="190" text-anchor="end" class="lbl" font-size="11">the lesson — advisory, not a rule</text>
+
+  <text x="112" y="218" class="k" font-size="12.5" fill="#aeb6c2">tags</text>
+  <text x="330" y="218" class="lbl" font-size="9.5" fill="#556072">optional</text>
+  <text x="560" y="218" text-anchor="end" class="lbl" font-size="11">labels · a second axis, not scope</text>
+  <text x="112" y="244" class="k" font-size="12.5" fill="#aeb6c2">ttl_days</text>
+  <text x="330" y="244" class="lbl" font-size="9.5" fill="#556072">optional</text>
+  <text x="560" y="244" text-anchor="end" class="lbl" font-size="11">auto-expiry</text>
+
+  <!-- divider -->
+  <line x1="100" y1="266" x2="580" y2="266" stroke="#2a2d38"/>
+  <text x="100" y="288" class="lbl" font-size="10.5">WHAT THE STORE KEEPS</text>
+
+  <text x="112" y="314" class="k" font-size="12.5" fill="#7ce6bf">seen_count</text>
+  <rect x="205" y="302" width="86" height="17" rx="8" fill="#34d399" fill-opacity="0.16" stroke="#34d399" stroke-opacity="0.4"/>
+  <text x="248" y="314" text-anchor="middle" class="k" font-size="9" fill="#7ce6bf">salience</text>
+  <text x="560" y="314" text-anchor="end" class="lbl" font-size="11">recurrence — re-learned five times &gt; once</text>
+
+  <text x="112" y="342" class="k" font-size="12.5" fill="#c5ccd6">created · updated</text>
+  <text x="560" y="342" text-anchor="end" class="lbl" font-size="11">recency (14-day half-life)</text>
+
+  <text x="112" y="370" class="k" font-size="12.5" fill="#c5ccd6">expires_at</text>
+  <text x="560" y="370" text-anchor="end" class="lbl" font-size="11">the resolved TTL instant</text>
+
+  <text x="112" y="398" class="k" font-size="12.5" fill="#c5ccd6">archived_at</text>
+  <text x="560" y="398" text-anchor="end" class="lbl" font-size="11">soft delete — hidden, not destroyed</text>
+
+  <text x="112" y="426" class="k" font-size="12.5" fill="#c5ccd6">source_agent · trigger · origin_*</text>
+  <text x="560" y="426" text-anchor="end" class="lbl" font-size="11">provenance / audit trail</text>
+</svg>

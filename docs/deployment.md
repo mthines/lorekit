@@ -7,14 +7,57 @@ LoreKit has three deployable pieces. Each has its own deployment path.
 | Piece | Platform | Deploy command |
 |-------|----------|----------------|
 | MCP server + health check | Supabase Edge Functions | `pnpm nx fn:deploy supabase` |
-| Web dashboard | Vercel | Auto-deploy on `git push main` |
+| Web dashboard | Vercel (via `deploy.yml`, CLI) | Promoted by the pipeline on `git push main` |
 | Database migrations | Supabase | `pnpm nx db:push supabase` |
 
 **In normal operation you do not run these by hand.** Merging to `main` triggers
 the [automated CI/CD pipeline](#automated-deployment-cicd), which promotes
-migrations + Edge Functions **preview → production** with smoke gates and
-automatic function rollback. The manual commands below are for first-time
-project setup and local operations.
+migrations, Edge Functions **and the Vercel web dashboard** **preview →
+production** with smoke gates and automatic rollback of both the functions and
+the web deployment. The manual commands below are for first-time project setup
+and local operations.
+
+> **The web dashboard is deployed by `deploy.yml` / `ci.yml`, not by Vercel's
+> Git integration.** Vercel's native auto-deploy is turned off entirely
+> (`packages/web/vercel.json` → `git.deploymentEnabled = false`). Production is
+> promoted by `deploy.yml`, so the FE and API flip to production together
+> instead of skewing apart — Vercel used to deploy the frontend the instant
+> `main` was pushed, while the API crawled through the preview→smoke→prod
+> pipeline. PR **previews** are deployed by `ci.yml`'s `web-preview` job, gated
+> on the `web` path filter — so a PR with no web changes creates **no** Vercel
+> deployment (and spends no quota), where the Git integration used to deploy on
+> every push. It goes further: on a web PR it **skips redeploying between commits
+> when no web file changed since that PR's last preview** (`web-preview`'s
+> "Decide" step diffs the current head against the SHA recorded in the sticky
+> preview comment via the compare API, and fails safe to deploy on any doubt), so
+> a burst of non-web commits spends one deployment, not one per push. If you fork
+> this, mirror the flag (or disable Git deployments in the Vercel dashboard) or
+> you will double-deploy.
+>
+> The sticky comment is a Vercel-style status table exposing **both** URLs, like
+> the Git integration did: a **stable** `Preview` link (a `lorekit-pr-<n>-<scope>`
+> alias the job re-points to the newest deployment via `vercel alias set` — which
+> re-points, not deploys, so it costs no quota) and the **immutable** per-commit
+> `Deployment` link. The alias `<scope>` is derived from the deployment host so it
+> satisfies the CORS allowlist (`isVercelPreviewOrigin`); if aliasing isn't
+> permitted on the plan, the comment degrades to the per-commit link alone.
+>
+> The three preview jobs (`ci.yml` `web-preview`, `deploy.yml`
+> `deploy-web-preview`, `preview.yml` `deploy-web`) share one implementation:
+> the composite action **`.github/actions/vercel-preview-deploy`** (pull → build
+> on the runner → deploy prebuilt → return the URL; callers supply only the env
+> to pin and the git ref to attribute). It is a **local** action, so it must
+> exist at the checked-out ref: `ci.yml`/`deploy.yml` always have it (they check
+> out the PR merge ref / `main`), but a `/preview` on a branch that predates this
+> action will fail to resolve it until that branch merges `main`.
+>
+> **`deploy.yml`'s `deploy-web-preview` runs the composite in BUILD-ONLY mode**
+> (`deploy: 'false'`): it builds the FE against the preview Supabase project as a
+> gate but creates **no** deployment. That deployment was pure quota waste —
+> `smoke-preview` tests the API only (it never fetched the web URL) and
+> production is promoted from the separate `stage-web-production` build, so
+> nothing consumed the preview. The build still fails the pipeline if the FE
+> can't compile.
 
 ---
 
@@ -24,8 +67,10 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
-| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — preview-first promotion only. |
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by the `web-test` (Storybook) job, gated on the `web` path filter, and the `web-preview` (Vercel preview deploy) job, gated on the narrower `web_preview` filter so a PR with no dashboard change deploys nothing and spends no Vercel quota ([why the two differ](#what-counts-as-preview-relevant)). |
+| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit** — Supabase (migrations + Edge Functions) **and** the Vercel web dashboard, in lockstep. No test re-run — preview-first promotion only. |
+| `.github/workflows/web-preview-deploy.yml` | `workflow_call` (reusable) | **The dashboard preview flow itself**, called by the two workflows below. Owns the fork-secret guard, the incremental "is a redeploy needed?" decision, the PR-head checkout, and the sticky preview comment. See [Dashboard previews](#dashboard-previews-on-a-pr). |
+| `.github/workflows/web-preview.yml` | `/web-preview` comment, `workflow_dispatch` | **Deploy a dashboard preview on demand** for one PR, forcing past the incremental skip. See [Forcing a preview](#forcing-a-preview-web-preview). |
 
 ### Tests run once, on the PR
 
@@ -50,12 +95,114 @@ cover here and `smoke-preview` exercises end-to-end against current PostgREST.
 
 Booting a local Supabase is expensive, so a `changes` job diffs the PR and the
 `integration` job only runs when API/backend paths change — `packages/mcp-core/`,
-`packages/mcp-server/`, `supabase/functions/`, `supabase/migrations/`,
+`packages/smoke-tests/`, `supabase/functions/`, `supabase/migrations/`,
 `supabase/config.toml`, `package.json`, `pnpm-lock.yaml`, or `ci.yml` itself. A
 docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
 this way — `nx affected` already scopes itself to the changed packages. A
 skipped required check is treated as passing by branch protection, so gating
 `integration` does not block unrelated PRs from merging.
+
+### Dashboard previews on a PR
+
+Every PR that touches the dashboard gets a Vercel preview and a single sticky
+comment holding two links: a **stable** `lorekit-pr-<n>-<scope>.vercel.app`
+alias that always points at the newest deployment, and the **immutable**
+per-commit URL. This replaces Vercel's native Git integration, which deployed on
+every push regardless of what changed.
+
+The flow lives in `.github/workflows/web-preview-deploy.yml`, a `workflow_call`
+reusable workflow. `ci.yml`'s `web-preview` job calls it with `force: false`;
+`/web-preview` calls it with `force: true`. Both produce the same deployment and
+the same comment — only the decision to deploy differs. The build itself is the
+`.github/actions/vercel-preview-deploy` composite action, shared with
+`deploy.yml` and `preview.yml`.
+
+**Two gates decide whether a push spends a deployment** (the Vercel Hobby plan
+allows 100/day):
+
+1. The `changes` job's `web_preview` path filter — no preview-relevant file in
+   the PR at all ⇒ the job never runs.
+2. The reusable workflow's *incremental* check — a preview-relevant file changed
+   in the PR, but nothing preview-relevant changed **since this PR's last
+   preview** (diffed against the SHA recorded in the sticky comment's marker) ⇒
+   skip. So a burst of backend-only commits on a web PR spends one deployment,
+   not one per push. It fails safe to deploying on any doubt: no prior preview, a
+   rebase/force-push, a >300-file diff, or an API error.
+
+#### What counts as preview-relevant
+
+The filter answers one question: *can this file change what the deployed
+dashboard looks like, or how it gets deployed?* It covers `packages/web/`,
+`packages/schemas/` (a `workspace:*` dependency the dashboard compiles in), the
+**root** `package.json` (pnpm overrides reach into the dashboard's dependency
+graph), `nx.json`, the `vercel-preview-deploy` composite action, and
+`web-preview.yml` / `web-preview-deploy.yml`.
+
+Two paths are deliberately **off** it, because both were spending deployments on
+a dashboard nobody had changed:
+
+- **`.github/workflows/ci.yml`.** Every *other* gate in that file includes
+  itself, so the guard runs on its own PR — but for this gate that means any
+  unrelated CI edit (a new test step, a cache key, another job entirely) costs a
+  deployment. The `web-preview` job's own wiring does live in `ci.yml`, so when
+  you change *that*, force a preview with `/web-preview` to watch it run.
+- **`pnpm-lock.yaml`.** It moves on every dependency change anywhere in the
+  monorepo. The bumps that reach the dashboard also touch
+  `packages/web/package.json`, `packages/schemas/`, or the root manifest — all
+  listed above — so the lockfile adds no signal, only deployments.
+
+Both are still in the **broader `web` filter** that gates the Storybook
+interaction + visual-regression job. That distinction is the point: `web-test` is
+free CI compute and should be jumpy (a dep bump *can* move a pixel, and the
+baselines exist to catch it), while a preview is metered.
+
+The canonical filter — with the rationale for each path — is
+[`scripts/ci/web-preview-filter.mjs`](../scripts/ci/web-preview-filter.mjs). It is
+written as an extended regex so the one string works under both `grep -E`
+(`ci.yml`) and a JS `RegExp` (the github-script step, which runs *before* its
+checkout and so cannot import the module). Neither consumer can import it, so
+both carry a copy and `scripts/ci/web-preview-filter.test.mjs` holds them to it:
+the `preview-filter` CI job fails on drift in either copy, and cross-checks that
+`grep -E` and `RegExp` agree on every case.
+
+To ask why a specific PR did or didn't get a preview:
+
+```bash
+git diff --name-only main... | xargs node scripts/ci/web-preview-filter.mjs
+```
+
+### Forcing a preview (`/web-preview`)
+
+The incremental check means an unchanged head never redeploys — including via
+"Re-run jobs". When you need a deployment anyway (the preview expired, the
+stable alias broke, a run was cancelled mid-deploy, or the path filter was
+simply wrong), force one:
+
+```text
+/web-preview
+```
+
+Comment it on the PR as an OWNER, MEMBER, or COLLABORATOR. The command must be
+the first non-empty line of the comment, so quoting it in prose or in a bot
+summary does not fire it. To respect the incremental skip instead of forcing:
+
+```text
+/web-preview --if-changed
+```
+
+You can also run it from **Actions ▸ Deploy web preview ▸ Run workflow**, which
+takes the PR number — useful for a PR you would rather not comment on, or when
+the comment path itself is broken.
+
+Feedback on the comment path is a 👀 reaction when the command is accepted, then
+👍 (ran, nothing to deploy), 🚀 (deployed), or 👎 plus a comment linking the run
+(failed). The dispatch path has no comment to react to, so it reports by
+commenting on the PR.
+
+> `issue_comment` workflows always run the workflow file from the **default
+> branch**. Edits to `web-preview.yml` or `web-preview-deploy.yml` therefore
+> only take effect once merged to `main` — on the PR that introduces them,
+> `/web-preview` still runs `main`'s version.
 
 ### The deploy pipeline (on merge to `main`)
 
@@ -64,15 +211,318 @@ downstream runs:
 
 ```
 deploy-preview          db push + functions deploy → PREVIEW project
-  └─▶ smoke-preview      smoke.integration spec against PREVIEW
-        └─▶ deploy-production     db push + functions deploy → PRODUCTION project
-              └─▶ smoke-production   health + MCP tools/list against PRODUCTION
-                    └─▶ rollback-production   (only on failure)
+deploy-web-preview      Vercel build (preview Supabase) + preview deploy
+stage-web-production    Vercel build --prod, upload prebuilt, --skip-domain (no flip yet)
+  └─▶ smoke-preview     smoke.integration spec against PREVIEW
+        └─▶ deploy-production      db push + functions deploy → PRODUCTION project
+              └─▶ promote-web-production   Vercel alias swap → PRODUCTION domain
+                    └─▶ smoke-production    health + MCP tools/list + web dashboard 200
+                          ├─▶ rollback-production       functions → previous commit (on failure)
+                          └─▶ rollback-web-production   Vercel → previous deployment (on failure)
 
 any job fails ─▶ notify-failure   Discord webhook (see below)
 ```
 
 Production is never touched until preview has been deployed and smoke-tested.
+
+#### Which halves run (change detection + manual override)
+
+A `changes` job diffs the merge and gates the two halves independently: the API
+chain (`deploy-preview` → `smoke-preview` → `deploy-production`) runs only when
+API paths changed, and the web chain (`deploy-web-preview` / `stage-web-production`
+→ `promote-web-production`) only when web paths changed. A docs-only merge deploys
+neither. `packages/schemas/`, the workspace files, and `deploy.yml` itself map to
+**both**.
+
+A **manual run** can override the detection. From **Actions ▸ Deploy ▸ Run
+workflow** (or `gh workflow run deploy.yml`), pick a `deploy_target`:
+
+| `deploy_target` | Deploys |
+|-----------------|---------|
+| `auto` (default) | Whatever the change-detection step finds — same as a push to `main`. |
+| `all` | Both halves — API **and** web — regardless of what changed. |
+| `api` | API only (Supabase migrations + edge functions). |
+| `web` | Web only (Next.js dashboard on Vercel). |
+
+This is the way to redeploy an unchanged half — e.g. re-ship the dashboard after a
+Vercel env-var change, or re-apply functions — without an empty no-op commit. The
+override only decides **which** halves run; each still goes through the full
+preview → smoke → production promotion with its own gates and rollback.
+
+### FE ↔ API deploy in lockstep (no availability skew)
+
+The whole point of moving the web deploy into `deploy.yml` is that the frontend
+and backend flip to production **together**. Previously Vercel's Git integration
+deployed the dashboard the moment `main` was pushed, while the API went through
+the preview→smoke→prod pipeline (minutes) — so there was always a window where
+the FE and API were on different versions.
+
+Now:
+
+- **The production web bundle is pre-built during the preview phase**
+  (`stage-web-production`): `vercel build --prod` then `vercel deploy --prebuilt
+  --prod --skip-domain`, which uploads a production-target deployment **without**
+  assigning the production domain. The slow `next build` happens before the flip.
+- **The flip is an alias swap** (`promote-web-production` → `vercel promote`),
+  which is near-instant. It `needs: deploy-production`, so the API is live in
+  production **before** the new FE is served — a client should never front an
+  older backend. The two go live within seconds of each other.
+- **The FE build points at the right Supabase per phase.** `deploy-web-preview`
+  overrides `NEXT_PUBLIC_SUPABASE_*` to the **preview** project (set
+  `SUPABASE_ANON_KEY` in the `preview` environment for this to take effect), so
+  smoke exercises the FE against the same API bundle preview just shipped;
+  `stage-web-production` uses Vercel's **production** env untouched.
+- **Rollback reverts both.** Any production-phase failure (the API deploy, the
+  web promote, or the shared production smoke — which now also curls the
+  dashboard) trips **both** `rollback-production` (functions → previous commit)
+  and `rollback-web-production` (`vercel rollback` → previous deployment), so the
+  FE and API never end up on mismatched versions. The one exception is a failure
+  in `deploy-production` itself before the web is promoted: the web was never
+  touched, so only the functions revert.
+
+The web jobs authenticate to Vercel with the same three repo-level secrets
+`preview.yml` already uses — `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
+— and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
+repo-level variable, defaulting to `https://lorekit.io`).
+
+#### The deploy scope is measured against what is DEPLOYED, not the last commit
+
+Lockstep above only binds the two halves **within one run**. It says nothing
+about a half that never reached production in an *earlier* run — and that gap is
+what broke production once already:
+
+| | |
+|---|---|
+| **#492** | Changed both halves (`packages/web/**` + `supabase/functions/**` + migration 00067). `smoke-preview` failed, so `deploy-production` and `promote-web-production` were both skipped. Correct — nothing shipped. |
+| **#504** | Changed only `packages/web/**`. The scope filter diffed **that push** and reported `api=false`, so `promote-web-production` took its `changes.outputs.api == 'false'` branch and assigned the production domain to a bundle built from `HEAD` — carrying #492's client. |
+| **Result** | That client POSTs `/functions/v1/memories/list`, a route the production edge functions had never been given. **100% of production Lore Explorer list reads answered `405`** until the web was rolled back by hand. |
+
+So each half is now diffed against **the commit that half is actually serving**,
+recorded by two advisory tags. Only a **successful** production flip advances a
+tag — and, symmetrically, only that half's **rollback** moves it back:
+
+| Tag | Advanced by | Moved back by | Means |
+|-----|-------------|---------------|-------|
+| `deployed/api-production` | `deploy-production`, last step | `rollback-production` → `HEAD~1` | Migrations pushed **and** edge functions deployed at this SHA |
+| `deployed/web-production` | `promote-web-production`, last step | `rollback-web-production` → the previously promoted commit | The production domain points at a bundle built from this SHA |
+
+`changes` resolves each baseline, diffs it against `HEAD`, and applies the same
+path globs as before. Undeployed work therefore stays in the diff until it
+deploys: replay #504 with the API tag still on the pre-#492 commit and it
+resolves `api=true`, so `promote-web-production` must wait for
+`deploy-production` instead of running ahead of it. The same protection holds in
+the other direction (an API change whose web half never promoted).
+
+Three things to know when reading a run:
+
+- **The tags are advisory and fail open.** A missing, unfetched or
+  garbage-collected tag falls back to the push baseline — the previous
+  behaviour. So does a tag that is not an ancestor of `HEAD` (after a revert, or
+  a re-run of an older ref), because diffing against a marker *ahead* of `HEAD`
+  reports the marker-only files as changed here. Doubt never resolves to "this
+  half has no changes": a wrong `false` is the incident above, a wrong `true` is
+  one redundant deploy. When there is no usable push baseline either (a root
+  commit, or a checkout whose parent is not present) the resolver diffs nothing
+  and treats **every tracked file** as changed — it never falls back to `HEAD`,
+  because `git diff HEAD HEAD` is empty and would resolve both halves `false`.
+  And if git cannot answer at all (no repository, no git on `PATH`, a corrupt
+  object store) the resolver catches it, reports `api=true web=true`, and still
+  **exits 0** — it classifies, it does not gate, so a red exit here would stop the
+  deploy rather than fail open.
+- **Both rollback jobs must REPOINT their half's tag at what production went
+  back to.** The markers are moved by
+  the *flip* jobs, which run **before** `smoke-production` — so a marker is
+  already on this run's SHA by the time the smoke gate fails, and neither
+  rollback undoes that by itself. `rollback-production` reverts the edge
+  functions to `HEAD~1` while `deployed/api-production` still names `HEAD`, and
+  `rollback-web-production` reverts the *domain* to the previously promoted
+  deployment, whose commit `deployed/web-production` no longer names. Leaving
+  either tag in place is **not** a safe error, and the non-ancestor rule does not
+  catch it: both are set to `github.sha`, a commit on `main`, so each stays an
+  *ancestor* of every later `HEAD` no matter what production is actually serving.
+  The next merge would then diff that half against something production never
+  kept and could resolve it `false`, skipping the half production is not serving
+  — the incident above, once per half.
+
+  **Deleting the marker is not enough**, either: with no marker `pickBaseline`
+  falls back to the push baseline, which on the next merge is
+  `github.event.before` — the rolled-back commit itself — so the diff starts
+  *after* the work production is not serving and can skip the half a second time.
+  Each rollback job therefore sets its marker to the commit production went back
+  to. `rollback-production` uses `HEAD~1`, which is exactly the function code it
+  just redeployed. `rollback-web-production` cannot use `HEAD~1` — the web half is
+  skipped on merges that do not touch it, so the previously promoted deployment
+  can be many commits back — so `promote-web-production` captures the marker's old
+  value before overwriting it and exposes it as a job output for the rollback to
+  restore. If there was no previous promotion to restore, the marker is dropped
+  and the job emits a `::warning::` to force the next deploy manually
+  (`workflow_dispatch`, `deploy_target: web`), because detection genuinely cannot
+  cover that case. Every one of these writes is best-effort (`|| true`,
+  `if: always()`) — a failed marker write must not mask the deploy failure that
+  triggered the rollback.
+- **The decision is a tested module, not a shell block.**
+  `scripts/ci/resolve-deploy-scope.mjs` with `scripts/ci/resolve-deploy-scope.test.mjs`
+  (`node --test`, zero deps), run by ci.yml's `deploy-scope` job — the same
+  extract-and-test treatment `check-remote-migration-drift.mjs` got, for the same
+  reason. The test pins both the fixed behaviour and the old one that caused the
+  incident. Every git call goes through one injectable `execGit` seam, so the
+  marker-to-baseline wiring (`tagCommit` / `pushBaseline` / `resolveHalf` /
+  `changedSince`) is covered without a repository, a tag, or a reflog. The step
+  summary prints both baselines and where each came from.
+
+The first `deploy.yml` run after this landed has no tags yet, so both halves fall
+back to the push baseline — and since the change touches `deploy.yml` itself
+(which forces both halves), that run deploys both and mints both tags.
+
+#### Where the marker wiring lives
+
+The tag names are declared once, at `deploy.yml`'s top level
+(`API_DEPLOYED_TAG` / `WEB_DEPLOYED_TAG`), and five places read or move them:
+
+| Where | Step | Does |
+|-------|------|------|
+| `changes` | `Resolve the deploy scope` | Runs `scripts/ci/resolve-deploy-scope.mjs` — reads both markers, picks each half's baseline, writes `api` / `web` |
+| `deploy-production` | `Record the deployed commit` | Advances `deployed/api-production` to `github.sha` |
+| `promote-web-production` | `Capture the previously promoted marker` → `Record the deployed commit` | Exposes the marker's OLD value as `previous_marker` (+ `previous_marker_read`), then advances it to `github.sha` — unless that read failed |
+| `rollback-production` | `Point the API marker at the commit just rolled back to` | Repoints `deployed/api-production` at `HEAD~1` — but only if this run advanced it |
+| `rollback-web-production` | `Restore the promoted-web marker…` | Repoints `deployed/web-production` at `previous_marker`; drops it with a `::warning::` when nothing was ever promoted; leaves it untouched when the capture failed |
+
+Four properties of that wiring are load-bearing — do not "tidy" any of them away:
+
+- **Both record steps are the LAST step of their job and carry no `if:`.** That
+  is what makes a marker advance only when every step above it succeeded.
+  `if: always()` there would move the marker after a *failed* deploy — the one
+  thing this placement exists to prevent.
+- **A record step's own failure is a `::warning::`, not a red job.** The deploy
+  has already succeeded by then, so reddening the job would trip
+  `rollback-production` and revert a healthy production API over a bookkeeping
+  hiccup — from `deploy-production` it would also skip the web promote outright.
+  A marker that fails to advance just costs the next run a redundant deploy of an
+  unchanged half.
+- **Every marker write is create-or-update** (`POST /git/refs`, falling back to
+  `PATCH /git/refs/tags/…`) and goes through the API, never `git push --force`:
+  these checkouts are shallow, and force-pushing a moving tag from a shallow
+  clone goes wrong quietly. A `PATCH` alone 404s while the marker does not exist
+  yet — a first deploy, or after a web rollback with nothing to restore dropped
+  it.
+- **No marker write is fire-and-forget.** Every one of them — both records, both
+  repoints, the drop — branches on whether the write landed and emits a
+  `::warning::` naming the tag to move by hand when it did not. None of them can
+  fail the step, so a marker hiccup never masks the deploy failure that triggered
+  a rollback, but none of them reports a move that never happened either.
+- **Each of the four jobs holds `permissions: contents: write`** for its own
+  marker and nothing else; the workflow's top-level default stays `{}`.
+
+**`rollback-production` undoes only a marker this run advanced.** On the
+`deploy-production` **failure** arm nothing advanced it: it still names the last
+commit this half actually deployed, which can be many merges back, so writing
+`HEAD~1` would move it FORWARD over migrations `db push` never applied and
+functions production never received — and the next merge could then skip an API
+half production lacks. So the step is gated on
+`needs.deploy-production.result == 'success'`, which answers that locally and
+cannot itself fail. Past that gate it reads the marker, because a successful
+`deploy-production` proves its record step *ran*, not that the API write
+*landed* — a marker that does not name `github.sha` is one whose write was
+already warned about, and it is left alone. An **unreadable** marker is read as
+"it landed", never as "it did not": the two mistakes are not symmetric. Leaving a
+marker naming `github.sha` while production serves `HEAD~1` is the skip-a-half
+incident; repointing one that was already older costs a redundant deploy.
+
+**The web half never advances a marker it could not first read.** Its rollback
+restores a value captured *before* this run wrote anything, so that capture is
+the only record of where the domain was. An empty capture has two meanings —
+nothing was ever promoted, or the read failed — and collapsing them loses the
+previous commit: the rollback would *drop* the marker on a transient API error,
+and the next merge would then diff this half from the rolled-back commit and
+could skip it. So the capture uses `git/matching-refs`, which answers `200` with
+an empty array for an absent tag (`git/ref` 404s for both), retries, and reports
+`previous_marker_read` alongside the value. When that read failed,
+`Record the deployed commit` declines to advance the marker at all and warns —
+leaving it naming the commit the domain would return to, which is *already* the
+right answer if this run is rolled back, and one redundant web deploy on the next
+merge if it is not. The rollback then has nothing to restore and says so.
+
+The asymmetry with the API half is deliberate: `rollback-production` derives its
+target from `HEAD~1`, which is local and cannot fail, so it can always undo an
+advance. `rollback-web-production` cannot, so its job is not to undo well but to
+avoid advancing what it could not undo.
+
+`ci.yml` guards the decision on every PR that touches it: a `deploy` path filter
+over
+`^(\.github/workflows/deploy\.yml|scripts/ci/resolve-deploy-scope(\.test)?\.mjs|\.github/workflows/ci\.yml)`
+gates a `deploy-scope` job running `node --test
+scripts/ci/resolve-deploy-scope.test.mjs`, and that job is in the `summary` gate's
+`needs`. Without it the test would never run — `scripts/**` is outside
+`nx affected`, so the `check` job does not reach it.
+
+### Skew Protection (already-open tabs and Server Actions)
+
+The lockstep flip above keeps the FE and API on the same version **for new page
+loads**. It does nothing for a tab that is already open: the alias swap is
+instant, and that tab keeps running the JavaScript of the deployment it loaded
+from.
+
+That matters because Next.js Server Actions are a `POST` to the page route
+carrying a **build-time action ID**. A tab on build A that posts build A's
+action ID to build B gets a bare **404** — no error surface, just a dead button.
+This is exactly what happened on the Overview page: every `POST /dashboard` went
+from `200` to `404` after a `main` push, with the browser reporting
+`service.version` from one commit and the server span reporting another.
+
+The mitigation is Vercel **Skew Protection**. The wiring is in place; **it is
+not active**, and two prerequisites remain — one to confirm, one to decide.
+
+1. **Code (in place, inert).** `next.config.ts` sets `deploymentId` from
+   `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`) — the value Next.js stamps
+   onto asset URLs and Server Action requests. Neither route in step 3 actually
+   activates it today: when Vercel runs the build the variable is there, but
+   Next.js >= 14.1.4 stamps with no config at all, so the line is redundant
+   rather than load-bearing; on the prebuilt path the ID Vercel wants is a
+   *custom* one, not `VERCEL_DEPLOYMENT_ID`. What the line buys is the seam —
+   `resolveDeploymentId` is the single place either ID would be read from.
+2. **Project settings (manual, confirm first — it may already be on).** Vercel
+   enables **Skew Protection** by default for projects created after
+   2024-11-19 on a supported framework, so check Settings → Advanced before
+   treating this as open; only older projects have to flip the switch
+   themselves. Leave **Maximum Age** alone unless
+   there is a reason to change it: Vercel's default is already one day, which
+   covers a tab idled overnight — lowering it would *shorten* the protection
+   window. Raise it only for tabs that stay open longer than that, up to the
+   project's Deployment Retention limit, which is the ceiling Vercel enforces.
+   Also enable **"Enable access to System Environment Variables"** (Settings →
+   Environment Variables); without it Vercel never injects `VERCEL_*` system
+   variables into the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with
+   Skew Protection on. Whatever you change here, Vercel's enable steps end by
+   **redeploying the latest production deployment** — until that redeploy the
+   toggles do not apply to what is currently live. On this project that
+   redeploy only helps once one of the routes in step 3 is taken; a redeploy of
+   today's prebuilt deployment still carries no deployment ID.
+3. **Build path (open decision, blocks the whole thing).** A deployment ID is
+   assigned when a deployment is **uploaded**, not when it is built. Today
+   `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
+   then `vercel deploy --prebuilt` (see the bullets above), so
+   `VERCEL_DEPLOYMENT_ID` does not exist during that build. Prebuilt deployments
+   are **not** excluded from Skew Protection — Vercel supports them via a
+   **custom deployment ID**, configured so the build-time ID matches the one
+   Vercel assigns at deploy time (a prebuilt deployment may not use Vercel's
+   reserved `dpl_` prefix for it). So there are two routes, and neither is taken
+   here:
+   - **Let Vercel build production.** Drop `--prebuilt`, forwarding the
+     `VERCEL_GIT_*` values with `--build-env` so
+     `NEXT_PUBLIC_OTEL_SERVICE_VERSION` and the `vcs.*` resource attributes
+     survive. Next.js >= 14.1.4 built on Vercel needs no `next.config.ts` change
+     at all. Costs the "build already done before the flip" property.
+   - **Keep `--prebuilt` and adopt a custom deployment ID.** Keeps the current
+     pipeline shape; the ID has to be minted by us and given to both the build
+     and the deploy. `resolveDeploymentId` is the seam it would be read through.
+
+   Setup steps for the custom-ID route are Vercel's, not ours — see
+   [Skew Protection → Next.js](https://vercel.com/docs/skew-protection#skew-protection-with-next.js)
+   and [`vercel deploy` → "When not to use `--prebuilt`"](https://vercel.com/docs/cli/deploy#when-not-to-use---prebuilt).
+
+Until 2 **and** one of the two routes in 3 hold, no deployment ID reaches the
+build, `deploymentId` resolves to `undefined`, and behaviour is unchanged.
+Step 1 is inert on its own.
 
 ### Migration drift on the shared preview project
 
@@ -93,7 +543,7 @@ supabase migration repair --status reverted 00049 00050 00051
 every subsequent deploy of `main` failed on this check, with zero pending work.
 
 `deploy-preview` therefore classifies the drift *before* pushing, via
-[`scripts/check-remote-migration-drift.mjs`](../scripts/check-remote-migration-drift.mjs):
+[`scripts/migrations/check-remote-migration-drift.mjs`](../scripts/migrations/check-remote-migration-drift.mjs):
 
 | Remote state | Local pending | Outcome |
 |---|---|---|
@@ -132,8 +582,8 @@ The classifier is live in the workflows (no manual step — unlike the older
   'push'`. A `fail` verdict exits non-zero and stops the deploy; `skip` continues
   to the function deploy without pushing. `deploy-production` is left strict.
 - **`.github/workflows/ci.yml`**: the `changes` job's migration path filter also
-  matches `scripts/check-remote-migration-drift`, and the `migration-order` job
-  unit-tests the classifier (`node --test scripts/check-remote-migration-drift.test.mjs`)
+  matches `scripts/migrations/check-remote-migration-drift`, and the `migration-order` job
+  unit-tests the classifier (`node --test scripts/migrations/check-remote-migration-drift.test.mjs`)
   alongside the ordering guard.
 
 If the classifier ever returns `fail`, the interim manual unblock is its own
@@ -205,7 +655,7 @@ A reset wipes **everything**, including the seeded orgs-smoke user (see "Seed th
 orgs-smoke user" below), so the orgs REST smoke self-skips until you re-seed it.
 Re-seeding needs the service-role key and is deliberately **not** wired into the
 workflow (the recurring smoke path never carries that key) — the workflow only
-emits a reminder. After a rebuild, run `scripts/seed-smoke-user.mjs` from a
+emits a reminder. After a rebuild, run `scripts/smoke/seed-smoke-user.mjs` from a
 trusted admin shell against the preview project.
 
 ### Failure notifications (Discord)
@@ -232,10 +682,41 @@ run — the underlying failure is still reported loudly by the job that broke.
 ### Rollback behaviour
 
 On any post-deploy failure, `rollback-production` redeploys the **previous
-commit's** Edge Functions and fails the run loudly with a step summary.
-Database migrations are **forward-only** and intentionally *not* reverted —
-keep migrations backward-compatible (expand/contract) and enable **PITR**
-(Point-in-Time Recovery) in the Supabase dashboard as the database safety net.
+commit's** Edge Functions and `rollback-web-production` reverts the Vercel
+production deployment (`vercel rollback`), so the FE and API roll back together;
+the run fails loudly with a step summary. Database migrations are **forward-only**
+and intentionally *not* reverted — keep migrations backward-compatible
+(expand/contract) and enable **PITR** (Point-in-Time Recovery) in the Supabase
+dashboard as the database safety net. The web rollback stays out only when the
+API deploy failed before the web was ever promoted — in that case the web was
+never touched, so reverting it would regress a healthy deployment.
+
+### Smoke telemetry (observable in Dash0, tagged `test`)
+
+The smoke jobs are instrumented so a failure is diagnosable from telemetry, not
+only the CI log. Each smoke job (`deploy.yml` smoke-preview/smoke-production,
+`preview.yml` smoke, `ci.yml` integration) sets three job-wide env vars:
+
+- `LOREKIT_TELEMETRY_TOKEN` — turns on CLI OTLP export, which is off in a source
+  checkout (the token is injected only at npm publish), so `install` /
+  `doctor --deep` emit their `cli` spans.
+- `DEPLOYMENT_ENVIRONMENT=test` — stamps **all** of the run's smoke telemetry
+  (CLI, plus the edge `api` spans for every REST/MCP request the smokes make)
+  with `deployment.environment.name=test`, so synthetic smoke traffic filters
+  apart from real usage — including the production smoke, which runs against the
+  production deployment. The mechanism (a forwarded `X-LoreKit-Deployment-Environment`
+  header the edge honours only for the value `test`) is documented in
+  [docs/otel.md](./otel.md) → "Smoke / test runs are tagged".
+- `LOREKIT_CORRELATION_ID` — a per-run key on every REST call's
+  `usage_events.correlation_id`, so one run's calls are greppable.
+
+`ci.yml`'s integration job runs against a throwaway **local** Supabase. A plain
+`supabase start` gives the edge no OTLP endpoint, so it would be dark — the
+"Configure local edge OTLP export" step therefore writes `supabase/functions/.env`
+(the file the CLI loads into the local edge runtime) with the Dash0 ingress
+endpoint + ingest token, so the local `api` spans **do** export, tagged `test`.
+Fork PRs have no secret, so that step self-skips and the edge stays dark — a
+graceful no-export, never a broken start.
 
 ### Smoke-test data hygiene
 
@@ -247,8 +728,8 @@ modes:
 
 | Layer | Covers | Where |
 |-------|--------|-------|
-| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/mcp-server/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
-| **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
+| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/smoke-tests/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
+| **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
 
 Two rules make the difference between "cleaned up" and "looks cleaned up":
 
@@ -268,7 +749,7 @@ Run the sweep by hand against any project:
 LOREKIT_REST_BASE_URL="https://<ref>.supabase.co/functions/v1" \
 LOREKIT_SMOKE_TOKEN="<lk_rw_* token>" \
 LOREKIT_SMOKE_JWT="<supabase user JWT>" \
-  node scripts/smoke-cleanup.mjs --dry-run
+  node scripts/smoke/smoke-cleanup.mjs --dry-run
 ```
 
 Drop `--dry-run` to delete. `--min-age-minutes` (default 30) protects a smoke
@@ -305,7 +786,7 @@ nothing downstream rolls back on this job.
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
           LOREKIT_SWEEP_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
           LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
 ```
 
 **2. `deploy.yml` → `smoke-preview` job**, as the last step. `if: always()` is
@@ -319,7 +800,7 @@ No `--strict`: cleanup must never red a deploy.
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30
 ```
 
 **3. `deploy.yml` → `smoke-production` job**, as the last step — **report-only**.
@@ -336,7 +817,7 @@ job whose failure triggers `rollback-production`. `--dry-run` +
         env:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
-        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
+        run: node scripts/smoke/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
 ```
 
 **Historical residue.** Orgs that earlier runs *soft*-deleted are invisible to
@@ -349,7 +830,7 @@ kept as two separate claims:
 ```bash
 LOREKIT_REST_BASE_URL="https://<ref>.supabase.co/functions/v1" \
 LOREKIT_SWEEP_SERVICE_ROLE_KEY="<service-role key>" \
-  node scripts/smoke-cleanup.mjs --allow-service-role --dry-run
+  node scripts/smoke/smoke-cleanup.mjs --allow-service-role --dry-run
 ```
 
 This is a one-off cleanup — the suites no longer create them.
@@ -393,14 +874,33 @@ never blocked. Set all three to enable it:
 The org endpoints require a real Supabase **user JWT** (`lk_*` tokens and the
 service-role key are rejected), so `smoke-preview` mints one per run by signing
 in as this fixed user. That user must already exist on the project —
-seed it once with [`scripts/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
+seed it once with [`scripts/smoke/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
 below.
 
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
-personal access token) and — optionally — `DISCORD_WEBHOOK_URL` for
+personal access token); the three **Vercel** secrets the web jobs use —
+`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (the same set `preview.yml`
+already relies on); `LOREKIT_TELEMETRY_TOKEN` (the Dash0 ingest-only token — the
+smoke jobs pass it so their telemetry exports; see [Smoke telemetry](#smoke-telemetry-observable-in-dash0-tagged-test),
+and it is also injected into the CLI tarball at publish by `release.yml`); and —
+optionally — `DISCORD_WEBHOOK_URL` for
 [failure notifications](#failure-notifications-discord). Add a **required
 reviewer** on the `production` environment for a manual approval gate before prod
-is touched.
+is touched — it now gates the web promote (`promote-web-production`) as well as
+the API deploy.
+
+Repo-level **variables** (Settings ▸ Secrets and variables ▸ Actions ▸
+Variables), both optional:
+
+- `WEB_PROD_URL` — the production dashboard origin the production smoke curls.
+  Defaults to `https://lorekit.io`; set it for a self-hosted fork on a different
+  domain.
+- `VERCEL_SCOPE` — the Vercel **team slug** that `vercel promote` / `vercel
+  rollback` run under. Defaults to `mads-thines-projects` (this project's team,
+  matching the hardcoded `VERCEL_SCOPE` in `packages/mcp-core/src/rest/cors-origins.ts`).
+  **A fork MUST set this to its own team slug** — `promote`/`rollback` ignore the
+  token's team and the linked project ([Vercel bug #11712](https://github.com/vercel/vercel/issues/11712)),
+  so an unset value would try to promote into `mads-thines-projects` and 403.
 
 #### Seed the orgs-smoke user
 
@@ -415,7 +915,7 @@ SUPABASE_URL=https://<preview-ref>.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=<preview-service-role-key> \
 LOREKIT_SMOKE_EMAIL=<email> \
 LOREKIT_SMOKE_PASSWORD='<password>' \
-  node scripts/seed-smoke-user.mjs
+  node scripts/smoke/seed-smoke-user.mjs
 ```
 
 Run it from a trusted admin shell — **not in CI**. Creating a confirmed user
@@ -458,7 +958,7 @@ when `#260` shipped `00042` and `#266` then shipped `00041`.
 
 Two layers keep this from wedging the deploy:
 
-1. **Prevention — the `migration-order` CI job** (`scripts/check-migration-order.mjs`)
+1. **Prevention — the `migration-order` CI job** (`scripts/migrations/check-migration-order.mjs`)
    fails any PR that adds a migration numbered ≤ the highest already on the base
    branch, telling the author the next free number to rebase-and-renumber to.
 2. **Tolerance — `supabase db push --include-all`** in `deploy.yml` applies an
@@ -534,6 +1034,11 @@ supabase secrets set \
 > clients toward production and gets a token minted for the wrong resource.
 > Set it on every project that is not production.
 
+> `LOREKIT_EMBEDDING_*` are not needed here either. Embedding is **off by
+> default** and is enabled separately, on demand — see
+> [embeddings.md](./embeddings.md). Setting only the API key does nothing; the
+> `LOREKIT_EMBEDDING_ENABLED` flag is the deliberate second half.
+
 > `GITHUB_WEBHOOK_SECRET` is not needed here — webhook secrets are
 > per-repository, generated by end users from the dashboard's webhook
 > onboarding step. The env var is a legacy fallback only.
@@ -565,6 +1070,19 @@ In your Vercel project → Settings → General:
 | Build Command | `cd ../.. && pnpm nx build web --configuration=production` |
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
+
+> **Vercel Git auto-deploy is off.** `packages/web/vercel.json` sets
+> `git.deploymentEnabled = false`, so Vercel deploys nothing on a Git push —
+> `deploy.yml` promotes production (see [FE ↔ API deploy in lockstep](#fe--api-deploy-in-lockstep-no-availability-skew))
+> and `ci.yml`'s `web-preview` job deploys PR previews, gated on the `web` path
+> filter so unrelated PRs spend no quota. This also disables the dashboard's
+> Ignored Build Step approach, which still created (quota-counting) deployments
+> even when it skipped the build. Create a **Vercel access token**
+> (Account Settings → Tokens) and store it as the repo secret `VERCEL_TOKEN`,
+> alongside `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (found in `.vercel/project.json`
+> after `vercel link`, or in the project's Settings). These three secrets are
+> repo-level, so `ci.yml`'s `web-preview` job reads them on PR runs (a fork PR
+> with no access self-skips green).
 
 Environment variables to add:
 

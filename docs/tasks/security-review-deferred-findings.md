@@ -41,7 +41,7 @@ per-function caller analysis + RLS-path test).
 ## SEC-1 — [HIGH] CLI API-token exfiltration via committed repo config
 
 - **Severity:** High · **Component:** `@lorekit/cli` · **Labels:** security, cli, supply-chain
-- **Files:** `packages/cli/src/config.mjs` (`resolveProjectConnection`, ~L351-380), `stores.mjs`, `src/store/remote.mjs` (`restFetch`), `src/store/index.mjs`, `src/hook.mjs`
+- **Files:** `packages/cli/src/shared/config.mjs` (`resolveProjectConnection`, ~L351-380), `stores.mjs`, `src/store/remote.mjs` (`restFetch`), `src/store/index.mjs`, `src/hook.mjs`
 
 **Problem.** The remote endpoint is read verbatim from repo-committed config (`.mcp.json`
 `mcpServers.lorekit.args`, or `.lorekit.json` `mcp.endpoint`) with **no host allow-list** (the only
@@ -106,7 +106,7 @@ specific messages only for the discriminated client-error classes (`UserInputErr
 ## SEC-6 — [MEDIUM] CLI repo-committed `store` path escapes the repo
 
 - **Severity:** Medium · **Component:** `@lorekit/cli` · **Labels:** security, cli
-- **File:** `packages/cli/src/control.mjs` (`projectDirFrom`, ~L177-180); consumed by `localStoreDirs`/`resolveControl`
+- **File:** `packages/cli/src/shared/control.mjs` (`projectDirFrom`, ~L177-180); consumed by `localStoreDirs`/`resolveControl`
 
 **Problem.** `projectDirFrom` does `path.isAbsolute(raw) ? raw : path.join(root, raw)` where `raw` can
 come from a repo-committed `.lorekit.json` `"store"`. A malicious repo sets `"store": "/home/victim/.ssh"`
@@ -124,7 +124,7 @@ env / user-global config), or resolve and assert containment within `root`.
 ## SEC-7 — [MEDIUM] CLI prompt-injection via repo-committed `hooks.instructions`
 
 - **Severity:** Medium (trust-model) · **Component:** `@lorekit/cli` · **Labels:** security, cli, prompt-injection
-- **Files:** `packages/cli/src/control.mjs` (`hooksInstructions`, ~L145-159), `src/hook.mjs` (SessionStart/Stop injection)
+- **Files:** `packages/cli/src/shared/control.mjs` (`hooksInstructions`, ~L145-159), `src/hook.mjs` (SessionStart/Stop injection)
 
 **Problem.** A repo's committed `.lorekit.json` can set `hooks.instructions.SessionStart` (etc.) to
 arbitrary text emitted into the coding agent's context on session start with **no consent gate** — same
@@ -263,7 +263,7 @@ cookies never forwarded).
 - **Non-constant-time secret compare** — `token === SERVICE_KEY` in `_shared/api/auth.ts` (~L41),
   `mcp/auth.ts` (~L51). Theoretical timing side-channel on a long static secret; use `timingSafeEqual`.
 - **Telemetry PII** — `createTracedClient` records interpolated filter values (scope, key, `user_id`,
-  raw search `q`) in `db.query.text` (`_shared/otel.ts` ~L483-524). Goes to the operator's Dash0, not
+  raw search `q`) in `db.query.text` (`_shared/telemetry/otel.ts` ~L483-524). Goes to the operator's Dash0, not
   users, and excludes memory *values*, but is more PII than the "no-PII attrs" posture implies.
 - **CLI `__proto__` frontmatter** — `packages/cli/src/store/format.mjs` (`parseEntry`, ~L31-42):
   `meta[key] = …` assigns through `__proto__`. Not exploitable today (no deep-merge of the parsed object),

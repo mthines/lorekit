@@ -269,6 +269,15 @@ export async function issueAccessToken(
   const tokenHash = await sha256Hex(accessToken);
   const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000).toISOString();
 
+  // Reuse the existing tri-state tenancy columns (00068_api_token_scoping.sql)
+  // rather than a second, OAuth-specific scoping mechanism: the consent screen
+  // offers no "every org, including ones joined later" affordance, so a grant
+  // is always either PERSONAL (no org ticked) or SELECTED (the ticked subset)
+  // — never `all`. `effectiveOrgIds`/`applyTenantScope` and the
+  // `memory_write`/`memory_delete` RPCs enforce it identically to a scoped
+  // dashboard token, with no OAuth-specific code on the read or write path.
+  const orgAccess = grant.orgIds.length > 0 ? 'selected' : 'personal';
+
   const { data, error } = await admin
     .from('api_tokens')
     .insert({
@@ -279,6 +288,7 @@ export async function issueAccessToken(
       permissions: grant.permissions,
       kind: 'oauth',
       client_id: grant.clientId,
+      org_access: orgAccess,
       org_ids: grant.orgIds,
       expires_at: expiresAt,
     })

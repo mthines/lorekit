@@ -2,12 +2,15 @@ import type { AuthContext, ResolvedAuth, DbClient } from './auth.ts';
 import { hasPermission, isJwtAuth, analyticsUserId, usageAuthType } from './auth.ts';
 import { forbidden, notFound, methodNotAllowed } from './respond.ts';
 import { translateDbError } from './errors.ts';
-import { recordUsageEvent, getUserPlanName } from '../usage.ts';
-import type { UsageEventParams } from '../usage.ts';
-import { restToolName } from '../rest-tool-name.ts';
-import { classifyResponseOutcome } from '../rest-response-outcome.ts';
-import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../usage-stats.ts';
-import type { Span } from '../otel.ts';
+import { recordUsageEvent, getUserPlanName } from '../telemetry/usage.ts';
+import type { UsageEventParams } from '../telemetry/usage.ts';
+import { restToolName } from '../rest/rest-tool-name.ts';
+import { classifyResponseOutcome } from '../rest/rest-response-outcome.ts';
+import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../telemetry/usage-stats.ts';
+import { parseSessionKind } from '../telemetry/session-kind.ts';
+import { safeValidateScope } from '../scope/scope.ts';
+import { scopeTypeAttribute } from '../scope/scope-type-attribute.ts';
+import type { Span } from '../telemetry/otel.ts';
 
 /**
  * Request header carrying a client-supplied grouping key (a PR ref, session id,
@@ -26,6 +29,31 @@ export const CORRELATION_HEADER = 'x-lorekit-correlation-id';
 export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
 
 /**
+ * Response header `POST /memories/search` sets with how many scopes its body
+ * named (`body.scopes.length`), for the SAME reason `RESULT_COUNT_HEADER`
+ * exists: the router must not consume the request body to read `scope`
+ * (`safeValidateScope` only ever sees the query string, which a POST body
+ * never populates), but the handler already parsed it to run the search. This
+ * is the handler surfacing a value back through the one channel the router
+ * already reads post-response, not the router reaching into the body itself.
+ * Feeds `usage_events.scope_count` (migration 00078). Fail-safe: an
+ * absent/garbage value records no count.
+ */
+export const SCOPE_COUNT_HEADER = 'x-lorekit-scope-count';
+
+/**
+ * Response header `POST /memories/search` sets to the single scope it
+ * searched, ONLY when its body named exactly one — mirroring
+ * {@link SCOPE_COUNT_HEADER}'s rationale. A search over ONE scope is exactly
+ * as attributable as a singular `?scope=` filter would be, so it is validated
+ * through the SAME `safeValidateScope` the query-string path uses. A search
+ * over several scopes sets no value here — which of several a read "belongs
+ * to" is genuinely ambiguous, and `SCOPE_COUNT_HEADER` is the honest answer
+ * for that case, not a guessed single scope.
+ */
+export const RESOLVED_SCOPE_HEADER = 'x-lorekit-resolved-scope';
+
+/**
  * Request header naming the SURFACE the call came from (`dashboard` / `cli` /
  * `mcp` / `api`). Read once here, validated against the closed vocabulary by
  * the pure `parseUsageClient`, and attached to every usage event this request
@@ -38,6 +66,38 @@ export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
  * excludes `dashboard`-attributed reads from `lorekit_read_activity`.
  */
 export const CLIENT_HEADER = 'x-lorekit-client';
+
+/**
+ * Request header naming the SESSION KIND the call came from (`local` / `ci` /
+ * `pr` / `unknown`, migration 00082). The CLI derives this from its own
+ * environment (`GITHUB_ACTIONS`, `GITHUB_REF`, …) and sends it; the router
+ * only validates (`parseSessionKind`), the same fail-safe posture as
+ * `CLIENT_HEADER`. `correlation_id` stays the unbounded drill-down key
+ * (a PR ref, a branch, a session id); this is the bounded dimension every
+ * chart groups on.
+ */
+export const SESSION_KIND_HEADER = 'x-lorekit-session-kind';
+
+/**
+ * Response header naming the account the request authenticated as — the
+ * caller's OWN id, echoed back to them.
+ *
+ * Set for every non-service-role caller (see the write site in `createRouter`).
+ * It exists for the CLI, whose telemetry runs on the user's machine and has no
+ * other way to learn its account: reading it off calls it was already making
+ * lets a later OFFLINE run — one that makes no request at all, so no edge span
+ * records `auth.user_id` — still report which account it belongs to. Without it,
+ * local-only CLI usage is unattributable by construction.
+ *
+ * Absent, never empty, for service-role: there is no human actor to name. Same
+ * posture as the `auth.user_id` span attribute.
+ *
+ * Kept in step with `USER_ID_HEADER` in `packages/cli/src/shared/mcp.mjs`, and listed
+ * in `Access-Control-Expose-Headers` (`cors-origins.ts`) — a browser cannot read
+ * a response header that is not exposed, so omitting it there would make this
+ * invisible to the dashboard even though it is set.
+ */
+export const CALLER_USER_ID_HEADER = 'x-lorekit-user-id';
 
 export type Permission = 'read' | 'write' | 'jwt';
 
@@ -94,8 +154,8 @@ export function relativePath(pathname: string, functionName: string): string {
  * Read the `code` field a 429 body may carry, then classify.
  *
  * The CLASSIFICATION is the pure, unit-tested `classifyResponseOutcome`
- * (`_shared/rest-response-outcome.ts`, mirror of
- * `packages/mcp-core/src/rest-response-outcome.ts`) — see that module for the
+ * (`_shared/rest/rest-response-outcome.ts`, mirror of
+ * `packages/mcp-core/src/rest/rest-response-outcome.ts`) — see that module for the
  * full status→outcome mapping and why 429 is the one case needing the body.
  * Only the I/O stays here: the response is cloned on that rare path alone, and
  * never on the response actually returned to the caller. A body that is
@@ -184,7 +244,23 @@ export function createRouter(routes: Route[], functionName: string) {
       // body to peek at a scope, so body-carried scopes report null. Same
       // bounded values as the MCP side (`global`/`project`/`repo`/`branch`).
       const rawScope = url.searchParams.get('scope');
-      const scopeType = rawScope ? (rawScope.split('::')[0] ?? 'unknown') : null;
+      // BOUNDED via the shared `scopeTypeAttribute`, which collapses an
+      // ungrammatical `?scope=` into a single `invalid` bucket. The previous
+      // inline `split('::')[0]` echoed the caller's own prefix straight into a
+      // dimension declared low-cardinality, so a typo'd query string was an
+      // unbounded attribute value. Absent scope still reports null, and the
+      // attribute is still omitted rather than placeholdered below.
+      const scopeType = scopeTypeAttribute(rawScope);
+      // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
+      // "records read from repo::owner/name" answerable, which the deliberately
+      // low-cardinality `scopeType` above cannot. Read from the SAME query
+      // string and for the same reason: the router must not consume the request
+      // body, so a body-carried scope records null here exactly as it records a
+      // null `scopeType` today. Normalised through the canonical validator but
+      // TOTAL — an ungrammatical `?scope=` records null rather than turning a
+      // telemetry dimension into a 4xx on the request it is measuring. Resolved
+      // ONCE, before the try, so the success and error paths cannot disagree.
+      const usageScope = safeValidateScope(rawScope);
       const toolName = restToolName({
         fn: functionName,
         method,
@@ -205,7 +281,20 @@ export function createRouter(routes: Route[], functionName: string) {
       // Calling surface (dashboard / cli / mcp / api). Same fail-safe posture:
       // an absent or unrecognised value records no attribution rather than
       // rejecting the request or admitting an unbounded value.
-      const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
+      //
+      // This router IS the REST transport, so an absent/unrecognised header
+      // defaults to 'api' — applied HERE by the caller, not by widening
+      // `parseUsageClient` itself (still a closed, fail-safe validator; an
+      // unknown value still cannot smuggle a new member into the ledger). An
+      // explicit header still wins: the dashboard's own `dashboard` and the
+      // CLI's `cli` are unaffected. Retroactive for NEW traffic only —
+      // historical rows recorded before this change stay NULL.
+      const client = parseUsageClient(req.headers.get(CLIENT_HEADER)) ?? 'api';
+      // Which KIND of session (local/ci/pr/unknown, migration 00082). The CLI
+      // derives and sends this; the router only validates. Null (an older CLI,
+      // or a caller that never set the header) means no attribution, never an
+      // error — same fail-safe posture as CLIENT_HEADER.
+      const sessionKind = parseSessionKind(req.headers.get(SESSION_KIND_HEADER));
       hs.setAttributes({ 'lorekit.tool.name': toolName, ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}) });
       const startedMs = Date.now();
 
@@ -215,20 +304,48 @@ export function createRouter(routes: Route[], functionName: string) {
         const planName = planNamePromise ? await planNamePromise : null;
         if (planName) hs.setAttributes({ 'lorekit.plan': planName });
         hs.setAttributes({ 'http.response.status_code': res.status }).end();
+        // ── tell the caller which account it authenticated as ────────────────
+        //
+        // The CLI's only cheap route to its own account id. It has no `/me`
+        // call, and its telemetry runs on the user's machine where nothing else
+        // knows the account: without this, a local-only CLI run (offline store,
+        // `lorekit hook`) is unattributable, because it makes no request for the
+        // edge to record `auth.user_id` on. The CLI caches this value and stamps
+        // it on subsequent offline runs — see `packages/cli/src/store/remote.mjs`.
+        //
+        // Disclosing it is not a widening: this is the caller's OWN id, returned
+        // only to a request that already authenticated as them, and it is
+        // already what every row they can read is keyed by. Service-role gets
+        // nothing (`analyticsUserId` returns null — no human actor to name), so
+        // the header is absent rather than empty, matching how the same value is
+        // treated as a span attribute.
+        if (usageUserId !== null) res.headers.set(CALLER_USER_ID_HEADER, usageUserId);
         if (usageUserId !== null) {
           // Record count from the handler's own header — fail-safe to null.
           const resultCount = parseResultCountHeader(res.headers.get(RESULT_COUNT_HEADER));
+          // How many scopes an array-bearing body (POST /memories/search)
+          // named, and — only when that count is exactly one — the resolved
+          // scope itself. `usageScope` (query-string-derived) wins when
+          // present; only a query-string-less call (search) falls back to the
+          // header. Read AFTER the handler runs, same as `resultCount` above,
+          // because the body — where `scopes` actually lives — is the
+          // handler's to consume, never the router's.
+          const scopeCount = parseResultCountHeader(res.headers.get(SCOPE_COUNT_HEADER));
+          const scope = usageScope ?? safeValidateScope(res.headers.get(RESOLVED_SCOPE_HEADER));
           recordUsageEvent(resolved.db, {
             userId: usageUserId,
             planName,
             toolName,
             scopeType,
+            scope,
+            scopeCount,
             authType: usageAuthType(resolved.auth),
             outcome: await responseOutcome(res),
             durationMs,
             resultCount,
             correlationId,
             client,
+            sessionKind,
           });
         }
         return res;
@@ -241,6 +358,7 @@ export function createRouter(routes: Route[], functionName: string) {
             planName: null, // skip the plan lookup on the error path to keep it fast
             toolName,
             scopeType,
+            scope: usageScope,
             authType: usageAuthType(resolved.auth),
             // A handler that threw a raw cap rejection still counts as a cap
             // hit, not a generic fault — translateDbError is the single
@@ -249,6 +367,7 @@ export function createRouter(routes: Route[], functionName: string) {
             durationMs,
             correlationId,
             client,
+            sessionKind,
           });
         }
         throw e;

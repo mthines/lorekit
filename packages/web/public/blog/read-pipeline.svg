@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 680" role="img" aria-label="A vertical pipeline: lessons across scopes pass through precedence, ranking by signal, a per-loop cap of one that drops extra loop rows, MMR that drops near-duplicates, and a 3000-character budget, leaving a bounded injected block that reports how many of the total it showed plus a scope map.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+    .drop{fill:#ef6b5a}
+  </style>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8892a4"/></marker>
+    <marker id="arRed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ef6b5a"/></marker>
+  </defs>
+  <rect x="0" y="0" width="620" height="680" fill="#0d0e11"/>
+
+  <rect x="70" y="18" width="280" height="60" rx="9" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="210" y="43" text-anchor="middle" font-size="14" font-weight="600">your store · any size</text>
+  <text x="210" y="62" text-anchor="middle" class="lbl" font-size="11.5">project · branch · repo · global</text>
+
+  <line x1="210" y1="78" x2="210" y2="118" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="222" y="102" class="lbl" font-size="11.5">read newest 100 / scope, then precedence</text>
+
+  <rect x="70" y="120" width="280" height="52" rx="9" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="210" y="151" text-anchor="middle" font-size="13.5">winners · one copy per key</text>
+
+  <line x1="210" y1="172" x2="210" y2="212" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="222" y="196" class="lbl" font-size="11.5">rank — reorder by signal</text>
+
+  <rect x="70" y="214" width="280" height="60" rx="9" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="210" y="238" text-anchor="middle" font-size="13.5" font-weight="600">ranked by signal</text>
+  <text x="210" y="258" text-anchor="middle" class="lbl" font-size="11">recency · salience · relevance · outcome</text>
+
+  <line x1="210" y1="274" x2="210" y2="320" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="222" y="300" class="lbl" font-size="11.5">cap — ≤ 1 per loop bucket</text>
+  <line x1="245" y1="297" x2="430" y2="297" stroke="#ef6b5a" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arRed)"/>
+  <rect x="432" y="279" width="168" height="38" rx="8" fill="none" stroke="#ef6b5a" stroke-opacity="0.5"/>
+  <text x="516" y="296" text-anchor="middle" class="drop k" font-size="11">loop:: over the cap</text>
+  <text x="516" y="310" text-anchor="middle" class="lbl" font-size="10.5">no bucket takes the read</text>
+
+  <rect x="70" y="322" width="280" height="52" rx="9" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="210" y="353" text-anchor="middle" font-size="13.5">no bucket dominates</text>
+
+  <line x1="210" y1="374" x2="210" y2="420" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="222" y="400" class="lbl" font-size="11.5">MMR λ 0.7 — drop near-duplicates</text>
+  <line x1="245" y1="397" x2="430" y2="397" stroke="#ef6b5a" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arRed)"/>
+  <rect x="432" y="379" width="168" height="38" rx="8" fill="none" stroke="#ef6b5a" stroke-opacity="0.5"/>
+  <text x="516" y="396" text-anchor="middle" class="drop k" font-size="11">near-duplicates</text>
+  <text x="516" y="410" text-anchor="middle" class="lbl" font-size="10.5">the it3 · it4 · it5 stutter</text>
+
+  <rect x="70" y="422" width="280" height="52" rx="9" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="210" y="453" text-anchor="middle" font-size="13.5">diversified</text>
+
+  <line x1="210" y1="474" x2="210" y2="520" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="222" y="500" class="lbl" font-size="11.5">budget — fill 3000 chars, then stop</text>
+
+  <rect x="60" y="522" width="300" height="120" rx="11" fill="#2a2010" stroke="#f5a623"/>
+  <text x="210" y="548" text-anchor="middle" class="k" font-size="13.5" font-weight="700" fill="#f5a623">LoreKit: 8 of 6000 loaded</text>
+  <line x1="80" y1="560" x2="340" y2="560" stroke="#f5a623" stroke-opacity="0.25"/>
+  <text x="80" y="580" class="k" font-size="11" fill="#34d399">- (repo) supabase-rls::empty-array-is-not-no-rows</text>
+  <text x="80" y="598" class="k" font-size="11" fill="#34d399">- (global) always-typecheck-before-done</text>
+  <text x="80" y="616" class="lbl" font-size="11">…6 more, ranked &amp; de-duplicated</text>
+  <text x="80" y="634" class="k" font-size="9" fill="#f5a623">More lore: repo 4000 · global 2000 → memory.search</text>
+</svg>

@@ -1,8 +1,8 @@
 ---
 title: "Use cases"
 description: "End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows."
-order: 8
-keywords: ["use cases", "autonomous workflow", "aw", "stuck-loop", "ci", "github actions", "org sharing", "scope binding", "branch scope", "ttl_days", "memory.purge_expired", "runbook"]
+order: 9
+keywords: ["use cases", "autonomous workflow", "aw", "stuck-loop", "ci", "github actions", "ci state", "state records", "flaky tests", "kind bus", "lk_wo", "clear-ttl", "org sharing", "scope binding", "branch scope", "ttl_days", "expiring_within_days", "memory.purge_expired", "runbook"]
 ---
 
 ### Autonomous workflow self-improvement
@@ -73,6 +73,58 @@ Use a read-only token (lk_ro_…) stored as LOREKIT_TOKEN.
     LOREKIT_MCP_URL: https://…/functions/v1/mcp
     LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}
 ```
+
+### CI state records (programmatic, non-LLM memories)
+
+A CI job can use LoreKit as memory of its own, without an agent involved: it writes a small JSON record of what was true at the end of a run, and reads it back on the next one. Flaky tests, a benchmark baseline, the last deployed SHA, what a bot already commented on.
+
+These are a different shape from lessons — machine-written JSON that a script parses, not prose an agent weighs. Keep them in their own bucket: tag `ci::<job>-state`, key `ci-state::<slug>`, and `kind: "bus"` / `host: "ci"` so `lorekit list --kind bus --host ci` shows every state record and nothing else.
+
+**One key per fact, overwritten in place**
+
+Same scope and key is an update, so a job that runs a thousand times still holds one row. Never key on the run id — that grows the store without bound and crowds out the lessons an agent reads at session start.
+
+```bash
+# Read the known-flaky set. `show` exits 1 on a miss, which is just the first run.
+if npx @lorekit/cli show \
+     --scope "repo::${GITHUB_REPOSITORY}" --key 'ci-state::flaky-tests' \
+     --remote --json > state.json 2>&1; then
+  cat state.json
+  KNOWN=$(jq -c '(.remote.record.value // "{}") | fromjson
+                 | if .v == 1 then .data.flaky else [] end' state.json)
+else
+  cat state.json
+  echo "No prior state — treating every failure as new."
+  KNOWN='[]'
+fi
+```
+
+Address the record with `--scope` and `--key` flags, not the single-token `scope::key` form — the key itself contains `::`.
+
+**Write it back, versioned**
+
+```bash
+jq -nc --argjson flaky "$FLAKY" \
+   --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+   '{v: 1, updated_by_run: $run, data: {flaky: $flaky}}' \
+| npx @lorekit/cli write \
+    --scope "repo::${GITHUB_REPOSITORY}" --key 'ci-state::flaky-tests' \
+    --tags 'ci::test-state' --kind bus --host ci \
+    --ttl-days 7 --remote --json \
+| tee lorekit-write.log \
+|| echo "LoreKit write failed (exit $?) — not failing the build."
+```
+
+Four things worth copying from this snippet:
+
+- **Keep the TTL short — about a week — and always pass it.** `expires_at` is recomputed as `now() + ttl_days` on *every* write, so a record the job rewrites each run never expires while the job keeps running. The TTL measures how long the job has been *silent*, which is exactly when its contents stopped being true: 7 days for anything running at least daily, 14 for nightly, 30 for weekly. It also caps the damage if someone keys on the run id by mistake — the store drains instead of climbing to the memory cap. Reserve `clear_ttl` for a record whose absence is worse than its staleness. Never omit both, or the write silently inherits whatever default the repo configured for lessons.
+- **A write-only `lk_wo_…` token** in `LOREKIT_TOKEN` is enough for a job that only records. It cannot read anything back, so a leaked CI token cannot exfiltrate the team's lore. Use `lk_ro_…` for a read-only job.
+- **`v` is a required version stamp.** A reader that sees an unrecognised version falls back to its first-run path instead of mis-parsing.
+- **Never on the critical path.** A LoreKit outage falls back to the first-run path and logs it; it never turns a green build red.
+
+Never build the payload from an environment dump or a raw error body — a CI environment is full of tokens. Assemble it from an explicit list of fields. The value cap is 64 KiB, so reports, logs, and traces belong in artifacts, not here.
+
+**Why not just `actions/cache`?** For pure job-to-job caching, use `actions/cache` — it is free and built for it. LoreKit earns its place when the *agent* reads the same record: CI records the flaky set on `main`, and an agent asked to fix those tests picks it up at session start from the same repo scope, with no extra wiring. The record links back to the workflow run that wrote it, because the CLI derives repo, branch, commit, and PR from the GitHub Actions environment automatically.
 
 ### Team playbook with org sharing
 
@@ -192,6 +244,22 @@ memory.write {
   ttl_days: 3
 }
 ```
+
+**See what is about to expire, before it does**
+
+An expiry you never look at is a deletion you did not decide on. `GET /memories` takes
+`expiring_within_days` (1–365) to list exactly the memories whose TTL runs out inside that horizon —
+still live, but not for long — so you can review them and either let them lapse or extend them.
+
+```bash
+# What lapses in the next 7 days?
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?expiring_within_days=7"
+```
+
+Memories with no TTL never appear here, and neither do ones that already expired — this is the
+"act now" list, not an audit of everything with a deadline. Refresh anything worth keeping with a
+new `ttl_days`, or `clear_ttl: true` to make it permanent.
 
 **Clean up expired entries explicitly**
 

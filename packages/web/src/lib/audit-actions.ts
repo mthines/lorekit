@@ -5,7 +5,7 @@
  * one-line edit here, not a scattered set of if/else branches (mirrors the
  * `scope-meta.ts` single-record pattern).
  *
- * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit.ts`
+ * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit/audit.ts`
  * (and its self-contained edge copy) — the web package has no dependency on
  * `@lorekit/core` (same reason `lib/scope.ts` re-declares a lightweight copy
  * of `scopeType`), so the action literals are re-declared here rather than
@@ -38,12 +38,15 @@ import {
   Link,
   Unlink,
   Github,
+  ListChecks,
+  ShieldPlus,
   type LucideIcon,
 } from 'lucide-react';
 
 export const AUDIT_ACTIONS = [
   'api_key.create',
   'api_key.revoke',
+  'api_key.scope_change',
   'webhook_secret.create',
   'webhook_secret.rotate',
   'webhook_secret.deactivate',
@@ -66,6 +69,10 @@ export const AUDIT_ACTIONS = [
   'scope.bind',
   'scope.unbind',
   'github_app.installation_linked',
+  'policy.create',
+  'policy.update',
+  'policy.delete',
+  'memory.protect',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -82,6 +89,7 @@ export interface AuditActionMeta {
 export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'api_key.create': { label: 'API key created', badgeColor: 'green', icon: KeyRound },
   'api_key.revoke': { label: 'API key revoked', badgeColor: 'red', icon: KeySquare },
+  'api_key.scope_change': { label: 'API key scoping changed', badgeColor: 'blue', icon: KeyRound },
   'webhook_secret.create': { label: 'Webhook secret created', badgeColor: 'green', icon: Webhook },
   'webhook_secret.rotate': { label: 'Webhook secret rotated', badgeColor: 'blue', icon: RefreshCw },
   'webhook_secret.deactivate': { label: 'Webhook secret deactivated', badgeColor: 'red', icon: WebhookOff },
@@ -104,4 +112,8 @@ export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'scope.bind': { label: 'Scope bound', badgeColor: 'green', icon: Link },
   'scope.unbind': { label: 'Scope unbound', badgeColor: 'amber', icon: Unlink },
   'github_app.installation_linked': { label: 'GitHub App installation linked', badgeColor: 'green', icon: Github },
+  'policy.create': { label: 'Retention policy created', badgeColor: 'green', icon: ListChecks },
+  'policy.update': { label: 'Retention policy updated', badgeColor: 'blue', icon: ListChecks },
+  'policy.delete': { label: 'Retention policy deleted', badgeColor: 'red', icon: ListChecks },
+  'memory.protect': { label: 'Memory protection changed', badgeColor: 'purple', icon: ShieldPlus },
 };

@@ -27,14 +27,13 @@ import {
   loreScopeUrl,
   buildLessonUrl,
   parseOwnerArg,
-  parseViewArg,
   parseRangeArg,
   parseTagsArg,
   resolveScopeArg,
   mostSpecificScope,
   surfaceFor,
-} from '../src/deeplink-pure.mjs';
-import { scopeIssue } from '../src/lessons-view.mjs';
+} from '../src/shared/deeplink-pure.mjs';
+import { scopeIssue } from '../src/shared/lessons-view.mjs';
 
 // The real validity predicate the `link` command injects.
 const isScope = (s) => scopeIssue(s) === null;
@@ -67,7 +66,7 @@ test('encodeParam JSON-encodes then URL-encodes (the inverse of the app read)', 
 
 test('buildLoreQuery omits params equal to their default', () => {
   assert.equal(buildLoreQuery({}), '');
-  assert.equal(buildLoreQuery({ scope: null, q: '', owner: 'all', view: 'scope', archived: false, range: null, lesson: null }), '');
+  assert.equal(buildLoreQuery({ scope: null, q: '', owner: 'all', archived: false, range: null, lesson: null }), '');
   // undefined values are skipped too.
   assert.equal(buildLoreQuery({ scope: undefined }), '');
 });
@@ -76,8 +75,7 @@ test('buildLoreQuery encodes each non-default param and honours PARAM_ORDER', ()
   assert.equal(buildLoreQuery({ scope: 'global' }), 'scope=%22global%22');
   assert.equal(buildLoreQuery({ q: 'flaky test' }), 'q=%22flaky%20test%22');
   assert.equal(buildLoreQuery({ owner: 'personal' }), 'owner=%22personal%22');
-  assert.equal(buildLoreQuery({ owner: { orgId: 'org_123' } }), 'owner=%7B%22orgId%22%3A%22org_123%22%7D');
-  assert.equal(buildLoreQuery({ view: 'time' }), 'view=%22time%22');
+  assert.equal(buildLoreQuery({ owner: 'acme' }), 'owner=%22acme%22');
   assert.equal(buildLoreQuery({ archived: true }), 'archived=true');
   assert.equal(
     buildLoreQuery({ range: { from: '2026-01-01', to: '2026-02-01' } }),
@@ -113,18 +111,14 @@ test('buildLessonUrl sets BOTH scope and lesson so the sheet is not blank', () =
 
 // ── unit: flag coercion ───────────────────────────────────────────────────────
 
-test('parseOwnerArg maps to the OwnerFilter shape', () => {
+test('parseOwnerArg passes through personal / a slug, and defaults to all', () => {
   assert.equal(parseOwnerArg(undefined), 'all');
+  assert.equal(parseOwnerArg(''), 'all');
   assert.equal(parseOwnerArg('all'), 'all');
   assert.equal(parseOwnerArg('personal'), 'personal');
-  assert.deepEqual(parseOwnerArg('org_abc'), { orgId: 'org_abc' });
-});
-
-test('parseViewArg only accepts time; anything else is the scope default', () => {
-  assert.equal(parseViewArg('time'), 'time');
-  assert.equal(parseViewArg('scope'), 'scope');
-  assert.equal(parseViewArg(undefined), 'scope');
-  assert.equal(parseViewArg('bogus'), 'scope');
+  // A slug is written verbatim (NOT the old `{ orgId }` object, which the app
+  // could not resolve to the slug the owner facet keys on).
+  assert.equal(parseOwnerArg('acme'), 'acme');
 });
 
 test('parseRangeArg: JSON --range wins, else --from/--to shorthand, else null', () => {
@@ -206,8 +200,8 @@ test('round-trip: every surface decodes back to the exact input values', () => {
     lesson: { scope: 'branch::owner/repo::feat/x', key: 'k1' },
   });
   assert.deepEqual(
-    decodeParams(buildLoreUrl({ q: 'flaky', owner: { orgId: 'o1' }, view: 'time', archived: true })),
-    { q: 'flaky', owner: { orgId: 'o1' }, view: 'time', archived: true },
+    decodeParams(buildLoreUrl({ q: 'flaky', owner: { orgId: 'o1' }, archived: true })),
+    { q: 'flaky', owner: { orgId: 'o1' }, archived: true },
   );
 });
 
@@ -328,22 +322,16 @@ test('link --from/--to shorthand flows through the command into the range param'
   assert.deepEqual(out.params.range, { from: '2026-01-01', to: '2026-02-01' });
 });
 
-test('link --view time flows through the command into the view param', () => {
+test('link --owner <slug> writes the slug string the app folds into an owner filter', () => {
   const root = tmp('lk-link-proj-');
-  const res = run(['link', 'global', '--view', 'time', '--json'], { dir: root });
+  const res = run(['link', 'global', '--owner', 'acme', '--json'], { dir: root });
   assert.equal(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
-  assert.deepEqual(out.params, { scope: 'global', view: 'time' });
-  assert.deepEqual(decodeParams(out.url), { scope: 'global', view: 'time' });
-});
-
-test('link --owner <orgId> flows through the command as the { orgId } object form', () => {
-  const root = tmp('lk-link-proj-');
-  const res = run(['link', 'global', '--owner', 'org_abc', '--json'], { dir: root });
-  assert.equal(res.status, 0, res.stderr);
-  const out = JSON.parse(res.stdout);
-  assert.deepEqual(out.params.owner, { orgId: 'org_abc' });
-  assert.deepEqual(decodeParams(out.url).owner, { orgId: 'org_abc' });
+  // A slug is written verbatim to the legacy `owner` param (NOT the old
+  // `{ orgId }` object, whose uuid the app could not resolve to the slug the
+  // owner facet keys on). `filtersFromLegacyOwner` folds it into an owner filter.
+  assert.equal(out.params.owner, 'acme');
+  assert.equal(decodeParams(out.url).owner, 'acme');
 });
 
 test('bare link (no args) links to the cwd project scope', () => {
@@ -572,7 +560,7 @@ test(
       buildLessonUrl('global', 'prefer-guard-clauses'),
       buildLoreUrl({ q: 'flaky test', owner: 'personal' }),
       buildLoreUrl({ scope: 'global', tags: ['perf', 'ci'] }),
-      buildLoreUrl({ scope: 'global', view: 'time', archived: true }),
+      buildLoreUrl({ scope: 'global', archived: true }),
       buildLoreUrl({ scope: 'global' }, { base: 'https://lore.acme.dev' }),
     ];
     for (const url of expected) {

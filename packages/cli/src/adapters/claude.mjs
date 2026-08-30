@@ -8,6 +8,12 @@ export const claude = {
     switch (event) {
       case 'SessionStart':
         return 'read';
+      // The per-turn relevance pull. Distinct from 'read': that one fires once
+      // and injects a ranked slice of everything applicable; this one fires on
+      // every prompt and injects only what the prompt itself points at, minus
+      // whatever has already been shown.
+      case 'UserPromptSubmit':
+        return 'relevant-read';
       case 'PostToolUse':
         return 'confirm';
       case 'PostToolUseFailure':
@@ -41,6 +47,10 @@ export const claude = {
       toolName: input.tool_name || 'tool',
       toolInput: input.tool_input || null,
       toolResponse: input.tool_response || null,
+      // The user's message, present on UserPromptSubmit. Claude Code sends it
+      // as `prompt`; it is the only field that event carries beyond the
+      // session envelope.
+      prompt: typeof input.prompt === 'string' ? input.prompt : null,
       event: input.hook_event_name || null,
       // Path to the session JSONL (present on Stop/SubagentStop) — read by the
       // friction-gated retrospective to decide whether the session is worth a nudge.

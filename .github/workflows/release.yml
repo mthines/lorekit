@@ -150,9 +150,18 @@ jobs:
       - name: Inject telemetry token
         env:
           LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
-        run: node scripts/inject-telemetry-token.mjs --require
+        run: node scripts/telemetry/inject-telemetry-token.mjs --require
 
       - name: Verify the injected token can ingest (doctor --telemetry)
+        # This probe emits ONE real span to Dash0 (it is the only live-emitting
+        # step in the release). Tag it `deployment.environment.name=test` — same
+        # convention as the deploy/preview/ci smoke jobs — so this synthetic
+        # release-verification span filters apart from real CLI usage. (It hits
+        # the OTLP endpoint, not the LoreKit API, so no request header applies —
+        # the CLI resource attribute is enough.) The probe already carries
+        # `lorekit.telemetry.probe=true`; env=test is the second axis.
+        env:
+          DEPLOYMENT_ENVIRONMENT: test
         run: node packages/cli/bin/lorekit.mjs doctor --telemetry --dir "$RUNNER_TEMP"
 
       # No NODE_AUTH_TOKEN: npm authenticates via the Actions OIDC trusted

@@ -27,6 +27,7 @@ begin;
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a1', 'authenticated', 'authenticated', 'lk-mig-a@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a2', 'authenticated', 'authenticated', 'lk-mig-a2@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -498,6 +499,45 @@ begin
     'memory_write: a call with no p_org_slug must leave org_id NULL';
   assert v_row.user_id = '00000000-0000-0000-0000-0000000000a1',
     'memory_write: a personal write must set user_id to the writer';
+end;
+$$;
+
+-- ── 13b. memory_write: org-scoped write succeeds under RLS for a real JWT
+-- caller, not just a superuser/service-role test harness (regression) ───────
+--
+-- Every prior org-write assertion above (§12) calls memory_write() directly
+-- as the test's own (superuser) role, which bypasses Row Level Security
+-- entirely — so it never exercised the path a real dashboard/user-session
+-- caller goes through. That gap hid a bug: the org-write branch inserts
+-- `user_id = null` for an org-owned row, and `rls_insert` (00001) only allows
+-- `user_id = auth.uid() or auth.role() = 'service_role'`. Without
+-- `security definer`, memory_write ran as the CALLER's role, so an
+-- `authenticated` JWT caller writing to an org got "new row violates row-level
+-- security policy for table memories" even though lorekit_org_can() already
+-- approved the write. This reproduces that path under `set local role
+-- authenticated` (the same technique as §1/§7/§8) and asserts it now succeeds.
+do $$
+declare
+  v_id uuid;
+  v_row memories%rowtype;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-rls-write-key', 'v1',
+                                        '{}'::text[], null, null, null, 'phase2-org');
+
+  reset role;
+
+  assert v_id is not null,
+    'memory_write: an org-scoped write from an authenticated JWT caller must not be rejected by RLS';
+
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id = '00000000-0000-0000-0000-0000000000f2',
+    format('memory_write org branch (RLS caller): org_id should be phase2-org, got %s', v_row.org_id);
+  assert v_row.user_id is null,
+    'memory_write org branch (RLS caller): user_id must be NULL on an org-owned row';
 end;
 $$;
 
@@ -1993,7 +2033,8 @@ $$;
 -- AC-5: A scope whose every row is archived disappears from the result entirely.
 -- AC-6: An org co-member sees the org's scopes (via lorekit_member_org_ids).
 -- AC-7: A non-member does not see that org's scopes.
--- AC-8: Rows come back sorted by scope ascending.
+-- AC-8: Rows come back sorted by count DESC, then scope asc (00065, matching
+--       lorekit_memory_tags) — the busiest scope leads regardless of name.
 
 -- Fresh 'scopes-org' (fa) with owner A + member B, isolated from the phase-3
 -- and safe-org-deletion fixtures above (f3 has unrelated membership churn, f9
@@ -2015,6 +2056,14 @@ insert into memories (user_id, scope, key, value, archived_at) values
   ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-gone', 'sc-gone', 'v', now());
 insert into memories (user_id, scope, key, value, expires_at) values
   ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-a', 'sc-a-expired', 'v', now() - interval '1 minute');
+
+-- A busier scope for A (3 active rows) whose name sorts AFTER project::scopes-a.
+-- Under the old `scope asc` order it would come last; under 00065's `count desc`
+-- it must come FIRST — so A's result distinguishes the two orderings (AC-8).
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/scopes-top', 'sc-top-1', 'v'),
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/scopes-top', 'sc-top-2', 'v'),
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/scopes-top', 'sc-top-3', 'v');
 
 -- User B: one active row in a scope of their own.
 insert into memories (user_id, scope, key, value) values
@@ -2084,11 +2133,25 @@ begin
   assert v_rows = 0,
     'memory scopes AC-7: a non-member/non-owner must see none of these scopes';
 
-  -- AC-8: results are ordered by scope ascending.
-  select array_agg(scope) into v_scopes from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
-  select array_agg(s order by s) into v_sorted from unnest(v_scopes) as s;
+  -- AC-8: the function returns rows already ordered by count desc, then scope
+  -- asc. `array_agg` with no ORDER BY preserves the function-scan row order, so
+  -- comparing it against the same rows re-sorted by the intended key asserts the
+  -- function itself did the ordering.
+  select array_agg(scope) into v_scopes
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
+  select array_agg(scope order by count desc, scope asc) into v_sorted
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
   assert v_scopes = v_sorted,
-    format('memory scopes AC-8: results must be sorted by scope asc, got %s', v_scopes);
+    format('memory scopes AC-8: results must be ordered by count desc then scope asc, got %s', v_scopes);
+  -- Concretely, over the three scopes A owns with known counts: they must appear
+  -- busiest-first — top(3) before scopes-a(2) before scopes-org(1) — regardless
+  -- of the other scopes A carries from earlier fixtures. Under the old `scope
+  -- asc` this order was top LAST, so this only holds once count drives it.
+  assert array_position(v_scopes, 'repo::acme/scopes-top')
+           < array_position(v_scopes, 'project::scopes-a')
+     and array_position(v_scopes, 'project::scopes-a')
+           < array_position(v_scopes, 'repo::acme/scopes-org'),
+    format('memory scopes AC-8: known scopes must be count-desc top(3)<scopes-a(2)<scopes-org(1), got %s', v_scopes);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
@@ -2690,7 +2753,10 @@ declare
   v_purged_arch int;
   v_purged_exp  int;
   v_arch_id     uuid;
-  v_rest_id     uuid;
+  -- 00072 replaced `restore_memory`'s `returns uuid` with
+  -- `returns table (restored boolean, existed boolean)`, so the call is a FROM
+  -- item now and the guard reads `restored` instead of "an id came back".
+  r_rest        record;
 begin
   set local role authenticated;
   perform set_config('request.jwt.claims',
@@ -2699,7 +2765,8 @@ begin
   select purge_archived_memories('00000000-0000-0000-0000-0000000000d4', 0) into v_purged_arch;
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4')     into v_purged_exp;
   select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
-  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select * into r_rest
+    from restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived');
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
@@ -2710,7 +2777,7 @@ begin
     format('IDOR: e5 hard-deleted %s of d4''s expired rows by naming d4 as p_user_id', v_purged_exp);
   assert v_arch_id is null,
     'IDOR: e5 archived one of d4''s rows by naming d4 as p_user_id';
-  assert v_rest_id is null,
+  assert not r_rest.restored,
     'IDOR: e5 restored one of d4''s rows by naming d4 as p_user_id';
 
   -- d4's three rows are all exactly as seeded.
@@ -2732,7 +2799,8 @@ $$;
 do $$
 declare
   v_arch_id    uuid;
-  v_rest_id    uuid;
+  -- See 60a: 00072 made `restore_memory` a table-returning function.
+  r_rest       record;
   v_purged_exp int;
 begin
   set local role authenticated;
@@ -2740,14 +2808,15 @@ begin
     '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
 
   select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
-  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select * into r_rest
+    from restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived');
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4') into v_purged_exp;
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
 
   assert v_arch_id is not null, 'self-service: d4 archiving its OWN active row must succeed';
-  assert v_rest_id is not null, 'self-service: d4 restoring its OWN archived row must succeed';
+  assert r_rest.restored,       'self-service: d4 restoring its OWN archived row must succeed';
   assert v_purged_exp >= 1,     'self-service: d4 purging its OWN expired row must delete it';
   assert not exists (select 1 from memories
                      where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
@@ -2824,10 +2893,19 @@ declare
   v_sig  text;
   v_sigs text[] := array[
     'archive_memory(uuid, text, text)',
-    'restore_memory(uuid, text, text)',
+    -- 00072 recreated `restore_memory` with the calling key's restriction
+    -- appended (p_key_scopes, p_key_org_access, p_key_org_ids → 6 args), for the
+    -- same reason 00069 did it to `memory_delete` below: name the CURRENT
+    -- signature, or `has_function_privilege` ERRORS on a function that no longer
+    -- exists and aborts the whole run.
+    'restore_memory(uuid, text, text, text[], text, uuid[])',
     'purge_archived_memories(uuid, integer)',
     'purge_expired_memories(uuid)',
-    'memory_delete(uuid, text, text, text, boolean)'
+    -- 00069 appended the calling key's restriction (p_key_scopes, p_key_org_access,
+    -- p_key_org_ids → 8 args). The grant guard names a signature, so a recreate
+    -- that changes the parameter list leaves this pointing at a function that no
+    -- longer exists and `has_function_privilege` ERRORS rather than failing.
+    'memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])'
   ];
 begin
   assert array_length(v_sigs, 1) = 5,
@@ -3168,7 +3246,8 @@ declare
   v_sig  text;
   -- Reads: authenticated + service_role, never anon.
   v_read text[] := array[
-    'lorekit_memory_scopes(uuid)',
+    -- 00069 appended the key restriction (4 args) — see the note in 60d.
+    'lorekit_memory_scopes(uuid, text[], text, uuid[])',
     'lorekit_memory_count(uuid)'
   ];
   -- Service-role-only: never anon, never authenticated.
@@ -3397,11 +3476,14 @@ begin
 end;
 $$;
 
--- ── 65. origin: grant surface — the widened 15-arg memory_write signature is
--- granted to the same three roles the 11-arg form was (00038) ───────────────
+-- ── 65. origin: grant surface — the widened memory_write signature is granted
+-- to the same three roles the 11-arg form was (00038); 00056 further widened it
+-- with p_kind + p_host (17 args) ────────────────────────────────────────────
 do $$
 declare
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer)';
+  -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
+  -- p_key_org_ids → 20 args).
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, text[], text, uuid[])';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
@@ -3626,6 +3708,68 @@ begin
 end;
 $$;
 
+-- ── 68b. lorekit_memory_activity — scope + dimension filters (00063) ────────
+-- The Explorer's stat header follows the filter bar, so the activity RPC gained
+-- the same predicate GET /memories and lorekit_memory_facets apply. Most of the
+-- operator matrix is §69's proven logic, so §68b proves the plumbing — and the
+-- `nin` / origin_pr-coercion arms that are fresh plpgsql in 00063 get their own
+-- assertions in §68c (just below §69), once the facet-a fixtures that carry an
+-- agent and a PR exist.
+-- AC-1: a dimension filter narrows the counts to the list's set.
+-- AC-2: scope is a hard filter.
+-- AC-3: a NO-MATCH filter yields ZERO — never a fallback to the account total,
+--       which would show account numbers under an empty scope's name.
+-- AC-4: tags 'none' is an EXCLUSION arm — it drops overlapping rows.
+do $$
+declare
+  v_sum bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: both ACTIVE agg-a rows carry 'perf' (the archived/expired siblings do
+  -- not count), so a perf filter over agg-a sums to 2.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['perf']);
+  assert v_sum = 2, format('activity filter AC-1: perf under agg-a must sum to 2, got %s', v_sum);
+
+  -- Only agg-1 carries 'auth'.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['auth']);
+  assert v_sum = 1, format('activity filter AC-1b: auth under agg-a must sum to 1, got %s', v_sum);
+
+  -- AC-3: a no-match filter must yield nothing, not the account-wide total.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['does-not-exist']);
+  assert v_sum = 0, format('activity filter AC-3: a no-match filter must yield 0, got %s', v_sum);
+
+  -- AC-2: p_scope is a hard filter — no other scope's rows leak into the result.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a')
+   where scope <> 'project::agg-a';
+  assert v_sum = 0, 'activity filter AC-2: p_scope must exclude every other scope';
+
+  -- AC-4: an EXCLUSION arm — tags 'none' drops the rows that overlap the set.
+  -- Only agg-1 carries 'auth', so excluding it leaves agg-2 → 1.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['auth'], 'none');
+  assert v_sum = 1, format('activity filter AC-4: tags none [auth] must leave 1, got %s', v_sum);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 69. lorekit_memory_facets — the multi-dimension value catalog (00052) ───
 -- AC-1: every dimension is enumerated with its per-value count, including the
 --       text[] `tags` unnest and the integer `origin_pr` cast to text.
@@ -3748,12 +3892,292 @@ begin
 end;
 $$;
 
+-- ── 68c. lorekit_memory_activity — `nin` + origin_pr coercion (00063) ────────
+-- The arms of the activity predicate that are fresh plpgsql in 00063 — a scalar
+-- `nin` and the integer origin_pr coercion — asserted here (not in §68b) because
+-- they need a fixture carrying a source_agent and a PR, which §69's facet-a rows
+-- already do: facet-1/facet-2 are agent `aw` / PR 311, facet-3 has a blank agent
+-- and no PR. All three are active, so a bare facet-a scope sums to 3.
+-- AC-1: source_agent `nin [aw]` excludes the two `aw` rows → facet-3 alone → 1.
+-- AC-2: origin_pr's digits-only coercion drops the non-numeric decoy and matches
+--       311 alone → facet-1 + facet-2 → 2.
+-- AC-3: an all-non-numeric origin_pr list coerces to empty and applies NO filter
+--       (00063's rationale), not a match-nothing → all three active rows → 3.
+do $$
+declare
+  v_sum bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day',
+      p_scope => 'project::facet-a', p_source_agent => array['aw'], p_source_agent_mode => 'nin');
+  assert v_sum = 1, format('activity AC-1: source_agent nin [aw] under facet-a must leave 1, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day',
+      p_scope => 'project::facet-a', p_origin_pr => array['abc', '311']);
+  assert v_sum = 2, format('activity AC-2: origin_pr [abc,311] must coerce to 311 → 2, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day',
+      p_scope => 'project::facet-a', p_origin_pr => array['not-a-pr']);
+  assert v_sum = 3, format('activity AC-3: an empty coerced origin_pr must not filter → 3, got %s', v_sum);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 69b. lorekit_memory_facets drill-down + kind/host (00057) ────────────────
+-- AC-1: kind and host are enumerated as their own dimensions.
+-- AC-2: DRILL-DOWN — an active filter on one dimension narrows the counts of
+--       the OTHER dimensions, so a value's count is what selecting it yields.
+-- AC-3: SELF-EXCLUSION — a dimension's own filter does NOT collapse its own
+--       other values, so multi-select stays discoverable.
+-- AC-4: the `tag` dimension's `cross join lateral unnest` branch drills down
+--       like the scalar ones — it is the only structurally different cell.
+-- AC-5: `nin` mode is a distinct `case` arm and must self-exclude too.
+-- AC-6: `origin_pr` is compared NUMERICALLY, so `007` matches PR 7 exactly as
+--       it does on `GET /memories`, and an all-non-numeric list filters nothing.
+-- Fresh user id `…dd` so only these three rows are visible — counts are exact.
+-- It owns no other row anywhere in this file, which is what makes every count
+-- below exact; it therefore needs its own `auth.users` seed to satisfy
+-- `memories.user_id`'s FK (00001), like the other late-introduced identities.
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000dd', 'authenticated', 'authenticated', 'lk-mig-dd@test.local', now(), now());
+
+insert into memories (user_id, scope, key, value, source_agent, kind, host, tags, origin_pr) values
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-1', 'v', 'aw',  'lesson', 'reviewer', array['dd-alpha','dd-shared'], 7),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-2', 'v', 'aw',  'lesson', 'aw',       array['dd-shared'],            7),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-3', 'v', 'bee', 'signal', 'reviewer', array['dd-beta','dd-shared'],  42);
+
+do $$
+declare
+  v_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: kind + host appear as dimensions with global counts.
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000dd')
+   where facet = 'kind' and value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-1: kind lesson must count 2, got %s', v_count);
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000dd')
+   where facet = 'host' and value = 'reviewer';
+  assert v_count = 2, format('facets drill-down AC-1b: host reviewer must count 2, got %s', v_count);
+
+  -- AC-2: filter kind=lesson → host `reviewer` narrows from 2 to 1 (only dd-1;
+  -- dd-3 is a signal). This is the whole point of drill-down.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in')
+   where facet = 'host' and value = 'reviewer';
+  assert v_count = 1, format('facets drill-down AC-2: host reviewer under kind=lesson must be 1, got %s', v_count);
+
+  -- AC-3: the SAME kind filter must NOT collapse the kind dimension's own
+  -- values — self-exclusion keeps signal=1 visible so the user can switch.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in')
+   where facet = 'kind' and value = 'signal';
+  assert v_count = 1, format('facets drill-down AC-3: self-exclusion must keep kind signal=1 under kind=lesson, got %s', v_count);
+
+  -- AC-4: the tag dimension is the ONE cell built with `cross join lateral
+  -- unnest`, so its drill-down is structurally different from the scalar ones
+  -- and is asserted on its own. `dd-shared` is on all three rows, so kind=lesson
+  -- narrows it 3 → 2; `dd-beta` lives only on the signal row, so it disappears.
+  -- `coalesce(sum(...))` because an absent value emits NO row at all.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in') f
+   where f.facet = 'tag' and f.value = 'dd-shared';
+  assert v_count = 2, format('facets drill-down AC-4: tag dd-shared under kind=lesson must be 2, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in') f
+   where f.facet = 'tag' and f.value = 'dd-beta';
+  assert v_count = 0, format('facets drill-down AC-4b: tag dd-beta must not survive kind=lesson, got %s', v_count);
+
+  -- AC-4c: the tag dimension SELF-EXCLUDES too — filtering on `dd-alpha` must
+  -- not collapse the tag dimension to that one value, or the user could never
+  -- switch labels from a drilled-down menu.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_tags => array['dd-alpha'], p_tags_mode => 'any') f
+   where f.facet = 'tag' and f.value = 'dd-beta';
+  assert v_count = 1, format('facets drill-down AC-4c: tag self-exclusion must keep dd-beta=1 under tags=dd-alpha, got %s', v_count);
+
+  -- AC-5: `nin` is its own `case` arm. Under kind NOT IN (lesson) the host
+  -- dimension narrows to the signal row only (1), while the kind dimension
+  -- self-excludes and still reports its own excluded value (lesson = 2).
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'nin') f
+   where f.facet = 'host' and f.value = 'reviewer';
+  assert v_count = 1, format('facets drill-down AC-5: host reviewer under kind nin lesson must be 1, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'nin') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-5b: nin self-exclusion must keep kind lesson=2, got %s', v_count);
+
+  -- AC-6: `origin_pr` is an integer column, so the filter is compared
+  -- numerically — `007` must match PR 7 exactly as it does on `GET /memories`,
+  -- which sends the digits-only value bare to the integer column.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_origin_pr => array['007'], p_origin_pr_mode => 'in') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-6: zero-padded origin_pr 007 must match PR 7 (kind lesson = 2), got %s', v_count);
+
+  -- AC-6b: a list with no numeric entry left applies NO filter, rather than
+  -- matching nothing — again the list route's documented behaviour.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_origin_pr => array['not-a-number'], p_origin_pr_mode => 'in') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-6b: a non-numeric origin_pr list must not filter (kind lesson = 2), got %s', v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 69c. owner as a facet DIMENSION + the RPC owner predicate (00064) ────────
+-- Ownership was the ONE Explorer filter narrowed client-side; 00064 folds it
+-- into the same drill-down machinery as every other dimension. Owner identity is
+-- `personal` (org_id null) or the owning org's SLUG. This covers the two RPCs
+-- (`lorekit_memory_facets` and `lorekit_memory_activity`). The equivalent
+-- `GET /memories` list predicate (`applyOwnerFilter`) shares the SAME identity
+-- rule but runs at the PostgREST layer, so this SQL suite cannot reach it — and
+-- it has NO automated coverage yet: `memories-api.integration.spec.ts` has a
+-- `list filters` block for the other dimensions but no `owner` case. Adding one
+-- is the open follow-up; until then the list predicate is verified by hand
+-- against the RPC identity rule these ACs pin.
+-- AC-1: the owner facet enumerates `personal` and the org slug with counts.
+-- AC-2: DRILL-DOWN — an owner filter narrows the OTHER dimensions' counts.
+-- AC-3: SELF-EXCLUSION — the owner filter does not collapse the owner dimension,
+--       so both owner values stay switchable from a drilled-in menu.
+-- AC-4: `nin` excludes the named identity (personal → org rows only).
+-- AC-5: activity applies the SAME predicate (personal-only / org-only / a
+--       no-match yielding zero), so the stat header agrees with the list.
+-- Fresh user `…ec` + org `…fc` (slug `owner-org`): the user owns 2 personal rows
+-- and, as a member of `…fc`, sees 1 org-owned row — so every count is exact and
+-- isolated from the rest of the file.
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ec', 'authenticated', 'authenticated', 'lk-mig-ec@test.local', now(), now());
+
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000fc', 'owner-org', 'Owner Org', '00000000-0000-0000-0000-0000000000ec');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000fc', '00000000-0000-0000-0000-0000000000ec', 'owner');
+
+-- Two personal rows (org_id null) with a shared agent, and one org-owned row
+-- (user_id null, org_id set) with a different agent — so a drill-down over the
+-- owner filter has an OTHER dimension to narrow.
+insert into memories (user_id, org_id, scope, key, value, source_agent) values
+  ('00000000-0000-0000-0000-0000000000ec', null,                                     'project::owner-p',        'op-1', 'v', 'ec-agent'),
+  ('00000000-0000-0000-0000-0000000000ec', null,                                     'project::owner-p',        'op-2', 'v', 'ec-agent'),
+  (null,                                    '00000000-0000-0000-0000-0000000000fc', 'repo::acme/owner-org',    'oo-1', 'v', 'org-agent');
+
+do $$
+declare
+  v_count bigint;
+  v_sum   bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: the owner facet enumerates `personal` (2 rows) and the org slug (1).
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000ec')
+   where facet = 'owner' and value = 'personal';
+  assert v_count = 2, format('owner facet AC-1: owner personal must count 2, got %s', v_count);
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000ec')
+   where facet = 'owner' and value = 'owner-org';
+  assert v_count = 1, format('owner facet AC-1b: owner owner-org (slug) must count 1, got %s', v_count);
+
+  -- AC-2: filter owner=personal → source_agent narrows to the personal rows'
+  -- agent (ec-agent = 2) and the org agent disappears.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'in') f
+   where f.facet = 'source_agent' and f.value = 'ec-agent';
+  assert v_count = 2, format('owner facet AC-2: source_agent ec-agent under owner=personal must be 2, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'in') f
+   where f.facet = 'source_agent' and f.value = 'org-agent';
+  assert v_count = 0, format('owner facet AC-2b: org-agent must not survive owner=personal, got %s', v_count);
+
+  -- Filter owner=owner-org (by SLUG) → only the org row's agent survives.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['owner-org'], p_owner_mode => 'in') f
+   where f.facet = 'source_agent' and f.value = 'org-agent';
+  assert v_count = 1, format('owner facet AC-2c: source_agent org-agent under owner=owner-org must be 1, got %s', v_count);
+
+  -- AC-3: SELF-EXCLUSION — the owner filter must NOT collapse the owner
+  -- dimension's own values, so the other owner stays switchable.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'in') f
+   where f.facet = 'owner' and f.value = 'owner-org';
+  assert v_count = 1, format('owner facet AC-3: self-exclusion must keep owner owner-org=1 under owner=personal, got %s', v_count);
+
+  -- AC-4: `nin` excludes the personal partition → only the org row's agent.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'nin') f
+   where f.facet = 'source_agent' and f.value = 'org-agent';
+  assert v_count = 1, format('owner facet AC-4: source_agent org-agent under owner nin personal must be 1, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'nin') f
+   where f.facet = 'source_agent' and f.value = 'ec-agent';
+  assert v_count = 0, format('owner facet AC-4b: ec-agent must not survive owner nin personal, got %s', v_count);
+
+  -- AC-5: activity applies the SAME predicate, so the stat header agrees.
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['personal']);
+  assert v_sum = 2, format('owner activity AC-5: owner=personal must sum to 2, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['owner-org']);
+  assert v_sum = 1, format('owner activity AC-5b: owner=owner-org must sum to 1, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['personal'], p_owner_mode => 'nin');
+  assert v_sum = 1, format('owner activity AC-5c: owner nin personal must sum to 1, got %s', v_sum);
+
+  -- A slug the caller cannot resolve (not a member org) matches NOTHING, never a
+  -- fallback to the account total.
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['no-such-org']);
+  assert v_sum = 0, format('owner activity AC-5d: an unresolvable owner slug must yield 0, got %s', v_sum);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 70. lorekit_memory_facets grant surface — PII-adjacent, so no anon ──────
 -- Branch names, repo names and agent names are at least as sensitive as the
 -- scope names 00039 withholds, so the grant set is that function's verbatim.
 do $$
 declare
-  v_sig text := 'lorekit_memory_facets(uuid, boolean)';
+  -- 00057 widened the signature with the drill-down filter params (19 args);
+  -- 00064 appended the owner dimension (p_owner, p_owner_mode → 21 args).
+  -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
+  -- p_key_org_ids → 24 args).
+  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, uuid[])';
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';
@@ -3838,7 +4262,11 @@ begin
   -- AC-2: EVERY READ_TOOLS name counts. The 2nd holds memory.read (4) and
   -- memory.list_archived (6). This is the discriminating assertion for the
   -- omitted fourth tool: with a three-name filter it reads 4, not 10.
-  select count into v_count
+  -- Summed with coalesce(sum(...)): 00080 split the function's output by
+  -- read_kind, so memory.read (targeted) and memory.list_archived (bulk) are
+  -- now two separate rows for this bucket — a bare `select count into` would
+  -- only see the first one (see AC-4 below for the same pattern).
+  select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',
       timestamptz '2026-04-02 00:00:00+00', timestamptz '2026-04-03 00:00:00+00');
@@ -3959,7 +4387,10 @@ begin
   -- gone. This single number is the discriminating assertion for all three:
   -- 30 means nothing was excluded, 4 means the NULL row was wrongly dropped
   -- (the `<>` bug), 25 means the filter is inverted.
-  select count into v_count
+  -- Summed with coalesce(sum(...)): the mcp memory.list (bulk) and the
+  -- unattributed memory.read (targeted) are two separate read_kind rows since
+  -- 00080, so a bare `select count into` would only see one of them.
+  select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',
       timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00');
@@ -3996,6 +4427,4083 @@ begin
     v_raised := true;
   end;
   assert v_raised, 'usage client AC-5: an over-long client value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 73. blog_post_likes — public anonymous cumulative like counter (00055) ──
+-- The blog is a public, unauthenticated surface and a like accumulates across
+-- ALL visitors, so — uniquely in this schema — the increment RPC is granted to
+-- `anon`. The per-session cap is client-side; the server only accumulates the
+-- global total and refuses an abusive single call.
+-- AC-1: lorekit_blog_like inserts a row on first like and returns the total.
+-- AC-2: a second like on the same slug accumulates atomically.
+-- AC-3: p_delta is clamped to [1,100] — an over-large delta adds at most 100,
+--       and a 0/negative delta is floored to +1 (never a decrement).
+-- AC-4: an invalid slug shape is rejected (no junk rows under arbitrary keys).
+-- AC-5: `anon` — the unauthenticated blog visitor — can execute the RPC and can
+--       SELECT the totals under the public read policy.
+-- AC-6: the migration header's claim that a direct PostgREST write "cannot be
+--       bypassed" is EXECUTED, not just asserted in prose: an `anon` INSERT is
+--       denied outright, and an `anon` UPDATE cannot move an existing total.
+
+do $$
+declare
+  v_total bigint;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+
+  -- AC-1: first like creates the row.
+  select lorekit_blog_like('hello-world', 1) into v_total;
+  assert v_total = 1, format('blog likes AC-1: first like must total 1, got %s', v_total);
+
+  -- AC-2: accumulates.
+  select lorekit_blog_like('hello-world', 1) into v_total;
+  assert v_total = 2, format('blog likes AC-2: second like must total 2, got %s', v_total);
+
+  -- AC-3: an over-large delta is clamped to 100 (2 + 100 = 102).
+  select lorekit_blog_like('hello-world', 1000) into v_total;
+  assert v_total = 102,
+    format('blog likes AC-3: delta 1000 must clamp to +100 (total 102), got %s', v_total);
+
+  -- AC-3: a 0/negative delta is floored to +1, never a decrement.
+  select lorekit_blog_like('hello-world', 0) into v_total;
+  assert v_total = 103,
+    format('blog likes AC-3: delta 0 must floor to +1 (total 103), got %s', v_total);
+  select lorekit_blog_like('hello-world', -5) into v_total;
+  assert v_total = 104,
+    format('blog likes AC-3: negative delta must floor to +1 (total 104), got %s', v_total);
+
+  -- AC-4: an invalid slug is rejected. Pinned to the errcode the RPC itself
+  -- raises (22023, 00055) rather than `when others`, which would be satisfied
+  -- by ANY failure — a renamed function, a revoked grant, a typo in this call —
+  -- and so would prove nothing about slug validation.
+  begin
+    perform lorekit_blog_like('Not A Slug!', 1);
+  exception when sqlstate '22023' then
+    v_raised := true;
+  end;
+  assert v_raised, 'blog likes AC-4: an invalid slug shape must raise 22023';
+
+  reset role;
+end;
+$$;
+
+-- AC-5: the anonymous role can both write and read.
+do $$
+declare
+  v_total bigint;
+  v_read  bigint;
+begin
+  set local role anon;
+
+  select lorekit_blog_like('anon-post', 3) into v_total;
+  assert v_total = 3, format('blog likes AC-5: anon write must total 3, got %s', v_total);
+
+  select likes into v_read from blog_post_likes where slug = 'anon-post';
+  assert v_read = 3, format('blog likes AC-5: anon read under the public policy must see 3, got %s', v_read);
+
+  reset role;
+end;
+$$;
+
+-- AC-6: writes really do go ONLY through lorekit_blog_like. The migration
+-- header rests its whole security argument on there being no insert/update RLS
+-- policy, so that has to be executable, not prose.
+--
+-- Deliberately mechanism-agnostic. A missing table grant and a missing RLS
+-- policy BOTH surface as insufficient_privilege (42501) on the INSERT, and an
+-- UPDATE that is granted but unpolicied matches zero rows with no error at all
+-- — so the UPDATE leg tolerates the exception and asserts the INVARIANT (the
+-- total did not move) instead of pinning one of the two outcomes. Note also
+-- that a plpgsql exception block is a subtransaction: an aborted one rolls back
+-- its own `set local role`, which is why each leg re-establishes the role.
+do $$
+declare
+  v_denied boolean := false;
+  v_total  bigint;
+begin
+  -- Seed a row for the UPDATE leg through the sanctioned path.
+  set local role service_role;
+  perform lorekit_blog_like('direct-write-probe', 5);
+  reset role;
+
+  -- A direct INSERT as the anonymous blog visitor must be refused.
+  begin
+    set local role anon;
+    insert into blog_post_likes (slug, likes) values ('bypass-attempt', 999);
+  exception when insufficient_privilege then
+    v_denied := true;
+  end;
+  reset role;
+  assert v_denied,
+    'blog likes AC-6: a direct anon INSERT must be denied — writes go only through lorekit_blog_like';
+
+  -- A direct UPDATE as anon must not be able to move a total.
+  begin
+    set local role anon;
+    update blog_post_likes set likes = 100000 where slug = 'direct-write-probe';
+  exception when insufficient_privilege then
+    null;
+  end;
+  reset role;
+
+  select likes into v_total from blog_post_likes where slug = 'direct-write-probe';
+  assert v_total = 5,
+    format('blog likes AC-6: a direct anon UPDATE must not change the total, got %s', v_total);
+
+  -- And the refused INSERT left no junk row behind.
+  select count(*) into v_total from blog_post_likes where slug = 'bypass-attempt';
+  assert v_total = 0,
+    format('blog likes AC-6: the refused INSERT must leave no row, got %s', v_total);
+end;
+$$;
+
+-- ── 74. usage_events.scope — per-scope read attribution (00058) ─────────────
+-- Reads already carried `scope_type` (the low-cardinality family: repo /
+-- branch / …), which cannot answer "how much did I read from
+-- repo::mthines/lorekit". 00058 adds the EXACT scope and regroups
+-- lorekit_read_activity one row per (bucket, scope), mirroring
+-- lorekit_memory_activity (00051), plus an optional exact-match p_scope filter.
+--
+-- AC-1: the column is nullable with a length CHECK backstop and a partial
+--       index; a NULL-scope row inserts fine and a 201-char one is refused.
+-- AC-2: the series is GROUPED — two scopes in one bucket come back as two rows
+--       with their own counts, not one merged total.
+-- AC-3: p_scope restricts to one exact scope, and the filtered buckets SUM to
+--       that scope's headline. This is why no companion total RPC exists.
+-- AC-4: a NULL-scope read is still COUNTED in the unfiltered series — reads
+--       whose scope could not be resolved are unattributed, never dropped —
+--       and is NOT swept into a named-scope filter.
+-- AC-5: the 00054 dashboard exclusion survives the regrouping, per scope.
+-- AC-6: the writer persists p_scope, and a call that omits it (every caller
+--       written before this migration) still succeeds with scope NULL.
+--
+-- Dated 2026-06 so it cannot collide with §71's 2026-04 fixture, §72's 2026-05
+-- one, or the usage-statistics section's all-time totals.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, scope, created_at) values
+  -- Two DIFFERENT scopes inside the SAME hour, which is what makes AC-2
+  -- discriminating: an ungrouped RPC returns one row of 12 here, not two.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'api_key', 'ok', 10,  8, 'mcp', 'repo::mthines/lorekit',  timestamptz '2026-06-01 01:10:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.search', 'repo',   'api_key', 'ok', 10,  4, 'mcp', 'repo::mthines/gw-tools', timestamptz '2026-06-01 01:20:00+00'),
+  -- A second event for the FIRST scope in a LATER bucket: p_scope must sum
+  -- across buckets, so a filter that only ever returns one row would fail AC-3.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read',   'repo',   'api_key', 'ok', 10,  5, 'mcp', 'repo::mthines/lorekit',  timestamptz '2026-06-01 03:00:00+00'),
+  -- Unattributable: a scope the server could not resolve (body-carried, or
+  -- ungrammatical and coerced to null by safeValidateScope).
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'global', 'api_key', 'ok', 10,  3, 'mcp', null,                     timestamptz '2026-06-01 01:30:00+00'),
+  -- The dashboard drawing the chart, under a real scope — must stay excluded.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'jwt',     'ok', 10, 99, 'dashboard', 'repo::mthines/lorekit', timestamptz '2026-06-01 01:40:00+00');
+
+do $$
+declare
+  v_rows    int;
+  v_count   bigint;
+  v_scope   text;
+  v_total   bigint;
+  v_id      uuid;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- ── AC-1: the column, the CHECK and the index are real schema, not prose ──
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'usage_events' and column_name = 'scope' and is_nullable = 'YES';
+  assert v_rows = 1, 'usage scope AC-1: usage_events.scope must exist and be nullable';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'usage_events' and indexname = 'usage_events_user_scope_created_idx';
+  assert v_rows = 1, 'usage scope AC-1: the partial (user_id, scope, created_at desc) index must exist';
+
+  -- The CHECK is a BACKSTOP against an unbounded value inflating analytics
+  -- cardinality — the app-side validator is the primary gate, but a direct
+  -- insert must not be able to bypass the storage guarantee. 200 is the
+  -- boundary, so 201 is the discriminating length.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 201));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'usage scope AC-1: a 201-char scope must violate the CHECK';
+
+  -- ...and exactly 200 is still admitted, so the CHECK is a bound, not a ban.
+  insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
+    values ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'jwt', 'ok', repeat('x', 200));
+
+  -- AC-1: the CHECK's blast radius, executed. The writer swallows every error
+  -- (`when others → return null`), so an over-long scope reaching the RPC does
+  -- NOT lose the scope — it loses the ENTIRE usage event, silently. That is why
+  -- `safeValidateScope` bounds length client-side at USAGE_SCOPE_MAX. Pinning
+  -- the consequence here means a future "simplification" that drops the
+  -- client-side bound fails a test instead of quietly deleting analytics rows.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_tool_name => 'memory.list',
+    p_auth_type => 'jwt',
+    p_outcome => 'ok',
+    p_result_count => 1,
+    p_scope => repeat('x', 201)) into v_id;
+  assert v_id is null,
+    'usage scope AC-1: an over-long scope must take the WHOLE event down (writer swallows) — '
+    || 'this is precisely why safeValidateScope bounds length before the write';
+
+  -- ...and the same call with the scope already dropped to NULL — what
+  -- safeValidateScope actually hands the writer — DOES land. The event survives;
+  -- only the dimension is lost. This is the pair that makes the bound's value
+  -- visible rather than asserted in prose.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_tool_name => 'memory.list',
+    p_auth_type => 'jwt',
+    p_outcome => 'ok',
+    p_result_count => 1,
+    p_scope => null) into v_id;
+  assert v_id is not null,
+    'usage scope AC-1: dropping the scope to NULL must preserve the event';
+
+  -- ── AC-2 + AC-4 + AC-5: the grouped shape ─────────────────────────────────
+  -- The 01:00 hour holds three counted reads under three distinct scope values
+  -- (lorekit 8, gw-tools 4, NULL 3) plus the dashboard's 99, which is excluded.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00');
+  assert v_rows = 3,
+    format('usage scope AC-2/AC-4: the 01:00 hour must yield 3 (bucket,scope) rows, got %s', v_rows);
+
+  -- AC-2: each scope keeps its OWN count. A merged 12 here would mean the
+  -- grouping is cosmetic.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope = 'repo::mthines/lorekit';
+  assert v_count = 8,
+    format('usage scope AC-2: repo::mthines/lorekit must read 8 in the 01:00 hour, got %s', v_count);
+
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope = 'repo::mthines/gw-tools';
+  assert v_count = 4,
+    format('usage scope AC-2: repo::mthines/gw-tools must read 4 in the 01:00 hour, got %s', v_count);
+
+  -- AC-4: the unattributed read is present as a `scope is null` row and still
+  -- counted. Dropping it would silently shrink the account total, which is the
+  -- exact failure `is distinct from` guards against on the client column.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope is null;
+  assert v_count = 3,
+    format('usage scope AC-4: the NULL-scope read must be counted as 3, got %s', v_count);
+
+  -- AC-5: the dashboard's 99 is nowhere in the hour — under ANY scope. The
+  -- whole-hour total is 8 + 4 + 3 = 15; 114 would mean the regrouping lost the
+  -- 00054 exclusion.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00');
+  assert v_total = 15,
+    format('usage scope AC-5: the 01:00 hour must total 15 with the dashboard excluded, got %s', v_total);
+
+  -- ── AC-3: p_scope is an exact filter whose buckets SUM to the headline ────
+  -- lorekit is read in two different buckets (8 at 01:00, 5 at 03:00). Two rows
+  -- back, summing to 13 — the per-scope headline the Explorer's stats card
+  -- shows above these very bars.
+  select count(*), coalesce(sum(count), 0) into v_rows, v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/lorekit');
+  assert v_rows = 2,
+    format('usage scope AC-3: the filter must span buckets, expected 2 rows, got %s', v_rows);
+  assert v_total = 13,
+    format('usage scope AC-3: repo::mthines/lorekit must sum to 13, got %s', v_total);
+
+  -- AC-3: and it is EXACT — the other scope is gone entirely, not merely
+  -- ordered later.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/lorekit')
+   where scope is distinct from 'repo::mthines/lorekit';
+  assert v_rows = 0,
+    format('usage scope AC-3: a filtered call must return only that scope, got %s foreign rows', v_rows);
+
+  -- AC-3 + AC-4: filtering by a named scope must NOT sweep in the NULL-scope
+  -- remainder. `=` and not `is not distinct from` — a caller asking for a named
+  -- scope wants events attributed to it. This is why the per-scope total (13)
+  -- is legitimately SMALLER than the day's account total, and the UI says so.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00');
+  assert v_total = 20,
+    format('usage scope AC-4: the unfiltered day must total 20 (13 + 4 + 3), got %s', v_total);
+
+  -- A filter naming a scope with no events is empty, not everything — the
+  -- discriminating case for a predicate accidentally written as always-true.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/does-not-exist');
+  assert v_rows = 0,
+    format('usage scope AC-3: an unmatched scope filter must return no rows, got %s', v_rows);
+
+  -- ── AC-6: the writer ──────────────────────────────────────────────────────
+  -- The new trailing parameter is persisted.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_plan_name => 'free',
+    p_tool_name => 'memory.list',
+    p_scope_type => 'repo',
+    p_auth_type => 'api_key',
+    p_outcome => 'ok',
+    p_result_count => 2,
+    p_scope => 'repo::mthines/lorekit') into v_id;
+  assert v_id is not null, 'usage scope AC-6: the writer must return the inserted id';
+  select scope into v_scope from usage_events where id = v_id;
+  assert v_scope = 'repo::mthines/lorekit',
+    format('usage scope AC-6: p_scope must be persisted, got %s', v_scope);
+
+  -- ...and a call that OMITS it — every caller written before 00058, including
+  -- the 14-argument positional form 00056 left behind — still succeeds, with
+  -- scope NULL. A stale DROP target would instead make this call ambiguous.
+  select lorekit_record_usage_event(
+    '00000000-0000-0000-0000-0000000000a1', null, 'free',
+    'memory.list', 'repo', 'jwt', 'ok', 5, null, 3, null, 'cli', null, null) into v_id;
+  assert v_id is not null, 'usage scope AC-6: the pre-00058 14-arg call must still resolve';
+  select scope into v_scope from usage_events where id = v_id;
+  assert v_scope is null,
+    format('usage scope AC-6: a call omitting p_scope must leave scope NULL, got %s', v_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-1: the grant surface follows 00047's hardening — the regrouped reader is
+-- reachable by an authenticated user and by service_role, and NEVER by anon.
+-- The signature changed, so the revoke/grant had to be re-issued against the
+-- NEW one; a stale grant would leave anon holding EXECUTE on a function that
+-- reads the whole usage ledger.
+do $$
+declare
+  -- 00069 appended `p_key_scopes text[]`, so the live signature is the 6-arg
+  -- one. Asserted against the CURRENT signature rather than 00058's: a
+  -- privilege probe against a signature that no longer exists errors out, and
+  -- the overload count below is what pins that only one form is live.
+  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[])';
+  v_overloads int;
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'usage scope: anon must NOT hold execute on the regrouped lorekit_read_activity';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'usage scope: authenticated must hold execute on the regrouped lorekit_read_activity';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'usage scope: service_role must hold execute on the regrouped lorekit_read_activity';
+
+  -- The old 4-argument signature must be GONE, not merely shadowed. A missed
+  -- DROP leaves both overloads live, and PostgREST's named-argument resolution
+  -- would then be free to pick the ungrouped one — the endpoint would keep
+  -- working while silently returning the pre-00058 shape.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_read_activity';
+  assert v_overloads = 1,
+    format('usage scope: exactly one lorekit_read_activity overload must exist, found %s', v_overloads);
+
+  -- Same for the writer: 00056's 14-argument form must have been replaced, not
+  -- joined by a 15-argument sibling.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_record_usage_event';
+  assert v_overloads = 1,
+    format('usage scope: exactly one lorekit_record_usage_event overload must exist, found %s', v_overloads);
+end;
+$$;
+
+-- AC-6 (deferral, R10): purge_expired_memories is deliberately UNTOUCHED by
+-- 00058 — its `memory.expired` event is per-USER and spans every scope that
+-- user owns, so there is no single scope to attribute it to. Asserted, not just
+-- documented, so "we'll do it later" cannot quietly become "we did it wrong":
+-- the expiry event must still record a NULL scope.
+do $$
+declare v_scopes int;
+begin
+  set local role service_role;
+  select count(*) into v_scopes
+    from usage_events
+   where tool_name = 'memory.expired' and scope is not null;
+  assert v_scopes = 0,
+    format('usage scope R10: memory.expired must remain scope-unattributed, found %s attributed', v_scopes);
+  reset role;
+end;
+$$;
+
+-- ── 75. "expiring soon" — the (now, bound] list predicate (PR-2) ────────────
+-- Backs `GET /memories?expiring_within_days=N`, the Explorer's "expiring soon"
+-- Status view. NO migration: the predicate is applied by the list handler and
+-- range-scans `memories_expires_at_idx` (00030), the partial index on
+-- `expires_at is not null`.
+--
+-- SCOPE OF THIS SECTION, stated plainly so it is not read as more than it is:
+-- it asserts the PREDICATE the handler emits, over real rows, at the
+-- boundaries — the part where the semantics can be wrong. It does NOT exercise
+-- the handler's PostgREST translation; that is the live smoke test's job
+-- (`memories-api.integration.spec.ts`). The two are complementary: this one can
+-- seed a row expiring in exactly N days and an already-expired one, which a
+-- live suite cannot do without waiting.
+--
+-- AC-1: rows expiring inside the window are returned.
+-- AC-2: an ALREADY-EXPIRED row is excluded — the lower bound is exclusive, and
+--       this is why the handler re-states it instead of leaning on the live
+--       branch (which `archived=true` does not apply).
+-- AC-3: a row with NO TTL is excluded, and with no `expires_at is not null`
+--       clause: the comparisons drop it on their own, which is the claim
+--       `expiring-window.ts` makes and the one most likely to be "simplified".
+-- AC-4: the boundaries are (exclusive, inclusive] — a row expiring exactly at
+--       `now` is out; one expiring exactly at the bound is in.
+-- AC-5: the partial index that makes this affordable actually exists.
+
+-- Every row is positioned relative to a FIXED instant, so "already expired" and
+-- "expires in exactly 7 days" are exact rather than racing the suite's runtime.
+insert into memories (user_id, scope, key, value, expires_at) values
+  -- In-window: comfortably inside a 7-day horizon.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-in-3d',   'v', timestamptz '2026-06-04 12:00:00+00'),
+  -- In-window, at the far edge: expires at EXACTLY now + 7 days. The inclusive
+  -- upper bound is the whole reason this row is expected back.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-at-edge', 'v', timestamptz '2026-06-08 12:00:00+00'),
+  -- Out of window: real and live, but further out than the horizon asked for.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-in-30d',  'v', timestamptz '2026-07-01 12:00:00+00'),
+  -- Already expired: still on the table (the purge is nightly), and must never
+  -- surface in a view whose whole promise is "act before these go".
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-past',    'v', timestamptz '2026-05-01 12:00:00+00'),
+  -- Exactly at `now`: expired by one instant. The discriminating row for an
+  -- accidentally-inclusive lower bound.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-at-now',  'v', timestamptz '2026-06-01 12:00:00+00'),
+  -- No TTL at all: permanent lore, never "expiring".
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-none',    'v', null);
+
+do $$
+declare
+  -- The frozen clock and the 7-day horizon `expiringWindow(7, now)` derives
+  -- from it. Two literals rather than an expression, so this test cannot
+  -- reproduce an arithmetic bug in the code it is checking.
+  v_now   constant timestamptz := timestamptz '2026-06-01 12:00:00+00';
+  v_bound constant timestamptz := timestamptz '2026-06-08 12:00:00+00';
+  v_keys  text[];
+  v_rows  int;
+begin
+  set local role service_role;
+
+  -- The predicate EXACTLY as the handler emits it: two comparisons, no
+  -- `is not null`, lower exclusive, upper inclusive.
+  select array_agg(key order by key) into v_keys
+    from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1'
+     and archived_at is null
+     and key like 'exp-%'
+     and expires_at >  v_now
+     and expires_at <= v_bound;
+
+  -- AC-1 + AC-2 + AC-3 + AC-4 in one discriminating assertion. Each wrong
+  -- boundary produces a DIFFERENT wrong array, so a failure names the bug:
+  --   + exp-at-now  → the lower bound was made inclusive
+  --   - exp-at-edge → the upper bound was made exclusive
+  --   + exp-past    → the lower bound is missing entirely
+  --   + exp-in-30d  → the upper bound is missing entirely
+  --   + exp-none    → NULL is leaking through (a coalesce, or a `not (…)`)
+  assert v_keys = array['exp-at-edge', 'exp-in-3d'],
+    format('expiring AC-1..4: expected exactly {exp-at-edge, exp-in-3d}, got %s', v_keys);
+
+  -- AC-3, isolated. The no-TTL row is the one a future "simplification" would
+  -- re-admit by rewriting the pair as a NOT of the live predicate, so it gets
+  -- its own assertion rather than only living inside the array above.
+  select count(*) into v_rows
+    from memories
+   where key = 'exp-none'
+     and expires_at >  v_now
+     and expires_at <= v_bound;
+  assert v_rows = 0,
+    format('expiring AC-3: a memory with no TTL must never be "expiring soon", got %s rows', v_rows);
+
+  -- AC-2, isolated, with the reason attached: the expired row is STILL PRESENT
+  -- in the table (purging is a nightly job, not a read-path delete), so its
+  -- absence from the result is the predicate's doing and not the fixture's.
+  select count(*) into v_rows from memories where key = 'exp-past';
+  assert v_rows = 1,
+    'expiring AC-2: the fixture must still hold the expired row — otherwise its exclusion proves nothing';
+
+  reset role;
+end;
+$$;
+
+-- AC-5: the index this predicate relies on exists and is the PARTIAL one.
+-- Asserted, not assumed: the plan for `expires_at > x and expires_at <= y` is a
+-- range scan over exactly the `expires_at is not null` subset, which is why
+-- PR-2 adds no index of its own. If 00030's index were dropped or made total,
+-- this filter would quietly become a seq scan on the largest table.
+do $$
+declare v_where text;
+begin
+  select pg_get_expr(i.indpred, i.indrelid) into v_where
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+   where c.relname = 'memories_expires_at_idx';
+
+  assert v_where is not null,
+    'expiring AC-5: memories_expires_at_idx (00030) must exist — the expiring filter has no index of its own';
+  assert v_where like '%expires_at IS NOT NULL%',
+    format('expiring AC-5: memories_expires_at_idx must stay PARTIAL on expires_at is not null, got %s', v_where);
+end;
+$$;
+
+-- ── 76. memories.seen_count — recurrence counted by the writer (00059) ──────
+-- The counter LoreKit's own skill guidance has always gated promotion on
+-- (`seen_count >= 3`) never existed as a column; it lived as hand-written text
+-- in a lesson body's `meta:` comment, so nothing incremented it and nothing
+-- could read it. 00059 makes it real and puts the increment in the upsert,
+-- which is where a recurrence actually happens.
+-- AC-1: a first write inserts with seen_count = 1.
+-- AC-2: a second write to the same (tenant, scope, key) increments to 2 and
+--       updates the existing row instead of inserting a second one. This says
+--       nothing about WHICH row the increment reads: `memories.seen_count + 1`
+--       and `excluded.seen_count + 1` both yield 2 on the second write.
+-- AC-3: the count keeps climbing, and the row is still the SAME row. This is
+--       the assertion that discriminates the two: `excluded` is the row the
+--       INSERT proposed and always carries the literal 1, so an `excluded`-based
+--       increment would pin the count at 2 while four writes must leave 4.
+-- AC-4: the OTHER two conflict branches increment too — the service-role
+--       branch (p_user_id null) and the org branch (p_org_slug set). AC-1…AC-3
+--       only ever write through the personal branch, and 00059 edited all
+--       three, so "all three branches" has to be exercised, not asserted.
+-- AC-5: reviving an ARCHIVED key is NOT a recurrence. The conflict predicates
+--       are partial on `archived_at is null`, so this inserts a fresh row that
+--       starts back at 1 — the lesson was retired and is being learned again.
+-- AC-6: the CHECK is a real backstop — a direct write of 0 is rejected, so a
+--       corrupt value fails loudly instead of silently sinking a lesson's
+--       salience in whatever ranks on this column later.
+do $$
+declare
+  v_uid constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_id1    uuid;
+  v_id2    uuid;
+  v_seen   integer;
+  v_raised boolean := false;
+begin
+  -- AC-1 — first sighting.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-key', 'v1');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 1,
+    format('seen_count AC-1: a first write must insert seen_count = 1, got %s', v_seen);
+
+  -- AC-2 — the recurrence.
+  select id into v_id2 from memory_write(v_uid, 'global', 'seen-count-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id2;
+  assert v_id2 = v_id1, 'seen_count AC-2: the recurrence must update the existing row';
+  assert v_seen = 2,
+    format('seen_count AC-2: the second write must increment to 2, got %s', v_seen);
+
+  -- AC-3 — it keeps counting, on the same row.
+  perform memory_write(v_uid, 'global', 'seen-count-key', 'v3');
+  perform memory_write(v_uid, 'global', 'seen-count-key', 'v4');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 4,
+    format('seen_count AC-3: four writes must leave seen_count = 4, got %s '
+           '(a value pinned at 2 means the increment reads excluded.seen_count)', v_seen);
+  assert (select count(*) from memories where scope = 'global' and key = 'seen-count-key') = 1,
+    'seen_count AC-3: four writes must leave exactly one row';
+
+  -- AC-4 — the service-role branch counts too (p_user_id null).
+  select id into v_id1 from memory_write(null, 'global', 'seen-count-service-key', 'v1');
+  perform memory_write(null, 'global', 'seen-count-service-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2,
+    format('seen_count AC-4: the service branch must increment as well, got %s', v_seen);
+
+  -- AC-4 — and so does the org branch (p_org_slug; a1 owns test-org / f1).
+  -- The org insert branch writes user_id null and arbitrates on
+  -- (org_id, scope, key), so it is a genuinely different conflict target from
+  -- both the personal and the service branch.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-org-key', 'v1',
+                                         '{}'::text[], null, null, null, 'test-org');
+  perform memory_write(v_uid, 'global', 'seen-count-org-key', 'v2',
+                       '{}'::text[], null, null, null, 'test-org');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2,
+    format('seen_count AC-4: the org branch must increment as well, got %s', v_seen);
+  assert (select org_id from memories where id = v_id1)
+           = '00000000-0000-0000-0000-0000000000f1',
+    'seen_count AC-4: the org write must land on an org-owned row, not a personal one';
+  assert (select count(*) from memories
+           where scope = 'global' and key = 'seen-count-org-key') = 1,
+    'seen_count AC-4: the org recurrence must update the row, not insert a second';
+
+  -- AC-5 — reviving an archived key starts over.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v1');
+  perform memory_write(v_uid, 'global', 'seen-count-archived-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2, format('seen_count AC-5: precondition — expected 2, got %s', v_seen);
+
+  update memories set archived_at = now() where id = v_id1;
+  select id into v_id2 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v3');
+  select seen_count into v_seen from memories where id = v_id2;
+  assert v_id2 <> v_id1,
+    'seen_count AC-5: writing an archived key must insert a NEW row, not revive the archived one';
+  assert v_seen = 1,
+    format('seen_count AC-5: the revived lesson must start back at 1, got %s', v_seen);
+
+  -- AC-6 — the CHECK backstop.
+  begin
+    update memories set seen_count = 0 where id = v_id2;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised,
+    'seen_count AC-6: memories_seen_count_positive must reject a non-positive count';
+end;
+$$;
+
+-- ── 75. The FTS candidate selection GET /memories/relevant ranks over (00001) ─
+-- `GET /memories/relevant` fetches candidates with
+-- `textSearch('fts', q, { type: 'websearch', config: 'english' })` and then
+-- ranks them in TypeScript. The RANKING is unit-tested (and held to the CLI's
+-- copy by `lesson-rank-parity.spec.ts`), but the SELECTION is pure SQL and had
+-- NO coverage anywhere in this file: the `fts` generated column has existed
+-- since 00001 and nothing asserted what it matches. A change to its expression
+-- or its text-search config would silently change which lessons are reachable —
+-- through this route and through `POST /memories/search`, which uses the same
+-- column.
+-- AC-1: a term in the VALUE matches, and AC-5 rides along with it.
+-- AC-2: a term in the KEY matches — `fts` is generated over `key || value`, so
+--       a lesson whose body never repeats its own title is still findable.
+-- AC-3: English STEMMING is on: `migrations` finds `migration`. That is what
+--       makes the endpoint usable with a natural-language query instead of an
+--       exact keyword.
+-- AC-4: a quoted phrase matches as a phrase, and websearch negation excludes.
+-- AC-5: the ACTIVE partition — an archived row and an expired row are not
+--       candidates, matching the handler's `archived_at is null` +
+--       `expires_at is null or expires_at > now()` predicate.
+-- AC-6: a term present in nothing matches nothing. Without this, every other
+--       assertion here would still pass if the predicate were a no-op that let
+--       recency rank the tenant's entire store.
+do $$
+declare
+  v_uid  constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_hits integer;
+begin
+  perform memory_write(v_uid, 'global', 'fts-migration-order',
+    'Always add the column before the backfill runs.');
+  perform memory_write(v_uid, 'global', 'fts-flaky-retry',
+    'The retry wrapper hides a real race in the fixture.');
+  perform memory_write(v_uid, 'global', 'fts-archived-one',
+    'An archived lesson about backfill that must not be a candidate.');
+  perform memory_write(v_uid, 'global', 'fts-expired-one',
+    'An expired lesson about backfill that must not be a candidate.');
+
+  update memories set archived_at = now()
+    where user_id = v_uid and key = 'fts-archived-one';
+  update memories set expires_at = now() - interval '1 day'
+    where user_id = v_uid and key = 'fts-expired-one';
+
+  -- AC-1 + AC-5 — a term in the value, and only the ACTIVE row carrying it.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'backfill');
+  assert v_hits = 1,
+    format('relevant AC-1/AC-5: "backfill" must match exactly the one ACTIVE lesson, got %s '
+           '(three rows contain the word; the archived and expired ones are not candidates)', v_hits);
+
+  -- AC-2 — a term present only in the KEY.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'flaky');
+  assert v_hits = 1,
+    format('relevant AC-2: a term present only in the key must match — fts is generated '
+           'over key || value — got %s', v_hits);
+
+  -- AC-3 — English stemming.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'migrations');
+  assert v_hits = 1,
+    format('relevant AC-3: the english config must stem "migrations" onto "migration", got %s '
+           '(a `simple` config would return 0 and make natural-language queries useless)', v_hits);
+
+  -- AC-4 — phrase and negation, the two websearch operators a caller can type.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', '"real race"');
+  assert v_hits = 1,
+    format('relevant AC-4: a quoted phrase must match as a phrase, got %s', v_hits);
+
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'lesson -backfill');
+  assert v_hits = 0,
+    format('relevant AC-4: websearch negation must exclude the negated term, got %s', v_hits);
+
+  -- AC-6 — anti-vacuity for every assertion above.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'kubernetes');
+  assert v_hits = 0,
+    format('relevant AC-6: a term present in no lesson must match nothing, got %s', v_hits);
+end;
+$$;
+
+-- ── 77. memories.embedding — the dormant semantic column (00060) ────────────
+-- 00060 lands the schema for semantic search with NOTHING reading or writing
+-- it. These assertions are therefore mostly about ABSENCE of effect: the point
+-- of a dormant migration is that you can prove it changed no behaviour, and a
+-- structural claim in a comment proves nothing.
+-- AC-1: the extension, both columns and both indexes are real schema.
+-- AC-2: the column is NULLABLE with NO DEFAULT. Null means "not embedded yet",
+--       which is the state every existing row is in and the state the backfill
+--       will query for; a default would make "never embedded" indistinguishable
+--       from "embedded as zeroes".
+-- AC-3: every pre-existing row reads null — the migration backfilled nothing.
+-- AC-4: `memory_write` is UNAFFECTED. It takes no embedding parameter and a
+--       write leaves the column null, so the whole existing write path is
+--       untouched by a column it does not know about.
+-- AC-5: the pairing CHECK holds in both directions. A vector without a model is
+--       unattributable and a model without a vector is a lie about what the row
+--       holds; both are silent failures, so they are refused at the storage
+--       layer rather than trusted to a writer that does not exist yet.
+-- AC-6: the model column's length backstop bounds an unbounded free-text value.
+-- AC-7: a vector of the WRONG WIDTH is refused. This is what pins the 1536
+--       decision to the schema — pgvector's HNSW index rejects more than 2000
+--       dimensions, so a later "let's just use the 3072 model" would otherwise
+--       fail at index-build time in a deploy rather than here.
+do $$
+declare
+  v_uid   constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_rows  int;
+  v_id    uuid;
+  v_null  int;
+  v_raised boolean;
+  v_msg   text;
+  -- A syntactically valid 1536-dimension vector, built rather than typed.
+  v_vec   constant text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+begin
+  -- AC-1 — the extension and the schema it made possible.
+  select count(*) into v_rows from pg_extension where extname = 'vector';
+  assert v_rows = 1, 'embeddings AC-1: the vector extension must be enabled';
+
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'memories' and column_name = 'embedding';
+  assert v_rows = 1, 'embeddings AC-1: memories.embedding must exist';
+
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'memories' and column_name = 'embedding_model';
+  assert v_rows = 1, 'embeddings AC-1: memories.embedding_model must exist';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'memories' and indexname = 'memories_embedding_hnsw_idx';
+  assert v_rows = 1, 'embeddings AC-1: the HNSW ANN index must exist';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'memories' and indexname = 'memories_embedding_pending_idx';
+  assert v_rows = 1,
+    'embeddings AC-1: the backfill coverage index must exist — without it a '
+    'resumable backfill scans the whole table on every batch';
+
+  -- The index must be HNSW, not IVFFlat. Built on an empty table IVFFlat
+  -- produces meaningless centroids and has to be dropped and rebuilt once data
+  -- lands, which is a second migration on a table that is large by then.
+  select count(*) into v_rows
+    from pg_class c
+    join pg_am am on am.oid = c.relam
+   where c.relname = 'memories_embedding_hnsw_idx' and am.amname = 'hnsw';
+  assert v_rows = 1, 'embeddings AC-1: the ANN index must use HNSW, not IVFFlat';
+
+  -- AC-2 — nullable, and no default.
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'memories' and column_name = 'embedding'
+     and is_nullable = 'YES' and column_default is null;
+  assert v_rows = 1, 'embeddings AC-2: embedding must be nullable with no default';
+
+  -- AC-3 — the migration embedded nothing. Anti-vacuity first: there must be
+  -- rows to be null, or this assertion is about the empty set.
+  select count(*) into v_rows from memories;
+  assert v_rows > 0, 'embeddings AC-3: precondition — earlier sections must have written rows';
+  select count(*) into v_null from memories where embedding is null;
+  assert v_null = v_rows,
+    format('embeddings AC-3: every pre-existing row must read null, got %s of %s', v_null, v_rows);
+
+  -- AC-4 — the existing write path is untouched by a column it does not know.
+  select id into v_id from memory_write(v_uid, 'global', 'embedding-dormant-key', 'v');
+  select count(*) into v_rows
+    from memories where id = v_id and embedding is null and embedding_model is null;
+  assert v_rows = 1, 'embeddings AC-4: memory_write must leave both columns null';
+
+  -- AC-5 — the pairing CHECK, both directions.
+  v_raised := false;
+  begin
+    update memories set embedding = v_vec::vector where id = v_id;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'embeddings AC-5: a vector with no model must be refused';
+
+  v_raised := false;
+  begin
+    update memories set embedding_model = 'text-embedding-3-small' where id = v_id;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'embeddings AC-5: a model with no vector must be refused';
+
+  -- ...and the pair together is admitted, so the CHECK is a pairing rule and
+  -- not a ban on ever using the columns.
+  update memories
+     set embedding = v_vec::vector, embedding_model = 'text-embedding-3-small'
+   where id = v_id;
+  select count(*) into v_rows from memories where id = v_id and embedding is not null;
+  assert v_rows = 1, 'embeddings AC-5: a vector WITH its model must be admitted';
+
+  -- AC-6 — the model length backstop.
+  v_raised := false;
+  begin
+    update memories set embedding_model = repeat('x', 129) where id = v_id;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'embeddings AC-6: a 129-char embedding_model must violate the CHECK';
+
+  -- AC-7 — the width is pinned by the type, so a wrong-dimension vector cannot
+  -- be stored at all. The handler is `data_exception` (SQLSTATE class 22) and
+  -- not `others`: pgvector's typmod coercion raises ERRCODE_DATA_EXCEPTION with
+  -- "expected 1536 dimensions, not 3", so `others` would let ANY failure —
+  -- including one unrelated to width — satisfy the assertion. The message check
+  -- is what keeps the assertion pinned to the dimension mismatch it claims to
+  -- prove rather than to "some class-22 error happened". It carries the literal
+  -- `1536` on purpose: matching only `%dimensions%` would prove *a* width
+  -- complaint and would keep passing if the column were silently redefined to
+  -- some other width, which is the one redefinition this AC exists to catch.
+  v_raised := false;
+  v_msg    := null;
+  begin
+    update memories set embedding = '[0.1,0.2,0.3]'::vector where id = v_id;
+  exception when data_exception then
+    v_raised := true;
+    v_msg    := sqlerrm;
+  end;
+  assert v_raised, 'embeddings AC-7: a 3-dimension vector must be refused by the 1536-wide column';
+  assert v_msg like '%1536 dimensions%',
+    format('embeddings AC-7: the refusal must name the 1536-wide column, got %L', v_msg);
+end;
+$$;
+
+-- ── 78. memories keyset-covering index for the list seek (00061) ────────────
+-- The audit_log precedent (00012, asserted in section 11) applied to the
+-- hottest read path in the product: the list query orders by
+-- (updated_at desc, id desc) and seeks on the same pair, so the index must
+-- carry the id column or the tiebreaker becomes a heap recheck. 00033's
+-- (scope, updated_at desc) index predates keyset pagination entirely.
+do $$
+declare
+  v_keyset_idx boolean;
+  v_partial    boolean;
+  v_columns    boolean;
+begin
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_scope_updated_at_id_idx'
+  ) into v_keyset_idx;
+  assert v_keyset_idx,
+    'memories keyset: (scope, updated_at desc, id desc) covering index must exist';
+
+  -- The partial predicate is the half that makes it describe the same row
+  -- population as 00033's index; an index over ALL rows would still satisfy the
+  -- existence check above while quietly covering archived lore too.
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_scope_updated_at_id_idx'
+      and indexdef ilike '%where (archived_at IS NULL)%'
+  ) into v_partial;
+  assert v_partial,
+    'memories keyset: the covering index must stay partial on archived_at is null';
+
+  -- The name and the predicate together still say nothing about the COLUMN
+  -- LIST, and the column list IS the fix: an index of this exact name built as
+  -- (scope, updated_at desc) — or with `id` ASC, which is 00012's residual
+  -- mismatch — satisfies both assertions above while leaving the keyset seek
+  -- exactly as uncovered as 00033 left it. `pg_get_indexdef` renders the
+  -- ordered column list verbatim, the same catalog-rendered-text idiom AC-5
+  -- above uses for `pg_get_expr(indpred)`.
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_scope_updated_at_id_idx'
+      and indexdef ilike '%(scope, updated_at desc, id desc)%'
+  ) into v_columns;
+  assert v_columns,
+    'memories keyset: the covering index must be on (scope, updated_at desc, id desc) '
+    'in that order — a same-named index over other columns is not the fix';
+end;
+$$;
+
+-- ── 62. lorekit_memory_set_embedding: org-owned rows are embeddable, and the
+--        role gate survives (00062) ──────────────────────────────────────────
+-- The regression this pins: `rls_read` was widened for orgs in 00015,
+-- `rls_update` (00001) never was. An org-owned memory has `user_id is null`
+-- (00019), so a JWT client's direct UPDATE matched zero rows and PostgREST
+-- called that success — every org memory silently went unembedded.
+--
+-- AC-1 asserts the OLD path is still broken (a direct update matches nothing),
+-- because that is the only way this test can prove the RPC is load-bearing
+-- rather than decorative. AC-2 asserts the new path works for the same caller.
+-- AC-3 is the reason this is an RPC and not a widened policy: a VIEWER must be
+-- refused, which RLS cannot express.
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000e6201', 'embed-org', 'Embed Org',
+   '00000000-0000-0000-0000-0000000000a1');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000e6201', '00000000-0000-0000-0000-0000000000a1', 'member'),
+  ('00000000-0000-0000-0000-0000000e6201', '00000000-0000-0000-0000-0000000000b2', 'viewer');
+
+-- An org-owned memory as 00019 writes one: org_id set, user_id NULL.
+insert into memories (id, user_id, org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000e6210', null, '00000000-0000-0000-0000-0000000e6201',
+   'global', 'embed-org-row', 'org owned value'),
+  ('00000000-0000-0000-0000-0000000e6211', '00000000-0000-0000-0000-0000000000a1', null,
+   'global', 'embed-personal-row', 'personal value');
+
+do $$
+declare
+  -- Built rather than typed, matching the 00060 section above.
+  v_vec      text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+  v_direct   int := 0;
+  v_ok       boolean;
+  v_model    text;
+  v_denied   boolean;
+  v_gone     boolean;
+  v_paired   boolean := false;
+begin
+  -- ── AC-1: the old direct-update path does NOT land for a JWT caller ───────
+  -- Either it matches zero rows (rls_update's USING excludes the org-owned row)
+  -- or the role lacks table UPDATE entirely. Both prove the same thing — a JWT
+  -- client cannot write this row directly — and which one applies depends on
+  -- Supabase's default table grants rather than on anything this repo declares.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  begin
+    with upd as (
+      update memories set embedding = v_vec::vector, embedding_model = 'probe'
+       where id = '00000000-0000-0000-0000-0000000e6210'
+      returning 1
+    )
+    select count(*) into v_direct from upd;
+  exception when insufficient_privilege then
+    v_direct := 0;
+  end;
+
+  reset role;
+
+  assert v_direct = 0,
+    format('00062 AC-1: a JWT-scoped direct UPDATE on an org-owned memory must not land '
+           '(that asymmetry between rls_read and rls_update is the bug 00062 routes around), '
+           'but it matched %s row(s). If this now succeeds, rls_update was widened — check '
+           'that the org ROLE gate did not go with it', v_direct);
+
+  -- ── AC-2: the RPC writes the same row for the same caller ─────────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6210', null, v_vec, 'text-embedding-3-small');
+
+  reset role;
+
+  assert v_ok,
+    '00062 AC-2: a write-capable org member must be able to embed an org-owned memory';
+
+  select embedding_model into v_model
+    from memories where id = '00000000-0000-0000-0000-0000000e6210';
+  assert v_model = 'text-embedding-3-small',
+    format('00062 AC-2: embedding_model should be written alongside the vector, got %s', v_model);
+
+  -- ── AC-3: a VIEWER is refused — the role gate RLS cannot express ──────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+
+  select written into v_denied
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6210', null, v_vec, 'sneaky-model');
+
+  reset role;
+
+  assert not v_denied,
+    '00062 AC-3: an org VIEWER must NOT be able to write an embedding — this is exactly what '
+    'widening rls_update instead of adding this RPC would have permitted';
+
+  select embedding_model into v_model
+    from memories where id = '00000000-0000-0000-0000-0000000e6210';
+  assert v_model = 'text-embedding-3-small',
+    format('00062 AC-3: the viewer''s denied call must not have altered the row, model is now %s', v_model);
+
+  -- ── AC-4: personal rows — owner writes, a stranger does not ───────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6211', null, v_vec, 'text-embedding-3-small');
+  reset role;
+  assert v_ok, '00062 AC-4: the owner of a personal memory must be able to embed it';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select written into v_denied
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6211', null, v_vec, 'stranger-model');
+  reset role;
+  assert not v_denied,
+    '00062 AC-4: a user who does not own a personal memory must not be able to embed it';
+
+  -- ── AC-5: a row that no longer exists is false, not an exception ──────────
+  -- The caller is a backgrounded task whose contract is "never fail a write".
+  select written into v_gone
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e62ff', null, v_vec, 'text-embedding-3-small');
+  assert not v_gone,
+    '00062 AC-5: a missing memory id must return false rather than raising';
+
+  -- ── AC-6: the 00060 both-or-neither pairing is refused by NAME ────────────
+  begin
+    perform lorekit_memory_set_embedding(
+              '00000000-0000-0000-0000-0000000e6211', null, v_vec, null);
+  exception when others then
+    v_paired := sqlerrm like '%must be set together%';
+  end;
+  assert v_paired,
+    '00062 AC-6: supplying a vector without a model must be refused with a named reason, '
+    'not left to surface as an opaque CHECK violation inside a background task';
+end;
+$$;
+
+-- AC-7: grant surface. Postgres grants EXECUTE to PUBLIC by default and `anon`
+-- inherits it, so the migration's explicit REVOKE is what makes this pass —
+-- the same trap 00041 documents and this assertion is why it stays caught.
+do $$
+declare
+  v_sig text := 'lorekit_memory_set_embedding(uuid, uuid, text, text)';
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must NOT be executable by anon';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must be executable by authenticated';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must be executable by service_role';
+end;
+$$;
+
+-- ── 62b. An embedding write must not restamp `updated_at` (00062) ───────────
+-- `updated_at` is the recency signal search/relevant order by, memory.list
+-- keysets on, and lesson-rank scores. The vector is a DERIVED artefact, so
+-- writing one is not an edit. A whole-store backfill would otherwise restamp
+-- every row in `created_at desc` order and destroy the real ordering, with no
+-- way to recover the old values.
+--
+-- AC-1 pins the preservation, AC-2 pins that a REAL edit still bumps (a trigger
+-- that never stamps would pass AC-1 while breaking every consumer), and AC-3
+-- pins that an edit arriving together with an embedding still counts as an edit.
+insert into memories (id, user_id, scope, key, value, updated_at) values
+  ('00000000-0000-0000-0000-0000000e6220', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row', 'original value', '2020-01-01T00:00:00Z'),
+  -- AC-3 needs its own row: `now()` does not advance within a transaction, so a
+  -- reset-then-compare on the first row could never show a bump. See the note there.
+  ('00000000-0000-0000-0000-0000000e6221', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row-2', 'original value', '2020-01-01T00:00:00Z'),
+  -- AC-6 likewise: it asserts a no-op re-write STILL bumps, which needs a row
+  -- whose stamp is unambiguously old.
+  ('00000000-0000-0000-0000-0000000e6222', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row-3', 'original value', '2020-01-01T00:00:00Z');
+
+do $$
+declare
+  v_vec     text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+  v_before  timestamptz;
+  v_after   timestamptz;
+  v_ok      boolean;
+begin
+  select updated_at into v_before from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_before = '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062b AC-1 setup: the seeded updated_at should be untouched, got %s', v_before);
+
+  -- AC-1 — an embedding-only write preserves it.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6220', null, v_vec, 'text-embedding-3-small');
+  reset role;
+
+  assert v_ok, '00062b AC-1 setup: the embedding write should have landed';
+
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after = v_before,
+    format('00062b AC-1: an embedding-only write must NOT restamp updated_at — was %s, now %s. '
+           'A backfill doing this to every row rewrites the store''s recency ordering irrecoverably',
+           v_before, v_after);
+
+  -- AC-2 — a real edit still bumps it. Without this, a trigger that simply
+  -- never stamped would satisfy AC-1 while silently breaking every consumer.
+  update memories set value = 'edited value' where id = '00000000-0000-0000-0000-0000000e6220';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after > v_before,
+    format('00062b AC-2: editing a memory must still bump updated_at, stayed at %s', v_after);
+
+  -- AC-3 — an edit that ALSO rewrites the vector is still an edit.
+  --
+  -- On a SECOND row seeded at 2020, not by resetting the first one, because
+  -- `now()` is the TRANSACTION timestamp and does not advance inside one — so
+  -- comparing two stamps taken in this transaction could never show an increase,
+  -- and the assertion would be vacuous however the reset behaved.
+  --
+  -- (An earlier revision of the trigger gave a second reason: a lone
+  -- `update … set updated_at = …` was preserved, so the reset silently no-oped.
+  -- That is no longer true — AC-6 below asserts such a write BUMPS, because the
+  -- trigger now requires the embedding columns to have actually moved. The
+  -- separate row is still the right shape for the timestamp reason above.)
+  --
+  -- Seeding through INSERT is what makes it work: there is no BEFORE INSERT
+  -- trigger on `updated_at`, so the 2020 value survives and a bump is
+  -- unmistakable.
+  --
+  -- Both embedding columns move together — the 00060 CHECK is both-or-neither,
+  -- so setting `embedding_model` alone would fail on the constraint rather than
+  -- testing the trigger.
+  update memories
+     set value = 'edited again',
+         embedding = v_vec::vector,
+         embedding_model = 'text-embedding-3-large'
+   where id = '00000000-0000-0000-0000-0000000e6221';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6221';
+  assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062b AC-3: a change touching both the value and the embedding columns is an edit '
+           'and must bump updated_at, stayed at %s', v_after);
+
+  -- AC-6 — a plain NO-OP re-write still bumps, i.e. this migration did not
+  -- quietly change the recency contract for everything else.
+  --
+  -- `memory_write` UPSERTS, so an agent re-saving an identical lesson lands here
+  -- with every column unchanged. Preserving `updated_at` for that case would
+  -- silently stop re-saves from refreshing recency — a behaviour change reaching
+  -- far beyond embeddings, in a migration whose entire claim is that a DERIVED
+  -- column must not disturb the row. The trigger therefore requires a vector to
+  -- have actually moved, and this is what holds it to that.
+  update memories
+     set updated_at = updated_at   -- no-op: rewrites the row, changes nothing
+   where id = '00000000-0000-0000-0000-0000000e6222';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6222';
+  assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062b AC-6: a no-op re-write must STILL bump updated_at — only a write that moves '
+           'the embedding columns may preserve it. An upsert of an unchanged lesson is the '
+           'common case here, and it must keep refreshing recency. Stayed at %s', v_after);
+end;
+$$;
+
+-- AC-5: the generated-column list this trigger masks is still exactly `fts`.
+--
+-- This is the guard for the trap that broke the first attempt. Postgres computes
+-- GENERATED columns AFTER before-row triggers, so inside the trigger `new.<gen>`
+-- is NULL while `old.<gen>` holds a value — an unmasked generated column makes
+-- EVERY update compare as changed and quietly turns the function back into
+-- `set_updated_at`. It fails in the safe direction, so nothing else would catch
+-- it. Adding a generated column to `memories` must therefore trip this and be
+-- masked in `lorekit_memories_set_updated_at` too.
+do $$
+declare
+  v_generated text[];
+begin
+  select coalesce(array_agg(column_name order by column_name), '{}')
+    into v_generated
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'memories' and is_generated = 'ALWAYS';
+
+  assert v_generated = array['fts'],
+    format('00062b AC-5: memories now has generated columns %s, but '
+           'lorekit_memories_set_updated_at only masks `fts`. An unmasked generated column is '
+           'NULL in a BEFORE trigger while OLD holds a value, so every update compares as '
+           'changed and updated_at is restamped on embedding-only writes again. Mask it there '
+           'and update this assertion.', v_generated);
+end;
+$$;
+
+-- AC-4: the five OTHER tables on the shared `set_updated_at` are untouched —
+-- only the memories trigger was retargeted. Retargeting all of them would be a
+-- behaviour change to tables that have no embedding column and no such problem.
+do $$
+declare
+  v_fn text;
+begin
+  select p.proname into v_fn
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_class c on c.oid = t.tgrelid
+   where c.relname = 'memories' and t.tgname = 'memories_updated_at';
+  assert v_fn = 'lorekit_memories_set_updated_at',
+    format('00062b AC-4: the memories trigger must use lorekit_memories_set_updated_at, uses %s', v_fn);
+
+  select p.proname into v_fn
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_class c on c.oid = t.tgrelid
+   where c.relname = 'orgs' and t.tgname = 'orgs_updated_at';
+  assert v_fn = 'set_updated_at',
+    format('00062b AC-4: orgs must still use the shared set_updated_at, uses %s', v_fn);
+end;
+$$;
+
+-- ── 80. lorekit_match_text / _tags / _int — the shared predicates (00066) ────
+-- Three inlinable helpers replace eight hand-written `case` blocks per caller.
+-- The rule most likely to be lost in a copy — and the reason they exist — is
+-- that `nin` requires the value to be NON-NULL, so an unattributed row is
+-- EXCLUDED from a negated filter rather than silently dropped by NULL logic.
+--
+-- AC-1: a null filter is "not filtered" and matches everything.
+-- AC-2: `in` is membership; `nin` its negation.
+-- AC-3: a NULL column value satisfies neither `in` NOR `nin` — the load-bearing
+--       asymmetry. `x <> all(...)` alone is NULL for a null x, which reads as
+--       false, so "agent is not aw" would drop every unattributed memory.
+-- AC-4: the helpers are TOTAL — they return a boolean, never NULL, for every
+--       combination including a null value and a null mode.
+-- AC-5: tags modes — `all` is containment, `any` overlap, `none` the negation
+--       of `any` (never of `all`, which would admit "all but one").
+-- AC-6: the integer helper compares NUMERICALLY, so `007` matches PR 7 exactly
+--       as the list route does.
+do $$
+begin
+  -- AC-1: null filter matches everything, whatever the mode says.
+  assert lorekit_match_text('aw', null, 'in'),      'match_text AC-1: null filter must match';
+  assert lorekit_match_text('aw', null, 'nin'),     'match_text AC-1: null filter must match under nin';
+  assert lorekit_match_text(null, null, 'in'),      'match_text AC-1: null value + null filter must match';
+  assert lorekit_match_tags(array['a'], null, 'all'), 'match_tags AC-1: null filter must match';
+  assert lorekit_match_int(7, null, 'in'),          'match_int AC-1: null filter must match';
+
+  -- AC-2: membership and its negation.
+  assert lorekit_match_text('aw', array['aw','claude'], 'in'),
+    'match_text AC-2: a listed value must match under in';
+  assert not lorekit_match_text('other', array['aw'], 'in'),
+    'match_text AC-2: an unlisted value must not match under in';
+  assert lorekit_match_text('other', array['aw'], 'nin'),
+    'match_text AC-2: an unlisted value must match under nin';
+  assert not lorekit_match_text('aw', array['aw'], 'nin'),
+    'match_text AC-2: a listed value must not match under nin';
+
+  -- AC-3: THE asymmetry. A row with no value is excluded either way.
+  assert not lorekit_match_text(null, array['aw'], 'in'),
+    'match_text AC-3: a null value must not match a positive filter';
+  assert not lorekit_match_text(null, array['aw'], 'nin'),
+    'match_text AC-3: a null value must NOT satisfy a negated filter — that is the '
+    'null test the helper exists to centralise';
+  assert not lorekit_match_int(null, array[7], 'nin'),
+    'match_int AC-3: the integer helper must share the null rule';
+
+  -- AC-4: total — never NULL, so a caller can AND the result directly.
+  assert lorekit_match_text(null, array['aw'], 'in') is not null,
+    'match_text AC-4: must return a boolean, never NULL';
+  assert lorekit_match_text('aw', array['aw'], null) is not null,
+    'match_text AC-4: a null mode must default, not propagate NULL';
+  assert lorekit_match_text('aw', array['aw'], null),
+    'match_text AC-4: a null mode must default to `in`';
+  assert lorekit_match_tags(array['a'], array['a'], null),
+    'match_tags AC-4: a null mode must default to `any`';
+
+  -- AC-5: the three tag modes.
+  assert lorekit_match_tags(array['a','b'], array['a','b'], 'all'),
+    'match_tags AC-5: containment holds when every label is present';
+  assert not lorekit_match_tags(array['a'], array['a','b'], 'all'),
+    'match_tags AC-5: containment fails when one label is missing';
+  assert lorekit_match_tags(array['a'], array['a','b'], 'any'),
+    'match_tags AC-5: overlap holds on one shared label';
+  assert not lorekit_match_tags(array['a'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must reject a row sharing ANY label';
+  -- The discriminating case for `none` being NOT(any) rather than NOT(all):
+  -- a row carrying every named label must be rejected, and so must one
+  -- carrying just one of them (asserted above).
+  assert not lorekit_match_tags(array['a','b'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must reject a row carrying all named labels';
+  assert lorekit_match_tags(array['c'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must accept a row sharing no label';
+  assert lorekit_match_tags('{}'::text[], array['a'], 'none'),
+    'match_tags AC-5: a row with no labels shares none, so `none` accepts it';
+
+  -- AC-6: numeric comparison, so a zero-padded entry still matches.
+  assert lorekit_match_int(7, array[7], 'in'), 'match_int AC-6: 7 must match 7';
+  assert lorekit_match_int(7, (select array_agg(x::integer) from unnest(array['007']) as x), 'in'),
+    'match_int AC-6: `007` must resolve to 7 and match, exactly as GET /memories does';
+end;
+$$;
+
+-- ── 81. lorekit_memory_list — the keyset page as a SQL function (00067) ──────
+-- The list read moved into Postgres so a wide filter never becomes a URL. The
+-- edge previously composed `or=(host.in.("a","b",…))` as a PostgREST QUERY
+-- PARAM, so a dimension carrying a few hundred values built an internal request
+-- the gateway refused — the same wall the JSON body removed on the client hop,
+-- relocated one hop downstream where it surfaced as an unattributable 500.
+--
+-- AC-1: the page is ordered by the requested sort desc, then id desc.
+-- AC-2: the keyset cursor resumes strictly after the named row, and the id
+--       tie-break splits rows sharing a timestamp — the whole reason the
+--       cursor carries both halves.
+-- AC-3: WIDE dimensions are the point. A filter naming 1000 values, of which
+--       exactly one is real, returns the one matching row. This is the case
+--       that could not survive the URL transport at any layer.
+-- AC-4: dimensions AND together while values within one OR together, and the
+--       predicates are 00066's, so a `nin` over a NULL column behaves as
+--       lorekit_memory_facets does.
+-- AC-5: a value carrying a COMMA is reachable — unreachable over the query
+--       transport by construction, and the reason the array form exists.
+-- AC-6: the tenant boundary holds: another user's rows are never returned,
+--       and the function is the ONLY predicate (no applyRestTenantScope).
+--       BOTH actor branches are covered: service_role (v_actor = p_user_id)
+--       and the `authenticated` JWT branch (v_actor = auth.uid()), where a
+--       caller-supplied p_user_id must be ignored — that is the branch this
+--       read has instead of RLS.
+-- AC-7: `p_q` and `p_key_prefix` arrive already LIKE-escaped, so a literal `%`
+--       stays data instead of widening to a wildcard.
+-- AC-8: the archived / expired partition rule matches GET /memories'.
+-- AC-9: an `origin_pr` entry that is all digits but too wide for int4 is
+--       DROPPED like any other unusable entry — never a 22003 raised out of a
+--       hand-editable filter value — while the zero-padded form still resolves.
+--       A list whose every entry drops degrades to UNFILTERED, the same way an
+--       all-non-numeric list already does on the facet catalog.
+-- AC-10: `owner`, the one dimension restated inline rather than delegated to
+--       00066's helpers, so it is the only one that can drift from
+--       lorekit_memory_facets unnoticed — AC-10d asserts the two agree.
+-- AC-9 needs one row carrying a real `origin_pr`, so the zero-padded half of a
+-- mixed filter has something to match; every other row leaves it null.
+insert into memories (user_id, scope, key, value, tags, source_agent, host, kind, origin_pr, created_at, updated_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-1', 'alpha',   array['x'], 'aw',    'reviewer', 'lesson', 7,    '2026-01-09T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-2', 'beta',    array['y'], 'aw',    'aw',       'lesson', null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+  -- Same updated_at as lr-2 on purpose: AC-2's id tie-break needs a real tie.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-3', 'gamma',   array['y'], 'other', null,       null,     null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+  -- A comma-bearing host: AC-5.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-4', 'delta',   array['z'], 'aw',    'a,b',      'bus',    null, '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z'),
+  -- A literal percent in the value: AC-7.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-5', '100%pure',array['z'], 'aw',    'reviewer', 'bus',    null, '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z');
+insert into memories (user_id, scope, key, value, source_agent, archived_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-archived', 'v', 'aw', now());
+insert into memories (user_id, scope, key, value, source_agent) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::list-rpc-b', 'lr-b-1', 'v', 'aw');
+
+do $$
+declare
+  v_keys   text[];
+  v_rows   int;
+  v_rows2  int;
+  v_facet  bigint;
+  v_wide   text[];
+  v_ts     timestamptz;
+  v_id     uuid;
+  v_key    text;
+  v_ts2    timestamptz;
+  v_id2    uuid;
+  v_i      int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: updated_at desc, id desc.
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at', p_limit => 100)
+  ) t;
+  assert v_keys[1] = 'lr-5',
+    format('list rpc AC-1: newest updated_at must lead, got %s', v_keys);
+  assert v_keys[2] = 'lr-4',
+    format('list rpc AC-1b: second must be lr-4, got %s', v_keys);
+  assert array_length(v_keys, 1) = 5,
+    format('list rpc AC-1c: the archived row must be excluded, got %s', v_keys);
+
+  -- AC-2: resume after lr-4. The next page must start at the tie pair and must
+  -- not repeat lr-4 or lr-5.
+  select updated_at, id into v_ts, v_id
+    from memories where scope = 'project::list-rpc' and key = 'lr-4';
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at',
+        p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 100)
+  ) t;
+  assert not ('lr-4' = any(v_keys)) and not ('lr-5' = any(v_keys)),
+    format('list rpc AC-2: the cursor must exclude its own row and everything above it, got %s', v_keys);
+  assert array_length(v_keys, 1) = 3,
+    format('list rpc AC-2b: three rows must remain, got %s', v_keys);
+
+  -- AC-2c: the id tie-break. lr-2 and lr-3 share updated_at, so paginating
+  -- with a limit of 1 from the tie must yield the other one and not loop.
+  select updated_at, id into v_ts, v_id
+    from memories where scope = 'project::list-rpc' and key = 'lr-2';
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_sort => 'updated_at',
+      p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 1);
+  assert v_keys is null or not ('lr-2' = any(v_keys)),
+    format('list rpc AC-2c: a cursor must never return its own row again, got %s', v_keys);
+
+  -- AC-2d: AC-2c on its own does not pin the tie-break. Delete `m.id < $30` and
+  -- the keyset degrades to `m.updated_at < $29`, which from lr-2's cursor lands
+  -- on lr-1 — still "not lr-2", so AC-2c stays green while the sibling sharing
+  -- lr-2's timestamp has been SKIPPED. Walking every page one row at a time is
+  -- what sees that: with the tie-break the walk visits all five rows exactly
+  -- once; without it lr-3 never appears and the walk returns four.
+  v_keys := '{}'::text[];
+  v_ts   := null;
+  v_id   := null;
+  for v_i in 1..10 loop
+    v_key := null;
+    select r.key, r.updated_at, r.id into v_key, v_ts2, v_id2
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at',
+        p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 1) r;
+    exit when v_key is null;
+    v_keys := v_keys || v_key;
+    v_ts := v_ts2;
+    v_id := v_id2;
+  end loop;
+  assert array_length(v_keys, 1) = 5,
+    format('list rpc AC-2d: a one-row-at-a-time walk must visit all five active rows, got %s', v_keys);
+  assert (select count(distinct k) from unnest(v_keys) k) = 5,
+    format('list rpc AC-2d2: the walk must not repeat a row, got %s', v_keys);
+  assert v_keys @> array['lr-2','lr-3'],
+    format('list rpc AC-2d3: BOTH rows sharing an updated_at must be paged, which is what the id tie-break buys, got %s', v_keys);
+
+  -- AC-3: THE case the URL transport could not carry. 1000 values, one real.
+  select array_agg('filler-host-' || g) into v_wide from generate_series(1, 999) g;
+  v_wide := v_wide || 'reviewer'::text;
+  assert array_length(v_wide, 1) = 1000, 'list rpc AC-3: fixture must name 1000 values';
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_host => v_wide, p_host_mode => 'in', p_limit => 100);
+  assert v_keys @> array['lr-1','lr-5'] and array_length(v_keys, 1) = 2,
+    format('list rpc AC-3: a 1000-value dimension must return exactly its matches, got %s', v_keys);
+
+  -- AC-4: AND across dimensions, OR within one.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_source_agent => array['aw'], p_kind => array['bus'], p_limit => 100);
+  assert v_keys @> array['lr-4','lr-5'] and array_length(v_keys, 1) = 2,
+    format('list rpc AC-4: agent AND kind must intersect, got %s', v_keys);
+
+  -- AC-4b: `nin` over a NULLABLE column keeps the 00066 semantics — a row whose
+  -- column is NULL is NOT admitted by the negation, exactly as the facet
+  -- catalog counts it.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_host => array['reviewer'], p_host_mode => 'nin', p_limit => 100);
+  assert not ('lr-3' = any(coalesce(v_keys, '{}'::text[]))),
+    format('list rpc AC-4b: a NULL host must not satisfy `nin`, got %s', v_keys);
+
+  -- AC-5: a comma-bearing value round-trips. Unreachable over `?host=a,b`,
+  -- which splits it into two values that match nothing.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_host => array['a,b'], p_limit => 100);
+  assert v_keys = array['lr-4'],
+    format('list rpc AC-5: a comma-bearing value must match as ONE value, got %s', v_keys);
+
+  -- AC-6: the tenant boundary. B's row is invisible to A even though the
+  -- function is SECURITY DEFINER and the caller is service_role.
+  select count(*) into v_rows
+    from lorekit_memory_list('00000000-0000-0000-0000-0000000000a1'::uuid, p_limit => 1000)
+   where key = 'lr-b-1';
+  assert v_rows = 0, 'list rpc AC-6: another user''s row must never be returned';
+
+  -- AC-6b: the OTHER actor branch. AC-6 runs as service_role, where v_actor
+  -- comes from p_user_id; a JWT caller takes `v_actor := auth.uid()` instead,
+  -- and that branch is what replaced RLS on this read — the function is
+  -- SECURITY DEFINER, so nothing else narrows it. Adopt B's identity and pass
+  -- A's id: the p_user_id must be IGNORED, so A's rows stay invisible and B
+  -- sees only its own.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated","email":"lk-list-b@test.local"}', true);
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_limit => 100);
+  assert v_rows = 0,
+    format('list rpc AC-6b: a JWT caller must act as auth.uid(), never the p_user_id it passes, got %s rows', v_rows);
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc-b', p_limit => 100);
+  assert v_keys = array['lr-b-1'],
+    format('list rpc AC-6b: the JWT branch must still return the caller''s OWN rows, got %s', v_keys);
+
+  -- Back to service_role for the remaining assertions, which act as A.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-7: a literal `%` in the needle is DATA. The escaped form matches only
+  -- the row that really contains it; an unescaped `%` would match everything.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_q => '100\%pure', p_limit => 100);
+  assert v_keys = array['lr-5'],
+    format('list rpc AC-7: an escaped %% must stay literal, got %s', v_keys);
+
+  -- AC-7b: key_prefix appends the one active wildcard.
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_key_prefix => 'lr-', p_limit => 100);
+  assert v_rows = 5, format('list rpc AC-7b: the prefix must match the five active rows, got %s', v_rows);
+
+  -- AC-8: the archived partition, GET /memories' rule verbatim.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_archived => true, p_scope => 'project::list-rpc', p_limit => 100);
+  assert v_keys = array['lr-archived'],
+    format('list rpc AC-8: the archived partition must hold exactly the archived row, got %s', v_keys);
+
+  -- AC-8b: created_at is a real second sort order, not an alias of the first.
+  -- lr-1 is the OLDEST by updated_at and the NEWEST by created_at, so the two
+  -- orders disagree at the head — a regression collapsing v_sort back to
+  -- updated_at leads with lr-5 and fails here. Without that skew in the fixture
+  -- this assertion holds for both columns and proves nothing.
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'created_at', p_limit => 2)
+  ) t;
+  assert v_keys[1] = 'lr-1',
+    format('list rpc AC-8b: created_at desc must lead with lr-1, not the updated_at leader, got %s', v_keys);
+  assert v_keys[2] = 'lr-5',
+    format('list rpc AC-8b2: created_at desc must continue with lr-5, got %s', v_keys);
+  assert array_length(v_keys, 1) = 2,
+    format('list rpc AC-8c: p_limit must bound the page, got %s', v_keys);
+
+  -- AC-9: an origin_pr entry that is all digits but wider than int4 is DROPPED
+  -- like any other unusable entry, never raised. `^[0-9]+$` alone admits it and
+  -- `x::integer` then raises 22003 — a 500 out of a hand-editable filter value.
+  --
+  -- When EVERY entry drops, `array_agg` over the empty set yields NULL, and a
+  -- null filter is "not filtered" in lorekit_match_int — so the dimension
+  -- degrades to unfiltered, exactly as an all-non-numeric list already does on
+  -- lorekit_memory_facets. That degradation is the contract; what this pins is
+  -- that reaching it does not RAISE.
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['99999999999'], p_limit => 100);
+  assert v_rows = 5,
+    format('list rpc AC-9: an out-of-int4 origin_pr must drop without raising, leaving the dimension unfiltered, got %s rows', v_rows);
+  -- The same degradation an all-non-numeric list produces, asserted side by
+  -- side so the two cannot drift apart.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['not-a-number'], p_limit => 100);
+  assert v_rows2 = v_rows,
+    format('list rpc AC-9a: an over-wide entry must degrade exactly like a non-numeric one, got %s vs %s', v_rows2, v_rows);
+
+  -- AC-9b: the drop is per ENTRY, and the bound keeps the zero-padded form
+  -- resolving numerically, so a list mixing the two still filters on its
+  -- usable half rather than erroring or matching nothing.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['99999999999', '0000000007'], p_limit => 100);
+  assert v_keys = array['lr-1'],
+    format('list rpc AC-9b: the over-wide entry must drop while `0000000007` still matches PR 7, got %s', v_keys);
+
+  -- AC-10: `owner`. It is the ONE dimension 00067 restates inline instead of
+  -- delegating to 00066's lorekit_match_* helpers — it is a LEFT JOIN-computed
+  -- identity (`personal` / org slug), not a scalar column — so it is the only
+  -- one that can drift from lorekit_memory_facets without a shared helper
+  -- catching it. Every fixture row here is personal (org_id null).
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_owner => array['personal'], p_limit => 100);
+  assert v_rows = 5,
+    format('list rpc AC-10: `personal` must admit every org-less row, got %s', v_rows);
+
+  -- The negation is the half that disagrees if the inline expression is
+  -- rewritten as a plain `<> all(...)` over a nullable identity.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_owner => array['personal'], p_owner_mode => 'nin', p_limit => 100);
+  assert v_rows2 = 0,
+    format('list rpc AC-10b: `nin personal` must exclude every org-less row, got %s', v_rows2);
+
+  -- A slug the caller cannot see resolves to nothing rather than widening the
+  -- page: slugs are matched against the LEFT JOIN of VISIBLE orgs only.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_owner => array['no-such-org'], p_limit => 100);
+  assert v_rows2 = 0,
+    format('list rpc AC-10c: an unknown owner slug must match nothing, got %s', v_rows2);
+
+  -- AC-10d: the anti-drift assertion the inline restatement actually needs —
+  -- the list's `personal` count must equal the facet catalog's `owner`/`personal`
+  -- cell for the same caller and scope. If the two implementations of the owner
+  -- identity ever disagree, this fails rather than the menu quietly showing a
+  -- count the list does not honour.
+  select f.count into v_facet
+    from lorekit_memory_facets(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc') f
+   where f.facet = 'owner' and f.value = 'personal';
+  assert v_facet = v_rows,
+    format('list rpc AC-10d: the owner count must agree with lorekit_memory_facets, list=%s facets=%s', v_rows, v_facet);
+
+  -- Hand the transaction back as the migration owner. `set local role` is
+  -- TRANSACTION-scoped, not block-scoped, so leaving `service_role` in place
+  -- here leaks into every later section — and the next one seeds `auth.users`,
+  -- which service_role may not write.
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+end;
+$$;
+
+-- ── 82. api_tokens scoping — columns, CHECKs, predicates, RPC (00068) ───────
+--
+-- The FIRST assertions this file has ever carried about `api_tokens`. The table
+-- has held an authorization record since 00002 with no DB-level proof of its
+-- constraints; 00068 puts a second authorization decision on it, so the gap is
+-- closed here rather than deferred again.
+do $$
+declare
+  v_owner   uuid := gen_random_uuid();
+  v_other   uuid := gen_random_uuid();
+  v_org_a   uuid;
+  v_org_b   uuid;
+  v_token   uuid;
+  v_scopes  text[];
+  v_access  text;
+  v_ids     uuid[];
+  v_failed  boolean;
+begin
+  -- Two orgs, the owner a member of only the first. `api_tokens.user_id`
+  -- references `auth.users`, so the fixtures go in there first.
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values
+    ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+     'lk-mig-keyscope-owner@test.local', now(), now()),
+    ('00000000-0000-0000-0000-000000000000', v_other, 'authenticated', 'authenticated',
+     'lk-mig-keyscope-other@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values ('scoping-org-a', 'A', v_owner)
+    returning id into v_org_a;
+  insert into orgs (slug, name, created_by) values ('scoping-org-b', 'B', v_other)
+    returning id into v_org_b;
+  insert into org_members (org_id, user_id, role) values (v_org_a, v_owner, 'owner');
+  insert into org_members (org_id, user_id, role) values (v_org_b, v_other, 'owner');
+
+  -- ── AC-1: a new key is unrestricted by default ────────────────────────────
+  -- The load-bearing backwards-compatibility claim of 00068 decision 1: adding
+  -- the columns must not narrow a single key that already exists.
+  insert into api_tokens (user_id, name, token_prefix, token_hash)
+  values (v_owner, 'scoping fixture', 'lk_rw_aaaa...', 'hash-scoping-fixture-0001')
+  returning id into v_token;
+
+  select scopes, org_access, org_ids into v_scopes, v_access, v_ids
+  from api_tokens where id = v_token;
+
+  assert v_scopes = '{}'::text[],
+    'api_tokens AC-1: a new key must default to an EMPTY scope allowlist';
+  assert v_access = 'all',
+    'api_tokens AC-1: a new key must default to org_access = all';
+  assert v_ids = '{}'::uuid[],
+    'api_tokens AC-1: a new key must default to no org ids';
+  assert lorekit_api_token_scope_allowed(v_scopes, 'repo::mthines/lorekit'),
+    'api_tokens AC-1: an empty allowlist must permit every scope';
+  assert lorekit_api_token_org_allowed(v_access, v_ids, v_org_a),
+    'api_tokens AC-1: the default tenancy must permit every org';
+
+  -- ── AC-2: the scope predicate ─────────────────────────────────────────────
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2: an exact pattern matches its own scope';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines/gw-tools'),
+    'scope_allowed AC-2: an exact pattern matches nothing else';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines'),
+    'scope_allowed AC-2: an exact pattern must not widen to its own prefix';
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/anything'),
+    'scope_allowed AC-2: an owner wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::someone/lorekit'),
+    'scope_allowed AC-2: an owner wildcard must not cross the owner boundary';
+  assert lorekit_api_token_scope_allowed(array['global', 'repo::mthines/*'], 'global'),
+    'scope_allowed AC-2: patterns are OR-ed';
+
+  -- The `::` half of the CHECK's `(/|::)` alternation. Everything above exercises
+  -- the `/` branch only, and the two are different literal prefixes both in the
+  -- regex and at match time — proving one says nothing about the other. The TS
+  -- twin pins `project::*` and the docs advertise it, so SQL was the gap.
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['project::*'], 'projectx::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard must not cross the prefix boundary';
+
+  -- The discriminating case for the LIKE escape. Without `replace(_, '\_')`,
+  -- `_` is LIKE's single-character wildcard and the second assertion fails —
+  -- which would silently widen every allowlist containing an underscore.
+  assert lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::my_org/lorekit'),
+    'scope_allowed AC-2: an underscore in the prefix still matches itself';
+  assert not lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::myxorg/lorekit'),
+    'scope_allowed AC-2: an underscore must stay LITERAL, not act as a LIKE wildcard';
+
+  -- The scope-side twin of AC-3's NULL-element case, and it gets there by a
+  -- different mechanism: `org_allowed` needed an explicit `coalesce(…, false)`
+  -- because `= any(array[null])` is a scalar NULL, whereas here `right(null,1)`
+  -- makes the CASE yield NULL, the WHERE drops the row, and `exists` is false by
+  -- construction. Correct, but INCIDENTALLY correct — adding an `else` to that
+  -- CASE would flip it to NULL with nothing failing. `is false`, not `not`,
+  -- because `assert not NULL` also fails and would not discriminate.
+  assert lorekit_api_token_scope_allowed(array[null]::text[], 'global') is false,
+    'scope_allowed AC-2: a NULL pattern element must yield FALSE, never NULL';
+  -- And it must not POISON the list: a good pattern alongside a NULL one still
+  -- matches. This is the case a cargo-culted `coalesce` wrapper would break.
+  assert lorekit_api_token_scope_allowed(array['global', null]::text[], 'global'),
+    'scope_allowed AC-2: a NULL element must not suppress a sibling pattern that matches';
+
+  -- Fail closed on a scopeless operation, but only for a RESTRICTED key.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], null),
+    'scope_allowed AC-2: a restricted key must not reach a scopeless operation';
+  assert lorekit_api_token_scope_allowed('{}'::text[], null),
+    'scope_allowed AC-2: an unrestricted key still reaches a scopeless operation';
+
+  -- AC-2b (00069): a pattern outside SCOPE_PATTERN's shape is DROPPED, not
+  -- honoured as a prefix. `*` is a wildcard only directly after `/` or `::`, so
+  -- a stored `repo::mthines/lore*` must not reach every repo starting with
+  -- those letters — that would WIDEN the key, the one direction these
+  -- predicates may never move. Pins the shape test itself: without this,
+  -- deleting the `pattern ~ …` line leaves the suite green, while the two TS
+  -- twins are pinned by tenant-scope.spec.ts and api-key.spec.ts.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: a mid-token wildcard must not prefix-match';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lore-other'),
+    'scope_allowed AC-2b: a dropped pattern must not match anything beneath it';
+  -- A key whose patterns ALL fail the shape test matches nothing — fail closed,
+  -- never "no restriction".
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'global'),
+    'scope_allowed AC-2b: an all-malformed allowlist must reach nothing';
+  -- …and the two LEGAL wildcard positions are untouched.
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: an owner wildcard still expands';
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::alpha'),
+    'scope_allowed AC-2b: a prefix wildcard after `::` still expands';
+
+  -- ── AC-3: the tenancy predicate ───────────────────────────────────────────
+  assert lorekit_api_token_org_allowed('personal', '{}'::uuid[], null),
+    'org_allowed AC-3: a personal row is reachable under every tenancy';
+  assert not lorekit_api_token_org_allowed('personal', '{}'::uuid[], v_org_a),
+    'org_allowed AC-3: `personal` must refuse every org';
+  assert lorekit_api_token_org_allowed('selected', array[v_org_a], v_org_a),
+    'org_allowed AC-3: `selected` admits a listed org';
+  assert not lorekit_api_token_org_allowed('selected', array[v_org_a], v_org_b),
+    'org_allowed AC-3: `selected` refuses an unlisted org';
+  assert not lorekit_api_token_org_allowed('nonsense', '{}'::uuid[], v_org_a),
+    'org_allowed AC-3: an unknown tenancy must fail CLOSED';
+
+  -- `= any(array[null])` is NULL, so without the outer coalesce this predicate
+  -- returns NULL — neither true nor false — out of an authorization check.
+  -- `assert not` is the discriminating form: `assert` on a NULL fails, but so
+  -- does `assert not NULL`, and only `is false` distinguishes the two. Written
+  -- explicitly so a regression cannot pass as "not true".
+  assert lorekit_api_token_org_allowed('selected', array[null]::uuid[], v_org_a) is false,
+    'org_allowed AC-3: a NULL element must yield FALSE, never NULL, from the predicate';
+
+  -- ── AC-4: the CHECKs actually reject ──────────────────────────────────────
+  -- Each is asserted by attempting the write and catching, because a CHECK that
+  -- exists but does not fire is indistinguishable from no CHECK at all.
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['a,value.not.is.null'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a pattern outside the injection-guard charset must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::*/lorekit'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: an INTERIOR wildcard must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'everything' where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: an unknown org_access must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'selected', org_ids = '{}'::uuid[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: `selected` with no org ids must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'personal', org_ids = array[v_org_a] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: org ids under a tenancy that does not use them must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens
+       set scopes = (select array_agg('project::p' || i) from generate_series(1, 51) as i)
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-pattern allowlist must be rejected (cardinality cap)';
+
+  -- The org-list twin of the cap above. `org_access` is set to 'selected' in the
+  -- SAME statement on purpose: with the tenancy left at 'all', a non-empty
+  -- org_ids also violates api_tokens_org_ids_match_access, and BOTH constraints
+  -- raise check_violation — so the assertion would pass while proving the wrong
+  -- one. Under 'selected' the match constraint is satisfied (selected = true,
+  -- cardinality > 0 = true), leaving api_tokens_org_ids_len as the only
+  -- constraint the row can violate.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array_fill(v_org_a, array[51])
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-org list must be rejected (cardinality cap)';
+
+  -- The org-list twin of the NULL-element case below. `{null}` has cardinality
+  -- 1, so api_tokens_org_ids_len and api_tokens_org_ids_match_access are both
+  -- satisfied under 'selected' — api_tokens_org_ids_not_null is the only
+  -- constraint that can fire, which is what makes this assertion specific.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array[null]::uuid[]
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL org id must be rejected, not read as an empty list';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['project::' || repeat('a', 200)] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a pattern over 200 chars must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::mthines/lore*'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a trailing wildcard off a segment boundary must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array[null]::text[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL element must be INVALID, not unknown-therefore-fine';
+
+  -- The accept side of the same alternation: the CHECK must admit a
+  -- `::`-boundary wildcard, not only a `/` one. Without this the regex could be
+  -- narrowed to `/` alone and every assertion above would still pass, while the
+  -- TS twin and the docs kept advertising `project::*`.
+  update api_tokens set scopes = array['project::*'] where id = v_token;
+  select scopes into v_scopes from api_tokens where id = v_token;
+  assert v_scopes = array['project::*'],
+    'api_tokens AC-4: a `::`-boundary wildcard must be accepted';
+
+  -- A valid pair still lands — the CHECKs must not be so tight that the
+  -- feature is unusable.
+  update api_tokens
+     set scopes = array['repo::mthines/*'], org_access = 'selected', org_ids = array[v_org_a]
+   where id = v_token;
+  select scopes, org_access into v_scopes, v_access from api_tokens where id = v_token;
+  assert v_scopes = array['repo::mthines/*'] and v_access = 'selected',
+    'api_tokens AC-4: a valid scoping must be accepted';
+
+  -- ── AC-5: the RPC is owner-only and membership-checked ────────────────────
+  -- The AC-4 block above wrote as the migration owner (superuser, RLS bypassed)
+  -- because `api_tokens` deliberately has no UPDATE policy. From here the actor
+  -- matters, so the session becomes a real `authenticated` JWT — the same shape
+  -- sections 4–12 use for the org RPCs.
+  --
+  -- Acting as the OTHER user: the key is not theirs, so the call must RAISE
+  -- rather than silently match zero rows and report success.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_other), true);
+
+  -- The RPC raises DISTINCT sqlstates, so each refusal is caught by code rather
+  -- than by `when others` — which would also pass on a typo, a missing function
+  -- or a permissions error, i.e. on the test being wrong.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
+  exception when no_data_found then v_failed := true;
+  end;
+  assert v_failed, 'set_scoping AC-5: a non-owner must get the not-found refusal (P0002)';
+
+  -- Back as the owner: pointing the key at an org the OWNER is not in must be
+  -- refused, or the row would record access that does not exist.
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_owner), true);
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', array[v_org_b]);
+  exception when insufficient_privilege then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a non-member org must get the permission refusal (42501)';
+
+  -- The RPC RE-STATES the table's five CHECKs so a bad argument comes back as a
+  -- legible LK004 instead of a raw constraint-violation string. Duplicated logic
+  -- drifts from its original unless something asserts it, and AC-4 only proves
+  -- the CHECKs themselves — it writes as the migration owner and never enters
+  -- this function. Each case therefore feeds ONE bad argument with the other
+  -- three valid, and catches the RPC's own sqlstate (22023 =
+  -- `invalid_parameter_value`) rather than `others`, for the same reason the
+  -- refusals above catch theirs by code.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array_fill('global'::text, array[51]), 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-pattern allowlist must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array['a,value.not.is.null'], 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a malformed scope pattern must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array_fill(v_org_a, array[51]));
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-org list must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'everything', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: an unknown org_access must be refused with LK004';
+
+  -- NULL is a THIRD case, not a variant of the one above: `null not in (…)` is
+  -- NULL, so without the explicit `is null` the guard does not fire, and neither
+  -- does the equality guard after it. The tenancy would reach the UPDATE and come
+  -- back as a raw 23502 from the column's NOT NULL — an internal constraint name
+  -- instead of an LK004. `invalid_parameter_value` here is therefore asserting
+  -- that the re-statement is TOTAL, not merely present.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], null, '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_access must be refused with LK004, not a raw NOT NULL violation';
+
+  -- A NULL ARGUMENT is not the same as an empty array, and for `scopes` the
+  -- difference is a widening: '{}' means UNRESTRICTED, so a coalesce here would
+  -- turn `null` into "every scope the owner can see". Giving the arguments no
+  -- DEFAULT only stops them being OMITTED; these two cases pin that an explicit
+  -- null is refused as well.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, null, 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL scopes argument must be refused, never coalesced to the unrestricted default';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', null);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_ids argument must be refused, never coalesced';
+
+  -- The RPC's own re-statement of api_tokens_org_ids_not_null. It has to run
+  -- BEFORE the membership guard, because that guard cannot see a NULL: the row
+  -- IS selected into v_stray (`m.org_id = null` is NULL, so `not exists` holds)
+  -- and `v_stray is not null` is then false. Catching LK004's 22023 rather than
+  -- LK002's 42501 is what proves the ordering.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array[null]::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org id must be refused with LK004, ahead of the membership guard';
+
+  -- Both directions of the equality, because a one-sided implication would let
+  -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
+  -- carrying orgs. The second uses v_org_a, an org the actor IS a member of, so
+  -- it is the mismatch that refuses it and not the membership check below it.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: `selected` with no org ids must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'personal', array[v_org_a]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: org ids under a tenancy that does not use them must be refused with LK004';
+
+  -- And the happy path returns the row it wrote.
+  select t.scopes, t.org_access, t.org_ids into v_scopes, v_access, v_ids
+  from lorekit_api_token_set_scoping(v_token, array['global'], 'selected', array[v_org_a]) t;
+  assert v_scopes = array['global'] and v_access = 'selected' and v_ids = array[v_org_a],
+    'set_scoping AC-5: the RPC must return the scoping it persisted';
+
+  -- Clearing it is how a key is un-scoped again (decision 1's other direction).
+  perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select scopes, org_access, org_ids into v_scopes, v_access, v_ids
+  from api_tokens where id = v_token;
+  assert v_scopes = '{}'::text[] and v_access = 'all' and v_ids = '{}'::uuid[],
+    'set_scoping AC-5: clearing the scoping must restore the unrestricted default';
+end;
+$$;
+
+-- ── 83. api_token scoping ENFORCEMENT — the eight functions 00069 teaches ───
+--
+-- §81 proved the predicates answer correctly in isolation. This proves the
+-- functions that CONSUME them actually changed behaviour: the two mutation
+-- gates (memory_write, memory_delete), which are the last unbypassable checks
+-- on their paths, and the five per-scope aggregates (lorekit_memory_scopes,
+-- _activity, lorekit_read_activity, _tags, _facets), each of which would
+-- otherwise leak the very names scoping hides.
+do $$
+declare
+  v_owner    uuid := gen_random_uuid();
+  v_org      uuid;
+  v_org_slug text := 'keyenf-org';
+  v_scopes   text[];
+  v_routed   boolean;
+  v_binding  text;
+  v_count    integer;
+  v_failed   boolean;
+begin
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+          'lk-mig-keyenf@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values (v_org_slug, 'Key Enforcement', v_owner)
+    returning id into v_org;
+  insert into org_members (org_id, user_id, role) values (v_org, v_owner, 'owner');
+
+  -- Adopt the service-role claim BEFORE any assertion, exactly as §80 does for
+  -- lorekit_memory_scopes. Every aggregate 00069 re-issues resolves its actor
+  -- with `case when auth.role() = 'service_role' then coalesce(p_user_id,
+  -- auth.uid()) else auth.uid() end`, and memory_delete resolves its actor the
+  -- same way. Without the claim `auth.role()` is NULL, so v_actor collapses to a
+  -- NULL auth.uid(): the aggregates return NO rows and the AC-4/5/6 "must see"
+  -- asserts fail while every "must not see" assert passes VACUOUSLY — the worst
+  -- of both, since the narrowing this section exists to prove would be untested.
+  -- Only the claim is set (no `set local role`), because auth.role() reads
+  -- request.jwt.claims and the inserts above need the harness's own privileges.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- ── AC-1: an unscoped caller is completely unaffected ─────────────────────
+  -- The defaults must reproduce the pre-00069 behaviour exactly, or this
+  -- migration is a regression for every existing key, JWT session and CI run.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-default',
+    p_value => 'v', p_org_slug => v_org_slug
+  ) w;
+  assert v_routed,
+    'enforcement AC-1: an explicit org write must still route to the org by default';
+
+  -- ── AC-2: the explicit-org branch refuses a key outside its tenancy ───────
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-denied',
+      p_value => 'v', p_org_slug => v_org_slug,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2: a personal-only key must not write into a named org';
+
+  -- ── AC-2b: the SCOPE allowlist is enforced on the write path too ──────────
+  -- Both dispatchers already refuse a named scope outside the allowlist, but
+  -- both run on the service-role client, so this RPC is the only gate a write
+  -- cannot route around. Without it the allowlist half had no unbypassable
+  -- enforcement at all, unlike the tenancy half AC-2 covers.
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::other/repo', p_key => 'k-scope-denied',
+      p_value => 'v', p_key_scopes => array['repo::mthines/*']
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2b: a key allowlisted elsewhere must not write under repo::other/repo';
+
+  -- …and the same key writing INSIDE its allowlist still succeeds, so AC-2b
+  -- denies on the allowlist and not on some unrelated failure.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/allowed', p_key => 'k-scope-allowed',
+    p_value => 'v', p_key_scopes => array['repo::mthines/*']
+  );
+  select count(*) into v_count from memories m
+   where m.user_id = v_owner and m.scope = 'repo::mthines/allowed';
+  assert v_count = 1,
+    'enforcement AC-2b: a write INSIDE the allowlist must still land';
+
+  -- ── AC-3: the binding branch — THE KEY WINS (00068 decision 4) ────────────
+  -- Bind the scope to the org, then write with NO explicit org. A default
+  -- caller is auto-routed; a personal-only key must fall back to a PERSONAL
+  -- write instead — never rejected, and still told which org the scope belongs
+  -- to, exactly as a non-member already is.
+  -- Inserted directly rather than through `lorekit_scope_bind`, which resolves
+  -- its actor from auth.uid() — null in this superuser block. The binding ROW is
+  -- what memory_write reads; how it got there is 00026's concern, not this one.
+  insert into org_scope_bindings (org_id, scope, created_by) values (v_org, 'repo::bound/repo', v_owner);
+
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-default', p_value => 'v'
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: an unrestricted caller must still be auto-routed by the binding';
+
+  select w.org_routed, w.binding_org_slug into v_routed, v_binding
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-personal',
+    p_value => 'v', p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) w;
+  assert not v_routed,
+    'enforcement AC-3: a personal-only key must NOT be auto-routed into the bound org';
+  assert v_binding = v_org_slug,
+    'enforcement AC-3: the fallback must still report the bound org so the caller can be told';
+
+  -- The same key pointed AT that org is routed — proving AC-3 denies on the
+  -- tenancy and not on some unrelated failure.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-selected',
+    p_value => 'v', p_key_org_access => 'selected', p_key_org_ids => array[v_org]
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: a key that DOES include the bound org must still be routed';
+
+  -- ── AC-4: lorekit_memory_scopes honours the key's allowlist ───────────────
+  -- Two personal scopes exist by now (repo::mthines/lorekit from AC-1 landed in
+  -- the org, so seed a personal one explicitly) plus the bound-repo rows.
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-alpha', p_value => 'v');
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::beta',  p_key => 'k-beta',  p_value => 'v');
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: an unrestricted caller must still see every scope';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::alpha']) s;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-4: an allowlisted key must see ONLY its allowlisted scopes';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::*']) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: a wildcard pattern must match every scope beneath it';
+  assert not ('repo::bound/repo' = any(v_scopes)),
+    'enforcement AC-4: a wildcard must not leak a scope outside its prefix';
+
+  -- And the tenancy narrows the catalog too — otherwise a personal-only key
+  -- still enumerates the org's repo names, which is the leak this closes.
+  --
+  -- The probe needs a name that exists ONLY on an org-owned row.
+  -- `repo::bound/repo` cannot serve: AC-3's fallback wrote a PERSONAL row under
+  -- that same name, and a `personal` key keeps its own rows by design, so the
+  -- name legitimately survives the narrowing (asserted directly below).
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::orgonly/repo', p_key => 'k-orgonly',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner) s
+  where s.scope = 'repo::orgonly/repo';
+  assert v_count = 1,
+    'enforcement AC-4: an unrestricted caller must still enumerate the org-owned scope';
+
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::orgonly/repo';
+  assert v_count = 0,
+    'enforcement AC-4: a personal-only key must not enumerate an org-owned scope';
+
+  -- The mixed case, and the reason the probe above needed its own scope: under
+  -- `repo::bound/repo` the account holds two org rows (k-bound-default,
+  -- k-bound-selected) and one personal row (k-bound-personal). A `personal` key
+  -- must lose the org's two and keep its own one — the NAME survives with a
+  -- narrower count rather than disappearing, which is what "narrows, never
+  -- revokes" means for a scope the owner writes on both sides.
+  select s.count into v_count
+  from lorekit_memory_scopes(v_owner) s where s.scope = 'repo::bound/repo';
+  assert v_count = 3,
+    'enforcement AC-4: an unrestricted caller must count both the org rows and the personal one';
+
+  select s.count into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::bound/repo';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must keep its OWN row under a scope it also shares with an org';
+
+  -- A personal-only key still sees its OWN scopes: `personal` narrows which
+  -- ORGS are reachable, it never revokes the owner's own memories.
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'project::alpha';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must still see its own personal scopes';
+
+  -- ── AC-4b: memory_delete is gated on BOTH axes ────────────────────────────
+  -- The org branch chooses its rows inside the function, so no transport-side
+  -- filter reaches them. Without these guards it enforced the OWNER's role and
+  -- nothing about the key: a personal-only key could hard-delete an org row.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::deltest/repo', p_key => 'k-del',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a personal-only key must not delete an org-owned memory';
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true, p_key_scopes => array['repo::other/*']
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a key allowlisted elsewhere must not delete this scope';
+
+  -- The unrestricted default still deletes, so AC-4b denies on the key and not
+  -- on some unrelated failure.
+  select count(*) into v_count
+  from memory_delete(
+    p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+    p_key => 'k-del', p_force => true
+  ) d where d.deleted;
+  assert v_count = 1,
+    'enforcement AC-4b: an unrestricted caller must still delete the org-owned memory';
+
+  -- ── AC-5: the two ACTIVITY series are narrowed the same way ───────────────
+  -- `lorekit_memory_scopes` is not the only per-scope catalog: GET
+  -- /memories/activity and /read-activity also return one row per scope NAME,
+  -- so narrowing only the catalog would move the leak rather than close it.
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner) a;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-5: an unrestricted caller must still see every scope in the activity series';
+
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner, p_key_scopes => array['project::alpha']) a;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must see ONLY its allowlisted scopes in the activity series';
+
+  -- `repo::orgonly/repo`, not `repo::bound/repo`, for the reason AC-4 gives:
+  -- only the former names a row the owner holds solely through the org.
+  select count(*) into v_count
+  from lorekit_memory_activity(p_user_id => v_owner) a
+  where a.scope = 'repo::orgonly/repo';
+  assert v_count = 1,
+    'enforcement AC-5: an unrestricted caller must still see the org-owned scope in the activity series';
+
+  select count(*) into v_count
+  from lorekit_memory_activity(
+    p_user_id => v_owner, p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) a
+  where a.scope = 'repo::orgonly/repo';
+  assert v_count = 0,
+    'enforcement AC-5: a personal-only key must not see an org-owned scope in the activity series';
+
+  -- The read series, over its own ledger. `scope` is NULLABLE there — an
+  -- unattributable read names nothing, so it must survive the allowlist rather
+  -- than being dropped, or a scoped key's chart silently loses every event
+  -- written before 00058.
+  insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome,
+                            duration_ms, result_count, scope, created_at) values
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 5, 'project::alpha',
+     timestamptz '2026-05-01 01:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 7, 'project::beta',
+     timestamptz '2026-05-01 02:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'unknown', 'api_key', 'ok', 10, 3, null,
+     timestamptz '2026-05-01 03:00:00+00');
+
+  select array_agg(distinct r.scope order by r.scope) into v_scopes
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is not null;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must not see another scope NAME in the read series';
+
+  select count(*) into v_count
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is null;
+  assert v_count = 1,
+    'enforcement AC-5: an unattributable read names nothing and must survive the allowlist';
+
+  -- ── AC-6: the tag and facet catalogs are narrowed too ─────────────────────
+  -- `origin_repo` is a repository name by construction, so the facet list is a
+  -- scope-name catalog wearing a different hat. Narrowing four of six aggregate
+  -- endpoints moves the leak rather than closing it.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-facet-a',
+    p_value => 'v', p_tags => array['tag-alpha'], p_origin_repo => 'mthines/alpha'
+  );
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::beta', p_key => 'k-facet-b',
+    p_value => 'v', p_tags => array['tag-beta'], p_origin_repo => 'mthines/beta'
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a repo name from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/alpha';
+  assert v_count = 1,
+    'enforcement AC-6: the facet inside the allowlist must still be listed';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner, p_key_scopes => array['project::alpha']) t
+  where t.tag = 'tag-beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a label from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner) t where t.tag = 'tag-beta';
+  assert v_count = 1,
+    'enforcement AC-6: an unrestricted caller must still see every label';
+
+  -- Leave the session as this block found it, so a section appended after this
+  -- one does not silently inherit a service-role actor (§80's `reset role` +
+  -- empty-claims pairing, minus the role it never set).
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 84. API token scope-authorized removal + not-found/forbidden signal (00071) ─
+-- 00071 lets a key with a NON-EMPTY scope allowlist, reaching memory_delete on
+-- the service-role connection, manage any writer's row WITHIN its allowlist —
+-- while an UNSCOPED key and any non-service-role caller stay pinned to their own
+-- rows (the 00046 actor guard is untouched). It also returns `existed`, so a
+-- 0-row removal is reported as not_found vs forbidden instead of a silent false.
+--
+-- Owner under test = user A (…a1). Every row here is written by user B (…b2), a
+-- DIFFERENT principal, so ownership can never be what authorises the removal —
+-- only the key's scoping can.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-arch', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-keep', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::managed', 'sar-hard', 'written by B'),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::other',   'sar-out',  'written by B');
+
+-- An org-owned row under phase2-org (f2, seeded in §11 with A as owner) exercises
+-- the org branch's new `existed` column in case (6).
+insert into memories (user_id, org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000f2',
+   'project::managed', 'sar-org-row', 'org-owned by phase2-org');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  -- (1) service-role + SCOPED key archives another writer's in-allowlist row.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-arch',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert r.archived and r.existed and not r.deleted,
+    format('SAR-1: a scoped key must archive an in-allowlist row it does not own (archived=%s existed=%s deleted=%s)',
+           r.archived, r.existed, r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-arch' and archived_at is not null;
+  assert v_count = 1, 'SAR-1: the row must actually be archived';
+
+  -- (1b) and hard-delete it, too.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-hard',
+    p_force      => true,
+    p_key_scopes => array['project::managed']);
+  assert r.deleted and r.existed and not r.archived,
+    format('SAR-1b: a scoped key must hard-delete an in-allowlist row it does not own (deleted=%s)', r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-hard';
+  assert v_count = 0, 'SAR-1b: the row must actually be gone';
+
+  -- (7) re-archiving the now ALREADY-archived sar-arch reports existed=true
+  --     (present), never not_found — the row is there, just nothing active to
+  --     archive. This is the case that would otherwise masquerade as not_found.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-arch',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert (not r.archived) and r.existed,
+    format('SAR-7: re-archiving an already-archived row must report existed=true, not not_found (archived=%s existed=%s)',
+           r.archived, r.existed);
+
+  -- (2) service-role + UNSCOPED key must NOT touch another writer's row; and
+  --     `existed` must report it present, i.e. forbidden — not not-found.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-keep',
+    p_force      => false,
+    p_key_scopes => array[]::text[]);
+  assert (not r.archived) and (not r.deleted) and r.existed,
+    format('SAR-2: an UNSCOPED key must not archive another user''s row, and existed must be true (archived=%s existed=%s)',
+           r.archived, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-keep' and archived_at is null;
+  assert v_count = 1, 'SAR-2: the unscoped key must have left the row active';
+
+  -- (3) not_found: a scoped key on a missing key removes nothing, existed=false.
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-missing',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);
+  assert (not r.archived) and (not r.existed),
+    format('SAR-3: a missing key must report existed=false / not_found (existed=%s)', r.existed);
+
+  -- (4) the scope allowlist STILL bounds a scoped key: a scope OUTSIDE the
+  --     allowlist is refused with LK002 before any widening can reach it.
+  begin
+    perform memory_delete(
+      p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+      p_org_slug   => null,
+      p_scope      => 'project::other',
+      p_key        => 'sar-out',
+      p_force      => false,
+      p_key_scopes => array['project::managed']);
+    assert false, 'SAR-4: a scope outside the allowlist must raise LK002';
+  exception when sqlstate 'LK002' then
+    null; -- expected
+  end;
+  select count(*) into v_count from memories
+    where scope = 'project::other' and key = 'sar-out' and archived_at is null;
+  assert v_count = 1, 'SAR-4: the out-of-allowlist row must be untouched';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (5) a raw AUTHENTICATED caller cannot widen with a request-supplied
+  --     p_key_scopes — auth.uid() pins the actor (00046), so B's row survives
+  --     and `existed` does not leak it. User C (…c3) is the would-be attacker.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select * into r from memory_delete(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',   -- spoofed; ignored off service_role
+    p_org_slug   => null,
+    p_scope      => 'project::managed',
+    p_key        => 'sar-keep',
+    p_force      => false,
+    p_key_scopes => array['project::managed']);               -- request input; must NOT widen
+  assert (not r.archived) and (not r.existed),
+    format('SAR-5: a request-supplied p_key_scopes must not let an authenticated caller widen (archived=%s existed=%s)',
+           r.archived, r.existed);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories
+    where scope = 'project::managed' and key = 'sar-keep' and archived_at is null;
+  assert v_count = 1, 'SAR-5: B''s row must survive the authenticated caller''s spoof attempt';
+
+  -- (6) the org branch carries `existed` too: A (owner of phase2-org) archives
+  --     an org-owned memory and gets archived=true alongside existed=true. The
+  --     org capability gate is 00068 verbatim; this only pins the new column.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select * into r from memory_delete(
+    p_user_id  => '00000000-0000-0000-0000-0000000000a1',
+    p_org_slug => 'phase2-org',
+    p_scope    => 'project::managed',
+    p_key      => 'sar-org-row',
+    p_force    => false);
+  assert r.archived and r.existed and not r.deleted,
+    format('SAR-6: an org archive must report archived + existed (archived=%s existed=%s)',
+           r.archived, r.existed);
+  select count(*) into v_count from memories
+    where org_id = '00000000-0000-0000-0000-0000000000f2' and key = 'sar-org-row' and archived_at is not null;
+  assert v_count = 1, 'SAR-6: the org row must actually be archived';
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 85. API token scope-authorized RESTORE + not-found/forbidden signal (00072) ─
+-- The restore-side symmetry of §83: a scoped key restores any writer's archived
+-- row within its allowlist; an unscoped key and any non-service-role caller stay
+-- own-rows-only; `existed` (scoped to ARCHIVED rows) distinguishes forbidden
+-- from not_found. Rows are archived up front (archived_at set) and written by B.
+insert into memories (user_id, scope, key, value, archived_at) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-arch', 'archived by B', now()),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-keep', 'archived by B', now()),
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rother',   'res-out',  'archived by B', now());
+-- An ACTIVE (non-archived) row: there is nothing to restore, so it must read as
+-- not_found (existed=false), never forbidden.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::rmanaged', 'res-active', 'active, by B');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (1) scoped key restores another writer's archived in-allowlist row.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-arch',
+    p_key_scopes => array['project::rmanaged']);
+  assert r.restored and r.existed,
+    format('SAR-R1: a scoped key must restore an in-allowlist row it does not own (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-arch' and archived_at is null;
+  assert v_count = 1, 'SAR-R1: the row must actually be un-archived';
+
+  -- (2) UNSCOPED key must NOT restore another writer's row; existed=true.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-keep',
+    p_key_scopes => array[]::text[]);
+  assert (not r.restored) and r.existed,
+    format('SAR-R2: an UNSCOPED key must not restore another user''s row, existed must be true (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
+  assert v_count = 1, 'SAR-R2: the row must stay archived';
+
+  -- (3) not_found: a missing key AND an ACTIVE (nothing-to-restore) row both
+  --     report existed=false — there is no restorable row.
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-missing',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed), 'SAR-R3a: a missing key must report existed=false';
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-active',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed),
+    format('SAR-R3b: an active (non-archived) row is not restorable → existed=false (existed=%s)', r.existed);
+
+  -- (4) scope allowlist still bounds a scoped key.
+  begin
+    perform restore_memory(
+      p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+      p_scope      => 'project::rother',
+      p_key        => 'res-out',
+      p_key_scopes => array['project::rmanaged']);
+    assert false, 'SAR-R4: a scope outside the allowlist must raise LK002';
+  exception when sqlstate 'LK002' then
+    null; -- expected
+  end;
+  select count(*) into v_count from memories
+    where scope = 'project::rother' and key = 'res-out' and archived_at is not null;
+  assert v_count = 1, 'SAR-R4: the out-of-allowlist row must stay archived';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (5) an authenticated caller cannot widen with request-supplied p_key_scopes.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select * into r from restore_memory(
+    p_user_id    => '00000000-0000-0000-0000-0000000000a1',
+    p_scope      => 'project::rmanaged',
+    p_key        => 'res-keep',
+    p_key_scopes => array['project::rmanaged']);
+  assert (not r.restored) and (not r.existed),
+    format('SAR-R5: a request-supplied p_key_scopes must not let an authenticated caller widen (restored=%s existed=%s)',
+           r.restored, r.existed);
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories
+    where scope = 'project::rmanaged' and key = 'res-keep' and archived_at is not null;
+  assert v_count = 1, 'SAR-R5: B''s archived row must survive the authenticated caller''s spoof attempt';
+end;
+$$;
+
+-- ── 86. The SERVICE tier reaches every row on both removal paths (00071/00072) ─
+--
+-- The bare service-role key (CI, the REST smoke suite, an operator script) is
+-- neither a user nor an API key, so both surfaces resolve `p_user_id => null`
+-- for it — and on that connection `auth.uid()` is null too, so the actor these
+-- RPCs derive is NULL and every `user_id = v_actor` disjunct is NULL. Pinning
+-- that caller to its "own" rows therefore matched NOTHING: the natural-key
+-- archive and the restore both came back 403 (`existed` true, nothing changed)
+-- for the tier that holds the secret which can write the table directly.
+--
+-- §84/§85 pin the two KEY tiers (scoped and unscoped); this pins the one above
+-- them. The complement — that a NON-service-role caller gains nothing from a
+-- null/spoofed p_user_id — is 60a/60f and SAR-5/SAR-R5, all still in force.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::svctier', 'svc-row', 'written by B');
+
+do $$
+declare
+  r       record;
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (1) Archive another principal's row with NO p_user_id and NO key scoping —
+  --     the exact call `handleRemove`'s natural-key branch makes for a
+  --     service-token request.
+  select * into r from memory_delete(
+    p_user_id  => null,
+    p_org_slug => null,
+    p_scope    => 'project::svctier',
+    p_key      => 'svc-row',
+    p_force    => false);
+  assert r.archived and r.existed and not r.deleted,
+    format('SVC-1: the service tier must archive any row (archived=%s existed=%s deleted=%s)',
+           r.archived, r.existed, r.deleted);
+  select count(*) into v_count from memories
+    where scope = 'project::svctier' and key = 'svc-row' and archived_at is not null;
+  assert v_count = 1, 'SVC-1: the row must actually be archived';
+
+  -- (2) …and restore it. A tier that can archive a row but not un-archive it is
+  --     the asymmetry 00072 exists to close.
+  select * into r from restore_memory(
+    p_user_id => null,
+    p_scope   => 'project::svctier',
+    p_key     => 'svc-row');
+  assert r.restored and r.existed,
+    format('SVC-2: the service tier must restore the row it just archived (restored=%s existed=%s)',
+           r.restored, r.existed);
+  select count(*) into v_count from memories
+    where scope = 'project::svctier' and key = 'svc-row' and archived_at is null;
+  assert v_count = 1, 'SVC-2: the row must be live again';
+
+  -- (3) …and hard-delete it.
+  select * into r from memory_delete(
+    p_user_id  => null,
+    p_org_slug => null,
+    p_scope    => 'project::svctier',
+    p_key      => 'svc-row',
+    p_force    => true);
+  assert r.deleted and not r.archived,
+    format('SVC-3: the service tier must hard-delete any row (deleted=%s archived=%s)',
+           r.deleted, r.archived);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select count(*) into v_count from memories where scope = 'project::svctier';
+  assert v_count = 0, 'SVC-3: the row must be physically gone';
+end;
+$$;
+
+-- ── 00074: query-profiling reader is bounded and operator-only ──────────────
+-- `lorekit_db_query_stats()` reads pg_stat_statements — the whole cluster's
+-- query shapes, every tenant's workload aggregated. Two properties matter and
+-- neither is visible from the app layer: it must be unreachable by `anon` and
+-- `authenticated` (PostgREST exposes ANY function they can execute, so a missing
+-- revoke silently publishes a cross-tenant view), and it must never raise, since
+-- an observability read that can fail is a request that can fail.
+do $$
+declare
+  v_count  int;
+  v_rows   int;
+  v_status text;
+begin
+  -- (1) The function exists with the expected arity, and is SECURITY DEFINER.
+  select count(*) into v_count
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_db_query_stats' and p.prosecdef;
+  assert v_count = 1,
+    format('PROF-1: lorekit_db_query_stats must exist exactly once as SECURITY DEFINER (found %s)', v_count);
+
+  -- (2) NOT executable by the two PostgREST-facing roles. `create function`
+  --     grants EXECUTE to PUBLIC by default, so this asserts the revoke landed
+  --     rather than asserting a default.
+  assert not has_function_privilege('anon', 'lorekit_db_query_stats(integer)', 'execute'),
+    'PROF-2: anon must NOT be able to execute lorekit_db_query_stats';
+  assert not has_function_privilege('authenticated', 'lorekit_db_query_stats(integer)', 'execute'),
+    'PROF-2: authenticated must NOT be able to execute lorekit_db_query_stats';
+  assert has_function_privilege('service_role', 'lorekit_db_query_stats(integer)', 'execute'),
+    'PROF-2: service_role MUST be able to execute lorekit_db_query_stats';
+
+  -- (3) It returns without raising whether or not pg_stat_statements is
+  --     installed. On a local stack the extension is usually absent, which is
+  --     precisely the path that must yield zero rows instead of an error — the
+  --     dynamic-SQL + exception guard in 00074.
+  select count(*) into v_rows from lorekit_db_query_stats(5);
+  assert v_rows >= 0, 'PROF-3: the reader must return a row count, not raise';
+
+  -- (4) The row cap is enforced INSIDE the function, so a caller cannot ask for
+  --     unbounded metric cardinality. Only assertable when the extension is
+  --     present and actually has more rows than the cap.
+  if exists (select 1 from pg_extension where extname = 'pg_stat_statements') then
+    select count(*) into v_rows from lorekit_db_query_stats(1000);
+    assert v_rows <= 200,
+      format('PROF-4: p_limit must be capped at 200 regardless of the request (got %s rows)', v_rows);
+    -- A null or absurd limit must not bypass the cap either.
+    select count(*) into v_rows from lorekit_db_query_stats(null);
+    assert v_rows <= 200, format('PROF-4: a null p_limit must fall back to the default (got %s rows)', v_rows);
+  end if;
+
+  -- (5) The scheduled exporter is inert until an operator provisions the two
+  --     Vault secrets. This asserts the OFF-BY-DEFAULT posture: applying the
+  --     migration must not start sending anything anywhere. Gated on the
+  --     secrets actually being absent so the assertion states the real
+  --     invariant ("no secrets ⇒ no post") rather than assuming the
+  --     environment it runs in.
+  if to_regclass('vault.decrypted_secrets') is null
+     or not exists (select 1 from vault.decrypted_secrets
+                     where name in ('lorekit_profiling_url', 'lorekit_profiling_key'))
+  then
+    select lorekit_export_db_query_stats() into v_status;
+    assert v_status ~ '^(disabled|skipped)',
+      format('PROF-5: the exporter must be inert without vault secrets, got %s', v_status);
+  end if;
+
+  assert not has_function_privilege('anon', 'lorekit_export_db_query_stats()', 'execute'),
+    'PROF-5: anon must NOT be able to trigger the exporter';
+  assert not has_function_privilege('authenticated', 'lorekit_export_db_query_stats()', 'execute'),
+    'PROF-5: authenticated must NOT be able to trigger the exporter';
+end;
+$$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- §86 — the MCP org tools under an api_key actor override
+-- ═════════════════════════════════════════════════════════════════════════
+-- The MCP `org.*` tools were JWT-only: their RPCs resolve the actor from
+-- `auth.uid()`, and the api_key tier reaches Postgres over a service-role
+-- connection where that is NULL, so every `lorekit_org_can(...)` denied. They
+-- now pass the token owner explicitly as `p_actor_user_id`, the same path
+-- `supabase/functions/orgs/` has used since 00041.
+--
+-- §50–§59 already prove the override itself. What this pins is the pair of
+-- properties the MCP surface newly depends on, and would break silently:
+--
+--   (1) the override is HONOURED on a service-role connection, so an api_key
+--       caller can act as its own token owner; and
+--   (2) it does NOT become an impersonation primitive — token permission is
+--       orthogonal to org ROLE, so an actor who is only a viewer is still
+--       denied a rename with LK002.
+--
+-- (2) is the one worth the test. Token permission is checked at the edge, org
+-- role only in the RPC, so a `lk_rw_*` token held by a viewer passes every
+-- check the edge can make. If the RPC's role gate ever stopped applying to the
+-- overridden actor, that token would silently gain admin powers.
+do $$
+declare
+  v_owner  uuid := '00000000-0000-0000-0000-0000000086a1';
+  v_viewer uuid := '00000000-0000-0000-0000-0000000086b2';
+  v_org    uuid;
+  v_name   text;
+  v_count  int;
+  v_denied_viewer_rename boolean := false;
+  v_denied_viewer_delete boolean := false;
+  v_denied_null_actor    boolean := false;
+begin
+  insert into auth.users (id, email) values
+    (v_owner,  'org86-owner@test.local'),
+    (v_viewer, 'org86-viewer@test.local')
+  on conflict (id) do nothing;
+
+  -- ── (1)+(2) create and rename, as a service-role caller naming its actor ──
+  --
+  -- BOTH lines below are required, and the second is the load-bearing one.
+  -- `lorekit_org_actor` (00041) discriminates on `auth.role()`, which reads the
+  -- `role` claim out of `request.jwt.claims` — NOT the Postgres session role.
+  -- With only `set local role service_role`, the claim stays unset, auth.role()
+  -- is not 'service_role', the override is IGNORED, and the actor falls back to
+  -- a NULL auth.uid(). The first version of this section did exactly that and
+  -- died on `org_actor_unresolved` — which was the override failing closed
+  -- precisely as 00041 §4 designs it, so the harness was wrong, not the RPC.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select lorekit_org_create(
+    p_slug          => 'org86',
+    p_name          => 'Org 86',
+    p_actor_user_id => v_owner) into v_org;
+
+  perform lorekit_org_rename(
+    p_org_id        => v_org,
+    p_name          => 'Org 86 renamed',
+    p_actor_user_id => v_owner);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_org is not null, '86-1: create must return the new org id';
+  select count(*) into v_count from org_members
+    where org_id = v_org and user_id = v_owner and role = 'owner';
+  assert v_count = 1, '86-1: the named actor must become the owner, not auth.uid()';
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-2: the owner must be able to rename (name=%s)', v_name);
+
+  -- Fixture, not part of the scenario: `org_members` carries a SELECT policy
+  -- and no INSERT policy at all (00022), so the viewer row is written here as
+  -- the migration role rather than leaning on service_role's BYPASSRLS.
+  insert into org_members (org_id, user_id, role) values (v_org, v_viewer, 'viewer')
+    on conflict (org_id, user_id) do update set role = 'viewer';
+
+  -- ── (3)(4)(5) the denials, and the owner's soft delete ───────────────────
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- (3) The load-bearing case. Nothing about holding a write-capable TOKEN
+  -- grants an org role, and this is where that separation is enforced.
+  --
+  -- Each denial sets a flag and is asserted after the block rather than with an
+  -- `assert false` inside the `begin`: `assert` raises P0004, which `when
+  -- others` would catch and then re-report as "expected LK002, got <the
+  -- assertion's own message>" — a failure, but one that names the wrong cause.
+  begin
+    perform lorekit_org_rename(
+      p_org_id        => v_org,
+      p_name          => 'Org 86 hijacked',
+      p_actor_user_id => v_viewer);
+  exception when sqlstate 'LK002' then v_denied_viewer_rename := true; end;
+
+  -- (4) A NULL actor still fails closed — the property 00041 was written
+  -- around: no actor, no authority. An edge bug that forgot to pass the token
+  -- owner must deny rather than act as someone.
+  --
+  -- Ordered BEFORE the owner's delete deliberately, so the org is still live
+  -- and the denial can only be the actor. `lorekit_org_rename` checks the
+  -- capability first and has no deleted-org guard at all, so running this after
+  -- the soft delete would still pass — while no longer proving what it claims.
+  begin
+    perform lorekit_org_rename(
+      p_org_id        => v_org,
+      p_name          => 'Org 86 nulled',
+      p_actor_user_id => null);
+  exception when sqlstate 'LK002' then v_denied_null_actor := true; end;
+
+  -- (5) delete is owner-only, and a SOFT delete.
+  begin
+    perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_viewer);
+  exception when sqlstate 'LK002' then v_denied_viewer_delete := true; end;
+
+  perform lorekit_org_delete(p_org_id => v_org, p_actor_user_id => v_owner);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_denied_viewer_rename,
+    '86-3: a viewer actor must be denied the rename with LK002';
+  assert v_denied_null_actor,
+    '86-4: a NULL actor must not be able to rename';
+  assert v_denied_viewer_delete,
+    '86-5: a viewer actor must be denied the delete with LK002';
+
+  select name into v_name from orgs where id = v_org;
+  assert v_name = 'Org 86 renamed',
+    format('86-3/86-4: no denied rename may have taken effect (name=%s)', v_name);
+
+  select count(*) into v_count from orgs where id = v_org and deleted_at is not null;
+  assert v_count = 1,
+    '86-5: the owner delete must SOFT-delete (deleted_at set), matching what the MCP tool advertises';
+  select count(*) into v_count from orgs where id = v_org;
+  assert v_count = 1, '86-5: the row must still exist — a purge is a separate, owner-only step';
+end;
+$$;
+
+-- ── 87. usage_events.scope_count — how many scopes a search named (00078) ───
+-- `memory.search` takes a `scopes` ARRAY; `usage_events.scope` is one text
+-- column and stays null the moment a search names more than one, which is why
+-- the unattributed bucket in the per-scope read series was ~40% of all records
+-- account-wide. This adds `scope_count` alongside `scope` (kept exactly as
+-- accurate as it already was) rather than replacing either.
+-- AC-1: the writer RPC persists the new trailing p_scope_count parameter.
+-- AC-2: scope_count is null by default (a singular-scope tool never sets it).
+-- AC-3: the range CHECK is a real backstop — a direct insert cannot put a
+--       negative or absurdly large value into a column that gets grouped on.
+do $$
+declare
+  v_id     uuid;
+  v_count  integer;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a search over three scopes persists scope_count = 3 (and, per the
+  -- app-side contract this migration backs, scope stays null for it — that
+  -- half is TypeScript behaviour in router.ts/mcp-handler.ts, not something
+  -- this SQL-only writer call can exercise on its own).
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.search',
+    p_scope_type => 'mixed', p_auth_type => 'jwt', p_outcome => 'ok',
+    p_scope_count => 3) into v_id;
+  assert v_id is not null, '87 AC-1: the writer must return the inserted id';
+  select scope_count into v_count from usage_events where id = v_id;
+  assert v_count = 3, format('87 AC-1: p_scope_count must be persisted, got %s', v_count);
+
+  -- AC-2: omitting p_scope_count (a singular-scope tool, e.g. memory.read)
+  -- leaves the column null rather than defaulting to some placeholder count.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select scope_count into v_count from usage_events where id = v_id;
+  assert v_count is null, format('87 AC-2: scope_count must default to null, got %s', v_count);
+
+  -- AC-3: the range CHECK is a real backstop, not decoration. The app-side
+  -- `scopeCount`/`body.scopes.length` computation is the primary gate, but a
+  -- direct insert must not be able to put an unbounded value into a column
+  -- that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, scope_count)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.search', 'jwt', 'ok', 257);
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '87 AC-3: an out-of-range scope_count must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 00076: GIN index on memories.tags must exist and stay a GIN index ───────
+-- The `tags @> ARRAY[...]` containment check in onboarding-server.ts has no
+-- index of its own without this — asserted here for the same reason 00030's
+-- memories_expires_at_idx is (line ~4953 above): "index presence isn't a
+-- behavior the app-layer unit tests can assert", so a future migration that
+-- drops or narrows this index would regress the /overview latency this index
+-- fixes with nothing else catching it.
+do $$
+declare v_idx_method text;
+begin
+  select am.amname into v_idx_method
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+    join pg_am am on am.oid = c.relam
+   where c.relname = 'memories_tags_idx';
+
+  assert v_idx_method is not null,
+    'TAGS-1: memories_tags_idx (00076) must exist — the tags containment filter has no index without it';
+  assert v_idx_method = 'gin',
+    format('TAGS-1: memories_tags_idx must stay a GIN index (array containment needs it), got %s', v_idx_method);
+end;
+$$;
+
+-- ── 88. lorekit_usage_stats groups by client, kind, host too (00079) ────────
+-- usage_events has stored client (00054) and kind/host (00056) for months;
+-- GET /memories/usage exposed none of them. Widen the GROUP BY.
+-- AC-1: the new columns actually discriminate rows (two rows with the same
+--       tool/outcome/scope_type but different client stay SEPARATE rows).
+-- AC-2: summing event_count over every returned row reproduces the same
+--       total as the pre-00079 (tool_name, outcome, scope_type)-only grouping
+--       would have -- widening the GROUP BY must never gain or lose events.
+-- AC-3: host is bounded to the window's own top 20 by event count; the 21st
+--       most-frequent host (and everything rarer) collapses to 'other'.
+-- AC-4: a NULL host stays NULL -- it is not "some other host", it has none.
+do $$
+declare
+  v_total_new bigint;
+  v_total_old bigint;
+  v_client_a  bigint;
+  v_client_b  bigint;
+  v_other_count bigint;
+  v_null_host_count bigint;
+  v_distinct_hosts_returned integer;
+  i integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: same (tool_name, outcome, scope_type), different client -- must be
+  -- two rows, not folded into one.
+  -- auth_type is NOT NULL on usage_events (00034) — a raw insert must supply
+  -- it explicitly, unlike the RPC path where it defaults through a parameter.
+  insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'api_key', 'mcp', timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.list', 'ok', 'repo', 'api_key', 'cli', timestamptz '2026-08-01');
+
+  select coalesce(sum(event_count), 0) into v_client_a from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list' and client = 'mcp';
+  select coalesce(sum(event_count), 0) into v_client_b from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list' and client = 'cli';
+  assert v_client_a = 1 and v_client_b = 1,
+    format('88 AC-1: client must discriminate rows, got mcp=%s cli=%s', v_client_a, v_client_b);
+
+  -- AC-2: the SUM over every row for this tool_name is 2, matching the two
+  -- events inserted -- widening the group-by refined the buckets, it did not
+  -- change the total.
+  select coalesce(sum(event_count), 0) into v_total_new from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.list';
+  select count(*) into v_total_old from usage_events
+   where tool_name = '88.memory.list' and user_id = '00000000-0000-0000-0000-0000000000a1';
+  assert v_total_new = v_total_old,
+    format('88 AC-2: summed event_count (%s) must equal the raw row count (%s)', v_total_new, v_total_old);
+
+  -- AC-3/AC-4: 21 distinct hosts, one event each, plus 3 NULL-host events (a
+  -- scopeless/hostless tool). The rarest host (host-20, alphabetically last
+  -- among ties at count=1) must collapse to 'other'; NULL must stay NULL.
+  for i in 0..20 loop
+    insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, host, created_at)
+      values ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key',
+              format('88-host-%s', lpad(i::text, 2, '0')), timestamptz '2026-08-01');
+  end loop;
+  insert into usage_events (user_id, tool_name, outcome, scope_type, auth_type, host, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01'),
+    ('00000000-0000-0000-0000-0000000000a1', '88.memory.write', 'ok', 'repo', 'api_key', null, timestamptz '2026-08-01');
+
+  select count(distinct host) into v_distinct_hosts_returned from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host is not null;
+  -- 20 top hosts + the 'other' bucket the 21st collapses into = 21 distinct
+  -- non-null host values, never 21 real host names.
+  assert v_distinct_hosts_returned = 21,
+    format('88 AC-3: expected 20 named hosts + one "other" bucket (21 distinct), got %s', v_distinct_hosts_returned);
+
+  select coalesce(sum(event_count), 0) into v_other_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host = 'other';
+  assert v_other_count = 1,
+    format('88 AC-3: exactly one event must have collapsed into the "other" bucket, got %s', v_other_count);
+
+  select coalesce(sum(event_count), 0) into v_null_host_count from lorekit_usage_stats(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-02 00:00:00+00'
+  ) where tool_name = '88.memory.write' and host is null;
+  assert v_null_host_count = 3,
+    format('88 AC-4: the 3 NULL-host events must stay NULL, not become "other", got %s', v_null_host_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 89. lorekit_read_activity gains read_kind (00080) ────────────────────────
+-- "Memories read" is 99.7% bulk list/search output in a live sample -- split
+-- retrieved (bulk) from opened (targeted) so the two stop sharing one number.
+-- AC-1: a memory.read event is read_kind='targeted'.
+-- AC-2: memory.list/search/list_archived events are read_kind='bulk'.
+-- AC-3: retrieved + opened sum to the SAME total the function always gave for
+--       this window (the split refines, never changes, the series).
+-- AC-4: the dashboard-client exclusion and key-scope narrowing still apply
+--       per read_kind, not just to the unsplit total.
+do $$
+declare
+  v_targeted   bigint;
+  v_bulk       bigint;
+  v_total_new  bigint;
+  v_total_rows bigint;
+  v_dashboard_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',         'repo', 'jwt', 'ok', 10,  1, 'mcp', timestamptz '2026-08-05 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',         'repo', 'jwt', 'ok', 10, 31, 'mcp', timestamptz '2026-08-05 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search',       'repo', 'jwt', 'ok', 10,  5, 'mcp', timestamptz '2026-08-05 01:10:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list_archived','repo', 'jwt', 'ok', 10,  2, 'mcp', timestamptz '2026-08-05 01:15:00+00'),
+    -- The dashboard's own browsing must stay excluded per read_kind too.
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', 10, 100, 'dashboard', timestamptz '2026-08-05 01:20:00+00');
+
+  -- AC-1: memory.read is targeted.
+  select coalesce(sum(count), 0) into v_targeted from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'targeted';
+  assert v_targeted = 1, format('89 AC-1: memory.read must be read_kind=targeted with count 1, got %s', v_targeted);
+
+  -- AC-2: list/search/list_archived are bulk (31+5+2 = 38; the dashboard's
+  -- 100 must NOT be included per AC-4).
+  select coalesce(sum(count), 0) into v_bulk from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where read_kind = 'bulk';
+  assert v_bulk = 38, format('89 AC-2/AC-4: bulk must be 38 (31+5+2, dashboard excluded), got %s', v_bulk);
+
+  -- AC-3: retrieved + opened sum to the function's own total for the window
+  -- (1 + 38 = 39; the dashboard's 100 stays excluded from the total too).
+  select coalesce(sum(count), 0) into v_total_new from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_new = 39,
+    format('89 AC-3: targeted + bulk must sum to 39 (1 + 38), got %s', v_total_new);
+
+  -- AC-4 (direct): the dashboard-attributed row contributes nothing to either
+  -- read_kind, not merely something less than its full 100.
+  select count(*) into v_dashboard_count from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  ) where count = 100;
+  assert v_dashboard_count = 0, '89 AC-4: the dashboard-attributed 100 records must not appear in either read_kind';
+
+  -- Sanity: exactly two rows returned for this bucket/scope (one per
+  -- read_kind) -- not folded into one, not split further.
+  select count(*) into v_total_rows from lorekit_read_activity(
+    '00000000-0000-0000-0000-0000000000a1', 'day',
+    timestamptz '2026-08-05 00:00:00+00', timestamptz '2026-08-06 00:00:00+00'
+  );
+  assert v_total_rows = 2,
+    format('88: expected exactly 2 rows (targeted + bulk) for this bucket/scope, got %s', v_total_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 90. lorekit_usage_memory_count_peak (00081) ──────────────────────────────
+-- usage_events.memory_count is stamped on every write event and exposed by no
+-- endpoint. Surface the window's peak as its own scalar RPC.
+-- AC-1: returns the MAX memory_count over write events in the window.
+-- AC-2: a window with no write events returns null, never a fabricated 0.
+-- AC-3: a service-role caller with no target user returns null.
+-- AC-4: self-only -- a different user's peak is invisible.
+do $$
+declare
+  v_peak bigint;
+  v_peak_none bigint;
+  v_peak_other_scope integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, memory_count, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 40, timestamptz '2026-08-10 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 55, timestamptz '2026-08-10 02:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 47, timestamptz '2026-08-10 03:00:00+00'),
+    -- A different user in the SAME window must not leak into the first user's peak.
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.write', 'repo', 'jwt', 'ok', 9999, timestamptz '2026-08-10 01:30:00+00');
+
+
+  -- AC-1: the max of 40/55/47 is 55.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak;
+  assert v_peak = 55, format('90 AC-1: expected peak 55, got %s', v_peak);
+
+  -- AC-2: a window with no write events for this user returns null.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2020-01-01 00:00:00+00', timestamptz '2020-01-02 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-2: an empty window must return null, got %s', v_peak_none);
+
+  -- AC-3: a service-role caller with no target user (p_user_id null) has no
+  -- single account to report on.
+  select lorekit_usage_memory_count_peak(
+    null, timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_none;
+  assert v_peak_none is null, format('90 AC-3: a NULL target user must return null, got %s', v_peak_none);
+
+  -- AC-4: self-only -- the second user's 9999 must never appear in the first
+  -- user's peak (already proven by AC-1 = 55, not 9999), and querying the
+  -- SECOND user directly must see their own peak, not the first's.
+  select lorekit_usage_memory_count_peak(
+    '00000000-0000-0000-0000-0000000000a2',
+    timestamptz '2026-08-10 00:00:00+00', timestamptz '2026-08-11 00:00:00+00'
+  ) into v_peak_other_scope;
+  assert v_peak_other_scope = 9999,
+    format('90 AC-4: the second user must see their own peak (9999), got %s', v_peak_other_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+
+-- ── 91. Per-memory read counters + daily rollup (00084) ─────────────────────
+-- usage_events records HOW MANY records a call touched, never WHICH -- there
+-- is no memory_id on the read ledger and none of the 17 tables is a
+-- per-memory read table. This closes it with counters + a daily rollup, not a
+-- per-read event table.
+-- AC-1: lorekit_record_memory_reads increments read_count/last_read_at for
+--       EVERY id in the array, in one call.
+-- AC-2: it upserts memory_read_daily, keyed by (memory_id, day, read_kind),
+--       accumulating count across repeated calls on the same day.
+-- AC-3: a null/empty array is a no-op -- no row touched, no error raised.
+-- AC-4: the read_kind CHECK is a real backstop.
+-- AC-5: ON DELETE CASCADE -- purging a memory removes its rollup rows; an
+--       ARCHIVED memory (soft-delete only) keeps them.
+do $$
+declare
+  v_m1        uuid;
+  v_m2        uuid;
+  v_read_count integer;
+  v_last_read  timestamptz;
+  v_rollup_count integer;
+  v_rollup_rows  integer;
+  v_raised       boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-1', 'v')
+    returning id into v_m1;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '87-lesson-2', 'v')
+    returning id into v_m2;
+
+  -- AC-1: a bulk read over both memories, one call, one array.
+  perform lorekit_record_memory_reads(array[v_m1, v_m2], 'bulk');
+
+  select read_count, last_read_at into v_read_count, v_last_read from memories where id = v_m1;
+  assert v_read_count = 1, format('91 AC-1: read_count must increment to 1, got %s', v_read_count);
+  assert v_last_read is not null, '91 AC-1: last_read_at must be set';
+
+  select read_count into v_read_count from memories where id = v_m2;
+  assert v_read_count = 1, format('91 AC-1: the second id in the array must ALSO increment, got %s', v_read_count);
+
+  -- AC-2: a second bulk call the SAME day accumulates onto the same rollup row
+  -- rather than inserting a second one.
+  perform lorekit_record_memory_reads(array[v_m1], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m1], 'targeted');
+
+  select count into v_rollup_count from memory_read_daily
+   where memory_id = v_m1 and day = (now() at time zone 'UTC')::date and read_kind = 'bulk';
+  assert v_rollup_count = 2, format('91 AC-2: the bulk rollup must accumulate to 2, got %s', v_rollup_count);
+
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m1;
+  assert v_rollup_rows = 2,
+    format('91 AC-2: bulk and targeted must be SEPARATE rollup rows for the same day, got %s rows', v_rollup_rows);
+
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('91 AC-2: read_count must reflect all three calls (1+1+1), got %s', v_read_count);
+
+  -- AC-3: a null/empty array must not raise and must not touch any row.
+  perform lorekit_record_memory_reads(null, 'bulk');
+  perform lorekit_record_memory_reads(array[]::uuid[], 'bulk');
+  select read_count into v_read_count from memories where id = v_m1;
+  assert v_read_count = 3, format('91 AC-3: a null/empty array must be a no-op, got read_count=%s', v_read_count);
+
+  -- AC-4: the read_kind CHECK is a real backstop, not decoration.
+  begin
+    insert into memory_read_daily (memory_id, day, read_kind, count) values (v_m1, current_date, 'skimmed', 1);
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '91 AC-4: an unrecognised read_kind must violate the CHECK';
+
+  -- AC-5: hard-delete (purge) cascades; archive (soft-delete) does not touch
+  -- the rollup at all. Test the CASCADE using m2 (already has a 'bulk' rollup
+  -- row from AC-1's array[v_m1, v_m2] call above) — give it a second, 'targeted'
+  -- row so the setup count reflects both.
+  perform lorekit_record_memory_reads(array[v_m2], 'targeted');
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 2, '91 AC-5 setup: m2 must have exactly two rollup rows (bulk + targeted) before the delete';
+
+  delete from memories where id = v_m2;
+  select count(*) into v_rollup_rows from memory_read_daily where memory_id = v_m2;
+  assert v_rollup_rows = 0,
+    format('91 AC-5: deleting the memory must CASCADE its rollup rows, got %s remaining', v_rollup_rows);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 92. lorekit_memory_read_ranking — hot/cold lore (00085) ──────────────────
+-- With per-memory counters in place (00084), rank memories by how often they
+-- have actually been read. hot = most-read first; cold = least-read, oldest
+-- first among ties.
+-- AC-1: hot ranks strictly by read_count desc.
+-- AC-2: cold ranks strictly by read_count asc, and among equal (zero) counts,
+--       oldest-created first — the most actionable prune candidates.
+-- AC-3: archived memories are excluded (already pruned; ranking them again is
+--       noise).
+-- AC-4: a scoped API key's unfiltered call is narrowed to its own allowlist.
+-- AC-5: an invalid direction raises rather than silently defaulting.
+do $$
+declare
+  v_m_hot   uuid;
+  v_m_warm  uuid;
+  v_m_cold1 uuid;
+  v_m_cold2 uuid;
+  v_m_archived uuid;
+  v_ids     text[];
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-hot', 'v', timestamptz '2026-01-01')
+    returning id into v_m_hot;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-warm', 'v', timestamptz '2026-01-02')
+    returning id into v_m_warm;
+  -- Two never-read memories, at different creation times, to prove the cold
+  -- tiebreak orders by created_at asc rather than leaving ties unordered.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-older', 'v', timestamptz '2025-06-01')
+    returning id into v_m_cold1;
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-cold-newer', 'v', timestamptz '2025-07-01')
+    returning id into v_m_cold2;
+  insert into memories (user_id, scope, key, value, archived_at)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '89-archived', 'v', now())
+    returning id into v_m_archived;
+
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_hot], 'bulk');
+  perform lorekit_record_memory_reads(array[v_m_warm], 'targeted');
+  -- Give the archived memory reads too, to prove archived rows are excluded
+  -- from the ranking regardless of how often they were read before archiving.
+  perform lorekit_record_memory_reads(array[v_m_archived, v_m_archived], 'bulk');
+
+  -- AC-1: hot ranks strictly by read_count desc. p_limit=100 (the function's
+  -- own max clamp, same as AC-3/AC-4 below) rather than a small number — by
+  -- this point in the shared-transaction test file the user already has
+  -- dozens of other active memories, most with read_count=0, so a small
+  -- top-N window is not guaranteed to still contain all four `89-*` probe
+  -- rows once filtered down to them.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-hot', '89-warm', '89-cold-older', '89-cold-newer']
+      or v_ids::text[] = array['89-hot', '89-warm', '89-cold-newer', '89-cold-older'],
+    format('92 AC-1: hot must rank 89-hot first and 89-warm second, got %s', v_ids);
+
+  -- AC-2: cold ranks read_count asc, then created_at asc among zero-count ties.
+  select array_agg(key order by ord) into v_ids
+    from (
+      select key, row_number() over () as ord
+        from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'cold', null, 100)
+       where key like '89-%'
+    ) t;
+  assert v_ids::text[] = array['89-cold-older', '89-cold-newer', '89-warm', '89-hot'],
+    format('92 AC-2: cold must rank the never-read, oldest-first, before the read ones, got %s', v_ids);
+
+  -- AC-3: the archived memory never appears in either ranking.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'hot', null, 100)
+     where key = '89-archived'
+  ), '92 AC-3: an archived memory must be excluded from the ranking';
+
+  -- AC-4: a scoped key's unfiltered call is narrowed to its allowlist —
+  -- restricting to a DIFFERENT scope than 'global' must exclude every 89-* row.
+  assert not exists (
+    select 1 from lorekit_memory_read_ranking(
+      '00000000-0000-0000-0000-0000000000a1', 'hot', null, 100, array['repo::acme/other']
+    ) where key like '89-%'
+  ), '92 AC-4: an out-of-allowlist key_scopes must narrow the result to nothing for these rows';
+
+  -- AC-5: an invalid direction raises rather than silently defaulting to hot.
+  begin
+    perform lorekit_memory_read_ranking('00000000-0000-0000-0000-0000000000a1', 'sideways', null, 10);
+  exception when sqlstate '22023' then
+    v_raised := true;
+  end;
+  assert v_raised, '92 AC-5: an invalid direction must raise, not silently default';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 93. usage_events.session_kind (00082) ────────────────────────────────────
+-- correlation_id was populated only when a human hand-exported
+-- LOREKIT_CORRELATION_ID, so "was this read in a local session, CI, or a PR
+-- automation" was unanswerable. session_kind is the bounded dimension every
+-- chart groups on; correlation_id stays the unbounded drill-down key.
+-- AC-1: the writer RPC persists the new trailing p_session_kind parameter.
+-- AC-2: session_kind is null by default (an older CLI, or no header sent).
+-- AC-3: the length CHECK is a real backstop, not decoration.
+do $$
+declare
+  v_id     uuid;
+  v_kind   text;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a CI run persists session_kind = 'ci'.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.list',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok',
+    p_session_kind => 'ci') into v_id;
+  assert v_id is not null, '93 AC-1: the writer must return the inserted id';
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind = 'ci', format('93 AC-1: p_session_kind must be persisted, got %s', v_kind);
+
+  -- AC-2: omitting p_session_kind leaves the column null.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select session_kind into v_kind from usage_events where id = v_id;
+  assert v_kind is null, format('93 AC-2: session_kind must default to null, got %s', v_kind);
+
+  -- AC-3: the length CHECK is a real backstop -- the app-side parseSessionKind
+  -- is the primary gate, but a direct insert must not be able to put an
+  -- unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, session_kind)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 17));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, '93 AC-3: an over-long session_kind value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 94. lorekit_usage_runs — enumerate runs (00083) ──────────────────────────
+-- GET /memories/usage?correlation_id= filters TO one run; nothing enumerated
+-- which runs exist. This is the payoff view.
+-- AC-1: two distinct correlation_id values produce two separate run rows,
+--       each aggregating only its own events (read/write counts, distinct
+--       scopes, duration).
+-- AC-2: events with a NULL correlation_id are excluded entirely -- they are
+--       not "one more run", they belong to no run.
+-- AC-3: keyset pagination -- a cursor at the first run's (last_seen,
+--       correlation_id) returns only the OLDER run, never OFFSET-style
+--       skipping.
+-- AC-4: self-only -- a second user's runs are invisible.
+do $$
+declare
+  v_count_a integer;
+  v_count_b integer;
+  v_reads_a bigint;
+  v_writes_a bigint;
+  v_scopes_a bigint;
+  v_null_run_count integer;
+  v_run_a_last_seen timestamptz;
+  v_page1_count integer;
+  v_page2_ids text[];
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- Run A: two reads (one memory.list returning 20, one memory.read
+  -- returning 1) and one write, across two scopes, newer.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, scope, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list',  'repo', 'jwt', 'ok', 100, 20, 'repo::acme/a', 'run-a', timestamptz '2026-08-15 01:00:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.read',  'repo', 'jwt', 'ok', 50,   1, 'repo::acme/b', 'run-a', timestamptz '2026-08-15 01:05:00+00'),
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'repo', 'jwt', 'ok', 30, null, 'repo::acme/a', 'run-a', timestamptz '2026-08-15 01:10:00+00');
+  -- Run B: one read, older.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, scope, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.search', 'global', 'jwt', 'ok', 200, 5, 'global', 'run-b', timestamptz '2026-08-14 01:00:00+00');
+  -- A NULL-correlation event in the same window -- must never surface as a
+  -- third run.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'repo', 'jwt', 'ok', null, timestamptz '2026-08-15 02:00:00+00');
+  -- A second user's run in the same window -- must never leak into user a1's list.
+  insert into usage_events (user_id, tool_name, scope_type, auth_type, outcome, correlation_id, created_at) values
+    ('00000000-0000-0000-0000-0000000000a2', 'memory.list', 'repo', 'jwt', 'ok', 'run-other-user', timestamptz '2026-08-15 01:00:00+00');
+
+  -- AC-1: two runs, aggregated correctly.
+  select count(*) into v_count_a from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id = 'run-a';
+  assert v_count_a = 1, format('94 AC-1: run-a must appear exactly once, got %s rows', v_count_a);
+
+  select read_events, write_events, distinct_scopes, last_seen
+    into v_reads_a, v_writes_a, v_scopes_a, v_run_a_last_seen
+    from lorekit_usage_runs(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+    ) where correlation_id = 'run-a';
+  assert v_reads_a = 2, format('94 AC-1: run-a must have 2 read events, got %s', v_reads_a);
+  assert v_writes_a = 1, format('94 AC-1: run-a must have 1 write event, got %s', v_writes_a);
+  assert v_scopes_a = 2, format('94 AC-1: run-a must touch 2 distinct scopes, got %s', v_scopes_a);
+
+  select count(*) into v_count_b from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id = 'run-b';
+  assert v_count_b = 1, format('94 AC-1: run-b must appear exactly once, got %s rows', v_count_b);
+
+  -- AC-2: the null-correlation event never becomes its own run, and does not
+  -- pollute run-a's counts (run-a's read_events stays 2, not 3).
+  select count(*) into v_null_run_count from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+  ) where correlation_id is null;
+  assert v_null_run_count = 0, format('94 AC-2: a NULL correlation_id must never surface as a run, got %s', v_null_run_count);
+
+  -- AC-3: a cursor positioned at run-a (the newest) returns only run-b.
+  select array_agg(correlation_id) into v_page2_ids from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00',
+    v_run_a_last_seen, 'run-a', 10
+  );
+  assert v_page2_ids = array['run-b'],
+    format('94 AC-3: paging past run-a must return only run-b, got %s', v_page2_ids);
+
+  -- Sanity: the unfiltered first page (no cursor) returns run-a before run-b
+  -- (newest first).
+  select count(*) into v_page1_count from lorekit_usage_runs(
+    '00000000-0000-0000-0000-0000000000a1',
+    timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00',
+    null, null, 1
+  ) where correlation_id = 'run-a';
+  assert v_page1_count = 1, '89: the first unfiltered page (limit 1) must be run-a (newest first)';
+
+  -- AC-4: self-only -- the second user's run never appears for user a1.
+  assert not exists (
+    select 1 from lorekit_usage_runs(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-20 00:00:00+00'
+    ) where correlation_id = 'run-other-user'
+  ), '94 AC-4: a second user''s run must never appear in the first user''s list';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── memories_tags_idx exists, is valid, and actually covers `tags` (00076 + 00086) ──
+-- 00076 added this GIN index specifically to keep the `tags @> ARRAY[...]`
+-- containment read in getOnboardingState() (packages/web/src/lib/onboarding-server.ts,
+-- awaited by every /overview render) off a sequential scan. It regressed
+-- silently four days later with no schema diff — a migration is not proof an
+-- index stays valid or gets used, only that it was created once — so assert
+-- its live catalog state directly rather than trusting that history. 00086
+-- rebuilt it; this pins the invariant going forward so a future bloat/corruption
+-- regression fails CI instead of reaching the next /overview p95 alert.
+do $$
+declare
+  v_indisvalid  boolean;
+  v_indisready  boolean;
+  v_amname      text;
+  v_indexdef    text;
+begin
+  select i.indisvalid, i.indisready, am.amname, pg_get_indexdef(i.indexrelid)
+    into v_indisvalid, v_indisready, v_amname, v_indexdef
+  from pg_index i
+  join pg_class c on c.oid = i.indexrelid
+  join pg_am am on am.oid = c.relam
+  where c.relname = 'memories_tags_idx';
+
+  assert v_indisvalid is not null, '00076/00086: memories_tags_idx must exist';
+  assert v_indisvalid, '00076/00086: memories_tags_idx must be VALID (not a failed/leftover CONCURRENTLY build)';
+  assert v_indisready, '00076/00086: memories_tags_idx must be READY (visible to the planner)';
+  assert v_amname = 'gin', format('00076/00086: memories_tags_idx must use the gin access method, got %s', v_amname);
+  assert v_indexdef ilike '%(tags)%', format('00076/00086: memories_tags_idx must be defined on the tags column, got: %s', v_indexdef);
+
+end;
+$$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- §95 — 00088/00089: retention policies ("grooming")
+-- ═════════════════════════════════════════════════════════════════════════
+-- Proves the SQL layer's central invariant: lorekit_groom_candidates is the
+-- SINGLE source of truth "what matches", so a groom.preview count always
+-- equals what groom.run archives, and lorekit_groom_sweep sweeps only
+-- auto+enabled policies. Also proves the never-seen unseen_days coalesce,
+-- the protected exclusion, the never-deletes guarantee, and the policy CRUD
+-- RPCs' JSONB-patch has-key/absent/null semantics.
+--
+-- Auditing (one memory.archive row per archived lesson) is deliberately NOT
+-- asserted here: lorekit_groom_run does not write audit_log itself — LoreKit's
+-- capture model is app-layer (CLAUDE.md "Audit logging is captured at the app
+-- layer"), so both the MCP groom.run tool and the REST POST /groom/run
+-- handler write it after the RPC returns. That is covered by the JS/TS test
+-- suite (packages/mcp-core), not here.
+do $$
+declare
+  v_user      uuid := '00000000-0000-0000-0000-0000000089a1';
+  v_other     uuid := '00000000-0000-0000-0000-0000000089b2';
+  v_count     int;
+  v_archived  int;
+  v_keys      jsonb;
+  v_policy_id uuid;
+  v_row       record;
+  v_bool      boolean;
+begin
+  insert into auth.users (id, email) values
+    (v_user,  'groom87-user@test.local'),
+    (v_other, 'groom87-other@test.local')
+  on conflict (id) do nothing;
+
+  -- ── fixtures ────────────────────────────────────────────────────────────
+  -- old-global: 60 days old, never seen, seen_count 1 — matches everything.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'global', 'groom87-old-global', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- recent-global: 1 day old — fails min_age_days=30.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'global', 'groom87-recent-global', 'v', now() - interval '1 day', now() - interval '1 day', 1);
+  -- old-branch: under repo::acme/app via branch::acme/app::main — proves the
+  -- ::-delimited hierarchy (a repo-scoped policy reaches its branches).
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'branch::acme/app::main', 'groom87-old-branch', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- other-repo: must NOT match a repo::acme/app policy despite a shared prefix.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'repo::acme/app-2', 'groom87-other-repo', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- seen-recently: last_seen_at 1 day ago — fails unseen_days=14.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_seen_at)
+    values (v_user, 'global', 'groom87-seen-recently', 'v', now() - interval '60 days', now() - interval '60 days', 1, now() - interval '1 day');
+  -- unseen-long: last_seen_at 30 days ago — matches unseen_days=14.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_seen_at)
+    values (v_user, 'global', 'groom87-unseen-long', 'v', now() - interval '60 days', now() - interval '60 days', 1, now() - interval '30 days');
+  -- high-seen-count: seen_count 10 — fails max_seen_count=3.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'global', 'groom87-high-seen-count', 'v', now() - interval '60 days', now() - interval '60 days', 10);
+  -- protected: would otherwise match min_age_days=30, but is excluded.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, protected)
+    values (v_user, 'global', 'groom87-protected', 'v', now() - interval '60 days', now() - interval '60 days', 1, true);
+  -- other-user: same scope/age, but a DIFFERENT owner — must never appear in
+  -- v_user's candidate set (the explicit p_user_id filter, not RLS, since
+  -- SECURITY DEFINER functions bypass RLS).
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_other, 'global', 'groom87-other-user', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+  -- already-archived: must never be re-selected as a candidate.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, archived_at)
+    values (v_user, 'global', 'groom87-already-archived', 'v', now() - interval '60 days', now() - interval '60 days', 1, now());
+
+  -- ── AC-6: candidate ANDs conditions, never-seen matches unseen_days ─────
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null);
+  -- 'global' reaches EVERY scope, so this catches every 60-day-old v_user row
+  -- except recent-global (too young), protected, and already-archived: 6 of
+  -- the 9 v_user fixtures (old-global, old-branch, other-repo, seen-recently,
+  -- unseen-long, high-seen-count).
+  assert v_count = 6,
+    format('95-CAND-1: min_age_days=30 over global should catch 6, got %s', v_count);
+
+  -- Never-seen (last_seen_at IS NULL) must match unseen_days regardless of
+  -- the threshold — the literal "never-seen lessons match" reading.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 3650, null) c
+   where c.key = 'groom87-old-global';
+  assert v_count = 1, '95-CAND-2: a never-seen row must match unseen_days at ANY threshold';
+
+  -- unseen_days excludes a recently-seen row and includes a long-unseen one.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 14, null) c
+   where c.key = 'groom87-seen-recently';
+  assert v_count = 0, '95-CAND-3: unseen_days=14 must exclude a row seen 1 day ago';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 14, null) c
+   where c.key = 'groom87-unseen-long';
+  assert v_count = 1, '95-CAND-4: unseen_days=14 must include a row last seen 30 days ago';
+
+  -- max_seen_count excludes a high-recurrence row.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, null, 3) c
+   where c.key = 'groom87-high-seen-count';
+  assert v_count = 0, '95-CAND-5: max_seen_count=3 must exclude seen_count=10';
+
+  -- protected is excluded unconditionally, even with no other condition.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, null, null) c
+   where c.key = 'groom87-protected';
+  assert v_count = 0, '95-CAND-6: a protected memory must never be a candidate';
+
+  -- The ::-delimited hierarchy: repo::acme/app reaches branch::acme/app::main
+  -- but not repo::acme/app-2 (shared textual prefix, different repo).
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'repo::acme/app', 30, null, null) c
+   where c.key = 'groom87-old-branch';
+  assert v_count = 1, '95-CAND-7: a repo-scoped policy must reach its branch scopes';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'repo::acme/app', 30, null, null) c
+   where c.key = 'groom87-other-repo';
+  assert v_count = 0, '95-CAND-8: a repo-scoped policy must NOT reach a different repo sharing a text prefix';
+
+  -- Tenant isolation: another user's memory never appears.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null) c
+   where c.key = 'groom87-other-user';
+  assert v_count = 0, '95-CAND-9: another user''s memory must never be a candidate';
+
+  -- Already-archived rows are never re-selected.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null) c
+   where c.key = 'groom87-already-archived';
+  assert v_count = 0, '95-CAND-10: an already-archived row must never be a candidate';
+
+  -- ── AC-7: groom_run archives the SAME candidates preview showed, in one
+  --    transaction, returns count+keys, and NEVER deletes a row ───────────
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', 30, null, null);
+
+  select archived, keys into v_archived, v_keys from lorekit_groom_run(v_user, 'global', 30, null, null);
+  assert v_archived = v_count,
+    format('95-RUN-1: groom_run must archive exactly the candidates groom_candidates showed (preview=%s, run=%s)', v_count, v_archived);
+  assert jsonb_array_length(v_keys) = v_archived,
+    '95-RUN-2: the returned keys array length must equal the archived count';
+
+  select count(*) into v_count
+    from memories where user_id = v_user and key = 'groom87-old-global' and archived_at is not null;
+  assert v_count = 1, '95-RUN-3: a candidate must have archived_at set after groom_run';
+
+  -- Never deletes: the total row count for this user is unchanged (nothing
+  -- physically removed), and the archived row is still SELECT-able.
+  select count(*) into v_count from memories where user_id = v_user;
+  assert v_count = 9, format('95-RUN-4: groom_run must never physically delete a row (expected 9 total, got %s)', v_count);
+
+  select count(*) into v_count
+    from memories where user_id = v_user and key = 'groom87-old-global';
+  assert v_count = 1, '95-RUN-5: an archived row must still exist (soft-archive, not delete)';
+
+  -- Idempotent-ish: re-running against the now-archived global scope with the
+  -- same conditions finds nothing left to archive (they are all archived_at
+  -- is not null now, so lorekit_groom_candidates excludes them via its own
+  -- archived_at is null predicate).
+  select archived into v_archived from lorekit_groom_run(v_user, 'global', 30, null, null);
+  assert v_archived = 0, '95-RUN-6: re-running groom_run over an already-archived set must archive nothing';
+
+  -- ── AC-8/AC-9: sweep touches only auto+enabled; auto defaults disabled ──
+  -- A FRESH row, inserted now rather than reused from the fixtures above: the
+  -- AC-7 section's `groom_run(v_user, 'global', 30, …)` already archived
+  -- everything old (global reaches every scope), so a pre-existing row would
+  -- already be archived_at IS NOT NULL and the sweep below would prove
+  -- nothing about the sweep mechanism itself.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'branch::acme/app::main', 'groom87-sweep-target', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+
+  insert into retention_policies (user_id, scope, name, mode, enabled, min_age_days)
+    values (v_user, 'branch::acme/app::main', '95-review-policy', 'review', false, 30)
+    returning id into v_policy_id;
+  assert v_policy_id is not null, '95-POLICY-1: policy insert must return an id';
+
+  -- default-disabled check via a plain insert with no explicit `enabled`.
+  insert into retention_policies (user_id, scope, name, mode, min_age_days)
+    values (v_user, 'repo::acme/app', '95-auto-default', 'auto', 30);
+  assert (select enabled from retention_policies where name = '95-auto-default') = false,
+    '95-POLICY-2: a new auto-mode policy must default to enabled=false';
+
+  insert into retention_policies (user_id, scope, name, mode, enabled, min_age_days)
+    values (v_user, 'repo::acme/app', '95-auto-enabled', 'auto', true, 30);
+
+  -- Sweep: only '95-auto-enabled' (mode=auto, enabled=true) should archive
+  -- groom87-old-branch (under repo::acme/app). The review policy and the
+  -- disabled auto policy must leave it untouched.
+  select lorekit_groom_sweep() into v_archived;
+  assert v_archived >= 1,
+    format('95-SWEEP-1: sweep must archive at least the auto+enabled policy''s match, got %s', v_archived);
+
+  select count(*) into v_count
+    from memories where user_id = v_user and key = 'groom87-sweep-target' and archived_at is not null;
+  assert v_count = 1, '95-SWEEP-2: the auto+enabled policy''s match must be archived after sweep';
+
+  -- A second sweep call must not error and must not re-archive anything
+  -- (proves the review/disabled policies never ran — if they had run
+  -- unexpectedly there would be nothing new for them to catch either, so
+  -- this call's return being consistent is the assertion).
+  select lorekit_groom_sweep() into v_archived;
+
+  -- ── policy CRUD RPCs: JSONB patch has-key / absent / null semantics ────
+  select * into v_row from lorekit_policy_update(v_user, v_policy_id, jsonb_build_object('name', '95-review-policy-renamed'));
+  assert v_row.name = '95-review-policy-renamed', '95-POLICY-3: update must apply a present key';
+  assert v_row.min_age_days = 30, '95-POLICY-4: update must leave an ABSENT key unchanged';
+
+  select * into v_row from lorekit_policy_update(v_user, v_policy_id, jsonb_build_object('min_age_days', null));
+  assert v_row.min_age_days is null, '95-POLICY-5: update must CLEAR a key present with a JSON null';
+
+  -- Update for a policy owned by a different user (tenant isolation) or a
+  -- nonexistent id returns no row (setof, zero rows) — a caller reads that as
+  -- "not found".
+  select count(*) into v_count from lorekit_policy_update(v_other, v_policy_id, jsonb_build_object('name', 'hijack'));
+  assert v_count = 0, '95-POLICY-6: updating another user''s policy must return zero rows';
+
+  select count(*) into v_count from lorekit_policy_delete(v_other, v_policy_id);
+  assert v_count = 0, '95-POLICY-7: deleting another user''s policy must return zero rows and delete nothing';
+
+  select count(*) into v_count from retention_policies where id = v_policy_id;
+  assert v_count = 1, '95-POLICY-8: the policy must still exist after a denied cross-user delete attempt';
+
+  select count(*) into v_count from lorekit_policy_delete(v_user, v_policy_id);
+  assert v_count = 1, '95-POLICY-9: deleting your own policy must return the deleted row';
+
+  select count(*) into v_count from retention_policies where id = v_policy_id;
+  assert v_count = 0, '95-POLICY-10: the policy row must be gone after delete';
+
+  -- ── AC-9 (structural): pg_cron guard already proven by every migration in
+  --    this run applying cleanly above (00088's DO block did not error).
+
+  -- ── memory.protect toggling ─────────────────────────────────────────────
+  select lorekit_memory_protect(v_user, 'global', 'groom87-recent-global', true) into v_bool;
+  assert v_bool = true, '95-PROTECT-0: lorekit_memory_protect must report true when it changed a row';
+  assert (select protected from memories where user_id = v_user and key = 'groom87-recent-global') = true,
+    '95-PROTECT-1: lorekit_memory_protect(true) must set protected';
+
+  select lorekit_memory_protect(v_user, 'global', 'groom87-recent-global', false) into v_bool;
+  assert (select protected from memories where user_id = v_user and key = 'groom87-recent-global') = false,
+    '95-PROTECT-2: lorekit_memory_protect(false) must clear protected';
+
+  -- Protecting a nonexistent/another-tenant memory returns false, changes nothing.
+  assert lorekit_memory_protect(v_other, 'global', 'groom87-recent-global', true) = false,
+    '95-PROTECT-3: protecting a memory owned by a different user must return false';
+end;
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §96 — 00090: lorekit_memory_pivot (the two-dimensional facet count)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- §69 pins the ONE-dimensional catalog (lorekit_memory_facets) and its
+-- drill-down self-exclusion. This pins the two-dimensional one, and the single
+-- assertion worth having is PIVOT-3: BOTH axes must be excluded from the
+-- filters, because a matrix counted under its own axes blacks out the moment a
+-- cell is clicked and the instrument has no second click. The rest of the
+-- section holds the pivot to the SAME row-visibility rules the facet catalog
+-- already has, so the two cannot answer differently about the same rows.
+do $$
+declare
+  v_user  uuid := '96000000-0000-0000-0000-000000000001';
+  v_other uuid := '96000000-0000-0000-0000-000000000002';
+  v_count bigint;
+  v_rows  bigint;
+begin
+  insert into auth.users (id) values (v_user), (v_other) on conflict do nothing;
+
+  insert into memories (user_id, scope, key, value, tags, kind, host, origin_repo)
+  values
+    (v_user, 'repo::a/b', 'pivot96-1', 'v', '{x,y}', 'lesson', 'reviewer', 'a/b'),
+    (v_user, 'repo::a/b', 'pivot96-2', 'v', '{x}',   'lesson', 'aw',       'a/b'),
+    (v_user, 'repo::a/b', 'pivot96-3', 'v', '{y}',   'signal', 'reviewer', 'a/b'),
+    (v_user, 'repo::c/d', 'pivot96-4', 'v', '{}',    'signal', 'reviewer', 'c/d'),
+    (v_user, 'repo::c/d', 'pivot96-5', 'v', '{x}',   'lesson', null,       'c/d'),
+    (v_user, 'repo::a/b', 'pivot96-6', 'v', '{x}',   'lesson', 'reviewer', 'a/b'),
+    (v_user, 'repo::a/b', 'pivot96-7', 'v', '{x}',   'lesson', 'reviewer', 'a/b');
+  update memories set archived_at = now() where user_id = v_user and key = 'pivot96-6';
+  update memories set expires_at = now() - interval '1 day' where user_id = v_user and key = 'pivot96-7';
+
+  -- The RPC resolves its actor from the JWT claims (a service_role caller may
+  -- name the user it acts for; anyone else is only ever themselves), so the
+  -- reads below run in the service_role context §94 uses. Seeding stays as the
+  -- session role — `auth.users` is not writable from service_role.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- ── PIVOT-1: the active partition excludes archived AND expired ─────────
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user);
+  assert v_count = 4,
+    '96-PIVOT-1: the active partition must exclude archived and expired rows (expected 4, got ' || v_count || ')';
+
+  -- ── PIVOT-2: a `tag` axis unnests, so a two-label row lands in two cells.
+  --    Matches lorekit_memory_facets' own unnest, which is what makes a matrix
+  --    row total agree with that value's facet count (see PIVOT-10).
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('tag', 'kind', v_user) where row_value = 'x';
+  assert v_count = 3,
+    '96-PIVOT-2: a tag axis must unnest labels (expected x=3, got ' || v_count || ')';
+
+  -- ── PIVOT-3: BOTH axes are self-excluded. THE load-bearing one. ─────────
+  -- `kind` is an axis AND carries a filter; the `signal` cells must survive,
+  -- or clicking a cell empties every other cell and the grid is a dead end.
+  select count(*) into v_rows
+    from lorekit_memory_pivot('kind', 'host', v_user, false, null, 400,
+         null, 'any', null, 'in', null, 'in', array['lesson'], 'in')
+   where row_value = 'signal';
+  assert v_rows > 0,
+    '96-PIVOT-3: an axis must be excluded from its OWN filter, or a drilled-in matrix blacks out';
+
+  -- ── PIVOT-4: a NON-axis filter still narrows ────────────────────────────
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user, false, null, 400,
+         null, 'any', null, 'in', null, 'in', null, 'in', null, 'in',
+         array['c/d'], 'in');
+  assert v_count = 1,
+    '96-PIVOT-4: a filter on a dimension that is NOT an axis must narrow (expected 1, got ' || v_count || ')';
+
+  -- ── PIVOT-5: a null column value yields no cell (as in the facet catalog) ─
+  select count(*) into v_rows
+    from lorekit_memory_pivot('host', 'kind', v_user) where row_value is null;
+  assert v_rows = 0, '96-PIVOT-5: a null column value must yield no cell';
+
+  -- ── PIVOT-6: the archived partition is its own population ───────────────
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user, true);
+  assert v_count = 1,
+    '96-PIVOT-6: archived=true must count only archived rows (expected 1, got ' || v_count || ')';
+
+  -- ── PIVOT-7: p_limit bounds the response ────────────────────────────────
+  select count(*) into v_rows from lorekit_memory_pivot('kind', 'host', v_user, false, null, 1);
+  assert v_rows = 1, '96-PIVOT-7: p_limit must bound the number of cells returned';
+
+  -- ── PIVOT-8: tenant isolation ───────────────────────────────────────────
+  select count(*) into v_rows from lorekit_memory_pivot('kind', 'host', v_other);
+  assert v_rows = 0, '96-PIVOT-8: a different tenant must see none of these rows';
+
+  -- ── PIVOT-9: the calling key's scope allowlist narrows the pivot ────────
+  -- `origin_repo` is a repository name by construction, so an unnarrowed
+  -- pivot would leak exactly what the scope catalog hides (00068/00069).
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('kind', 'host', v_user, false, null, 400,
+         null,'any', null,'in', null,'in', null,'in', null,'in',
+         null,'in', null,'in', null,'in', null,'in',
+         array['repo::c/d']);
+  assert v_count = 1,
+    '96-PIVOT-9: p_key_scopes must narrow the pivot (expected 1, got ' || v_count || ')';
+
+  -- ── PIVOT-10: agreement with the one-dimensional catalog ────────────────
+  -- The pivot is the facet count with a second group-by, so summing one axis
+  -- must reproduce that value's facet count exactly. This is the assertion
+  -- that stops the two drifting into a second implementation of one question.
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_memory_pivot('host', 'kind', v_user) where row_value = 'reviewer';
+  select count into v_rows
+    from lorekit_memory_facets(v_user) where facet = 'host' and value = 'reviewer';
+  assert v_count = v_rows,
+    '96-PIVOT-10: a pivot axis total must equal that value''s facet count (pivot ' || v_count
+      || ' vs facets ' || v_rows || ')';
 
   reset role;
   perform set_config('request.jwt.claims', '', true);

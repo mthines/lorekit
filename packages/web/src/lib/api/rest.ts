@@ -22,6 +22,8 @@
  * session). Nothing here imports `next/*` or a Supabase client.
  */
 
+import { supabaseUrl } from '@/lib/supabase/config';
+
 /**
  * The `X-LoreKit-Client` request header and this dashboard's value for it.
  *
@@ -29,7 +31,7 @@
  * `@lorekit/schemas` / `@lorekit/core` dependency (the same reason
  * `lib/audit-actions.ts` re-declares the audit vocabulary). The authoritative
  * vocabulary is `USAGE_CLIENTS` / `DASHBOARD_CLIENT` in
- * `packages/mcp-core/src/usage-stats.ts`, and `usage-client-parity.spec.ts`
+ * `packages/mcp-core/src/telemetry/usage-stats.ts`, and `usage-client-parity.spec.ts`
  * fails if these two strings drift from it — which matters, because a
  * mismatched value is silently ignored by `parseUsageClient` and the dashboard
  * would quietly start counting its own reads again.
@@ -73,13 +75,13 @@ export class RestConfigError extends Error {
  * `https://<ref>.supabase.co/functions/v1` — the edge-function root the REST
  * API is served from.
  *
- * Read as a literal `process.env['…']` member expression so Next.js inlines it
- * into the browser bundle at build time (the same requirement `otel-origins.ts`
- * documents), and resolved per call rather than at module load so a test can
- * set it after import.
+ * Resolved through `supabaseUrl()` (the single Supabase-target resolver, which
+ * honours the `NEXT_PUBLIC_USE_LOCAL_SUPABASE` flag and keeps the literal
+ * `process.env['…']` read Next.js inlines into the browser bundle), per call
+ * rather than at module load so a test can set the env after import.
  */
 export function restBaseUrl(): string {
-  const url = process.env['NEXT_PUBLIC_SUPABASE_URL'];
+  const url = supabaseUrl();
   if (!url) throw new RestConfigError();
   return `${url.replace(/\/+$/, '')}/functions/v1`;
 }
@@ -148,6 +150,41 @@ export async function restFetch<T>(path: string, req: RestRequest): Promise<T> {
     ...(signal ? { signal } : {}),
     // Never cache a per-user read: Next's fetch would otherwise serve one
     // user's memories to the next request that happens to match the URL.
+    cache: 'no-store',
+  });
+
+  if (!res.ok) throw await toRestError(res);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+/** A request to a PUBLIC (unauthenticated) REST route. */
+export interface PublicRestRequest {
+  method?: 'GET' | 'POST';
+  query?: Record<string, RestQueryValue>;
+  body?: unknown;
+  signal?: AbortSignal;
+}
+
+/**
+ * Call a PUBLIC REST route — no `Authorization`, no `X-LoreKit-Client`.
+ *
+ * The blog like counter (`/blog/likes`) is the one unauthenticated surface: the
+ * blog is a public page and its likes accumulate anonymously, so there is no
+ * session token to send. Everything else — the base URL, query building, the
+ * `{ error, code }` envelope parsing — is shared with the authed `restFetch`, so
+ * the two cannot drift on how they talk to the edge functions.
+ */
+export async function publicRestFetch<T>(path: string, req: PublicRestRequest = {}): Promise<T> {
+  const { method = 'GET', query, body, signal } = req;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${restBaseUrl()}${path}${buildQuery(query)}`, {
+    method,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    ...(signal ? { signal } : {}),
     cache: 'no-store',
   });
 

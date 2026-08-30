@@ -10,13 +10,14 @@
  * actions (same note as webhook-secrets.ts).
  *
  * `recordAuditEvent` is the dashboard-side counterpart of
- * `packages/mcp-core/src/audit.ts`'s `recordAudit` — same non-throwing
+ * `packages/mcp-core/src/audit/audit.ts`'s `recordAudit` — same non-throwing
  * contract: a failed audit write must never break the caller's primary
  * operation (token creation, webhook rotation, …), so every path here
  * swallows and logs its own errors rather than propagating them.
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { AUDIT_ACTIONS, type AuditAction } from '@/lib/audit-actions';
 import { decodeCursor } from '@/lib/pagination/cursor';
 import { clampPageSize, assemblePage, type Page } from '@/lib/pagination/keyset';
@@ -72,7 +73,7 @@ const EMPTY_PAGE: AuditLogPage = { rows: [], nextCursor: null, hasMore: false };
 export async function recordAuditEvent(input: AuditLogEventInput): Promise<void> {
   try {
     const supabase = await createServerClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getVerifiedUser();
     if (!user) {
       console.error('[recordAuditEvent] no authenticated user — skipping audit write for action:', input.action);
       return;
@@ -109,7 +110,7 @@ export async function recordAuditEvent(input: AuditLogEventInput): Promise<void>
  */
 export async function listAuditLog(filters: AuditLogFilters = {}): Promise<AuditLogPage> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return EMPTY_PAGE;
 
   const pageSize = clampPageSize(filters.pageSize ?? filters.limit, {

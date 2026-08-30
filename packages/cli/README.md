@@ -47,11 +47,13 @@ Linux, and Windows (npm creates the `lorekit` shim on every platform).
 Sets up the full memory loop — the same three parts as the Claude plugin,
 without needing a marketplace:
 
-1. **Skills** (`lorekit-memory` + `lorekit-setup`) — the model-invoked authoring judgment and the self-improvement loop authoring counterpart.
+1. **Skills** (`lorekit-memory` + `lorekit-setup` + `lorekit-groom`) — the model-invoked runtime read/write loop, the self-improvement loop authoring counterpart, and the store-grooming maintenance counterpart.
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
-   `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
+   `SessionStart`, the few that match what you just typed on every substantive
+   prompt (`UserPromptSubmit`, `hooks.userPrompt`), and on a tool failure
+   (`PostToolUseFailure`) any lessons that
    look **relevant to that failure** ("you've hit this before") plus a nudge to
    record the fix, and a retrospective nudge on `Stop` — by default only when the
    session actually hit friction (`hooks.stop`). These fire the shared
@@ -73,6 +75,39 @@ lorekit install \
 
 lorekit install --global      # set it up for every project
 ```
+
+#### Claude Code on the web (`--mcp-json`)
+
+Claude Code on the web clones the repo fresh into an ephemeral container, so the
+only MCP config it can see is a **committed, repo-root `.mcp.json`** — a global
+`~/.claude.json` lives on your machine and never travels there. `--mcp-json`
+writes exactly that file, in a **committable** form: it authenticates via a
+`${LOREKIT_TOKEN}` reference in an `mcp-remote --header` rather than embedding
+the token, so there is no secret in the file.
+
+```bash
+lorekit install --mcp-json --yes            # web-ready project .mcp.json
+lorekit install --global --mcp-json --yes   # + the machine-wide CLI, skills, hooks
+```
+
+Set **`LOREKIT_TOKEN`** as an environment secret in the web UI; the value is
+expanded before `mcp-remote` is spawned. `--mcp-json` always writes the
+**project-root** file regardless of `--project` / `--global`, and it composes
+with either — pair it with `--global` to get the local CLI, skills, and hooks in
+`~/.claude` **and** the committable web config in one command. On a `--project`
+install it takes over `.mcp.json` with the committable form instead of the
+embedded-token one.
+
+**You have to commit the file, and `.mcp.json` is usually git-ignored** (the
+default install embeds a token, so LoreKit's own `.gitignore` — and many
+projects — ignore it). Un-ignore it before committing (drop the `.mcp.json` line
+from `.gitignore`, negate it with `!.mcp.json`, or `git add -f .mcp.json` once);
+`install --mcp-json` **warns when the file it wrote is still git-ignored**, so a
+fresh web clone silently missing the config is not a mystery. Once `.mcp.json` is
+tracked, only run `install --mcp-json` in that repo — a plain `install --project`
+would embed a live token in the now-committed file (and the command warns before
+it does). See the
+[Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
 Flags: `--project` / `--global` pick the scope non-interactively; `--yes` runs
@@ -100,8 +135,8 @@ and the write is still the model calling `memory.write`.
 
 | Mode | Wires | What you get |
 |------|-------|--------------|
-| `all` | `SessionStart`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, plus a nudge on a tool failure and a friction-gated one at end of turn |
-| `read-only` | `SessionStart` | Lessons injected; nothing ever nudges |
+| `all` | `SessionStart`, `UserPromptSubmit`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, the ones matching each substantive prompt injected as you go, plus a nudge on a tool failure and a friction-gated one at end of turn |
+| `read-only` | `SessionStart` | Lessons injected ONCE at session start; nothing nudges and nothing runs per turn |
 | `none` | — | Skills + MCP only; memory stays model-invoked |
 
 ```bash
@@ -231,8 +266,8 @@ Inspect **one** lesson in full — its complete, **untruncated** value plus scop
 key, updated date, tags, and which store(s) it lives in:
 
 ```bash
-lorekit show global prefer-guard-clauses
-lorekit show project::widget build-flags --json
+lorekit show global::prefer-guard-clauses
+lorekit show repo::acme/widget::build-flags --json
 ```
 
 If the same `scope::key` exists in **both** the offline and remote stores —
@@ -241,6 +276,36 @@ When it lives in only one store, that copy is shown and the other is noted as
 missing. It exits **non-zero** when the key is found in no readable store, so it
 fits scripts. `--json` emits the full normalized record(s) and which store each
 came from. Both a scope and a key are required (else a usage error).
+
+### Addressing a memory: `<scope::key>`
+
+`show`, `write` and `link` all take a memory the same way, and the single-token
+`<scope::key>` form is canonical — it is exactly what `list` and `search` print
+and what `write` echoes back, so a key copy-pasted out of any output resolves.
+The explicit two-positional form is also accepted, and `--scope` / `--key` name
+each half outright:
+
+```bash
+lorekit show repo::acme/widget::build-flags        # canonical
+lorekit show repo::acme/widget build-flags         # explicit positionals
+lorekit show --scope repo::acme/widget --key build-flags
+```
+
+The single-token form is split at the **last** `::`, and only when the left side
+is itself a **complete valid scope** — so a multi-segment scope stays whole
+(`repo::acme/widget::build-flags` is scope `repo::acme/widget`, key
+`build-flags`), and a bare `repo::acme/widget` is never mis-read as scope `repo`
+plus a bogus key. Because `::` is reserved as the scope separator, a key that
+itself contains `::` cannot be written as one token — use `--key` for those:
+
+```bash
+lorekit write --scope global --key "loop::aw-lessons" "body"
+```
+
+The scope is validated before any store is touched, so a typo is rejected by
+name (`invalid scope foo — unrecognized scope type`) instead of surfacing later
+as a missing value or, worse, a memory quietly filed under a scope that does not
+exist. See [scope format](../../docs/scope-format.md) for the grammar.
 
 ### `lorekit stats`
 
@@ -351,7 +416,10 @@ lorekit lint --json           # { total, offline, remote } structured findings
 
 Rules: **empty-value** (blank/whitespace-only body), **short-value** (a non-empty
 body below a small length threshold), **untrimmed-value** (real content with
-surrounding whitespace), **empty-key** (blank key), and **malformed-scope** (e.g.
+surrounding whitespace), **empty-key** (blank key), **volatile-key** (the key
+carries a per-sighting identifier — a run of 6+ digits such as a GitHub comment
+id, or a `pr<n>` / `issue<n>` segment — so it never collides, never dedups, and
+freezes `seen_count` at 1), and **malformed-scope** (e.g.
 a single `:` where `::` is expected). `lint` **exits non-zero (1) when any issue
 is found**, so it is usable as a CI gate (`lorekit lint || exit 1`); a clean run —
 or one where only a store is unavailable — exits 0. The pure rule predicates live
@@ -374,6 +442,57 @@ candidates for a human to review and can both miss paraphrases and group
 coincidental overlaps. Any pair scoring at or above `--threshold` links (transitively)
 into one cluster; only clusters of 2+ members are reported, each with a similarity
 range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store.
+
+### `lorekit obligations`
+
+Check a changed-file set against the **Surface-Partner Map** — a declarative
+registry of known, path-keyed file partnerships (a mirrored module, a doc that
+copies a claim, a generated artifact) mined from existing CI guards — and flag
+any partner the map says the changed-set owes but doesn't contain:
+
+```bash
+lorekit obligations supabase/functions/_shared/audit/audit.ts        # positionals
+lorekit obligations --files packages/schemas/src/shared/tool-catalog.ts --json
+git diff --name-only origin/main... | lorekit obligations --strict   # from a real diff
+```
+
+This is a machine version of a recurring review finding: a fix to one surface
+leaves its partner stale because the lessons documenting the partnership are
+retrieved lexically (full-text search + recency) and rarely surface at edit
+time for the exact file just touched. Each matched entry prints its obliged
+partner files/actions, marks each as met (✓) or unmet (!), and cites the
+memory `lessonKey` the partnership encodes.
+
+An `obliges` element is a required partner path/glob, a `run:<action>`
+advisory that is always reported but never gates `--strict` (some
+partnerships are "regenerate this," not "edit this file"), or an "any of"
+group satisfied by whichever of several candidates is present. `{name}` (or
+`**/{name}`) in a `match`/`obliges` glob binds a mirrored module's relative
+path (directories + stem, extension stripped), for the (rare) case where a
+partner's path genuinely IS a predictable function of the source's, so one
+entry covers every module instead of needing one per file.
+
+The `edge-mirror`/`edge-mirror-core` entries (mcp-core ↔ the self-contained
+Deno edge mirrors) do NOT use that glob mechanism: an edge mirror doesn't
+reliably preserve mcp-core's directory structure (it may flatten or rename
+it), so a symmetric-path reconstruction false-positives on exactly those
+pairs. Instead, both entries are generated — one row per pair — from
+`src/shared/mirror-pairs.mjs`, the single-source inventory
+`packages/mcp-core/src/edge/edge-parity.spec.ts` also reads for its
+byte-comparison drift guard, so the spec and this command can never disagree
+about which files mirror which.
+
+**Cwd-independent by design**: it matches the path STRINGS it is given
+against the map and never reads the filesystem or resolves scope from the
+current directory — the changed-set can come from a real `git diff`, a PR
+file list, or by hand, from anywhere.
+
+Exits 0 by default; `--strict` exits non-zero when any PATH obligation is
+unmet. `--json` → `{ files, matched, unmet, ok }`. CLI-only (`native` — no MCP
+tool, no REST route, no `tool-catalog.ts` entry): a path-matching lint utility
+is not an operation surface. Slice 1 of a larger design — wiring a
+`PreToolUse` hook to call this at edit time, and server-side retrieval
+changes, are named follow-ups, not built here.
 
 ### `lorekit link` (alias `url`)
 
@@ -398,9 +517,9 @@ that lesson's detail sheet. It sets **both** the `lesson` param (which opens the
 sheet) and `scope` — not because scope is needed to find the lesson (the sidebar
 reads one unfiltered recent set), but so the Explorer list *behind* the sheet is
 filtered to the lesson's own scope. Filter flags mirror the Explorer: `--q`
-(search), `--owner <all|personal|orgId>`, `--tags <a,b,c>` (label filter, AND
+(search), `--owner <all|personal|org-slug>`, `--tags <a,b,c>` (label filter, AND
 across labels; comma-separated or a JSON array), `--range`/`--from`/`--to`,
-`--archived`, `--view <scope|time>`.
+`--archived`.
 
 Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
 how the dashboard's `useUrlState` reads it back (`JSON.parse`, falling back to the
@@ -418,14 +537,47 @@ lesson link, `search foo --link` → `/lore?q="foo"` (+ scope), and `list --link
 multi-scope `list`/`tree` view maps to its primary scope. (The same JSON-encoded
 links now back the hooks' write-confirmation and retrospective nudges.)
 
+### `lorekit purge` / `lorekit purge-expired`
+
+The two maintenance sweeps. Both permanently delete rows, and neither can be undone.
+
+```bash
+lorekit purge --retention-days 30 --yes   # hard-delete archived lore older than 30 days
+lorekit purge-expired --yes               # hard-delete every TTL-expired memory
+```
+
+`purge` removes **archived** memories past a retention window — archived lore is
+hidden from reads but recoverable with `lorekit restore`, so this is the step that
+makes it unrecoverable. `purge-expired` removes memories whose `ttl_days` window
+has passed. `--retention-days` accepts 1–365 and defaults to 30; it is validated
+before any request, so an out-of-range or non-integer value fails immediately
+rather than costing a round trip.
+
+**Remote only.** They sweep server-side state and the offline store has no
+equivalent operation, so `--local` is refused with a message rather than quietly
+doing nothing.
+
+**Confirmation, not a dry run.** There is no `--dry-run`, and that is not an
+omission: the purge RPCs return their count only *after* deleting, and the REST
+dry-run header stops before the write with nothing to preview — so "would purge
+N" cannot be answered honestly. Instead an interactive terminal is prompted, and
+**`--yes` is required whenever there is nobody to ask** (a pipe, CI, or `--json`).
+An unattended agent cannot purge by omission.
+
+**Scoped tokens are refused.** A token restricted to specific scopes cannot run
+an account-wide sweep — there is no scope to check and no result set to narrow.
+The server's refusal is printed verbatim with a one-line next step; the CLI makes
+exactly one request and never retries, splits the sweep, or re-scopes around it.
+Use an unscoped `lk_rw_*` / `lk_wo_*` token for maintenance.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
 It is not run by hand — the plugins wire it into their hook config. It reads
 the host framework's JSON on stdin and prints that host's injection format on
-stdout (lessons at session start; relevant lessons plus a write-nudge on a tool
-failure; a retrospective nudge at end of turn), always exiting 0 so it can never
-block the host agent.
+stdout (lessons at session start; the ones matching each substantive prompt as
+you go; relevant lessons plus a write-nudge on a tool failure; a retrospective
+nudge at end of turn), always exiting 0 so it can never block the host agent.
 
 ```bash
 lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
@@ -451,9 +603,20 @@ It speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (the MCP stdio
 transport, hand-rolled — zero dependencies) and is **not run by hand**: only
 JSON-RPC frames reach stdout. It serves whatever mode resolves — `local` serves
 the `.lorekit/` files directly, `remote` passes calls through to the hosted
-endpoint, and `off` advertises no tools. Tools advertised: `memory.write`,
-`memory.read`, `memory.list`, `memory.search`, `memory.delete`,
-`memory.archive`.
+endpoint, and `off` advertises no tools.
+
+Tools advertised are **derived from the canonical tool catalog**
+(`packages/schemas/src/shared/tool-catalog.ts`) rather than declared here, so this
+server and the hosted one describe each operation identically. In `local` and
+`remote` mode that is `memory.write`, `memory.read`, `memory.list`,
+`memory.search`, `memory.delete`, `memory.archive`, `memory.restore` and
+`memory.scopes`, plus `org.create`, `org.list`, `org.rename` and `org.delete`
+(which always route to the hosted API). `off` advertises the `org.*` tools only.
+
+An operation the catalog declares but this server cannot back — `memory.purge`,
+`memory.purge_expired` and `memory.list_archived` — carries a recorded reason in
+the catalog's `surfaces.localMcpExempt` field, so the gap is a stated decision
+rather than an omission.
 
 Wire it into `.mcp.json` as an alternative to the `mcp-remote <url>` transport —
 this variant needs no endpoint or token for local mode:
@@ -529,7 +692,7 @@ erases your cross-repo home lesson.
 > sharing comes from the account/token, so remote needs no second location.
 > Different mechanism, same concept.
 
-### `lorekit migrate` — relocation / rename tool
+### `lorekit migrate` — relocate a store, or push one to the hosted store
 
 Moved or renamed a local store (e.g. an old `.lore/`)? `migrate` re-writes its
 entries into the current two-tier layout so lessons are never stranded:
@@ -543,6 +706,80 @@ lorekit migrate --from .lore --to project --yes   # force all entries into the p
 Dry-run (preview) by default; `--yes` (or `--apply`) applies. Idempotent — a
 re-run is a no-op. It reads LoreKit's own on-disk format only (it does **not**
 import persistent-memory's `~/.agent-memory/<bucket>/` format).
+
+#### `--to remote` — bring your local lessons up
+
+Started offline and later connected a token? `--to remote` pushes the whole
+local store to the hosted one in a single command, instead of the agent
+re-writing lessons one at a time in remote mode:
+
+```bash
+lorekit migrate --from .lorekit --to remote         # dry-run: the plan, per scope
+lorekit migrate --from .lorekit --to remote --yes   # push it
+```
+
+The connection and token come from the same place every other command reads
+them (`.mcp.json` / `.lorekit.json` / `LOREKIT_MCP_URL` + `LOREKIT_TOKEN`), so
+a `deny: remote` constraint still wins. Everything is checked **before** the
+first request rather than mid-push:
+
+| Condition | Result |
+|---|---|
+| No usable connection | Fails with the `lorekit install` command to run |
+| Read-only `lk_ro_*` token | Fails — a migration writes |
+| Write-only `lk_wo_*` token | Warns, then pushes without reading: its reads are denied, so the destination is not classified at all and every entry reports as `add` (the hosted upsert is idempotent either way) |
+| Unrecognized token prefix | Warns and proceeds, so a self-hosted or custom token still works |
+| `deny: remote` | Fails, naming the config source that denied it |
+
+**What transfers, and what the server owns.** `scope`, `key`, `value`,
+`source_agent` and `trigger` travel as the source states them (`value` is
+trimmed server-side), and the original creation date travels as `created_at` —
+so a migrated lesson keeps the recency its ranking depends on. The rest is not
+verbatim, and every departure is reported per entry, in the dry run as well as
+the apply:
+
+| Field | What happens |
+|---|---|
+| `updated` | Re-stamped at the write instant — there is no parameter for it |
+| `seen_count` | Starts at 1 for a key the hosted store has never seen; one it already holds lands at ITS count plus one (the RPC treats a write as a sighting, migration 00059). A local tally of 12 never transfers |
+| `tags` | **Replace** the hosted row's labels, so an untagged local entry clears them |
+| `origin_*` | **Sticky** — the RPC coalesces provenance, so an entry carrying none leaves whatever the hosted row already had |
+| `created` | Honoured only when the lesson is new to the hosted store (the RPC's update clause omits it, so one already there keeps its hosted date); an unusable or future-dated value is dropped for the write instant, and the entry is named |
+| `expires_at` | Converted to the remaining whole `ttl_days`; anything beyond the API's 365-day cap lands shortened |
+
+**Archived and expired entries are skipped** and reported as such. Neither can
+be represented: a write against an archived key inserts a second, live row
+beside it rather than reviving it, and any TTL would re-date an expired row
+into the future — so pushing them would resurrect lore you retired.
+
+Idempotent, with one nuance: a re-run compares only what a hosted write can
+change, and compares it the way the server stores it — trimmed `value`, only
+the provenance the source carries, and an expiry that still honours the local
+intent (the hosted one is fixed at push time while the local one is measured
+from now, so it is judged on whether at least half the intended life remains —
+matching them instant-for-instant could never converge). Comparing the server-owned fields
+directly would report a change forever and re-push the whole store on every
+run. A remote `unchanged` therefore means "the hosted lesson already says
+this", not "byte-identical row".
+
+Rate limits and transient failures are handled rather than surfaced as
+failures. The run paces itself under the hosted 120 req/min limit (and says so
+the first time it has to wait), and retries a `429` on the server's own
+`Retry-After` — plus a 5xx or a dropped connection, which on a push of
+thousands of requests is the likeliest failure and the least worth losing an
+entry to. Any other 4xx is a decision, not a blip, and is never retried.
+
+Retrying is bounded, so none of this should be read as "it never fails": an
+entry that exhausts its attempts is reported and the run exits non-zero, and
+five CONSECUTIVE failures of any kind stop the run early with a
+partial-progress report — an outage is not worth grinding a whole store through
+the retry budget for. Every one of those exits is safe to re-run. The memory cap ([5,000 active memories on the
+free plan](../../docs/limits.md)) is returned as a `429` too but is terminal —
+the run stops, reports how many entries landed, and exits non-zero, so you can
+archive or upgrade and re-run to resume.
+
+Not in v1: `--org <slug>` org-owned writes (a migration lands as your personal
+lore) and the reverse remote → local direction.
 
 ### The control model — two layers, deny-wins
 
@@ -593,7 +830,25 @@ Both files share this schema — all fields optional:
   // ── Hook behaviour ─────────────────────────────────────────────────────────
   "hooks.disabled": ["Stop"],
                            // suppress specific hook events; union across layers
-                           // values: "SessionStart" | "PostToolUseFailure" | "Stop"
+                           // values: "SessionStart" | "UserPromptSubmit" | "PostToolUseFailure" | "Stop"
+
+  "hooks.userPrompt": "on",
+                           // the per-turn relevance pull (UserPromptSubmit):
+                           //   "on"  (default) — on each substantive prompt, query the
+                           //     store for memories matching what you typed and inject
+                           //     at most 3 you have NOT already been shown this session
+                           //   "off"           — keep the rest of hook mode "all", drop
+                           //     just this event's output
+                           // a switch, not a mode: the knobs a mode would expose (how
+                           // many, how strict) are the two things that must not be
+                           // turned up on a hook that fires every single turn.
+                           // two install paths reach it: hook mode "all" ("read-only"
+                           // and "none" never wire the event), and the Claude
+                           // marketplace plugin, whose hooks.json wires it
+                           // unconditionally — no mode involved, so hooks.userPrompt is
+                           // the mode-independent opt-out there. (hooks.disabled:
+                           // ["UserPromptSubmit"] also switches it off, one gate
+                           // earlier, so it is not the only opt-out.) repo wins over user
 
   "hooks.stop": "friction",
                            // gate the end-of-turn retrospective nudge:
@@ -607,6 +862,73 @@ Both files share this schema — all fields optional:
                            //  transcript; on Cursor/Codex there is none, so "friction"
                            //  falls back to firing so no lesson is silently lost)
 
+  "hooks.sessionStart": "hybrid",
+                           // shape of the block injected at session start:
+                           //   "hybrid" (default) — fill the character budget with the
+                           //     highest-ranked memories, then add one line naming what
+                           //     was left out and where it lives
+                           //   "index"            — the same list, no trailing map
+                           //                        (truncation is silent)
+                           //   "map"              — lead with the scope map plus the
+                           //                        three most salient memories
+                           // repo wins over user; an unrecognised value is ignored and the
+                           // next layer is tried, so a mistyped repo value falls through to
+                           // the user layer before defaulting to hybrid
+
+  "hooks.sessionStart.maxChars": 3000,
+                           // character budget for that block (default 3000, ~750 tokens,
+                           // ~25 index lines); bounded 200–20000, out-of-range CLAMPED not
+                           // rejected — a small number means "keep it short", and honouring
+                           // the floor is closer to that intent than restoring the default
+                           // repo wins over user, and a declared-but-unparseable repo value
+                           // still claims the decision (a typo'd project policy degrades to
+                           // the default rather than silently becoming a per-machine one)
+                           // memories are RANKED before the budget is spent, so what
+                           // survives is the most-recurring and most-recent, not the newest
+
+  "hooks.sessionStart.maxLessons": 100,
+                           // how many memory LINES that block may hold, where
+                           // maxChars bounds its characters — whichever binds
+                           // first decides the block, so raising this alone does
+                           // nothing unless maxChars comes up with it
+                           // (default 100, bounded 3–200). Clamped, not
+                           // rejected; repo wins over user with the same
+                           // declared-value-owns-the-layer rule as maxChars.
+                           // In practice this is a READ-DEPTH dial, not a size
+                           // one: maxChars runs out around line 25, so what
+                           // this really sets is the per-scope candidate fetch
+                           // (100/scope by default) the ranker chooses from —
+                           // 400 candidates across a four-scope hierarchy
+                           // instead of the newest handful. It never exceeds
+                           // 100/scope, the largest page GET /memories will
+                           // return, so a ceiling above 100 fills its remaining
+                           // lines from the other scopes instead. Below 25 the
+                           // read does not shrink; you just see fewer lines.
+
+  "hooks.sessionStart.loopCap": 1,
+                           // how many memories one self-improvement loop (a
+                           // "loop::<bucket>" tag) may contribute to that block
+                           // (default 1, bounded 0–40; 0 excludes loop buckets
+                           // entirely so only general memories are read). One per
+                           // bucket keeps a loop's best lesson without letting its
+                           // bookkeeping take a second slot from your codebase's
+                           // memories, which are read by a different audience.
+                           // Clamped,
+                           // not rejected; repo wins over user with the same
+                           // declared-value-owns-the-layer rule as maxChars
+
+  "hooks.sessionStart.branchHint": "on",
+                           // whether the block is nudged toward the current git
+                           // branch's topic — on "feat/embedding-pipeline",
+                           // embedding memories are lifted (the leading type/author
+                           // segment is ignored). Default "on"; it only ever lifts
+                           // an on-topic memory, never buries one. "off" restores
+                           // the plain most-recurring / most-recent read. Repo wins
+                           // over user, but — following hooks.userPrompt, not the
+                           // maxChars layer-lock — a declared-but-unparseable repo
+                           // value FALLS THROUGH to a valid user value rather than
+                           // owning the layer
+
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
                            // values: "claude" | "cursor" | "codex"
@@ -614,13 +936,14 @@ Both files share this schema — all fields optional:
 
   "hooks.instructions": {
     "SessionStart":        "Focus on migration safety. Treat any lesson tagged 'migration' as high-priority.",
+    "UserPromptSubmit":    "Prefer a memory that names the file you are editing.",
     "PostToolUseFailure":  "When recording a failure, always include the exact command and exit code.",
     "Stop":                null
   },
                            // per-event custom text appended to the hook output.
                            // both layers merged: repo instructions first, then user.
                            // null (or absent key) means no extra instruction for that event.
-                           // values: string | null  (keys: "SessionStart" | "PostToolUseFailure" | "Stop")
+                           // values: string | null  (keys: "SessionStart" | "UserPromptSubmit" | "PostToolUseFailure" | "Stop")
 
   // ── Telemetry ──────────────────────────────────────────────────────────────
   "telemetry.disabled": true,
@@ -716,18 +1039,23 @@ also returns their headroom against the plan's memory cap.
 | `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
 | `--store <path>` | Local project-tier store directory (default `.lorekit`) |
 | `--from <path>` | Source store to migrate from (`migrate`) |
-| `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
+| `--to <dest>` | Migration destination: `home` / `project` / `remote` (`migrate`; default routes by scope across the local tiers) |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
 | `--hooks <mode>` | Lifecycle hooks to wire: `all` / `read-only` / `none` (`install`; `none` removes any already wired) |
 | `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only. Leaves already-wired hooks alone (`install`) |
+| `--mcp-json` | Also write a committable project `.mcp.json` (auth via `${LOREKIT_TOKEN}`, no embedded token) for Claude Code on the web (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `purge` / `purge-expired`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. On `show` / `write` it **names** the scope, overriding the positional |
+| `--key <key>` | Name the key outright (`show` / `write` / `link`) — the way to address a key that itself contains `::` |
 | `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
+| `--files <path>...` | Changed files to check (`obligations`); also accepted as positionals or newline-separated stdin |
+| `--strict` | Exit non-zero on any unmet obligation (`obligations`) |
+| `--retention-days <1..365>` | Only purge archived memories older than this (`purge`; default `30`, derived from the tool catalog) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
@@ -751,7 +1079,7 @@ also returns their headroom against the plan's memory cap.
 
 ## What the skills do
 
-`install` scaffolds two skills:
+`install` scaffolds three skills:
 
 The **`lorekit-memory`** skill teaches an agent to:
 
@@ -769,6 +1097,14 @@ The **`lorekit-setup`** skill is the authoring counterpart: it teaches an agent
 to wire a self-improvement loop into one of *your own* skills or workflows — the
 two-tier model, the lesson bucket convention, and the entrenchment guards. See
 its `SKILL.md` and `rules/self-improvement-loops.md`.
+
+The **`lorekit-groom`** skill is the maintenance counterpart: it teaches an agent
+to run a grooming pass over an accumulated store — survey (`stats` / `scopes`),
+lint, dedupe & merge near-duplicates, set expiry (TTL) on time-bound lessons, and
+prune or archive obsolete ones. It always analyses read-only and proposes a plan
+before mutating (archive is preferred over hard-delete), because the store is
+shared and a merge or delete is permanent for every agent. See its `SKILL.md`,
+`rules/grooming-pass.md`, and `references/merge-and-expiry.md`.
 
 The **skills** are model-invoked (the agent chooses to use them). For a
 **deterministic** guarantee — lessons injected on every session start, a nudge
@@ -840,3 +1176,12 @@ at release time and is never committed to git. See
 
 `install` writes your token into `.mcp.json`. Keep that file out of version
 control (LoreKit's root `.gitignore` already ignores `.mcp.json`).
+
+The **one exception is `install --mcp-json`**: that file authenticates via a
+`${LOREKIT_TOKEN}` reference instead of an embedded token, so it holds no secret
+and **is** meant to be committed (that is how Claude Code on the web reads it
+after a fresh clone). You'll need to un-ignore `.mcp.json` first, since it is
+normally git-ignored for the embedded-token reason above. The token itself comes
+from the `LOREKIT_TOKEN` environment variable at runtime — set it as an
+environment secret, never commit it — and once the file is tracked, keep using
+`--mcp-json` so a later plain install never writes a token into it.

@@ -12,6 +12,12 @@
  *   navigating with arrows (Linear-style).
  * - Nested breadcrumb showing the parent command label when drilling.
  * - Escape / Backspace (on empty search) pops back or closes.
+ * - Live re-query (`Command.search`) for a nested level too large to
+ *   prefetch, debounced per keystroke — and, at the root only, an automatic
+ *   fallback to one designated `search` command (`Command.fallbackSearch`)
+ *   whenever the root's own label filter comes up empty, so typing something
+ *   that matches nothing by label still finds a result without drilling in
+ *   first.
  *
  * Rendered once at the dashboard layout root (inside `CommandPaletteProvider`),
  * so it overlays every page.
@@ -22,7 +28,7 @@ import { createPortal } from 'react-dom';
 import { ChevronRight, Loader2, ArrowLeft, Search } from 'lucide-react';
 import { useCommandPalette } from './CommandPaletteProvider';
 import { formatShortcut } from './shortcut';
-import type { Command } from './types';
+import type { Command, CommandSearch } from './types';
 
 // ── Search / filter ───────────────────────────────────────────────────────────
 
@@ -66,13 +72,17 @@ function groupCommands(commands: Command[]): GroupedItems[] {
 function ShortcutBadge({ keys }: { keys: string[] }) {
   return (
     <span
-      className="flex shrink-0 items-center gap-0.5 text-[10px] font-mono text-[var(--color-content-tertiary)]"
+      className="flex shrink-0 items-center gap-1 text-[11px] text-[var(--color-content-tertiary)]"
       aria-label={`Shortcut: ${formatShortcut(keys)}`}
     >
       {keys.map((k, i) => (
-        <span key={i}>
-          {i > 0 && <span className="mx-0.5 opacity-40">then</span>}
-          <kbd className="inline-flex min-w-5 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5">
+        <span key={i} className="flex items-center gap-1">
+          {/* "then" in the chord — kept dim and lowercase, Linear-style. */}
+          {i > 0 && <span className="text-[var(--color-content-tertiary)]">then</span>}
+          {/* Soft key cap: subtle fill + hairline (border-subtle, not the harder
+              border), sans font, muted-but-legible text — a quiet hint, not a
+              boxed button. */}
+          <kbd className="inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1.5 leading-none text-[var(--color-content-secondary)]">
             {formatShortcut([k])}
           </kbd>
         </span>
@@ -118,13 +128,13 @@ function CommandRow({
       onMouseEnter={onHover}
       onClick={onActivate}
       className={[
-        'flex w-full min-h-10 items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors focus:outline-none',
+        'flex w-full min-h-10 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors focus:outline-none',
         selected
           ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
           : 'text-[var(--color-content-primary)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
     >
-      {/* Icon */}
+      {/* Icon — vertically centered in the single-line row */}
       {command.icon && (
         <span
           className={[
@@ -139,15 +149,12 @@ function CommandRow({
         </span>
       )}
 
-      {/* Label + description */}
-      <span className="flex-1 min-w-0">
-        <span className="block truncate font-medium">{command.label}</span>
-        {command.description && (
-          <span className="block truncate text-xs text-[var(--color-content-tertiary)]">
-            {command.description}
-          </span>
-        )}
-      </span>
+      {/* Label only — single-line rows (Linear / VS Code style) so the list
+          scans fast and reads calm. The description is intentionally NOT
+          rendered: it stays in the SEARCH index (see `matchesSearch`) so typing
+          a word from it still surfaces the command, without the per-row weight
+          of a second line. */}
+      <span className="min-w-0 flex-1 truncate font-normal">{command.label}</span>
 
       {/* Shortcut badge */}
       {command.shortcut && (
@@ -160,8 +167,10 @@ function CommandRow({
         />
       )}
 
-      {/* Chevron for commands with children */}
-      {command.children && (
+      {/* Chevron for commands that drill into a nested level — a static
+          `children` list or a live `search` (e.g. "Open Lesson…"), which is
+          just as much a nested level even though nothing is prefetched. */}
+      {(command.children || command.search) && (
         <ChevronRight
           className={[
             'size-3.5 shrink-0',
@@ -178,7 +187,20 @@ function CommandRow({
 
 // ── Main palette component ────────────────────────────────────────────────────
 
-export function CommandPalette() {
+export interface CommandPaletteProps {
+  /**
+   * Portal target. Defaults to `document.body` (the app case).
+   *
+   * Storybook passes a positioned frame element here: the visual-regression
+   * hook screenshots `#storybook-root`, so an overlay portalled to `<body>`
+   * would snapshot an empty root. When contained, the backdrop switches from
+   * `fixed` to `absolute` so it fills the frame rather than the viewport —
+   * the same contract as `BottomSheet`'s `container`.
+   */
+  container?: HTMLElement | null;
+}
+
+export function CommandPalette({ container }: CommandPaletteProps = {}) {
   const { open, currentFrame, stack, closePalette, activateCommand, popFrame } =
     useCommandPalette();
 
@@ -186,21 +208,119 @@ export function CommandPalette() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Live-search state: results from an active search's debounced re-query
+  // (either a genuine `search` frame, or the root fallback below). `null`
+  // means "no re-query has resolved yet for this activation" — a `search`
+  // frame's own `commands` (the empty-query seed `activateCommand` fetched)
+  // render instead, so drilling into one is never a blank flash.
+  const [liveResults, setLiveResults] = useState<Command[] | null>(null);
+  const [liveSearching, setLiveSearching] = useState(false);
+
   // Reset state and re-focus input when palette opens or the frame changes
   // (drilling into a nested level).
   useEffect(() => {
     if (open) {
       setQuery('');
       setSelectedIndex(0);
+      setLiveResults(null);
+      setLiveSearching(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open, currentFrame]);
 
-  // Filtered commands for the current frame.
-  const filtered = useMemo(() => {
+  // The root frame's ordinary label/description/group filter — computed
+  // unconditionally (not just at the root) because the fallback check below
+  // needs to know whether it came up empty.
+  const labelFiltered = useMemo(() => {
     if (!currentFrame) return [];
     return currentFrame.commands.filter((c) => matchesSearch(c, query));
   }, [currentFrame, query]);
+
+  // The command backing the root-level fallback (see `fallbackSearch` on
+  // `Command`), or null when the current frame isn't root or none is
+  // registered. Memoized on the frame/stack rather than on `query`, so its
+  // identity survives keystrokes and the debounce effect below doesn't reset
+  // every render.
+  const rootFallbackCommand = useMemo(() => {
+    if (!currentFrame || stack.length !== 1) return null;
+    return currentFrame.commands.find((c) => c.fallbackSearch && c.search) ?? null;
+  }, [currentFrame, stack.length]);
+
+  // What is actually driving the list right now: a genuine `search` frame
+  // (drilled into), or — only at the root, only once the ordinary label
+  // filter has come up empty for a non-empty query — the fallback command's
+  // `search`, invoked IN PLACE without drilling in. `key` identifies which of
+  // the two (and which command) so the effect below can tell "still the same
+  // active search, new query" apart from "switched to a different one",
+  // without depending on the `fn` closure's own identity.
+  const activeSearch = useMemo((): { key: string; fn: CommandSearch } | null => {
+    if (currentFrame?.search) {
+      return { key: `frame:${currentFrame.parentCommand?.id ?? ''}`, fn: currentFrame.search };
+    }
+    if (rootFallbackCommand?.search && query.trim() !== '' && labelFiltered.length === 0) {
+      return { key: `fallback:${rootFallbackCommand.id}`, fn: rootFallbackCommand.search };
+    }
+    return null;
+  }, [currentFrame, rootFallbackCommand, query, labelFiltered]);
+
+  // Clear stale results when switching which search is active (e.g. the root
+  // fallback engaging or disengaging) — otherwise the OLD active search's
+  // results would render for one frame before the new query resolves.
+  // Deliberately keyed on `activeSearch?.key` alone, not `query`: within the
+  // same activation, the previous results should stay on screen (no blank
+  // flash) until the next debounced fetch resolves.
+  const activeSearchKey = activeSearch?.key ?? null;
+  useEffect(() => {
+    setLiveResults(null);
+    setLiveSearching(false);
+  }, [activeSearchKey]);
+
+  // Debounced re-query for the active search. Skipped on a `search` frame's
+  // very first render (empty query, no results yet) because `activateCommand`
+  // already fetched that exact call — re-firing it here would double the
+  // request. The root fallback has no such prefetch (`activeSearch` is only
+  // ever non-null for it once `query` is non-empty), so it always fetches.
+  useEffect(() => {
+    if (!activeSearch) return;
+    if (query === '' && liveResults === null) return;
+    const { fn } = activeSearch;
+    let cancelled = false;
+    setLiveSearching(true);
+    const handle = setTimeout(() => {
+      Promise.resolve(fn(query))
+        .then((results) => {
+          if (cancelled) return;
+          setLiveResults(results);
+          setSelectedIndex(0);
+        })
+        .catch(() => {
+          if (!cancelled) setLiveResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLiveSearching(false);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, activeSearch]);
+
+  // Filtered commands for the current frame. An active search's results are
+  // already server-filtered by its own query, so `matchesSearch` — a
+  // client-side label/description/group substring check — is skipped for it;
+  // applying it on top would silently drop rows whose label doesn't literally
+  // contain the typed text (e.g. a scope-prefix match). A `search` frame with
+  // no live results YET falls back to its own empty-query seed
+  // (`currentFrame.commands`); the root fallback has no such seed, so it
+  // renders nothing (and the loading spinner below) until the first fetch
+  // resolves.
+  const filtered = useMemo(() => {
+    if (!currentFrame) return [];
+    if (activeSearch) return liveResults ?? (currentFrame.search ? currentFrame.commands : []);
+    return labelFiltered;
+  }, [currentFrame, activeSearch, liveResults, labelFiltered]);
 
   const grouped = useMemo(() => groupCommands(filtered), [filtered]);
 
@@ -280,8 +400,27 @@ export function CommandPalette() {
     // Full-screen backdrop that also flex-centers the panel. Portalled to
     // <body> so no transformed / contained ancestor can trap the fixed panel in
     // a narrow containing block (which had pinned it to the sidebar column).
+    // When `container` is supplied the frame IS the viewport, so the backdrop
+    // is absolute within it instead.
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[15vh] backdrop-blur-sm"
+      className={[
+        'inset-0 z-50 flex justify-center bg-black/60 p-4 backdrop-blur-sm',
+        // `position` is not the only way this element reaches the viewport:
+        // `15vh` measures the viewport too, so in contained mode it would track
+        // the Storybook iframe rather than the frame. Contained mode centres
+        // instead — container-relative by construction, and deterministic for
+        // the screenshot at any iframe size.
+        //
+        // The `15vh` drop is DESKTOP-ONLY. On a phone the virtual keyboard opens
+        // the moment the palette does (the search input takes focus on mount)
+        // and eats roughly half the screen, while `vh` and `dvh` both keep
+        // measuring the full viewport — Chrome's default `interactive-widget`
+        // resizes the *visual* viewport, not the layout one, so a `fixed`
+        // overlay still spans behind the keyboard. 15vh of that budget spent on
+        // empty space above the panel is what pushed the command list under the
+        // keyboard. The base `p-4` supplies the mobile offset instead.
+        container ? 'absolute items-center' : 'fixed items-start sm:pt-[15vh]',
+      ].join(' ')}
       onClick={closePalette}
     >
       {/* Palette panel */}
@@ -289,7 +428,14 @@ export function CommandPalette() {
         role="dialog"
         aria-modal
         aria-label="Command Palette"
-        className="w-full max-w-xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
+        // `max-h-full flex-col` + a shrinkable list is what keeps the panel
+        // inside whatever height it is actually given: `max-height: 100%`
+        // resolves against the backdrop's CONTENT box, so it already nets out
+        // the padding above. Without it the panel is the sum of its parts and
+        // simply overflows a short viewport (phone landscape, a small phone with
+        // the keyboard up) with the footer and the last rows unreachable —
+        // `overflow-hidden` clips them rather than scrolling them.
+        className="flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
         // Clicks inside the panel must not bubble to the backdrop's close handler.
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => {
@@ -301,8 +447,10 @@ export function CommandPalette() {
           if (e.target !== inputRef.current) e.preventDefault();
         }}
       >
-        {/* Header: breadcrumb + search */}
-        <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
+        {/* Header: breadcrumb + search. `shrink-0` here and on the footer so the
+            LIST absorbs the whole deficit when the panel is height-capped —
+            otherwise flexbox shrinks all three and crushes the search field. */}
+        <div className="flex shrink-0 items-center gap-2 px-3 py-2.5">
           {/* Back button when nested */}
           {isNested && (
             <button
@@ -362,8 +510,9 @@ export function CommandPalette() {
             className="flex-1 bg-transparent text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] !outline-none !focus:outline-none"
           />
 
-          {/* Keyboard hint */}
-          <kbd className="shrink-0 text-[10px] font-mono text-[var(--color-content-tertiary)] border border-[var(--color-border)] rounded px-1 py-0.5">
+          {/* Keyboard hint — same cap recipe as the footer hints below (UI
+              sans, hairline, subtle fill) so every chrome-level cap matches. */}
+          <kbd className="shrink-0 rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1 text-[10px] text-[var(--color-content-tertiary)]">
             esc
           </kbd>
         </div>
@@ -373,12 +522,16 @@ export function CommandPalette() {
           id="command-palette-list"
           role="listbox"
           aria-label={frameTitle}
-          className="max-h-80 overflow-y-auto p-1.5"
+          // `min-h-0` is what LETS this shrink below its content height — a flex
+          // item's default `min-height: auto` floors it at the content size, so
+          // the panel's `max-h-full` would be ignored and the overflow would
+          // land on the footer instead of scrolling here.
+          className="min-h-0 max-h-80 overflow-y-auto p-1.5"
         >
-          {currentFrame?.loading ? (
+          {currentFrame?.loading || (liveSearching && filtered.length === 0) ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-content-tertiary)]">
               <Loader2 className="size-4 animate-spin" aria-hidden />
-              Loading…
+              {liveSearching ? 'Searching…' : 'Loading…'}
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-[var(--color-content-tertiary)]">
@@ -418,23 +571,23 @@ export function CommandPalette() {
         </div>
 
         {/* Footer hint */}
-        <div className="flex items-center justify-between border-t border-[var(--color-border)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
+        <div className="flex shrink-0 items-center justify-between border-t border-[var(--color-border-subtle)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
           <span className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+              <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
                 ↑↓
               </kbd>
               navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+              <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
                 ↵
               </kbd>
               select
             </span>
             {isNested && (
               <span className="flex items-center gap-1">
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+                <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
                   ⌫
                 </kbd>
                 back
@@ -442,7 +595,7 @@ export function CommandPalette() {
             )}
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+            <kbd className="rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-1">
               ⌘K
             </kbd>
             toggle
@@ -450,6 +603,6 @@ export function CommandPalette() {
         </div>
       </div>
     </div>,
-    document.body,
+    container ?? document.body,
   );
 }

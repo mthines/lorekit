@@ -12,7 +12,10 @@
 import type { Decorator } from '@storybook/nextjs-vite';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
+import type { FlagValueMap } from '@lorekit/feature-flags';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
+import { ExplorerResultsProvider } from '@/components/providers/ExplorerResultsProvider';
+import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 
 /**
  * Wrap a story in a fresh `QueryClientProvider` tuned for deterministic tests.
@@ -54,7 +57,8 @@ export const withQueryClient: Decorator = (Story) => (
  * Freeze `Date` to `fixedIso` for the story's render.
  *
  * The dashboard reads `new Date()` during render (trend windows, freshness
- * labels, the 26-week heatmap grid), so the clock must be pinned before the
+ * labels, the heatmap grid — whose columns are counted back from today), so
+ * the clock must be pinned before the
  * story paints. Only the zero-argument constructor and `Date.now()` are
  * overridden; `new Date(someArg)` still parses normally, so fixture timestamps
  * are unaffected. The override is a subclass assignment on `globalThis.Date`;
@@ -101,4 +105,51 @@ export const withMemorySidebar: Decorator = (Story) => (
   <MemorySidebarProvider>
     <Story />
   </MemorySidebarProvider>
+);
+
+/**
+ * Provide the client context `LoreExplorer` needs when rendered outside the
+ * dashboard layout's `ExplorerResultsProvider` (see that component's
+ * docblock). `useExplorerResults()` throws without it — in the real app the
+ * dashboard layout wraps every page, but a page story mounts `/lore` on its
+ * own, so it needs the same wrapper here. Reporting into it is a no-op with
+ * nothing else listening, so this adds no visible DOM to the snapshot.
+ */
+export const withExplorerResults: Decorator = (Story) => (
+  <ExplorerResultsProvider>
+    <Story />
+  </ExplorerResultsProvider>
+);
+
+/**
+ * Every flag's REGISTRY default (`defaultVariant`'s value) — see
+ * `packages/feature-flags/src/registry.ts`. Stories render outside the
+ * dashboard layout, so nothing evaluates a flag server-side for them; this is
+ * a plain, deterministic seed rather than a live `evaluateFlag` call, which
+ * can't run in the browser anyway (`@openfeature/server-sdk` is Node-only —
+ * see `FeatureFlagsProvider.tsx`'s file header).
+ */
+const DEFAULT_FLAG_VALUES: FlagValueMap = {
+  'insights-page': false,
+  'retention-policies': false,
+  'lore-explorer-instruments': false,
+};
+
+const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = {
+  'insights-page': 'off',
+  'retention-policies': 'off',
+  'lore-explorer-instruments': 'off',
+};
+
+/**
+ * Seed `FeatureFlagsProvider` with the registry's defaults so components
+ * reading `useFeatureFlag`/`useFeatureFlagVariant` (e.g. `LoreExplorer`'s
+ * `lore-explorer-instruments` gate) resolve instead of throwing "must be
+ * used within a <FeatureFlagsProvider>" when rendered outside the dashboard
+ * layout, which is the only place a real provider is mounted.
+ */
+export const withFeatureFlags: Decorator = (Story) => (
+  <FeatureFlagsProvider flags={DEFAULT_FLAG_VALUES} variants={DEFAULT_FLAG_VARIANTS}>
+    <Story />
+  </FeatureFlagsProvider>
 );

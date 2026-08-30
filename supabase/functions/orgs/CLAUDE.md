@@ -49,7 +49,7 @@ of an already-verified JWT and never out of request input. An `authenticated` ca
 
 **Every handler passes `p_actor_user_id: actorUserId(auth)`** (`_shared/api/auth.ts`). Use the
 helper, never an inlined `auth.userId ?? null`: omitting it breaks only the api_key tier, which is
-invisible in a JWT test run. `packages/mcp-core/src/org-actor-usage.spec.ts` fails the build if a
+invisible in a JWT test run. `packages/mcp-core/src/auth/org-actor-usage.spec.ts` fails the build if a
 call site drops it.
 
 ### 3. Reads MUST carry their own tenant filter
@@ -82,7 +82,7 @@ Rules:
   capability, because that is exactly what `rls_org_invites_select_manage` gives a JWT member.
   Matching it is what keeps the two tiers identical instead of quietly widening one.
 
-`packages/mcp-core/src/org-actor-usage.spec.ts` fails if a handler reads
+`packages/mcp-core/src/auth/org-actor-usage.spec.ts` fails if a handler reads
 `orgs` / `org_members` / `org_invites` directly without referencing one of these helpers.
 
 ### Known gap — self-removal via an API token
@@ -121,7 +121,7 @@ Handler signature: `async function handle{Name}(req, auth, db, span, params, cor
 ## Audit events
 
 Every mutating handler writes to `audit_log` via `recordAudit`
-(`_shared/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
+(`_shared/audit/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
 field layout deliberately matches the equivalent web server action
 (`packages/web/src/lib/orgs.ts`, `org-invites.ts`) so the dashboard and the REST API
 produce comparable rows for the same operation.
@@ -165,7 +165,7 @@ This keeps the URL surface minimal while preserving correct permission semantics
 **All seven mutating routes audit.** `POST /`, `PATCH /:slug`, `DELETE /:slug`,
 `PATCH /:slug/members/:userId`, `DELETE /:slug/members/:userId`, `POST /:slug/invites` and
 `DELETE /:slug/invites/:inviteId` each call `recordAudit(db, {...}, auditUserId(auth))` from
-`_shared/audit.ts` — the single edge audit writer — **after** the RPC succeeded, never on a
+`_shared/audit/audit.ts` — the single edge audit writer — **after** the RPC succeeded, never on a
 validation, 404, permission or RPC-error path. Every `lorekit_org_*` RPC RAISES on each of its
 non-success branches, so `error === null` is a reliable "a row really changed".
 
@@ -186,7 +186,7 @@ rows. Do not invent a new shape for a route that already has a dashboard twin.
 `lorekit_org_leave` and `lorekit_org_member_remove`.
 
 A new mutating route is required to audit by the structural guard
-`packages/mcp-core/src/audit-coverage.spec.ts`, which parses this file's route table, resolves
+`packages/mcp-core/src/audit/audit-coverage.spec.ts`, which parses this file's route table, resolves
 each handler through `index.ts`'s own imports, and fails if the file has no `recordAudit` call.
 
 ## Adding a handler

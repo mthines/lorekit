@@ -46,7 +46,7 @@ import {
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { useToast } from '@/components/providers/ToastProvider';
+import { showToast } from '@/lib/toast';
 
 const ROLE_LABEL: Record<OrgRole, string> = {
   owner: 'Owner',
@@ -100,7 +100,6 @@ function CreateOrgForm({
   onCreated: (orgId: string, membership: OrgMembership) => void;
   onCancel?: () => void;
 }) {
-  const { showToast } = useToast();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [error, setError] = useState('');
@@ -222,7 +221,6 @@ function InviteForm({
   onInvited: (invite: OrgInvite) => void;
   onCancel?: () => void;
 }) {
-  const { showToast } = useToast();
   const [input, setInput] = useState('');
   const [role, setRole] = useState<Exclude<OrgRole, 'owner'>>('member');
   const [error, setError] = useState('');
@@ -336,7 +334,6 @@ interface BindScopeFormProps {
 }
 
 function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: BindScopeFormProps) {
-  const { showToast } = useToast();
   const [scope, setScope] = useState('');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
@@ -576,7 +573,6 @@ interface OrganizationManagerProps {
 }
 
 export function OrganizationManager({ initialOrgs, currentUserId }: OrganizationManagerProps) {
-  const { showToast } = useToast();
   const [orgs, setOrgs] = useState<OrgMembership[]>(initialOrgs);
   // URL-backed selection (org slug, or null for the master list) — deep-linkable,
   // so a specific org can be shared/refreshed. `null` (the default) renders the

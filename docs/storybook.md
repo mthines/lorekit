@@ -52,11 +52,11 @@ const meta: Meta<typeof DashboardStats> = {
 Shipped examples:
 
 - **`src/app/(dashboard)/lore/LorePage.stories.tsx`** — a *true full-page* story of the
-  `/lore` client page. Its scope tree + 26-week contribution heatmap resolve from the
+  `/lore` client page. Its scope tree + contribution heatmap resolve from the
   MSW-mocked PostgREST reads. Needs `parameters.nextjs.appDirectory: true` (the page uses
   `useRouter`/`useSearchParams` via `useUrlState`).
 - **`src/components/dashboard/DashboardStats.stories.tsx`** — a full-view story of the
-  Overview page's main content. `/dashboard` is a **server component** (it `await`s the
+  Overview page's main content. `/overview` is a **server component** (it `await`s the
   Supabase *server* client, so it can't render in the browser), so the largest *client*
   subtree is storied instead — the guidance for any RSC page.
 
@@ -94,6 +94,34 @@ Invoke with **`npx`**, never `pnpm exec` / `pnpm run` / `nx run` — those wrap 
 hold the Playwright browser child's stdio open, so the run never returns. Playwright is pinned
 to `1.56.0` so local and CI pixels compare like-for-like; bumping it means regenerating
 baselines with `-u` on Linux/Chromium.
+
+## Updating baselines from CI (no local toolchain needed)
+
+Baselines are Linux/Chromium PNGs generated with the pinned Playwright build, so a run on a
+different OS or browser version produces pixels that will never match CI. When you can't (or
+don't want to) reproduce that toolchain locally, the **Update visual baselines** workflow
+(`.github/workflows/update-baselines.yml`) regenerates them on the same runner image and browser
+build `web-test` uses, then commits **only** the changed screenshots straight back onto the PR's
+branch. Two ways to run it against a specific PR:
+
+- **Comment `/update-baselines` on the PR** (write-access users only), or
+- **Actions ▸ "Update visual baselines" ▸ Run workflow**, entering the PR number.
+
+It runs `vitest -u` over the whole suite, stages only files under `__screenshots__/` (matching
+baselines are rewritten byte-identical and produce no diff), commits, pushes, and comments the
+outcome on the PR. Three things worth knowing:
+
+- **A failing test does not cost you the baselines.** `-u` writes a screenshot as a side effect of
+  the story *rendering*, not of the run *passing* — so an unrelated failing `play` assertion
+  somewhere else in the full suite used to abort the job and discard every baseline already on
+  disk. The regeneration step is `continue-on-error`: the baselines are committed either way, the
+  PR comment says the suite was red, and a final step re-raises the failure so the run still ends
+  red. Only `__screenshots__/**` is ever staged, so nothing else can ride along on a red run.
+- **Fork PRs are rejected** — `GITHUB_TOKEN` can't push to a fork branch, so regenerate locally
+  and push from the fork instead.
+- The baseline commit is pushed with `GITHUB_TOKEN`, which by design does **not** re-trigger
+  workflows, so `web-test` won't auto-run on it. Push a follow-up commit (or swap in a PAT) if you
+  need CI to re-verify.
 
 ## Deploying Storybook to Vercel (separate project, Git integration)
 

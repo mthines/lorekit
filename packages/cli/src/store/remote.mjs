@@ -14,18 +14,105 @@
 // and the `orgs` edge function now passes it plus its own tenant filters — so
 // every `/orgs*` route serves api_key tokens and the holdout is gone.
 //
-// `packages/cli/src/mcp.mjs` still exists and is still used: it backs the
+// `packages/cli/src/shared/mcp.mjs` still exists and is still used: it backs the
 // `lorekit mcp` stdio server command and provides `mcpToRestBase`. It is just
 // no longer a transport for this store.
 // Zero-dependency.
-import { restFetch, mcpToRestBase } from '../mcp.mjs';
-import { getActiveTraceparent } from '../telemetry.mjs';
+import { restFetch, mcpToRestBase } from '../shared/mcp.mjs';
+import { rememberAccountId } from '../telemetry/telemetry-identity.mjs';
+import { getActiveTraceparent } from '../telemetry/telemetry.mjs';
+import { withReadFields } from './entry-fields.mjs';
+import { normalizeCreatedAt } from './created-at.mjs';
 
 // Drop undefined/null args so JSON payloads stay tidy.
 function stripUndefined(obj) {
   const out = {};
   for (const [k, v] of Object.entries(obj || {})) if (v !== undefined && v !== null) out[k] = v;
   return out;
+}
+
+/**
+ * A read that could not be answered — a transport failure or a non-2xx status,
+ * as opposed to "the lesson is not there".
+ *
+ * Exported so a caller can tell it from a programming error and degrade
+ * per-entry (report this one, keep going) instead of aborting a whole run.
+ * `result` carries the raw store envelope for the message the caller shows.
+ */
+export class StoreReadError extends Error {
+  constructor(message, result) {
+    super(message);
+    this.name = 'StoreReadError';
+    this.result = result;
+  }
+}
+
+/**
+ * What a remote write of `entry` would lose, without performing it.
+ *
+ * Exported because a DRY RUN has to be able to say the same thing the apply
+ * will: a preview that omits "this entry's expiry will be shortened" is a
+ * preview of a different operation. `putEntry` calls it too, so the two
+ * cannot drift.
+ *
+ *   `ttlClamped`        the entry's TTL exceeds the API's 365-day maximum and
+ *                       will land shortened.
+ *   `createdAtDropped`  the entry's `created` is unusable (unparseable or
+ *                       future-dated), so the override is dropped and the
+ *                       server stamps the write instant instead.
+ *
+ * Total over any input: a malformed entry reports no losses rather than
+ * throwing, because this runs on the preview path where an exception would
+ * cost the user the whole plan.
+ */
+export function remoteWriteLosses(entry, now = new Date()) {
+  const exact = remoteTtlDaysExact(entry?.expires_at, now);
+  return {
+    ttlClamped: typeof exact === 'number' && exact > 365,
+    createdAtDropped: Boolean(entry?.created) && safeCreatedAt(entry?.created, now) === null,
+  };
+}
+
+// `normalizeCreatedAt`, but an invalid value yields null instead of throwing.
+function safeCreatedAt(created, now) {
+  try {
+    return normalizeCreatedAt(created ?? null, now);
+  } catch {
+    return null;
+  }
+}
+
+// An absolute `expires_at` expressed as the hosted write's relative `ttl_days`.
+//
+// Three outcomes, and the third exists because "no expiry" and "I cannot tell"
+// must not collapse into one answer:
+//
+//   `undefined`  no expiry — the caller states that positively with
+//                `clear_ttl: true`, so a permanent lesson stops being expiring.
+//   `'expired'`  already elapsed; the caller must refuse (see `putEntry`).
+//   `'unknown'`  an unparseable value. The caller then sends NEITHER TTL field,
+//                leaving the RPC on its `'keep'` branch, because the safe
+//                reading of a corrupt frontmatter field is "do not touch the
+//                expiry" — the same fail-safe posture as `isExpired`. Treating
+//                it as no expiry would let one bad character wipe a live remote
+//                TTL.
+//
+//   else         the remaining WHOLE days, clamped to the schema's 1–365.
+function remoteTtlDays(expiresAt, now = new Date()) {
+  const exact = remoteTtlDaysExact(expiresAt, now);
+  if (typeof exact !== 'number') return exact;
+  return Math.min(365, Math.max(1, exact));
+}
+
+// The same conversion WITHOUT the 1–365 clamp, so a caller can see that the
+// clamp bound and report the loss. Same three non-numeric outcomes.
+function remoteTtlDaysExact(expiresAt, now = new Date()) {
+  if (!expiresAt) return undefined;
+  const ms = Date.parse(expiresAt);
+  if (Number.isNaN(ms)) return 'unknown';
+  const remaining = ms - now.getTime();
+  if (remaining <= 0) return 'expired';
+  return Math.ceil(remaining / 86_400_000);
 }
 
 export function createRemoteStore({ endpoint, token } = {}) {
@@ -53,29 +140,113 @@ class RemoteStore {
 
   async _rest(path, opts = {}) {
     if (!this.usable()) return { ok: false, unusable: true };
-    return restFetch(this.restBase, this.token, path, { ...opts, traceparent: this._tp() });
+    const res = await restFetch(this.restBase, this.token, path, { ...opts, traceparent: this._tp() });
+    // Learn (and persist) which account this token belongs to, from the
+    // `X-LoreKit-User-Id` header the edge sets on every authenticated response.
+    // This is the ONE choke point for the CLI's remote traffic, so a single call
+    // site covers every command.
+    //
+    // Why cache it at all, when the server already knows: a run that never
+    // leaves the machine (`--offline`, the local two-tier store, `lorekit hook`)
+    // makes no request, so there is no server-side span to carry `auth.user_id`.
+    // Persisting it here is what lets THOSE runs report an account and join to
+    // server-side `usage_events` / `auth.user_id`.
+    //
+    // `rememberAccountId` is total, is a no-op when the value is unchanged, and
+    // never creates the identity file — so a user who opted out of telemetry
+    // gets nothing written even though they still receive the header. Guarded
+    // anyway so a store operation can never fail on a telemetry concern.
+    try {
+      rememberAccountId(res?.userId);
+    } catch { /* identity is an enrichment, never a precondition */ }
+    return res;
   }
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, limit } = {}) {
+  async list({ scope, tags, kind, host, limit, cursor, created_since, created_until, key_prefix } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
+    if (kind) p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
+    if (host) p.set('host', Array.isArray(host) ? host.join(',') : host);
     if (limit) p.set('limit', String(limit));
+    if (cursor) p.set('cursor', cursor);
+    if (created_since) p.set('created_since', created_since);
+    if (created_until) p.set('created_until', created_until);
+    if (key_prefix) p.set('key_prefix', key_prefix);
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    return { ok: true, entries: res.data?.entries ?? [] };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      // `withReadFields` is additive — every key the route returned survives —
+      // so this projection costs existing callers nothing and gives a ranker
+      // the same `seenCount`/`updatedAt` pair the local store answers with.
+      entries: (data.entries ?? []).map(withReadFields),
+      hasMore: data.hasMore ?? false,
+      nextCursor: data.nextCursor ?? null,
+    };
   }
 
-  async search({ q, scopes, tags } = {}) {
+  // `timeoutMs` is optional and defaults to `restFetch`'s own budget, so every
+  // existing caller is unaffected. It exists for the callers on a user's
+  // critical path, which would rather answer nothing than stall (see
+  // `PROMPT_FETCH_TIMEOUT_MS` in `core/lessons.mjs`).
+  async search({ q, scopes, tags, limit, cursor, timeoutMs } = {}) {
+    // A list of terms collapses into ONE `websearch` query joined by `OR`, so a
+    // multi-term failure lookup is a single round-trip (the server FTS ORs them
+    // and stems each). `failureQuery` distils terms to `[a-z0-9]+` tokens, so no
+    // FTS metacharacter reaches the query string. A plain string passes through.
+    const query = Array.isArray(q) ? q.filter(Boolean).join(' OR ') : q;
     const body = {};
-    if (q) body.q = q;
+    if (query) body.q = query;
     if (scopes?.length) body.scopes = scopes;
     if (tags?.length) body.tags = tags;
-    const res = await this._rest('/memories/search', { method: 'POST', body });
+    if (limit) body.limit = limit;
+    if (cursor) body.cursor = cursor;
+    const res = await this._rest('/memories/search', { method: 'POST', body, timeoutMs });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    return { ok: true, entries: res.data?.entries ?? [] };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: (data.entries ?? []).map(withReadFields),
+      hasMore: data.hasMore ?? false,
+      nextCursor: data.nextCursor ?? null,
+    };
+  }
+
+  // Top-K lessons RANKED for a query — `GET /memories/relevant`.
+  //
+  // The difference from `search()` is the ordering, and it is the whole point:
+  // search returns what MATCHES (ordered `updated_at desc` by the handler),
+  // this returns what is worth READING, scored on recency + salience +
+  // relevance by the same ranking the SessionStart hook applies. It answers in
+  // a compact index — scope, key, a one-line hook, the score — never full
+  // bodies, so a caller pays for the shortlist and fetches only what it wants.
+  //
+  // `scopes` is ordered MOST-SPECIFIC FIRST and that order is meaningful: the
+  // server uses it to break ties, so passing `deriveScope().readOrder` verbatim
+  // gives a project lesson precedence over the global one it ties with.
+  //
+  // Returns the store's standard `{ ok, entries }` envelope so a caller can
+  // treat it like any other read, plus `candidates` — how many the FTS matched
+  // before ranking — so it can say "3 of 47" rather than implying it saw
+  // everything.
+  async relevant({ q, scopes, limit, minScore } = {}) {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (scopes?.length) p.set('scopes', Array.isArray(scopes) ? scopes.join(',') : scopes);
+    if (limit) p.set('limit', String(limit));
+    if (minScore != null) p.set('min_score', String(minScore));
+    const res = await this._rest(`/memories/relevant?${p}`);
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: Array.isArray(data.entries) ? data.entries : [],
+      candidates: Number(data.candidates) || 0,
+    };
   }
 
   async read({ scope, key } = {}) {
@@ -85,20 +256,41 @@ class RemoteStore {
     // scope+key is unique, so one row is all there can be — don't pull the default page of 50.
     p.set('limit', '1');
     const res = await this._rest(`/memories?${p}`);
-    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    // `unusable` is passed through: `_rest` short-circuits an unconfigured
+    // store with that flag and NOTHING else, so a caller that drops it is left
+    // with a failure carrying no error and no networkError — a blank failure it
+    // can only report generically. Additive; every existing caller branches on
+    // `ok` and ignores the extra key.
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error ?? null,
+        // Carried for the same reason `write` carries them: a read can be
+        // rate-limited too, and a caller that retries needs to tell a 429 it
+        // should wait out from one it must not.
+        httpStatus: res.httpStatus ?? null,
+        retryAfter: res.retryAfter ?? null,
+        networkError: res.networkError ?? null,
+        unusable: res.unusable ?? false,
+      };
+    }
     const entries = res.data?.entries ?? [];
-    return { ok: true, entry: entries[0] ?? null };
+    // Same projection as list/search — a single read must not answer with a
+    // different shape than the listing the caller found the key in.
+    return { ok: true, entry: entries[0] ? withReadFields(entries[0]) : null };
   }
 
   async write(args = {}) {
     const {
-      scope, key, value, tags, source_agent, trigger, org, ttl_days, clear_ttl, created_at,
+      scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
       origin_repo, origin_branch, origin_commit, origin_pr,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
     if (source_agent !== undefined) body.source_agent = source_agent;
     if (trigger !== undefined) body.trigger = trigger;
+    if (kind !== undefined) body.kind = kind;
+    if (host !== undefined) body.host = host;
     if (org !== undefined) body.org = org;
     if (ttl_days !== undefined) body.ttl_days = ttl_days;
     if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;
@@ -111,7 +303,214 @@ class RemoteStore {
     if (origin_commit !== undefined) body.origin_commit = origin_commit;
     if (origin_pr !== undefined) body.origin_pr = origin_pr;
     const res = await this._rest('/memories', { method: 'POST', body });
-    return { ok: res.ok, error: res.error, networkError: res.networkError };
+    // `httpStatus` and `retryAfter` are passed through so a caller can tell the
+    // two 429s apart and honour the server's own backoff. They are DIFFERENT
+    // failures wearing one status code: `code: 'rate_limited'` is transient and
+    // must be retried, `code: 'memory_cap'` is terminal (translateDbError maps
+    // the LK001 cap trigger to 429 as well) and must not be. Additive — the
+    // existing `{ ok, error, networkError }` keys are unchanged.
+    // Every field is coalesced, not just the retry hint: a caller comparing
+    // `httpStatus` must not get `null` from a refusal and `undefined` from the
+    // network-error or `unusable` branch, which is the exact split the shape
+    // exists to remove.
+    return {
+      ok: res.ok,
+      error: res.error ?? null,
+      httpStatus: res.httpStatus ?? null,
+      retryAfter: res.retryAfter ?? null,
+      networkError: res.networkError ?? null,
+      // `_rest` short-circuits an unconfigured store with `{ ok:false,
+      // unusable:true }` and no error at all, so without this the caller sees
+      // a failure with every field null and no reason. Passed through the way
+      // `listScopes` already does.
+      unusable: res.unusable ?? false,
+    };
+  }
+
+  // ── Migrate-destination parity with LocalStore ────────────────────────────
+  //
+  // `migrate` classifies each source entry ADD / UPDATE / NOOP with a read and
+  // then upserts it, against whatever store it was handed. LocalStore answers
+  // that with `getEntry` + `putEntry`; these are the remote halves, so the
+  // migrate loop stays ONE code path instead of branching per destination.
+  //
+  // The local pair is lossless (`putEntry` writes every field verbatim,
+  // archived rows included). The remote pair CANNOT be, because the hosted
+  // write is an RPC with a fixed parameter list, not a file write:
+  //
+  //   preserved  scope, key, source_agent, trigger, and `created` —
+  //              sent as `created_at`, which memory_write honours on INSERT
+  //              only, so a migrated lesson keeps its original creation date
+  //              and its ranking recency with it. `value` survives too but is
+  //              TRIMMED: `MemoryWriteSchema` applies `.transform(s =>
+  //              s.trim())`, so surrounding whitespace does not make the trip.
+  //   re-stamped `updated` — the server sets it to the write instant. There is
+  //              no parameter for it, and inventing one would let a client
+  //              backdate an edit it did not make.
+  //   derived    `seen_count` — the RPC owns the tally (migration 00059: a
+  //              write against an existing key IS the next sighting). A lesson
+  //              the hosted store has never seen lands at 1; one it already
+  //              holds lands at ITS count plus one, not the local one. Either
+  //              way the local history does not transfer.
+  //   converted  `expires_at` → `ttl_days`, the remaining whole days, clamped
+  //              to the schema's 1–365 (a longer-lived TTL is clamped, not
+  //              dropped — the alternative is silently making it permanent).
+  //              A clamp IS lossy, so it is reported: the result carries
+  //              `ttlClamped: true` and the caller can list the entry as
+  //              shortened rather than leaving the user to discover it.
+  //              A PERMANENT entry sends `clear_ttl: true` rather than simply
+  //              omitting `ttl_days`: omission is the RPC's `'keep'` branch
+  //              (migration 00031), which leaves an existing remote
+  //              `expires_at` in place, so a permanent local lesson would
+  //              land on an expiring remote row and still die.
+  //   authoritative
+  //              `tags`. The conflict clause is `tags = excluded.tags`, so the
+  //              source entry's list REPLACES the hosted one — an untagged
+  //              local entry sends `[]` and clears whatever labels the hosted
+  //              row carried. That is what a verbatim upsert means here (the
+  //              local file is the thing being migrated), but it is the one
+  //              field where "verbatim" can remove hosted data, so it is
+  //              called out rather than filed under preserved.
+  //   sticky     `origin_*`. The RPC's conflict clause coalesces provenance
+  //              (`coalesce(excluded.origin_repo, memories.origin_repo)`, and
+  //              likewise for branch/commit/pr) so a write that does not know
+  //              a field cannot erase what an earlier one recorded. A migrated
+  //              entry with NO provenance therefore leaves whatever the hosted
+  //              row already had; it cannot clear it, by design, and there is
+  //              no parameter that would. `source_agent` and `trigger` are NOT
+  //              coalesced (`= excluded.*`), so an absent one still CLEARS the
+  //              hosted value — not because a null is sent (`stripUndefined`
+  //              drops nulls before the request) but because the REST handler
+  //              substitutes `?? null` for the missing field and the RPC
+  //              writes that. Omitted and null are the same instruction here,
+  //              which is the opposite of what they mean for `origin_*`. `kind` and `host` are coalesced the same
+  //              way, and this store never sends them at all — the server
+  //              infers both from the `loop::` tag (`resolveKindHost`), which
+  //              the tags carry, so a migrated lesson classifies itself.
+  //
+  // Two states have no remote representation at all and are REFUSED rather
+  // than silently rewritten, because writing them would resurrect a lesson the
+  // user retired: an archived entry (every conflict predicate on `memories` is
+  // partial on `archived_at is null`, so the hosted write does not revive the
+  // archived row — it INSERTS a second, live one beside it, leaving the store
+  // with both) and
+  // an already-expired one (any `ttl_days` re-dates it into the future). Both
+  // come back as `{ ok:false, unsupported }` so the caller can report them as
+  // skipped. `migrate` does NOT filter them today — adding that filter is the
+  // job of the PR that makes a remote destination reachable — so until then
+  // this refusal is the only thing standing between an archived lesson and
+  // resurrection, which is why it lives in the store and not in the caller.
+
+  // Raw lookup by scope+key, mirroring `LocalStore.getEntry` — the entry or
+  // null. The ROW is each store's own: this answers a REST `MemoryEntry`
+  // (`created_at`/`updated_at`) and the local one answers parsed frontmatter
+  // (`created`/`updated`), both through `withReadFields`. That is deliberate —
+  // the pair exists so a caller can ASK either store whether a key is there,
+  // not so it can compare two rows field-by-field without knowing which store
+  // produced them. A caller that compares has to speak the destination's
+  // spelling; that is what the remote comparison in the migrate loop does. LocalStore's is synchronous and this one cannot be, so callers must
+  // `await` it; awaiting the local store's plain return value is a no-op.
+  //
+  // One semantic difference the caller has to know about: LocalStore.getEntry
+  // sees archived rows and this cannot — `GET /memories` filters them out — so
+  // a remote destination classifies an archived counterpart as ADD, and the
+  // write then lands as a NEW live row beside the archived one (the conflict
+  // predicates are partial on `archived_at is null`). That is what the hosted
+  // `memory_write` does for any write against an archived key, not a
+  // migrate-specific quirk — and it is why `putEntry` refuses an archived
+  // source entry outright rather than relying on this classification.
+  //
+  // A FAILED read THROWS rather than answering null. Null is the answer to "no
+  // such lesson", and a caller that classifies ADD / UPDATE / NOOP acts on it:
+  // returning null for a transient 500 or a dropped connection would quietly
+  // reclassify an existing hosted lesson as new and overwrite it. The local
+  // store never throws here (a file read that fails is genuinely a miss), so
+  // this widens the contract only where the failure mode exists.
+  async getEntry({ scope, key } = {}) {
+    const res = await this.read({ scope, key });
+    if (!res.ok) {
+      // An unconfigured store carries no error at all, so name that case
+      // rather than reporting the generic failure text for it.
+      const reason = res.unusable
+        ? 'the remote store is not configured (missing endpoint or token)'
+        : (res.networkError || res.error?.message || 'read failed');
+      throw new StoreReadError(`remote read failed for ${scope}::${key}: ${reason}`, res);
+    }
+    return res.entry ?? null;
+  }
+
+  // Upsert one entry, as close to verbatim as the hosted write allows. See the
+  // fidelity table above for exactly which fields survive.
+  //
+  // EVERY branch answers with the SAME key set — `write`'s
+  // `{ ok, error, httpStatus, retryAfter, networkError, unusable }` plus
+  // Unlike `LocalStore.putEntry`, no `entry` comes back: the hosted write
+  // returns an id and derives the rest server-side, so echoing the request as
+  // if it were the stored row would be a fabrication. A caller that needs the
+  // stored row reads it back.
+  //
+  // `unsupported` (the refusal reason, else null), `ttlClamped` (the entry
+  // landed with a shortened life) and `createdAtDropped` (its `created` was
+  // unusable, so the server stamped the write instant instead). The last two
+  // report what HAPPENED, so both are false when the write did not succeed. A refusal fills the transport fields
+  // with null rather than omitting them, so a caller reading any one key never
+  // gets a value from one branch and `undefined` from another.
+  async putEntry(entry = {}, { now = new Date() } = {}) {
+    const refuse = (unsupported, message) => ({
+      ok: false,
+      unsupported,
+      // Carries a `code` like every real failure, so a caller can branch on
+      // one field instead of matching prose.
+      error: { message, code: 'unsupported' },
+      httpStatus: null,
+      retryAfter: null,
+      networkError: null,
+      // Every key any putEntry branch answers with, so a caller reading one
+      // never gets a value from one branch and `undefined` from another.
+      unusable: false,
+      ttlClamped: false,
+      createdAtDropped: false,
+    });
+    if (entry?.archived_at) {
+      return refuse('archived', 'archived entries cannot be written remotely — the hosted write would insert a second, live row beside the archived one');
+    }
+    const ttl = remoteTtlDays(entry?.expires_at, now);
+    if (ttl === 'expired') {
+      return refuse('expired', 'expired entries cannot be written remotely — any TTL would re-date them into the future');
+    }
+    // What this write will lose, decided by the same pure function a DRY RUN
+    // calls — so a preview cannot promise something the apply then silently
+    // does differently.
+    const { ttlClamped, createdAtDropped } = remoteWriteLosses(entry, now);
+    const createdAt = createdAtDropped ? undefined : (safeCreatedAt(entry?.created, now) ?? undefined);
+    const result = await this.write(stripUndefined({
+      scope: entry.scope,
+      key: entry.key,
+      value: entry.value == null ? '' : String(entry.value),
+      tags: Array.isArray(entry.tags) ? entry.tags : [],
+      source_agent: entry.source_agent,
+      trigger: entry.trigger,
+      created_at: createdAt,
+      // `'unknown'` sends neither field, leaving the RPC on its `'keep'`
+      // branch. A real TTL sends only `ttl_days`; no TTL says so explicitly
+      // with `clear_ttl` rather than by omission — see the fidelity note above.
+      ttl_days: typeof ttl === 'number' ? ttl : undefined,
+      clear_ttl: ttl === undefined ? true : undefined,
+      origin_repo: entry.origin_repo,
+      origin_branch: entry.origin_branch,
+      origin_commit: entry.origin_commit,
+      origin_pr: entry.origin_pr,
+    }));
+    // Always present, like every other key in this envelope — a caller must
+    // not have to know which branch produced the result to read it.
+    // Both flags describe what HAPPENED, so they are false on a write that did
+    // not happen — a failed request shortened nothing and re-dated nothing.
+    return {
+      ...result,
+      unsupported: null,
+      ttlClamped: Boolean(result.ok) && ttlClamped,
+      createdAtDropped: Boolean(result.ok) && createdAtDropped,
+    };
   }
 
   // Natural-key DELETE. Without `force` the server soft-archives (stamps
@@ -129,10 +528,77 @@ class RemoteStore {
     return this.delete({ scope, key, force: false });
   }
 
+  // Natural-key RESTORE — un-archive a soft-deleted memory. POST
+  // /memories/restore with {scope, key} (supabase/functions/memories/handlers/
+  // restore.ts). Symmetric with archive; scope-authorized server-side (00072).
+  async restore({ scope, key } = {}) {
+    const res = await this._rest('/memories/restore', { method: 'POST', body: { scope, key } });
+    return { ok: res.ok, error: res.error, networkError: res.networkError };
+  }
+
+  // ── Maintenance sweeps → REST ─────────────────────────────────────────────
+  // `POST /memories/purge` and `/purge-expired` (handlers/purge.ts). Both are
+  // account-wide and irreversible, and both refuse a token carrying a scope
+  // allowlist with a 403 (`refuseAccountWideSweep`). `httpStatus` is passed
+  // through so the caller can print that refusal verbatim instead of a generic
+  // failure — the real status lives ONLY there, never in `error.code` (see
+  // `listScopes` above for why).
+
+  // `retention_days` is always SENT, never left to the server's default. For an
+  // irreversible sweep the request should record the exact window it used, and
+  // the caller has to know that number anyway to say what it is about to delete
+  // — `lorekit purge`'s confirmation names it. The default itself is derived
+  // from the tool catalog (`PURGE_RETENTION_DAYS_DEFAULT`), so sending it
+  // explicitly cannot disagree with what the server would have applied.
+  //
+  // An earlier version omitted the body when the argument was absent, to "let
+  // the server default apply". That branch was unreachable — the CLI resolves
+  // the default before calling — so it was dead code guarded by a comment that
+  // described behaviour the code did not have.
+  // Refuses an absent window LOUDLY rather than defaulting to one. `= {}` plus
+  // a bare pass-through would send `retention_days: undefined`, which
+  // JSON.stringify drops — so a caller that forgot the window would silently
+  // get the server's default and hard-delete against a window nobody chose.
+  // On an irreversible account-wide sweep that is the worst of the three
+  // options; throwing names the mistake at the call site instead. Unreachable
+  // today (`parseRetentionDays` resolves and validates before this is called),
+  // and cheap insurance for the day a second caller appears.
+  async purge({ retentionDays } = {}) {
+    if (!Number.isInteger(retentionDays)) {
+      throw new Error(
+        `purge requires an explicit integer retentionDays (got ${JSON.stringify(retentionDays)}); `
+        + 'an account-wide hard delete must never run against an unstated window.',
+      );
+    }
+    const res = await this._rest('/memories/purge', {
+      method: 'POST',
+      body: { retention_days: retentionDays },
+    });
+    return {
+      ok: res.ok,
+      purged: res.ok ? (res.data?.purged ?? 0) : null,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      networkError: res.networkError,
+    };
+  }
+
+  // Takes no body — the row set is every TTL-expired memory the caller owns.
+  async purgeExpired() {
+    const res = await this._rest('/memories/purge-expired', { method: 'POST' });
+    return {
+      ok: res.ok,
+      purged: res.ok ? (res.data?.purged ?? 0) : null,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      networkError: res.networkError,
+    };
+  }
+
   // ── Org operations → REST ─────────────────────────────────────────────────
   // `supabase/functions/orgs/` serves `lk_*` tokens on every route as of
   // 00041_org_actor_override.sql (see the file header). Each method's RETURN
-  // SHAPE is unchanged from the MCP era — `packages/cli/src/mcp-server.mjs`
+  // SHAPE is unchanged from the MCP era — `packages/cli/src/commands/mcp-server.mjs`
   // serialises these objects straight into a `tools/call` result, so the shape
   // is a published contract, not an internal detail.
   //
@@ -147,7 +613,7 @@ class RemoteStore {
   // `{ id, slug, name }`. A bare JSON id string is the LEGACY shape an older
   // deployed backend can still return — that is what the string branch below is
   // for, not the normal case. Either way this method reassembles the
-  // `{ id, slug, name }` triple, because `packages/cli/src/mcp-server.mjs`
+  // `{ id, slug, name }` triple, because `packages/cli/src/commands/mcp-server.mjs`
   // serialises it straight into a `tools/call` result and that shape is a
   // published contract.
   async orgCreate({ slug, name } = {}) {
@@ -187,14 +653,110 @@ class RemoteStore {
   // The `scopes` array is the SAME `[{ scope, count }]` inventory shape
   // `LocalStore.listScopes()` returns, so `scopes.mjs` feeds both through the
   // same pure `filterScopeInventory`/`summarizeScopeInventory` helpers. Ordering
-  // is not relied upon (the server sorts by scope asc; the view re-sorts by
+  // is not relied upon (the server sorts by count desc; the view re-sorts by
   // scope type). Failures use this store's standard `{ ok:false, error,
   // networkError }` envelope so the caller can degrade gracefully.
+  //
+  // `httpStatus` is carried through VERBATIM from `restFetch`, which is the ONLY
+  // place the real status lives: its error object holds `{ message, code }`,
+  // where `code` is the response body's own application code on a JSON error
+  // (a string like `permission_denied`) and only incidentally the status on a
+  // non-JSON one. A consumer that wants to say "HTTP 403" must therefore read
+  // `httpStatus`, never `error.code` — `store/scope-inventory.mjs`'s
+  // `failureReason` does exactly that, and it had nothing to read until this field was passed
+  // through. Additive: `scopes.mjs`, `stats.mjs` and `lessons-view.mjs` all
+  // branch on `ok` / `unusable` / `networkError` and ignore the extra key.
   async listScopes() {
     const res = await this._rest('/memories/scopes');
-    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError, unusable: res.unusable };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error,
+        httpStatus: res.httpStatus,
+        networkError: res.networkError,
+        unusable: res.unusable,
+      };
+    }
     const scopes = Array.isArray(res.data?.scopes) ? res.data.scopes : [];
-    return { ok: true, scopes: scopes.map((s) => ({ scope: s.scope, count: Number(s.count) || 0 })) };
+    // `last_activity` (migration 00049) is `max(created_at)` over exactly the
+    // counted rows — per-scope freshness without listing rows to reduce them,
+    // which is the row-cap trap this endpoint exists to avoid. It is passed
+    // through when present and OMITTED when absent (an older backend, or the
+    // offline store, which has no equivalent), so a consumer can tell "this
+    // store does not report freshness" from "this scope has none". Callers that
+    // read only `{ scope, count }` — `scopes.mjs`, `stats.mjs` — are unaffected.
+    return {
+      ok: true,
+      scopes: scopes.map((s) => ({
+        scope: s.scope,
+        count: Number(s.count) || 0,
+        ...(s.last_activity ? { last_activity: s.last_activity } : {}),
+      })),
+    };
+  }
+
+  // ── Retention policies ("grooming") → REST ────────────────────────────────
+  // Server-side only (retention_policies table + pg_cron sweep) — v1 has no
+  // local-store equivalent, matching the account-wide sweeps just above.
+
+  // GET /policies → { entries: [...] }
+  async policyList() {
+    const res = await this._rest('/memories/policies');
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, entries: Array.isArray(res.data?.entries) ? res.data.entries : [] };
+  }
+
+  // POST /policies → the created policy object.
+  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count } = {}) {
+    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count });
+    const res = await this._rest('/memories/policies', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, policy: res.data };
+  }
+
+  // PATCH /policies/:id → the updated policy object. An omitted field is left
+  // unchanged; pass an explicit `null` in the patch to clear a condition —
+  // this method does not strip nulls, only `undefined` (stripUndefined keeps
+  // that distinction, which is the whole point of the RPC's JSONB-patch design).
+  async policyUpdate(id, patch = {}) {
+    const body = stripUndefined(patch);
+    const res = await this._rest(`/memories/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, policy: res.data };
+  }
+
+  // DELETE /policies/:id → deletes the RULE only; never touches the lessons it matched.
+  async policyDelete(id) {
+    const res = await this._rest(`/memories/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, deleted: true };
+  }
+
+  // POST /groom/preview → { count, keys: [{ scope, key }] } — the SAME
+  // candidates a groom() run would archive. Pass either `policy_id` or
+  // `scope` (+ optional conditions), never both.
+  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count });
+    const res = await this._rest('/memories/groom/preview', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, count: res.data?.count ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
+  }
+
+  // POST /groom/run → archives every previewed candidate, in one transaction.
+  // Soft-archive only (recoverable via restore); never hard-deletes.
+  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count });
+    const res = await this._rest('/memories/groom/run', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, archived: res.data?.archived ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
+  }
+
+  // POST /protect → { protected }. Excludes/includes a lesson from every
+  // grooming candidate set regardless of policy.
+  async protect({ scope, key, protected: isProtected } = {}) {
+    const res = await this._rest('/memories/protect', { method: 'POST', body: { scope, key, protected: isProtected } });
+    if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
+    return { ok: true, protected: res.data?.protected ?? isProtected };
   }
 
   // Authentication probe for doctor — does the configured token STILL work?

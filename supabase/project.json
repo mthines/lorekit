@@ -28,10 +28,26 @@
       }
     },
 
+    "deno:check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node scripts/ci/deno-check-functions.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "sweep": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node scripts/migrations/sweep-rows.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
     "db:push": {
       "executor": "nx:run-commands",
       "dependsOn": [
-        { "projects": ["mcp-core", "mcp-server", "web"], "target": "typecheck" }
+        { "projects": ["mcp-core", "smoke-tests", "web"], "target": "typecheck" }
       ],
       "options": {
         "command": "supabase db push",
@@ -58,7 +74,7 @@
     "db:types": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "supabase gen types typescript > supabase/functions/_shared/database.types.ts --project-id $SUPABASE_PROJECT_REF && cp supabase/functions/_shared/database.types.ts packages/mcp-core/src/database.types.ts",
+        "command": "supabase gen types typescript > supabase/functions/_shared/db/database.types.ts --project-id $SUPABASE_PROJECT_REF && cp supabase/functions/_shared/db/database.types.ts packages/mcp-core/src/db/database.types.ts",
         "cwd": "{workspaceRoot}"
       }
     },
@@ -66,7 +82,7 @@
     "fn:deploy": {
       "executor": "nx:run-commands",
       "dependsOn": [
-        { "projects": ["mcp-core", "mcp-server"], "target": "typecheck" }
+        { "projects": ["mcp-core", "smoke-tests"], "target": "typecheck" }
       ],
       "options": {
         "commands": [
@@ -98,10 +114,10 @@
       "executor": "nx:run-commands",
       "dependsOn": [
         {
-          "projects": ["mcp-core", "mcp-server", "web"],
+          "projects": ["mcp-core", "smoke-tests", "web"],
           "target": "typecheck"
         },
-        { "projects": ["mcp-core", "mcp-server"], "target": "test" }
+        { "projects": ["mcp-core", "smoke-tests"], "target": "test" }
       ],
       "options": {
         "commands": [

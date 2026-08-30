@@ -1,14 +1,15 @@
+import { applyKeyScopeFilter } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
-import { recordAudit } from '../../_shared/audit.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
 import { ok, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { UpdateMemoryBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -49,10 +50,13 @@ export async function handleUpdate(
   }
 
   const tracedDb = createTracedClient(db, span);
-  let q: TracedQuery<MemoryRow> = tracedDb.from<MemoryRow>('memories').update(patch).eq('id', idV.data).is('archived_at', null);
+  let q: TracedQuery<MemoryRow> = tracedDb.from('memories').update(patch).eq('id', idV.data).is('archived_at', null);
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control (org-owned rows included).
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  // The allowlist half. `user_id` alone let a scoped key patch a memory outside
+  // its allowlist by id.
+  q = applyKeyScopeFilter(q, auth);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
@@ -78,6 +82,7 @@ export async function handleUpdate(
       metadata: { scope: updated.scope, key: updated.key },
     },
     auditUserId(auth),
+    span,
   );
   return ok(shapeMemoryRow(data as Record<string, unknown>), cors);
 }

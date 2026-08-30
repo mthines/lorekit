@@ -14,7 +14,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { install } from '../src/install.mjs';
+import { install } from '../src/commands/install.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/shared/config.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
@@ -259,9 +260,51 @@ test('doctor reports which hooks are wired and in which scope', async () => {
   const line = (runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks project'))) ?? '';
   assert.match(line, /PASS/, `expected a passing hooks line, got: ${line}`);
   assert.match(line, /all/, 'names the resolved mode');
-  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+  // Derived from the constant, never a hardcoded list — see install.test.mjs.
+  for (const event of CLAUDE_HOOK_EVENTS) {
     assert.match(line, new RegExp(event), `names ${event}`);
   }
+});
+
+test('doctor names the upgrade a legacy hook wiring still reports as `all`', async () => {
+  // A pre-UserPromptSubmit install reads as `all` (LEGACY_ALL_EVENT_SETS), so
+  // the mode alone told the user they were current when they were not. It stays
+  // a PASS — the wiring works — but it must name the gap and the command, the
+  // same upgrade `install`'s already-installed summary reports.
+  const root = tmp('lk-doc-legacy-');
+  const home = tmp('lk-doc-legacy-home-');
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }, home);
+
+  // Roll the wiring back to the legacy triple the way an old install left it.
+  const settings = path.join(root, '.claude', 'settings.json');
+  const parsed = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  delete parsed.hooks.UserPromptSubmit;
+  fs.writeFileSync(settings, JSON.stringify(parsed, null, 2));
+
+  const res = runDoctor(root, home);
+  const line = res.stdout.split('\n').find((l) => l.includes('hooks project')) ?? '';
+  assert.match(line, /PASS/, `a stale wiring still works, so it is not a failure: ${line}`);
+  assert.match(line, /missing UserPromptSubmit/, `names the gap, got: ${line}`);
+  assert.match(line, /lorekit install --project --hooks all/, `names the command, got: ${line}`);
+  assert.equal(res.status, 0, 'and the advisory never changes doctor\'s exit code');
+});
+
+test('the hook upgrade command names the scope it would actually repair', async () => {
+  // `install` prompts for project vs global when neither flag is given, so a
+  // bare command offered against a global gap can rewire the project instead
+  // and leave the gap untouched.
+  const root = tmp('lk-doc-legacy-global-');
+  const home = tmp('lk-doc-legacy-global-home-');
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true }, home);
+
+  const settings = path.join(home, '.claude', 'settings.json');
+  const parsed = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  delete parsed.hooks.UserPromptSubmit;
+  fs.writeFileSync(settings, JSON.stringify(parsed, null, 2));
+
+  const line = runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks global')) ?? '';
+  assert.match(line, /missing UserPromptSubmit/, `names the gap, got: ${line}`);
+  assert.match(line, /lorekit install --global --hooks all/, `names the global scope, got: ${line}`);
 });
 
 test('doctor says so when no hooks are wired, so a deliberate opt-out is legible', async () => {

@@ -33,7 +33,7 @@
  *
  *   const [lessonKey, setLessonKey] = useUrlState<string | null>('lesson', null, {
  *     cleanOnUnmount: true,
- *     cleanOnPathname: ['/dashboard', '/activity'],
+ *     cleanOnPathname: ['/overview', '/activity'],
  *   });
  */
 

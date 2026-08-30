@@ -1,5 +1,5 @@
 /**
- * StorageAdapter — Deno edge function mirror of packages/mcp-core/src/storage-adapter.ts
+ * StorageAdapter — Deno edge function mirror of packages/mcp-core/src/db/storage-adapter.ts
  *
  * Self-contained (no cross-package imports). Keep in sync with the Node.js
  * source when either changes (the limits.ts / auth-token.ts pattern).
@@ -10,9 +10,11 @@
  * memory-count billing.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { DbClient } from '../_shared/db/db-client.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 export interface StorageAdapter {
-  db: ReturnType<typeof createClient>;
+  db: DbClient;
   supportsRateLimit: boolean;
   supportsHostedBilling: boolean;
   mode: 'hosted' | 'byod';
@@ -24,7 +26,7 @@ export function createHostedAdapter(jwt?: string): StorageAdapter {
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
   const db = jwt
-    ? createClient(url, anonKey, {
+    ? createClient<Database>(url, anonKey, {
         global: { headers: { Authorization: `Bearer ${jwt}` } },
         auth: { persistSession: false, autoRefreshToken: false },
       })
@@ -35,7 +37,7 @@ export function createHostedAdapter(jwt?: string): StorageAdapter {
               'Set this environment variable or pass a JWT to use user-scoped access.',
           );
         }
-        return createClient(url, serviceKey, {
+        return createClient<Database>(url, serviceKey, {
           auth: { persistSession: false, autoRefreshToken: false },
         });
       })();
@@ -58,7 +60,7 @@ export function createBYODAdapter(url: string, anonKey: string, serviceKey?: str
   // enforces data isolation through application-level checks (e.g. user_id
   // column filters), not through auth.uid()-based RLS policies.
   const key = serviceKey || anonKey;
-  const db = createClient(url, key, {
+  const db = createClient<Database>(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return {

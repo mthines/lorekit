@@ -2,12 +2,12 @@
 title: "Offline storage"
 description: "Store lore locally on your machine using the LoreKit CLI — no account, no network, full privacy. Memories live in a plain directory you own and control."
 order: 2
-keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search"]
+keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search", "migrate"]
 ---
 
 <TutorialCallout variant="tip">
 
-Offline storage is the fastest way to start. You can migrate to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_API_KEY` — the CLI reads both stores and merges them automatically.
+Offline storage is the fastest way to start. You can move to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` — the CLI then reads both stores, showing each in its own **Offline** and **Remote** section — and bring everything you learned along with `npx @lorekit/cli migrate --from ~/.lorekit --to remote`, which previews the plan before you add `--yes`.
 
 </TutorialCallout>
 
@@ -17,9 +17,11 @@ Offline storage is the fastest way to start. You can migrate to remote storage l
 npx @lorekit/cli install
 ```
 
-This scaffolds the `lorekit-memory` and `lorekit-setup` skills and the local MCP server into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
+This scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills and an MCP server entry into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
 
-The hooks inject context into your agent — they never write memory themselves. Pick `all` (inject lessons at session start, nudge on a tool failure and at end of turn), `read-only` (inject lessons, never nudge), or `none`. Choose non-interactively with `--hooks`:
+The MCP entry it writes points at the **hosted** server. For an offline-only setup, replace it with the CLI's local stdio server (Step 3) — leave the token prompt blank, since local mode needs none.
+
+The hooks inject context into your agent — they never write memory themselves. Pick `all` (inject lessons at session start and the ones matching each substantive prompt as you go, nudge on a tool failure and at end of turn), `read-only` (inject lessons at session start only, never nudge), or `none`. Choose non-interactively with `--hooks`:
 
 ```bash
 npx @lorekit/cli install --hooks read-only
@@ -39,7 +41,7 @@ npx @lorekit/cli install --no-hooks
 npx @lorekit/cli doctor
 ```
 
-This checks connectivity, token permissions, and scope health. In offline-only mode it confirms that the local MCP server is reachable and the store directory is writable.
+This checks connectivity, token permissions, and scope health, and names the resolved mode plus the config source that decided it. In offline-only mode it confirms that the local MCP server is reachable and the store directory is writable. If it reports `remote` here, that is the built-in default and expected until you pin the mode in Step 6.
 
 </TutorialStep>
 
@@ -49,7 +51,15 @@ This checks connectivity, token permissions, and scope health. In offline-only m
 npx @lorekit/cli mcp
 ```
 
-This starts the local stdio MCP server. Your agent can then call `memory.write` to store a memory:
+This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint. This is half of an offline setup — it decides *which server* your agent talks to; Step 6 decides *which store* that server resolves, and you need both. `install` merges its `lorekit` entry into `.mcp.json` alongside any other servers you have, so edit **that entry only** rather than replacing the file:
+
+```jsonc
+// .mcp.json → mcpServers — the local store, no endpoint and no token.
+// Edit this entry in place; your other servers stay as they are.
+"lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+```
+
+Your agent can then call `memory.write` to store a memory:
 
 ```json
 memory.write {
@@ -89,11 +99,11 @@ Matches a literal, case-insensitive substring against the memory key or value. W
 
 </TutorialStep>
 
-<TutorialStep number={6} title="(Optional) Commit a project config file">
+<TutorialStep number={6} title="Pin the mode with a project config file">
 
-Drop a `.lorekit.json` at the repo root to set the default memory mode for everyone on the team — no per-machine env var needed:
+**This is what makes the setup offline.** The built-in default mode is `remote`, so until something selects `local`, the CLI, the hooks and `lorekit mcp` all resolve to the hosted path — the local MCP entry from Step 3 included. Drop a `.lorekit.json` at the repo root to set the repo's default to local, with no per-machine env var:
 
-```json
+```jsonc
 // .lorekit.json  (safe to commit)
 {
   "mode": "local"
@@ -102,13 +112,15 @@ Drop a `.lorekit.json` at the repo root to set the default memory mode for every
 
 The same file also controls the local store path and deny constraints:
 
-```json
+```jsonc
 {
   "mode": "local",
   "store": ".lorekit",      // path to the project-tier store (default: .lorekit)
   "deny": ["remote"]        // prevent remote mode in this repo (e.g. for air-gapped CI)
 }
 ```
+
+The two keys differ in force. Repo `mode` is only a *default*: a teammate whose `~/.lorekit/config.json` sets its own `mode` overrides it, because precedence runs env var → user config → repo config → the built-in default. `deny: ["remote"]` is the team-wide guarantee — a deny can't be lifted by any personal config or env var, so it's what actually keeps an air-gapped repo offline for everyone, not the `mode` line alone.
 
 A user-level version of the same file lives at `~/.lorekit/config.json` and applies across all repos. User-level deny constraints are a ceiling the repo config can never lift — a user who sets `"deny": ["remote"]` is always offline, regardless of the repo default.
 
@@ -122,6 +134,6 @@ Run `npx @lorekit/cli doctor` to see the resolved mode and which config source d
 
 <TutorialCallout variant="info">
 
-**Next steps:** once you have offline lore working, you can add the remote hosted store for cross-machine access. See the [Remote storage tutorial](/docs/remote) to continue.
+**Next steps:** once you have offline lore working, you can add the remote hosted store for cross-machine access — and push the lessons you already accumulated up to it with one `migrate` command. See the [Remote storage tutorial](/docs/remote) to continue.
 
 </TutorialCallout>

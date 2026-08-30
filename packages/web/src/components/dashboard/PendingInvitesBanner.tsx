@@ -20,8 +20,8 @@ import { usePendingInvitesForMe, PENDING_INVITES_QUERY_KEY } from '@/lib/queries
 import { useDismissedInviteIds } from '@/lib/hooks/useDismissedInviteIds';
 import { visibleInvites } from '@/lib/org-ui';
 import { serialise } from '@/lib/hooks/useUrlState';
-import type { OwnerFilter } from '@/lib/org-ui';
-import { useToast } from '@/components/providers/ToastProvider';
+import type { Filter } from '@/lib/filters';
+import { showToast } from '@/lib/toast';
 import { InviteDetailsDialog } from '@/components/dashboard/InviteDetailsDialog';
 
 interface PendingInvitesBannerProps {
@@ -31,7 +31,6 @@ interface PendingInvitesBannerProps {
 export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
   const { data: invites = initialInvites } = usePendingInvitesForMe(initialInvites);
   const [dismissedIds, dismiss, hasHydrated] = useDismissedInviteIds();
@@ -57,8 +56,19 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
       await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
       const orgName = target.org?.name ?? 'the organization';
       showToast(`You joined ${orgName}. Their shared lore now appears in your Explorer.`, 'success');
-      const ownerFilter: OwnerFilter = { orgId: target.org_id };
-      router.push(`/lore?owner=${encodeURIComponent(serialise(ownerFilter))}`);
+      // Ownership is a server-side filter DIMENSION now (migration 00064), keyed
+      // by the org SLUG. Deep-link straight into the Explorer's `?filters=` bar
+      // with an owner filter, so the freshly-joined org is pre-selected. The
+      // legacy `?owner=` param is gone: the Explorer still READS it for old
+      // links, but writing a slug-keyed filter here lands exactly, where the old
+      // uuid form could not be resolved to a slug on arrival.
+      const slug = target.org?.slug;
+      if (slug) {
+        const ownerFilter: Filter[] = [{ field: 'owner', operator: 'in', values: [slug] }];
+        router.push(`/lore?filters=${encodeURIComponent(serialise(ownerFilter))}`);
+      } else {
+        router.push('/lore');
+      }
     });
   }
 

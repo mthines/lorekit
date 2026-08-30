@@ -1,13 +1,18 @@
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
+import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { validateScope } from '../../_shared/scope/scope.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { ReadActivityQuerySchema } from '../../_shared/schemas/memory.ts';
 
 /** The raw shape `lorekit_read_activity` returns (bigints arrive as strings). */
 interface RawReadActivityRow {
   bucket: string;
+  scope: string | null;
+  read_kind: 'targeted' | 'bulk';
   count: number | string;
 }
 
@@ -47,12 +52,56 @@ export async function handleReadActivity(
   if (!validated.ok) return validated.response;
   const params = validated.data;
 
+  // The optional per-scope filter, normalised by the CANONICAL validator — the
+  // same one every scope-bearing route uses, never a second grammar.
+  //
+  // This route NORMALISES where the five `parseScopeFilter` routes reject-only,
+  // because it filters a different column: `usage_events.scope` is written
+  // through `safeValidateScope` at the recording site (`_shared/api/router.ts`),
+  // so every value in it is already lowercased and a raw filter would miss a
+  // mixed-case request. `memories.scope` is written verbatim over REST, which is
+  // why filtering IT must not lowercase. Grammar is shared; case follows the
+  // writer. Keep this call `validateScope` for as long as the recording side
+  // normalises.
+  //
+  // This fails LOUD where the recording side (`safeValidateScope`, 00058) fails
+  // SAFE, and the asymmetry is the point: recording a scope is a measurement
+  // taken alongside an operation the caller asked for, so a bad value must not
+  // break it; filtering BY a scope is the question itself, so silently dropping
+  // a typo'd filter would answer a different question — "reads everywhere" —
+  // under the label the caller asked for. Same call as `?correlation_id=`.
+  let scopeFilter: string | null = null;
+  if (params.scope !== undefined) {
+    try {
+      scopeFilter = validateScope(params.scope);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
+
+  // Early refusal for a NAMED scope outside the key's allowlist (00068/00069),
+  // identical to `GET /memories`. Without it `p_key_scopes` narrows the series
+  // to empty inside the RPC, which reads as "you read nothing in that scope"
+  // — a different answer than "you may not ask about that scope", and the one
+  // `docs/api-tokens.md`'s table says this path gives. `firstDeniedScope`
+  // returns null for a JWT/service caller and for an unrestricted key, so an
+  // unscoped token is byte-for-byte unaffected.
+  const deniedScope = firstDeniedScope(auth, [scopeFilter]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   const until = params.until ?? new Date().toISOString();
   const since = params.since ?? new Date(Date.parse(until) - DEFAULT_WINDOW_DAYS * DAY_MS).toISOString();
 
   span.setAttributes({
     'lorekit.operation': 'memories.read-activity',
     'lorekit.bucket': params.bucket,
+    ...(scopeFilter ? { 'lorekit.scope': scopeFilter } : {}),
   });
 
   const tracedDb = createTracedClient(db, span);
@@ -61,11 +110,25 @@ export async function handleReadActivity(
     p_bucket: params.bucket,
     p_since: since,
     p_until: until,
+    p_scope: scopeFilter,
+    // The calling key's scope allowlist (00068/00069), narrowed inside the RPC
+    // exactly as `GET /memories/activity` and `/scopes` are: this series also
+    // returns one row per scope NAME. No org parameters — `usage_events` is a
+    // per-user ledger with no org axis to narrow.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
   const buckets = ((data ?? []) as RawReadActivityRow[]).map((r) => ({
     bucket: new Date(r.bucket).toISOString(),
+    // Nullable by contract: a read whose scope could not be resolved is
+    // recorded unattributed rather than dropped, so it still counts toward the
+    // account total. `?? null` normalises an absent key to the same thing.
+    scope: r.scope ?? null,
+    // targeted (memory.read) vs bulk (list/search/list_archived) — migration
+    // 00080. Retrieved (bulk) + opened (targeted) sum to the same total this
+    // endpoint always returned.
+    read_kind: r.read_kind,
     count: Number(r.count),
   }));
   span.setAttributes({ 'lorekit.result_count': buckets.length });

@@ -1,0 +1,250 @@
+# Load and stress test — drives a chosen surface at a fixed arrival rate (or up a
+# ladder of rates) and attributes the latency to specific SQL statements.
+#
+# SURFACE x AUTH is what picks the caller being simulated:
+#   rest + jwt    the dashboard        (default)
+#   rest + token  the CLI remote path  (`lk_*`, the api_key tier)
+#   mcp  + token  AGENTS               — the path that matters most
+# MCP rate-limits EVERY method (120/min/user = 2 rps), so rate is bought with
+# USERS: 20 rps needs 10, 100 rps needs 50. The script REFUSES a configuration
+# that cannot fit rather than reporting the rate limiter as a latency result.
+#
+# WHICH IS WHY `users` DEFAULTS TO `auto`. It previously defaulted to 5 while
+# `max_rps` defaulted to 160 — so the obvious stress dispatch (pick mcp, tick
+# ramp, leave the rest alone) was refused by construction, every time. A default
+# combination that cannot run is a bad default, not operator error. `auto` derives
+# the minimum, and the script prints what it picked. `max_rps` is 40 rather than
+# 160 for the same reason: on MCP, 160 would silently mean provisioning 80 users
+# and seeding all of them before a single measurement.
+#
+# WHY A WORKFLOW RATHER THAN A LOCAL SCRIPT
+# The target must be configurable between preview and production, and a
+# production run needs a human in the loop. GitHub Environments already give us
+# that: `deploy.yml` gates its production jobs on the `production` environment's
+# approval rules, and this reuses the same gate rather than inventing a
+# typed-confirmation input, which is not a real guard.
+#
+# WHAT THIS IS NOT
+# Not a per-PR check. It provisions real users, writes real rows and consumes
+# real Dash0 ingest quota, so it is dispatch-only plus a weekly PREVIEW run.
+# Production never fires on a timer — see the `schedule` note below.
+#
+# HONEST CAVEAT, stated here because it shapes how the output is read: a shared
+# 2-core runner saturates before the target at any real concurrency, and network
+# variance adds latency noise. Distrust the client-side percentiles; the numbers
+# to trust are `lorekit.self_time_ms`, `lorekit.io.wait_ms` and the
+# `lorekit.db.query.*` metrics, which are measured server-side and are robust to
+# a noisy client. The script prints a warning when the achieved rate falls below
+# 90 % of the requested one, which is the signal that the runner is the
+# bottleneck.
+#
+# ENVIRONMENT SECRETS (`preview` and `production` each need all three)
+#   SUPABASE_PROJECT_REF       — already present; deploy.yml and preview.yml use
+#                                it. The project URL is DERIVED from it below
+#                                rather than stored again: a second secret
+#                                holding the same project is a second thing to
+#                                get out of sync, and every other workflow in
+#                                this repo already builds its URLs this way.
+#   SUPABASE_ANON_KEY          — already present; signing a provisioned user in
+#                                uses the anon key.
+#   SUPABASE_SERVICE_ROLE_KEY  — NEW, and the one thing here that cannot be
+#                                derived. Provisioning and deleting users goes
+#                                through the Auth admin API, and the
+#                                `lorekit_db_query_stats()` snapshot is
+#                                service-role-only, so a weaker credential
+#                                cannot run this workflow at all. Copy it from
+#                                Supabase ▸ Project Settings ▸ API ▸ `service_role`
+#                                for the SAME project as SUPABASE_PROJECT_REF.
+#
+# Full design and method: docs/benchmarking.md.
+
+name: Load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which deployment to drive'
+        type: choice
+        options: [preview, production]
+        default: preview
+      rps:
+        description: 'Arrival rate (requests/sec)'
+        default: '20'
+      duration:
+        description: 'Drive duration (seconds)'
+        default: '120'
+      users:
+        description: 'Provisioned users, or "auto" to derive the minimum the peak rate needs (MCP needs rps/2)'
+        default: auto
+      surface:
+        description: 'Which transport — rest = dashboard/CLI path, mcp = the AGENT path'
+        type: choice
+        options: [rest, mcp]
+        default: rest
+      auth:
+        description: 'Auth tier. Blank = the real pairing (mcp->token, rest->jwt); rest+token is the CLI path'
+        type: choice
+        options: ['', jwt, token]
+        default: ''
+      ramp:
+        description: 'Stress mode: step the rate up to max_rps until saturation'
+        type: boolean
+        default: false
+      max_rps:
+        description: 'Ceiling for the stress ladder (only used when ramp is on). On MCP this drives the user count: 160 rps means 80 users, and 80 users means a long seed phase'
+        default: '40'
+  schedule:
+    # Weekly, Mondays 05:25 UTC. Off the hour on purpose: GitHub queues :00
+    # schedules by many minutes. A scheduled run is ALWAYS preview — the target
+    # below falls back to preview when `inputs.target` is empty, which is the
+    # only state a cron trigger can produce, so production cannot be reached
+    # without a human dispatching it.
+    - cron: '25 5 * * 1'
+
+# Never cancel a run in flight. A cancelled load test leaves provisioned users
+# and their rows behind, and cleanup only happens if the job reaches its
+# `finally`. Same posture as deploy.yml.
+concurrency:
+  group: load-test-${{ inputs.target || 'preview' }}-${{ inputs.surface || 'rest' }}
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: Load test → ${{ inputs.target || 'preview' }} (${{ inputs.surface || 'rest' }})
+    runs-on: ubuntu-latest
+    # The gate. `production` inherits whatever approval rules that environment
+    # carries; `preview` runs freely.
+    environment: ${{ inputs.target || 'preview' }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+
+    # Derived ONCE for the whole job, so the pre-check, the run and the sweeper
+    # cannot disagree about which project they are pointing at. `SUPABASE_URL` is
+    # the script's env contract (a plain URL is the right local interface); the
+    # workflow's job is to build it from the ref this repo already stores.
+    #
+    # Only the two NON-secret values live at job scope. The keys stay on the
+    # steps that actually need them, so `checkout` and `setup-node` never see a
+    # service-role credential.
+    env:
+      SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
+      TARGET: ${{ inputs.target || 'preview' }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Fail with a NAMED list rather than letting the script die on the first
+      # missing value — mirrors deploy.yml's secret pre-check, because "which
+      # secret" is the only question worth answering here.
+      #
+      # SUPABASE_PROJECT_REF is checked directly rather than through the derived
+      # SUPABASE_URL: with the ref unset the URL still interpolates to the
+      # syntactically valid `https://.supabase.co`, so a non-empty check on the
+      # URL would pass and the failure would resurface much later as a DNS error
+      # naming no secret at all.
+      - name: Check the environment's secrets
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$SUPABASE_PROJECT_REF" ]      || missing="$missing SUPABASE_PROJECT_REF"
+          [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] || missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -n "$SUPABASE_ANON_KEY" ]         || missing="$missing SUPABASE_ANON_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets for the '$TARGET' environment:$missing. Add them under Settings ▸ Environments ▸ $TARGET. SUPABASE_SERVICE_ROLE_KEY comes from Supabase ▸ Project Settings ▸ API ▸ service_role, for the same project as SUPABASE_PROJECT_REF; the other two are already used by deploy.yml."
+            exit 1
+          fi
+          # Deliberately NOT echoing the resolved project ref. It is stored as a
+          # secret, so Actions masks it and the line would read `project: ***` —
+          # worse than nothing, because it looks like a diagnostic. The job name
+          # (`Load test → <target>`) plus the `environment:` on the run page are
+          # what identify which deployment was driven. The same masking applies
+          # to the script's own `(https://***.supabase.co)` banner line.
+          echo "Secrets present for '$TARGET'."
+
+      # The load test's own logic is unit-tested; run those first so a broken
+      # percentile or a mis-built schedule fails in seconds rather than after
+      # provisioning users against a real project.
+      - name: Unit-test the load-test logic
+        run: |
+          set -euo pipefail
+          node --test scripts/load-test/load-test-lib.test.mjs
+          node --test scripts/telemetry/load-telemetry.test.mjs
+
+      - name: Run the load test
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Absent → the run still prints its report and says the export was
+          # skipped. A missing telemetry token must not fail a load test.
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: |
+          # `pipefail` is load-bearing, not boilerplate: GitHub's default shell
+          # is `bash -e`, which takes a pipeline's exit status from its LAST
+          # command. Without this, `node … | tee` reports tee's success and a
+          # load test that died mid-run would have gone GREEN.
+          set -euo pipefail
+          # `--surface`/`--auth` are appended only when set, so a scheduled run
+          # (which has no inputs at all) keeps the script's own defaults rather
+          # than passing empty strings the arg parser would reject.
+          args=(
+            --target "$TARGET"
+            --rps "${{ inputs.rps || '20' }}"
+            --duration "${{ inputs.duration || '120' }}"
+            --users "${{ inputs.users || '5' }}"
+          )
+          # `if` rather than `[ … ] && …`: the latter evaluates to 1 when the
+          # test fails, which under `set -e` fails the step if it is ever the
+          # last command in the block. Same behaviour, no ordering trap.
+          if [ -n "${{ inputs.surface }}" ]; then args+=(--surface "${{ inputs.surface }}"); fi
+          if [ -n "${{ inputs.auth }}" ];    then args+=(--auth "${{ inputs.auth }}"); fi
+          if [ "${{ inputs.ramp }}" = "true" ]; then
+            args+=(--ramp --max-rps "${{ inputs.max_rps || '160' }}")
+          fi
+          echo "load-test args: ${args[*]}"
+          node scripts/load-test/load-test.mjs "${args[@]}" | tee load-report.txt
+
+      # The report is the artefact worth keeping: the client percentiles and the
+      # per-statement delta, on a run whose Dash0 trace may be sampled away.
+      # (The same text is `tee`-d to the log above — the artefact is for
+      # diffing two runs, not for reading this one.)
+      - name: Upload the report
+        if: always()
+        # v6, not v5: run 32580068106 warned that this action targets Node 20 and
+        # is being force-run on Node 24. `v5` is STILL `using: node20` — only v6
+        # declares node24 — so v5 would not have cleared the deprecation. Same
+        # three inputs in both. This workflow is the repo's only upload-artifact
+        # caller, so the bump is local.
+        uses: actions/upload-artifact@v7
+        with:
+          name: load-report-${{ inputs.target || 'preview' }}-${{ inputs.surface || 'rest' }}-${{ github.run_id }}
+          path: load-report.txt
+          if-no-files-found: warn
+
+      # Belt and braces. The script deletes its users in a `finally`, so this
+      # only fires if the job was killed hard enough to skip that — a runner
+      # timeout or a cancellation. Residue is real rows in a real project.
+      #
+      # Deliberately not `-e`: a failed sweep must not turn a green load test
+      # red, but it must say so with the exit code rather than swallowing it.
+      - name: Sweep any residue
+        if: always()
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -uo pipefail
+          node scripts/load-test/load-test-cleanup.mjs && rc=0 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::Residue sweep exited $rc; check the '$TARGET' project for leftover loadtest-* users."
+          fi

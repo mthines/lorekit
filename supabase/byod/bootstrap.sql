@@ -160,12 +160,148 @@ create table if not exists api_tokens (
   token_hash   text not null unique,
   -- Array of granted permissions: 'read' | 'write'.
   permissions  text[] not null default '{"read","write"}',
+  -- Scoping (migration 00068). EMPTY scopes = unrestricted; org_access is a
+  -- tri-state and org_ids is non-empty iff org_access = 'selected'.
+  scopes       text[] not null default '{}',
+  org_access   text   not null default 'all',
+  org_ids      uuid[] not null default '{}',
   last_used_at timestamptz,
   created_at   timestamptz not null default now()
 );
 
+-- `create table if not exists` above is a no-op on an install that predates
+-- 00068, so the columns are added separately for that case.
+alter table api_tokens
+  add column if not exists scopes     text[] not null default '{}',
+  add column if not exists org_access text   not null default 'all',
+  add column if not exists org_ids    uuid[] not null default '{}';
+
 create index if not exists api_tokens_user_idx on api_tokens(user_id);
 create index if not exists api_tokens_hash_idx on api_tokens(token_hash);
+
+-- Shape gate for the scope allowlist. A CHECK cannot hold a subquery, and
+-- "every element satisfies P" needs one — hence the immutable helper.
+create or replace function lorekit_api_token_scopes_valid(p_patterns text[])
+returns boolean
+language sql
+immutable
+as $$
+  select p_patterns is null or not exists (
+    select 1
+    from unnest(p_patterns) as t(pattern)
+    where (t.pattern ~ '^[a-z0-9._:/-]+(/|::)\*$' or t.pattern ~ '^[a-z0-9._:/-]+$') is not true
+       or (length(t.pattern) <= 200) is not true
+  );
+$$;
+
+alter table api_tokens drop constraint if exists api_tokens_scopes_len;
+alter table api_tokens add constraint api_tokens_scopes_len
+  check (cardinality(scopes) <= 50);
+
+alter table api_tokens drop constraint if exists api_tokens_scopes_shape;
+alter table api_tokens add constraint api_tokens_scopes_shape
+  check (lorekit_api_token_scopes_valid(scopes));
+
+alter table api_tokens drop constraint if exists api_tokens_org_access_valid;
+alter table api_tokens add constraint api_tokens_org_access_valid
+  check (org_access in ('all', 'personal', 'selected'));
+
+alter table api_tokens drop constraint if exists api_tokens_org_ids_match_access;
+alter table api_tokens add constraint api_tokens_org_ids_match_access
+  check ((org_access = 'selected') = (cardinality(org_ids) > 0));
+
+alter table api_tokens drop constraint if exists api_tokens_org_ids_len;
+alter table api_tokens add constraint api_tokens_org_ids_len
+  check (cardinality(org_ids) <= 50);
+
+-- `{null}` has cardinality 1, so neither CHECK above catches a NULL element,
+-- and a NULL org id on an authorization column is "unknown", not "none".
+-- Mirrored from 00068.
+alter table api_tokens drop constraint if exists api_tokens_org_ids_not_null;
+alter table api_tokens add constraint api_tokens_org_ids_not_null
+  check (array_position(org_ids, null) is null);
+
+-- The two request-time predicates. Kept byte-identical to the CURRENT hosted
+-- definitions — `lorekit_api_token_scope_allowed` as re-issued by 00069 §8,
+-- `lorekit_api_token_org_allowed` as first issued by 00068 — a BYOD install
+-- that answers these differently is a BYOD install with a different
+-- authorization boundary. Mirror the LATEST definition, never the one the
+-- column was introduced with: 00068's looser scope predicate treated any
+-- trailing `*` as a prefix wildcard, so a stored mid-token `*` WIDENED the key.
+--
+-- `lorekit_api_token_set_scoping` is deliberately NOT mirrored: it validates
+-- org ids against `lorekit_member_org_ids`, and this file has no orgs by design
+-- (see the header). The org columns are still created so the row shape the
+-- transports select is identical on both deployments — with no orgs, every row
+-- is personal and `lorekit_api_token_org_allowed` returns true regardless of
+-- the tenancy, so the tri-state is inert rather than wrong.
+create or replace function lorekit_api_token_scope_allowed(
+  p_patterns text[],
+  p_scope text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when p_patterns is null or cardinality(p_patterns) = 0 then true
+    when p_scope is null then false
+    else exists (
+      select 1
+      from unnest(p_patterns) as pattern
+      -- SCOPE_PATTERN's shape, verbatim (00069 §8). A `*` is a wildcard only
+      -- directly after `/` or `::`; a pattern that fails this test is DROPPED
+      -- rather than matched, so a stored mid-token wildcard can only ever
+      -- narrow the key. The guard is needed even though `api_tokens_scopes_shape`
+      -- exists, because the column can hold a value the CHECK never saw — a
+      -- BYOD install bootstrapped before this file grew the constraint, or a
+      -- constraint dropped by hand.
+      where pattern ~ '^[a-z0-9._:/-]+((/|::)\*)?$'
+        and case
+          when right(pattern, 1) = '*'
+            -- Escape LIKE's single-character wildcard in the literal prefix so
+            -- `repo::my_org/*` stays owner-exact instead of also matching
+            -- `repo::myXorg/...`. `%` and `\` cannot occur — the shape test's
+            -- charset excludes them.
+            then p_scope like replace(left(pattern, -1), '_', '\_') || '%'
+          else p_scope = pattern
+        end
+    )
+  end;
+$$;
+
+create or replace function lorekit_api_token_org_allowed(
+  p_org_access text,
+  p_org_ids uuid[],
+  p_org_id uuid
+)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when p_org_id is null then true
+    when p_org_access = 'all' then true
+    when p_org_access = 'personal' then false
+    -- `coalesce(…, false)`: a NULL element in p_org_ids makes `= any(…)` NULL,
+    -- and an authorization predicate must never return NULL. Kept identical to
+    -- 00068 — see the rationale there.
+    when p_org_access = 'selected'
+      then coalesce(p_org_id = any(coalesce(p_org_ids, '{}'::uuid[])), false)
+    else false
+  end;
+$$;
+
+-- The GRANTS are part of the mirror, not decoration: a `create function` is
+-- PUBLIC-executable by default, so omitting these left a BYOD install with three
+-- authorization predicates any role could call. Byte-for-byte bodies with
+-- different grants is not a mirror.
+revoke execute on function lorekit_api_token_scopes_valid(text[]) from public, anon;
+revoke execute on function lorekit_api_token_scope_allowed(text[], text) from public, anon;
+revoke execute on function lorekit_api_token_org_allowed(text, uuid[], uuid) from public, anon;
+grant execute on function lorekit_api_token_scopes_valid(text[]) to authenticated, service_role;
+grant execute on function lorekit_api_token_scope_allowed(text[], text) to authenticated, service_role;
+grant execute on function lorekit_api_token_org_allowed(text, uuid[], uuid) to authenticated, service_role;
 
 alter table api_tokens enable row level security;
 
@@ -386,28 +522,55 @@ begin
 end;
 $$;
 
+-- 00072 mirrored. The hosted function was recreated with the calling key's
+-- restriction appended and a `(restored, existed)` return, so the pre-00072
+-- `returns uuid` form is DROPPED rather than replaced: PostgREST resolves by
+-- argument NAME and the edge now sends all six, so leaving the 3-arg overload
+-- behind would either shadow this one or fail to resolve at all.
+--
+-- BYOD is a personal install with no orgs, so `p_key_org_access` / `p_key_org_ids`
+-- are accepted and inert (same as `memory_delete` below); the scope allowlist is
+-- enforced, because that half is what scoping a key means here too.
+drop function if exists restore_memory(uuid, text, text);
+
 create or replace function restore_memory(
   p_user_id  uuid,
-  p_scope    text,
-  p_key      text
+  p_scope    text default null,
+  p_key      text default null,
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',   -- inert in BYOD (no orgs)
+  p_key_org_ids    uuid[] default '{}'     -- inert in BYOD (no orgs)
 )
-returns uuid
+returns table (restored boolean, existed boolean)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_id uuid;
+  v_count   integer;
+  v_existed boolean;
 begin
-  update memories
-     set archived_at = null
-   where user_id = p_user_id
-     and scope    = p_scope
-     and key      = p_key
-     and archived_at is not null
-  returning id into v_id;
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
 
-  return v_id;
+  -- A null p_user_id is the SERVICE tier (no user, no key) — the hosted
+  -- functions' rule, and the one the raw-query paths have always used. It must
+  -- not degrade to `user_id = null`, which matches nothing.
+  v_existed := exists(
+    select 1 from memories m
+     where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+       and (p_user_id is null or m.user_id = p_user_id)
+  );
+
+  update memories m
+     set archived_at = null
+   where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+     and (p_user_id is null or m.user_id = p_user_id);
+  get diagnostics v_count = row_count;
+
+  return query select (v_count > 0), (v_existed or v_count > 0);
 end;
 $$;
 
@@ -466,8 +629,22 @@ $$;
 --    management RPCs and orgs table. Writes always land in the personal
 --    (user-scoped) partition. A comment in the return is added for callers that
 --    inspect org_routed.
+--
+--    The three key-restriction parameters (00068/00069) are NOT optional
+--    cosmetics. PostgREST resolves an RPC by argument NAME, so `create.ts`
+--    sending p_key_scopes / p_key_org_access / p_key_org_ids at a BYOD install
+--    whose function lacks them misses the function entirely (PGRST202) and
+--    surfaces as an opaque 500. And the scope allowlist is the LAST gate on the
+--    write path a caller cannot route around — the edge holds the service-role
+--    key, so the dispatcher's refusal is advisory by construction. Without it a
+--    BYOD install got the columns and the CHECKs with no SQL-layer enforcement
+--    at all. Guard kept byte-identical to 00069 §1.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- Every earlier signature is dropped, newest first: `create or replace` keys on
+-- the argument list, so growing the parameter list leaves the previous one
+-- behind as an overload that PostgREST would still resolve for a caller sending
+-- the old argument names.
 drop function if exists memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean);
 drop function if exists memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer);
 drop function if exists memory_write(uuid, text, text, text, text[], text, text, timestamptz);
@@ -484,7 +661,17 @@ create or replace function memory_write(
   p_created_at   timestamptz default null,
   p_org_slug     text        default null,  -- accepted but ignored in BYOD (no orgs table)
   p_ttl_days     integer     default null,
-  p_clear_ttl    boolean     default false
+  p_clear_ttl    boolean     default false,
+  -- The CALLING KEY's restriction (00068/00069), defaulted to unrestricted so
+  -- every existing BYOD caller keeps its behaviour with no call-site change.
+  p_key_scopes     text[] default '{}',
+  -- The tenancy pair is accepted for signature compatibility and is INERT here:
+  -- BYOD has no orgs, so every row is personal and
+  -- `lorekit_api_token_org_allowed` returns true regardless of the tenancy.
+  -- Accepting it is what stops PostgREST's by-name resolution from missing this
+  -- function; ignoring it is correct rather than lax.
+  p_key_org_access text   default 'all',
+  p_key_org_ids    uuid[] default '{}'
 )
 returns table (
   id               uuid,
@@ -507,6 +694,14 @@ declare
 begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-owned writes require the hosted LoreKit product.
+
+  -- The scope allowlist, checked FIRST and for every branch — 00069 §1
+  -- verbatim. LK002 is the code `translateDbError` already maps to a 403 on
+  -- REST and a forbidden error on MCP, so no second mapping is needed.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
 
   if p_clear_ttl then
     v_ttl_action := 'clear';
@@ -579,7 +774,7 @@ begin
 end;
 $$;
 
-grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean)
+grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean, text[], text, uuid[])
   to anon, authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -589,42 +784,76 @@ grant execute on function memory_write(uuid, text, text, text, text[], text, tex
 --    p_org_slug is accepted for signature compatibility but ignored.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- The pre-00069 signature is DROPPED rather than replaced: `create or replace`
+-- keys on the argument list, so adding parameters would leave two overloads and
+-- PostgREST would resolve the old one for a caller that omits them.
+drop function if exists memory_delete(uuid, text, text, text, boolean);
+-- 00071 mirrored: the return gained `existed`, and `create or replace` cannot
+-- change a return type, so the 00069-shaped 8-arg form is dropped as well.
+drop function if exists memory_delete(uuid, text, text, text, boolean, text[], text, uuid[]);
+
 create or replace function memory_delete(
   p_user_id  uuid,
   p_org_slug text    default null,  -- accepted but ignored in BYOD
   p_scope    text    default null,
   p_key      text    default null,
-  p_force    boolean default false
+  p_force    boolean default false,
+  -- Same three as memory_write, for the same two reasons: PostgREST resolves by
+  -- argument NAME (remove.ts sends all three), and this RPC chooses its own
+  -- rows, so `applyKeyScopeFilter` never sees them and the allowlist has
+  -- nowhere else to be enforced.
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',   -- inert in BYOD (no orgs)
+  p_key_org_ids    uuid[] default '{}'     -- inert in BYOD (no orgs)
 )
-returns table (deleted boolean, archived boolean)
+returns table (deleted boolean, archived boolean, existed boolean)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_count integer;
+  v_count   integer;
+  v_existed boolean;
 begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-gated deletes require the hosted LoreKit product.
 
+  -- 00069 §7 verbatim: the allowlist, before either branch.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
+
+  -- 00071 mirrored: `existed` is what lets the edge answer 404 (nothing there)
+  -- vs 403 (present, but this call removed nothing) instead of collapsing both
+  -- into not_found. And a null p_user_id is the SERVICE tier (no user, no key),
+  -- never "the user with no id" — see restore_memory above.
+  v_existed := exists(
+    select 1 from memories m
+     where m.scope = p_scope and m.key = p_key
+       and (p_user_id is null or m.user_id = p_user_id)
+  );
+
   if p_force then
-    delete from memories
-     where user_id = p_user_id and scope = p_scope and key = p_key;
+    delete from memories m
+     where m.scope = p_scope and m.key = p_key
+       and (p_user_id is null or m.user_id = p_user_id);
     get diagnostics v_count = row_count;
 
-    return query select (v_count > 0), false;
+    return query select (v_count > 0), false, (v_existed or v_count > 0);
   else
-    update memories
+    update memories m
        set archived_at = now()
-     where user_id = p_user_id and scope = p_scope and key = p_key and archived_at is null;
+     where m.scope = p_scope and m.key = p_key and m.archived_at is null
+       and (p_user_id is null or m.user_id = p_user_id);
     get diagnostics v_count = row_count;
 
-    return query select false, (v_count > 0);
+    return query select false, (v_count > 0), (v_existed or v_count > 0);
   end if;
 end;
 $$;
 
-grant execute on function memory_delete(uuid, text, text, text, boolean) to anon, authenticated, service_role;
+grant execute on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[]) to anon, authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9. Grants
@@ -641,7 +870,7 @@ grant execute on function lorekit_get_limit(uuid, text) to anon, authenticated, 
 grant execute on function lorekit_check_rate_limit(uuid, integer) to anon, authenticated, service_role;
 grant execute on function lorekit_purge_rate_limit_counters(interval) to anon, authenticated, service_role;
 grant execute on function archive_memory(uuid, text, text) to anon, authenticated, service_role;
-grant execute on function restore_memory(uuid, text, text) to anon, authenticated, service_role;
+grant execute on function restore_memory(uuid, text, text, text[], text, uuid[]) to anon, authenticated, service_role;
 grant execute on function purge_archived_memories(uuid, integer) to anon, authenticated, service_role;
 grant execute on function purge_expired_memories(uuid) to authenticated, service_role;
 

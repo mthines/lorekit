@@ -9,7 +9,7 @@ export default function LorePage() {
   // the lesson list streams in separately via useMemories inside LoreExplorer.
   const { data: scopes, isLoading: scopesLoading, isError: scopesError, error: scopesErr } = useScopeTree();
   // useLoreData: the legacy combined fetch, kept only for heatmapData (the
-  // 26-week contribution graph), which now comes from `GET /memories/activity`
+  // contribution graph), which now comes from `GET /memories/activity`
   // — bucketed in Postgres, so it is not bounded by the page it ships with
   // (`LEGACY_PAGE_SIZE` in queries/lore.ts owns that size). Runs in parallel —
   // the heatmap can load after the scope tree; the lesson list + feed stream in
@@ -23,7 +23,14 @@ export default function LorePage() {
   const signedOut = isNotAuthenticated(scopesErr);
 
   return (
-    <div className="flex flex-col gap-4">
+    // Capped and left-aligned so the stat columns, heatmap and list do not
+    // stretch edge-to-edge on an ultrawide display, where four cards spread
+    // across ~1900px read as sparse and each memory line runs too long to scan.
+    // Below the cap the page is full-width as before, so laptops are unaffected.
+    // `max-w-page` is the SHARED cap (`--container-page` in globals.css) that
+    // Overview uses too — the two wide dashboard shells must agree, otherwise
+    // navigating between them shifts the content edge.
+    <div className="flex max-w-page flex-col gap-4">
       {/* Title is static — renders immediately, never skeletoned */}
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">

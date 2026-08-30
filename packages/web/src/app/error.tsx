@@ -62,7 +62,7 @@ export default function RootError({ error, reset }: ErrorProps) {
             Try again
           </button>
           <Link
-            href="/dashboard"
+            href="/overview"
             className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
           >
             <Home className="size-4" aria-hidden />

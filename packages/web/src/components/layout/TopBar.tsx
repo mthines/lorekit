@@ -41,8 +41,17 @@ export function TopBar({ user: _ }: TopBarProps) {
         >
           Docs
         </Link>
-        {/* Command palette trigger — opens with ⌘K or clicking this button */}
-        <CommandPaletteButton />
+        {/*
+          Command palette trigger — opens with ⌘K or clicking this button.
+          Desktop only: the label IS a keyboard shortcut, which is dead copy on
+          a touch device, and on mobile the palette is reached from the tab
+          bar's docked FAB instead (Sidebar → CommandPaletteFab), where it is
+          both bigger and thumb-reachable. Mirrors the docs/blog headers, which
+          hide the same chip below `sm`.
+        */}
+        <span className="hidden md:inline-flex">
+          <CommandPaletteButton />
+        </span>
         {/* Memory expand button: always visible, opens the global lesson sidebar */}
         <MemoryExpandButton />
         <SignOutButton />

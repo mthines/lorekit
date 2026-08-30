@@ -1,16 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
+import { Badge } from '@/components/ui/Badge';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { EditableField } from '@/components/ui/EditableField';
+import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
+import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -36,6 +40,12 @@ interface LessonDetailSheetProps {
    * snapshot each presentation deterministically.
    */
   layout?: 'auto' | 'drawer' | 'sheet';
+  /**
+   * Which Content tab is active on first render. Defaults to `preview`. An
+   * explicit value is used by Storybook/tests to pin either tab deterministically
+   * (the same rationale as `layout`); the product never sets it.
+   */
+  initialContentTab?: ContentTab;
 }
 
 interface LessonFormValues {
@@ -50,6 +60,15 @@ interface LessonFormValues {
    */
   ttlInput: string;
 }
+
+// ── Promotion threshold ──────────────────────────────────────────────────────
+// LoreKit's own documented promotion gate (packages/cli/skill/lorekit-setup/
+// rules/self-improvement-loops.md → "Promotion (fast → slow)"): a lesson that
+// has recurred at least this many times across runs is promotion-eligible —
+// worth hardening into a permanent host rule rather than staying episodic.
+// Kept as a named constant here (not re-derived) because the rules doc is the
+// authority; this only needs to match its number for the affordance to be honest.
+const PROMOTION_SEEN_COUNT_THRESHOLD = 3;
 
 // ── TTL helpers ───────────────────────────────────────────────────────────────
 
@@ -136,8 +155,135 @@ function ExpiryControl({ currentExpiresAt, form, disabled }: ExpiryControlProps)
   );
 }
 
-export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' }: LessonDetailSheetProps) {
+// ── ContentSection ─────────────────────────────────────────────────────────
+// The memory value with a Preview / Edit tab switch. Preview renders the value
+// as safe GitHub-flavored markdown (`MarkdownPreview`); Edit is the raw textarea
+// (`EditableField`). Matches the house tab a11y pattern (`ClientConfigTabs`):
+// role tablist/tab/tabpanel, aria-selected/-controls, roving tabindex + arrow
+// keys, and ≥44px (`min-h-11`) targets. Identical in the drawer and bottom sheet.
+//
+// The single `Controller` above stays mounted across a tab switch, so the form
+// value/dirty state survives; only the rendered panel swaps. Editing dirties the
+// form and the pinned Discard/Save bar appears regardless of which tab is shown.
+
+const CONTENT_TAB_LABELS: Record<ContentTab, string> = { preview: 'Preview', edit: 'Edit' };
+
+interface ContentSectionProps {
+  tab: ContentTab;
+  onTabChange: (tab: ContentTab) => void;
+  /** False for archived lessons — the Edit tab is disabled and Preview is forced. */
+  canEdit: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  onEditEnd: () => void;
+  error?: string;
+}
+
+function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd, error }: ContentSectionProps) {
+  const tabRefs = useRef<Record<ContentTab, HTMLButtonElement | null>>({ preview: null, edit: null });
+  const effectiveTab: ContentTab = canEdit ? tab : 'preview';
+
+  function selectTab(next: ContentTab) {
+    if (next === 'edit' && !canEdit) return;
+    onTabChange(next);
+  }
+
+  function handleKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>) {
+    const next = nextTabForKey(effectiveTab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    if (next === 'edit' && !canEdit) return;
+    onTabChange(next);
+    tabRefs.current[next]?.focus();
+  }
+
+  return (
+    <section aria-label="Content" className="flex flex-col gap-2">
+      {/* Compact segmented control, left-aligned. The heading is dropped — the
+          tabs are self-explanatory — but `aria-label="Content"` keeps the
+          region named for assistive tech. `w-fit` hugs the two tabs rather than
+          stretching into a full-width bar. */}
+      <div
+        role="tablist"
+        aria-label="Content view"
+        aria-orientation="horizontal"
+        className="flex w-fit gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5"
+      >
+        {CONTENT_TABS.map((id) => {
+          const selected = effectiveTab === id;
+          const disabled = id === 'edit' && !canEdit;
+          return (
+            <button
+              key={id}
+              ref={(el) => {
+                tabRefs.current[id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`content-tab-${id}`}
+              aria-selected={selected}
+              aria-controls={`content-panel-${id}`}
+              // Announce the global single-letter shortcut so it is
+              // discoverable to assistive tech — but only while the tab can
+              // actually be activated, matching `shortcutTabForKey`, which
+              // returns null for Edit on an archived memory.
+              aria-keyshortcuts={disabled ? undefined : CONTENT_TAB_SHORTCUT_KEYS[id]}
+              tabIndex={selected ? 0 : -1}
+              disabled={disabled}
+              onClick={() => selectTab(id)}
+              onKeyDown={handleKeyDown}
+              // Compact on desktop (≈28px) but a ≥44px tap target on mobile.
+              className={[
+                'flex min-h-11 items-center justify-center rounded-md px-3 py-1 text-xs font-medium transition-colors duration-150 md:min-h-7',
+                selected
+                  ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
+                  : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
+                disabled ? 'cursor-not-allowed opacity-40' : '',
+              ].join(' ')}
+            >
+              {CONTENT_TAB_LABELS[id]}
+            </button>
+          );
+        })}
+      </div>
+
+      {effectiveTab === 'preview' ? (
+        // Preview renders directly on the panel background — no card/border/inset.
+        <div
+          role="tabpanel"
+          id="content-panel-preview"
+          aria-labelledby="content-tab-preview"
+          tabIndex={0}
+          // The panel is focusable (it is the tablist's target), so it needs a
+          // visible ring — `outline-none` alone would land a keyboard user here
+          // invisibly, against packages/web/CLAUDE.md's visible-focus floor.
+          className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        >
+          <MarkdownPreview value={value} />
+        </div>
+      ) : (
+        <div role="tabpanel" id="content-panel-edit" aria-labelledby="content-tab-edit">
+          <EditableField
+            label="Content"
+            hideLabel
+            value={value}
+            onChange={onChange}
+            onEditEnd={onEditEnd}
+            isEditing
+            placeholder="Enter memory content…"
+            minRows={6}
+            error={error}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto', initialContentTab = DEFAULT_CONTENT_TAB }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Content view: Preview (rendered markdown, default) vs Edit (raw textarea).
+  const [contentTab, setContentTab] = useState<ContentTab>(initialContentTab);
   const queryClient = useQueryClient();
   // Below `md` the panel is a bottom sheet; at/above it a right-side drawer.
   // `useIsMobile` shares one matchMedia listener across all consumers. An
@@ -233,14 +379,39 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
       void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       toast.success('Memory saved', { description: lesson.key });
     },
+    // After a successful save, return to the Preview tab so the user sees the
+    // freshly-rendered saved markdown.
+    onSaveSuccess: () => setContentTab(tabAfterSave()),
   });
 
   const { form, isSaving, saveError, isDirty, handleSubmit, discard } = editForm;
 
-  // Focus close button on open; restore on close.
+  // Identity of the open lesson (null while the panel is closed).
+  const lessonId = lesson ? `${lesson.scope}\u0000${lesson.key}` : null;
+  // Reset to Preview whenever a *different* lesson opens. The ref is seeded
+  // with the mount-time identity so the first run is a no-op — otherwise this
+  // effect would overwrite `initialContentTab` before paint.
+  const shownLessonIdRef = useRef(lessonId);
+  useEffect(() => {
+    if (shownLessonIdRef.current === lessonId) return;
+    shownLessonIdRef.current = lessonId;
+    setContentTab(DEFAULT_CONTENT_TAB);
+  }, [lessonId]);
+
+  // Focus close button on open; restore on close. The delay lets the open
+  // animation start first, which means focus can already be somewhere inside
+  // the panel by the time it fires (a fast click straight into the Content
+  // textarea) — pulling it back to the close button would swallow the keystrokes
+  // that follow. So this only ever moves focus INTO the panel, never within it.
   useEffect(() => {
     if (lesson) {
-      const timer = setTimeout(() => closeRef.current?.focus(), 80);
+      const timer = setTimeout(() => {
+        const close = closeRef.current;
+        if (!close) return;
+        const panel = close.closest('[role="dialog"]');
+        if (panel?.contains(document.activeElement)) return;
+        close.focus();
+      }, 80);
       return () => clearTimeout(timer);
     }
     return undefined;
@@ -255,6 +426,29 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [lesson, onClose, isDirty]);
+
+  // Global P / E shortcuts switch the Content tab — but never while focus is in
+  // a form field (so typing "p"/"e" into the textarea, tags or expiry input is
+  // untouched) and never with a command modifier held (`shortcutTabForKey`).
+  useEffect(() => {
+    if (!lesson) return undefined;
+    function onKeyDown(e: KeyboardEvent) {
+      const el = document.activeElement as HTMLElement | null;
+      const inFormField =
+        el != null &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable);
+      const hasModifier = e.metaKey || e.ctrlKey || e.altKey;
+      const next = shortcutTabForKey(e.key, { hasModifier, inFormField, canEdit: !isArchived });
+      if (!next) return;
+      e.preventDefault();
+      setContentTab(next);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [lesson, isArchived]);
 
   function handleArchive() {
     if (!lesson) return;
@@ -400,22 +594,25 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
               className="flex min-h-0 flex-1 flex-col overflow-hidden"
               aria-label="Edit memory"
             >
-              <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-                {/* Content — editable */}
+              {/* `min-h-0` is load-bearing: without it a flex child's default
+                  `min-height:auto` refuses to shrink below its content, so
+                  `overflow-y-auto` never engages and a tall memory overflows the
+                  sheet's `max-h-[90vh]` (clipping the content and pushing the
+                  pinned footer off-screen) instead of scrolling inside it. */}
+              <div className="group flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-5">
+                {/* Content — Preview (rendered markdown) / Edit (raw textarea) */}
                 <Controller
                   name="value"
                   control={form.control}
                   rules={{ required: 'Content is required', minLength: { value: 1, message: 'Content cannot be empty' } }}
                   render={({ field, fieldState }) => (
-                    <EditableField
-                      label="Content"
+                    <ContentSection
+                      tab={contentTab}
+                      onTabChange={setContentTab}
+                      canEdit={!isArchived}
                       value={field.value}
                       onChange={field.onChange}
                       onEditEnd={field.onBlur}
-                      isEditing={!isArchived}
-                      readOnly={isArchived}
-                      placeholder="Enter memory content…"
-                      minRows={4}
                       error={fieldState.error?.message}
                     />
                   )}
@@ -491,11 +688,39 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                           </>
                         )}
 
-                        {/* Source — which agent recorded this and what triggered it. */}
-                        {(lesson.source_agent || lesson.trigger) && (
+                        {/* Source — the memory's taxonomy (kind/host), which
+                            agent recorded it, what triggered it, and how many
+                            times it has recurred. Every field is nullable: a
+                            row written before migration 00048/00056 (or
+                            00059 for recurrence) carries fewer of them, and
+                            `lessonFromMemoryEntry` has already reused the
+                            shared `inferKindHost` to backfill kind/host from
+                            the legacy `loop::<host>-lessons` tag where
+                            possible, so this section never re-parses tags
+                            itself. First row present starts a new cluster
+                            only when Ownership rendered above it. */}
+                        {(lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null) && (
                           <>
-                            {lesson.source_agent && (
+                            {lesson.kind && (
                               <div className={`flex items-center gap-2 text-xs ${lesson.org ? clusterStart : ''}`}>
+                                <Layers className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Kind</dt>
+                                <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                                  {lesson.kind}
+                                </dd>
+                              </div>
+                            )}
+                            {lesson.host && (
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.kind ? clusterStart : ''}`}>
+                                <Cpu className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Host</dt>
+                                <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                                  {lesson.host}
+                                </dd>
+                              </div>
+                            )}
+                            {lesson.source_agent && (
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.kind && !lesson.host ? clusterStart : ''}`}>
                                 <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
@@ -504,7 +729,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                               </div>
                             )}
                             {lesson.trigger && (
-                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.source_agent ? clusterStart : ''}`}>
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent ? clusterStart : ''}`}>
                                 <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
@@ -512,13 +737,77 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                                 </dd>
                               </div>
                             )}
-                          </>
-                        )}
+                            {(() => {
+                              const seenCount = lesson.seen_count;
+                              if (seenCount == null) return null;
+                              const eligibleForPromotion = seenCount >= PROMOTION_SEEN_COUNT_THRESHOLD;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <Repeat className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Recurrence</dt>
+                                  <dd className="ml-auto flex items-center gap-1.5">
+                                    <span className="text-[var(--color-content-secondary)]">seen {seenCount}×</span>
+                                    {eligibleForPromotion && (
+                                      <Badge
+                                        variant="amber"
+                                        className="normal-case"
+                                        title={`Recurred ${seenCount} times \u2014 LoreKit's own promotion gate (seen_count >= ${PROMOTION_SEEN_COUNT_THRESHOLD}) suggests hardening this into a permanent rule.`}
+                                      >
+                                        promote?
+                                      </Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                            {(() => {
+                              const readCount = lesson.read_count;
+                              if (readCount == null) return null;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org && !lesson.kind && !lesson.host && !lesson.source_agent && !lesson.trigger && lesson.seen_count == null
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <BookOpenCheck className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Consumption</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="How many times this memory has actually been READ back by a memory.read/list/search/list_archived call, not just written. Counts only SINCE per-memory tracking began — a 0 here means not read since then, not necessarily never."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {readCount === 0
+                                          ? 'no reads recorded'
+                                          : `read ${readCount}×${lesson.last_read_at ? ` · last ${new Date(lesson.last_read_at).toLocaleDateString()}` : ''}`}
+                                      </span>
+                                    </Tooltip>
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                           </>
+                         )}
 
-                        {/* Timeline — created / updated / expiry / archived.
+                         {/* Timeline — created / updated / expiry / archived.
                             Preceded by ownership and/or source, so the first row
                             always starts a new cluster. */}
-                        <div className={`flex items-center gap-2 text-xs ${lesson.org || lesson.source_agent || lesson.trigger ? clusterStart : ''}`}>
+                        <div
+                          className={`flex items-center gap-2 text-xs ${
+                            lesson.org || lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null
+                              ? clusterStart
+                              : ''
+                          }`}
+                        >
                           <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                           <dt className="text-[var(--color-content-tertiary)]">Created</dt>
                           <dd className="ml-auto text-[var(--color-content-secondary)]">

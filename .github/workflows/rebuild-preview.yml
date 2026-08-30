@@ -4,7 +4,7 @@
 # `preview` is a shared project. `/preview` runs (preview.yml) push UN-MERGED
 # migrations to it from open PR head SHAs, so over time it accumulates drifted
 # history rows and orphan schema objects from PRs that were edited or abandoned.
-# The deploy-time drift classifier (scripts/check-remote-migration-drift.mjs)
+# The deploy-time drift classifier (scripts/migrations/check-remote-migration-drift.mjs)
 # keeps `main`'s deploy GREEN through that drift; THIS workflow is the flush that
 # clears it — `supabase db reset --linked` drops and re-provisions the remote DB
 # from the migration files on this ref, so grants and RLS defaults are restored
@@ -103,7 +103,13 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
         with:
-          version: latest
+          # Pinned, not `latest`, for consistency with ci.yml (#578): CLI
+          # v2.116.0 changed the local stack's default privileges, tripping a
+          # security assertion under `supabase start`. This job talks to
+          # hosted Supabase, not the local stack, so that specific assertion
+          # doesn't apply here — pinned anyway to avoid unplanned CLI drift
+          # across all workflows until the v2.116.0 grant change is understood.
+          version: 2.115.0
 
       - name: Verify preview environment secrets are set
         run: |
@@ -130,13 +136,12 @@ jobs:
 
       # The ONE step that clears drifted history rows AND orphan schema objects:
       # re-provision the remote DB from the migration files on this ref.
-      # NOTE: depending on the pinned CLI version, `db reset --linked` may prompt
-      # for confirmation. Verify on the FIRST manual `workflow_dispatch` run
-      # (before the cron ever fires); if it hangs on a prompt, drive it
-      # non-interactively with whatever confirmation flag the installed CLI
-      # exposes (or pipe `y`).
+      # `db reset --linked` prompts `[y/N]` to confirm wiping the remote DB, which
+      # a CI runner has no TTY to answer (it aborts with `context canceled`). The
+      # global `--yes` flag answers the prompt so the flush runs unattended on the
+      # weekly cron, a `/reset-preview` comment, or a manual dispatch.
       - name: Reset preview database from migrations
-        run: supabase db reset --linked
+        run: supabase db reset --linked --yes
 
       # `db reset` wipes the seeded orgs-smoke user along with everything else,
       # so the orgs REST smoke self-skips (announced, non-fatal) until it is
@@ -146,7 +151,7 @@ jobs:
       # reminder rather than smuggling the key into a recurring workflow.
       - name: Remind to re-seed the orgs-smoke user
         run: |
-          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
+          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/smoke/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM

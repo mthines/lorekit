@@ -1,0 +1,52 @@
+{
+  "name": "feature-flags",
+  "$schema": "../../node_modules/nx/schemas/project.json",
+  "projectType": "library",
+  "sourceRoot": "packages/feature-flags/src",
+  "tags": [],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "tsc --noEmit -p packages/feature-flags/tsconfig.json",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "generate": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        {
+          "input": "default",
+          "projects": ["feature-flags"]
+        }
+      ],
+      "outputs": [
+        "{workspaceRoot}/packages/feature-flags/src/generated/flags.generated.ts",
+        "{workspaceRoot}/packages/feature-flags/generated/flags.manifest.json"
+      ],
+      "options": {
+        "command": "node --experimental-transform-types scripts/codegen/gen-feature-flags.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "check:generate": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        {
+          "input": "default",
+          "projects": ["feature-flags"]
+        },
+        "{workspaceRoot}/packages/feature-flags/src/generated/flags.generated.ts",
+        "{workspaceRoot}/packages/feature-flags/generated/flags.manifest.json"
+      ],
+      "outputs": [],
+      "options": {
+        "command": "node --experimental-transform-types scripts/codegen/gen-feature-flags.mjs --check",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@ import {
   type DocsIndexEntry,
 } from './render.ts';
 import { buildLlmsTxt, parseFrontmatter, readDocsIndex, OUTPUT_PATH } from './generate.ts';
-import { MCP_TOOLS, type McpToolDoc } from '../tool-catalog.ts';
+import { MCP_TOOLS, type McpToolDoc } from '../shared/tool-catalog.ts';
 
 const toolNamed = (name: string): McpToolDoc => {
   const found = MCP_TOOLS.find((t) => t.name === name);
@@ -37,10 +37,20 @@ describe('renderTool', () => {
     expect(renderTool(toolNamed('memory.write'))).toContain('Requires **write** permission.');
   });
 
-  it('flags jwt-only tools instead of claiming a token permission', () => {
-    const out = renderTool(toolNamed('org.create'));
+  it('states a token permission for org tools, which are no longer jwt-only', () => {
+    // These used to render "dashboard session JWT". They are token-gated now,
+    // and the change came from the catalog alone — `renderTool` was not touched.
+    expect(renderTool(toolNamed('org.create'))).toContain('Requires **write**');
+    expect(renderTool(toolNamed('org.list'))).toContain('Requires **read**');
+    expect(renderTool(toolNamed('org.create'))).not.toContain('dashboard session JWT');
+  });
+
+  it('still flags a jwt-only tool if one is ever added back', () => {
+    // The branch has no catalog tool exercising it today, so it is pinned
+    // against a synthetic one rather than left to rot unexercised.
+    const jwtOnly = { ...toolNamed('org.create'), permission: null, auth: 'jwt-only' as const };
+    const out = renderTool(jwtOnly);
     expect(out).toContain('dashboard session JWT');
-    expect(out).not.toContain('Requires **read**');
     expect(out).not.toContain('Requires **write**');
   });
 
@@ -64,10 +74,24 @@ describe('renderPermissionMatrix', () => {
     expect(matrix).toContain('| `memory.write` | ✓ | ✗ | ✓ |');
   });
 
-  it('omits org tools from the token matrix and footnotes them instead', () => {
+  it('includes the org tools now that they are token-gated', () => {
     const matrix = renderPermissionMatrix();
-    expect(matrix).not.toContain('`org.create`');
+    expect(matrix).toContain('`org.create`');
+    expect(matrix).toContain('`org.list`');
+  });
+
+  it('drops the jwt-only footnote when no tool is jwt-only, and names them when one is', () => {
+    // DERIVED from the catalog's `auth` field rather than stated. The footnote
+    // was previously a hardcoded sentence asserting `org.*` needed a JWT, so
+    // opening those tools meant editing the catalog AND remembering this line.
+    expect(renderPermissionMatrix()).not.toContain('Supabase user JWT');
+
+    const withJwtOnly = MCP_TOOLS.map((t) => (
+      t.name === 'org.create' ? { ...t, permission: null, auth: 'jwt-only' as const } : t
+    ));
+    const matrix = renderPermissionMatrix(withJwtOnly);
     expect(matrix).toContain('Supabase user JWT');
+    expect(matrix).toContain('`org.create`');
   });
 
   it('covers exactly the permission-gated tools', () => {

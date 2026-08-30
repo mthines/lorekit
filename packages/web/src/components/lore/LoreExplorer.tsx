@@ -3,19 +3,19 @@
 /**
  * LoreExplorer
  *
- * Two-panel layout (scope tree + paginated lesson list) for the Lore page.
- * Includes a collapsible heatmap panel at the top and a "Browse by time" tab
- * that surfaces the ActivityFeed view, replacing the old /activity route.
+ * The Lore page: a scope chip selector + a collapsible insights panel (stats +
+ * heatmap) above a paginated, filterable lesson list.
  *
  * ## Key changes from the previous client-filtered version
- * - Default view is "all scopes" (no scope selected). The scope tree has an
- *   "all" row at the top that clears the scope filter.
+ * - Default view is "all scopes" (no scope selected). The scope selector's first
+ *   chip is "All scopes", which clears the scope filter.
  * - Filtering (scope / search / date) is server-side, not client-side.
  *   `useMemories` (`useInfiniteQuery` over `listMemories`) is the data source.
  * - Pagination: "Load more" button appends the next keyset page, identical to
  *   the audit log feed (`AuditLogFeed.tsx`).
- * - The scope sidebar still reads a lightweight `useScopeTree()` query so the
- *   tree renders immediately without waiting for the lesson list.
+ * - Scope is a persistent chip row (`ScopeSelector`) at the top of the page,
+ *   above the stats it drives — not a left-hand tree. It shares the `ScopeBadge`
+ *   language with the Overview cards and the stat captions.
  *
  * ## URL state
  * - `scope` param:    selected scope (null → all scopes). Shareable.
@@ -23,29 +23,82 @@
  * - `tags` param:     selected labels (JSON array). A memory must carry ALL of
  *   them. Server-side, shareable — "every perf regression we've learned" is a
  *   link you can paste to a teammate.
- * - `range` param:    date range, shareable. Scoped to /lore. Shared by the
- *   heatmap click, scope view, and feed view — one param drives all three.
- * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
- *   lands on the correct tab.
- * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
- *   Defaults to closed so the phone layout leads with the memories.
- * - `heatmapOpen`:    local useState — ephemeral panel collapse, NOT in URL.
+ * - `range` param:    time range, shareable. Scoped to /lore. Shared by the
+ *   heatmap click and the list — one param drives both, and
+ *   as of the shared time model it is the SAME param the Overview writes, so a
+ *   selection means the same thing on both pages. It holds either a relative
+ *   preset (`{preset:'7d'}`, which stays live in a shared link) or an absolute
+ *   window (`{from,to}`, ISO instants or the legacy `YYYY-MM-DD` day strings).
+ *   `resolveRange` turns whichever arrived into instants; nothing downstream
+ *   sees a relative value. See `lib/time-range.ts`.
+ * - `status` param:   'active' | 'archived' | 'expiring'. The population being
+ *   viewed, as opposed to the filters that narrow it. Absent means "fall back
+ *   to the legacy `archived` flag", which is why its default is `null` rather
+ *   than `'active'`.
+ * - `filters` param:  the unified filter bar (JSON array of committed
+ *   conditions) — one dimension per pill, OR within a dimension and AND across.
+ *   Ownership (Personal / an org) is one of those dimensions now, filtered
+ *   server-side like every other (migration 00064).
+ * - `retention` param: the retention-preview trio (`lib/retention-filter.ts`)
+ *   — min age / unseen-for / seen-at-most, the SAME conditions a saved
+ *   retention policy matches on. Narrows the list to what a policy with these
+ *   conditions would catch, so a reader can verify before ever saving one.
+ *   Server-side (migration 00092), shareable, absent means no narrowing.
+ *   Resolves to no conditions while the `retention-policies` flag is off —
+ *   the whole feature is gated together with its Settings → Retention
+ *   Policies destination, which 404s while the flag is off.
+ * - `owner` param:    the superseded ownership shorthand from the old
+ *   client-side owner bar. Still READ so old links (and pre-change accept-invite
+ *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
+ *   into an `owner` filter — same absent-only fallback rule as legacy `tags`.
+ * - `archived` param: the superseded boolean. Still READ so existing links keep
+ *   resolving; never written. Same treatment as the legacy `tags` shorthand.
+ * - `insightsOpen`:  local useState inside `ExplorerInsights` — ephemeral panel
+ *   collapse, NOT in URL. A shared link carries what you are looking at, not
+ *   how tall you left a panel.
  *
  * ## SSR note
  * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
-import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
-import { ScopeTree, type ScopeNode } from './ScopeTree';
+import { useCallback, useEffect, useMemo, useTransition, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Search, Loader2 } from 'lucide-react';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
+import { type ScopeNode } from './ScopeTree';
+import { ScopeSelector } from './ScopeSelector';
+import { ExplorerInsights } from './ExplorerInsights';
+import { ExplorerInstruments } from './ExplorerInstruments';
+import { MatrixInstrument } from './MatrixInstrument';
+import { TimelineInstrument } from './TimelineInstrument';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+import { resolveScopeParam } from '@/lib/scope';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { useExplorerResults } from '@/components/providers/ExplorerResultsProvider';
+import { isExplorerViewFiltered } from '@/lib/explorer-result-count';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
+import { StatusControl } from './StatusControl';
+import {
+  EXPIRING_WITHIN_DAYS,
+  expiringWithinDays,
+  isArchivedView,
+  resolveStatus,
+  STATUS_ICONS,
+  statusParamValue,
+  type MemoryStatus,
+} from '@/lib/status-filter';
+import {
+  isPresetRange,
+  rangeCaption,
+  resolveRange,
+  toDayRange,
+  type TimeRange,
+} from '@/lib/time-range';
+import { useFacetCatalog, useMemories, usePivot } from '@/lib/queries/lore';
 import {
   filtersParamValue,
   removeFilter,
@@ -58,95 +111,52 @@ import {
   type FilterOperator,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
+import {
+  RetentionConditionsPanel,
+  RetentionConditionsTrigger,
+} from './RetentionConditionsControl';
+import {
+  hasRetentionConditions,
+  normalizeRetentionConditions,
+  retentionConditionsParamValue,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
 import { useReducedMotion } from 'motion/react';
+import {
+  DEFAULT_MATRIX_COL,
+  DEFAULT_MATRIX_ROW,
+  MATRIX_AXES,
+  type Instrument,
+} from '@/lib/explorer-instruments';
 import type { LessonEntry } from './LessonCard';
-import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
-import { ActivityFeed } from '@/components/activity/ActivityFeed';
-import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
-type ViewMode = 'scope' | 'time';
 
 // Module-scoped so the reference is stable across renders — `useUrlState`
 // documents that mutable defaults must be memoized at the call site.
 const NO_TAGS: string[] = [];
 const NO_FILTERS: Filter[] = [];
 
-// ── Ownership filter bar ──────────────────────────────────────────────────────
-// "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
-// one org-owned memory is in view (nothing to filter by ownership otherwise).
-// A leading "Owner" label + per-chip icons make the dimension self-explanatory:
-// without them the bare "Personal / {org}" chips read as unlabelled mystery
-// filters. Single-select, so it uses radiogroup/radio semantics (aria-checked),
-// not the toggle-button aria-pressed shape.
+/**
+ * The Explorer's LIST opens on ALL time — a list's job is to show everything,
+ * and that is the horizon every existing `/lore` deep link (and `lorekit link`
+ * URL) has always meant by an absent `range`. Narrowing this default would
+ * silently re-scope every shared link.
+ *
+ * The Activity panel above the list does NOT open on all time: it substitutes a
+ * 24h DISPLAY default for exactly this "untouched" value, without writing it
+ * (`DEFAULT_STATS_RANGE` in `ExplorerInsights`). That is why `null` here has to
+ * stay distinguishable from an explicit `All`, and why the picker now writes
+ * `{preset:'all'}` instead of clearing the param — both resolve to an unbounded
+ * window, but only the absent one is a reader who has not chosen yet.
+ *
+ * Module-level `null` for the reference-stability reason `useUrlState` documents:
+ * the default sits in the setter's `useCallback` deps, so a fresh literal each
+ * render reminted it. `null` is a constant, so this is moot — kept named for the
+ * one-line rationale above.
+ */
+const DEFAULT_EXPLORER_RANGE: TimeRange = null;
 
-function OwnershipFilterBar({
-  orgs,
-  value,
-  onChange,
-}: {
-  orgs: { id: string; name: string }[];
-  value: OwnerFilter;
-  onChange: (next: OwnerFilter) => void;
-}) {
-  if (orgs.length === 0) return null;
-
-  function isActive(candidate: OwnerFilter): boolean {
-    if (candidate === 'all') return value === 'all';
-    if (candidate === 'personal') return value === 'personal';
-    return typeof value === 'object' && value.orgId === candidate.orgId;
-  }
-
-  const chips: {
-    key: string;
-    label: string;
-    filter: OwnerFilter;
-    icon: typeof User;
-    title: string;
-  }[] = [
-    { key: 'all', label: 'All', filter: 'all', icon: Users, title: 'Show memories from every owner' },
-    { key: 'personal', label: 'Personal', filter: 'personal', icon: User, title: 'Only your personal memories' },
-    ...orgs.map((org) => ({
-      key: org.id,
-      label: org.name,
-      filter: { orgId: org.id } as OwnerFilter,
-      icon: Building2,
-      title: `Only memories shared with ${org.name}`,
-    })),
-  ];
-
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Filter by owner"
-      className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2"
-    >
-      <span className="mr-0.5 flex items-center text-xs font-medium text-[var(--color-content-tertiary)]">
-        Owner
-      </span>
-      {chips.map((chip) => (
-        <button
-          key={chip.key}
-          type="button"
-          role="radio"
-          onClick={() => onChange(chip.filter)}
-          aria-checked={isActive(chip.filter)}
-          title={chip.title}
-          className={[
-            'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
-            isActive(chip.filter)
-              ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-              : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-          ].join(' ')}
-        >
-          <chip.icon className="size-3 shrink-0" aria-hidden />
-          {chip.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── Filter bar (search + labels + date + archived) ────────────────────────────
+// ── Filter bar (search + filters + date + status) ─────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
 // differences between the desktop and mobile renders: the desktop bar sits in a
 // bordered header (`border-b`/padding), uses smaller type + the page `bg`, and
@@ -172,8 +182,14 @@ function ControlRow({
   onEditField,
   range,
   onRangeChange,
-  showArchived,
-  onToggleArchived,
+  dateLabel,
+  dateActive,
+  status,
+  onStatusChange,
+  retentionEnabled,
+  retentionConditions,
+  retentionPanelOpen,
+  onToggleRetentionPanel,
 }: {
   variant: 'desktop' | 'mobile';
   search: string;
@@ -185,8 +201,19 @@ function ControlRow({
   onEditField: (field: FilterField | null) => void;
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
-  showArchived: boolean;
-  onToggleArchived: () => void;
+  /** Preset label for the date trigger when a preset (not a custom window) is active. */
+  dateLabel?: string;
+  /** Whether the date control should read as an active narrowing (preset or custom). */
+  dateActive?: boolean;
+  status: MemoryStatus;
+  onStatusChange: (status: MemoryStatus) => void;
+  /** Behind the `retention-policies` flag — its destination (Settings →
+   *  Retention Policies) 404s while the flag is off, so the entry point stays
+   *  hidden alongside it rather than dead-ending. */
+  retentionEnabled: boolean;
+  retentionConditions: RetentionConditions;
+  retentionPanelOpen: boolean;
+  onToggleRetentionPanel: () => void;
 }) {
   const desktop = variant === 'desktop';
 
@@ -214,26 +241,21 @@ function ControlRow({
         onEditField={onEditField}
         variant={variant}
       />
-      <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
-      <button
-        type="button"
-        onClick={onToggleArchived}
-        aria-pressed={showArchived}
-        aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
-        title={desktop ? (showArchived ? 'Showing archived' : 'Show archived') : undefined}
-        className={[
-          'flex min-h-9 shrink-0 items-center rounded-lg border transition-all duration-150',
-          desktop ? 'gap-1.5 px-2.5 py-1.5 text-xs font-medium' : 'justify-center p-2',
-          showArchived
-            ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
-            : `border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]${
-                desktop ? ' hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]' : ''
-              }`,
-        ].join(' ')}
-      >
-        <Archive className={desktop ? 'size-3.5' : 'size-4'} aria-hidden />
-        {desktop && <span className="hidden sm:inline">Archived</span>}
-      </button>
+      {retentionEnabled && (
+        <RetentionConditionsTrigger
+          conditions={retentionConditions}
+          open={retentionPanelOpen}
+          onToggle={onToggleRetentionPanel}
+        />
+      )}
+      <DateRangePicker
+        value={range}
+        onChange={onRangeChange}
+        displayLabel={dateLabel}
+        active={dateActive}
+        className="shrink-0"
+      />
+      <StatusControl value={status} onChange={onStatusChange} variant={variant} />
     </div>
   );
 }
@@ -250,9 +272,27 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // URL-backed: null means "all scopes" (the new default). A discrete click
   // writes the URL immediately (no debounce). Scoped to /lore.
-  const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null, {
+  const [scopeParam, setSelectedScope] = useUrlState<string | null>('scope', null, {
     cleanOnPathname: '/lore',
   });
+
+  // The `?scope=` param is the ONE value on this page that arrives from outside
+  // the app — a shared link, a hand-edited URL, a stale bookmark — and it fans
+  // out unchanged to five endpoints on every render. Four of them treat an
+  // ungrammatical scope as an exact-match filter that matches nothing;
+  // `GET /memories/read-activity` validates it and returns 400 (deliberately —
+  // a filter is the question itself). So a single bad param used to render four
+  // empty-but-fine panels next to one failed request, which reads as the page
+  // being broken rather than as the link being wrong.
+  //
+  // Reject it here, once, at the seam it enters through — and keep the rejected
+  // value so the page can SAY it ignored the filter. Silently widening to "all
+  // scopes" without saying so would answer a different question than the link
+  // asked, which is the same trap the endpoint's 400 exists to avoid.
+  const { scope: selectedScope, rejected: rejectedScope } = useMemo(
+    () => resolveScopeParam(scopeParam),
+    [scopeParam],
+  );
 
   // Search is high-frequency input — the returned `search` is instantly
   // responsive (local state) while the URL param is written on a trailing
@@ -269,20 +309,93 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // URL-backed date range, scoped to /lore. Shared by the heatmap click, the
   // scope view, and the feed view — one param drives all three.
-  const [range, setRange] = useUrlState<DateRange | null>('range', null, {
+  //
+  // Typed as `TimeRange` (lib/time-range.ts) rather than `DateRange`, which is
+  // what makes the param timestamp-capable: it now also carries a relative
+  // preset (`{preset:'7d'}`, which stays live in a shared link) and an absolute
+  // window precise to the hour (what a drilled-in chart bucket produces, PR-6).
+  // The widening is backward-compatible by construction — a `{from,to}` pair of
+  // day strings, the only shape this param has ever held, is still one of the
+  // arms, so every existing `?range=` link decodes exactly as before.
+  const [range, setRange] = useUrlState<TimeRange>('range', DEFAULT_EXPLORER_RANGE, {
     cleanOnPathname: '/lore',
   });
 
-  // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
-  // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
-  // so a freshly-joined org is pre-filtered on arrival.
-  const [ownerFilter, setOwnerFilter] = useUrlState<OwnerFilter>('owner', 'all', {
+  // Resolved ONCE per range change, never per render: the clock is read inside
+  // the memo, so a relative preset stays a stable object between renders. It is
+  // part of the `useMemories` query key, and re-resolving on every render would
+  // mint a new key each time and refetch forever.
+  //
+  // Keyed on the SERIALISED range, not the object: `useUrlState` re-derives its
+  // value from `searchParams`, so `range` is a fresh object identity after ANY
+  // param edit — flipping the archived toggle would otherwise re-resolve
+  // `{preset:'7d'}` against a newer clock and remint the `useMemories` key for a
+  // range the user never touched.
+  // One clock for everything the insights panel derives — the picker's custom
+  // label, the stat window (it is handed down to ExplorerStats so the strip and
+  // the cards share it) and the captions must all describe the same instant, or a
+  // render can straddle a bucket boundary and caption a chart it did not draw.
+  // Minted ONCE per mount (empty deps): a stable instant is the point, so it must
+  // not be re-read on range changes or every render would chase the clock.
+  const insightsNowIso = useMemo(() => new Date().toISOString(), []);
+  const rangeKey = JSON.stringify(range);
+  const resolvedRange = useMemo(
+    // Resolve the LIST's window against the SAME mount clock the insights panel
+    // uses (`insightsNowIso`), not a fresh `new Date()` — otherwise a relative
+    // preset like `24h` bounds the list and the stat header a few milliseconds
+    // apart, reintroducing exactly the header/list disagreement this feature
+    // removes. `insightsNowIso` is a mount-stable constant, so `rangeKey` is what
+    // actually drives re-resolution; it is listed as a dep for correctness.
+    () => resolveRange(range, insightsNowIso),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rangeKey, insightsNowIso],
+  );
+
+  // Day-cell highlighting for the heatmap. Derived from the RESOLVED window, so
+  // a preset arriving from an Overview deep link lights the right cells instead
+  // of leaving the calendar blank while the list below it is clearly filtered.
+  const highlightRange: DateRange | null = resolvedRange ? toDayRange(resolvedRange) : null;
+
+  // The calendar picker speaks whole UTC days and cannot render a preset or a
+  // sub-day window, so it is shown the absolute arm and nothing else. A preset
+  // reads as "no custom range" there — which is honest: the user did not pick
+  // one — while the label above the picker still names what is selected.
+  //
+  // It is shown the DAY form, not the raw param. `DateRange` is documented as
+  // an INCLUSIVE `YYYY-MM-DD` pair, and now that the absolute arm can carry ISO
+  // instants with an exclusive `to` (a bucket drilled in from a chart), handing
+  // the raw value over would feed a day picker timestamps. `toDayRange` is
+  // already the one conversion, and it is a no-op for the legacy day pair this
+  // param has always held.
+  const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
+
+  // The date control and the stat panel's preset picker share ONE `range`, so
+  // the date control must SHOW that shared selection rather than reading "All
+  // time" while the list below is filtered. When a preset is active it carries no
+  // custom `pickerRange`, so surface the preset's own label ('24h'/'7d'/'30d')
+  // and keep the control styled active; `all` / unset stay the inactive "All
+  // time" grey the reader resets to.
+  const rangeIsAll = range === null || (isPresetRange(range) && range.preset === 'all');
+  const dateActive = !rangeIsAll;
+  const dateLabel =
+    isPresetRange(range) && range.preset !== 'all' ? range.preset : undefined;
+
+  // The pre-facet `?owner=` param. Ownership is a server-side filter DIMENSION
+  // now (migration 00064), folded into the bar below like every other
+  // dimension, so this legacy param is READ (never written) purely to keep old
+  // links landing: the accept-invite deep link, `lorekit link --owner`, and any
+  // shared owner view from before this change. `resolveFilters` translates ANY
+  // non-`all` string — a `'personal'` marker OR an org slug — into an owner
+  // filter; only the pre-00064 `{orgId}` OBJECT degrades to no filter (its uuid
+  // cannot be resolved to the slug the facet keys on). Same "absent-only"
+  // fallback rule as legacy `?tags=`. The default stays `'all'` (its historical
+  // value, mirrored in the CLI's `LORE_PARAM_DEFAULTS`).
+  const [legacyOwner] = useUrlState<unknown>('owner', 'all', {
     cleanOnPathname: '/lore',
   });
 
   // URL-backed filter bar — server-side filtered (OR within a dimension, AND
-  // across dimensions), so it belongs in the query, not in a client-side
-  // narrowing like `owner`. Shareable: "every perf regression we learned on the
+  // across dimensions). Shareable: "every perf regression we learned on the
   // release branch" is a link you can paste to a teammate.
   // `null` — not `[]` — is the default, so "the param is absent" and "the bar
   // is explicitly empty" stay distinguishable. `useUrlState` drops a param whose
@@ -291,6 +404,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // below resurrected the pill the user had just removed.
   const [rawFilters, setRawFilters] = useUrlState<Filter[] | null>('filters', null, {
     cleanOnPathname: '/lore',
+    // Push, not replace: adding/removing a filter is a navigational step the
+    // reader expects the Back button to undo (return to the previous filter
+    // set), the way scope selection already behaves.
+    navigationMode: 'push',
   });
 
   // The pre-filter-bar `?tags=` param. Still read (never written) so links
@@ -305,18 +422,99 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // pills, the empty-state copy) reads a real `Filter[]`. An explicit
   // `?filters=` wins over the legacy shorthand — including when it is empty,
   // which is what makes removing the last pill on a `?tags=` link stick.
-  const filters = useMemo(() => resolveFilters(rawFilters, legacyTags), [rawFilters, legacyTags]);
+  const filters = useMemo(
+    () => resolveFilters(rawFilters, legacyTags, legacyOwner),
+    [rawFilters, legacyTags, legacyOwner],
+  );
 
   // Every write goes through here so the "explicitly empty" marker is applied
   // in one place rather than at each of the four call sites below.
   const setFilters = useCallback(
-    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags)),
-    [setRawFilters, legacyTags],
+    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags, legacyOwner)),
+    [setRawFilters, legacyTags, legacyOwner],
   );
 
   // Which dimension the menu should open at, set by a pill's value segment.
   // Ephemeral — a request, not state worth sharing, so never in the URL.
   const [editingField, setEditingField] = useState<FilterField | null>(null);
+
+  // Settings → Retention Policies (`/settings/grooming`) is gated behind this
+  // flag and 404s while it is off — the SAME check `SettingsNav.tsx` and the
+  // page's own `notFound()` use. The Explorer's whole retention-preview
+  // feature stays behind it too, so the entry point can never dead-end at a
+  // 404 for a reader who does not have it enabled.
+  const retentionPoliciesEnabled = useFeatureFlag('retention-policies');
+
+  // URL-backed retention-preview trio (`lib/retention-filter.ts`) — narrows the
+  // list to what a retention policy with these conditions would catch. `null`
+  // is the default (no narrowing); `useUrlState` drops the param entirely once
+  // the last condition is cleared (`retentionConditionsParamValue`). Resolves
+  // to NO conditions while the flag is off, so a stale `?retention=` from
+  // before the flag was disabled (or a link shared by someone who has it)
+  // cannot silently narrow the list for a reader with no way to see or clear it.
+  // Debounced exactly like `q` above (`search`/`committedSearch`): the panel's
+  // three number inputs are high-frequency, keystroke-driven input, so a raw
+  // `useUrlState` here re-navigates and reissues the full facets+list fetch on
+  // EVERY digit typed — 8 facet calls + 1 list call, repeated per keystroke,
+  // which is also why `isLoading` never got a chance to settle to `false`:
+  // each keystroke started a brand-new (uncached) query key before the
+  // previous one's response could paint, so the skeleton never cleared while
+  // typing a multi-digit value. `rawRetention` stays instantly responsive for
+  // the panel's own inputs; `committedRawRetention` re-reads the URL directly
+  // and only changes once the debounce settles, so `useMemories` below fetches
+  // once per finished edit rather than once per keystroke.
+  const [rawRetention, setRawRetention] = useDebouncedUrlState<RetentionConditions | null>(
+    'retention',
+    null,
+    { debounceMs: 350, cleanOnPathname: '/lore', navigationMode: 'push' },
+  );
+  const [committedRawRetention] = useUrlState<RetentionConditions | null>('retention', null, {
+    cleanOnPathname: '/lore',
+  });
+  const retentionConditions = useMemo(
+    () => (retentionPoliciesEnabled ? normalizeRetentionConditions(rawRetention) : {}),
+    [rawRetention, retentionPoliciesEnabled],
+  );
+  const committedRetentionConditions = useMemo(
+    () => (retentionPoliciesEnabled ? normalizeRetentionConditions(committedRawRetention) : {}),
+    [committedRawRetention, retentionPoliciesEnabled],
+  );
+  const setRetentionConditions = useCallback(
+    (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
+    [setRawRetention],
+  );
+  // The disclosure's open/closed state — ephemeral, never in the URL (the
+  // conditions themselves are the shareable part, not whether the panel is
+  // showing).
+  const [retentionPanelOpen, setRetentionPanelOpen] = useState(false);
+
+  const router = useRouter();
+
+  /** Hand the current scope, retention conditions AND filter bar to
+   *  Settings → Retention Policies, which opens its "New policy" dialog
+   *  pre-filled with all three — the "verify, then save as a policy" seam
+   *  this whole feature exists for. `selectedScope === null` ("all scopes")
+   *  maps to the policy schema's own "everything" scope, `global` (see
+   *  `scopeMatchesPolicy`). The filter bar rides as JSON, exactly how
+   *  `?filters=` itself is encoded — `GroomingRuleBuilder` normalises it the
+   *  same defensive way a hand-edited Explorer link is. */
+  function handleCreatePolicy() {
+    const params = new URLSearchParams();
+    params.set('prefillScope', selectedScope ?? 'global');
+    if (retentionConditions.minAgeDays !== undefined) {
+      params.set('prefillMinAgeDays', String(retentionConditions.minAgeDays));
+    }
+    if (retentionConditions.unseenDays !== undefined) {
+      params.set('prefillUnseenDays', String(retentionConditions.unseenDays));
+    }
+    if (retentionConditions.maxSeenCount !== undefined) {
+      params.set('prefillMaxSeenCount', String(retentionConditions.maxSeenCount));
+    }
+    if (filters.length > 0) {
+      params.set('prefillFilters', JSON.stringify(filters));
+    }
+    router.push(`/settings/grooming?${params.toString()}`);
+  }
 
   // The desktop and mobile layouts are BOTH mounted — the breakpoint split
   // below is CSS (`hidden md:flex` / `flex md:hidden`), not a conditional
@@ -330,26 +528,26 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // `useMediaQuery` documents — a `md:` class cannot gate a prop.
   const isMobile = useIsMobile();
 
-  // URL-backed view mode so a shared link lands on the right tab.
-  const [view, setView] = useUrlState<ViewMode>('view', 'scope');
 
-  // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
-  // persisted. Putting this in URL state would pollute every share link and
-  // fire a router.replace on every tap. Starts CLOSED so the phone layout opens
-  // on the memories themselves — the scope tree is a filter, not the content,
-  // and expanding it by default pushed the first card below the fold. The
-  // collapsed header still shows the active scope, so nothing is hidden.
-  const [scopePanelOpen, setScopePanelOpen] = useState(false);
-
-  // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
-  const [heatmapOpen, setHeatmapOpen] = useState(true);
-
-  // URL-backed archived toggle — scoped to /lore.
-  const [showArchived, setShowArchived] = useUrlState<boolean>('archived', false, {
+  // URL-backed Status — scoped to /lore. Defaults to `null` (param absent), not
+  // to 'active', for the reason `filters` defaults to null: absent has to be
+  // distinguishable from an explicit choice, because an absent `status` falls
+  // back to the legacy `archived` flag and an explicit one overrides it.
+  const [rawStatus, setRawStatus] = useUrlState<MemoryStatus | null>('status', null, {
     cleanOnPathname: '/lore',
   });
 
-  // Paginated lesson list — server-side filtered by scope / search / range / archived.
+  // The superseded boolean. Still READ so `?archived=true` links in PRs, Slack
+  // and `lorekit link --archived` output keep resolving to the archived view —
+  // the same treatment the legacy `?tags=` shorthand gets. Never written.
+  const [legacyArchived] = useUrlState<boolean>('archived', false, {
+    cleanOnPathname: '/lore',
+  });
+
+  const status = resolveStatus(rawStatus, legacyArchived);
+  const showArchived = isArchivedView(status);
+
+  // Paginated lesson list — server-side filtered by scope / search / range / status.
   const {
     data,
     isLoading,
@@ -357,44 +555,154 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range, filters, showArchived });
+  } = useMemories({
+    scope: selectedScope,
+    search: committedSearch,
+    range: resolvedRange,
+    filters,
+    retentionConditions: committedRetentionConditions,
+    showArchived,
+    expiringWithinDays: expiringWithinDays(status),
+  });
 
-  // Filter-independent facet catalog (see `useFacetCatalog`) — the menu's
-  // options must not shrink to whatever the current filter happens to have
-  // loaded, or you could narrow but never widen or switch. Archived-aware: the
-  // archived view is a different population, so it gets its own counts.
-  const { data: facets } = useFacetCatalog(showArchived);
+  // Facet catalog for the menu (see `useFacetCatalog`) — its own endpoint query,
+  // never derived from the loaded pages, so the menu's options can't shrink to
+  // whatever happens to be loaded. Passing `filters` makes its counts drill down:
+  // pick one filter and the other dimensions narrow to what selecting each would
+  // yield, while the endpoint self-excludes each dimension so you can still widen
+  // or switch within it. `selectedScope` scopes the counts to match the list —
+  // without it a scoped view would show global counts and overstate the yield.
+  // Archived-aware — the archived view is a different population with its own counts.
+  const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
+  // ── Instruments ─────────────────────────────────────────────────────────
+  // The matrix and the timeline are filter INPUTS, not views: each writes to the
+  // same `?filters=` / `?range=` state the menu and the date picker write, so the
+  // list below stays the single output and a link still reproduces the state.
+  // See `lib/explorer-instruments.ts` for the rule that decides what qualifies.
+  const instrumentsEnabled = useFeatureFlag('lore-explorer-instruments');
+
+  // The two axes are the instrument's own state, not the page's: they choose how
+  // to LOOK for a filter rather than being one, so they are ephemeral and stay
+  // out of the URL — the same call the panel's disclosure makes.
+  const [matrixRow, setMatrixRow] = useState<FilterField>(DEFAULT_MATRIX_ROW);
+  const [matrixCol, setMatrixCol] = useState<FilterField>(DEFAULT_MATRIX_COL);
+
+  const rowFacet = MATRIX_AXES.find((a) => a.field === matrixRow)?.facet ?? 'host';
+  const colFacet = MATRIX_AXES.find((a) => a.field === matrixCol)?.facet ?? 'kind';
+
+  // Only fetched when the flag is on — the panel gates the rest itself by
+  // rendering nothing while collapsed, and `usePivot` is disabled with it.
+  const {
+    data: pivot,
+    isLoading: pivotLoading,
+    isError: pivotError,
+  } = usePivot(rowFacet, colFacet, {
+    enabled: instrumentsEnabled,
+    showArchived,
+    filters,
+    scope: selectedScope,
+  });
+
+  // A cell is two ordinary pills. Going through `toggleFilterValue` — the same
+  // function the menu and the pills use — is what makes a cell click
+  // indistinguishable from having typed the two values, Back button included.
+  function handleSelectCell(
+    row: { field: FilterField; value: string },
+    col: { field: FilterField; value: string },
+  ) {
+    setFilters(
+      toggleFilterValue(toggleFilterValue(filters, row.field, row.value), col.field, col.value),
+    );
+    closeLesson();
+  }
+
+  const renderInstrument = (instrument: Instrument) =>
+    instrument === 'matrix' ? (
+      <MatrixInstrument
+        row={matrixRow}
+        col={matrixCol}
+        onRowChange={setMatrixRow}
+        onColChange={setMatrixCol}
+        cells={pivot?.cells ?? []}
+        serverTruncated={pivot?.truncated ?? false}
+        isLoading={pivotLoading}
+        isError={pivotError}
+        filters={filters}
+        onSelectCell={handleSelectCell}
+      />
+    ) : (
+      <TimelineInstrument
+        // The account-wide per-day series the heatmap already reads, so the two
+        // time controls describe the same population rather than two.
+        days={heatmapData}
+        selected={highlightRange}
+        onSelectRange={(next) => setRange(next)}
+        onClear={() => setRange({ preset: 'all' })}
+      />
+    );
+
+  // The list is entirely server-filtered now — scope / search / range / status
+  // AND every dimension in the filter bar, ownership included (migration 00064
+  // folded the old client-side owner narrowing into the bar). So the loaded
+  // pages ARE the result; there is no post-filter pass.
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
     [data],
   );
 
-  // Unique orgs present in the loaded lesson pages, for the ownership filter
-  // chips — recomputed only when the underlying lessons change.
-  const orgsInView = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string }>();
-    for (const l of lessons) {
-      if (l.org && !seen.has(l.org.id)) seen.set(l.org.id, l.org);
-    }
-    return Array.from(seen.values());
-  }, [lessons]);
+  // A range is "narrowing" only when it actually bounds something: an
+  // unbounded selection cannot be the reason a list is empty, so offering to
+  // widen it would be a button that does nothing.
+  const rangeIsNarrowing = range !== null && resolvedRange !== null;
 
-  // Ownership is the one filter with no server-side param — scope / search /
-  // range / archived are already applied by `useMemories`, so this is a pure
-  // client-side narrowing of the loaded pages by owner (Personal vs a given
-  // org). `filterByOwnership` is the shared, unit-tested predicate.
-  const filteredLessons = useMemo(
-    () => filterByOwnership(lessons, ownerFilter),
-    [lessons, ownerFilter],
-  );
+  // Has the user narrowed WITHIN the current view? `status` is deliberately not
+  // one of these: it selects which population is listed, not a predicate over
+  // it, so "Archived" or "Expiring" being selected must not read as "you
+  // filtered something out". `range` is excluded for a related reason — a time
+  // window is a bound, not a within-view predicate, and it has its own
+  // empty-state branch (`rangeIsNarrowing`) with a "View all time" way out. That
+  // distinction is what the empty state turns on — a status view with nothing
+  // narrowing it gets its own copy, the same view with a search that matched
+  // nothing gets "no matches".
+  const isNarrowedWithinView =
+    search.trim() !== '' || filters.length > 0 || hasRetentionConditions(retentionConditions);
 
-  const isFiltered =
-    search.trim() !== '' ||
-    range !== null ||
-    showArchived ||
-    ownerFilter !== 'all' ||
-    filters.length > 0;
+  // Report the current view's result count up to the TopBar's
+  // MemoryExpandButton (see ExplorerResultsProvider) so the header can show
+  // "12 of 128 memories" while this view narrows the active population,
+  // instead of a bare total that ignores it. `committedSearch`, not `search`
+  // — the settled URL value the server query itself keys off, so the header
+  // doesn't flag "filtered" a debounce tick before the list actually is.
+  const { setResults } = useExplorerResults();
+  const isFilteredView = isExplorerViewFiltered({
+    scope: selectedScope,
+    search: committedSearch,
+    filterCount: filters.length,
+    hasRetentionConditions: hasRetentionConditions(retentionConditions),
+    rangeIsNarrowing,
+    showArchived,
+  });
+  // The API's own exact match count (`GET /memories`'s `total`, identical on
+  // every loaded page) — not how many rows happen to be in the browser. Only
+  // the FIRST page needs reading: `total` describes the whole filtered
+  // population, so it does not change as more pages load.
+  const matchedTotal = data?.pages[0]?.total;
+  useEffect(() => {
+    // `undefined` while the first page is still loading (or between a filter
+    // change and its response) — skip reporting rather than flash a wrong
+    // "0 of 128" for the instant the real count is unknown. The previous
+    // report (or the header's own plain-total fallback before any report
+    // ever arrives) stays on screen until this resolves.
+    if (matchedTotal === undefined) return;
+    setResults({ matchedCount: matchedTotal, isFiltered: isFilteredView });
+  }, [setResults, matchedTotal, isFilteredView]);
+  // Cleared on unmount ONLY (empty-ish deps — `setResults` is a stable setter
+  // identity) so navigating away from /lore never leaves a stale filtered
+  // count in the header; a separate effect from the one above so every
+  // narrowing/page-load update doesn't bounce the header through `null`
+  // first, which would flash the plain total on every keystroke.
+  useEffect(() => () => setResults(null), [setResults]);
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -420,9 +728,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     closeLesson();
   }
 
-  function handleToggleArchived() {
-    setShowArchived(!showArchived);
-    // Close the sidebar — the open lesson may not exist in the other list.
+  function handleStatusChange(next: MemoryStatus) {
+    // `statusParamValue` decides whether the param is written or dropped — it
+    // has to be written even for the default when a legacy `archived=true` is
+    // still in the URL, or selecting Active would silently undo itself on the
+    // next reload.
+    setRawStatus(statusParamValue(next, legacyArchived));
+    // Close the sidebar — the open lesson may not exist in the other population.
     closeLesson();
   }
 
@@ -432,7 +744,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       // Close the sidebar when switching scope — the previous lesson may not
       // be present in the new scope.
       closeLesson();
-      setScopePanelOpen(false);
     });
   }
 
@@ -450,12 +761,25 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Heatmap day-click: two-click range anchor → extend → reset, matching the
   // original activity page behaviour.
   function handleHeatmapDayClick(day: string) {
-    if (range && range.from === range.to) {
-      const anchor = range.from;
+    // The anchor→extend gesture only makes sense against an existing SINGLE-DAY
+    // absolute selection. A preset (or any wider window) is not an anchor, so a
+    // click on top of one starts a fresh single-day selection rather than
+    // silently extending from a boundary the user never picked.
+    const anchor = !isPresetRange(range) && range && range.from === range.to ? range.from : null;
+    if (anchor !== null) {
       setRange(day >= anchor ? { from: anchor, to: day } : { from: day, to: anchor });
     } else {
       setRange({ from: day, to: day });
     }
+  }
+
+  // Clearing the calendar means "no date restriction" — which is the EXPLICIT
+  // `all` selection, not the untouched state. The two are different values now
+  // (see RangePicker): clearing back to `null` would re-arm the Activity
+  // panel's 24h display default, so the control row would say "no dates" while
+  // the panel above it started describing yesterday.
+  function handleDatePickerChange(next: DateRange | null) {
+    setRange(next ?? { preset: 'all' });
   }
 
   const selectedScopeLabel =
@@ -493,11 +817,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     </div>
   );
 
-  // Shared results renderer for BOTH tabs. Loading / error / empty are handled
-  // once here; only the populated body differs — a flat card list ("scope") vs
-  // date-grouped feed rows ("time"). Both consume the SAME `filteredLessons`
-  // (server-filtered by scope/search/range/archived, then owner-narrowed
-  // client-side), so every filter applies identically across tabs.
+  // The results renderer: one flat card list. Loading / error / empty are
+  // handled once here; the populated body is the lesson cards. It consumes the
+  // server-filtered `lessons` (scope / search / range / archived / every bar
+  // dimension) — there is a single renderer now that the scope/time view tabs
+  // and the date-grouped `ActivityFeed` body are gone.
   //
   // This is a plain function that is CALLED, not a nested component rendered as
   // `<Results />`. A nested component would get a fresh type identity on every
@@ -524,53 +848,68 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
-    // Empty state only when nothing is left to show AND nothing more to load —
-    // the ownership filter is client-side over the loaded pages, so an empty
-    // `filteredLessons` with `hasNextPage` still true means "keep loading",
-    // not "no matches".
-    if (filteredLessons.length === 0 && !hasNextPage) {
+    // Empty state only when nothing is left to show AND nothing more to load.
+    // Every filter is server-side now, so an empty page with `hasNextPage` still
+    // true genuinely means "keep loading", not "no matches".
+    if (lessons.length === 0 && !hasNextPage) {
       return (
         <EmptyState
-          icon={showArchived ? Archive : BookOpen}
+          icon={STATUS_ICONS[status]}
+          // The time window gets its own state and its own "View all time" way
+          // out. The Explorer opens on ALL time, so an empty list is rarely the
+          // window's fault — but once a reader HAS narrowed the range, widening
+          // it is the most likely fix, so the action is offered whenever the
+          // range actually bounds something, regardless of which title branch
+          // wins below.
+          {...(rangeIsNarrowing
+            ? { action: { label: 'View all time', onClick: () => setRange({ preset: 'all' }) } }
+            : {})}
           title={
-            showArchived
-              ? 'No archived memories'
-              : isFiltered
-                ? 'No matching memories'
-                : 'No memories in this scope'
+            // Within-view narrowing is checked FIRST — a search or filter that
+            // matched nothing is a failed search in every status view, and
+            // reading "Nothing expiring soon" (or "No archived memories") when
+            // the honest answer is "your query matched nothing here" hides the
+            // control the user needs to undo. Then the range window (named, with
+            // the widen action above). The status-specific copy shows only when
+            // neither a filter NOR the range is narrowing — i.e. the "All time"
+            // view of that population is genuinely empty, which is exactly when
+            // "No archived memories" is the truthful answer rather than a
+            // range-specific "No memories in the last 7 days".
+            isNarrowedWithinView
+              ? 'No matching memories'
+              : rangeIsNarrowing
+                ? `No memories in ${rangeCaption(range, insightsNowIso)}`
+                : status === 'archived'
+                  ? 'No archived memories'
+                  : // An unnarrowed EXPIRING view is good news, not a failed
+                    // search, so it gets its own copy.
+                    status === 'expiring'
+                    ? 'Nothing expiring soon'
+                    : 'No memories in this scope'
           }
           description={
-            showArchived
-              ? 'Archive a memory from its detail panel to see it here.'
-              : isFiltered
-                ? // Filters AND together, so the most likely cause of an empty
-                  // list is one condition too many — name that before search
-                  // terms and dates, which the user can already see.
-                  filters.length > 1
-                  ? 'No memory satisfies every filter — try removing one.'
-                  : 'Try a different search term, filter, or date range.'
-                : 'Memories will appear here once your agents start writing.'
+            isNarrowedWithinView
+              ? // Filters AND together, so the most likely cause of an empty
+                // list is one condition too many — name that before search
+                // terms and dates, which the user can already see.
+                filters.length > 1
+                ? 'No memory satisfies every filter — try removing one.'
+                : 'Try a different search term, filter, or date range.'
+              : rangeIsNarrowing
+                ? 'Nothing was written in this window. Widen the range, or pick another from the Activity panel above.'
+                : status === 'archived'
+                  ? 'Archive a memory from its detail panel to see it here.'
+                  : status === 'expiring'
+                    ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
+                    : 'Memories will appear here once your agents start writing.'
           }
         />
       );
     }
 
-    if (view === 'time') {
-      return (
-        <div className="flex flex-col gap-1">
-          <ActivityFeed
-            lessons={filteredLessons}
-            isSelected={isLessonSelected}
-            onSelect={handleLessonClick}
-          />
-          {loadMore}
-        </div>
-      );
-    }
-
     return (
       <div className="flex flex-col gap-2" role="list" aria-label="Memories">
-        {filteredLessons.map((lesson, i) => (
+        {lessons.map((lesson, i) => (
           <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
             <LessonCard
               lesson={lesson}
@@ -594,156 +933,127 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           ? 'Loading memories'
           : isFetchingNextPage
             ? 'Loading more memories'
-            : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
+            : `${lessons.length} memor${lessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
 
-      {/* ── Heatmap panel (collapsible) ─────────────────────────────────── */}
-      <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-        <button
-          type="button"
-          onClick={() => setHeatmapOpen((v) => !v)}
-          aria-expanded={heatmapOpen}
-          className="flex w-full min-h-11 items-center justify-between gap-4 px-5 py-3"
+      {/* ── Scope selector ──────────────────────────────────────────────────
+          A persistent chip row at the TOP of the page, above the stats it
+          drives. Selecting a scope only lights a different chip — it never
+          reflows the layout — and the numbers below update in step, so the
+          selection's effect on the stats is legible. See ScopeSelector. */}
+      <ScopeSelector
+        nodes={scopes}
+        selected={selectedScope}
+        onSelect={handleScopeSelect}
+        totalCount={totalCount}
+      />
+
+      {/* The link carried a scope the API cannot filter by, so the page is
+          showing ALL scopes. Say it rather than let the reader believe the
+          filter applied — an unannounced widening is the failure mode the
+          endpoint's own 400 exists to prevent. */}
+      {rejectedScope !== null && (
+        <p
+          role="status"
+          className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-bg-raised)] px-3 py-2 text-xs text-[var(--color-content-secondary)]"
         >
-          <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
-            Memories written — last 26 weeks
-          </p>
-          {heatmapOpen ? (
-            <ChevronUp className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          ) : (
-            <ChevronDown className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          )}
-        </button>
-        {heatmapOpen && (
-          <div className="px-5 pb-5">
-            <ContributionHeatmap
-              data={heatmapData}
-              weeks={26}
-              selectedRange={range}
-              onSelectDate={handleHeatmapDayClick}
-            />
-          </div>
+          Ignored the scope <code className="font-mono">{rejectedScope}</code> from this link —
+          it is not a valid scope. Showing all scopes instead.
+        </p>
+      )}
+
+      {/* ── Insights ────────────────────────────────────────────────────────
+          ONE panel for everything the page says ABOUT the memories — the stat
+          cards, the range picker and the heatmap — above the list of the
+          memories themselves. It replaced two separate bordered panels with two
+          independent chevrons; see ExplorerInsights for why it opens collapsed
+          and why the collapsed state still shows the numbers. */}
+      <ExplorerInsights
+        scope={selectedScope}
+        scopeLabel={selectedScopeLabel}
+        range={range}
+        onRangeChange={setRange}
+        filters={filters}
+        heatmapData={heatmapData}
+        highlightRange={highlightRange}
+        onSelectDate={handleHeatmapDayClick}
+        nowIso={insightsNowIso}
+      />
+
+      {/* ── Instruments ─────────────────────────────────────────────────────
+          A collapsible panel of filter INPUTS. It opens collapsed and remembers
+          the choice, and below `md` its body is a BottomSheet rather than a
+          squeezed inline panel — a matrix and a brushable track are transient
+          selection surfaces, which is what that primitive is for. */}
+      {instrumentsEnabled && (
+        <ExplorerInstruments
+          renderInstrument={renderInstrument}
+          activeFilterCount={filters.length}
+        />
+      )}
+
+      {/* Scope consumption, hot/cold lore, operational health and "who's
+          reading" all moved to the dedicated /insights page — one place to
+          dig into consumption/usage rather than four panels scattered across
+          Overview and the Explorer. See InsightsPage.tsx. */}
+
+      {/* ── Results ─────────────────────────────────────────────────────────
+          The filter bar (search / filters / date / status) sits above the memory
+          list — ownership is a dimension INSIDE the filter menu now, not a
+          separate bar. Scope now
+          lives in the chip row at the top of the page, so the list is a single
+          full-width column — no more left scope rail. Both breakpoints are still
+          mounted and CSS-toggled (not a JS conditional render) so each keeps a
+          live FilterMenu, exactly as before; `variant` carries the only styling
+          difference between them. */}
+
+      {/* Desktop */}
+      <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
+        <ControlRow
+          variant="desktop"
+          search={search}
+          onSearchChange={setSearch}
+          facets={facets ?? []}
+          filters={filters}
+          onToggleFilterValue={handleToggleFilterValue}
+          editingField={isMobile ? null : editingField}
+          onEditField={setEditingField}
+          range={pickerRange}
+          onRangeChange={handleDatePickerChange}
+          dateLabel={dateLabel}
+          dateActive={dateActive}
+          status={status}
+          onStatusChange={handleStatusChange}
+          retentionEnabled={retentionPoliciesEnabled}
+          retentionConditions={retentionConditions}
+          retentionPanelOpen={retentionPanelOpen}
+          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
+        />
+
+        {retentionPoliciesEnabled && retentionPanelOpen && (
+          <RetentionConditionsPanel
+            conditions={retentionConditions}
+            onChange={setRetentionConditions}
+            onClose={() => setRetentionPanelOpen(false)}
+            onCreatePolicy={handleCreatePolicy}
+            filterCount={filters.length}
+          />
         )}
-      </div>
 
-      {/* ── View-mode tabs ───────────────────────────────────────────────── */}
-      <div
-        className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-1"
-        role="tablist"
-        aria-label="Explorer view"
-      >
-        {([
-          { id: 'scope' as ViewMode, label: 'Browse by scope', icon: LayoutGrid },
-          { id: 'time' as ViewMode, label: 'Browse by time', icon: List },
-        ] as const).map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={view === id}
-            onClick={() => setView(id)}
-            className={[
-              'flex flex-1 min-h-9 items-center justify-center gap-2 rounded-md text-xs font-medium transition-all duration-150',
-              view === id
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-            ].join(' ')}
-          >
-            <Icon className="size-3.5 shrink-0" aria-hidden />
-            {label}
-          </button>
-        ))}
-      </div>
+        <FilterPillRow
+          filters={filters}
+          onOperatorChange={handleOperatorChange}
+          onRemove={handleRemoveFilter}
+          onClearAll={handleClearFilters}
+          onEditField={setEditingField}
+        />
 
-      {/* ── Results (shared chrome for both tabs) ───────────────────────────
-          Scope tree + filter bar (search / date / archived) + owner bar are the
-          SAME for "Browse by scope" and "Browse by time"; only the body inside
-          `renderResults()` differs (card list vs date-grouped feed). Lifting
-          the chrome out of the two views is what makes the tabs read as one
-          page and keeps every filter — including Owner — active across both. */}
-
-      {/* Desktop: side-by-side panels */}
-      <div className="hidden md:flex h-full gap-0 overflow-hidden rounded-xl border border-[var(--color-border)]">
-        <div className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-          <div className="border-b border-[var(--color-border)] px-3 py-2.5">
-            <p className="text-xs font-medium text-[var(--color-content-tertiary)]">Scopes</p>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {scopes.length > 0 ? (
-              <ScopeTree
-                nodes={scopes}
-                selected={selectedScope}
-                onSelect={handleScopeSelect}
-                totalCount={totalCount}
-              />
-            ) : (
-              <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first memory." />
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <ControlRow
-            variant="desktop"
-            search={search}
-            onSearchChange={setSearch}
-            facets={facets ?? []}
-            filters={filters}
-            onToggleFilterValue={handleToggleFilterValue}
-            editingField={isMobile ? null : editingField}
-            onEditField={setEditingField}
-            range={range}
-            onRangeChange={setRange}
-            showArchived={showArchived}
-            onToggleArchived={handleToggleArchived}
-          />
-
-          <FilterPillRow
-            filters={filters}
-            onOperatorChange={handleOperatorChange}
-            onRemove={handleRemoveFilter}
-            onClearAll={handleClearFilters}
-            onEditField={setEditingField}
-          />
-
-          <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
-
-          <div className="flex-1 overflow-y-auto p-3">
-            {renderResults()}
-          </div>
-        </div>
+        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
       </div>
 
       {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
           clear the bottom edge of the scroll container. */}
       <div className="flex md:hidden flex-col gap-3 pb-6">
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setScopePanelOpen((v) => !v)}
-            aria-expanded={scopePanelOpen}
-            className="flex w-full min-h-11 items-center justify-between gap-2 px-4 py-2.5 text-sm text-[var(--color-content-primary)]"
-          >
-            <span className="font-medium">
-              Scope: <span className="text-[var(--color-accent)] font-mono text-xs">{selectedScopeLabel}</span>
-            </span>
-            <ChevronDown
-              className={['size-4 shrink-0 text-[var(--color-content-tertiary)] transition-transform duration-200', scopePanelOpen ? 'rotate-180' : ''].join(' ')}
-              aria-hidden
-            />
-          </button>
-          {scopePanelOpen && (
-            <div className="border-t border-[var(--color-border)] max-h-52 overflow-y-auto">
-              <ScopeTree
-                nodes={scopes}
-                selected={selectedScope}
-                onSelect={handleScopeSelect}
-                totalCount={totalCount}
-              />
-            </div>
-          )}
-        </div>
-
         <ControlRow
           variant="mobile"
           search={search}
@@ -753,11 +1063,29 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onToggleFilterValue={handleToggleFilterValue}
           editingField={isMobile ? editingField : null}
           onEditField={setEditingField}
-          range={range}
-          onRangeChange={setRange}
-          showArchived={showArchived}
-          onToggleArchived={handleToggleArchived}
+          range={pickerRange}
+          onRangeChange={handleDatePickerChange}
+          dateLabel={dateLabel}
+          dateActive={dateActive}
+          status={status}
+          onStatusChange={handleStatusChange}
+          retentionEnabled={retentionPoliciesEnabled}
+          retentionConditions={retentionConditions}
+          retentionPanelOpen={retentionPanelOpen}
+          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
+
+        {retentionPoliciesEnabled && retentionPanelOpen && (
+          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <RetentionConditionsPanel
+              conditions={retentionConditions}
+              onChange={setRetentionConditions}
+              onClose={() => setRetentionPanelOpen(false)}
+              onCreatePolicy={handleCreatePolicy}
+              filterCount={filters.length}
+            />
+          </div>
+        )}
 
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
           <FilterPillRow
@@ -769,11 +1097,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           />
         </div>
 
-        <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
-
-        <div>
-          {renderResults()}
-        </div>
+        <div>{renderResults()}</div>
       </div>
     </div>
   );

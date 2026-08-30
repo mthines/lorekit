@@ -1,15 +1,17 @@
+import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
-import { recordAudit } from '../../_shared/audit.ts';
-import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
+import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { parseScopeFilter } from '../../_shared/scope/scope.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import { DeleteMemoryQuerySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -22,7 +24,7 @@ type MemoryRow = Tables<'memories'>;
  * `lorekit.delete.force` span attribute, so the two surfaces are queryable
  * together in traces.
  *
- * Audits through the one shared edge writer (`_shared/audit.ts`, the same
+ * Audits through the one shared edge writer (`_shared/audit/audit.ts`, the same
  * module `mcp/tools.ts` uses): `memory.delete` on the force branch,
  * `memory.archive` on the soft branch — matching toolDelete's actions,
  * `resourceType`, `target` and `metadata` so the two surfaces produce
@@ -46,17 +48,66 @@ export async function handleRemove(
 ): Promise<Response> {
   const validated = validateQuery(req, DeleteMemoryQuerySchema, cors);
   if (!validated.ok) return validated.response;
-  const { scope: scopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
+  const { scope: rawScopeParam, key: keyParam, force: forceParam, org: orgParam } = validated.data;
   const force = forceParam === 'true';
   const idParam = params.id;
 
-  const tracedDb = createTracedClient(db, span);
-  const now = new Date().toISOString();
+  // Named BEFORE the first early return, so a rejected request is still
+  // attributable — a 400 returning above this would carry no
+  // `lorekit.operation` and be invisible to the per-operation metrics.
   span.setAttributes({
     'lorekit.operation': 'memories.remove',
     'lorekit.delete.force': force,
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
+
+  // `DeleteMemoryQuerySchema.scope` is shape-only ("normalisation happens
+  // downstream" — its own docblock); downstream is here. On a DELETE the stakes
+  // are higher than on a read: an ungrammatical or differently-cased scope
+  // produced a predicate that matched nothing, and the caller was told the
+  // memory did not exist rather than that their scope was wrong.
+  //
+  // Scoped to the natural-key forms, which are the ones that turn `scope` into
+  // a predicate. `DELETE /:id` addresses the row by id and ignores `?scope=`
+  // entirely, so validating it there would 400 on a value the route never
+  // reads — a new rejection this change does not intend and the behaviour-change
+  // list does not claim.
+  let scopeParam: string | undefined;
+  if (!idParam) {
+    try {
+      scopeParam = parseScopeFilter(rawScopeParam);
+    } catch (e) {
+      return badRequest((e as Error).message, undefined, cors);
+    }
+  }
+
+  // Early refusal for a NAMED scope outside the key's allowlist (00068), hoisted
+  // ABOVE the `?org=` dispatch on purpose. `applyKeyScopeFilter` below is a query
+  // filter, and the org branch has no query to filter — it returns through
+  // `removeOrgOwned`, whose `memory_delete` RPC chooses the rows itself — so a
+  // gate placed further down covers only the personal branch and leaves
+  // `DELETE /memories?scope=…&key=…&org=…` with no key gate at all.
+  //
+  // Here it also upgrades the personal scope+key form from an empty match (404)
+  // to the plain 403 `handleCreate` already returns for the same situation: when
+  // the request NAMES a scope, "your token may not use it" is the honest answer,
+  // where "not found" sends the caller hunting a data bug.
+  //
+  // It reads `scopeParam`, so it is deliberately BELOW the grammar check and
+  // inherits its `/:id` exemption: that form addresses the row by id and never
+  // turns `?scope=` into a predicate, so there is no named scope to refuse. The
+  // id form's allowlist half stays with `applyKeyScopeFilter` on the query.
+  const deniedScope = firstDeniedScope(auth, [scopeParam]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
+  const tracedDb = createTracedClient(db, span);
+  const now = new Date().toISOString();
 
   if (orgParam) {
     return await removeOrgOwned(
@@ -65,12 +116,25 @@ export async function handleRemove(
     );
   }
 
+  // Personal scope+key: route through memory_delete (00071) so a scoped key
+  // manages any writer's row within its allowlist — symmetric with the org
+  // branch above and the MCP `memory.delete` tool — and so the RPC's `existed`
+  // distinguishes 403 (present, not this token's to remove) from 404. The RPC
+  // is keyed on (scope,key) and has no id parameter, so the `/:id` form below
+  // stays a direct own-row update.
+  if (!idParam && scopeParam && keyParam) {
+    return await removePersonalByKey(
+      { tracedDb, db, auth, span, cors },
+      { scope: scopeParam, key: keyParam, force, req },
+    );
+  }
+
   // Hard delete removes the row outright, so it must NOT be constrained to
   // non-archived rows the way the soft-archive is — purging an already-archived
   // memory is the main reason a caller asks for force.
   let q: TracedQuery<MemoryRow> = force
-    ? tracedDb.from<MemoryRow>('memories').delete({ count: 'exact' })
-    : tracedDb.from<MemoryRow>('memories').update({ archived_at: now }, { count: 'exact' }).is('archived_at', null);
+    ? tracedDb.from('memories').delete({ count: 'exact' })
+    : tracedDb.from('memories').update({ archived_at: now }, { count: 'exact' }).is('archived_at', null);
 
   if (idParam) {
     const v = validateUuid(idParam, cors);
@@ -87,6 +151,9 @@ export async function handleRemove(
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control.
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  // The allowlist half. `user_id` alone let a scoped key delete a memory outside
+  // its allowlist by id.
+  q = applyKeyScopeFilter(q, auth);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
@@ -115,9 +182,19 @@ export async function handleRemove(
         metadata: { scope: row.scope, key: row.key, force },
       },
       actor,
+      span,
     );
   }
-  return noContent(cors);
+  // Record how many rows this archive/delete touched, so the usage ledger's
+  // `result_count` is populated for a WRITE the same way a read's is. Before
+  // this the router recorded `null` here, which is why `memory.archive` events
+  // carried no count — the reason the usage summary counts archives by EVENT
+  // rather than by record. Setting it keeps the raw ledger honest going forward
+  // on BOTH DELETE branches (`removeOrgOwned` sets it too); the event-count read
+  // path stays correct for the historical rows this cannot backfill.
+  const res = noContent(cors);
+  res.headers.set('X-LoreKit-Result-Count', String(count));
+  return res;
 }
 
 interface OrgRemoveCtx {
@@ -169,6 +246,13 @@ async function removeOrgOwned(
       p_scope: scope,
       p_key: key,
       p_force: force,
+      // The calling key's restriction (00068/00069). The scope refusal above
+      // this dispatch is advisory — the edge holds the service-role key — and
+      // the TENANCY half has nowhere else to live at all: this RPC chooses its
+      // rows, so `applyKeyScopeFilter` never sees them.
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     })
     .single();
 
@@ -209,6 +293,84 @@ async function removeOrgOwned(
       metadata: { scope, key, force, org },
     },
     auditUserId(auth),
+    span,
+  );
+
+  // Same rule as the personal branch: report the affected-row count so the
+  // usage ledger records a real number instead of null. `memory_delete` is
+  // keyed on the natural key (org_id + scope + key), which is unique, and the
+  // `!deleted && !archived` guard above already returned 404 for a miss — so
+  // reaching here means exactly one row changed.
+  const res = noContent(cors);
+  res.headers.set('X-LoreKit-Result-Count', '1');
+  return res;
+}
+
+interface PersonalRemoveInput {
+  scope: string;
+  key: string;
+  force: boolean;
+  req: Request;
+}
+
+/**
+ * The personal `scope+key` branch. Calls `memory_delete` with `p_org_slug` null
+ * and the calling key's scoping, so a scoped key manages any writer's row within
+ * its allowlist (00071) and an unscoped key stays own-rows-only — the same rule
+ * the MCP tool now uses. `existed` turns a 0-row result into a 403 (present but
+ * not this token's to remove) rather than a 404 that sends the caller hunting a
+ * data bug.
+ */
+async function removePersonalByKey(
+  { tracedDb, db, auth, span, cors }: OrgRemoveCtx,
+  { scope, key, force, req }: PersonalRemoveInput,
+): Promise<Response> {
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+
+  // Everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
+
+  const { data, error } = await tracedDb
+    .rpc<{ deleted: boolean; archived: boolean; existed: boolean }>('memory_delete', {
+      p_user_id: auth.userId ?? null,
+      p_org_slug: null,
+      p_scope: scope,
+      p_key: key,
+      p_force: force,
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+    })
+    .single();
+
+  if (error) {
+    const mapped = translateDbError(error);
+    if (mapped) return mapped.toResponse(cors);
+    span.error(`DB: ${error.message}`);
+    throw error;
+  }
+
+  const row = data as { deleted: boolean; archived: boolean; existed: boolean } | null;
+  const deleted = row?.deleted === true;
+  const archived = row?.archived === true;
+  span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': archived });
+
+  if (!deleted && !archived) {
+    return row?.existed
+      ? forbidden('This token is not allowed to remove that memory.', cors)
+      : notFound('Memory', cors);
+  }
+
+  await recordAudit(
+    db,
+    {
+      action: deleted ? 'memory.delete' : 'memory.archive',
+      resourceType: 'memory',
+      target: key,
+      metadata: { scope, key, force },
+    },
+    auditUserId(auth),
+    span,
   );
 
   return noContent(cors);

@@ -2,7 +2,7 @@
 
 <img width="120" height="120" alt="LoreKit logo" src="https://github.com/user-attachments/assets/d65ac2d4-0a52-483b-9efe-427dfa45c026" />
 
-# LoreKit
+# [LoreKit](https://lorekit.io)
 
 **Shared, persistent memory for your AI coding agents.**
 
@@ -82,7 +82,7 @@ Your token is shown once — copy it now.
 
 ### 2. Connect your agent
 
-The fastest path is the CLI. It scaffolds two companion skills that make your
+The fastest path is the CLI. It scaffolds three companion skills that make your
 agent use LoreKit on its own:
 
 - **`lorekit-memory`** — the runtime loop: reading relevant lessons when it
@@ -92,6 +92,14 @@ agent use LoreKit on its own:
   loop** into one of *your own* skills or workflows — a fast episodic tier that
   promotes proven lessons into permanent rules, with the entrenchment guards
   that keep a learning loop from reinforcing its own mistakes.
+- **`lorekit-groom`** — the maintenance counterpart: running a **grooming pass**
+  over a store that has grown noisy — finding and merging near-duplicate
+  lessons, linting out low-quality ones, and setting expiry on time-bound ones —
+  always analysing read-only and proposing a plan before it changes anything.
+  For fully automated, server-side cleanup instead of an agent-driven pass, see
+  [Retention policies](https://lorekit.io/docs/grooming) — saved scoped rules
+  (`lorekit policy create` / `lorekit groom`) that archive stale lore, reviewed
+  manually or swept nightly, and never hard-delete.
 
 ```bash
 npx @lorekit/cli install \
@@ -106,6 +114,30 @@ npx @lorekit/cli doctor
 # → connectivity, token permission, and detected scopes, all green
 ```
 
+**Run the CLI often?** Read commands like `list`, `search`, and `tree` are
+nicer without the `npx` prefix. Install the binary globally once:
+
+```bash
+npm install -g @lorekit/cli
+```
+
+Then drop `npx @lorekit/cli` and call `lorekit` directly:
+
+```bash
+lorekit doctor
+```
+
+**Tab completion (zsh / fish).** Let `install` wire it, or do it by hand:
+
+```bash
+lorekit install --completions auto        # detect $SHELL and set it up
+lorekit completion zsh  > ~/.zsh/completions/_lorekit
+lorekit completion fish > ~/.config/fish/completions/lorekit.fish
+```
+
+It completes commands, each command's flags, and — from your local store —
+scopes and `scope::key` addresses.
+
 ### 3. That's it
 
 Your agent now remembers. Its lessons survive every session, reach every machine
@@ -115,6 +147,13 @@ running the same token, and are there the next time any agent picks up the work.
 > — no reliance on the agent choosing to use the skill — install a plugin
 > instead. Claude Code has a one-line marketplace install; Cursor and Codex have
 > their own bundles. See [plugins/](./plugins/README.md).
+
+> **Using Claude Code on the web?** Its sessions run in a fresh, ephemeral clone,
+> so add `--mcp-json` — `npx @lorekit/cli install --global --mcp-json` also writes
+> a committable, secret-free `.mcp.json` (auth via `${LOREKIT_TOKEN}`) the cloud
+> session reads directly. `.mcp.json` is usually git-ignored, so you'll need to
+> un-ignore and commit it — the command warns if it's still ignored. See the
+> [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 ## Remote or local — your choice
 
@@ -150,9 +189,11 @@ Then select local mode — set `LOREKIT_MODE=local`, or add `{ "mode": "local" }
 to a `.lorekit.json` at your repo root — and create `<repo>/.lorekit/` when you
 want repo-scoped lessons to persist in the project.
 
-> **Not committed to one?** Start local and move to remote later (or the
-> reverse) with `lorekit migrate` — lessons are never stranded. You can also
-> hard-deny a mode for privacy or CI (e.g. `LOREKIT_DENY=remote`).
+> **Not committed to one?** Start local and move up to the hosted store later
+> with one command — `lorekit migrate --from ~/.lorekit --to remote` previews
+> the plan, `--yes` applies it — so lessons are never stranded. `lorekit migrate` also relocates a store between
+> the local tiers (`--to home|project`). You can also hard-deny a mode for
+> privacy or CI (e.g. `LOREKIT_DENY=remote`).
 
 Full details — the two-tier layout, write routing, the control model, and
 migration — are in

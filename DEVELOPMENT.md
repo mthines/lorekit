@@ -33,18 +33,19 @@ Vercel bits are only needed when you touch those pieces.
 | Path                   | What                                                                        |
 | ---------------------- | --------------------------------------------------------------------------- |
 | `packages/mcp-core/`   | Scope validator, DB client, tool handlers, OTel                             |
-| `packages/mcp-server/` | Node.js MCP server (Fly.io variant)                                         |
 | `packages/web/`        | Next.js dashboard (Vercel)                                                  |
 | `packages/cli/`        | Zero-dep `@lorekit/cli` — `install` / `doctor` / `hook` / `migrate` / `mcp` |
 | `plugins/`             | Per-framework bundles (Claude / Cursor / Codex)                             |
 | `supabase/`            | Edge Functions (production MCP server), migrations                          |
+| `packages/smoke-tests/`| Live-endpoint integration tests against the deployed Edge Functions        |
 
 See [CLAUDE.md](./CLAUDE.md) for the full package map and key decisions.
 
 ## Everyday commands
 
 ```bash
-# The full CI gate (what must pass before merge)
+# The full CI gate (what must pass before merge) — CI and beefy local machines
+# only; see the warning below before running this in a container.
 pnpm nx run-many -t typecheck,test,lint --all
 
 # Only what your change affects (fast; what CI actually runs on a PR)
@@ -55,6 +56,13 @@ pnpm nx test mcp-core          # needs a local Supabase (see below)
 pnpm nx test cli               # the CLI's node:test suite
 pnpm nx typecheck web
 ```
+
+> **Agents / cloud sandboxes: do not run `run-many … --all`.** The whole-repo
+> fan-out saturates a container's CPU/memory allowance and the session freezes or
+> stalls instead of failing cleanly. Use `pnpm nx affected -t typecheck,test,lint`
+> or name the projects explicitly; if you truly need everything, run one target
+> per invocation with `--parallel=1`. See
+> [CLAUDE.md](./CLAUDE.md#never-run-whole-repo-nx-fan-outs-in-a-cloud-sandbox).
 
 ## Developing the CLI (`@lorekit/cli`)
 
@@ -117,8 +125,8 @@ The Claude plugin ships a copy of the skill under
 `plugins/lorekit-claude/skills/`. If you edit `packages/cli/skill/`, re-sync it:
 
 ```bash
-node scripts/sync-plugin-skill.mjs           # apply
-node scripts/sync-plugin-skill.mjs --check   # verify (what CI does)
+node scripts/codegen/sync-plugin-skill.mjs           # apply
+node scripts/codegen/sync-plugin-skill.mjs --check   # verify (what CI does)
 ```
 
 ## Backend (Supabase)

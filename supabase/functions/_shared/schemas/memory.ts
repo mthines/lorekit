@@ -1,6 +1,6 @@
 // GENERATED MIRROR — do not edit.
-// Source: packages/schemas/src/memory.ts
-// Regenerate: node scripts/sync-edge-schemas.mjs
+// Source: packages/schemas/src/domain/memory.ts
+// Regenerate: node scripts/codegen/sync-edge-schemas.mjs
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
 import { z } from 'npm:zod@3';
@@ -14,26 +14,69 @@ export const MAX_VALUE_BYTES = 65_536;
 // cannot import zod); re-exported here so existing importers are unaffected.
 export { PURGE_RETENTION_DAYS_DEFAULT };
 
+/**
+ * The three KINDS of memory a self-improvement loop writes — the bucket
+ * taxonomy promoted to a first-class property.
+ *
+ * `lesson` — a procedural "how to do better next time" rule, read every run.
+ * `bus`    — a transient per-item outcome event, read only at promotion time.
+ * `signal` — a durable, learned per-repo filter, read every run.
+ *
+ * A closed vocabulary: adding a kind is a schema change, deliberately, because
+ * the three families drive different read cadences and lifetimes. `host` (the
+ * owning skill/agent) is open free-text, like `source_agent`. The authoritative
+ * reference is agent-skills' `agents/shared/rules/memory-buckets.md`.
+ */
+export const MemoryKindSchema = z.enum(['lesson', 'bus', 'signal']);
+export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+
 export const MemoryWriteSchema = z.object({
   scope: ScopeSchema, key: z.string().min(1).max(512),
-  value: z.string().max(MAX_VALUE_BYTES, `value exceeds ${MAX_VALUE_BYTES} bytes`),
+  value: z.string().max(MAX_VALUE_BYTES, `value exceeds ${MAX_VALUE_BYTES} bytes`).transform((s) => s.trim()),
   tags: z.array(z.string()).optional().default([]),
   source_agent: z.string().optional(), trigger: z.string().optional(),
   created_at: z.string().optional(), org: z.string().optional(),
   ttl_days: z.number().int().min(1).max(365).optional(),
   clear_ttl: z.boolean().optional().default(false),
+  // Taxonomy — WHAT KIND of memory this is and WHICH HOST owns it. Both are
+  // optional: an older client omits them and the write path derives them from
+  // the `loop::<host>-lessons` tag via `inferKindHost` (tags.ts).
+  kind: MemoryKindSchema.optional(), host: z.string().max(64).optional(),
   // Provenance — where the memory was RECORDED FROM (vs `scope`, which says
   // where it applies). Every field is independently optional; the shared
-  // `parseOrigin` validator (mcp-core / _shared/origin.ts) owns the shape rules.
+  // `parseOrigin` validator (mcp-core / _shared/provenance/origin.ts) owns the shape rules.
   origin_repo: z.string().optional(), origin_branch: z.string().optional(),
   origin_commit: z.string().optional(), origin_pr: z.union([z.number(), z.string()]).optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
 export const MemoryReadSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
-export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50) });
+
+/**
+ * How much of each entry a list read puts on the wire.
+ *
+ * `full`    — every entry carries its complete `value` (the historical shape).
+ * `summary` — `value` is REPLACED by `value_bytes` + a bounded `preview`.
+ *
+ * The split exists because the two reads answer different questions. An agent
+ * deciding WHICH lessons apply to the change in front of it needs the index —
+ * keys, tags, freshness — not 50 full bodies; it can then `memory.read` the
+ * handful it matched. At the observed ~1.9 KB median body, a 50-entry
+ * `full` list is ~95 KB of caller context, the overwhelming majority of which
+ * is never consulted. `summary` is the cheap discovery half of that read.
+ *
+ * `full` remains the default: the parameter is additive and no existing caller
+ * changes shape.
+ */
+export const MemoryListViewSchema = z.enum(['full', 'summary']);
+export type MemoryListView = z.infer<typeof MemoryListViewSchema>;
+
+/** Characters of `value` echoed in a `summary` entry's `preview`. */
+export const LIST_PREVIEW_CHARS = 200;
+
+export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().min(1).max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
 export const MemoryDeleteSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512), force: z.boolean().optional().default(false) });
-export const MemorySearchSchema = z.object({ q: z.string().min(1), scopes: z.array(RawScopeSchema).optional(), tags: z.array(z.string()).optional() });
+export const MemorySearchSchema = z.object({ q: z.string().min(1), scopes: z.array(RawScopeSchema).optional(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(20), cursor: z.string().optional() });
 export const MemoryArchiveSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
 export const MemoryRestoreSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
 export const MemoryListArchivedSchema = z.object({ scope: ScopeSchema, limit: z.number().int().min(1).max(100).optional().default(50) });
@@ -103,6 +146,14 @@ const ValueListSchema = z.string().min(1).max(2048);
 export const ListMemoriesQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   key: z.string().min(1).max(512).optional(),
+  /**
+   * Case-insensitive PREFIX match on `key` (`key ILIKE '<prefix>%'`), distinct
+   * from the exact `key` above. Backs the CLI's `--key-prefix` narrowing for
+   * `dedupe`/`list`: it must be applied SERVER-side so a large scope is narrowed
+   * before the page/cap is reached, not row-filtered after. LIKE metacharacters
+   * in the prefix are escaped by the handler, so a literal `%`/`_` stays data.
+   */
+  key_prefix: z.string().min(1).max(512).optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
   /**
@@ -135,6 +186,15 @@ export const ListMemoriesQuerySchema = z.object({
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
   trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Taxonomy filters — the bucket KIND (`lesson`/`bus`/`signal`) and the owning
+   * HOST. Same comma-list + `*_mode` shape as the scalar filters above, so
+   * `?kind=lesson&host=reviewer` reads "reviewer's lessons".
+   */
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_repo: ValueListSchema.optional(),
   origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_branch: ValueListSchema.optional(),
@@ -146,8 +206,61 @@ export const ListMemoriesQuerySchema = z.object({
    */
   origin_pr: ValueListSchema.optional(),
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Ownership filter — the literal `personal` (rows with no org) plus one value
+   * per org the caller belongs to, keyed by the org SLUG (stable, unlike its
+   * uuid or display name). Same comma-list + `*_mode` shape as the scalar
+   * dimensions above, so `?owner=personal,acme` reads "my personal lore or
+   * acme's". A slug the caller is not a member of matches nothing. This was the
+   * one dimension the dashboard used to narrow CLIENT-side; it is server-side
+   * now (migration 00064) so the list, the facet counts and the stat header
+   * agree.
+   */
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.enum(['true','false']).optional().default('false'),
+  /**
+   * "Expiring soon": keep only memories whose TTL runs out within the next N
+   * days — `expires_at` in `(now, now + N days]`.
+   *
+   * A RELATIVE horizon rather than an absolute `expires_before` timestamp,
+   * because this parameter's job is to back a shareable, bookmarkable view.
+   * "Expiring in the next 7 days" stays true tomorrow; `expires_before=<a
+   * Tuesday>` silently becomes a view of the past. The bound is computed
+   * per-request by `expiringWindow`, which owns the boundary semantics.
+   *
+   * Composes with the other filters rather than overriding them: with the
+   * default `archived=false` it narrows the live rows (the only combination the
+   * Explorer's Status control produces), and `archived=true` alongside it reads
+   * as "archived AND expiring soon" instead of being rejected — a filter that
+   * 400s on a combination the grammar can express is a worse surprise than an
+   * empty page.
+   *
+   * Bounds mirror `TTL_MIN_DAYS`/`TTL_MAX_DAYS` (`@lorekit/mcp-core`'s `ttl.ts`)
+   * and `EXPIRING_WITHIN_DAYS_MIN`/`_MAX` (`expiring-window.ts`); the literals
+   * are repeated here because `@lorekit/schemas` deliberately depends on
+   * nothing, exactly as `ttl_days` above already does. `expiring-window.spec.ts`
+   * asserts the two agree, so the duplication cannot drift silently.
+   *
+   * `z.coerce` because every query param arrives as a string; `.int()` runs
+   * after coercion, so `7.5` and `abc` are a 400 rather than a silent floor.
+   */
+  expiring_within_days: z.coerce.number().int().min(1).max(365).optional(),
+  /**
+   * Retention-policy preview conditions — the SAME three thresholds
+   * `GroomConditionsSchema` (`@lorekit/schemas/retention`) matches a saved
+   * policy on, exposed here so the Explorer's filter bar can show the actual
+   * lesson ROWS a policy would catch (not just a count) before one is ever
+   * saved — "verify before you run it" without leaving the list view. The
+   * bounds are copied rather than imported: `retention.ts` is its own domain
+   * file for the reason its header states, and `memory.spec.ts` pins the two
+   * in step. `z.coerce` for `expiring_within_days`'s reason — every query
+   * param arrives as a string.
+   */
+  min_age_days: z.coerce.number().int().min(1).max(3650).optional(),
+  unseen_days: z.coerce.number().int().min(1).max(3650).optional(),
+  max_seen_count: z.coerce.number().int().min(0).max(100_000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -275,9 +388,15 @@ export const MemoryFacetSchema = z.enum([
   'tag',
   'source_agent',
   'trigger',
+  'kind',
+  'host',
   'origin_repo',
   'origin_branch',
   'origin_pr',
+  // Ownership (migration 00064): `personal` for org_id-null rows, else the
+  // owning org's slug. Enumerated with per-value counts like every other
+  // dimension, so the filter menu offers Personal / {org} with drill-down.
+  'owner',
 ]);
 export type MemoryFacet = z.infer<typeof MemoryFacetSchema>;
 
@@ -296,6 +415,54 @@ export const ListFacetsQuerySchema = z.object({
    * refresh just that one instead of re-reading the whole catalog.
    */
   facets: z.string().optional(),
+  /**
+   * The caller's CURRENTLY-APPLIED filters — the DIMENSION filters of
+   * `GET /memories`, named identically so a menu CAN pass its filter state
+   * verbatim. When any are present the counts become drill-down: each dimension
+   * is counted with every OTHER active filter applied but not its own
+   * (self-exclusion, migration 00057), so a value's count is what selecting it
+   * would actually yield. Absent → the global catalog, unchanged.
+   *
+   * The dashboard's Explorer passes its active filter bar AND the selected
+   * `scope` here (`listFacetsRequest` ← `filtersToFacetParams` plus
+   * `useFacetCatalog`'s `scope`), so its filter-menu counts drill down and match
+   * the scoped list. All eight dimensions — `kind` and `host` included — now
+   * have a filter pill, so every facet this route can emit is one the menu can
+   * act on.
+   *
+   * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
+   * `created_since`, `created_until` and `expiring_within_days` — are
+   * deliberately NOT mirrored, so with a search, a date window or an
+   * expiring-soon horizon active a count is an upper bound on the yield rather
+   * than the exact figure. Mirroring `q` would mean a second implementation of
+   * `likeNeedle`'s LIKE escaping inside plpgsql, and mirroring
+   * `expiring_within_days` a second implementation of `expiringWindow`'s
+   * `now`-relative boundary — a filter value is encoded exactly one way in this
+   * repo.
+   *
+   * A value whose count falls to zero under the other dimensions' filters emits
+   * no row at all — the same omission a null column value has — so it leaves
+   * the menu until the filter is cleared.
+   */
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
@@ -310,6 +477,105 @@ export type FacetValue = z.infer<typeof FacetValueSchema>;
 export const FacetsResponseSchema = z.object({ facets: z.array(FacetValueSchema) });
 export type FacetsResponse = z.infer<typeof FacetsResponseSchema>;
 
+// ── GET/POST /memories/pivot ─────────────────────────────────────────────────
+
+/**
+ * How many cells a pivot may return.
+ *
+ * A pivot is `rows x columns`, so its size is the PRODUCT of two dimensions'
+ * cardinalities — `origin_branch` x `tag` over a real account is tens of
+ * thousands of cells, and a grid nobody can read costs the same round trip as
+ * one they can. The cap is applied in SQL (`p_limit`, ordered count desc) so
+ * the cells that survive truncation are the dense ones worth drawing.
+ *
+ * 400 is comfortably above what a legible matrix renders (the dashboard draws
+ * at most 12 x 9) while leaving room for a caller doing its own layout.
+ */
+export const PIVOT_LIMIT_MAX = 2000;
+export const PIVOT_LIMIT_DEFAULT = 400;
+
+/**
+ * Query params for `GET /memories/pivot` — the two-dimensional facet count.
+ *
+ * This is `GET /memories/facets` with a second group-by, and deliberately not a
+ * new vocabulary: `row` and `col` are `MemoryFacet`s, the filter params are the
+ * same dimension params every read on this function takes, and a cell maps back
+ * onto two ordinary filters. A client that can build a facet request can build
+ * this one.
+ *
+ * **Both axes are self-excluded from the filters.** 00057 established that a
+ * facet is counted with every OTHER active filter applied but not its own; a
+ * pivot has two dimensions in that position, so both are excluded. The
+ * consequence is the whole point: a caller that turns a cell into
+ * `row_facet in [x] AND col_facet in [y]` and asks again still gets every other
+ * cell back, so the grid stays navigable instead of collapsing to the one cell
+ * that was clicked.
+ *
+ * `row` and `col` MAY be the same facet — the result is that dimension's
+ * diagonal, which is a legitimate (if dull) question rather than something to
+ * reject.
+ *
+ * Inherits `GET /memories/facets`' two reading caveats verbatim: a pair whose
+ * count falls to zero emits no row, and `q` / `key` / `created_since` /
+ * `created_until` / `expiring_within_days` are NOT mirrored, so under a search
+ * or a date window a count is an upper bound rather than the exact yield.
+ */
+export const PivotQuerySchema = z.object({
+  row: MemoryFacetSchema,
+  col: MemoryFacetSchema,
+  archived: z.enum(['true', 'false']).optional().default('false'),
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(PIVOT_LIMIT_MAX))
+    .optional(),
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
+});
+export type PivotQuery = z.infer<typeof PivotQuerySchema>;
+
+/** One `(row, col)` cell: how many visible memories carry BOTH values. */
+export const PivotCellSchema = z.object({
+  row: z.string(),
+  col: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type PivotCell = z.infer<typeof PivotCellSchema>;
+
+/**
+ * The pivot response.
+ *
+ * `row`/`col` echo the requested facets so a client holding several pivots in
+ * flight can tell them apart without threading its own request id, and
+ * `truncated` says whether {@link PIVOT_LIMIT_MAX} cut the grid — a silent
+ * truncation would read as "those pairs do not exist".
+ */
+export const PivotResponseSchema = z.object({
+  row: MemoryFacetSchema,
+  col: MemoryFacetSchema,
+  cells: z.array(PivotCellSchema),
+  truncated: z.boolean(),
+});
+export type PivotResponse = z.infer<typeof PivotResponseSchema>;
+
 // ── GET /memories/activity ───────────────────────────────────────────────────
 
 /** Bucket granularity for `GET /memories/activity`. */
@@ -322,11 +588,46 @@ export type ActivityBucketUnit = z.infer<typeof ActivityBucketUnitSchema>;
  * The window is half-open `[since, until)`, matching `GET /memories/usage`.
  * Both bounds are optional; `until` defaults to now and `since` to the start
  * of the retention window the handler picks, so a bare call is still bounded.
+ *
+ * `scope` + the DIMENSION filters (`tags`, `source_agent`, `trigger`, `kind`,
+ * `host`, `origin_repo/branch/pr`, each with its `*_mode`) are the SAME params
+ * `GET /memories` and `GET /memories/facets` take, named identically so the
+ * Explorer's stat header can pass its filter bar verbatim (`filtersToQueryParams`
+ * ← the one translation the list uses). They narrow the written/scopes counts so
+ * the header agrees with the list beneath it (migration 00063, applying the same
+ * predicate as `lorekit_memory_facets`). Absent → unfiltered, byte-for-byte the
+ * pre-00063 aggregate.
+ *
+ * Like `ListFacetsQuery`, the NON-dimension filters — `q`, `key`,
+ * `created_since/until`, `expiring_within_days` — are deliberately NOT mirrored:
+ * a filter value is encoded exactly one way in this repo, and mirroring `q`
+ * would mean a second `likeNeedle` inside plpgsql. So under an active SEARCH the
+ * counts are an upper bound on the yield, not the exact figure — the same
+ * documented caveat the facets menu carries.
  */
 export const ActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 
@@ -364,25 +665,55 @@ export type ActivityResponse = z.infer<typeof ActivityResponseSchema>;
  * so a caller charting both uses one set of parameters. The bucket enum is
  * REUSED rather than redeclared: a granularity admitted by one and not the
  * other would be a trap for exactly the caller rendering them side by side.
+ *
+ * `scope` is an optional exact-match FILTER (migration 00058). It is
+ * `RawScopeSchema` (shape-only) rather than `ScopeSchema` so the canonical
+ * normalisation happens once, in the handler, which can turn a rejection into a
+ * 400 — the `?correlation_id=` precedent. Because the metric is additive, the
+ * filtered buckets SUM to the per-scope headline; there is no separate total
+ * endpoint that could drift from the bars drawn above it.
  */
 export const ReadActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
 });
 export type ReadActivityQuery = z.infer<typeof ReadActivityQuerySchema>;
 
 /**
- * One bucket of read volume: how many memory RECORDS were read in that UTC
- * hour/day.
+ * One `(bucket, scope)` cell of read volume: how many memory RECORDS were read
+ * in that UTC hour/day under that scope.
  *
  * Records, not calls — one `memory.list` returning 600 rows is one call and
  * 600 records, the same distinction `GET /memories/usage` draws between
  * `event_count` and `record_count`. Records is the additive figure a chart can
  * sum: the bars of a read sparkbar add up to "you read N memories".
+ *
+ * `scope` mirrors {@link ActivityBucketSchema}'s (migration 00058) but is
+ * NULLABLE where the write series' is not: a write always happens under a
+ * scope, while a read may carry none the server can resolve (a scope in a body
+ * the router must not consume, or an ungrammatical one, both recorded as
+ * unattributed rather than failing the call). Those rows are still counted in
+ * the unfiltered series, so summing every bucket still gives the account total
+ * — which is exactly why a per-scope total can be SMALLER than the account
+ * total, and why a UI showing both should say so.
  */
+/**
+ * `read_kind` (migration 00080): `'targeted'` for a `memory.read` (one exact
+ * scope+key), `'bulk'` for `memory.list`/`memory.search`/`memory.list_archived`
+ * (every row a listing call returned) — `lorekit_read_activity`'s OWN narrow
+ * 4-tool "read" definition, not the broader `READ_TOOL_NAMES` in
+ * `usage-stats.ts`. Optional so a pre-00080 response (and any fixture that
+ * predates the split) still typechecks.
+ */
+export const ReadKindSchema = z.enum(['targeted', 'bulk']);
+export type ReadKind = z.infer<typeof ReadKindSchema>;
+
 export const ReadActivityBucketSchema = z.object({
   bucket: z.string(),
+  scope: z.string().nullable(),
+  read_kind: ReadKindSchema.optional(),
   count: z.number().int().nonnegative(),
 });
 export type ReadActivityBucket = z.infer<typeof ReadActivityBucketSchema>;
@@ -448,6 +779,26 @@ export const MemoryEntrySchema = z.object({
   expires_at: z.string().datetime().nullable(), archived_at: z.string().datetime().nullable(),
   origin_repo: z.string().nullable().optional(), origin_branch: z.string().nullable().optional(),
   origin_commit: z.string().nullable().optional(), origin_pr: z.number().nullable().optional(),
+  // Taxonomy. Optional/nullable so a row written before 00056 (NULL kind/host)
+  // and an older client that reads neither are both unaffected.
+  kind: z.string().nullable().optional(), host: z.string().nullable().optional(),
+  // Recurrence — how many times this lesson has been written (00059). The
+  // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
+  // for the same reason kind/host are, so a client reading a response from a
+  // backend deployed before 00059 is unaffected. Optional but NOT nullable,
+  // unlike the neighbours above: those mirror genuinely nullable columns,
+  // whereas a read of this one yields a number or omits the field entirely —
+  // there is no null for the schema to admit.
+  seen_count: z.number().int().optional(),
+  // Consumption — how many times this memory has actually been READ back
+  // (migration 00077), the read-to-write counterpart to seen_count above.
+  // `read_count` is NOT NULL DEFAULT 0 at the DB level (every row has a real,
+  // countable value), but optional here for the same backward-compat reason
+  // as seen_count: a client reading a response from a backend deployed before
+  // 00077 sees no field rather than a fabricated 0. `last_read_at` mirrors the
+  // genuinely nullable column (a never-read-since-00077 memory has none).
+  read_count: z.number().int().nonnegative().optional(),
+  last_read_at: z.string().datetime().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
@@ -468,7 +819,9 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
  */
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
-  + 'origin_repo,origin_branch,origin_commit,origin_pr,org_id,created_by,updated_by,orgs(id,name,slug)';
+  + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
+  + 'read_count,last_read_at,'
+  + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 
 /**
  * Collapse a selected row's `orgs` embed into the flat `org` field.
@@ -502,5 +855,217 @@ export const MemoryPageResponseSchema = z.object({
   entries: z.array(MemoryEntrySchema),
   hasMore: z.boolean(),
   nextCursor: z.string().nullable(),
+  /**
+   * Exact count of every row the request's filters matched, ignoring `limit`
+   * — so a caller can show "12 of 128" instead of "how many happen to be
+   * loaded so far". OPTIONAL: only `GET /memories` / `POST /memories/list`
+   * populate it today (`lorekit_memory_list`'s `total_count` column, migration
+   * 00094, a `count(*) over ()` alongside the page — one query, no second
+   * round trip). `POST /memories/search` has no equivalent yet, so it is
+   * absent there rather than a fabricated number.
+   */
+  total: z.number().int().nonnegative().optional(),
 });
 export type MemoryPageResponse = z.infer<typeof MemoryPageResponseSchema>;
+
+// ── The body transport: POST /memories/list, /facets, /activity ──────────────
+
+/**
+ * How many values ONE dimension may carry in a body request.
+ *
+ * A safety limit, not a product limit: it is ~50x the widest filter bar the
+ * Explorer has produced, and roughly 20x what the query transport could carry
+ * before `ValueListSchema`'s 2048-character cap rejected the request. It exists
+ * so an unbounded array cannot be used to make the server build an unbounded
+ * PostgREST `in.()` operand — the reason the bound is a COUNT and not another
+ * character budget is that a count is the thing a caller can reason about,
+ * where "2048 characters" silently means a different number of hosts than of
+ * branches.
+ */
+export const FILTER_VALUES_MAX = 1000;
+
+/** How long ONE filter value may be — the `key` bound, applied to a filter. */
+export const FILTER_VALUE_MAX_CHARS = 512;
+
+/**
+ * One dimension's values, as a real array.
+ *
+ * This is the whole point of the body transport. The query form joins the
+ * values with commas into a single `ValueListSchema` string, which caps the
+ * DIMENSION at 2048 characters and makes a value containing a comma
+ * unreachable (`parseTagsParam` splits before anything is quoted). An array has
+ * neither property: each value is bounded on its own, the dimension is bounded
+ * by a count, and a comma is just a character.
+ */
+const DimensionValuesSchema = z
+  .array(z.string().min(1).max(FILTER_VALUE_MAX_CHARS))
+  .max(FILTER_VALUES_MAX);
+
+/**
+ * The dimension filters, shared verbatim by all three body routes.
+ *
+ * Named identically to the query params they replace — `tags`, `host`,
+ * `origin_pr`, each with its `*_mode` — so the two transports are the same
+ * contract in two encodings, and `handleList` / `handleListPost` can hand the
+ * SAME normalised shape to the SAME predicate function (`dimensionsFromQuery` /
+ * `dimensionsFromBody`). A field that existed on only one of them would be a
+ * place for the two to disagree about what a filter means.
+ */
+const dimensionBodyFields = {
+  tags: DimensionValuesSchema.optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: DimensionValuesSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: DimensionValuesSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: DimensionValuesSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: DimensionValuesSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: DimensionValuesSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: DimensionValuesSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Pull-request numbers. Still tolerant of a non-numeric entry for the query
+   * form's reason — the bar can be built from a hand-editable URL — so the
+   * handler drops those rather than 400ing the page.
+   */
+  origin_pr: DimensionValuesSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: DimensionValuesSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
+} as const;
+
+/**
+ * `POST /memories/list` — the same read as `GET /memories`, over a body.
+ *
+ * The dashboard's Explorer sends this one. The query form remains supported and
+ * unchanged for the CLI, the MCP surface and any API-token caller; it is simply
+ * not a transport that scales, because a filter bar's value sets are unbounded
+ * (agents invent hosts) while a URL is not.
+ *
+ * The non-dimension fields take their REAL JSON types — `archived` is a
+ * boolean, `limit` a number — instead of the coerced strings a query string
+ * forces. That is deliberate: over JSON, `"true"` is a string, and silently
+ * accepting it would make the two transports disagree about what a caller sent.
+ */
+export const ListMemoriesBodySchema = z.object({
+  scope: RawScopeSchema.optional(),
+  key: z.string().min(1).max(512).optional(),
+  key_prefix: z.string().min(1).max(512).optional(),
+  q: z.string().min(1).max(512).optional(),
+  created_since: TimestampFilterSchema.optional(),
+  created_until: TimestampFilterSchema.optional(),
+  ...dimensionBodyFields,
+  sort: MemorySortSchema.optional().default('updated_at'),
+  archived: z.boolean().optional().default(false),
+  expiring_within_days: z.number().int().min(1).max(365).optional(),
+  /** See `ListMemoriesQuerySchema.min_age_days` — same fields, real JSON types. */
+  min_age_days: z.number().int().min(1).max(3650).optional(),
+  unseen_days: z.number().int().min(1).max(3650).optional(),
+  max_seen_count: z.number().int().min(0).max(100_000).optional(),
+  limit: z.number().int().min(1).max(100).optional().default(50),
+  cursor: z.string().optional(),
+});
+export type ListMemoriesBody = z.infer<typeof ListMemoriesBodySchema>;
+
+/**
+ * `POST /memories/facets` — the drill-down catalog, over a body.
+ *
+ * Mirrors `ListFacetsQuerySchema` field for field, with `facets` as an array of
+ * the closed facet vocabulary rather than a comma list. An unknown NAME cannot
+ * arrive here at all (the enum rejects it), where the query form tolerated one
+ * and narrowed to nothing — a JSON client builds this from `MemoryFacet`, so a
+ * typo is a bug worth surfacing rather than a keystroke to survive.
+ */
+export const ListFacetsBodySchema = z.object({
+  archived: z.boolean().optional().default(false),
+  facets: z.array(MemoryFacetSchema).optional(),
+  scope: RawScopeSchema.optional(),
+  ...dimensionBodyFields,
+});
+export type ListFacetsBody = z.infer<typeof ListFacetsBodySchema>;
+
+/**
+ * `POST /memories/pivot` — the two-dimensional facet count, over a body.
+ *
+ * Exists for `POST /list` and `POST /facets`' reason: the dashboard's filter bar
+ * is unbounded, and a query string caps each dimension at 2048 characters. The
+ * Explorer's matrix instrument reads over this form; `GET` stays supported for
+ * a caller whose filters fit in a URL.
+ */
+export const PivotBodySchema = z.object({
+  row: MemoryFacetSchema,
+  col: MemoryFacetSchema,
+  archived: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(PIVOT_LIMIT_MAX).optional(),
+  scope: RawScopeSchema.optional(),
+  ...dimensionBodyFields,
+});
+export type PivotBody = z.infer<typeof PivotBodySchema>;
+
+/** `POST /memories/activity` — the written-volume series, over a body. */
+export const ActivityBodySchema = z.object({
+  bucket: ActivityBucketUnitSchema.optional().default('day'),
+  since: TimestampFilterSchema.optional(),
+  until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
+  ...dimensionBodyFields,
+});
+export type ActivityBody = z.infer<typeof ActivityBodySchema>;
+
+/**
+ * `GET /memories/read-ranking` — memories ranked by how often they have
+ * actually been READ (migration 00077's `memories.read_count`), not written.
+ * `hot` (default) surfaces the most-consumed lore; `cold` surfaces the
+ * least-consumed — the prune-list input the `lorekit-groom` skill exists to
+ * consume. REST-only (`telemetry-vocabulary.ts`'s `NON_CATALOG_OPS`): the
+ * response names individual scopes, the same scope-leak surface as
+ * `memory.tags`/`memory.facets`, for the same absent agent-side demand —
+ * dashboard analytics, not an agent primitive.
+ */
+export const ReadRankingDirectionSchema = z.enum(['hot', 'cold']);
+export type ReadRankingDirection = z.infer<typeof ReadRankingDirectionSchema>;
+export const ReadRankingQuerySchema = z.object({
+  direction: ReadRankingDirectionSchema.optional().default('hot'),
+  scope: RawScopeSchema.optional(),
+  // `z.coerce` because this is a QUERY schema — `validateQuery` feeds it
+  // `Object.fromEntries(searchParams)`, where every value is a string. A bare
+  // `z.number()` here 400s (`Expected number, received string`) on every
+  // caller that passes the param at all, which is what silently blanked the
+  // Insights page's Hot & Cold panel: the request never reached the RPC.
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+});
+export type ReadRankingQuery = z.infer<typeof ReadRankingQuerySchema>;
+
+/**
+ * One ranked row. `read_count`/`last_read_at` are the counters this ranking
+ * exists to expose; `seen_count` rides along so the dashboard can show the
+ * read-to-write ratio (written once and read 200 times vs. written 16 times
+ * and never read) without a second round trip.
+ */
+export const ReadRankingEntrySchema = z.object({
+  id: z.string().uuid(),
+  scope: z.string(),
+  key: z.string(),
+  read_count: z.number().int().nonnegative(),
+  last_read_at: z.string().datetime().nullable(),
+  seen_count: z.number().int().optional(),
+  created_at: z.string().datetime(),
+});
+export type ReadRankingEntry = z.infer<typeof ReadRankingEntrySchema>;
+
+export const ReadRankingResponseSchema = z.object({
+  direction: ReadRankingDirectionSchema,
+  /**
+   * The date counting started (migration 00077's deployment). A `cold` row
+   * with `read_count: 0` means "not read SINCE this date", never "never read
+   * in this memory's lifetime" — a memory created before it may have been
+   * read plenty under the old, uncounted regime. Every consumer MUST render
+   * this qualifier rather than the bare word "never".
+   */
+  counting_since: z.string().datetime(),
+  entries: z.array(ReadRankingEntrySchema),
+});
+export type ReadRankingResponse = z.infer<typeof ReadRankingResponseSchema>;

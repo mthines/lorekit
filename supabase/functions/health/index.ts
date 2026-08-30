@@ -8,7 +8,8 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { traceRequest, createTracedClient } from '../_shared/otel.ts';
+import { traceRequest, createTracedClient } from '../_shared/telemetry/otel.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -22,7 +23,7 @@ Deno.serve(async (req: Request) => {
     let dbError: string | undefined;
 
     try {
-      const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      const supabase = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const tracedDb = createTracedClient(supabase, span);

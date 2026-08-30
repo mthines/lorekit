@@ -20,7 +20,7 @@
  * tested directly.
  */
 
-import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../tool-catalog.ts';
+import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../shared/tool-catalog.ts';
 
 /** One entry in the generated docs index, read from an MDX file's frontmatter. */
 export interface DocsIndexEntry {
@@ -38,7 +38,7 @@ const GENERATED_BANNER = `<!--
   GENERATED FILE — do not edit by hand.
 
   Editorial prose:  packages/schemas/src/llms/template.md
-  Tool reference:   packages/schemas/src/tool-catalog.ts
+  Tool reference:   packages/schemas/src/shared/tool-catalog.ts
   Docs index:       packages/web/src/content/docs/*.mdx (frontmatter)
 
   Regenerate:  pnpm nx generate:llms schemas
@@ -119,12 +119,25 @@ export function renderPermissionMatrix(tools: readonly McpToolDoc[] = MCP_TOOLS)
     return `| \`${t.name}\` | ✓ | ${read} | ${write} |`;
   });
 
+  // DERIVED, not stated. This footnote used to assert that `org.*` needs a
+  // dashboard JWT, which was a second hand-written copy of a fact the catalog's
+  // `auth` field owns — so opening those tools to `lk_*` tokens meant editing
+  // the catalog AND remembering this line. Now it appears only while some tool
+  // is actually `jwt-only`, and names whichever tools those are.
+  const jwtOnly = tools.filter((t) => t.auth === 'jwt-only');
+  const footnote = jwtOnly.length
+    ? [
+        '',
+        `${jwtOnly.map((t) => `\`${t.name}\``).join(', ')} require a Supabase user JWT `
+        + '(dashboard session) — not available via `lk_*` tokens.',
+      ]
+    : [];
+
   return [
     '| Tool | lk_rw_ | lk_ro_ | lk_wo_ |',
     '|------|--------|--------|--------|',
     ...rows,
-    '',
-    '`org.*` tools require a Supabase user JWT (dashboard session) — not available via `lk_*` tokens.',
+    ...footnote,
   ].join('\n');
 }
 

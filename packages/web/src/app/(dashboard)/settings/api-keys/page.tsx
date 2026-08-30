@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Key, ArrowUpRight } from 'lucide-react';
 import { listTokens } from '@/lib/tokens';
+import { getKeyScopeCatalog } from '@/lib/key-scope-catalog';
 import { resolveMcpUrls } from '@/lib/mcp-url';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
 import { SessionTokenPanel } from '@/components/dashboard/SessionTokenPanel';
@@ -10,7 +11,9 @@ export const metadata: Metadata = { title: 'API keys — Settings' };
 
 export default async function ApiKeysSettingsPage() {
   // Read-only: the settings page surfaces existing keys, it never auto-generates.
-  const tokens = await listTokens();
+  // The catalog is fetched alongside so the create form's scope picker has
+  // something to offer; both halves of it fail soft to an empty list.
+  const [tokens, catalog] = await Promise.all([listTokens(), getKeyScopeCatalog()]);
   const { mcpUrl } = resolveMcpUrls();
 
   return (
@@ -19,7 +22,13 @@ export default async function ApiKeysSettingsPage() {
       title="API keys"
       subtitle="Tokens your agents use to reach LoreKit. The secret is shown once at creation — we store only the prefix, so it can never be revealed again."
     >
-      <OnboardingStepContent step="connect" mcpUrl={mcpUrl} initialTokens={tokens} />
+      <OnboardingStepContent
+        step="connect"
+        mcpUrl={mcpUrl}
+        initialTokens={tokens}
+        scopeCatalog={catalog.scopes}
+        orgs={catalog.orgs}
+      />
       <SessionTokenPanel />
       <a
         href="/api-docs"

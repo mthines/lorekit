@@ -42,12 +42,59 @@ export default defineConfig({
   // `react-dom` (via `createPortal`) and `motion/react` (drag/AnimatePresence)
   // both first enter the story graph through `BottomSheet`, so declare them
   // here alongside the setup-file deps.
+  // The Lore filter stories are the last un-pre-bundled entry. `FilterMenu` /
+  // `FilterPill` import `@/lib/filters`, which VALUE-imports `@lorekit/schemas/
+  // tags` — the first time the browser test graph reaches the linked
+  // `@lorekit/schemas` workspace package. No earlier-loaded story does, so Vite
+  // discovered it mid-run and re-optimized, re-hashing the react shim out from
+  // under an in-flight import and failing `FilterMenu.test.stories.tsx` on every
+  // cold CI run. The trigger is the LINKED PACKAGE, not any one heavy dep:
+  // `tags` (`schemas/src/shared/tags.ts`) is pure and imports nothing, and `filters.ts`
+  // imports `@lorekit/schemas/memory` (the one that pulls `zod`) TYPE-only, so
+  // it is erased at runtime and never loaded here. Force-optimize both
+  // resolvable subpaths so the whole linked package is in the cold-start bundle:
+  // `tags` is the entry actually reached at runtime today; `memory` is included
+  // so a future runtime (value) import of it cannot reintroduce the same reload.
+  // (A bare `'zod'` cannot work — `zod` is a dep of `@lorekit/schemas`, not of
+  // `@lorekit/web`, so it does not resolve from this package's root: Vite warns
+  // "Failed to resolve dependency: zod" and skips it.)
+  //
+  // `react-markdown` / `remark-gfm` / `rehype-sanitize` (and their large
+  // transitive graph: micromark-*, mdast-*, hast-*, unist-*) enter through
+  // `MarkdownPreview` in `LessonDetailSheet` — a second large graph this PR
+  // added. Same failure mode: Vite's initial scan can miss them and only
+  // discover them when a story first imports the graph at RUN time, which
+  // re-optimizes deps mid-run and 404s modules other test files already
+  // imported. Pre-bundle them for the same reason.
   optimizeDeps: {
-    include: ['@storybook/nextjs-vite', 'storybook/test', 'react-dom', 'motion/react'],
+    include: [
+      '@storybook/nextjs-vite',
+      'storybook/test',
+      'react-dom',
+      'motion/react',
+      '@lorekit/schemas/tags',
+      '@lorekit/schemas/memory',
+      // `TokenScoping` value-imports `@lorekit/schemas/api-key` (via
+      // `@/lib/token-scoping`), which is the third runtime entry into the linked
+      // package — the same mid-run re-optimize trigger as the two above, and the
+      // only one this PR adds.
+      '@lorekit/schemas/api-key',
+      'react-markdown',
+      'remark-gfm',
+      'rehype-sanitize',
+    ],
   },
   test: {
     name: 'storybook',
     setupFiles: [path.join(storybookDir, 'vitest.setup.ts')],
+    // Same reporter pairing as the node/jsdom `vitest.config.ts`: in GitHub
+    // Actions, add the `github-actions` reporter so each failing story emits a
+    // `::error file=…,line=…::` annotation. This job is the ONE suite whose
+    // output was previously log-only — a browser run's failure could only be
+    // read by expanding the job log, so the checks API (and anything reading
+    // it) saw nothing but "Process completed with exit code 1". No-op locally.
+    reporters:
+      process.env.GITHUB_ACTIONS === 'true' ? ['default', 'github-actions'] : ['default'],
     browser: {
       enabled: true,
       headless: true,

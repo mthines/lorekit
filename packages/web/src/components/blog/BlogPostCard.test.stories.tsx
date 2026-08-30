@@ -21,6 +21,7 @@ const POST: PostMeta = {
   tags: ['self-healing', 'self-improving', 'agents'],
   order: 1,
   keywords: [],
+  isDraft: false,
 };
 
 const meta: Meta<typeof BlogPostCard> = {

@@ -2,13 +2,19 @@ import type { Meta, StoryObj } from '@storybook/react';
 
 import LorePage from './page';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
-import { withQueryClient, withFrozenClock, withMemorySidebar } from '@/mocks/decorators';
+import {
+  withQueryClient,
+  withFrozenClock,
+  withMemorySidebar,
+  withExplorerResults,
+  withFeatureFlags,
+} from '@/mocks/decorators';
 
 /**
  * True full-page visual-regression stories for the `/lore` client page.
  *
  * Unlike the server-component pages, `/lore` is `'use client'`: it drives its
- * scope tree and 26-week contribution heatmap from `useScopeTree` / `useLoreData`
+ * scope tree and contribution heatmap from `useScopeTree` / `useLoreData`
  * — TanStack Query hooks that call the Supabase *browser* client (PostgREST over
  * HTTP), which MSW mocks. So the actual page component renders end-to-end here,
  * not a hand-assembled subtree.
@@ -40,7 +46,13 @@ const meta: Meta<typeof LorePage> = {
     // of throwing "expected app router to be mounted".
     nextjs: { appDirectory: true },
   },
-  decorators: [withFrozenClock(FROZEN_NOW), withMemorySidebar, withQueryClient],
+  decorators: [
+    withFrozenClock(FROZEN_NOW),
+    withMemorySidebar,
+    withExplorerResults,
+    withFeatureFlags,
+    withQueryClient,
+  ],
 };
 
 export default meta;

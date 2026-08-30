@@ -1,12 +1,14 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { ok, notFound } from '../../_shared/api/respond.ts';
 import { validateUuid } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/database.types.ts';
+import type { Tables } from '../../_shared/db/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
+import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -21,7 +23,7 @@ export async function handleGet(
 
   const tracedDb = createTracedClient(db, span);
   let q: TracedQuery<MemoryRow> = tracedDb
-    .from<MemoryRow>('memories')
+    .from('memories')
     .select(MEMORY_SELECT)
     .eq('id', v.data)
     .is('archived_at', null)
@@ -31,7 +33,7 @@ export async function handleGet(
   // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
   if (auth.type === 'api_key' && auth.userId) {
     const orgIds = await getMemberOrgIds(db, auth.userId, span);
-    q = applyRestTenantScope(q, auth.userId, orgIds);
+    q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
 
   const { data, error } = await q.maybeSingle();
@@ -40,5 +42,8 @@ export async function handleGet(
   // One record read — surfaced for the router's usage event (RESULT_COUNT_HEADER).
   const res = ok(shapeMemoryRow(data as Record<string, unknown>), cors);
   res.headers.set('X-LoreKit-Result-Count', '1');
+  // GET /:id is the REST equivalent of memory.read — one exact scope+key —
+  // so it is a TARGETED read for the per-memory counter (migration 00077).
+  recordMemoryReads(db, [(data as { id: string }).id], 'targeted');
   return res;
 }

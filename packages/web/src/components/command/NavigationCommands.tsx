@@ -11,8 +11,10 @@
  *
  * ### Navigate
  * Top-level destinations with "g → X" chained shortcuts (Gmail / Linear style):
- *   g o → Dashboard (Home)
+ *   g o → Overview (Home) — only while `insights-page` is OFF
  *   g e → Lore Explorer
+ *   g i → Insights — only while `insights-page` is ON, and takes Overview's
+ *         "home" slot (see Sidebar.tsx's matching nav filter)
  *   g s → Settings
  *   g g → Docs
  *
@@ -26,8 +28,12 @@
  * reference. The docs pages are also full-text searchable at `/docs`.
  *
  * ### Lore
- * "Open Lesson…" — async nested list of the 20 most-recent memories;
- * selecting one opens it in the lesson detail sidebar.
+ * "Open Lesson…" — opens with the 20 most-recent memories; typing live-
+ * searches EVERY memory by (a prefix of) its full `scope::key` identifier —
+ * e.g. pasting `repo::mthines/lorekit::sandbox-lessons::lorekit-mcp-` matches
+ * every key that starts with `lorekit-mcp-` in that scope — or by a plain
+ * substring, capped at 50 results. Selecting one opens it in the lesson
+ * detail sidebar.
  */
 
 import { useRouter } from 'next/navigation';
@@ -44,12 +50,34 @@ import {
   CreditCard,
   FileCode,
   Library,
+  Telescope,
 } from 'lucide-react';
+import { useEffect } from 'react';
 import { useCommand } from './useCommand';
+import { useCommandPalette } from './CommandPaletteProvider';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
-import { useLoreData } from '@/lib/queries/lore';
+import { useLoreData, searchLessonsByQuery } from '@/lib/queries/lore';
 import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
+import type { LessonEntry } from '@/components/lore/LessonCard';
+import type { Command } from './types';
+
+// `Command` has no enabled/hidden field, and `useCommand` always registers on
+// mount — so a flag-gated entry (like `nav-insights` below) can't use it
+// directly. This calls `useCommandPalette()` unconditionally (rules of
+// hooks) and only decides INSIDE the effect whether to call `register`,
+// mirroring the page's `notFound()` gate and the Sidebar's nav filter so all
+// three surfaces agree on visibility.
+function useConditionalCommand(enabled: boolean, command: Command): void {
+  const { register } = useCommandPalette();
+
+  useEffect(() => {
+    if (!enabled) return;
+    return register(command);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, register, command.id, command.label, command.onSelect]);
+}
 
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
@@ -58,6 +86,31 @@ import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 // MemorySidebarProvider in the dashboard layout precisely so useMemorySidebar()
 // here resolves — the command registry itself still comes from the ancestor
 // CommandPaletteProvider.
+
+/**
+ * Rows are label-only (see `CommandRow`), so the scope has to live IN the
+ * label: a key is only unique WITHIN a scope, and the same key in two scopes
+ * would otherwise render two identical, unpickable rows. Scope leads because
+ * the row truncates from the end — the disambiguator must survive truncation.
+ *
+ * `onSelect` passes the already-fetched `lesson` through to `openLessonById`
+ * so opening a search result never triggers a second, redundant fetch by ref
+ * (see that function's doc on why only callers with the row in hand can skip
+ * it — the palette is exactly the caller `useLessonByRef`'s cache-miss path
+ * exists for otherwise).
+ */
+function lessonToCommand(lesson: LessonEntry, openLessonById: (ref: { scope: string; key: string }, lesson: LessonEntry) => void): Command {
+  return {
+    id: `lore-lesson-${lesson.scope}::${lesson.key}`,
+    label: `${lesson.scope} · ${lesson.key}`,
+    description: lesson.scope,
+    // Labelled so a root-level fallback match (see `fallbackSearch` on the
+    // command below) renders under its own "Lore" separator rather than as an
+    // ungrouped run mixed visually with whatever else is on screen.
+    group: 'Lore',
+    onSelect: () => openLessonById({ scope: lesson.scope, key: lesson.key }, lesson),
+  };
+}
 
 function LoreCommands() {
   const router = useRouter();
@@ -69,28 +122,37 @@ function LoreCommands() {
     label: 'Open Lesson…',
     icon: <Library className="size-4" />,
     group: 'Lore',
-    // Async children: resolves the 20 most-recent lessons at open time so the
-    // list is always fresh without blocking the palette open.
-    children: async () => {
-      const lessons = data?.lessons?.slice(0, 20) ?? [];
+    // Live search: the empty query (palette just opened) shows the 20
+    // most-recent memories from the already-loaded `useLoreData` cache — no
+    // extra request. Any typed query re-queries the server directly (paste a
+    // full or partial `scope::key` identifier, or a plain word), capped at
+    // MEMORY_SEARCH_LIMIT, so this reaches every memory, not just the recent
+    // window.
+    search: async (query) => {
+      const lessons = query.trim()
+        ? await searchLessonsByQuery(query)
+        : (data?.lessons?.slice(0, 20) ?? []);
       if (lessons.length === 0) {
         return [
           {
             id: 'lore-no-lessons',
-            label: 'No lessons found',
+            label: query.trim() ? `No lessons match "${query.trim()}"` : 'No lessons found',
             description: 'Visit the Lore Explorer to add some.',
+            group: 'Lore',
             onSelect: () => router.push('/lore'),
           },
         ];
       }
-      return lessons.map((lesson) => ({
-        id: `lore-lesson-${lesson.scope}::${lesson.key}`,
-        label: lesson.key,
-        description: lesson.scope,
-        onSelect: () =>
-          openLessonById({ scope: lesson.scope, key: lesson.key }),
-      }));
+      return lessons.map((lesson) => lessonToCommand(lesson, openLessonById));
     },
+    // Lets a memory key pasted at the ROOT palette (before drilling into
+    // "Open Lesson…" at all) resolve directly: when nothing at the root
+    // matches by label, the palette falls back to running THIS search
+    // in-place. A pasted `scope::key` identifier never matches a root
+    // command's label/description/group, so without this the user would have
+    // to know to open "Open Lesson…" first — defeating the point of being
+    // able to paste the key from the very start.
+    fallbackSearch: true,
   });
 
   return null;
@@ -134,13 +196,19 @@ export function NavigationCommands() {
 
   // ── Navigate ─────────────────────────────────────────────────────────────
 
-  useCommand({
-    id: 'nav-dashboard',
-    label: 'Go to Dashboard',
+  // Overview and Insights are mutually exclusive destinations while
+  // `insights-page` rolls out — Insights absorbs Overview's "home" slot, so
+  // exactly one of the two is ever registered (see Sidebar.tsx's matching
+  // `nav`/`mobileTabs` filter and insights/page.tsx's `notFound()` gate).
+  const insightsEnabled = useFeatureFlag('insights-page');
+
+  useConditionalCommand(!insightsEnabled, {
+    id: 'nav-overview',
+    label: 'Go to Overview',
     icon: <LayoutDashboard className="size-4" />,
     group: 'Navigate',
     shortcut: { keys: ['g', 'o'] },
-    onSelect: () => router.push('/dashboard'),
+    onSelect: () => router.push('/overview'),
   });
 
   useCommand({
@@ -150,6 +218,15 @@ export function NavigationCommands() {
     group: 'Navigate',
     shortcut: { keys: ['g', 'e'] },
     onSelect: () => router.push('/lore'),
+  });
+
+  useConditionalCommand(insightsEnabled, {
+    id: 'nav-insights',
+    label: 'Go to Insights',
+    icon: <Telescope className="size-4" />,
+    group: 'Navigate',
+    shortcut: { keys: ['g', 'i'] },
+    onSelect: () => router.push('/insights'),
   });
 
   useCommand({
@@ -169,6 +246,11 @@ export function NavigationCommands() {
     shortcut: { keys: ['g', 'g'] },
     onSelect: () => router.push('/docs'),
   });
+
+  // NOTE: no "Go to Blog" command here on purpose — the blog is not a released
+  // surface yet, so the app palette must not advertise it. Re-add (with `g b`)
+  // when the blog ships. ⌘K still works ON the blog page itself; it just isn't
+  // discoverable from the rest of the app.
 
   // ── Settings ──────────────────────────────────────────────────────────────
 

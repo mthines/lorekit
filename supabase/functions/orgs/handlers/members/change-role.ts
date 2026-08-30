@@ -1,14 +1,14 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
 import { ok, notFound, dryRun } from '../../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/limits/dry-run.ts';
 import { validateBody, validateUuid, validateOrgSlug } from '../../../_shared/api/validate.ts';
-import { createTracedClient } from '../../../_shared/otel.ts';
-import type { Span } from '../../../_shared/otel.ts';
+import { createTracedClient } from '../../../_shared/telemetry/otel.ts';
+import type { Span } from '../../../_shared/telemetry/otel.ts';
 import { UpdateMemberRoleBodySchema } from '../../../_shared/schemas/member.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
 import { auditUserId } from '../../../_shared/api/auth.ts';
-import { recordAudit } from '../../../_shared/audit.ts';
+import { recordAudit } from '../../../_shared/audit/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { isOrgMember } from '../../../_shared/api/tenant.ts';
 
@@ -33,7 +33,7 @@ export async function handleChangeRole(
   const tracedDb = createTracedClient(db, span);
 
   const { data: org, error: lookupErr } = await tracedDb
-    .from<{ id: string }>('orgs')
+    .from('orgs')
     .select('id')
     .eq('slug', slug)
     .is('deleted_at', null)
@@ -76,6 +76,7 @@ export async function handleChangeRole(
       metadata: { role: bodyV.data.role },
     },
     auditUserId(auth),
+    span,
   );
 
   return ok({ slug, userId: idV.data, role: bodyV.data.role }, cors);

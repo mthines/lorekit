@@ -1,6 +1,6 @@
 # Technical Reference
 
-> **New here?** The in-product onboarding at [lorekit.io/dashboard](https://lorekit.io/dashboard) walks you through connecting your first agent step by step. This file is a technical reference for CLI operations and environment variables.
+> **New here?** The in-product onboarding at [lorekit.io/overview](https://lorekit.io/overview) walks you through connecting your first agent step by step. This file is a technical reference for CLI operations and environment variables.
 
 ---
 
@@ -89,11 +89,18 @@ pnpm nx db:reset supabase   # reset local DB (dev only)
 ### NX dev & CI
 
 ```bash
-pnpm nx run-many -t typecheck,test,lint --all    # full CI gate
+pnpm nx run-many -t typecheck,test,lint --all    # full CI gate (CI only — see below)
+pnpm nx affected -t typecheck,test,lint          # sandbox-safe equivalent
 pnpm nx typecheck web                            # web app
 pnpm nx serve web                                # Next.js dev server
 pnpm nx test mcp-core                            # needs supabase start
 ```
+
+> **Agents / cloud sandboxes: do not run `run-many … --all`.** The whole-repo
+> fan-out saturates a container's CPU/memory allowance and the session freezes or
+> stalls instead of failing cleanly. Use `nx affected` or name the projects
+> explicitly. See
+> [CLAUDE.md](./CLAUDE.md#never-run-whole-repo-nx-fan-outs-in-a-cloud-sandbox).
 
 ---
 
@@ -106,6 +113,14 @@ pnpm nx test mcp-core                            # needs supabase start
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
 
+> Vercel Git auto-deploy is **off entirely** (`packages/web/vercel.json` →
+> `git.deploymentEnabled = false`), so Vercel deploys nothing on a Git push —
+> the `deploy.yml` pipeline promotes the dashboard to production in lockstep
+> with the API, and `ci.yml`'s `web-preview` job deploys PR previews, gated on
+> the `web_preview` path filter (`scripts/ci/web-preview-filter.mjs`) so a PR with
+> no dashboard change spends no quota. See
+> [docs/deployment.md](./docs/deployment.md).
+
 ---
 
 ## GitHub Actions CI secrets
@@ -114,6 +129,18 @@ pnpm nx test mcp-core                            # needs supabase start
 |--------|-------------|
 | `SUPABASE_PROJECT_REF` | Your project ref |
 | `SUPABASE_ACCESS_TOKEN` | From [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens) |
+| `VERCEL_TOKEN` | Vercel access token (Account Settings → Tokens) — lets `deploy.yml` build + promote the web dashboard, and `ci.yml`'s `web-preview` job deploy PR previews |
+| `VERCEL_ORG_ID` | From `.vercel/project.json` after `vercel link` (or Vercel project settings) |
+| `VERCEL_PROJECT_ID` | From `.vercel/project.json` after `vercel link` |
+| `LOREKIT_TELEMETRY_TOKEN` | Dash0 ingest-only token — the smoke/CI jobs pass it so their edge telemetry exports (tagged `deployment.environment.name=test`); also injected into the CLI tarball at publish by `release.yml`. Fork PRs without it skip telemetry gracefully. |
+
+Optional repo **variables** (Settings → Secrets and variables → Actions →
+Variables):
+
+| Variable | Description |
+|----------|-------------|
+| `VERCEL_SCOPE` | Your Vercel **team slug** for `vercel promote`/`rollback`. Defaults to `mads-thines-projects` — **a fork must set its own**, or the production promote 403s ([Vercel bug #11712](https://github.com/vercel/vercel/issues/11712)). |
+| `WEB_PROD_URL` | Production dashboard origin the prod smoke curls. Defaults to `https://lorekit.io`. |
 
 ---
 

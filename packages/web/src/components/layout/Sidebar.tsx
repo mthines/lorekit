@@ -4,16 +4,30 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, GraduationCap, Telescope } from 'lucide-react';
+import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
-// Primary content nav — 3 destinations keeps the sidebar scannable and the
-// mobile tab bar comfortably within the 3–5 item guideline.
+// Primary content nav — 4 entries here, but Overview and Insights are
+// mutually exclusive behind the `insights-page` flag (see the filter in
+// `Sidebar()`), so only 3 ever render at once — still within the mobile tab
+// bar's 3–5 item guideline. Insights joined Explorer/Getting-started as the
+// single place to dig into consumption and usage — it used to be four panels
+// scattered across Overview and the Explorer (scope leaderboard, hot/cold
+// lore, operational health, who's-reading), which made "how is my lore
+// actually being used" a scavenger hunt across two pages. While the flag is
+// on, Insights takes Overview's spot as the first ("home") destination.
+// `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
+// copy the tab bar's column does not: the bar carries up to FOUR tabs plus the
+// docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
+// phone) and "Getting started" would wrap or clip there.
 const NAV = [
-  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
+  { href: '/overview', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/docs', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
+  { href: '/insights', label: 'Insights', icon: Telescope },
+  { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
@@ -40,6 +54,33 @@ export function Sidebar({ user }: SidebarProps) {
   const showProgress = hydrated && !allDone;
   const isUserActive = pathname === '/settings/user';
 
+  // Overview and Insights are mutually exclusive destinations while
+  // `insights-page` rolls out — Insights absorbs Overview's "home" slot
+  // (first nav item) rather than the two coexisting, so filtering drops
+  // whichever one the flag currently disables. `/insights`'s own page
+  // enforces the REAL access-control boundary (`notFound()` in
+  // insights/page.tsx); this filter — like the matching one in
+  // NavigationCommands.tsx — is only a visibility nicety, matching the
+  // developer-page precedent's nav-link-vs-page-check split. Overview has no
+  // equivalent page-level gate: it still mints a brand-new user's first API
+  // token (`buildOnboardingSteps({ autoGenerateToken: true })`), so it stays
+  // reachable by direct URL even while hidden from nav — see the root page's
+  // matching redirect-target switch.
+  const insightsEnabled = useFeatureFlag('insights-page');
+  const nav = NAV.filter((item) => {
+    if (item.href === '/insights') return insightsEnabled;
+    if (item.href === '/overview') return !insightsEnabled;
+    return true;
+  });
+
+  // The FAB sits between the second and third destination, so the row is
+  // split here rather than at render time — the split point is layout, not
+  // state. Derived from the (possibly Insights-filtered) `nav` so the mobile
+  // bar and desktop rail never disagree about which destinations exist.
+  const mobileTabs = [...nav, SETTINGS];
+  const mobileTabsBeforeFab = mobileTabs.slice(0, 2);
+  const mobileTabsAfterFab = mobileTabs.slice(2);
+
   const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
   const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
 
@@ -64,7 +105,7 @@ export function Sidebar({ user }: SidebarProps) {
 
         {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {nav.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link
@@ -134,49 +175,104 @@ export function Sidebar({ user }: SidebarProps) {
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
+      {/*
+        Five columns: two destinations, the docked command FAB, two more
+        destinations. Overview and Insights are mutually exclusive (see the
+        `nav` filter above), so the tab count stays four regardless of the
+        `insights-page` flag. The FAB gets a column of its own rather than
+        floating over the row so the four tabs keep even, predictable hit
+        areas — nothing shifts under the disc, and there is no tab hiding
+        behind it.
+
+        `pb-[env(safe-area-inset-bottom)]` keeps the labels clear of the home
+        indicator on a notched phone; the dashboard layout's `main` reserves the
+        matching amount of scroll padding.
+      */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="Main navigation"
       >
-        {[...NAV, SETTINGS].map((item) => {
-          const { href, icon: Icon } = item;
-          const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
-          const active =
-            'isActive' in item
-              ? item.isActive(pathname)
-              : pathname === href || pathname.startsWith(href + '/');
-          const isDocs = href === '/docs';
-          const withProgressDot = isDocs && showProgress;
-          return (
-            <Link
-              key={href}
-              href={href}
-              prefetch={true}
-              className={[
-                'relative flex flex-1 min-h-[3.5rem] flex-col items-center justify-center gap-1 text-xs transition-all duration-150',
-                active
-                  ? 'text-[var(--color-accent)]'
-                  : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-              ].join(' ')}
-              aria-current={active ? 'page' : undefined}
-            >
-              <span className="relative">
-                <Icon className="size-5 shrink-0" aria-hidden />
-                {withProgressDot && (
-                  <span
-                    className="absolute -right-1 -top-0.5 size-2 rounded-full bg-[var(--color-accent)]"
-                    aria-hidden
-                  />
-                )}
-              </span>
-              <span>{label}</span>
-              {withProgressDot && (
-                <span className="sr-only">, setup not yet complete</span>
-              )}
-            </Link>
-          );
-        })}
+        {mobileTabsBeforeFab.map((item) => (
+          <MobileTab
+            key={item.href}
+            item={item}
+            pathname={pathname}
+            showProgress={showProgress}
+          />
+        ))}
+
+        {/*
+          The FAB's column. `relative` makes it the FAB's containing block, so
+          the disc is centred on the bar's own midline and lifted from its top
+          border — see CommandPaletteFab for the offset.
+        */}
+        <div className="relative min-h-[3.5rem] flex-1">
+          <CommandPaletteFab />
+        </div>
+
+        {mobileTabsAfterFab.map((item) => (
+          <MobileTab
+            key={item.href}
+            item={item}
+            pathname={pathname}
+            showProgress={showProgress}
+          />
+        ))}
       </nav>
     </>
+  );
+}
+
+// ── Mobile tab ────────────────────────────────────────────────────────────────
+
+type MobileTabItem = (typeof NAV)[number] | typeof SETTINGS;
+
+interface MobileTabProps {
+  item: MobileTabItem;
+  pathname: string;
+  showProgress: boolean;
+}
+
+function MobileTab({ item, pathname, showProgress }: MobileTabProps) {
+  const { href, icon: Icon } = item;
+  const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
+  const active =
+    'isActive' in item
+      ? item.isActive(pathname)
+      : pathname === href || pathname.startsWith(href + '/');
+  const withProgressDot = href === '/docs' && showProgress;
+
+  return (
+    <Link
+      href={href}
+      prefetch={true}
+      className={[
+        // `text-[11px]` + `truncate`: a fifth column leaves ~66px on a 330px
+        // phone, and a wrapped label would push the row taller than the tabs
+        // beside it.
+        'relative flex min-h-[3.5rem] flex-1 flex-col items-center justify-center gap-1 px-0.5 text-[11px] transition-colors duration-150',
+        // Inactive tabs are `content-secondary`, matching the desktop rail
+        // above — NOT `content-tertiary`, which lands at 2.5:1 on the raised
+        // surface (below both the 4.5:1 AA floor for the label and the 3:1 floor
+        // for the icon) and is what made these labels read as disabled. At
+        // `content-secondary` they measure 5.9:1.
+        active
+          ? 'text-[var(--color-accent)]'
+          : 'text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)]',
+      ].join(' ')}
+      aria-current={active ? 'page' : undefined}
+    >
+      <span className="relative">
+        <Icon className="size-5 shrink-0" aria-hidden />
+        {withProgressDot && (
+          <span
+            className="absolute -right-1 -top-0.5 size-2 rounded-full bg-[var(--color-accent)]"
+            aria-hidden
+          />
+        )}
+      </span>
+      <span className="max-w-full truncate">{label}</span>
+      {withProgressDot && <span className="sr-only">, setup not yet complete</span>}
+    </Link>
   );
 }

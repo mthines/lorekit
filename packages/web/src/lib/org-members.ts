@@ -13,6 +13,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getVerifiedUser } from '@/lib/auth/verified-user';
 import type { OrgRole } from '@/lib/orgs';
 
 export interface OrgMemberIdentity {
@@ -30,7 +31,7 @@ export interface OrgMemberIdentity {
  */
 export async function listMemberIdentities(orgId: string): Promise<OrgMemberIdentity[]> {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getVerifiedUser();
   if (!user) return [];
 
   const { data, error } = await supabase.rpc('lorekit_org_members_list', { p_org_id: orgId });

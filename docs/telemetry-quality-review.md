@@ -18,9 +18,9 @@ lower-severity recommendations.
 
 Every component propagates one W3C `traceparent` through a single pure seam:
 `parseTraceparent` (receiver) and `formatTraceparent` (sender), which live in
-`packages/mcp-core/src/trace-context.ts` and are mirrored verbatim into every
-edge function (`supabase/functions/_shared/trace-context.ts`). The zero-dep CLI
-re-implements the same header format in `packages/cli/src/telemetry.mjs`.
+`packages/mcp-core/src/telemetry/trace-context.ts` and are mirrored verbatim into every
+edge function (`supabase/functions/_shared/telemetry/trace-context.ts`). The zero-dep CLI
+re-implements the same header format in `packages/cli/src/telemetry/telemetry.mjs`.
 
 ```
 agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
@@ -41,14 +41,13 @@ agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
 
 | File | Proves |
 |------|--------|
-| `packages/mcp-core/src/otel-correlation.spec.ts` | CLI→api and MCP→api join one trace with correct parent/child linkage; N REST calls become siblings under the command span; the echoed header points back at the server span; a 3-service chain preserves one `trace_id`; invalid inbound → fresh root; the sampled flag is data, not an export gate; the zero-dep CLI header — source-scanned from the shipped `getActiveTraceparent` — renders byte-identically to `formatTraceparent`. |
-| `packages/mcp-core/src/otel-conventions.spec.ts` | Drift guards: the four components declare **distinct** `service.name` values (`cli`/`api`/`mcp-node`/`web`); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; the edge (`extractTraceContext`/`withTraceparent`) and CLI (`getActiveTraceparent`) source keeps routing propagation through the shared `parseTraceparent`/`formatTraceparent` seam; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
-| `packages/mcp-core/src/otel-harness.spec.ts` | The correlated-trace harness's pure builder emits three service blocks (`cli`/`api`/`mcp-node`) under ONE `trace_id`, each resource stamped `deployment.environment.name=test`; correct span kinds; and the real parentage — CLI→api, MCP→api, and every DB CLIENT span under an api SERVER span — all off the CLI root. |
+| `packages/mcp-core/src/telemetry/otel-correlation.spec.ts` | CLI→api and MCP→api join one trace with correct parent/child linkage; N REST calls become siblings under the command span; the echoed header points back at the server span; a 3-service chain preserves one `trace_id`; invalid inbound → fresh root; the sampled flag is data, not an export gate; the zero-dep CLI header — source-scanned from the shipped `getActiveTraceparent` — renders byte-identically to `formatTraceparent`. |
+| `packages/mcp-core/src/telemetry/otel-conventions.spec.ts` | Drift guards: the three components declare **distinct** `service.name` values (`cli`/`api`/`web`); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; the edge (`extractTraceContext`/`withTraceparent`) and CLI (`getActiveTraceparent`) source keeps routing propagation through the shared `parseTraceparent`/`formatTraceparent` seam; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
+| `packages/mcp-core/src/telemetry/otel-harness.spec.ts` | The correlated-trace harness's pure builder emits three service blocks (`cli`/`api`/`mcp-node`) under ONE `trace_id`, each resource stamped `deployment.environment.name=test`; correct span kinds; and the real parentage — CLI→api, MCP→api, and every DB CLIENT span under an api SERVER span — all off the CLI root. |
 | `packages/cli/test/telemetry.test.mjs` (extended) | `os.type` / `host.arch` emit OTel-registry values, incl. `ppc`→`ppc32` (see bug below); `deployment.environment.name` is omitted by default and emitted only under an explicit `DEPLOYMENT_ENVIRONMENT` override. |
 
 These complement the pre-existing suites: `trace-context.spec.ts` (strict W3C
-parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift),
-`packages/mcp-server/src/otel-propagation.spec.ts` (OTel context API), and the
+parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift), and the
 existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
 
 ---
@@ -57,7 +56,7 @@ existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
 
 The suites above run **offline** — they never boot an exporter, so nothing they
 run reaches Dash0. That is correct for a fast CI, but it leaves no way to
-**visually** confirm correlation in the backend. `scripts/emit-correlated-trace.mts`
+**visually** confirm correlation in the backend. `scripts/telemetry/emit-correlated-trace.mts`
 is the on-demand tool for exactly that: it emits **one** real, correlated
 cross-service trace to Dash0 and prints its `trace_id`.
 
@@ -66,7 +65,7 @@ cross-service trace to Dash0 and prints its `trace_id`.
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com
 export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <ingesting-only-token>, Dash0-Dataset=lorekit-test'
 
-pnpm emit-trace          # → node --experimental-transform-types scripts/emit-correlated-trace.mts
+pnpm emit-trace          # → node --experimental-transform-types scripts/telemetry/emit-correlated-trace.mts
 ```
 
 It prints the emitted `trace_id`, the endpoint host, the dataset, and the
@@ -96,7 +95,7 @@ cli (INTERNAL, service=cli)                       ← the CLI command span (root
 
 **Why it is faithful, not a mock.** Each span is built with the component's own
 emission code — the CLI's real `buildTracePayload`, the edge's real `Span` /
-`buildOtlpPayload` (`supabase/functions/_shared/otel.ts`) — and every parent→child
+`buildOtlpPayload` (`supabase/functions/_shared/telemetry/otel.ts`) — and every parent→child
 edge is derived through the **real** W3C seam (`formatTraceparent` →
 `parseTraceparent`), exactly as the edge's `extractTraceContext` does on the
 wire. It runs in Node via `--experimental-transform-types` and shims `Deno.env`
@@ -131,7 +130,7 @@ still omits the attribute by default (it has no ambient deployment).
 ## Bug fixed
 
 **`os.type` / `host.arch` emitted Node spellings, not OTel-registry values**
-(`packages/cli/src/telemetry.mjs`). The CLI resource set `os.type` from
+(`packages/cli/src/telemetry/telemetry.mjs`). The CLI resource set `os.type` from
 `process.platform` (`win32`, `sunos`) and `host.arch` from `process.arch`
 (`x64`, `ia32`, `arm`). Those Node spellings are **not** members of the OTel
 `os.type` / `host.arch` registries (`windows`, `solaris` / `amd64`, `x86`,
@@ -145,7 +144,7 @@ resource attributes only.
 ## Recommendations (not applied — design/judgment calls)
 
 1. **`db.query.text` and DB span names inline literal filter values**
-   (`_shared/otel.ts` `buildSql`). Span names like
+   (`_shared/telemetry/otel.ts` `buildSql`). Span names like
    `SELECT ... FROM memories WHERE scope = 'repo::acme/x' AND key = '...'` are
    **high-cardinality** (an anti-pattern for span names, which should group) and
    put user-controlled values (scope, key, filter args) into `db.query.text`,

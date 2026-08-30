@@ -1,14 +1,15 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
-import { recordAudit } from '../../_shared/audit.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
+import { accountWideRefusalMessage, isRefusedForScopedKey } from '../../_shared/auth/account-wide-tools.ts';
+import { recordAudit } from '../../_shared/audit/audit.ts';
 import { ok, forbidden, tooManyRequests, dryRun } from '../../_shared/api/respond.ts';
-import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateOptionalBody } from '../../_shared/api/validate.ts';
-import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import { createTracedClient } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import { PurgeMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Database } from '../../_shared/database.types.ts';
+import type { Database } from '../../_shared/db/database.types.ts';
 
 type RateLimitRow = Database['public']['Functions']['lorekit_check_rate_limit']['Returns'][number];
 
@@ -35,6 +36,30 @@ function requireUserId(auth: AuthContext, cors: Record<string, string>): string 
     return forbidden('Purge requires a user-scoped credential (service-role tokens have no user to purge)', cors);
   }
   return auth.userId;
+}
+
+/**
+ * The REST half of the account-wide-sweep refusal (00068).
+ *
+ * `docs/api-tokens.md` says a scoped token is refused an account-wide sweep on
+ * BOTH surfaces; only the MCP dispatcher enforced it, so these two endpoints
+ * were the documented-but-unimplemented half. The decision itself is not
+ * restated here — `isRefusedForScopedKey` and the message come from the one
+ * `_shared/auth/account-wide-tools.ts` module the MCP dispatcher also calls, keyed on
+ * the same tool name `rest-tool-name.ts` already maps these routes to.
+ *
+ * A 403 for the same reason the router's `requires` refusals are: the request is
+ * well-formed and nothing in it could be changed to make it valid — it is the
+ * credential that may not address the operation. Returns null for an unscoped
+ * token, so a key nobody scoped is byte-for-byte unaffected.
+ */
+function refuseAccountWideSweep(
+  auth: AuthContext, toolName: string, span: Span, cors: Record<string, string>,
+): Response | null {
+  const hasAllowlist = (keyRestriction(auth)?.scopes.length ?? 0) > 0;
+  if (!isRefusedForScopedKey(toolName, hasAllowlist)) return null;
+  span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_account_wide' });
+  return forbidden(accountWideRefusalMessage(toolName), cors);
 }
 
 /**
@@ -84,6 +109,9 @@ export async function handlePurge(
     'lorekit.scope.type': 'user',
   });
 
+  const refused = refuseAccountWideSweep(auth, 'memory.purge', span, cors);
+  if (refused) return refused;
+
   const limited = await checkRateLimit(db, span, userId, cors);
   if (limited) return limited;
 
@@ -111,6 +139,7 @@ export async function handlePurge(
         metadata: { purged, retention_days: retentionDays },
       },
       auditUserId(auth),
+      span,
     );
   }
   return ok({ purged }, cors);
@@ -133,6 +162,9 @@ export async function handlePurgeExpired(
   if (typeof userId !== 'string') return userId;
 
   span.setAttributes({ 'lorekit.operation': 'memories.purge_expired', 'lorekit.scope.type': 'user' });
+
+  const refused = refuseAccountWideSweep(auth, 'memory.purge_expired', span, cors);
+  if (refused) return refused;
 
   const limited = await checkRateLimit(db, span, userId, cors);
   if (limited) return limited;
@@ -158,6 +190,7 @@ export async function handlePurgeExpired(
         metadata: { purged_expired: purged },
       },
       auditUserId(auth),
+      span,
     );
   }
   return ok({ purged }, cors);

@@ -1,9 +1,9 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { ok, notFound } from '../../../_shared/api/respond.ts';
 import { validateOrgSlug } from '../../../_shared/api/validate.ts';
-import { createTracedClient } from '../../../_shared/otel.ts';
-import type { Span } from '../../../_shared/otel.ts';
-import type { Database } from '../../../_shared/database.types.ts';
+import { createTracedClient } from '../../../_shared/telemetry/otel.ts';
+import type { Span } from '../../../_shared/telemetry/otel.ts';
+import type { Database } from '../../../_shared/db/database.types.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
 import { isOrgMember } from '../../../_shared/api/tenant.ts';
@@ -23,7 +23,7 @@ export async function handleListMembers(
 
   // Resolve slug → org_id (all member/invite RPCs take p_org_id).
   const { data: org, error: lookupErr } = await tracedDb
-    .from<{ id: string }>('orgs')
+    .from('orgs')
     .select('id')
     .eq('slug', slug)
     .is('deleted_at', null)
@@ -42,7 +42,7 @@ export async function handleListMembers(
   // `lorekit_org_members_list` gates itself on `lorekit_org_role(actor, org)`;
   // the actor has to be passed explicitly because the api_key tier's
   // service-role connection has no auth.uid() (00041).
-  const { data, error } = await tracedDb.rpc<MemberRow>('lorekit_org_members_list', {
+  const { data, error } = await tracedDb.rpc<MemberRow[]>('lorekit_org_members_list', {
     p_org_id: orgId,
     p_actor_user_id: actorUserId(auth),
   });

@@ -21,17 +21,23 @@ describe('generateSpec', () => {
 
   it('documents every REST route the edge functions serve', () => {
     expect(Object.keys(spec.paths).sort()).toEqual([
+      '/blog/likes',
       '/memories',
       '/memories/activity',
       '/memories/facets',
+      '/memories/list',
+      '/memories/pivot',
       '/memories/purge',
       '/memories/purge-expired',
       '/memories/read-activity',
+      '/memories/read-ranking',
+      '/memories/relevant',
       '/memories/restore',
       '/memories/scopes',
       '/memories/search',
       '/memories/tags',
       '/memories/usage',
+      '/memories/usage/runs',
       '/memories/{id}',
       '/memories/{id}/restore',
       '/orgs',
@@ -50,6 +56,10 @@ describe('generateSpec', () => {
       'CreateMemoryBody',
       'UpdateMemoryBody',
       'SearchMemoriesBody',
+      // The body transport: the three POST reads the dashboard's filter bar uses.
+      'ListMemoriesBody',
+      'ListFacetsBody',
+      'ActivityBody',
       'RestoreMemoryBody',
       'PurgeMemoriesBody',
       'RestoreResponse',
@@ -66,6 +76,7 @@ describe('generateSpec', () => {
       'OrgInviteList',
       'CreateInviteBody',
       'UsageStatsResponse',
+      'BlogLikes',
       'Error',
     ]) {
       expect(spec.components.schemas[name], `missing component: ${name}`).toBeDefined();

@@ -5,6 +5,7 @@ import matter from 'gray-matter';
 import { serialize } from 'next-mdx-remote/serialize';
 import { blogMdxOptions } from './mdx-render-options';
 import { extractToc } from './toc';
+import { BLOG_SLUGS } from './sections';
 
 /**
  * End-to-end guard for the blog's TOC invariant: the ids the scroll-spy sidebar
@@ -35,4 +36,23 @@ describe('blog MDX render (heading ids ↔ TOC)', () => {
     const out = await serialize('## A Very Distinctive Heading Here\n\nBody.\n');
     expect(out.compiledSource).not.toContain('a-very-distinctive-heading-here');
   });
+});
+
+const BLOG_DIR = fileURLToPath(new URL('../../content/blog', import.meta.url));
+
+/**
+ * Every registered post must compile through the real pipeline — not just
+ * `self-healing-agents`. This is what catches a post that embeds raw JSX
+ * (`<figure>`/`<img>`) or a malformed fence before it ships, since those only
+ * fail at serialize time.
+ */
+describe('every blog post compiles through the MDX pipeline', () => {
+  it.each([...BLOG_SLUGS])(
+    'serializes %s (including any JSX figures) without throwing',
+    async (slug) => {
+      const raw = matter(readFileSync(`${BLOG_DIR}/${slug}.mdx`, 'utf8')).content;
+      await expect(serialize(raw, blogMdxOptions)).resolves.toBeTruthy();
+    },
+    30_000,
+  );
 });

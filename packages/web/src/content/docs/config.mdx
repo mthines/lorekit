@@ -22,11 +22,17 @@ keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "de
 | `mcp.endpoint` | `string` | Repo | Committable MCP URL without a token, so the connection can live in VCS. The token still comes from .mcp.json or LOREKIT_TOKEN. |
 | `tags.default` | `string[]` | Both | Tags appended to every memory.write. Both layers are merged: repo tags first, then user tags. |
 | `scope.defaults` | `Record<string, { tags: string[] }>` | Repo | Per-scope tag defaults, applied to writes whose scope starts with the key (prefix match, no wildcards). A team-level write policy. |
-| `hooks.disabled` | `("SessionStart" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
+| `hooks.disabled` | `("SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
+| `hooks.sessionStart` | `"hybrid" \| "index" \| "map"` | Both | Shape of the block injected at session start. hybrid (default) fills the budget with the highest-ranked memories and then names whatever was left out in a one-line scope map; index fills the budget and truncates silently; map leads with the scope map plus the three most salient memories. Repo wins over user; an unrecognised value is ignored and the next layer is tried, so a mistyped repo value falls through to the user layer before defaulting to hybrid. |
+| `hooks.sessionStart.maxChars` | `number (200–20000)` | Both | Character budget for that block. Defaults to 3000 (~750 tokens, around 25 index lines). Out-of-range values are clamped rather than rejected. Repo wins over user — a repo that declared a budget owns the decision even when the value is unparseable, so a typo degrades to the default instead of silently handing the choice to a personal config. |
+| `hooks.sessionStart.loopCap` | `number (0–40)` | Both | How many memories one self-improvement loop (`loop::<bucket>` tag) may contribute to the block. Defaults to 1, so a prolific loop's own bookkeeping can't crowd out your codebase's memories — its single best lesson still surfaces; `0` excludes loop buckets entirely (read only general memories); values are clamped, not rejected. Repo wins over user with the same declared-value-owns-the-layer rule as `maxChars`. |
+| `hooks.sessionStart.maxLessons` | `number (3–200)` | Both | How many memory LINES that block may hold — but in practice it is a **read-depth** setting, not a size one. Defaults to 100. At the default `maxChars` the budget runs out around line 25, so the ceiling rarely decides how many lines you SEE; what it decides is how many candidate memories per scope the ranker gets to choose those lines FROM (100 per scope, up to the API's 100-per-page maximum). That is where relevance comes from: a shallow read can only rank the most recent handful, so a memory you re-learned five times last quarter never even enters the running. Lowering it below 25 does not shrink the read — the ranker keeps a full pool — it just renders fewer lines. Values are clamped, not rejected, with the same declared-value-owns-the-layer rule as `maxChars`. The deeper read and the wider diversity pass both cost a little more per session start, which is the trade. |
+| `hooks.sessionStart.branchHint` | `"on" \| "off"` | Both | Whether the block is nudged toward your current git branch's topic — on `feat/embedding-pipeline`, embedding memories are lifted (the leading `type/`author segment is ignored). Defaults to on; it only ever lifts an on-topic memory, never buries one. Set to off to restore the plain most-recurring / most-recent read. Repo wins over user, but — following `hooks.userPrompt`, not the `maxChars` layer-lock — a declared-but-unparseable repo value falls through to a valid user value rather than owning the layer. |
+| `hooks.userPrompt` | `"on" \| "off"` | Both | Whether the per-turn relevance pull runs. On each substantive prompt it queries the store for memories matching what you just typed and injects at most three you have not already been shown this session. Defaults to on. It is a switch rather than a mode on purpose: the knobs a mode would expose (how many, how strict) are the two things that must not be turned up on a hook that fires every turn. Two install paths reach it: `lorekit install --hooks all` (read-only and none do not wire the event at all, so they never reach this setting), and the Claude marketplace plugin, whose `hooks.json` wires the event unconditionally — there is no mode involved there, so `hooks.userPrompt` is the mode-independent off switch a plugin user has — and `hooks.disabled: ["UserPromptSubmit"]` switches the event off one gate earlier, so it is not the only opt-out. Repo wins over user. |
 | `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
-| `hooks.instructions` | `Record<"SessionStart" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
+| `hooks.instructions` | `Record<"SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
 | `telemetry.disabled` | `boolean` | Repo | Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set. |
-| `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe. The --threshold flag wins when passed explicitly. Defaults to 0.8. |
+| `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe value-overlap clustering. The --threshold flag wins when passed explicitly. Defaults to 0.8. Key-shape clustering (lorekit dedupe --cluster-by-key) applies no cutoff, so this key is ignored there and passing --threshold alongside --cluster-by-key is a usage error. |
 
 **Layer** notes where a property is read from: `Both` layers, the `Repo` file only (team-level policy), or the `User` file only.
 
@@ -75,7 +81,7 @@ Machine-local preferences live in `~/.lorekit/config.json`. This is where a priv
 
 <TutorialStep number={3} title="Add project-specific hook instructions">
 
-Use `hooks.instructions` to inject custom guidance into the three hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
+Use `hooks.instructions` to inject custom guidance into the four hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
 
 ```json
 // .lorekit.json
@@ -83,6 +89,9 @@ Use `hooks.instructions` to inject custom guidance into the three hook events. T
   "hooks.instructions": {
     // Injected at session start, after the memory index.
     "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    // Injected with the per-turn relevance block — only on a turn that already
+    // has one, so it never adds a line to every prompt.
+    "UserPromptSubmit":   "Prefer a memory that names the file you are editing.",
     // Injected alongside the failure nudge when a tool call fails.
     "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
     // Injected with the retrospective nudge at end-of-turn (null = disabled for this event).
@@ -95,7 +104,59 @@ Both config layers are merged — repo instructions come first, user instruction
 
 </TutorialStep>
 
-<TutorialStep number={4} title="Understand precedence & deny">
+<TutorialStep number={4} title="Size the session-start memory block">
+
+At session start LoreKit injects a compact index of the memories that apply to your working directory. How much of the agent's context that block may occupy is a **character budget**, not a memory count — a count says nothing about cost, and the same number is both padding for a small store and truncation for a large one.
+
+A second bound holds it from the other direction: `maxLessons`, the number of **lines** the block may hold, default 100. The budget alone cannot stop a store of 500 one-word keys from rendering 400 lines inside it, and a 400-line index is unreadable however few characters it costs. Whichever of the two binds first decides the block — and at the default budget that is almost always `maxChars`, which is why `maxLessons` is better understood as the **depth of the read** than as the size of the block. See the note below.
+
+```json
+// .lorekit.json
+{
+  "hooks.userPrompt": "on",
+  "hooks.sessionStart": "hybrid",
+  "hooks.sessionStart.maxChars": 3000,
+  "hooks.sessionStart.maxLessons": 100,
+  "hooks.sessionStart.loopCap": 1,
+  "hooks.sessionStart.branchHint": "on"
+}
+```
+
+Memories are ranked before the budget is spent, so the ones that survive are the most-recurring and most-recent, not merely the newest. They are also **diversified** — when several highly-ranked memories read almost the same (one task's iteration log, say), the near-duplicates are pushed down so the budget shows variety instead of the same lesson three times. And no single self-improvement loop can flood the block: a memory tagged `loop::<bucket>` (a host's own working memory, read back by that host through its tag filter) contributes at most one line to a general session, so one prolific bot's bookkeeping never crowds out your codebase's actual lessons. The ranking also takes a gentle hint from your current **git branch**: on a branch like `feat/embedding-pipeline`, memories about embeddings are nudged up (the leading `type/` or author segment — `feat`, `fix`, a username, a bot name — is ignored, and a trunk branch like `main` adds no hint). It's a light touch: the branch only ever *lifts* an on-topic memory, never buries one, so your most-recurring and most-recent memories keep their place. When the budget runs out, the shape decides what happens to the rest:
+
+- **`hybrid`** (default) — fill the budget, then add one line naming what was left out and where it lives:
+
+  ```text
+  LoreKit: 9 of 50 memories loaded · repo::acme/widget — considerations, not rules; read any in full with memory.read.
+  - (repo::acme/widget) migration-order — Always add the column before the backfill…
+  - (global) flaky-e2e — The retry wrapper hides a real race in the fixture…
+  More lore: repo::acme/widget 25+ · global 25+ — memory.search or memory.read to drill in.
+  ```
+
+- **`index`** — the same list with no trailing map. Truncation is silent, so prefer this only when you know the store is small.
+- **`map`** — lead with the scope map and just three of the most salient memories. For a large store, where knowing the inventory matters more than any one memory.
+
+The header reads `9 of 50` whenever the block is truncated, so an agent can tell that reaching for `memory.search` is worth it. The denominator is what the fetch returned, not what the store holds: each scope is read to a cap of `maxLessons` memories (100 by default), so a four-scope workspace tops out at 400. A count in the map ending in `+` (`100+`) is a scope that hit that cap — a lower bound, not a total. `memory.search` and `memory.read` reach past it.
+
+**The line ceiling sets the depth of the read, and that is where relevance comes from.** `maxLessons` decides how many candidate memories are fetched *per scope* before any ranking happens. At the default of 100 the ranker chooses the ~25 lines it renders from up to 400 candidates across a four-scope hierarchy; at 25 it would be choosing from 100. On a store of any real size that is the difference between ranking the newest few percent and ranking a corpus — a memory you re-learned five times last quarter cannot win a slot it was never fetched for.
+
+The read stops at **100 per scope**, the largest page `GET /memories` will return, so a ceiling above 100 still reads 100 from each scope and fills its remaining lines from the others. Below 25 the read does *not* shrink: the ranker keeps a full pool and you simply see fewer lines.
+
+That read happens on **every session start**, against files on disk in local mode or over the network in remote mode, and the diversity pass that de-duplicates the results scales with the ceiling too. Neither is free: the de-duplication pass is `O(n·k)` in candidates × rendered lines, measured at roughly **25–105 ms** for the 400-candidate pool this default creates (it depends on how long your memories are), against ~15 ms for the old 100-candidate one. That is once per session start, not per turn — but if you raise the ceiling to 200 on a large store, expect closer to 170 ms.
+
+To actually *see* a wider index, raise the budget as well; the ceiling alone will not do it, because `maxChars` runs out first:
+
+```json
+// .lorekit.json — a deliberately wide index, for a large store
+{
+  "hooks.sessionStart.maxChars": 12000,
+  "hooks.sessionStart.maxLessons": 200
+}
+```
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Understand precedence & deny">
 
 A *selection* (which mode to use) is resolved highest-precedence first:
 
@@ -111,7 +172,7 @@ A *constraint* (`deny`) always wins, regardless of the selection. Denies are a u
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Check the resolved mode">
+<TutorialStep number={6} title="Check the resolved mode">
 
 Run the CLI doctor to see the resolved mode, **which source decided it**, and any active deny constraints:
 
@@ -148,6 +209,31 @@ gate when you route LoreKit telemetry to your own backend.
 ```bash
 npx @lorekit/cli doctor --telemetry
 ```
+
+### What usage telemetry identifies
+
+When export is on, the CLI stores two ids in `~/.lorekit/telemetry-id.json` (or
+`$LOREKIT_HOME/telemetry-id.json`) so separate runs can be recognised as coming
+from one place rather than from a thousand anonymous ones:
+
+| Id | What it is |
+|----|-----------|
+| Install id | 32 random hex characters, generated on first run. Not derived from your hostname, username, MAC address or any path — so it identifies the install and nothing about who you are. Reported as `service.instance.id` |
+| Account id | Your LoreKit account UUID, only once the CLI has made an authenticated call and learned it from the response. Reported as `user.id`; before that, `user.id` is your install id prefixed `install:` |
+
+The account id is what lets purely local, offline usage be attributed to an
+account at all — an offline command makes no request, so nothing server-side sees
+it.
+
+`doctor` prints the file path and both values. **Delete the file to reset your
+identity**; the next run with telemetry enabled generates a new install id and
+re-learns the account on your next authenticated call.
+
+Nothing is written while telemetry is disabled — no id is generated and the file
+is never created. If you have opted out, the account id is not recorded either,
+even though the server still returns it on your authenticated requests. Command
+telemetry never includes a path, working directory, token, endpoint, repo name or
+scope string.
 
 <TutorialCallout variant="tip">
 

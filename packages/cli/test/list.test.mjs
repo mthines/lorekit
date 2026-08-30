@@ -15,8 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/lessons-view.mjs';
-import { remoteUnavailableReason } from '../src/stores.mjs';
+import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/shared/lessons-view.mjs';
+import { remoteUnavailableReason } from '../src/shared/stores.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
@@ -47,14 +47,22 @@ test('scopeList drops a null branch/repo scope (no git remote) but keeps global'
 });
 
 test('normalizeEntry maps updated_at → updated and coerces value/tags', () => {
-  const remoteRow = { scope: 'global', key: 'k', value: 42, updated_at: '2026-07-01T00:00:00Z' };
+  const remoteRow = { scope: 'global', key: 'k', value: 42, updated_at: '2026-07-01T00:00:00Z', kind: 'lesson', host: 'reviewer' };
   assert.deepEqual(normalizeEntry(remoteRow), {
     scope: 'global',
     key: 'k',
     value: '42',
     updated: '2026-07-01T00:00:00Z',
+    created: null,
     tags: [],
+    kind: 'lesson',
+    host: 'reviewer',
   });
+  // A row without taxonomy columns normalizes them to null.
+  assert.deepEqual(
+    { kind: normalizeEntry({ scope: 'g', key: 'k' }).kind, host: normalizeEntry({ scope: 'g', key: 'k' }).host },
+    { kind: null, host: null },
+  );
   // A local row already uses `updated`; a nullish value becomes ''.
   const localRow = { scope: 'global', key: 'k2', value: null, updated: '2026-07-02', tags: ['a'] };
   assert.equal(normalizeEntry(localRow).value, '');

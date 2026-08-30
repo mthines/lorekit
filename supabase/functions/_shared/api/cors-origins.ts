@@ -1,6 +1,6 @@
 // CORS origin allowlist matching for the REST edge functions.
 //
-// Mirror of packages/mcp-core/src/cors-origins.ts, kept behaviourally identical
+// Mirror of packages/mcp-core/src/rest/cors-origins.ts, kept behaviourally identical
 // and verbatim (the Deno edge function cannot cross-import the Node package).
 // edge-parity.spec.ts asserts the two stay in sync; cors-origins.spec.ts in
 // mcp-core is the shared test home.
@@ -104,7 +104,10 @@ function isVercelPreviewOrigin(origin: string): boolean {
 // The origin-independent half of the CORS response. `Access-Control-Expose-Headers`
 // is what lets a browser read the server span's `traceparent` off the response
 // (traceRequest sets it) so client-side RUM can link to the server trace, plus the
-// dry-run acknowledgement so a client can confirm no-op execution.
+// dry-run acknowledgement so a client can confirm no-op execution, plus the
+// caller's own account id (`X-LoreKit-User-Id`) — an exposed header is the only
+// kind a browser can read at all, so a value the router sets but does not list
+// here is invisible to the dashboard.
 //
 // `Vary: Origin` is mandatory here BECAUSE `Access-Control-Allow-Origin` is
 // origin-dependent (echoed for an allowed origin, absent otherwise). Without it a
@@ -114,8 +117,8 @@ function isVercelPreviewOrigin(origin: string): boolean {
 // of the request Origin even when the origin is disallowed.
 const STATIC_CORS_HEADERS: Readonly<Record<string, string>> = {
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id',
-  'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id, X-LoreKit-Session-Kind',
+  'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run, X-LoreKit-User-Id',
   'Access-Control-Max-Age': '86400',
   'Vary': 'Origin',
 };

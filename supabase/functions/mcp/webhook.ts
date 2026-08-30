@@ -4,8 +4,7 @@
  * pull_request_review_thread, and issue_comment events and creates
  * candidate memory entries tagged source::pr-webhook.
  *
- * Two signal-quality gates applied before every write (mirrored from
- * packages/mcp-server/src/webhooks/signal-filter.ts — keep in sync):
+ * Two signal-quality gates applied before every write:
  *   1. classifyWebhookAction — only 'created', 'submitted', and 'resolved'
  *      actions carry durable signal; edits, deletes, dismissals are skipped.
  *   2. isSignalWorthy — rejects short bodies, bot noise, and code-only blocks.
@@ -52,9 +51,9 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { validateScope } from '../_shared/scope.ts';
-import { sanitizeOrigin } from '../_shared/origin.ts';
-import { traceRequest, type Span } from '../_shared/otel.ts';
+import { validateScope } from '../_shared/scope/scope.ts';
+import { sanitizeOrigin } from '../_shared/provenance/origin.ts';
+import { traceRequest, type Span } from '../_shared/telemetry/otel.ts';
 import { toolWrite } from './tools.ts';
 import {
   selectWebhookSecrets,
@@ -66,6 +65,8 @@ import {
   reconcileInstallation,
 } from './webhook-installation.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
+import { nullableRpcArg, type DbClient } from '../_shared/db/db-client.ts';
+import type { Database } from '../_shared/db/database.types.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
 const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
@@ -90,7 +91,6 @@ const SUPPORTED_EVENTS = new Set([
 ]);
 
 // ── Signal-quality helpers (inlined — Deno edge functions are self-contained) ─
-// Keep in sync with packages/mcp-server/src/webhooks/signal-filter.ts
 
 type WebhookTier = 'WRITE' | 'SKIP';
 
@@ -149,7 +149,7 @@ const INSTALLATION_EVENTS = new Set([
  * reaches a PostgREST filter unescaped.
  */
 async function resolveSecrets(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   fullName: string | undefined,
   event: string,
 ): Promise<{ secrets: string[]; source: WebhookSecretSource | 'app'; matchedRepo: string | null; isAppEvent: boolean }> {
@@ -206,7 +206,7 @@ async function resolveSecrets(
  *
  */
 async function reconcileAppInstallation(
-  db: ReturnType<typeof createClient>,
+  db: DbClient,
   event: string,
   // deno-lint-ignore no-explicit-any
   payload: Record<string, any>,
@@ -297,7 +297,7 @@ async function reconcileAppInstallation(
     p_github_account_id: githubAccountId,
     p_github_account_login: githubAccountLogin,
     p_account_type: accountType,
-    p_user_id: verdict.kind === 'linked' ? verdict.userId : null,
+    p_user_id: nullableRpcArg(verdict.kind === 'linked' ? verdict.userId : null),
     p_status: verdict.kind,
     p_repos: payloadRepos,
   });
@@ -321,7 +321,17 @@ async function verifyHmac(
   bodyBytes: ArrayBuffer,
   signature: string | null,
   secret: string,
-  secretSource: WebhookSecretSource,
+  /**
+   * `'app'` is a real source — the single-secret GitHub App path — and
+   * `resolveSecrets` above has always returned `WebhookSecretSource | 'app'`.
+   * Only this parameter was narrower, so every App-event verification was a
+   * type error that the untyped client had been absorbing.
+   *
+   * Widened here at the consumer rather than in `WebhookSecretSource` itself:
+   * that type is byte-mirrored from `packages/mcp-core/src/webhook/webhook-secret-select.ts`
+   * and enumerates the SECRET-SELECTION outcomes, which `'app'` is not one of.
+   */
+  secretSource: WebhookSecretSource | 'app',
 ): Promise<{ ok: boolean; secretConfigured: boolean; signaturePresent: boolean; secretSource: string; failReason?: string }> {
   const secretConfigured = secret.length > 0;
   const signaturePresent = !!signature && signature.length > 0;
@@ -377,7 +387,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
   const fullNameRaw = earlyPayload['repository']?.full_name as string | undefined;
   const fullName = fullNameRaw?.toLowerCase();
 
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  const db = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
@@ -398,7 +408,12 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       'lorekit.webhook.hmac_fail_reason': 'secret_not_configured',
       'lorekit.webhook.is_app_event': isAppEvent,
     });
-    span.error('HmacError: secret_not_configured');
+    // A 401: the delivery is unauthenticated because no secret is configured
+    // for this repo. That is a caller/config condition, not a server fault, so
+    // record it WITHOUT flipping the span to ERROR — an unconfigured or forged
+    // delivery is expected in the wild and must not inflate the webhook error
+    // rate. The `hmac_fail_reason` attribute keeps it queryable.
+    span.clientError('HmacError: secret_not_configured');
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -422,7 +437,11 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
   if (!hmac.ok) {
     span.setAttributes({ 'lorekit.webhook.hmac_fail_reason': hmac.failReason ?? 'unknown' });
-    span.error(`HmacError: ${hmac.failReason ?? 'signature mismatch'}`);
+    // A 401 signature mismatch is a caller condition (a forged or misconfigured
+    // delivery), not a server fault. Record it WITHOUT flipping the span to
+    // ERROR so routine bad signatures do not inflate the webhook error rate;
+    // `hmac_fail_reason` keeps the failure queryable.
+    span.clientError(`HmacError: ${hmac.failReason ?? 'signature mismatch'}`);
     return new Response('Unauthorized', { status: 401 });
   }
 
