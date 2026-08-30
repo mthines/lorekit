@@ -61,7 +61,7 @@
  * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
-import { useCallback, useMemo, useTransition, useState } from 'react';
+import { useCallback, useEffect, useMemo, useTransition, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Loader2 } from 'lucide-react';
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
@@ -78,6 +78,8 @@ import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { resolveScopeParam } from '@/lib/scope';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { useExplorerResults } from '@/components/providers/ExplorerResultsProvider';
+import { isExplorerViewFiltered } from '@/lib/explorer-result-count';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { StatusControl } from './StatusControl';
 import {
@@ -665,6 +667,42 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // nothing gets "no matches".
   const isNarrowedWithinView =
     search.trim() !== '' || filters.length > 0 || hasRetentionConditions(retentionConditions);
+
+  // Report the current view's result count up to the TopBar's
+  // MemoryExpandButton (see ExplorerResultsProvider) so the header can show
+  // "12 of 128 memories" while this view narrows the active population,
+  // instead of a bare total that ignores it. `committedSearch`, not `search`
+  // — the settled URL value the server query itself keys off, so the header
+  // doesn't flag "filtered" a debounce tick before the list actually is.
+  const { setResults } = useExplorerResults();
+  const isFilteredView = isExplorerViewFiltered({
+    scope: selectedScope,
+    search: committedSearch,
+    filterCount: filters.length,
+    hasRetentionConditions: hasRetentionConditions(retentionConditions),
+    rangeIsNarrowing,
+    showArchived,
+  });
+  // The API's own exact match count (`GET /memories`'s `total`, identical on
+  // every loaded page) — not how many rows happen to be in the browser. Only
+  // the FIRST page needs reading: `total` describes the whole filtered
+  // population, so it does not change as more pages load.
+  const matchedTotal = data?.pages[0]?.total;
+  useEffect(() => {
+    // `undefined` while the first page is still loading (or between a filter
+    // change and its response) — skip reporting rather than flash a wrong
+    // "0 of 128" for the instant the real count is unknown. The previous
+    // report (or the header's own plain-total fallback before any report
+    // ever arrives) stays on screen until this resolves.
+    if (matchedTotal === undefined) return;
+    setResults({ matchedCount: matchedTotal, isFiltered: isFilteredView });
+  }, [setResults, matchedTotal, isFilteredView]);
+  // Cleared on unmount ONLY (empty-ish deps — `setResults` is a stable setter
+  // identity) so navigating away from /lore never leaves a stale filtered
+  // count in the header; a separate effect from the one above so every
+  // narrowing/page-load update doesn't bounce the header through `null`
+  // first, which would flash the plain total on every keystroke.
+  useEffect(() => () => setResults(null), [setResults]);
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a

@@ -61,9 +61,12 @@ interface ListParams {
 /**
  * One row as `lorekit_memory_list` returns it: the `memories` columns plus the
  * org embed FLATTENED into two scalars, because a SQL function returns a table
- * and not a nested document.
+ * and not a nested document. `total_count` (migration 00094) is a `count(*)
+ * over ()` — identical on every row of the result, so it is read off the
+ * first row rather than being a per-memory field; `shapeRpcRow` strips it
+ * before a row is shaped into the response's `entries`.
  */
-type ListRpcRow = MemoryRow & { org_name: string | null; org_slug: string | null };
+type ListRpcRow = MemoryRow & { org_name: string | null; org_slug: string | null; total_count: number | null };
 
 /**
  * Re-nest the flattened org columns so the response body is byte-identical to
@@ -75,7 +78,7 @@ type ListRpcRow = MemoryRow & { org_name: string | null; org_slug: string | null
  * one definition rather than adding a second flattening rule here.
  */
 function shapeRpcRow(row: ListRpcRow): Record<string, unknown> {
-  const { org_name, org_slug, ...rest } = row;
+  const { org_name, org_slug, total_count: _total_count, ...rest } = row;
   return shapeMemoryRow({
     ...rest,
     orgs:
@@ -236,11 +239,20 @@ async function respondWithPage(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const page = buildPage((data ?? []) as ListRpcRow[], params.limit, params.sort);
-  span.setAttributes({ 'lorekit.result_count': page.entries.length, 'lorekit.has_more': page.hasMore });
+  const rows = (data ?? []) as ListRpcRow[];
+  const page = buildPage(rows, params.limit, params.sort);
+  // `total_count` is the SAME value on every row of `rows` (a `count(*) over
+  // ()` — see migration 00094), so any row answers it; an empty result has no
+  // row to read it from, and 0 matches is the exact total in that case too.
+  const total = rows[0]?.total_count ?? 0;
+  span.setAttributes({
+    'lorekit.result_count': page.entries.length,
+    'lorekit.has_more': page.hasMore,
+    'lorekit.total_count': total,
+  });
   // Let the router record the RECORD count (not just the call) — see
   // RESULT_COUNT_HEADER in _shared/api/router.ts.
-  const res = ok({ ...page, entries: page.entries.map(shapeRpcRow) }, cors);
+  const res = ok({ ...page, entries: page.entries.map(shapeRpcRow), total }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   // memory.list is a BULK read (every row a listing call returned) for the
   // per-memory counter (migration 00077) — one statement for the whole page.

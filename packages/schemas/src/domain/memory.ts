@@ -850,6 +850,16 @@ export const MemoryPageResponseSchema = z.object({
   entries: z.array(MemoryEntrySchema),
   hasMore: z.boolean(),
   nextCursor: z.string().nullable(),
+  /**
+   * Exact count of every row the request's filters matched, ignoring `limit`
+   * — so a caller can show "12 of 128" instead of "how many happen to be
+   * loaded so far". OPTIONAL: only `GET /memories` / `POST /memories/list`
+   * populate it today (`lorekit_memory_list`'s `total_count` column, migration
+   * 00094, a `count(*) over ()` alongside the page — one query, no second
+   * round trip). `POST /memories/search` has no equivalent yet, so it is
+   * absent there rather than a fabricated number.
+   */
+  total: z.number().int().nonnegative().optional(),
 });
 export type MemoryPageResponse = z.infer<typeof MemoryPageResponseSchema>;
 

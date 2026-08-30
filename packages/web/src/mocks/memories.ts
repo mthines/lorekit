@@ -429,7 +429,9 @@ function listFrom(rows: MemoryRow[], url: URL) {
   const matched = filterRows(rows, url).sort((a, b) => String(b[sort]).localeCompare(String(a[sort])));
   // No cursor emulation: every story fits in one page, and a fake cursor would
   // encode a pagination contract the fixtures do not actually implement.
-  return { entries: matched.slice(0, limit), hasMore: false, nextCursor: null };
+  // `total` mirrors the real route's `count(*) over ()` (migration 00094):
+  // every row FILTERING matched, before `limit` trims the page.
+  return { entries: matched.slice(0, limit), hasMore: false, nextCursor: null, total: matched.length };
 }
 
 /**

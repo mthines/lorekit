@@ -41,6 +41,23 @@ The literal routes are registered before the `/:id` routes in `index.ts` so a fu
 says "the request does not fit in a URL", not "this changes something". `audit-coverage.spec.ts`
 pins that exact list, so a fifth read-only POST is a deliberate edit rather than a silent one.
 
+## `GET /` / `POST /list` response — `total` (migration 00094)
+
+```json
+{ "entries": [ /* … */ ], "hasMore": true, "nextCursor": "…", "total": 2897 }
+```
+
+`total` is the EXACT count of every row the request's scope/search/filter/retention-condition
+predicate matched, ignoring `limit` — not how many rows are in `entries`. It comes from
+`lorekit_memory_list`'s `total_count` column (a `count(*) over ()` alongside the page, computed in
+the SAME query as the page itself — no second round trip). Every row of a given response carries
+the same value, so a caller reads it off `entries[0]` (or treats an empty result as `0`); the field
+is OPTIONAL in `MemoryPageResponseSchema` because `POST /memories/search` shares the same response
+shape and has no equivalent aggregate yet. The dashboard's Lore Explorer is the first consumer: the
+header's memory count reads `total` to show "12 of 128" for a narrowed view, replacing an earlier
+version that showed how many rows had LOADED so far — a floor that understated the true match for
+any view spanning more than one page.
+
 ## The body transport — `POST /list`, `POST /facets`, `POST /activity`
 
 Each is the SAME read as the identically-named `GET`, decoded from a JSON body instead of a
