@@ -665,16 +665,20 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     rangeIsNarrowing,
     showArchived,
   });
+  // The API's own exact match count (`GET /memories`'s `total`, identical on
+  // every loaded page) — not how many rows happen to be in the browser. Only
+  // the FIRST page needs reading: `total` describes the whole filtered
+  // population, so it does not change as more pages load.
+  const matchedTotal = data?.pages[0]?.total;
   useEffect(() => {
-    setResults({
-      matchedCount: lessons.length,
-      // No further pages remain once `hasNextPage` is false — see
-      // `explorerCountLabel` for why that is what makes the count exact
-      // rather than a floor.
-      isExact: !hasNextPage,
-      isFiltered: isFilteredView,
-    });
-  }, [setResults, lessons.length, hasNextPage, isFilteredView]);
+    // `undefined` while the first page is still loading (or between a filter
+    // change and its response) — skip reporting rather than flash a wrong
+    // "0 of 128" for the instant the real count is unknown. The previous
+    // report (or the header's own plain-total fallback before any report
+    // ever arrives) stays on screen until this resolves.
+    if (matchedTotal === undefined) return;
+    setResults({ matchedCount: matchedTotal, isFiltered: isFilteredView });
+  }, [setResults, matchedTotal, isFilteredView]);
   // Cleared on unmount ONLY (empty-ish deps — `setResults` is a stable setter
   // identity) so navigating away from /lore never leaves a stale filtered
   // count in the header; a separate effect from the one above so every

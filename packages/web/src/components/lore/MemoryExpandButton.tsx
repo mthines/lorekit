@@ -104,7 +104,7 @@ export function MemoryExpandButton({
   // makes `matchedLabel` fall back to the plain `total` there.
   const matchedLabel =
     !scope && explorerResults?.isFiltered
-      ? explorerCountLabel(explorerResults.matchedCount, explorerResults.isExact, total)
+      ? explorerCountLabel(explorerResults.matchedCount, total)
       : null;
 
   // `total` above reads `memoryTotal` only on the unscoped branch, so a scoped

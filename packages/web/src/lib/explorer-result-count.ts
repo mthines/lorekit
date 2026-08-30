@@ -42,14 +42,17 @@ export function isExplorerViewFiltered(input: {
 }
 
 /**
- * The header's label for a filtered Explorer view.
+ * The header's label for a filtered Explorer view: "12 of 128".
  *
- * `matchedCount` is exact only once every matching page has loaded
- * (`isExact`); short of that it is a floor — `useMemories` never fetches a
- * page it doesn't need to render, so the true matching count is unknown
- * until pagination is exhausted. The trailing `+` keeps that distinction
- * visible rather than a number that reads as final.
+ * `matchedCount` is the API's own exact count of every row the current
+ * scope/search/filter/retention/date-range view matches — `GET /memories`'s
+ * optional `total` field (`lorekit_memory_list`'s `total_count` column,
+ * migration 00094, a `count(*) over ()` alongside the page). It is NOT how
+ * many rows happen to be loaded into the browser so far: an earlier version
+ * of this label used the loaded-page count as a floor ("12+ of 128"), which
+ * understated the true match for any view spanning more than one page and
+ * never resolved past the page size for a large account.
  */
-export function explorerCountLabel(matchedCount: number, isExact: boolean, total: number): string {
-  return `${matchedCount}${isExact ? '' : '+'} of ${total}`;
+export function explorerCountLabel(matchedCount: number, total: number): string {
+  return `${matchedCount} of ${total}`;
 }

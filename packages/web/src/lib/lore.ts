@@ -213,7 +213,15 @@ export interface MemoryFilters {
   expiringWithinDays?: number;
 }
 
-export type MemoryPage = Page<LessonEntry>;
+/**
+ * `total` — exact count of every memory the request's filters matched,
+ * ignoring pagination (`MemoryPageResponseSchema`'s optional field,
+ * `lorekit_memory_list`'s `total_count` column, migration 00094). `Page<T>`
+ * itself stays total-less: it is shared with `useAuditLog`, which has no
+ * equivalent aggregate, so this is `MemoryPage`'s own addition rather than a
+ * field every keyset page now carries.
+ */
+export type MemoryPage = Page<LessonEntry> & { total?: number };
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -276,6 +284,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       rows: page.entries.map(lessonFromMemoryEntry),
       nextCursor: page.nextCursor,
       hasMore: page.hasMore,
+      total: page.total,
     };
   } catch (err) {
     console.error('[listMemories] REST error:', messageFor(err));

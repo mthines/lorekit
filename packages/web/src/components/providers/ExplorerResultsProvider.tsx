@@ -21,10 +21,12 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 
 export interface ExplorerResults {
-  /** How many memories the Explorer's current view has loaded so far. */
+  /**
+   * The API's own exact count of every memory the current view matches
+   * (`GET /memories`'s `total` field) — never how many rows happen to be
+   * loaded into the browser so far.
+   */
   matchedCount: number;
-  /** True once `matchedCount` is the complete count — no further pages remain to load. */
-  isExact: boolean;
   /**
    * True when the current view narrows the account's active memories (a
    * scope, a search term, a filter pill, a retention condition, or a date

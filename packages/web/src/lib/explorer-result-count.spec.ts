@@ -44,15 +44,11 @@ describe('isExplorerViewFiltered', () => {
 });
 
 describe('explorerCountLabel', () => {
-  it('renders an exact match with no trailing +', () => {
-    expect(explorerCountLabel(12, true, 128)).toBe('12 of 128');
-  });
-
-  it('renders a floor with a trailing + when more pages remain', () => {
-    expect(explorerCountLabel(12, false, 128)).toBe('12+ of 128');
+  it('renders the exact matched count against the total', () => {
+    expect(explorerCountLabel(12, 128)).toBe('12 of 128');
   });
 
   it('handles a zero match', () => {
-    expect(explorerCountLabel(0, true, 128)).toBe('0 of 128');
+    expect(explorerCountLabel(0, 128)).toBe('0 of 128');
   });
 });
