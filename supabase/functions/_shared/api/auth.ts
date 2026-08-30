@@ -63,8 +63,48 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     // Create one service-role client and reuse it for both the token lookup and
     // subsequent business queries — avoids a second client allocation per request.
     const db = svcClient();
-    const { data, error } = await db.from('api_tokens').select('user_id,permissions,scopes,org_access,org_ids').eq('token_hash', hash).maybeSingle();
-    if (error || !data) { span.clientError('invalid_api_key').end(); return null; }
+    // The token lookup gets its own CLIENT span, mirroring the MCP counterpart
+    // (`mcp/auth.ts`'s `lookupSpan`). Until now this was the ONE network
+    // round-trip on this surface with no span of its own — the JWT tier's
+    // `auth.getUser()` below got one in #592, but this `lk_*` read stayed a raw
+    // `svcClient()` call, so its latency folded into `lorekit.rest.auth`'s
+    // undifferentiated self time, indistinguishable from CPU-bound auth work.
+    // That is exactly what made a p95 latency spike on the api_key tier
+    // unattributable (`api — elevated p95 latency`).
+    //
+    // Deliberately NOT `createTracedClient`: it interpolates filter VALUES into
+    // the span name and `db.query.text` (`buildSql` over `eq()` arguments), and
+    // the filter here is the token hash — the stored credential. The query
+    // therefore runs on the raw client and only the timing is spanned, same as
+    // the MCP counterpart.
+    const lookupSpan = span.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
+      'db.system': 'postgresql',
+      'db.operation.name': 'SELECT',
+      'db.collection.name': 'api_tokens',
+    }, SPAN_KIND_CLIENT);
+    let data: { user_id: string; permissions: string[] | null; scopes?: unknown; org_access?: unknown; org_ids?: unknown } | null = null;
+    let success = false;
+    try {
+      const result = await db.from('api_tokens').select('user_id,permissions,scopes,org_access,org_ids').eq('token_hash', hash).maybeSingle();
+      data = result.data;
+      success = !result.error;
+      if (result.error) {
+        lookupSpan.error(`PostgrestError: ${result.error.code ?? 'unknown'}`);
+      }
+    } catch (err) {
+      // The error NAME only — a Deno fetch failure renders the request URL into
+      // its message, and this request's URL carries `token_hash=eq.<sha256>`.
+      lookupSpan.error((err as Error).name);
+      throw err;
+    } finally {
+      // `finally`, so a rejected read still exports the span instead of the
+      // failing case — the one this span exists to make visible — vanishing.
+      lookupSpan.setAttributes({
+        'db.response.rows': data ? 1 : 0,
+        'db.success': success,
+      }).end();
+    }
+    if (!data) { span.clientError('invalid_api_key').end(); return null; }
     span.setAttributes({ 'auth.type': 'api_key', 'auth.outcome': 'ok', 'auth.user_id': data.user_id }).end();
     return {
       auth: {
