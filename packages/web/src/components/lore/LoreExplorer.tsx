@@ -39,6 +39,11 @@
  *   conditions) — one dimension per pill, OR within a dimension and AND across.
  *   Ownership (Personal / an org) is one of those dimensions now, filtered
  *   server-side like every other (migration 00064).
+ * - `retention` param: the retention-preview trio (`lib/retention-filter.ts`)
+ *   — min age / unseen-for / seen-at-most, the SAME conditions a saved
+ *   retention policy matches on. Narrows the list to what a policy with these
+ *   conditions would catch, so a reader can verify before ever saving one.
+ *   Server-side (migration 00090), shareable, absent means no narrowing.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
  *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
@@ -54,7 +59,8 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Search, Loader2, Archive } from 'lucide-react';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
@@ -96,6 +102,16 @@ import {
   type FilterOperator,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
+import {
+  RetentionConditionsPanel,
+  RetentionConditionsTrigger,
+} from './RetentionConditionsControl';
+import {
+  hasRetentionConditions,
+  normalizeRetentionConditions,
+  retentionConditionsParamValue,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 
@@ -155,6 +171,9 @@ function ControlRow({
   dateActive,
   status,
   onStatusChange,
+  retentionConditions,
+  retentionPanelOpen,
+  onToggleRetentionPanel,
 }: {
   variant: 'desktop' | 'mobile';
   search: string;
@@ -172,6 +191,9 @@ function ControlRow({
   dateActive?: boolean;
   status: MemoryStatus;
   onStatusChange: (status: MemoryStatus) => void;
+  retentionConditions: RetentionConditions;
+  retentionPanelOpen: boolean;
+  onToggleRetentionPanel: () => void;
 }) {
   const desktop = variant === 'desktop';
 
@@ -198,6 +220,11 @@ function ControlRow({
         editingField={editingField}
         onEditField={onEditField}
         variant={variant}
+      />
+      <RetentionConditionsTrigger
+        conditions={retentionConditions}
+        open={retentionPanelOpen}
+        onToggle={onToggleRetentionPanel}
       />
       <DateRangePicker
         value={range}
@@ -389,6 +416,50 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Ephemeral — a request, not state worth sharing, so never in the URL.
   const [editingField, setEditingField] = useState<FilterField | null>(null);
 
+  // URL-backed retention-preview trio (`lib/retention-filter.ts`) — narrows the
+  // list to what a retention policy with these conditions would catch. `null`
+  // is the default (no narrowing); `useUrlState` drops the param entirely once
+  // the last condition is cleared (`retentionConditionsParamValue`).
+  const [rawRetention, setRawRetention] = useUrlState<RetentionConditions | null>(
+    'retention',
+    null,
+    { cleanOnPathname: '/lore', navigationMode: 'push' },
+  );
+  const retentionConditions = useMemo(
+    () => normalizeRetentionConditions(rawRetention),
+    [rawRetention],
+  );
+  const setRetentionConditions = useCallback(
+    (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
+    [setRawRetention],
+  );
+  // The disclosure's open/closed state — ephemeral, never in the URL (the
+  // conditions themselves are the shareable part, not whether the panel is
+  // showing).
+  const [retentionPanelOpen, setRetentionPanelOpen] = useState(false);
+
+  const router = useRouter();
+
+  /** Hand the current scope + retention conditions to Settings → Retention
+   *  Policies, which opens its "New policy" dialog pre-filled with them —
+   *  the "verify, then save as a policy" seam this whole feature exists for.
+   *  `selectedScope === null` ("all scopes") maps to the policy schema's own
+   *  "everything" scope, `global` (see `scopeMatchesPolicy`). */
+  function handleCreatePolicy() {
+    const params = new URLSearchParams();
+    params.set('prefillScope', selectedScope ?? 'global');
+    if (retentionConditions.minAgeDays !== undefined) {
+      params.set('prefillMinAgeDays', String(retentionConditions.minAgeDays));
+    }
+    if (retentionConditions.unseenDays !== undefined) {
+      params.set('prefillUnseenDays', String(retentionConditions.unseenDays));
+    }
+    if (retentionConditions.maxSeenCount !== undefined) {
+      params.set('prefillMaxSeenCount', String(retentionConditions.maxSeenCount));
+    }
+    router.push(`/settings/grooming?${params.toString()}`);
+  }
+
   // The desktop and mobile layouts are BOTH mounted — the breakpoint split
   // below is CSS (`hidden md:flex` / `flex md:hidden`), not a conditional
   // render — so both `ControlRow`s hold a live `FilterMenu`. An `editingField`
@@ -433,6 +504,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     search: committedSearch,
     range: resolvedRange,
     filters,
+    retentionConditions,
     showArchived,
     expiringWithinDays: expiringWithinDays(status),
   });
@@ -470,7 +542,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // distinction is what the empty state turns on — a status view with nothing
   // narrowing it gets its own copy, the same view with a search that matched
   // nothing gets "no matches".
-  const isNarrowedWithinView = search.trim() !== '' || filters.length > 0;
+  const isNarrowedWithinView =
+    search.trim() !== '' || filters.length > 0 || hasRetentionConditions(retentionConditions);
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -780,7 +853,18 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
+          retentionConditions={retentionConditions}
+          retentionPanelOpen={retentionPanelOpen}
+          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
+
+        {retentionPanelOpen && (
+          <RetentionConditionsPanel
+            conditions={retentionConditions}
+            onChange={setRetentionConditions}
+            onClose={() => setRetentionPanelOpen(false)}
+          />
+        )}
 
         <FilterPillRow
           filters={filters}
@@ -789,6 +873,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onClearAll={handleClearFilters}
           onEditField={setEditingField}
         />
+
+        {hasRetentionConditions(retentionConditions) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2">
+            <p className="text-xs text-[var(--color-content-secondary)]">
+              Showing lessons a retention policy with these conditions would catch.
+            </p>
+            <button
+              type="button"
+              onClick={handleCreatePolicy}
+              className="flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90"
+            >
+              <Archive className="size-3.5" aria-hidden />
+              Create retention policy
+            </button>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
       </div>
@@ -811,7 +911,20 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
+          retentionConditions={retentionConditions}
+          retentionPanelOpen={retentionPanelOpen}
+          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
+
+        {retentionPanelOpen && (
+          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <RetentionConditionsPanel
+              conditions={retentionConditions}
+              onChange={setRetentionConditions}
+              onClose={() => setRetentionPanelOpen(false)}
+            />
+          </div>
+        )}
 
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
           <FilterPillRow
@@ -822,6 +935,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onEditField={setEditingField}
           />
         </div>
+
+        {hasRetentionConditions(retentionConditions) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2">
+            <p className="text-xs text-[var(--color-content-secondary)]">
+              Showing lessons a retention policy with these conditions would catch.
+            </p>
+            <button
+              type="button"
+              onClick={handleCreatePolicy}
+              className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90"
+            >
+              <Archive className="size-3.5" aria-hidden />
+              Create retention policy
+            </button>
+          </div>
+        )}
 
         <div>{renderResults()}</div>
       </div>

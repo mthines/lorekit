@@ -41,6 +41,14 @@ Both answer `{ "count": <n>, "keys": [{ "scope", "key" }] }` — the exact set a
 run would archive, because a saved run and a preview resolve through the
 IDENTICAL candidate query. Nothing is changed by a preview.
 
+The [Lore Explorer](/lore) previews the same three conditions a different way:
+its "Age & activity" filter (`min_age_days` / `unseen_days` / `max_seen_count`)
+narrows the list to the actual lesson ROWS a policy with those conditions would
+catch, not just a count — so you can scroll through them before saving
+anything. Once at least one condition is set, a **Create retention policy**
+action hands the current scope and conditions to Settings → Retention
+Policies, which opens the New policy dialog pre-filled with them.
+
 </TutorialStep>
 
 <TutorialStep number={2} title="Save it as a policy">
@@ -51,8 +59,8 @@ lorekit policy create --scope repo::acme/app --name "stale repo lore" \
 ```
 
 `mode: review` is the default — the policy is saved and shows up in the
-[dashboard's Grooming settings](/settings/grooming) for you to run by hand
-whenever you like (`lorekit groom --policy-id <id> --run`). `mode: auto`
+[dashboard's Retention Policies settings](/settings/grooming) for you to run
+by hand whenever you like (`lorekit groom --policy-id <id> --run`). `mode: auto`
 gets swept **nightly**, but only once you also pass `--enabled` — a saved
 `auto` policy always starts disabled, so creating one never archives
 anything unattended by itself:

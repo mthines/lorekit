@@ -242,6 +242,20 @@ export const ListMemoriesQuerySchema = z.object({
    * after coercion, so `7.5` and `abc` are a 400 rather than a silent floor.
    */
   expiring_within_days: z.coerce.number().int().min(1).max(365).optional(),
+  /**
+   * Retention-policy preview conditions — the SAME three thresholds
+   * `GroomConditionsSchema` (`@lorekit/schemas/retention`) matches a saved
+   * policy on, exposed here so the Explorer's filter bar can show the actual
+   * lesson ROWS a policy would catch (not just a count) before one is ever
+   * saved — "verify before you run it" without leaving the list view. The
+   * bounds are copied rather than imported: `retention.ts` is its own domain
+   * file for the reason its header states, and `memory.spec.ts` pins the two
+   * in step. `z.coerce` for `expiring_within_days`'s reason — every query
+   * param arrives as a string.
+   */
+  min_age_days: z.coerce.number().int().min(1).max(3650).optional(),
+  unseen_days: z.coerce.number().int().min(1).max(3650).optional(),
+  max_seen_count: z.coerce.number().int().min(0).max(100_000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -833,6 +847,10 @@ export const ListMemoriesBodySchema = z.object({
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.boolean().optional().default(false),
   expiring_within_days: z.number().int().min(1).max(365).optional(),
+  /** See `ListMemoriesQuerySchema.min_age_days` — same fields, real JSON types. */
+  min_age_days: z.number().int().min(1).max(3650).optional(),
+  unseen_days: z.number().int().min(1).max(3650).optional(),
+  max_seen_count: z.number().int().min(0).max(100_000).optional(),
   limit: z.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });

@@ -1,7 +1,17 @@
 'use client';
 
 /**
- * GroomingRuleBuilder — the Settings → Grooming surface.
+ * GroomingRuleBuilder — the Settings → Retention Policies surface.
+ *
+ * "Retention policy" is the one user-facing noun for this feature (the page
+ * title, the feature flag `retention-policies`, and every string below use
+ * it) — "grooming" stays the internal/technical name for the underlying
+ * mechanism (the `groom.*` MCP tools and REST routes, the CLI's `lorekit
+ * groom`/`lorekit-groom` skill, this component's own file name, and the
+ * `/settings/grooming` route slug). Renaming those is a separate, much larger
+ * change (breaking every existing integration, script and bookmark that names
+ * them) and out of scope here — this file only makes the copy a USER reads
+ * consistent, not every identifier a developer does.
  *
  * LIST-FIRST: the page opens on the saved policies (or an empty state that
  * teaches) plus a single **Add policy** button. The rule form — scope, the
@@ -15,6 +25,7 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Archive, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { GroomRequest, RetentionPolicy } from '@lorekit/schemas/retention';
@@ -52,7 +63,7 @@ const PREVIEW_DEBOUNCE_MS = 400;
  */
 const RUN_CONFIRM_THRESHOLD = 25;
 
-interface Conditions {
+export interface Conditions {
   scope: string;
   minAgeDays: string;
   unseenDays: string;
@@ -60,6 +71,25 @@ interface Conditions {
 }
 
 const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: '', maxSeenCount: '' };
+
+/**
+ * `?prefillScope=` / `?prefillMinAgeDays=` / `?prefillUnseenDays=` /
+ * `?prefillMaxSeenCount=` — how the Lore Explorer's "Create retention policy"
+ * action hands off its current scope + retention conditions
+ * (`lib/retention-filter.ts`) to this page. Read ONCE (see the mount effect in
+ * {@link GroomingRuleBuilder}) so a reload of the resulting `/settings/grooming`
+ * URL does not keep reopening the dialog; absent entirely means "no prefill".
+ */
+function conditionsFromPrefillParams(params: URLSearchParams): Conditions | null {
+  const scope = params.get('prefillScope');
+  if (!scope) return null;
+  return {
+    scope,
+    minAgeDays: params.get('prefillMinAgeDays') ?? '',
+    unseenDays: params.get('prefillUnseenDays') ?? '',
+    maxSeenCount: params.get('prefillMaxSeenCount') ?? '',
+  };
+}
 
 /** Parse a numeric field, or `undefined` when blank — never NaN out to the API. */
 function parseIntField(raw: string): number | undefined {
@@ -192,13 +222,20 @@ function ScopeField({ value, onChange }: { value: string; onChange: (scope: stri
  */
 function PolicyForm({
   initialPolicy,
+  initialConditions,
   onClose,
 }: {
   initialPolicy: RetentionPolicy | null;
+  /**
+   * Seed the NEW-policy form (ignored when editing, which always seeds from
+   * `initialPolicy`) — how a scope + conditions handed off from the Lore
+   * Explorer's "Create retention policy" action arrive prefilled.
+   */
+  initialConditions?: Conditions | null;
   onClose: () => void;
 }) {
   const [conditions, setConditions] = useState<Conditions>(() =>
-    initialPolicy ? conditionsFromPolicy(initialPolicy) : EMPTY_CONDITIONS,
+    initialPolicy ? conditionsFromPolicy(initialPolicy) : (initialConditions ?? EMPTY_CONDITIONS),
   );
   const [autoEnabled, setAutoEnabled] = useState(() =>
     initialPolicy ? isAutoEnabled(initialPolicy) : false,
@@ -514,16 +551,40 @@ function PolicyRow({
 
 export function GroomingRuleBuilder() {
   const reduceMotion = useReducedMotion();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<RetentionPolicy | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RetentionPolicy | null>(null);
+  const [prefillConditions, setPrefillConditions] = useState<Conditions | null>(null);
 
   const updatePolicy = useUpdatePolicy();
   const deletePolicyMutation = useDeletePolicy();
   const { data: policies = [], isLoading: policiesLoading } = usePolicies();
 
+  // Consume a one-shot `?prefillScope=…` handoff from the Lore Explorer's
+  // "Create retention policy" action (see `LoreExplorer.handleCreatePolicy`):
+  // open the New policy dialog pre-filled with the scope + conditions the
+  // Explorer had active, then strip the params so reloading this URL does not
+  // reopen the dialog every time. Runs once per mount — searchParams is
+  // intentionally omitted from the deps so a later, unrelated navigation to
+  // this same page (e.g. closing and reopening via "Add policy") never
+  // replays a stale prefill.
+  useEffect(() => {
+    const prefill = conditionsFromPrefillParams(searchParams);
+    if (!prefill) return;
+    setPrefillConditions(prefill);
+    setEditingPolicy(null);
+    setDialogOpen(true);
+    router.replace('/settings/grooming', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function openCreate() {
+    // Clear any lingering prefill from a previous Explorer handoff — a manual
+    // "Add policy" click always starts from a blank form.
+    setPrefillConditions(null);
     setEditingPolicy(null);
     setDialogOpen(true);
   }
@@ -582,7 +643,7 @@ export function GroomingRuleBuilder() {
             <Archive className="size-5" aria-hidden />
           </span>
           <p className="max-w-sm text-sm text-[var(--color-content-secondary)]">
-            Grooming archives stale lore automatically, on your rules. Never a hard delete.
+            Retention policies archive stale lore automatically, on your rules. Never a hard delete.
           </p>
           <button
             type="button"
@@ -619,7 +680,7 @@ export function GroomingRuleBuilder() {
 
       <FormDialog
         open={dialogOpen}
-        title={editingPolicy ? 'Edit policy' : 'New grooming policy'}
+        title={editingPolicy ? 'Edit policy' : 'New retention policy'}
         description="Build a rule, see how many lessons it would catch, then run it now or save it to run automatically. A rule only ever archives — never permanently deletes."
         onClose={() => setDialogOpen(false)}
       >
@@ -627,6 +688,7 @@ export function GroomingRuleBuilder() {
         <PolicyForm
           key={editingPolicy?.id ?? 'new'}
           initialPolicy={editingPolicy}
+          initialConditions={prefillConditions}
           onClose={() => setDialogOpen(false)}
         />
       </FormDialog>

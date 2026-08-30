@@ -44,6 +44,15 @@ interface ListParams {
   sort: SortColumn;
   archived: boolean;
   expiring_within_days?: number | undefined;
+  /**
+   * The retention-policy preview trio — see migration 00090. Plain optional
+   * scalars, like `expiring_within_days` above, not a `MemoryDimensions`
+   * entry: they are numeric thresholds against `created_at`/`last_seen_at`/
+   * `seen_count`, not a categorical value-list.
+   */
+  min_age_days?: number | undefined;
+  unseen_days?: number | undefined;
+  max_seen_count?: number | undefined;
   limit: number;
   cursor?: string | undefined;
   dimensions: MemoryDimensions;
@@ -220,6 +229,10 @@ async function respondWithPage(
     p_cursor_id: usableCursor?.id ?? null,
     // limit + 1: the overflow row is what `buildPage` reads `hasMore` from.
     p_limit: params.limit + 1,
+    // The retention-policy preview trio (00090) — see `ListParams`.
+    p_min_age_days: params.min_age_days ?? null,
+    p_unseen_days: params.unseen_days ?? null,
+    p_max_seen_count: params.max_seen_count ?? null,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
@@ -263,6 +276,9 @@ export async function handleList(
     sort: p.sort,
     archived: p.archived === 'true',
     expiring_within_days: p.expiring_within_days,
+    min_age_days: p.min_age_days,
+    unseen_days: p.unseen_days,
+    max_seen_count: p.max_seen_count,
     limit: p.limit,
     cursor: p.cursor,
     dimensions: dimensionsFromQuery(p),
@@ -302,6 +318,9 @@ export async function handleListPost(
     sort: b.sort,
     archived: b.archived,
     expiring_within_days: b.expiring_within_days,
+    min_age_days: b.min_age_days,
+    unseen_days: b.unseen_days,
+    max_seen_count: b.max_seen_count,
     limit: b.limit,
     cursor: b.cursor,
     dimensions: dimensionsFromBody(b),
