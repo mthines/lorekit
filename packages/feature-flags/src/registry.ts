@@ -68,6 +68,16 @@ const REGISTRY_INPUT = [
     owner: '@lorekit/web',
     tags: ['dashboard', 'web', 'rollout'],
   },
+  {
+    key: 'lore-explorer-instruments',
+    description:
+      "Lore Explorer \u2014 the collapsible instrument panel above the memory list (matrix and timeline). An instrument is a filter INPUT, not a view: every selection it makes is written to the same `?filters=` bar the menu writes, so the list below stays the single output. Gates only the panel; with it off `/lore` renders exactly as before. The matrix reads `POST /memories/pivot` (migration 00090), which ships unconditionally \u2014 the route is additive and safe to serve whether or not this is on.",
+    type: 'boolean',
+    variants: { off: false, on: true },
+    defaultVariant: 'off',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'web', 'lore-explorer', 'rollout'],
+  },
 ] satisfies unknown[];
 
 function parseRegistry(input: unknown): readonly FlagDefinition[] {

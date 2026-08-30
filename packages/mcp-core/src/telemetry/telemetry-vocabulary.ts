@@ -88,6 +88,14 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
     reason: 'Write-activity heatmap buckets for the Explorer.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
+  'memory.pivot': {
+    reason: 'Two-dimensional facet counts behind the Explorer\'s matrix instrument.',
+    restOnly:
+      'memory.facets with a second group-by, so it inherits that decision exactly: a '
+      + 'name-bearing scope-leak surface (origin_repo/origin_branch values) for a charting '
+      + 'question no agent loop has asked. An agent that wants the intersection filters '
+      + 'memory.list on both dimensions and reads the rows.',
+  },
   'memory.read-activity': {
     reason: 'Read-activity counterpart of memory.activity.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',

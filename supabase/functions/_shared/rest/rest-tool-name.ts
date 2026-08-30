@@ -54,6 +54,7 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories GET /usage/runs': 'memory.usage-runs',
   'memories GET /tags': 'memory.tags',
   'memories GET /facets': 'memory.facets',
+  'memories GET /pivot': 'memory.pivot',
   'memories GET /activity': 'memory.activity',
   // The BODY transport for the three filtered reads — one operation spelled two
   // ways, so it reports under the SAME name as its GET sibling. Splitting them
@@ -61,6 +62,7 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   // day the dashboard switched transports.
   'memories POST /list': 'memory.list',
   'memories POST /facets': 'memory.facets',
+  'memories POST /pivot': 'memory.pivot',
   'memories POST /activity': 'memory.activity',
   'memories GET /read-activity': 'memory.read-activity',
   'memories GET /read-ranking': 'memory.read-ranking',

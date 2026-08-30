@@ -212,7 +212,7 @@ describe('tenancy exclusion guard (REST helper)', () => {
  * `global`), never a scope name, so there is no name to withhold. Adding a
  * name-bearing dimension to it puts it in this list.
  */
-const RPC_BACKED_SCOPE_READS = ['scopes', 'tags', 'activity', 'read-activity', 'facets', 'read-ranking'] as const;
+const RPC_BACKED_SCOPE_READS = ['scopes', 'tags', 'activity', 'read-activity', 'facets', 'pivot', 'read-ranking'] as const;
 
 /**
  * The RPC-backed ROW read. Separate from the aggregates above because the

@@ -41,6 +41,7 @@ import { normalizeTagList } from '@lorekit/schemas/tags';
 import type {
   ActivityBody,
   ListFacetsBody,
+  PivotBody,
   ListFacetsQuery,
   ListMemoriesBody,
   ListMemoriesQuery,
@@ -893,4 +894,16 @@ export function filtersToFacetBody(filters: readonly Filter[]): Partial<ListFace
 /** The active filters as a `POST /memories/activity` body. Same mapping again. */
 export function filtersToActivityBody(filters: readonly Filter[]): Partial<ActivityBody> {
   return filtersToBody(filters) as Partial<ActivityBody>;
+}
+
+/**
+ * The active filters as a `POST /memories/pivot` body. Same mapping again.
+ *
+ * `row`/`col` are NOT set here: the encoder's job is the filter bar, and the
+ * two axes are the instrument's own state. The endpoint self-excludes whichever
+ * dimensions the axes name, so passing the whole bar — axis dimensions included
+ * — is correct and is what keeps a drilled-in grid navigable.
+ */
+export function filtersToPivotBody(filters: readonly Filter[]): Partial<PivotBody> {
+  return filtersToBody(filters) as Partial<PivotBody>;
 }

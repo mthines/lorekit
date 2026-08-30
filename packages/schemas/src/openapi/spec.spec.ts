@@ -26,6 +26,7 @@ describe('generateSpec', () => {
       '/memories/activity',
       '/memories/facets',
       '/memories/list',
+      '/memories/pivot',
       '/memories/purge',
       '/memories/purge-expired',
       '/memories/read-activity',
