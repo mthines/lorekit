@@ -450,14 +450,32 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // to NO conditions while the flag is off, so a stale `?retention=` from
   // before the flag was disabled (or a link shared by someone who has it)
   // cannot silently narrow the list for a reader with no way to see or clear it.
-  const [rawRetention, setRawRetention] = useUrlState<RetentionConditions | null>(
+  // Debounced exactly like `q` above (`search`/`committedSearch`): the panel's
+  // three number inputs are high-frequency, keystroke-driven input, so a raw
+  // `useUrlState` here re-navigates and reissues the full facets+list fetch on
+  // EVERY digit typed — 8 facet calls + 1 list call, repeated per keystroke,
+  // which is also why `isLoading` never got a chance to settle to `false`:
+  // each keystroke started a brand-new (uncached) query key before the
+  // previous one's response could paint, so the skeleton never cleared while
+  // typing a multi-digit value. `rawRetention` stays instantly responsive for
+  // the panel's own inputs; `committedRawRetention` re-reads the URL directly
+  // and only changes once the debounce settles, so `useMemories` below fetches
+  // once per finished edit rather than once per keystroke.
+  const [rawRetention, setRawRetention] = useDebouncedUrlState<RetentionConditions | null>(
     'retention',
     null,
-    { cleanOnPathname: '/lore', navigationMode: 'push' },
+    { debounceMs: 350, cleanOnPathname: '/lore', navigationMode: 'push' },
   );
+  const [committedRawRetention] = useUrlState<RetentionConditions | null>('retention', null, {
+    cleanOnPathname: '/lore',
+  });
   const retentionConditions = useMemo(
     () => (retentionPoliciesEnabled ? normalizeRetentionConditions(rawRetention) : {}),
     [rawRetention, retentionPoliciesEnabled],
+  );
+  const committedRetentionConditions = useMemo(
+    () => (retentionPoliciesEnabled ? normalizeRetentionConditions(committedRawRetention) : {}),
+    [committedRawRetention, retentionPoliciesEnabled],
   );
   const setRetentionConditions = useCallback(
     (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
@@ -540,7 +558,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     search: committedSearch,
     range: resolvedRange,
     filters,
-    retentionConditions,
+    retentionConditions: committedRetentionConditions,
     showArchived,
     expiringWithinDays: expiringWithinDays(status),
   });
