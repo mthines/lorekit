@@ -463,6 +463,22 @@ Create a scoped retention policy that auto-archives (never hard-deletes) matchin
 | `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
 | `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+| `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
+| `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
+| `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
+| `source_agent_mode` |  | string | How the source_agent filter combines. _(default `in`)_ |
+| `trigger` |  | array | Match lessons whose write trigger is one of these (or, with mode "nin", none of these) — e.g. "stuck-loop", "pr-webhook". _(array of string)_ |
+| `trigger_mode` |  | string | How the trigger filter combines. _(default `in`)_ |
+| `kind` |  | array | Match lessons whose kind is one of these (or, with mode "nin", none of these) — e.g. "lesson", "bus", "signal". _(array of string)_ |
+| `kind_mode` |  | string | How the kind filter combines. _(default `in`)_ |
+| `host` |  | array | Match lessons whose owning host is one of these (or, with mode "nin", none of these) — e.g. "reviewer", "aw". _(array of string)_ |
+| `host_mode` |  | string | How the host filter combines. _(default `in`)_ |
+| `origin_repo` |  | array | Match lessons whose origin repository is one of these (or, with mode "nin", none of these) — e.g. "owner/repo". _(array of string)_ |
+| `origin_repo_mode` |  | string | How the origin_repo filter combines. _(default `in`)_ |
+| `origin_branch` |  | array | Match lessons whose origin branch is one of these (or, with mode "nin", none of these) — e.g. "main", "feat/x". _(array of string)_ |
+| `origin_branch_mode` |  | string | How the origin_branch filter combines. _(default `in`)_ |
+| `origin_pr` |  | array | Match lessons from one of these pull-request numbers, as digit strings — e.g. "482". _(array of string)_ |
+| `origin_pr_mode` |  | string | How the origin_pr filter combines. _(default `in`)_ |
 
 Requires **write** permission.
 
@@ -485,6 +501,22 @@ Update a retention policy. Every field but id is optional.
 | `min_age_days` |  | integer | Match only lessons at least this many days old. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
 | `unseen_days` |  | integer | Match lessons unseen for at least this many days. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
+| `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). Omit to leave unchanged; pass explicit null to clear. _(default `any`)_ |
+| `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `source_agent_mode` |  | string | How the source_agent filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
+| `trigger` |  | array | Match lessons whose write trigger is one of these (or, with mode "nin", none of these) — e.g. "stuck-loop", "pr-webhook". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `trigger_mode` |  | string | How the trigger filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
+| `kind` |  | array | Match lessons whose kind is one of these (or, with mode "nin", none of these) — e.g. "lesson", "bus", "signal". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `kind_mode` |  | string | How the kind filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
+| `host` |  | array | Match lessons whose owning host is one of these (or, with mode "nin", none of these) — e.g. "reviewer", "aw". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `host_mode` |  | string | How the host filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
+| `origin_repo` |  | array | Match lessons whose origin repository is one of these (or, with mode "nin", none of these) — e.g. "owner/repo". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `origin_repo_mode` |  | string | How the origin_repo filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
+| `origin_branch` |  | array | Match lessons whose origin branch is one of these (or, with mode "nin", none of these) — e.g. "main", "feat/x". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `origin_branch_mode` |  | string | How the origin_branch filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
+| `origin_pr` |  | array | Match lessons from one of these pull-request numbers, as digit strings — e.g. "482". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
+| `origin_pr_mode` |  | string | How the origin_pr filter combines. Omit to leave unchanged; pass explicit null to clear. _(default `in`)_ |
 
 Requires **write** permission.
 
@@ -519,6 +551,22 @@ Preview the lessons a saved policy or an inline condition set would archive, wit
 | `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
 | `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+| `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
+| `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
+| `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
+| `source_agent_mode` |  | string | How the source_agent filter combines. _(default `in`)_ |
+| `trigger` |  | array | Match lessons whose write trigger is one of these (or, with mode "nin", none of these) — e.g. "stuck-loop", "pr-webhook". _(array of string)_ |
+| `trigger_mode` |  | string | How the trigger filter combines. _(default `in`)_ |
+| `kind` |  | array | Match lessons whose kind is one of these (or, with mode "nin", none of these) — e.g. "lesson", "bus", "signal". _(array of string)_ |
+| `kind_mode` |  | string | How the kind filter combines. _(default `in`)_ |
+| `host` |  | array | Match lessons whose owning host is one of these (or, with mode "nin", none of these) — e.g. "reviewer", "aw". _(array of string)_ |
+| `host_mode` |  | string | How the host filter combines. _(default `in`)_ |
+| `origin_repo` |  | array | Match lessons whose origin repository is one of these (or, with mode "nin", none of these) — e.g. "owner/repo". _(array of string)_ |
+| `origin_repo_mode` |  | string | How the origin_repo filter combines. _(default `in`)_ |
+| `origin_branch` |  | array | Match lessons whose origin branch is one of these (or, with mode "nin", none of these) — e.g. "main", "feat/x". _(array of string)_ |
+| `origin_branch_mode` |  | string | How the origin_branch filter combines. _(default `in`)_ |
+| `origin_pr` |  | array | Match lessons from one of these pull-request numbers, as digit strings — e.g. "482". _(array of string)_ |
+| `origin_pr_mode` |  | string | How the origin_pr filter combines. _(default `in`)_ |
 
 Requires **read** permission.
 
@@ -539,6 +587,22 @@ Archive every lesson a saved policy or an inline condition set matches. Soft-arc
 | `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
 | `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+| `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
+| `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
+| `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
+| `source_agent_mode` |  | string | How the source_agent filter combines. _(default `in`)_ |
+| `trigger` |  | array | Match lessons whose write trigger is one of these (or, with mode "nin", none of these) — e.g. "stuck-loop", "pr-webhook". _(array of string)_ |
+| `trigger_mode` |  | string | How the trigger filter combines. _(default `in`)_ |
+| `kind` |  | array | Match lessons whose kind is one of these (or, with mode "nin", none of these) — e.g. "lesson", "bus", "signal". _(array of string)_ |
+| `kind_mode` |  | string | How the kind filter combines. _(default `in`)_ |
+| `host` |  | array | Match lessons whose owning host is one of these (or, with mode "nin", none of these) — e.g. "reviewer", "aw". _(array of string)_ |
+| `host_mode` |  | string | How the host filter combines. _(default `in`)_ |
+| `origin_repo` |  | array | Match lessons whose origin repository is one of these (or, with mode "nin", none of these) — e.g. "owner/repo". _(array of string)_ |
+| `origin_repo_mode` |  | string | How the origin_repo filter combines. _(default `in`)_ |
+| `origin_branch` |  | array | Match lessons whose origin branch is one of these (or, with mode "nin", none of these) — e.g. "main", "feat/x". _(array of string)_ |
+| `origin_branch_mode` |  | string | How the origin_branch filter combines. _(default `in`)_ |
+| `origin_pr` |  | array | Match lessons from one of these pull-request numbers, as digit strings — e.g. "482". _(array of string)_ |
+| `origin_pr_mode` |  | string | How the origin_pr filter combines. _(default `in`)_ |
 
 Requires **write** permission.
 

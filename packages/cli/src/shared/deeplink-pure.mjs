@@ -46,6 +46,9 @@ export const LORE_PARAM_DEFAULTS = {
   // "unfiltered".
   filters: null,
   tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Still READ by the app, superseded by `filters`
+  // RetentionConditions | null — the retention-preview trio (min age / unseen-for
+  // / seen-at-most). `null` means no narrowing; absent from the URL when unset.
+  retention: null,
   // 'active' | 'archived' | 'expiring' | null — the Explorer's Status control.
   // `null`, NOT 'active', is the default for `filters`' reason: the app has to
   // tell "absent" from an explicit choice, because an absent `status` falls back
@@ -59,9 +62,21 @@ export const LORE_PARAM_DEFAULTS = {
 
 // A stable, readable param order (also makes URLs deterministic for tests).
 // Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
-// param last), so `filters` and `tags` sit between `owner` and `status`. `scope`
-// precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'status', 'archived', 'lesson'];
+// param last), so `filters` and `tags` sit between `owner` and `status`, and
+// `retention` sits between `tags` and `status`. `scope` precedes `lesson` so a
+// lesson link reads `?scope=…&lesson=…`.
+const PARAM_ORDER = [
+  'scope',
+  'q',
+  'range',
+  'owner',
+  'filters',
+  'tags',
+  'retention',
+  'status',
+  'archived',
+  'lesson',
+];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.

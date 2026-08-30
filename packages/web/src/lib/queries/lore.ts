@@ -14,6 +14,7 @@ import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
+import { NO_RETENTION_CONDITIONS, type RetentionConditions } from '@/lib/retention-filter';
 import type { AbsoluteRange } from '@/lib/time-range';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
@@ -490,6 +491,12 @@ export interface UseMemoriesFilters {
    * Empty means no dimension filter.
    */
   filters?: Filter[];
+  /**
+   * The retention-preview trio (`lib/retention-filter.ts`) — narrows the list
+   * to what a retention policy with these conditions would catch. Empty means
+   * no narrowing.
+   */
+  retentionConditions?: RetentionConditions;
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
   /**
@@ -547,6 +554,9 @@ export function useMemories(filters: UseMemoriesFilters) {
       // key that ignored it would serve the unfiltered page when the user
       // switched to Expiring and never refetch.
       filters.expiringWithinDays ?? null,
+      // APPENDED at the end, per the rule above — a NEW segment, not a
+      // reordering of the fixed five before it.
+      filters.retentionConditions ?? NO_RETENTION_CONDITIONS,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
@@ -554,6 +564,7 @@ export function useMemories(filters: UseMemoriesFilters) {
         search: filters.search || undefined,
         range: filters.range,
         filters: bar,
+        retentionConditions: filters.retentionConditions,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
         expiringWithinDays: filters.expiringWithinDays,

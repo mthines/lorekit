@@ -40,6 +40,22 @@ interface RetentionPolicyDbRow {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  tags: string[] | null;
+  tags_mode: string | null;
+  source_agent: string[] | null;
+  source_agent_mode: string | null;
+  trigger: string[] | null;
+  trigger_mode: string | null;
+  kind: string[] | null;
+  kind_mode: string | null;
+  host: string[] | null;
+  host_mode: string | null;
+  origin_repo: string[] | null;
+  origin_repo_mode: string | null;
+  origin_branch: string[] | null;
+  origin_branch_mode: string | null;
+  origin_pr: string[] | null;
+  origin_pr_mode: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +111,25 @@ export async function handlePolicyCreate(
       p_min_age_days: body.min_age_days ?? null,
       p_unseen_days: body.unseen_days ?? null,
       p_max_seen_count: body.max_seen_count ?? null,
+      // The eight dimension filters (migration 00093) — same field names as
+      // the Explorer's own `POST /memories/list` body, so a `Filter[]` bar
+      // translated by `filtersToGroomConditions` needs no re-mapping here.
+      p_tags: body.tags ?? null,
+      p_tags_mode: body.tags_mode ?? 'any',
+      p_source_agent: body.source_agent ?? null,
+      p_source_agent_mode: body.source_agent_mode ?? 'in',
+      p_trigger: body.trigger ?? null,
+      p_trigger_mode: body.trigger_mode ?? 'in',
+      p_kind: body.kind ?? null,
+      p_kind_mode: body.kind_mode ?? 'in',
+      p_host: body.host ?? null,
+      p_host_mode: body.host_mode ?? 'in',
+      p_origin_repo: body.origin_repo ?? null,
+      p_origin_repo_mode: body.origin_repo_mode ?? 'in',
+      p_origin_branch: body.origin_branch ?? null,
+      p_origin_branch_mode: body.origin_branch_mode ?? 'in',
+      p_origin_pr: body.origin_pr ?? null,
+      p_origin_pr_mode: body.origin_pr_mode ?? 'in',
     })
     .single();
   if (error) { span.error(`DB: ${error.message}`); throw error; }

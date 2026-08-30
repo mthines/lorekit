@@ -600,9 +600,43 @@ export interface MockRetentionPolicy {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  // The eight dimension filters (migration 00093) — mirrors `RetentionPolicySchema`
+  // exactly so this fixture stays a faithful stand-in for the real response shape.
+  tags: string[] | null;
+  tags_mode: 'any' | 'all' | 'none' | null;
+  source_agent: string[] | null;
+  source_agent_mode: 'in' | 'nin' | null;
+  trigger: string[] | null;
+  trigger_mode: 'in' | 'nin' | null;
+  kind: string[] | null;
+  kind_mode: 'in' | 'nin' | null;
+  host: string[] | null;
+  host_mode: 'in' | 'nin' | null;
+  origin_repo: string[] | null;
+  origin_repo_mode: 'in' | 'nin' | null;
+  origin_branch: string[] | null;
+  origin_branch_mode: 'in' | 'nin' | null;
+  origin_pr: string[] | null;
+  origin_pr_mode: 'in' | 'nin' | null;
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * A freshly-created/updated policy's dimension filters — every filter
+ * cleared. Exported so a story's own fixtures (`GroomingRuleBuilder.stories.tsx`)
+ * can spread it in rather than repeating all sixteen `null` fields.
+ */
+export const NO_MOCK_DIMENSION_FILTERS = {
+  tags: null, tags_mode: null,
+  source_agent: null, source_agent_mode: null,
+  trigger: null, trigger_mode: null,
+  kind: null, kind_mode: null,
+  host: null, host_mode: null,
+  origin_repo: null, origin_repo_mode: null,
+  origin_branch: null, origin_branch_mode: null,
+  origin_pr: null, origin_pr_mode: null,
+} as const;
 
 export const DEFAULT_GROOM_POLICIES: MockRetentionPolicy[] = [
   {
@@ -614,6 +648,7 @@ export const DEFAULT_GROOM_POLICIES: MockRetentionPolicy[] = [
     min_age_days: 90,
     unseen_days: null,
     max_seen_count: null,
+    ...NO_MOCK_DIMENSION_FILTERS,
     created_at: FROZEN_NOW,
     updated_at: FROZEN_NOW,
   },
@@ -641,6 +676,12 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
 
     http.post('*/functions/v1/memories/policies', async ({ request }) => {
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const dimensionFilters = Object.fromEntries(
+        Object.keys(NO_MOCK_DIMENSION_FILTERS).map((field) => [
+          field,
+          field in body ? (body[field] as never) : null,
+        ]),
+      ) as typeof NO_MOCK_DIMENSION_FILTERS;
       const policy: MockRetentionPolicy = {
         id: `policy-${policies.length + 1}`,
         scope: String(body.scope ?? ''),
@@ -650,6 +691,7 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
         min_age_days: typeof body.min_age_days === 'number' ? body.min_age_days : null,
         unseen_days: typeof body.unseen_days === 'number' ? body.unseen_days : null,
         max_seen_count: typeof body.max_seen_count === 'number' ? body.max_seen_count : null,
+        ...dimensionFilters,
         created_at: FROZEN_NOW,
         updated_at: FROZEN_NOW,
       };
@@ -662,6 +704,11 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
       const idx = policies.findIndex((p) => p.id === params.id);
       if (idx === -1) return new HttpResponse(null, { status: 404 });
       const current = policies[idx] as MockRetentionPolicy;
+      const dimensionPatch = Object.fromEntries(
+        Object.keys(NO_MOCK_DIMENSION_FILTERS)
+          .filter((field) => field in body)
+          .map((field) => [field, body[field] as never]),
+      );
       const updated: MockRetentionPolicy = {
         ...current,
         ...('name' in body ? { name: String(body.name) } : {}),
@@ -670,6 +717,7 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
         ...('min_age_days' in body ? { min_age_days: body.min_age_days as number | null } : {}),
         ...('unseen_days' in body ? { unseen_days: body.unseen_days as number | null } : {}),
         ...('max_seen_count' in body ? { max_seen_count: body.max_seen_count as number | null } : {}),
+        ...dimensionPatch,
         updated_at: FROZEN_NOW,
       };
       policies = [...policies.slice(0, idx), updated, ...policies.slice(idx + 1)];

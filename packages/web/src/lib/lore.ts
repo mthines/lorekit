@@ -25,6 +25,10 @@ import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { normalizeTags } from '@/lib/tag-filter';
 import { filtersToBody, normalizeFilters, type Filter } from '@/lib/filters';
+import {
+  retentionConditionsToListBody,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { serverAccessToken } from '@/lib/api/session-server';
 import { RestApiError } from '@/lib/api/rest';
@@ -183,6 +187,12 @@ export interface MemoryFilters {
    * single place the UI vocabulary meets the wire vocabulary.
    */
   filters?: Filter[];
+  /**
+   * The retention-preview trio (`lib/retention-filter.ts`) — the same three
+   * conditions a saved retention policy matches on, narrowing the list to
+   * what that policy would catch. Absent/empty means no narrowing.
+   */
+  retentionConditions?: RetentionConditions;
   /** Page size, default 50, hard max 100. */
   pageSize?: number;
   /** Opaque keyset cursor from a previous page's `nextCursor`. */
@@ -258,6 +268,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       ...(bounds.lt ? { created_until: bounds.lt } : {}),
       // OR within a dimension, AND across dimensions — see `filtersToBody`.
       ...filtersToBody(bar),
+      ...retentionConditionsToListBody(filters.retentionConditions ?? {}),
       ...(filters.cursor ? { cursor: filters.cursor } : {}),
     });
 

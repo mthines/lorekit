@@ -39,6 +39,14 @@
  *   conditions) — one dimension per pill, OR within a dimension and AND across.
  *   Ownership (Personal / an org) is one of those dimensions now, filtered
  *   server-side like every other (migration 00064).
+ * - `retention` param: the retention-preview trio (`lib/retention-filter.ts`)
+ *   — min age / unseen-for / seen-at-most, the SAME conditions a saved
+ *   retention policy matches on. Narrows the list to what a policy with these
+ *   conditions would catch, so a reader can verify before ever saving one.
+ *   Server-side (migration 00092), shareable, absent means no narrowing.
+ *   Resolves to no conditions while the `retention-policies` flag is off —
+ *   the whole feature is gated together with its Settings → Retention
+ *   Policies destination, which 404s while the flag is off.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
  *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
@@ -54,7 +62,9 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Search, Loader2 } from 'lucide-react';
+import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
@@ -99,8 +109,17 @@ import {
   type FilterOperator,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
+import {
+  RetentionConditionsPanel,
+  RetentionConditionsTrigger,
+} from './RetentionConditionsControl';
+import {
+  hasRetentionConditions,
+  normalizeRetentionConditions,
+  retentionConditionsParamValue,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
 import { useReducedMotion } from 'motion/react';
-import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import {
   DEFAULT_MATRIX_COL,
   DEFAULT_MATRIX_ROW,
@@ -165,6 +184,10 @@ function ControlRow({
   dateActive,
   status,
   onStatusChange,
+  retentionEnabled,
+  retentionConditions,
+  retentionPanelOpen,
+  onToggleRetentionPanel,
 }: {
   variant: 'desktop' | 'mobile';
   search: string;
@@ -182,6 +205,13 @@ function ControlRow({
   dateActive?: boolean;
   status: MemoryStatus;
   onStatusChange: (status: MemoryStatus) => void;
+  /** Behind the `retention-policies` flag — its destination (Settings →
+   *  Retention Policies) 404s while the flag is off, so the entry point stays
+   *  hidden alongside it rather than dead-ending. */
+  retentionEnabled: boolean;
+  retentionConditions: RetentionConditions;
+  retentionPanelOpen: boolean;
+  onToggleRetentionPanel: () => void;
 }) {
   const desktop = variant === 'desktop';
 
@@ -209,6 +239,13 @@ function ControlRow({
         onEditField={onEditField}
         variant={variant}
       />
+      {retentionEnabled && (
+        <RetentionConditionsTrigger
+          conditions={retentionConditions}
+          open={retentionPanelOpen}
+          onToggle={onToggleRetentionPanel}
+        />
+      )}
       <DateRangePicker
         value={range}
         onChange={onRangeChange}
@@ -399,6 +436,66 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Ephemeral — a request, not state worth sharing, so never in the URL.
   const [editingField, setEditingField] = useState<FilterField | null>(null);
 
+  // Settings → Retention Policies (`/settings/grooming`) is gated behind this
+  // flag and 404s while it is off — the SAME check `SettingsNav.tsx` and the
+  // page's own `notFound()` use. The Explorer's whole retention-preview
+  // feature stays behind it too, so the entry point can never dead-end at a
+  // 404 for a reader who does not have it enabled.
+  const retentionPoliciesEnabled = useFeatureFlag('retention-policies');
+
+  // URL-backed retention-preview trio (`lib/retention-filter.ts`) — narrows the
+  // list to what a retention policy with these conditions would catch. `null`
+  // is the default (no narrowing); `useUrlState` drops the param entirely once
+  // the last condition is cleared (`retentionConditionsParamValue`). Resolves
+  // to NO conditions while the flag is off, so a stale `?retention=` from
+  // before the flag was disabled (or a link shared by someone who has it)
+  // cannot silently narrow the list for a reader with no way to see or clear it.
+  const [rawRetention, setRawRetention] = useUrlState<RetentionConditions | null>(
+    'retention',
+    null,
+    { cleanOnPathname: '/lore', navigationMode: 'push' },
+  );
+  const retentionConditions = useMemo(
+    () => (retentionPoliciesEnabled ? normalizeRetentionConditions(rawRetention) : {}),
+    [rawRetention, retentionPoliciesEnabled],
+  );
+  const setRetentionConditions = useCallback(
+    (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
+    [setRawRetention],
+  );
+  // The disclosure's open/closed state — ephemeral, never in the URL (the
+  // conditions themselves are the shareable part, not whether the panel is
+  // showing).
+  const [retentionPanelOpen, setRetentionPanelOpen] = useState(false);
+
+  const router = useRouter();
+
+  /** Hand the current scope, retention conditions AND filter bar to
+   *  Settings → Retention Policies, which opens its "New policy" dialog
+   *  pre-filled with all three — the "verify, then save as a policy" seam
+   *  this whole feature exists for. `selectedScope === null` ("all scopes")
+   *  maps to the policy schema's own "everything" scope, `global` (see
+   *  `scopeMatchesPolicy`). The filter bar rides as JSON, exactly how
+   *  `?filters=` itself is encoded — `GroomingRuleBuilder` normalises it the
+   *  same defensive way a hand-edited Explorer link is. */
+  function handleCreatePolicy() {
+    const params = new URLSearchParams();
+    params.set('prefillScope', selectedScope ?? 'global');
+    if (retentionConditions.minAgeDays !== undefined) {
+      params.set('prefillMinAgeDays', String(retentionConditions.minAgeDays));
+    }
+    if (retentionConditions.unseenDays !== undefined) {
+      params.set('prefillUnseenDays', String(retentionConditions.unseenDays));
+    }
+    if (retentionConditions.maxSeenCount !== undefined) {
+      params.set('prefillMaxSeenCount', String(retentionConditions.maxSeenCount));
+    }
+    if (filters.length > 0) {
+      params.set('prefillFilters', JSON.stringify(filters));
+    }
+    router.push(`/settings/grooming?${params.toString()}`);
+  }
+
   // The desktop and mobile layouts are BOTH mounted — the breakpoint split
   // below is CSS (`hidden md:flex` / `flex md:hidden`), not a conditional
   // render — so both `ControlRow`s hold a live `FilterMenu`. An `editingField`
@@ -443,6 +540,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     search: committedSearch,
     range: resolvedRange,
     filters,
+    retentionConditions,
     showArchived,
     expiringWithinDays: expiringWithinDays(status),
   });
@@ -547,7 +645,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // distinction is what the empty state turns on — a status view with nothing
   // narrowing it gets its own copy, the same view with a search that matched
   // nothing gets "no matches".
-  const isNarrowedWithinView = search.trim() !== '' || filters.length > 0;
+  const isNarrowedWithinView =
+    search.trim() !== '' || filters.length > 0 || hasRetentionConditions(retentionConditions);
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -869,7 +968,21 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
+          retentionEnabled={retentionPoliciesEnabled}
+          retentionConditions={retentionConditions}
+          retentionPanelOpen={retentionPanelOpen}
+          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
+
+        {retentionPoliciesEnabled && retentionPanelOpen && (
+          <RetentionConditionsPanel
+            conditions={retentionConditions}
+            onChange={setRetentionConditions}
+            onClose={() => setRetentionPanelOpen(false)}
+            onCreatePolicy={handleCreatePolicy}
+            filterCount={filters.length}
+          />
+        )}
 
         <FilterPillRow
           filters={filters}
@@ -900,7 +1013,23 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dateActive={dateActive}
           status={status}
           onStatusChange={handleStatusChange}
+          retentionEnabled={retentionPoliciesEnabled}
+          retentionConditions={retentionConditions}
+          retentionPanelOpen={retentionPanelOpen}
+          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
         />
+
+        {retentionPoliciesEnabled && retentionPanelOpen && (
+          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <RetentionConditionsPanel
+              conditions={retentionConditions}
+              onChange={setRetentionConditions}
+              onClose={() => setRetentionPanelOpen(false)}
+              onCreatePolicy={handleCreatePolicy}
+              filterCount={filters.length}
+            />
+          </div>
+        )}
 
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
           <FilterPillRow

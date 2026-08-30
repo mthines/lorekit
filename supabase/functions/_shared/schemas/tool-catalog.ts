@@ -134,6 +134,44 @@ const key: JsonSchemaProperty = { type: 'string', description: 'Lesson identifie
 const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum entries to return.' };
 
 /**
+ * The EIGHT dimension filters a retention policy (or an inline groom call)
+ * can carry (migration 00093) — the same set the Lore Explorer's filter bar
+ * offers. Shared by `policy.create`, `policy.update`, `groom.preview` and
+ * `groom.run` so the four cannot describe the dimensions differently. `*_mode`
+ * defaults match `ListMemoriesBodySchema`'s: `any` for `tags`, `in` for every
+ * scalar dimension.
+ */
+function groomDimensionFilterProperties(clearable: boolean): Record<string, JsonSchemaProperty> {
+  const omitSuffix = clearable ? ' Omit to leave unchanged; pass explicit null to clear.' : '';
+  const scalar = (label: string, example: string): JsonSchemaProperty => ({
+    type: 'array',
+    items: { type: 'string' },
+    description: `Match lessons whose ${label} is one of these (or, with mode "nin", none of these) — e.g. ${example}.${omitSuffix}`,
+  });
+  const mode = (label: string, values: readonly string[], def: string): JsonSchemaProperty => ({
+    type: 'string', enum: [...values], default: def, description: `How the ${label} filter combines.${omitSuffix}`,
+  });
+  return {
+    tags: { type: 'array', items: { type: 'string' }, description: `Match lessons carrying these labels — combined by \`tags_mode\`.${omitSuffix}` },
+    tags_mode: { type: 'string', enum: ['any', 'all', 'none'], default: 'any', description: `"any" (carries at least one), "all" (carries every one), or "none" (carries none).${omitSuffix}` },
+    source_agent: scalar('writing agent', '"claude", "aw"'),
+    source_agent_mode: mode('source_agent', ['in', 'nin'], 'in'),
+    trigger: scalar('write trigger', '"stuck-loop", "pr-webhook"'),
+    trigger_mode: mode('trigger', ['in', 'nin'], 'in'),
+    kind: scalar('kind', '"lesson", "bus", "signal"'),
+    kind_mode: mode('kind', ['in', 'nin'], 'in'),
+    host: scalar('owning host', '"reviewer", "aw"'),
+    host_mode: mode('host', ['in', 'nin'], 'in'),
+    origin_repo: scalar('origin repository', '"owner/repo"'),
+    origin_repo_mode: mode('origin_repo', ['in', 'nin'], 'in'),
+    origin_branch: scalar('origin branch', '"main", "feat/x"'),
+    origin_branch_mode: mode('origin_branch', ['in', 'nin'], 'in'),
+    origin_pr: { type: 'array', items: { type: 'string' }, description: `Match lessons from one of these pull-request numbers, as digit strings — e.g. "482".${omitSuffix}` },
+    origin_pr_mode: mode('origin_pr', ['in', 'nin'], 'in'),
+  };
+}
+
+/**
  * Why no `org.*` operation has a `lorekit <verb>` subcommand: org management
  * reaches the CLI through the local stdio MCP server (`lorekit mcp`), which
  * proxies to the REST `/orgs` routes. Stated once and shared by all four rather
@@ -499,6 +537,7 @@ export const MCP_TOOLS = [
         min_age_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match only lessons at least this many days old.' },
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons unseen for at least this many days. A never-seen lesson always matches.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times.' },
+        ...groomDimensionFilterProperties(false),
       },
     },
     returns: 'The created policy object.',
@@ -528,6 +567,7 @@ export const MCP_TOOLS = [
         min_age_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match only lessons at least this many days old. Omit to leave unchanged; pass explicit null to clear.' },
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons unseen for at least this many days. Omit to leave unchanged; pass explicit null to clear.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear.' },
+        ...groomDimensionFilterProperties(true),
       },
     },
     returns: 'The updated policy object.',
@@ -569,6 +609,7 @@ export const MCP_TOOLS = [
         min_age_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match only lessons at least this many days old.' },
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons unseen for at least this many days. A never-seen lesson always matches.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times.' },
+        ...groomDimensionFilterProperties(false),
       },
     },
     returns: '`{ "count": <number>, "keys": [{ "scope", "key" }] }` — the SAME candidates `groom.run` would archive.',
@@ -595,6 +636,7 @@ export const MCP_TOOLS = [
         min_age_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match only lessons at least this many days old.' },
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons unseen for at least this many days. A never-seen lesson always matches.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times.' },
+        ...groomDimensionFilterProperties(false),
       },
     },
     returns: '`{ "archived": <count>, "keys": [{ "scope", "key" }] }`',
