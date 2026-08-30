@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.60.0](https://github.com/mthines/lorekit/compare/cli-v1.59.1...cli-v1.60.0) (2026-08-30)
+
+
+### Features
+
+* **retention:** let a policy carry the Explorer's dimension filters ([08e84fb](https://github.com/mthines/lorekit/commit/08e84fb1d04e0208c1ed0a81c32e8d3eaa8b1d64))
+* **web:** filter the Lore Explorer by retention-policy conditions ([53389f2](https://github.com/mthines/lorekit/commit/53389f200b315d1552ec657740980b5d6c56b5f7))
+
+
+### Bug Fixes
+
+* **web:** resolve merge-with-main drift breaking CI ([9e2cd78](https://github.com/mthines/lorekit/commit/9e2cd78efc04146ffb866f2f1e8363ccd8cc749c))
+
 ## [1.59.1](https://github.com/mthines/lorekit/compare/cli-v1.59.0...cli-v1.59.1) (2026-08-29)
 
 
