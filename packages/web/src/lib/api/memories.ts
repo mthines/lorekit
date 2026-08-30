@@ -16,6 +16,8 @@ import type {
   ActivityResponse,
   FacetsResponse,
   ListFacetsBody,
+  PivotBody,
+  PivotResponse,
   ListFacetsQuery,
   ListMemoriesBody,
   ListMemoriesQuery,
@@ -142,6 +144,26 @@ export function listFacetsPostRequest(
   signal?: AbortSignal,
 ): Promise<FacetsResponse> {
   return restFetch<FacetsResponse>('/memories/facets', {
+    accessToken,
+    method: 'POST',
+    body,
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `POST /memories/pivot` — two dimensions cross-tabulated, over a body.
+ *
+ * The body transport for `listFacetsPostRequest`' reason: the Explorer sends its
+ * whole filter bar so the grid drills down with the list, which meets the query
+ * string's per-dimension cap at exactly the width the list does.
+ */
+export function pivotPostRequest(
+  accessToken: string,
+  body: Partial<PivotBody> & Pick<PivotBody, 'row' | 'col'>,
+  signal?: AbortSignal,
+): Promise<PivotResponse> {
+  return restFetch<PivotResponse>('/memories/pivot', {
     accessToken,
     method: 'POST',
     body,

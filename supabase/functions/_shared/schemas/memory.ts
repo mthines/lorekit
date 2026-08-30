@@ -477,6 +477,105 @@ export type FacetValue = z.infer<typeof FacetValueSchema>;
 export const FacetsResponseSchema = z.object({ facets: z.array(FacetValueSchema) });
 export type FacetsResponse = z.infer<typeof FacetsResponseSchema>;
 
+// ── GET/POST /memories/pivot ─────────────────────────────────────────────────
+
+/**
+ * How many cells a pivot may return.
+ *
+ * A pivot is `rows x columns`, so its size is the PRODUCT of two dimensions'
+ * cardinalities — `origin_branch` x `tag` over a real account is tens of
+ * thousands of cells, and a grid nobody can read costs the same round trip as
+ * one they can. The cap is applied in SQL (`p_limit`, ordered count desc) so
+ * the cells that survive truncation are the dense ones worth drawing.
+ *
+ * 400 is comfortably above what a legible matrix renders (the dashboard draws
+ * at most 12 x 9) while leaving room for a caller doing its own layout.
+ */
+export const PIVOT_LIMIT_MAX = 2000;
+export const PIVOT_LIMIT_DEFAULT = 400;
+
+/**
+ * Query params for `GET /memories/pivot` — the two-dimensional facet count.
+ *
+ * This is `GET /memories/facets` with a second group-by, and deliberately not a
+ * new vocabulary: `row` and `col` are `MemoryFacet`s, the filter params are the
+ * same dimension params every read on this function takes, and a cell maps back
+ * onto two ordinary filters. A client that can build a facet request can build
+ * this one.
+ *
+ * **Both axes are self-excluded from the filters.** 00057 established that a
+ * facet is counted with every OTHER active filter applied but not its own; a
+ * pivot has two dimensions in that position, so both are excluded. The
+ * consequence is the whole point: a caller that turns a cell into
+ * `row_facet in [x] AND col_facet in [y]` and asks again still gets every other
+ * cell back, so the grid stays navigable instead of collapsing to the one cell
+ * that was clicked.
+ *
+ * `row` and `col` MAY be the same facet — the result is that dimension's
+ * diagonal, which is a legitimate (if dull) question rather than something to
+ * reject.
+ *
+ * Inherits `GET /memories/facets`' two reading caveats verbatim: a pair whose
+ * count falls to zero emits no row, and `q` / `key` / `created_since` /
+ * `created_until` / `expiring_within_days` are NOT mirrored, so under a search
+ * or a date window a count is an upper bound rather than the exact yield.
+ */
+export const PivotQuerySchema = z.object({
+  row: MemoryFacetSchema,
+  col: MemoryFacetSchema,
+  archived: z.enum(['true', 'false']).optional().default('false'),
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(PIVOT_LIMIT_MAX))
+    .optional(),
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
+});
+export type PivotQuery = z.infer<typeof PivotQuerySchema>;
+
+/** One `(row, col)` cell: how many visible memories carry BOTH values. */
+export const PivotCellSchema = z.object({
+  row: z.string(),
+  col: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type PivotCell = z.infer<typeof PivotCellSchema>;
+
+/**
+ * The pivot response.
+ *
+ * `row`/`col` echo the requested facets so a client holding several pivots in
+ * flight can tell them apart without threading its own request id, and
+ * `truncated` says whether {@link PIVOT_LIMIT_MAX} cut the grid — a silent
+ * truncation would read as "those pairs do not exist".
+ */
+export const PivotResponseSchema = z.object({
+  row: MemoryFacetSchema,
+  col: MemoryFacetSchema,
+  cells: z.array(PivotCellSchema),
+  truncated: z.boolean(),
+});
+export type PivotResponse = z.infer<typeof PivotResponseSchema>;
+
 // ── GET /memories/activity ───────────────────────────────────────────────────
 
 /** Bucket granularity for `GET /memories/activity`. */
@@ -877,6 +976,24 @@ export const ListFacetsBodySchema = z.object({
   ...dimensionBodyFields,
 });
 export type ListFacetsBody = z.infer<typeof ListFacetsBodySchema>;
+
+/**
+ * `POST /memories/pivot` — the two-dimensional facet count, over a body.
+ *
+ * Exists for `POST /list` and `POST /facets`' reason: the dashboard's filter bar
+ * is unbounded, and a query string caps each dimension at 2048 characters. The
+ * Explorer's matrix instrument reads over this form; `GET` stays supported for
+ * a caller whose filters fit in a URL.
+ */
+export const PivotBodySchema = z.object({
+  row: MemoryFacetSchema,
+  col: MemoryFacetSchema,
+  archived: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(PIVOT_LIMIT_MAX).optional(),
+  scope: RawScopeSchema.optional(),
+  ...dimensionBodyFields,
+});
+export type PivotBody = z.infer<typeof PivotBodySchema>;
 
 /** `POST /memories/activity` — the written-volume series, over a body. */
 export const ActivityBodySchema = z.object({

@@ -225,6 +225,7 @@ describe('REST audit coverage', () => {
       'memories POST /list',
       'memories POST /facets',
       'memories POST /activity',
+      'memories POST /pivot',
       'memories POST /search',
       // Same reasoning: the request body carries a policy_id or inline
       // conditions that do not fit a query string, and previewing candidates

@@ -68,6 +68,9 @@ import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
+import { ExplorerInstruments } from './ExplorerInstruments';
+import { MatrixInstrument } from './MatrixInstrument';
+import { TimelineInstrument } from './TimelineInstrument';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -93,7 +96,7 @@ import {
   toDayRange,
   type TimeRange,
 } from '@/lib/time-range';
-import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
+import { useFacetCatalog, useMemories, usePivot } from '@/lib/queries/lore';
 import {
   filtersParamValue,
   removeFilter,
@@ -117,6 +120,12 @@ import {
   type RetentionConditions,
 } from '@/lib/retention-filter';
 import { useReducedMotion } from 'motion/react';
+import {
+  DEFAULT_MATRIX_COL,
+  DEFAULT_MATRIX_ROW,
+  MATRIX_AXES,
+  type Instrument,
+} from '@/lib/explorer-instruments';
 import type { LessonEntry } from './LessonCard';
 
 
@@ -546,6 +555,73 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Archived-aware — the archived view is a different population with its own counts.
   const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
+  // ── Instruments ─────────────────────────────────────────────────────────
+  // The matrix and the timeline are filter INPUTS, not views: each writes to the
+  // same `?filters=` / `?range=` state the menu and the date picker write, so the
+  // list below stays the single output and a link still reproduces the state.
+  // See `lib/explorer-instruments.ts` for the rule that decides what qualifies.
+  const instrumentsEnabled = useFeatureFlag('lore-explorer-instruments');
+
+  // The two axes are the instrument's own state, not the page's: they choose how
+  // to LOOK for a filter rather than being one, so they are ephemeral and stay
+  // out of the URL — the same call the panel's disclosure makes.
+  const [matrixRow, setMatrixRow] = useState<FilterField>(DEFAULT_MATRIX_ROW);
+  const [matrixCol, setMatrixCol] = useState<FilterField>(DEFAULT_MATRIX_COL);
+
+  const rowFacet = MATRIX_AXES.find((a) => a.field === matrixRow)?.facet ?? 'host';
+  const colFacet = MATRIX_AXES.find((a) => a.field === matrixCol)?.facet ?? 'kind';
+
+  // Only fetched when the flag is on — the panel gates the rest itself by
+  // rendering nothing while collapsed, and `usePivot` is disabled with it.
+  const {
+    data: pivot,
+    isLoading: pivotLoading,
+    isError: pivotError,
+  } = usePivot(rowFacet, colFacet, {
+    enabled: instrumentsEnabled,
+    showArchived,
+    filters,
+    scope: selectedScope,
+  });
+
+  // A cell is two ordinary pills. Going through `toggleFilterValue` — the same
+  // function the menu and the pills use — is what makes a cell click
+  // indistinguishable from having typed the two values, Back button included.
+  function handleSelectCell(
+    row: { field: FilterField; value: string },
+    col: { field: FilterField; value: string },
+  ) {
+    setFilters(
+      toggleFilterValue(toggleFilterValue(filters, row.field, row.value), col.field, col.value),
+    );
+    closeLesson();
+  }
+
+  const renderInstrument = (instrument: Instrument) =>
+    instrument === 'matrix' ? (
+      <MatrixInstrument
+        row={matrixRow}
+        col={matrixCol}
+        onRowChange={setMatrixRow}
+        onColChange={setMatrixCol}
+        cells={pivot?.cells ?? []}
+        serverTruncated={pivot?.truncated ?? false}
+        isLoading={pivotLoading}
+        isError={pivotError}
+        filters={filters}
+        onSelectCell={handleSelectCell}
+      />
+    ) : (
+      <TimelineInstrument
+        // The account-wide per-day series the heatmap already reads, so the two
+        // time controls describe the same population rather than two.
+        days={heatmapData}
+        selected={highlightRange}
+        onSelectRange={(next) => setRange(next)}
+        onClear={() => setRange({ preset: 'all' })}
+      />
+    );
+
   // The list is entirely server-filtered now — scope / search / range / status
   // AND every dimension in the filter bar, ownership included (migration 00064
   // folded the old client-side owner narrowing into the bar). So the loaded
@@ -847,6 +923,18 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         onSelectDate={handleHeatmapDayClick}
         nowIso={insightsNowIso}
       />
+
+      {/* ── Instruments ─────────────────────────────────────────────────────
+          A collapsible panel of filter INPUTS. It opens collapsed and remembers
+          the choice, and below `md` its body is a BottomSheet rather than a
+          squeezed inline panel — a matrix and a brushable track are transient
+          selection surfaces, which is what that primitive is for. */}
+      {instrumentsEnabled && (
+        <ExplorerInstruments
+          renderInstrument={renderInstrument}
+          activeFilterCount={filters.length}
+        />
+      )}
 
       {/* Scope consumption, hot/cold lore, operational health and "who's
           reading" all moved to the dedicated /insights page — one place to

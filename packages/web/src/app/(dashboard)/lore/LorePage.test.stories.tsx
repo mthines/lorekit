@@ -3,7 +3,7 @@ import { expect, within } from 'storybook/test';
 
 import LorePage from './page';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
-import { withQueryClient, withFrozenClock, withMemorySidebar } from '@/mocks/decorators';
+import { withQueryClient, withFrozenClock, withMemorySidebar, withFeatureFlags } from '@/mocks/decorators';
 
 /**
  * Interaction tests for the `/lore` page — asserts the page resolves against the
@@ -23,7 +23,7 @@ const meta: Meta<typeof LorePage> = {
     // `useUrlState`) resolve — see the note in `LorePage.stories.tsx`.
     nextjs: { appDirectory: true },
   },
-  decorators: [withFrozenClock(FROZEN_NOW), withMemorySidebar, withQueryClient],
+  decorators: [withFrozenClock(FROZEN_NOW), withMemorySidebar, withFeatureFlags, withQueryClient],
 };
 
 export default meta;

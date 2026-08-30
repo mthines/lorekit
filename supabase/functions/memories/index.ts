@@ -18,6 +18,7 @@ import { handleUsageRuns } from './handlers/usage-runs.ts';
 import { handleTags } from './handlers/tags.ts';
 import { handleFacets, handleFacetsPost } from './handlers/facets.ts';
 import { handleActivity, handleActivityPost } from './handlers/activity.ts';
+import { handlePivot, handlePivotPost } from './handlers/pivot.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
 import { handleReadRanking } from './handlers/read-ranking.ts';
 import { handleRelevant } from './handlers/relevant.ts';
@@ -56,6 +57,7 @@ const router = createRouter([
   { method: 'POST',   path: '/list',           handler: handleListPost,     requires: 'read'  },
   { method: 'POST',   path: '/facets',         handler: handleFacetsPost,   requires: 'read'  },
   { method: 'POST',   path: '/activity',       handler: handleActivityPost, requires: 'read'  },
+  { method: 'POST',   path: '/pivot',          handler: handlePivotPost,    requires: 'read'  },
   { method: 'POST',   path: '/search',         handler: handleSearch,       requires: 'read'  },
   { method: 'POST',   path: '/restore',        handler: handleRestore,      requires: 'write' },
   { method: 'POST',   path: '/purge',          handler: handlePurge,        requires: 'write' },
@@ -66,6 +68,7 @@ const router = createRouter([
   { method: 'GET',    path: '/tags',           handler: handleTags,         requires: 'read'  },
   { method: 'GET',    path: '/facets',         handler: handleFacets,       requires: 'read'  },
   { method: 'GET',    path: '/activity',       handler: handleActivity,     requires: 'read'  },
+  { method: 'GET',    path: '/pivot',          handler: handlePivot,        requires: 'read'  },
   { method: 'GET',    path: '/read-activity',  handler: handleReadActivity, requires: 'read'  },
   { method: 'GET',    path: '/read-ranking',   handler: handleReadRanking,  requires: 'read'  },
   { method: 'GET',    path: '/relevant',       handler: handleRelevant,     requires: 'read'  },
