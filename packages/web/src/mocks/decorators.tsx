@@ -115,23 +115,13 @@ export const withMemorySidebar: Decorator = (Story) => (
  * see `FeatureFlagsProvider.tsx`'s file header).
  */
 const DEFAULT_FLAG_VALUES: FlagValueMap = {
-  'new-onboarding-flow': false,
-  'usage-charts-v2': false,
-  'cli-completion-engine': false,
-  'plan-badge-copy': 'Beta',
   'insights-page': false,
-  'usage-empty-state-copy': { title: 'No usage yet', ctaLabel: 'Learn more', ctaHref: '/docs/limits' },
   'retention-policies': false,
   'lore-explorer-instruments': false,
 };
 
 const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = {
-  'new-onboarding-flow': 'control',
-  'usage-charts-v2': 'off',
-  'cli-completion-engine': 'off',
-  'plan-badge-copy': 'beta',
   'insights-page': 'off',
-  'usage-empty-state-copy': 'default',
   'retention-policies': 'off',
   'lore-explorer-instruments': 'off',
 };
