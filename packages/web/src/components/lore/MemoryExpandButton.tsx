@@ -7,6 +7,12 @@
  * memory detail sidebar when clicked on a specific lesson. Delegates full
  * lesson browsing to the Lore Explorer page.
  *
+ * While the Explorer is mounted (this component's TopBar instance) AND its
+ * current view narrows the active population — a scope, a search term, a
+ * filter pill, a retention condition, or a date range — the count reads
+ * "12 of 128" instead of a bare total, via `ExplorerResultsProvider`. See
+ * `lib/explorer-result-count.ts` for the "narrowed" decision and the label.
+ *
  * Uses a controlled open state (not a native <details> element) so that
  * framer-motion exit animations play correctly and click-outside closing works.
  */
@@ -17,6 +23,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useLoreData } from '@/lib/queries/lore';
 import { useMemoryTotal } from '@/lib/queries/plan';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { useExplorerResults } from '@/components/providers/ExplorerResultsProvider';
+import { explorerCountLabel } from '@/lib/explorer-result-count';
 import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
@@ -39,6 +47,7 @@ export function MemoryExpandButton({
   const { data, isLoading } = useLoreData();
   const { data: memoryTotal = 0, isLoading: isTotalLoading } = useMemoryTotal();
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
+  const { results: explorerResults } = useExplorerResults();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -83,6 +92,21 @@ export function MemoryExpandButton({
     return memoryTotal;
   }, [data, scope, memoryTotal]);
 
+  // While the Lore Explorer is mounted AND its current view narrows the
+  // active population (a scope, a search term, a filter pill, a retention
+  // condition, or a date range), show how much of `total` that view actually
+  // matches — "12 of 128" — instead of a bare `total` that silently ignores
+  // the filter the reader is looking at. Only for the unscoped instance
+  // (this component's OWN `scope` prop, unused by any current call site):
+  // a scoped instance already reports its own scoped total, a different
+  // question than what the Explorer's page-level view matches.
+  // `null` on every other page (see ExplorerResultsProvider), which is what
+  // makes `matchedLabel` fall back to the plain `total` there.
+  const matchedLabel =
+    !scope && explorerResults?.isFiltered
+      ? explorerCountLabel(explorerResults.matchedCount, explorerResults.isExact, total)
+      : null;
+
   // `total` above reads `memoryTotal` only on the unscoped branch, so a scoped
   // instance must not block its skeleton on the account-wide count query.
   if (isLoading || (!scope && isTotalLoading)) {
@@ -105,13 +129,17 @@ export function MemoryExpandButton({
         onClick={() => setIsDropdownOpen((v) => !v)}
         aria-expanded={isDropdownOpen}
         aria-haspopup="listbox"
-        aria-label={`${total} ${total === 1 ? 'memory' : 'memories'} — click to expand`}
+        aria-label={
+          matchedLabel
+            ? `${matchedLabel} memories match the current Explorer view — click to expand`
+            : `${total} ${total === 1 ? 'memory' : 'memories'} — click to expand`
+        }
         className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1.5 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       >
         <BookOpen className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
-        <span className="font-medium tabular-nums">{total}</span>
+        <span className="font-medium tabular-nums">{matchedLabel ?? total}</span>
         <span className="hidden text-xs text-[var(--color-content-tertiary)] sm:inline">
-          {total === 1 ? 'memory' : 'memories'}
+          {matchedLabel ? 'memories' : total === 1 ? 'memory' : 'memories'}
         </span>
         <ChevronDown
           className={`size-3.5 shrink-0 text-[var(--color-content-tertiary)] transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`}

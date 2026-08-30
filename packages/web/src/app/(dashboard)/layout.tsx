@@ -9,6 +9,7 @@ import { SiteFooter } from '@/components/layout/SiteFooter';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { FocusRefetcher } from '@/components/providers/FocusRefetcher';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
+import { ExplorerResultsProvider } from '@/components/providers/ExplorerResultsProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
 import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
@@ -106,38 +107,46 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Suspense fallback={null}>
             <MemorySidebarProvider>
               {/*
-                NavigationCommands registers the palette commands. It must live
-                INSIDE MemorySidebarProvider because its LoreCommands
-                sub-registration consumes useMemorySidebar(); the command
-                registry itself comes from the ancestor CommandPaletteProvider.
+                Wraps both the TopBar and the page content — same shape as
+                MemorySidebarProvider just above — so the Lore Explorer can
+                report its filtered result count up to the TopBar's
+                MemoryExpandButton. See ExplorerResultsProvider's docblock.
               */}
-              <NavigationCommands />
-              <div className="flex flex-1 flex-col overflow-hidden">
-                <TopBar user={user} />
+              <ExplorerResultsProvider>
                 {/*
-                  Sticky-footer layout: main is the bounded scroll container. An
-                  inner `min-h-full flex-col` sheet is what makes the footer
-                  behave: the content grows (grow) to push the footer to the
-                  bottom of the viewport on short pages, while on taller pages the
-                  sheet grows past 100% so the footer flows *below* the content and
-                  scrolls with it. `min-h-full` (a floor, not a cap) is the key —
-                  the previous `flex-1 min-h-0` content wrapper capped its box at
-                  the viewport height, so tall pages overflowed it and the footer
-                  floated on top of the content instead of scrolling after it.
+                  NavigationCommands registers the palette commands. It must live
+                  INSIDE MemorySidebarProvider because its LoreCommands
+                  sub-registration consumes useMemorySidebar(); the command
+                  registry itself comes from the ancestor CommandPaletteProvider.
                 */}
-                {/*
-                  The mobile bottom padding clears the fixed tab bar AND the
-                  home-indicator inset the bar itself pads with — without the
-                  `env()` term, the last row of content sits under the bar on a
-                  notched phone.
-                */}
-                <main className="flex-1 overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
-                  <div className="flex min-h-full flex-col">
-                    <div className="grow">{children}</div>
-                    <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
-                  </div>
-                </main>
-              </div>
+                <NavigationCommands />
+                <div className="flex flex-1 flex-col overflow-hidden">
+                  <TopBar user={user} />
+                  {/*
+                    Sticky-footer layout: main is the bounded scroll container. An
+                    inner `min-h-full flex-col` sheet is what makes the footer
+                    behave: the content grows (grow) to push the footer to the
+                    bottom of the viewport on short pages, while on taller pages the
+                    sheet grows past 100% so the footer flows *below* the content and
+                    scrolls with it. `min-h-full` (a floor, not a cap) is the key —
+                    the previous `flex-1 min-h-0` content wrapper capped its box at
+                    the viewport height, so tall pages overflowed it and the footer
+                    floated on top of the content instead of scrolling after it.
+                  */}
+                  {/*
+                    The mobile bottom padding clears the fixed tab bar AND the
+                    home-indicator inset the bar itself pads with — without the
+                    `env()` term, the last row of content sits under the bar on a
+                    notched phone.
+                  */}
+                  <main className="flex-1 overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
+                    <div className="flex min-h-full flex-col">
+                      <div className="grow">{children}</div>
+                      <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
+                    </div>
+                  </main>
+                </div>
+              </ExplorerResultsProvider>
             </MemorySidebarProvider>
           </Suspense>
         </div>
