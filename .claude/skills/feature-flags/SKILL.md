@@ -55,7 +55,7 @@ State the mode and target flag key before continuing:
 
 ```
 Mode: add
-Flag: usage-charts-v2
+Flag: example-usage-charts
 ```
 
 If the request is ambiguous about whether the flag needs a UI-variant
@@ -80,9 +80,7 @@ a full copy-and-suffix component split are very different amounts of work.
    - **Changes what renders** (a whole component's layout/content differs per arm) → scaffold the copy-and-suffix pattern now, before wiring anything:
      - `ComponentName.tsx` — the resolver. Dispatches on `useFeatureFlagVariant('<flag-key>')` (client) or `(await evaluateFlagDetails('<flag-key>', context)).variant` (server) — the VARIANT KEY, never the raw value.
      - `ComponentName.<variantKey>.tsx` per arm — a whole, standalone component. No shared inline branch, no prop threading between arms beyond what each needs on its own.
-     - A real, working instance to copy the shape from:
-       `packages/web/src/components/dashboard/onboarding-preview/` (`OnboardingPreview.tsx` + `.control.tsx` + `.treatment.tsx`).
-     - Full rationale: `docs/feature-flags.md` § "UI variants: copy-and-suffix, never inline branching".
+     - There is no reference implementation in the tree to copy from — the shape and full rationale are in `docs/feature-flags.md` § "UI variants: copy-and-suffix, never inline branching", which carries the complete resolver + arm snippet. Do not add a demo flag or a preview component to re-create one; that is exactly what was removed.
    - **Gates one small prop/value** (a boolean deciding which of two near-identical calls to make, a copy string, a numeric threshold) → skip the scaffold. Call `useFeatureFlag`/`getServerFlag` directly at the point of use.
 4. **Add the entry** to `REGISTRY_INPUT` in `packages/feature-flags/src/registry.ts`. Match the existing entries' shape and comment style.
 5. **Regenerate:**

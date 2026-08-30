@@ -5,7 +5,7 @@
  * Call sites should only ever need:
  *
  *   import { evaluateFlag } from '@lorekit/feature-flags';
- *   const showNewOnboarding = await evaluateFlag('new-onboarding-flow', {
+ *   const showInsights = await evaluateFlag('insights-page', {
  *     targetingKey: userId,
  *   });
  *

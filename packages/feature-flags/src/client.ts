@@ -37,7 +37,7 @@ export function getFeatureFlagClient(): Client {
 
 /**
  * Evaluate a flag by its generated, typed key. The return type is inferred
- * from `flags.generated.ts` — `evaluateFlag('usage-charts-v2', ctx)` types as
+ * from `flags.generated.ts` — `evaluateFlag('insights-page', ctx)` types as
  * `Promise<boolean>`, and a key not in the registry is a compile error, not a
  * runtime `FLAG_NOT_FOUND`.
  */

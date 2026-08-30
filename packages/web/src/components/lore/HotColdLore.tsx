@@ -39,7 +39,7 @@ function groomList(entries: readonly ReadRankingEntry[]): string {
 
 export function HotColdLore() {
   const [direction, setDirection] = useState<ReadRankingDirection>('cold');
-  const { data, isLoading } = useReadRanking(direction, 20);
+  const { data, isLoading, isError } = useReadRanking(direction, 20);
   const [copied, setCopied] = useState(false);
 
   const entries = data?.entries ?? [];
@@ -90,6 +90,14 @@ export function HotColdLore() {
             <div key={i} className="h-8 animate-pulse rounded-md bg-[var(--color-bg-elevated)]" />
           ))}
         </div>
+      ) : isError ? (
+        // NEVER fold a failed request into the empty state. A 400 on
+        // `GET /memories/read-ranking` rendered as "No memories to rank yet."
+        // for as long as the route was broken, which read as an empty account
+        // rather than a broken panel and hid the defect completely.
+        <p className="text-xs text-[var(--color-content-secondary)]">
+          Failed to load the read ranking. Please refresh the page to try again.
+        </p>
       ) : entries.length === 0 ? (
         <p className="text-xs text-[var(--color-content-tertiary)]">No memories to rank yet.</p>
       ) : (

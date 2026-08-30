@@ -1002,7 +1002,12 @@ export type ReadRankingDirection = z.infer<typeof ReadRankingDirectionSchema>;
 export const ReadRankingQuerySchema = z.object({
   direction: ReadRankingDirectionSchema.optional().default('hot'),
   scope: RawScopeSchema.optional(),
-  limit: z.number().int().min(1).max(100).optional().default(20),
+  // `z.coerce` because this is a QUERY schema — `validateQuery` feeds it
+  // `Object.fromEntries(searchParams)`, where every value is a string. A bare
+  // `z.number()` here 400s (`Expected number, received string`) on every
+  // caller that passes the param at all, which is what silently blanked the
+  // Insights page's Hot & Cold panel: the request never reached the RPC.
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
 });
 export type ReadRankingQuery = z.infer<typeof ReadRankingQuerySchema>;
 

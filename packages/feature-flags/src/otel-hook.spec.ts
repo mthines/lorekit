@@ -45,7 +45,7 @@ const NOOP_LOGGER = { debug: noop, error: noop, info: noop, warn: noop };
 
 function baseHookContext(overrides: Record<string, unknown> = {}) {
   return {
-    flagKey: 'new-onboarding-flow',
+    flagKey: 'example-experiment',
     defaultValue: false,
     flagValueType: 'boolean',
     context: { targetingKey: 'user-42' },
@@ -64,7 +64,7 @@ describe('featureFlagOtelHook', () => {
 
     context.with(trace.setSpan(context.active(), span), () => {
       featureFlagOtelHook.after?.(baseHookContext(), {
-        flagKey: 'new-onboarding-flow',
+        flagKey: 'example-experiment',
         value: true,
         variant: 'treatment',
         reason: 'SPLIT',
@@ -74,7 +74,7 @@ describe('featureFlagOtelHook', () => {
     span.end();
 
     const [exported] = exporter.getFinishedSpans();
-    expect(exported.attributes[ATTR_FEATURE_FLAG_KEY]).toBe('new-onboarding-flow');
+    expect(exported.attributes[ATTR_FEATURE_FLAG_KEY]).toBe('example-experiment');
     expect(exported.attributes[ATTR_FEATURE_FLAG_PROVIDER_NAME]).toBe('lorekit-flags');
     expect(exported.attributes[ATTR_FEATURE_FLAG_RESULT_VARIANT]).toBe('treatment');
     // Lowercased to match the OTel semconv well-known values, even though
@@ -87,7 +87,7 @@ describe('featureFlagOtelHook', () => {
   it('does nothing (no throw) when there is no active span', () => {
     expect(() =>
       featureFlagOtelHook.after?.(baseHookContext(), {
-        flagKey: 'new-onboarding-flow',
+        flagKey: 'example-experiment',
         value: false,
         variant: 'control',
         reason: 'STATIC',
@@ -106,7 +106,7 @@ describe('featureFlagOtelHook', () => {
     span.end();
 
     const [exported] = exporter.getFinishedSpans();
-    expect(exported.attributes[ATTR_FEATURE_FLAG_KEY]).toBe('new-onboarding-flow');
+    expect(exported.attributes[ATTR_FEATURE_FLAG_KEY]).toBe('example-experiment');
     expect(exported.events.some((e) => e.name === 'exception')).toBe(true);
   });
 });

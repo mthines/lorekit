@@ -15,12 +15,19 @@ import { ReadRankingQuerySchema } from '../../_shared/schemas/memory.ts';
  * "never read" — a memory written before it may have been read plenty under
  * the old, uncounted regime. See `ReadRankingResponseSchema.counting_since`.
  *
- * MUST be corrected to migration 00084's actual `deployed/api-production`
- * date before/at merge — a sandbox with no deploy visibility cannot know that
- * date, so this is a placeholder marking the migration's authoring day, not a
- * verified production timestamp.
+ * This is migration 00084's real production cutover, replacing the placeholder
+ * (2026-08-23, the migration's AUTHORING day) that shipped with the original
+ * handler: 00084 first reached `main` — and so the deploy pipeline that
+ * promotes to `deployed/api-production` — in `ac99e64`
+ * (`Merge pull request #583 from mthines/feat/insights-page`) at
+ * 2026-08-28T08:12:56Z. The five-day gap mattered: every `cold` row was
+ * captioned "not read since 23 Aug" when nothing was counted before the 28th,
+ * which overstates the evidence for exactly the rows this panel nominates for
+ * pruning. The merge timestamp precedes the deploy it triggers by a few
+ * minutes, so this is still marginally early — but minutes, not days, and the
+ * merge is the one instant the repo can name exactly.
  */
-const COUNTING_SINCE = '2026-08-23T00:00:00.000Z';
+const COUNTING_SINCE = '2026-08-28T08:12:56.000Z';
 
 /** The raw shape `lorekit_memory_read_ranking` returns. */
 interface RawReadRankingRow {

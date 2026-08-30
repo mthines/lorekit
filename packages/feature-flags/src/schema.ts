@@ -86,7 +86,7 @@ export const FlagDefinitionSchema = z
   .object({
     key: z
       .string()
-      .regex(FLAG_KEY_PATTERN, 'flag key must be kebab-case (e.g. "new-onboarding-flow")'),
+      .regex(FLAG_KEY_PATTERN, 'flag key must be kebab-case (e.g. "example-onboarding-flow")'),
     description: z.string().min(1),
     type: FlagTypeSchema,
     /** Variant key -> the value returned for that variant. Must include `defaultVariant`. */

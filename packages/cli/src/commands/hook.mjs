@@ -109,6 +109,23 @@ async function run(args, meter) {
   const parsed = adapter.parse(input);
   const event = args.event || parsed.event;
 
+  // Every adapter already normalises the host's own session id off the stdin
+  // payload (Claude's `session_id`, Codex's `thread_id`, Cursor's
+  // `conversation_id`). Publishing it as `LOREKIT_SESSION_ID` — the first name
+  // `deriveSessionContext` looks for — is what lets a hook-driven remote read
+  // carry a `correlation_id`, so the dashboard's Runs view can group a session's
+  // reads and writes. It is the AUTHORITATIVE id: the payload says which session
+  // this fire belongs to, whereas an inherited env var only says which process
+  // tree we happen to be in, and Cursor/Codex export nothing at all.
+  //
+  // `||=`, never an overwrite: an explicit LOREKIT_SESSION_ID (or the
+  // LOREKIT_CORRELATION_ID that outranks all of this) is a deliberate override
+  // and must keep winning. Process-local and short-lived — this CLI invocation
+  // handles exactly one hook fire and exits.
+  if (parsed.sessionId && !process.env.LOREKIT_SESSION_ID) {
+    process.env.LOREKIT_SESSION_ID = parsed.sessionId;
+  }
+
   // Harvest the real payload when recording is enabled (opt-in via env).
   recordFixture(args.adapter, event, raw);
 

@@ -89,7 +89,7 @@ function useFeatureFlagsContext(): FeatureFlagsContextValue {
  * flag key) rather than silently returning `undefined`.
  *
  * For a boolean flag with no experiment, this is almost always what you want
- * (`if (useFeatureFlag('usage-charts-v2')) ...`). For a flag with an active
+ * (`if (useFeatureFlag('insights-page')) ...`). For a flag with an active
  * experiment where each arm should be its OWN component — the copy-and-suffix
  * convention in `packages/feature-flags/CLAUDE.md` — use
  * {@link useFeatureFlagVariant} instead, which returns the variant KEY

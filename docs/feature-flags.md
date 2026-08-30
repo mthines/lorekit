@@ -31,7 +31,7 @@ A flag is:
 
 ```ts
 {
-  key: 'new-onboarding-flow',       // kebab-case
+  key: 'example-onboarding-flow',       // kebab-case
   description: '...',
   type: 'boolean' | 'string' | 'number' | 'object',
   variants: { control: false, treatment: true },  // variant key -> value
@@ -54,22 +54,33 @@ must match the declared `type`, experiment weights must sum to 100, and no
 duplicate keys across the registry. An invalid registry throws immediately —
 it can never ship a flag that silently resolves to `undefined`.
 
+> **Every `example-*` key in this document is illustrative, not a real flag.**
+> Grep for one and you will find only this file. The registry holds exactly the
+> flags that gate live behaviour — today the two rollout gates `insights-page`
+> and `retention-policies`, both plain booleans. It briefly also held five
+> demonstration entries (an A/B experiment, two unread toggles, and one each to
+> exercise the `string` and `object` paths); they were removed, because a flag
+> that gates nothing is indistinguishable at a call site from one left behind
+> after a rollout, and the mechanisms they showed are covered by
+> `provider.spec.ts` against its own fixtures. Illustrate a flag here; don't
+> register one.
+
 ### Value types
 
 All four types OpenFeature's own evaluation API distinguishes are supported —
 this isn't a subset:
 
-| `type` | Variant value | Example |
-|--------|---------------|---------|
-| `boolean` | `true` / `false` | `new-onboarding-flow` |
-| `string` | any string | `plan-badge-copy` — `{ beta: 'Beta', earlyAccess: 'Early Access' }` |
+| `type` | Variant value | Illustrative example |
+|--------|---------------|----------------------|
+| `boolean` | `true` / `false` | `example-onboarding-flow` (and both real flags today) |
+| `string` | any string | `example-plan-badge-copy` — `{ beta: 'Beta', earlyAccess: 'Early Access' }` |
 | `number` | any number | — |
-| `object` | any JSON value (nested objects/arrays included) | `usage-empty-state-copy` — a whole `{ title, ctaLabel, ctaHref }` copy block per variant |
+| `object` | any JSON value (nested objects/arrays included) | `example-empty-state-copy` — a whole `{ title, ctaLabel, ctaHref }` copy block per variant |
 
 `object` accepts the full recursive JSON value space (`schema.ts`'s
 `JsonValue` type — booleans, strings, numbers, `null`, arrays, and nested
 objects), not a flat key-value bag — a variant can be an arbitrarily
-structured config. `evaluateFlag('usage-empty-state-copy')` returns the whole
+structured config. `evaluateFlag('example-empty-state-copy')` returns the whole
 resolved object, typed via the generated `FlagValueMap` (see
 `flags.generated.ts`'s `JsonValue` type when at least one flag uses it).
 
@@ -77,7 +88,7 @@ There is deliberately no per-flag TypeScript shape for an `object` flag's
 contents beyond `JsonValue` — the registry has no mechanism to declare "this
 object flag's variants are always `{ title: string; ctaLabel: string }`"
 today. If a consumer needs that, narrow it at the call site
-(`evaluateFlag('usage-empty-state-copy') as { title: string; ctaLabel: string; ctaHref: string }`)
+(`evaluateFlag('example-empty-state-copy') as { title: string; ctaLabel: string; ctaHref: string }`)
 or treat adding a per-flag payload schema as a follow-up to this codegen —
 `FlagDefinitionSchema` already has everywhere such a schema would plug in
 (next to `type`).
@@ -92,7 +103,7 @@ repo.
 ```ts
 import { evaluateFlag } from '@lorekit/feature-flags';
 
-const showNewOnboarding = await evaluateFlag('new-onboarding-flow', {
+const showNewOnboarding = await evaluateFlag('example-onboarding-flow', {
   targetingKey: userId, // stable per-user ID — see "Deterministic bucketing" below
 });
 ```
@@ -136,7 +147,7 @@ stamps the **active span** with:
 
 | Attribute                     | Example               | Notes                                                               |
 | ----------------------------- | --------------------- | ------------------------------------------------------------------- |
-| `feature_flag.key`            | `new-onboarding-flow` |                                                                     |
+| `feature_flag.key`            | `example-onboarding-flow` |                                                                     |
 | `feature_flag.provider.name`  | `lorekit-flags`       |                                                                     |
 | `feature_flag.context.id`     | `user_abc123`         | The `targetingKey`, when the evaluation context carries one         |
 | `feature_flag.result.variant` | `treatment`           | **This is the A/B dimension** — filter or group by it               |
@@ -174,7 +185,7 @@ Compare evaluation volume per variant (Dash0 PromQL, using the
 
 ```promql
 sum by (feature_flag_result_variant) (
-  rate(lorekit_feature_flag_evaluations_total{feature_flag_key="new-onboarding-flow"}[1h])
+  rate(lorekit_feature_flag_evaluations_total{feature_flag_key="example-onboarding-flow"}[1h])
 )
 ```
 
@@ -194,7 +205,7 @@ for the rest of the session:
 
 | Attribute | Example | Notes |
 |-----------|---------|-------|
-| `feature_flag.<flagKey>` | `feature_flag.new-onboarding-flow = "treatment"` | One dynamically-named attribute PER FLAG, holding its variant |
+| `feature_flag.<flagKey>` | `feature_flag.example-onboarding-flow = "treatment"` | One dynamically-named attribute PER FLAG, holding its variant |
 
 This is a genuinely different shape from the server-side span attributes
 above, on purpose: the OTel feature-flag semantic conventions
@@ -209,7 +220,7 @@ Only the variant is attached, never an `object`-typed flag's whole payload —
 same "prefer `variant` over `value`" reasoning as the span hook.
 
 **This is what answers "did treatment convert better than control":** search
-or group Web Events by `feature_flag.new-onboarding-flow`, and compare
+or group Web Events by `feature_flag.example-onboarding-flow`, and compare
 whatever conversion event you're tracking (a `sign_up_completed` custom event,
 a specific page reached) between the `"control"` and `"treatment"`
 populations.
@@ -230,7 +241,7 @@ is the language-neutral projection of the registry:
 {
   "flags": [
     {
-      "key": "new-onboarding-flow",
+      "key": "example-onboarding-flow",
       "type": "boolean",
       "variants": { "control": false, "treatment": true },
       "defaultVariant": "control",
@@ -277,7 +288,7 @@ one evaluation per request — there is no independent client-side bucketing.
 import { getServerFlag } from '@/lib/feature-flags/server';
 
 export default async function SomePage() {
-  const showTreatment = await getServerFlag('new-onboarding-flow');
+  const showTreatment = await getServerFlag('example-onboarding-flow');
   return showTreatment ? <NewOnboarding /> : <LegacyOnboarding />;
 }
 ```
@@ -289,7 +300,7 @@ export default async function SomePage() {
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 
 function SomeWidget() {
-  const showTreatment = useFeatureFlag('new-onboarding-flow');
+  const showTreatment = useFeatureFlag('example-onboarding-flow');
   return showTreatment ? <NewWidget /> : <LegacyWidget />;
 }
 ```
@@ -354,7 +365,7 @@ import { OnboardingPreviewControl } from './OnboardingPreview.control';
 import { OnboardingPreviewTreatment } from './OnboardingPreview.treatment';
 
 export function OnboardingPreview() {
-  const variant = useFeatureFlagVariant('new-onboarding-flow');
+  const variant = useFeatureFlagVariant('example-onboarding-flow');
   switch (variant) {
     case 'treatment':
       return <OnboardingPreviewTreatment />;
@@ -365,11 +376,15 @@ export function OnboardingPreview() {
 }
 ```
 
-A real, working instance of exactly this trio lives at
-`packages/web/src/components/dashboard/onboarding-preview/` — rendered live
-on `/settings/developer` so toggling the flag's override visibly swaps the
-two components. It previews `new-onboarding-flow`; it is not (yet) wired into
-the actual onboarding flow — a worked example for the pattern, not a redesign.
+The snippet above is the whole convention — there is deliberately no reference
+implementation in the tree to copy from. One used to exist
+(`components/dashboard/onboarding-preview/`, a resolver plus two arms rendered
+live on `/settings/developer`), but it gated nothing: it existed to demonstrate
+this pattern, and it required a matching demo flag in `registry.ts` to keep it
+alive. Both were removed. A registry entry is a live product decision, and one
+that exists to serve a documentation example is indistinguishable at a call
+site from one left behind after a rollout finished — so the example lives here,
+in prose, where it costs nothing.
 
 **Why this is worth the extra files:** the entire point is what happens when
 the experiment ENDS. With two standalone components, shipping the winner is:
@@ -388,7 +403,7 @@ state, interleaved hooks, a bugfix applied to one arm and not the other — and
 component to figure out what's actually reachable now."
 
 **When this doesn't apply:** a flag that gates one small prop or a single CSS
-class (`usage-charts-v2` deciding which chart-rendering call to make inside
+class (`example-usage-charts` deciding which chart-rendering call to make inside
 an otherwise-identical page) doesn't need two whole components — use
 `useFeatureFlag`/`getServerFlag` directly, per the plain examples above. Reach
 for copy-and-suffix specifically when an experiment's arms diverge enough
