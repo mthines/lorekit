@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import type { FlagValueMap } from '@lorekit/feature-flags';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
+import { ExplorerResultsProvider } from '@/components/providers/ExplorerResultsProvider';
 import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
 
 /**
@@ -104,6 +105,20 @@ export const withMemorySidebar: Decorator = (Story) => (
   <MemorySidebarProvider>
     <Story />
   </MemorySidebarProvider>
+);
+
+/**
+ * Provide the client context `LoreExplorer` needs when rendered outside the
+ * dashboard layout's `ExplorerResultsProvider` (see that component's
+ * docblock). `useExplorerResults()` throws without it — in the real app the
+ * dashboard layout wraps every page, but a page story mounts `/lore` on its
+ * own, so it needs the same wrapper here. Reporting into it is a no-op with
+ * nothing else listening, so this adds no visible DOM to the snapshot.
+ */
+export const withExplorerResults: Decorator = (Story) => (
+  <ExplorerResultsProvider>
+    <Story />
+  </ExplorerResultsProvider>
 );
 
 /**
