@@ -528,6 +528,135 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons carrying these labels — combined by `tags_mode`."
+        },
+        "tags_mode": {
+          "type": "string",
+          "enum": [
+            "any",
+            "all",
+            "none"
+          ],
+          "default": "any",
+          "description": "\"any\" (carries at least one), \"all\" (carries every one), or \"none\" (carries none)."
+        },
+        "source_agent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose writing agent is one of these (or, with mode \"nin\", none of these) — e.g. \"claude\", \"aw\"."
+        },
+        "source_agent_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the source_agent filter combines."
+        },
+        "trigger": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose write trigger is one of these (or, with mode \"nin\", none of these) — e.g. \"stuck-loop\", \"pr-webhook\"."
+        },
+        "trigger_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the trigger filter combines."
+        },
+        "kind": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose kind is one of these (or, with mode \"nin\", none of these) — e.g. \"lesson\", \"bus\", \"signal\"."
+        },
+        "kind_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the kind filter combines."
+        },
+        "host": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose owning host is one of these (or, with mode \"nin\", none of these) — e.g. \"reviewer\", \"aw\"."
+        },
+        "host_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the host filter combines."
+        },
+        "origin_repo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin repository is one of these (or, with mode \"nin\", none of these) — e.g. \"owner/repo\"."
+        },
+        "origin_repo_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_repo filter combines."
+        },
+        "origin_branch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin branch is one of these (or, with mode \"nin\", none of these) — e.g. \"main\", \"feat/x\"."
+        },
+        "origin_branch_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_branch filter combines."
+        },
+        "origin_pr": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons from one of these pull-request numbers, as digit strings — e.g. \"482\"."
+        },
+        "origin_pr_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_pr filter combines."
         }
       }
     }
@@ -578,6 +707,135 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons carrying these labels — combined by `tags_mode`. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "tags_mode": {
+          "type": "string",
+          "enum": [
+            "any",
+            "all",
+            "none"
+          ],
+          "default": "any",
+          "description": "\"any\" (carries at least one), \"all\" (carries every one), or \"none\" (carries none). Omit to leave unchanged; pass explicit null to clear."
+        },
+        "source_agent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose writing agent is one of these (or, with mode \"nin\", none of these) — e.g. \"claude\", \"aw\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "source_agent_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the source_agent filter combines. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "trigger": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose write trigger is one of these (or, with mode \"nin\", none of these) — e.g. \"stuck-loop\", \"pr-webhook\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "trigger_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the trigger filter combines. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "kind": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose kind is one of these (or, with mode \"nin\", none of these) — e.g. \"lesson\", \"bus\", \"signal\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "kind_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the kind filter combines. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "host": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose owning host is one of these (or, with mode \"nin\", none of these) — e.g. \"reviewer\", \"aw\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "host_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the host filter combines. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "origin_repo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin repository is one of these (or, with mode \"nin\", none of these) — e.g. \"owner/repo\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "origin_repo_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_repo filter combines. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "origin_branch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin branch is one of these (or, with mode \"nin\", none of these) — e.g. \"main\", \"feat/x\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "origin_branch_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_branch filter combines. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "origin_pr": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons from one of these pull-request numbers, as digit strings — e.g. \"482\". Omit to leave unchanged; pass explicit null to clear."
+        },
+        "origin_pr_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_pr filter combines. Omit to leave unchanged; pass explicit null to clear."
         }
       }
     }
@@ -629,6 +887,135 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons carrying these labels — combined by `tags_mode`."
+        },
+        "tags_mode": {
+          "type": "string",
+          "enum": [
+            "any",
+            "all",
+            "none"
+          ],
+          "default": "any",
+          "description": "\"any\" (carries at least one), \"all\" (carries every one), or \"none\" (carries none)."
+        },
+        "source_agent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose writing agent is one of these (or, with mode \"nin\", none of these) — e.g. \"claude\", \"aw\"."
+        },
+        "source_agent_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the source_agent filter combines."
+        },
+        "trigger": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose write trigger is one of these (or, with mode \"nin\", none of these) — e.g. \"stuck-loop\", \"pr-webhook\"."
+        },
+        "trigger_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the trigger filter combines."
+        },
+        "kind": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose kind is one of these (or, with mode \"nin\", none of these) — e.g. \"lesson\", \"bus\", \"signal\"."
+        },
+        "kind_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the kind filter combines."
+        },
+        "host": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose owning host is one of these (or, with mode \"nin\", none of these) — e.g. \"reviewer\", \"aw\"."
+        },
+        "host_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the host filter combines."
+        },
+        "origin_repo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin repository is one of these (or, with mode \"nin\", none of these) — e.g. \"owner/repo\"."
+        },
+        "origin_repo_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_repo filter combines."
+        },
+        "origin_branch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin branch is one of these (or, with mode \"nin\", none of these) — e.g. \"main\", \"feat/x\"."
+        },
+        "origin_branch_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_branch filter combines."
+        },
+        "origin_pr": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons from one of these pull-request numbers, as digit strings — e.g. \"482\"."
+        },
+        "origin_pr_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_pr filter combines."
         }
       }
     }
@@ -664,6 +1051,135 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons carrying these labels — combined by `tags_mode`."
+        },
+        "tags_mode": {
+          "type": "string",
+          "enum": [
+            "any",
+            "all",
+            "none"
+          ],
+          "default": "any",
+          "description": "\"any\" (carries at least one), \"all\" (carries every one), or \"none\" (carries none)."
+        },
+        "source_agent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose writing agent is one of these (or, with mode \"nin\", none of these) — e.g. \"claude\", \"aw\"."
+        },
+        "source_agent_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the source_agent filter combines."
+        },
+        "trigger": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose write trigger is one of these (or, with mode \"nin\", none of these) — e.g. \"stuck-loop\", \"pr-webhook\"."
+        },
+        "trigger_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the trigger filter combines."
+        },
+        "kind": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose kind is one of these (or, with mode \"nin\", none of these) — e.g. \"lesson\", \"bus\", \"signal\"."
+        },
+        "kind_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the kind filter combines."
+        },
+        "host": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose owning host is one of these (or, with mode \"nin\", none of these) — e.g. \"reviewer\", \"aw\"."
+        },
+        "host_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the host filter combines."
+        },
+        "origin_repo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin repository is one of these (or, with mode \"nin\", none of these) — e.g. \"owner/repo\"."
+        },
+        "origin_repo_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_repo filter combines."
+        },
+        "origin_branch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons whose origin branch is one of these (or, with mode \"nin\", none of these) — e.g. \"main\", \"feat/x\"."
+        },
+        "origin_branch_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_branch filter combines."
+        },
+        "origin_pr": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Match lessons from one of these pull-request numbers, as digit strings — e.g. \"482\"."
+        },
+        "origin_pr_mode": {
+          "type": "string",
+          "enum": [
+            "in",
+            "nin"
+          ],
+          "default": "in",
+          "description": "How the origin_pr filter combines."
         }
       }
     }

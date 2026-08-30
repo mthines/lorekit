@@ -38,7 +38,7 @@ import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { scopeIcon } from '@/components/memory/scope-meta';
 import { showToast } from '@/lib/toast';
 import { isCanonicalScope } from '@/lib/scope';
-import { useScopeTree } from '@/lib/queries/lore';
+import { useFacetCatalog, useScopeTree } from '@/lib/queries/lore';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import {
   useCreatePolicy,
@@ -50,7 +50,18 @@ import {
 } from '@/lib/queries/groom';
 // Shared with the Explorer's retention-preview control (`lib/retention-filter.ts`)
 // so the same example numbers appear wherever these three fields do.
-import { RETENTION_CONDITION_PLACEHOLDERS } from '@/lib/retention-filter';
+import { RETENTION_CONDITION_PLACEHOLDERS, filtersToGroomDimensionFilters, groomConditionsToFilters } from '@/lib/retention-filter';
+import {
+  filtersPhrase,
+  normalizeFilters,
+  removeFilter,
+  setFilterOperator,
+  toggleFilterValue,
+  type Filter,
+  type FilterField,
+  type FilterOperator,
+} from '@/lib/filters';
+import { FilterMenuTrigger, FilterPillRow } from '@/components/lore/FilterBar';
 
 const LABEL_CLASS = 'text-xs font-medium text-[var(--color-content-secondary)]';
 const INPUT_CLASS =
@@ -71,26 +82,48 @@ export interface Conditions {
   minAgeDays: string;
   unseenDays: string;
   maxSeenCount: string;
+  /**
+   * The SAME eight dimension filters (label/agent/trigger/kind/host/repo/
+   * branch/PR) the Lore Explorer's filter bar offers — `lib/filters.ts`'s
+   * `Filter[]`, rendered here with the identical `FilterMenu`/`FilterPill`
+   * components so "the filter that's also getting used for the policy" is
+   * the SAME control, not a lookalike that could drift.
+   */
+  filters: Filter[];
 }
 
-const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: '', maxSeenCount: '' };
+const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: '', maxSeenCount: '', filters: [] };
 
 /**
  * `?prefillScope=` / `?prefillMinAgeDays=` / `?prefillUnseenDays=` /
- * `?prefillMaxSeenCount=` — how the Lore Explorer's "Create retention policy"
- * action hands off its current scope + retention conditions
- * (`lib/retention-filter.ts`) to this page. Read ONCE (see the mount effect in
- * {@link GroomingRuleBuilder}) so a reload of the resulting `/settings/grooming`
- * URL does not keep reopening the dialog; absent entirely means "no prefill".
+ * `?prefillMaxSeenCount=` / `?prefillFilters=` — how the Lore Explorer's
+ * "Create retention policy" action hands off its current scope, retention
+ * conditions (`lib/retention-filter.ts`) and filter bar to this page. Read
+ * ONCE (see the mount effect in {@link GroomingRuleBuilder}) so a reload of
+ * the resulting `/settings/grooming` URL does not keep reopening the dialog;
+ * absent entirely means "no prefill". `prefillFilters` is the bar's `Filter[]`
+ * as JSON, normalised the same way a hand-edited `?filters=` link on the
+ * Explorer itself is — a malformed value degrades to no filters rather than
+ * failing the whole handoff.
  */
 function conditionsFromPrefillParams(params: URLSearchParams): Conditions | null {
   const scope = params.get('prefillScope');
   if (!scope) return null;
+  const rawFilters = params.get('prefillFilters');
+  let filters: Filter[] = [];
+  if (rawFilters) {
+    try {
+      filters = normalizeFilters(JSON.parse(rawFilters));
+    } catch {
+      filters = [];
+    }
+  }
   return {
     scope,
     minAgeDays: params.get('prefillMinAgeDays') ?? '',
     unseenDays: params.get('prefillUnseenDays') ?? '',
     maxSeenCount: params.get('prefillMaxSeenCount') ?? '',
+    filters,
   };
 }
 
@@ -112,16 +145,26 @@ function toGroomRequest(c: Conditions): GroomRequest | null {
     ...(minAgeDays !== undefined ? { min_age_days: minAgeDays } : {}),
     ...(unseenDays !== undefined ? { unseen_days: unseenDays } : {}),
     ...(maxSeenCount !== undefined ? { max_seen_count: maxSeenCount } : {}),
+    ...filtersToGroomDimensionFilters(c.filters),
   };
 }
 
-/** A saved policy's conditions as an inline groom request (for a preview). */
+/**
+ * A saved policy's conditions as an inline groom request (for a preview).
+ * Dimension filters route through `Filter[]` and back
+ * (`groomConditionsToFilters` → `filtersToGroomDimensionFilters`) rather than
+ * copying the policy's snake_case fields directly — that round trip is what
+ * guarantees an empty array is never sent as "filtered to nothing" instead of
+ * "not filtered" (see the two functions' own docs); it is the same
+ * conversion the edit form's `conditionsFromPolicy` uses.
+ */
 function policyToRequest(p: RetentionPolicy): GroomRequest {
   return {
     scope: p.scope,
     ...(p.min_age_days !== null ? { min_age_days: p.min_age_days } : {}),
     ...(p.unseen_days !== null ? { unseen_days: p.unseen_days } : {}),
     ...(p.max_seen_count !== null ? { max_seen_count: p.max_seen_count } : {}),
+    ...filtersToGroomDimensionFilters(groomConditionsToFilters(p)),
   };
 }
 
@@ -132,15 +175,18 @@ function conditionsFromPolicy(p: RetentionPolicy): Conditions {
     minAgeDays: p.min_age_days !== null ? String(p.min_age_days) : '',
     unseenDays: p.unseen_days !== null ? String(p.unseen_days) : '',
     maxSeenCount: p.max_seen_count !== null ? String(p.max_seen_count) : '',
+    filters: groomConditionsToFilters(p),
   };
 }
 
-/** The rule as a human sentence: "Older than 90d · unseen 90d · seen ≤ 1". */
+/** The rule as a human sentence: "Older than 90d · unseen 90d · seen ≤ 1 · Host is reviewer". */
 function ruleSentence(p: RetentionPolicy): string {
   const parts: string[] = [];
   if (p.min_age_days !== null) parts.push(`Older than ${p.min_age_days}d`);
   if (p.unseen_days !== null) parts.push(`unseen ${p.unseen_days}d`);
   if (p.max_seen_count !== null) parts.push(`seen ≤ ${p.max_seen_count}`);
+  const filters = groomConditionsToFilters(p);
+  if (filters.length > 0) parts.push(filtersPhrase(filters));
   return parts.length > 0 ? parts.join(' · ') : 'Every unprotected lesson in scope';
 }
 
@@ -257,13 +303,37 @@ function PolicyForm({
   const createPolicy = useCreatePolicy();
   const updatePolicy = useUpdatePolicy();
 
+  // The filter bar's facet catalog, scoped to this rule's scope — the same
+  // `useFacetCatalog` the Explorer uses, so the value lists offered here
+  // (which hosts exist, which labels are in use) match what browsing that
+  // scope would show. `global` (the policy schema's "everything" scope) is
+  // not a real scope to filter the catalog BY, so it degrades to the
+  // unscoped (all-scopes) catalog, same as no scope chosen yet.
+  const facetScope = conditions.scope && conditions.scope !== 'global' ? conditions.scope : null;
+  const { data: facets = [] } = useFacetCatalog(false, conditions.filters, facetScope);
+  const [editingField, setEditingField] = useState<FilterField | null>(null);
+
+  function handleToggleFilterValue(field: FilterField, value: string) {
+    setConditions((c) => ({ ...c, filters: toggleFilterValue(c.filters, field, value) }));
+  }
+  function handleOperatorChange(field: FilterField, operator: FilterOperator) {
+    setConditions((c) => ({ ...c, filters: setFilterOperator(c.filters, field, operator) }));
+  }
+  function handleRemoveFilter(field: FilterField) {
+    setConditions((c) => ({ ...c, filters: removeFilter(c.filters, field) }));
+  }
+  function handleClearFilters() {
+    setConditions((c) => ({ ...c, filters: [] }));
+  }
+
   const request = useMemo(() => toGroomRequest(conditions), [conditions]);
   const autoScopeOnly =
     autoEnabled &&
     conditions.scope.trim() !== '' &&
     conditions.minAgeDays.trim() === '' &&
     conditions.unseenDays.trim() === '' &&
-    conditions.maxSeenCount.trim() === '';
+    conditions.maxSeenCount.trim() === '' &&
+    conditions.filters.length === 0;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live match count: re-preview PREVIEW_DEBOUNCE_MS after the form settles.
@@ -278,7 +348,7 @@ function PolicyForm({
     };
     // preview.mutate is a stable identity across renders (react-query).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conditions.scope, conditions.minAgeDays, conditions.unseenDays, conditions.maxSeenCount]);
+  }, [conditions.scope, conditions.minAgeDays, conditions.unseenDays, conditions.maxSeenCount, conditions.filters]);
 
   const matchCount = preview.data?.count;
 
@@ -306,6 +376,11 @@ function PolicyForm({
 
   async function handleSave() {
     if (!request || !('scope' in request) || !name.trim()) return;
+    // The eight dimension filters, in the same nullable-clearable shape every
+    // condition in this form uses: an update always sends them (an empty bar
+    // CLEARS a previously-saved filter, matching the age fields' `?? null`
+    // below), a create only sends the ones actually present.
+    const dimensionFilters = filtersToGroomDimensionFilters(conditions.filters);
     try {
       if (initialPolicy) {
         await updatePolicy.mutateAsync({
@@ -317,6 +392,22 @@ function PolicyForm({
             min_age_days: parseIntField(conditions.minAgeDays) ?? null,
             unseen_days: parseIntField(conditions.unseenDays) ?? null,
             max_seen_count: parseIntField(conditions.maxSeenCount) ?? null,
+            tags: dimensionFilters.tags ?? null,
+            tags_mode: dimensionFilters.tags_mode ?? null,
+            source_agent: dimensionFilters.source_agent ?? null,
+            source_agent_mode: dimensionFilters.source_agent_mode ?? null,
+            trigger: dimensionFilters.trigger ?? null,
+            trigger_mode: dimensionFilters.trigger_mode ?? null,
+            kind: dimensionFilters.kind ?? null,
+            kind_mode: dimensionFilters.kind_mode ?? null,
+            host: dimensionFilters.host ?? null,
+            host_mode: dimensionFilters.host_mode ?? null,
+            origin_repo: dimensionFilters.origin_repo ?? null,
+            origin_repo_mode: dimensionFilters.origin_repo_mode ?? null,
+            origin_branch: dimensionFilters.origin_branch ?? null,
+            origin_branch_mode: dimensionFilters.origin_branch_mode ?? null,
+            origin_pr: dimensionFilters.origin_pr ?? null,
+            origin_pr_mode: dimensionFilters.origin_pr_mode ?? null,
           },
         });
         showToast('Policy updated.', 'success');
@@ -329,6 +420,7 @@ function PolicyForm({
           ...('min_age_days' in request ? { min_age_days: request.min_age_days } : {}),
           ...('unseen_days' in request ? { unseen_days: request.unseen_days } : {}),
           ...('max_seen_count' in request ? { max_seen_count: request.max_seen_count } : {}),
+          ...dimensionFilters,
         });
         showToast('Policy saved.', 'success');
       }
@@ -359,6 +451,31 @@ function PolicyForm({
       ) : (
         <ScopeField value={conditions.scope} onChange={(scope) => setConditions((c) => ({ ...c, scope }))} />
       )}
+
+      {/* The SAME filter bar the Lore Explorer uses (`FilterMenu`/`FilterPill`,
+          `lib/filters.ts`'s `Filter[]`) — label/agent/trigger/kind/host/repo/
+          branch/PR, ANDed with the three conditions below. Reusing the
+          identical control, rather than a lookalike, is the point: a policy
+          created from a filtered Explorer view shows the SAME pills here that
+          produced it. */}
+      <div className="flex flex-col gap-1.5">
+        <span className={LABEL_CLASS}>Filters</span>
+        <FilterMenuTrigger
+          facets={facets}
+          filters={conditions.filters}
+          onToggleValue={handleToggleFilterValue}
+          editingField={editingField}
+          onEditField={setEditingField}
+          variant="desktop"
+        />
+        <FilterPillRow
+          filters={conditions.filters}
+          onOperatorChange={handleOperatorChange}
+          onRemove={handleRemoveFilter}
+          onClearAll={handleClearFilters}
+          onEditField={setEditingField}
+        />
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="flex flex-col gap-1.5">

@@ -21,8 +21,9 @@
  * `components/lore/RetentionConditionsControl.tsx`.
  */
 
-import type { GroomConditions } from '@lorekit/schemas/retention';
-import type { ListMemoriesBody } from '@lorekit/schemas/memory';
+import type { GroomConditions, GroomDimensionFilters } from '@lorekit/schemas/retention';
+import type { ListMemoriesBody, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
+import { filtersToBody, normalizeFilters, type Filter, type FilterField, type FilterOperator } from './filters';
 
 /** The three conditions, camelCased for the UI's own state — see `GroomConditions` for the wire shape. */
 export interface RetentionConditions {
@@ -143,6 +144,127 @@ export function retentionConditionsToGroomConditions(
   conditions: RetentionConditions,
 ): GroomConditions {
   return retentionConditionsToListBody(conditions);
+}
+
+// ── Dimension filters ────────────────────────────────────────────────────────
+//
+// A retention policy can ALSO carry the same eight dimension filters the
+// Explorer's filter bar offers (migration 00091) — label/agent/trigger/kind/
+// host/repo/branch/PR, everything `lib/filters.ts`'s `Filter[]` bar holds
+// EXCEPT `owner`: a policy's `scope` already partitions personal-vs-org lore
+// (v1 is personal-owned only), so a second ownership predicate would either
+// agree with the scope or silently fight it — an `owner` filter present on
+// the bar is therefore dropped, not carried over, when a policy is created
+// from a filtered Explorer view.
+//
+// The two functions below are the seam: `filtersToGroomDimensionFilters` is
+// what "Create retention policy" (the Explorer → Settings handoff) uses to
+// carry the CURRENT bar into a new policy's conditions; `groomConditionsToFilters`
+// is the reverse, rendering a SAVED policy's stored filters back as `Filter[]`
+// pills for `GroomingRuleBuilder`'s edit form — reusing the exact same
+// `FilterMenu`/`FilterPill` components the Explorer uses, so "the filter
+// that's also getting used for the policy" is the SAME control, not a
+// second one that could drift.
+
+/**
+ * The dimension-filter fields a policy's conditions carry — `GroomConditions`
+ * minus the three age/activity thresholds. An alias of `@lorekit/schemas/retention`'s
+ * own `GroomDimensionFilters` (not a hand-written duplicate): its `*_mode`
+ * fields are `.optional()` with NO zod `.default(...)` specifically so this
+ * stays genuinely optional (`T | undefined`) rather than "always present, the
+ * default" — see that schema's own doc for why a `.default()` would break
+ * every caller here that builds one of these incrementally.
+ */
+export type GroomDimensionConditions = GroomDimensionFilters;
+
+/**
+ * Translate the Explorer's filter bar into the dimension-filter fields a
+ * policy's conditions carry. Reuses `filtersToBody` — the wire shape is
+ * IDENTICAL (same field names, same `TagsMode`/`ScalarFilterMode`
+ * semantics) — so the two cannot drift on what a filter means; the `owner`
+ * dimension `filtersToBody` may also emit is dropped here, per the header.
+ */
+export function filtersToGroomDimensionFilters(filters: readonly Filter[]): GroomDimensionConditions {
+  const body = filtersToBody(filters);
+  return {
+    tags: body.tags,
+    tags_mode: body.tags_mode,
+    source_agent: body.source_agent,
+    source_agent_mode: body.source_agent_mode,
+    trigger: body.trigger,
+    trigger_mode: body.trigger_mode,
+    kind: body.kind,
+    kind_mode: body.kind_mode,
+    host: body.host,
+    host_mode: body.host_mode,
+    origin_repo: body.origin_repo,
+    origin_repo_mode: body.origin_repo_mode,
+    origin_branch: body.origin_branch,
+    origin_branch_mode: body.origin_branch_mode,
+    origin_pr: body.origin_pr,
+    origin_pr_mode: body.origin_pr_mode,
+  };
+}
+
+/** A saved policy's (or a `GroomConditions` request's) dimension-filter fields — nullable OR undefined, either transport's shape. */
+export interface DimensionFilterSource {
+  tags?: string[] | null;
+  tags_mode?: TagsMode | null;
+  source_agent?: string[] | null;
+  source_agent_mode?: ScalarFilterMode | null;
+  trigger?: string[] | null;
+  trigger_mode?: ScalarFilterMode | null;
+  kind?: string[] | null;
+  kind_mode?: ScalarFilterMode | null;
+  host?: string[] | null;
+  host_mode?: ScalarFilterMode | null;
+  origin_repo?: string[] | null;
+  origin_repo_mode?: ScalarFilterMode | null;
+  origin_branch?: string[] | null;
+  origin_branch_mode?: ScalarFilterMode | null;
+  origin_pr?: string[] | null;
+  origin_pr_mode?: ScalarFilterMode | null;
+}
+
+/**
+ * The reverse of {@link filtersToGroomDimensionFilters}: a saved policy's
+ * dimension filters, rendered back as `Filter[]` pills for the edit form.
+ * `*_mode` values outside the field's legal operator set (a hand-edited API
+ * call, a future mode this UI does not know yet) degrade to the field's
+ * default rather than throwing — `normalizeFilters` already establishes that
+ * rule for every other source of `Filter[]`, and this is one more.
+ */
+export function groomConditionsToFilters(source: DimensionFilterSource): Filter[] {
+  const raw: { field: FilterField; operator: FilterOperator; values: string[] }[] = [];
+
+  if (source.tags?.length) {
+    const operator: FilterOperator =
+      source.tags_mode === 'all' ? 'all' : source.tags_mode === 'none' ? 'nin' : 'in';
+    raw.push({ field: 'label', operator, values: source.tags });
+  }
+  if (source.source_agent?.length) {
+    raw.push({ field: 'agent', operator: source.source_agent_mode === 'nin' ? 'nin' : 'in', values: source.source_agent });
+  }
+  if (source.trigger?.length) {
+    raw.push({ field: 'trigger', operator: source.trigger_mode === 'nin' ? 'nin' : 'in', values: source.trigger });
+  }
+  if (source.kind?.length) {
+    raw.push({ field: 'kind', operator: source.kind_mode === 'nin' ? 'nin' : 'in', values: source.kind });
+  }
+  if (source.host?.length) {
+    raw.push({ field: 'host', operator: source.host_mode === 'nin' ? 'nin' : 'in', values: source.host });
+  }
+  if (source.origin_repo?.length) {
+    raw.push({ field: 'repo', operator: source.origin_repo_mode === 'nin' ? 'nin' : 'in', values: source.origin_repo });
+  }
+  if (source.origin_branch?.length) {
+    raw.push({ field: 'branch', operator: source.origin_branch_mode === 'nin' ? 'nin' : 'in', values: source.origin_branch });
+  }
+  if (source.origin_pr?.length) {
+    raw.push({ field: 'pr', operator: source.origin_pr_mode === 'nin' ? 'nin' : 'in', values: source.origin_pr });
+  }
+
+  return normalizeFilters(raw);
 }
 
 /** One phrase describing the active conditions, for the control's trigger label and pill. */

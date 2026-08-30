@@ -91,12 +91,21 @@ export function RetentionConditionsPanel({
   onChange,
   onClose,
   onCreatePolicy,
+  filterCount = 0,
 }: {
   conditions: RetentionConditions;
   onChange: (next: RetentionConditions) => void;
   onClose: () => void;
-  /** Hands the current conditions off to Settings → Retention Policies. */
+  /** Hands the current conditions (and the filter bar) off to Settings → Retention Policies. */
   onCreatePolicy: () => void;
+  /**
+   * How many dimension filters (label/agent/trigger/kind/host/repo/branch/PR)
+   * are ALSO active on the Explorer's own filter bar — a policy created from
+   * here carries those too (`handleCreatePolicy`'s `prefillFilters`), so the
+   * hand-off is offered whenever EITHER carries something, not just the three
+   * fields this popover owns.
+   */
+  filterCount?: number;
 }) {
   const minAgeId = useId();
   const unseenId = useId();
@@ -119,7 +128,8 @@ export function RetentionConditionsPanel({
     if (n !== undefined) onChange({ ...conditions, [field]: n });
   }
 
-  const active = hasRetentionConditions(conditions);
+  const conditionsActive = hasRetentionConditions(conditions);
+  const active = conditionsActive || filterCount > 0;
 
   return (
     <div
@@ -183,7 +193,11 @@ export function RetentionConditionsPanel({
       {active && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-2.5 py-2">
           <p className={CAPTION_CLASS}>
-            Showing lessons a retention policy with these conditions would catch.
+            {conditionsActive && filterCount > 0
+              ? `Showing lessons these conditions and ${filterCount} filter${filterCount === 1 ? '' : 's'} would catch.`
+              : filterCount > 0
+                ? `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`
+                : 'Showing lessons a retention policy with these conditions would catch.'}
           </p>
           <button
             type="button"

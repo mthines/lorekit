@@ -461,11 +461,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   const router = useRouter();
 
-  /** Hand the current scope + retention conditions to Settings → Retention
-   *  Policies, which opens its "New policy" dialog pre-filled with them —
-   *  the "verify, then save as a policy" seam this whole feature exists for.
-   *  `selectedScope === null` ("all scopes") maps to the policy schema's own
-   *  "everything" scope, `global` (see `scopeMatchesPolicy`). */
+  /** Hand the current scope, retention conditions AND filter bar to
+   *  Settings → Retention Policies, which opens its "New policy" dialog
+   *  pre-filled with all three — the "verify, then save as a policy" seam
+   *  this whole feature exists for. `selectedScope === null` ("all scopes")
+   *  maps to the policy schema's own "everything" scope, `global` (see
+   *  `scopeMatchesPolicy`). The filter bar rides as JSON, exactly how
+   *  `?filters=` itself is encoded — `GroomingRuleBuilder` normalises it the
+   *  same defensive way a hand-edited Explorer link is. */
   function handleCreatePolicy() {
     const params = new URLSearchParams();
     params.set('prefillScope', selectedScope ?? 'global');
@@ -477,6 +480,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     }
     if (retentionConditions.maxSeenCount !== undefined) {
       params.set('prefillMaxSeenCount', String(retentionConditions.maxSeenCount));
+    }
+    if (filters.length > 0) {
+      params.set('prefillFilters', JSON.stringify(filters));
     }
     router.push(`/settings/grooming?${params.toString()}`);
   }
@@ -886,6 +892,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onChange={setRetentionConditions}
             onClose={() => setRetentionPanelOpen(false)}
             onCreatePolicy={handleCreatePolicy}
+            filterCount={filters.length}
           />
         )}
 
@@ -931,6 +938,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onChange={setRetentionConditions}
               onClose={() => setRetentionPanelOpen(false)}
               onCreatePolicy={handleCreatePolicy}
+              filterCount={filters.length}
             />
           </div>
         )}

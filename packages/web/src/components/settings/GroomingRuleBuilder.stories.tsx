@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { userEvent, waitFor, within } from 'storybook/test';
 
 import { GroomingRuleBuilder } from './GroomingRuleBuilder';
-import { groomHandlers, memoryHandlers, DEFAULT_GROOM_POLICIES } from '@/mocks/memories';
+import { groomHandlers, memoryHandlers, DEFAULT_GROOM_POLICIES, NO_MOCK_DIMENSION_FILTERS } from '@/mocks/memories';
 import { withQueryClient } from '@/mocks/decorators';
 import type { MockRetentionPolicy } from '@/mocks/memories';
 
@@ -63,6 +63,7 @@ export const ListPopulated: Story = {
           min_age_days: null,
           unseen_days: 120,
           max_seen_count: null,
+          ...NO_MOCK_DIMENSION_FILTERS,
           created_at: '2026-05-01T00:00:00.000Z',
           updated_at: '2026-05-01T00:00:00.000Z',
         },
@@ -75,6 +76,7 @@ export const ListPopulated: Story = {
           min_age_days: 30,
           unseen_days: null,
           max_seen_count: 2,
+          ...NO_MOCK_DIMENSION_FILTERS,
           created_at: '2026-04-15T00:00:00.000Z',
           updated_at: '2026-04-15T00:00:00.000Z',
         },

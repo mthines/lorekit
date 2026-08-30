@@ -38,7 +38,7 @@ import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
 import type { DbClient } from '../_shared/db/db-client.ts';
 import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
-import type { RetentionPolicyRow, GroomRequestInput } from '../_shared/retention/groom.ts';
+import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../_shared/retention/groom.ts';
 import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
@@ -1159,9 +1159,42 @@ interface RetentionPolicyDbRow {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  tags: string[] | null;
+  tags_mode: string | null;
+  source_agent: string[] | null;
+  source_agent_mode: string | null;
+  trigger: string[] | null;
+  trigger_mode: string | null;
+  kind: string[] | null;
+  kind_mode: string | null;
+  host: string[] | null;
+  host_mode: string | null;
+  origin_repo: string[] | null;
+  origin_repo_mode: string | null;
+  origin_branch: string[] | null;
+  origin_branch_mode: string | null;
+  origin_pr: string[] | null;
+  origin_pr_mode: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * The eight dimension-filter field names a policy (or an inline groom call)
+ * can carry — one list, so `toolPolicyCreate`'s RPC params, `toolPolicyUpdate`'s
+ * patch whitelist, and `resolveGroomRequest`'s inline-request builder all read
+ * off the SAME set rather than three hand-maintained copies that can drift.
+ */
+const GROOM_DIMENSION_FIELDS = [
+  'tags', 'tags_mode',
+  'source_agent', 'source_agent_mode',
+  'trigger', 'trigger_mode',
+  'kind', 'kind_mode',
+  'host', 'host_mode',
+  'origin_repo', 'origin_repo_mode',
+  'origin_branch', 'origin_branch_mode',
+  'origin_pr', 'origin_pr_mode',
+] as const;
 
 /**
  * The same 1–3650 / 0–100000 bounds `GroomConditionsSchema`
@@ -1199,6 +1232,22 @@ function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
     min_age_days: row.min_age_days,
     unseen_days: row.unseen_days,
     max_seen_count: row.max_seen_count,
+    tags: row.tags,
+    tags_mode: row.tags_mode as RetentionPolicyRow['tags_mode'],
+    source_agent: row.source_agent,
+    source_agent_mode: row.source_agent_mode as RetentionPolicyRow['source_agent_mode'],
+    trigger: row.trigger,
+    trigger_mode: row.trigger_mode as RetentionPolicyRow['trigger_mode'],
+    kind: row.kind,
+    kind_mode: row.kind_mode as RetentionPolicyRow['kind_mode'],
+    host: row.host,
+    host_mode: row.host_mode as RetentionPolicyRow['host_mode'],
+    origin_repo: row.origin_repo,
+    origin_repo_mode: row.origin_repo_mode as RetentionPolicyRow['origin_repo_mode'],
+    origin_branch: row.origin_branch,
+    origin_branch_mode: row.origin_branch_mode as RetentionPolicyRow['origin_branch_mode'],
+    origin_pr: row.origin_pr,
+    origin_pr_mode: row.origin_pr_mode as RetentionPolicyRow['origin_pr_mode'],
   };
 }
 
@@ -1247,6 +1296,24 @@ export async function toolPolicyCreate(
       p_min_age_days: min_age_days,
       p_unseen_days: unseen_days,
       p_max_seen_count: max_seen_count,
+      // The eight dimension filters (00091) — same field names as
+      // `POST /memories/list`'s body, absent means "not filtered".
+      p_tags: params.tags ?? null,
+      p_tags_mode: params.tags_mode ?? 'any',
+      p_source_agent: params.source_agent ?? null,
+      p_source_agent_mode: params.source_agent_mode ?? 'in',
+      p_trigger: params.trigger ?? null,
+      p_trigger_mode: params.trigger_mode ?? 'in',
+      p_kind: params.kind ?? null,
+      p_kind_mode: params.kind_mode ?? 'in',
+      p_host: params.host ?? null,
+      p_host_mode: params.host_mode ?? 'in',
+      p_origin_repo: params.origin_repo ?? null,
+      p_origin_repo_mode: params.origin_repo_mode ?? 'in',
+      p_origin_branch: params.origin_branch ?? null,
+      p_origin_branch_mode: params.origin_branch_mode ?? 'in',
+      p_origin_pr: params.origin_pr ?? null,
+      p_origin_pr_mode: params.origin_pr_mode ?? 'in',
     })
     .single();
   if (error) throw new Error((error as { message: string }).message);
@@ -1282,7 +1349,7 @@ export async function toolPolicyUpdate(
   });
 
   const patch: Record<string, unknown> = {};
-  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count'] as const) {
+  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count', ...GROOM_DIMENSION_FIELDS] as const) {
     if (params[field] !== undefined) patch[field] = params[field];
   }
   if (Object.keys(patch).length === 0) throw new UserInputError('at least one field to update is required');
@@ -1346,7 +1413,7 @@ async function resolveGroomRequest(
   params: Params,
   userId: string,
   span: Span,
-): Promise<{ scope: string; min_age_days: number | null; unseen_days: number | null; max_seen_count: number | null }> {
+): Promise<GroomConditions> {
   const request: GroomRequestInput = params.policy_id
     ? { policy_id: params.policy_id as string }
     : {
@@ -1354,6 +1421,13 @@ async function resolveGroomRequest(
         min_age_days: params.min_age_days,
         unseen_days: params.unseen_days,
         max_seen_count: params.max_seen_count,
+        // The eight dimension filters — an inline groom.preview/groom.run
+        // call can carry the same filters a saved policy can (00091).
+        ...Object.fromEntries(
+          GROOM_DIMENSION_FIELDS
+            .filter((field) => params[field] !== undefined)
+            .map((field) => [field, params[field]]),
+        ),
       };
 
   let policy: RetentionPolicyRow | null = null;
@@ -1372,6 +1446,38 @@ async function resolveGroomRequest(
   return resolveGroomConditions(request, policy);
 }
 
+/**
+ * `lorekit_groom_candidates` and `lorekit_groom_run` take IDENTICAL
+ * parameters — one place to build the RPC args so `toolGroomPreview` and
+ * `toolGroomRun` cannot drift on which fields they send. Mirrors the REST
+ * `groom.ts` handler's `groomConditionsRpcParams` (two runtimes, one shape).
+ */
+function groomConditionsRpcParams(userId: string, conditions: GroomConditions) {
+  return {
+    p_user_id: userId,
+    p_scope: conditions.scope,
+    p_min_age_days: conditions.min_age_days,
+    p_unseen_days: conditions.unseen_days,
+    p_max_seen_count: conditions.max_seen_count,
+    p_tags: conditions.tags,
+    p_tags_mode: conditions.tags_mode ?? 'any',
+    p_source_agent: conditions.source_agent,
+    p_source_agent_mode: conditions.source_agent_mode ?? 'in',
+    p_trigger: conditions.trigger,
+    p_trigger_mode: conditions.trigger_mode ?? 'in',
+    p_kind: conditions.kind,
+    p_kind_mode: conditions.kind_mode ?? 'in',
+    p_host: conditions.host,
+    p_host_mode: conditions.host_mode ?? 'in',
+    p_origin_repo: conditions.origin_repo,
+    p_origin_repo_mode: conditions.origin_repo_mode ?? 'in',
+    p_origin_branch: conditions.origin_branch,
+    p_origin_branch_mode: conditions.origin_branch_mode ?? 'in',
+    p_origin_pr: conditions.origin_pr,
+    p_origin_pr_mode: conditions.origin_pr_mode ?? 'in',
+  };
+}
+
 /** Preview the candidates a policy or an inline condition set would archive. */
 export async function toolGroomPreview(
   db: DbClient,
@@ -1387,13 +1493,7 @@ export async function toolGroomPreview(
   span.setAttributes({ 'lorekit.scope': conditions.scope });
 
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc('lorekit_groom_candidates', {
-    p_user_id: userId,
-    p_scope: conditions.scope,
-    p_min_age_days: conditions.min_age_days,
-    p_unseen_days: conditions.unseen_days,
-    p_max_seen_count: conditions.max_seen_count,
-  });
+  const { data, error } = await tracedDb.rpc('lorekit_groom_candidates', groomConditionsRpcParams(userId, conditions));
   if (error) throw new Error((error as { message: string }).message);
 
   const rows = (data ?? []) as { id: string; scope: string; key: string }[];
@@ -1423,13 +1523,10 @@ export async function toolGroomRun(
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .rpc<{ archived: number; keys: { scope: string; key: string }[] }>('lorekit_groom_run', {
-      p_user_id: userId,
-      p_scope: conditions.scope,
-      p_min_age_days: conditions.min_age_days,
-      p_unseen_days: conditions.unseen_days,
-      p_max_seen_count: conditions.max_seen_count,
-    })
+    .rpc<{ archived: number; keys: { scope: string; key: string }[] }>(
+      'lorekit_groom_run',
+      groomConditionsRpcParams(userId, conditions),
+    )
     .single();
   if (error) throw new Error((error as { message: string }).message);
 

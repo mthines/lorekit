@@ -15,13 +15,22 @@ hard-delete; that stays a separate, manual, confirm-or-`--yes` step
 
 <TutorialStep number={1} title="Preview before you save anything">
 
-Every rule is the AND of up to three conditions, all optional:
+Every rule is the AND of three age/activity conditions, all optional, plus the
+same eight dimension filters the Lore Explorer's filter bar offers:
 
 | Condition | Meaning |
 | --- | --- |
 | `min_age_days` | Only lessons at least this many days old |
 | `unseen_days` | Only lessons unseen for at least this many days — a lesson that has never been read matches at ANY threshold |
 | `max_seen_count` | Only lessons that have recurred at most this many times |
+| `tags` / `tags_mode` | Labels a lesson must carry — `any` (default), `all`, or `none` |
+| `source_agent` / `source_agent_mode` | The writing agent — `in` (default) or `nin` |
+| `trigger` / `trigger_mode` | The write trigger — `in` (default) or `nin` |
+| `kind` / `kind_mode` | `lesson` / `bus` / `signal` — `in` (default) or `nin` |
+| `host` / `host_mode` | The owning skill or agent — `in` (default) or `nin` |
+| `origin_repo` / `origin_repo_mode` | `owner/repo` — `in` (default) or `nin` |
+| `origin_branch` / `origin_branch_mode` | The branch name — `in` (default) or `nin` |
+| `origin_pr` / `origin_pr_mode` | Pull-request numbers, as digit strings — `in` (default) or `nin` |
 
 Preview what a rule would catch before saving it as a policy, with the CLI:
 
@@ -41,13 +50,15 @@ Both answer `{ "count": <n>, "keys": [{ "scope", "key" }] }` — the exact set a
 run would archive, because a saved run and a preview resolve through the
 IDENTICAL candidate query. Nothing is changed by a preview.
 
-The [Lore Explorer](/lore) previews the same three conditions a different way:
-its "Age & activity" filter (`min_age_days` / `unseen_days` / `max_seen_count`)
-narrows the list to the actual lesson ROWS a policy with those conditions would
-catch, not just a count — so you can scroll through them before saving
-anything. Once at least one condition is set, a **Create retention policy**
-action hands the current scope and conditions to Settings → Retention
-Policies, which opens the New policy dialog pre-filled with them.
+The [Lore Explorer](/lore) previews the same conditions a different way: its
+"Age & activity" filter (`min_age_days` / `unseen_days` / `max_seen_count`)
+combines with its own filter bar (the same eight dimension filters above) to
+narrow the list to the actual lesson ROWS a policy with those conditions
+would catch, not just a count — so you can scroll through them before saving
+anything. Once at least one condition or filter is set, a **Create retention
+policy** action hands the current scope, conditions AND filter bar to
+Settings → Retention Policies, which opens the New policy dialog pre-filled
+with all of it, using the identical filter control to edit it further.
 
 </TutorialStep>
 
@@ -73,6 +84,12 @@ lorekit policy create --scope repo::acme/app --name "stale repo lore" \
 `lorekit policy list` / `update <id>` / `delete <id>` round out the set.
 Deleting a policy deletes the RULE only — it never touches the lessons it
 matched.
+
+The eight dimension filters (`tags`, `source_agent`, `trigger`, `kind`, `host`,
+`origin_repo`, `origin_branch`, `origin_pr` and their `*_mode` pairs) are
+reachable today through the dashboard, `POST /policies`/`PATCH /policies/:id`,
+and the MCP `policy.create`/`policy.update`/`groom.preview`/`groom.run` tools
+— `lorekit policy`/`lorekit groom` have no CLI flags for them yet.
 
 </TutorialStep>
 

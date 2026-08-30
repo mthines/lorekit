@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ListMemoriesBodySchema } from '@lorekit/schemas/memory';
 import { GroomConditionsSchema } from '@lorekit/schemas/retention';
+import { normalizeFilters } from './filters';
 import {
   NO_RETENTION_CONDITIONS,
+  filtersToGroomDimensionFilters,
+  groomConditionsToFilters,
   hasRetentionConditions,
   normalizeRetentionConditions,
   retentionConditionsCount,
@@ -94,6 +97,75 @@ describe('retentionConditionsToListBody / retentionConditionsToGroomConditions',
     const groom = retentionConditionsToGroomConditions(conditions);
     expect(GroomConditionsSchema.safeParse(groom).success).toBe(true);
     expect(groom).toEqual({ min_age_days: 90, unseen_days: 30, max_seen_count: 1 });
+  });
+});
+
+describe('filtersToGroomDimensionFilters', () => {
+  it('translates the label operator into tags_mode', () => {
+    expect(filtersToGroomDimensionFilters([{ field: 'label', operator: 'all', values: ['perf', 'ci'] }])).toEqual({
+      tags: ['perf', 'ci'],
+      tags_mode: 'all',
+    });
+  });
+
+  it('translates every scalar dimension by name', () => {
+    expect(
+      filtersToGroomDimensionFilters([
+        { field: 'host', operator: 'nin', values: ['reviewer'] },
+        { field: 'kind', operator: 'in', values: ['lesson'] },
+      ]),
+    ).toEqual({
+      host: ['reviewer'],
+      host_mode: 'nin',
+      kind: ['lesson'],
+      kind_mode: 'in',
+    });
+  });
+
+  it('drops a non-numeric pr value, matching filtersToBody', () => {
+    expect(filtersToGroomDimensionFilters([{ field: 'pr', operator: 'in', values: ['bogus'] }])).toEqual({});
+  });
+
+  it('drops the owner dimension — a policy has no ownership filter of its own', () => {
+    expect(filtersToGroomDimensionFilters([{ field: 'owner', operator: 'in', values: ['personal'] }])).toEqual({});
+  });
+
+  it('emits a shape GroomConditionsSchema accepts', () => {
+    const dims = filtersToGroomDimensionFilters([
+      { field: 'label', operator: 'in', values: ['perf'] },
+      { field: 'repo', operator: 'in', values: ['acme/app'] },
+    ]);
+    expect(GroomConditionsSchema.safeParse(dims).success).toBe(true);
+  });
+});
+
+describe('groomConditionsToFilters', () => {
+  it('is the reverse of filtersToGroomDimensionFilters for every dimension', () => {
+    const filters: import('./filters').Filter[] = [
+      { field: 'label', operator: 'all', values: ['perf', 'ci'] },
+      { field: 'agent', operator: 'nin', values: ['claude'] },
+      { field: 'trigger', operator: 'in', values: ['pr-webhook'] },
+      { field: 'kind', operator: 'in', values: ['lesson'] },
+      { field: 'host', operator: 'nin', values: ['reviewer'] },
+      { field: 'repo', operator: 'in', values: ['acme/app'] },
+      { field: 'branch', operator: 'in', values: ['main'] },
+      { field: 'pr', operator: 'in', values: ['482'] },
+    ];
+    const roundTripped = groomConditionsToFilters(filtersToGroomDimensionFilters(filters));
+    // normalizeFilters (both this function's output and the reference) orders
+    // by dimension, not input order — see `lib/filters.ts`'s `FILTER_FIELDS`.
+    expect(roundTripped).toEqual(normalizeFilters(filters));
+  });
+
+  it('omits an empty/absent dimension rather than emitting an empty pill', () => {
+    expect(groomConditionsToFilters({})).toEqual([]);
+    expect(groomConditionsToFilters({ tags: [] })).toEqual([]);
+  });
+
+  it('degrades an unrecognised tags_mode to "in" (any), matching normalizeFilters', () => {
+    expect(groomConditionsToFilters({ tags: ['perf'], tags_mode: 'bogus' as never })).toEqual([
+      { field: 'label', operator: 'in', values: ['perf'] },
+    ]);
   });
 });
 
