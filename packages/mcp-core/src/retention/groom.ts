@@ -2,7 +2,7 @@
  * Pure candidate/precedence logic for retention policies ("grooming").
  *
  * The AUTHORITATIVE evaluation of "what matches" runs in Postgres
- * (`lorekit_groom_candidates`, migrations 00088/00091) — SQL is what
+ * (`lorekit_groom_candidates`, migrations 00088/00093) — SQL is what
  * `groom.preview`, `groom.run`, and the nightly sweep all call, so a previewed
  * count always equals what a run archives. This module is a BEHAVIOURAL
  * MIRROR of that SQL, kept here so the matching rules (scope hierarchy, the
@@ -18,7 +18,7 @@
  * SQL RPC takes — so the RPC itself never branches on "was this a saved
  * policy or an inline call".
  *
- * The eight dimension-filter predicates (`matchText` / `matchTags`, 00091)
+ * The eight dimension-filter predicates (`matchText` / `matchTags`, 00093)
  * are a SECOND mirror, of `lorekit_match_text` / `lorekit_match_tags`
  * (migration 00066) — same reasoning, same null-handling subtlety: `nin`
  * excludes a row with no value entirely rather than reading a NULL comparison

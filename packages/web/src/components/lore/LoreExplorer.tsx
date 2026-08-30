@@ -43,7 +43,7 @@
  *   — min age / unseen-for / seen-at-most, the SAME conditions a saved
  *   retention policy matches on. Narrows the list to what a policy with these
  *   conditions would catch, so a reader can verify before ever saving one.
- *   Server-side (migration 00090), shareable, absent means no narrowing.
+ *   Server-side (migration 00092), shareable, absent means no narrowing.
  *   Resolves to no conditions while the `retention-policies` flag is off —
  *   the whole feature is gated together with its Settings → Retention
  *   Policies destination, which 404s while the flag is off.

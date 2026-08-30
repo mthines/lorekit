@@ -45,7 +45,7 @@ interface ListParams {
   archived: boolean;
   expiring_within_days?: number | undefined;
   /**
-   * The retention-policy preview trio — see migration 00090. Plain optional
+   * The retention-policy preview trio — see migration 00092. Plain optional
    * scalars, like `expiring_within_days` above, not a `MemoryDimensions`
    * entry: they are numeric thresholds against `created_at`/`last_seen_at`/
    * `seen_count`, not a categorical value-list.
@@ -229,7 +229,7 @@ async function respondWithPage(
     p_cursor_id: usableCursor?.id ?? null,
     // limit + 1: the overflow row is what `buildPage` reads `hasMore` from.
     p_limit: params.limit + 1,
-    // The retention-policy preview trio (00090) — see `ListParams`.
+    // The retention-policy preview trio (00092) — see `ListParams`.
     p_min_age_days: params.min_age_days ?? null,
     p_unseen_days: params.unseen_days ?? null,
     p_max_seen_count: params.max_seen_count ?? null,

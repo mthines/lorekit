@@ -135,7 +135,7 @@ const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 100, d
 
 /**
  * The EIGHT dimension filters a retention policy (or an inline groom call)
- * can carry (migration 00091) — the same set the Lore Explorer's filter bar
+ * can carry (migration 00093) — the same set the Lore Explorer's filter bar
  * offers. Shared by `policy.create`, `policy.update`, `groom.preview` and
  * `groom.run` so the four cannot describe the dimensions differently. `*_mode`
  * defaults match `ListMemoriesBodySchema`'s: `any` for `tags`, `in` for every

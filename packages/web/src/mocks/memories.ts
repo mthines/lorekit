@@ -600,7 +600,7 @@ export interface MockRetentionPolicy {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
-  // The eight dimension filters (migration 00091) — mirrors `RetentionPolicySchema`
+  // The eight dimension filters (migration 00093) — mirrors `RetentionPolicySchema`
   // exactly so this fixture stays a faithful stand-in for the real response shape.
   tags: string[] | null;
   tags_mode: 'any' | 'all' | 'none' | null;

@@ -121,7 +121,7 @@ export function retentionConditionsParamValue(
 }
 
 /**
- * Translate into the `POST /memories/list` body fields (migration 00090) —
+ * Translate into the `POST /memories/list` body fields (migration 00092) —
  * the same three field names `GroomConditionsSchema` uses, so a rename on
  * either side is a type error here rather than a silent mismatch.
  */
@@ -149,7 +149,7 @@ export function retentionConditionsToGroomConditions(
 // ── Dimension filters ────────────────────────────────────────────────────────
 //
 // A retention policy can ALSO carry the same eight dimension filters the
-// Explorer's filter bar offers (migration 00091) — label/agent/trigger/kind/
+// Explorer's filter bar offers (migration 00093) — label/agent/trigger/kind/
 // host/repo/branch/PR, everything `lib/filters.ts`'s `Filter[]` bar holds
 // EXCEPT `owner`: a policy's `scope` already partitions personal-vs-org lore
 // (v1 is personal-owned only), so a second ownership predicate would either

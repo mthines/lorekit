@@ -45,9 +45,9 @@ alter table retention_policies
 -- 2. lorekit_groom_candidates — the single source of truth for "what
 --    matches", extended with the eight filters. `language sql`, so the new
 --    parameters are referenced by NAME in the body, not by a `$N` position —
---    unlike `lorekit_memory_list` (00090), this function has no dynamic
+--    unlike `lorekit_memory_list` (00092), this function has no dynamic
 --    `execute format(...)` to renumber. Appended at the end of the argument
---    list so this is additive for the same reason 00090's append was: every
+--    list so this is additive for the same reason 00092's append was: every
 --    caller uses PostgREST's named-argument RPC form, so an appended,
 --    defaulted parameter changes no existing caller's behaviour.
 create or replace function lorekit_groom_candidates(

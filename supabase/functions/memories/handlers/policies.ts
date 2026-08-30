@@ -111,7 +111,7 @@ export async function handlePolicyCreate(
       p_min_age_days: body.min_age_days ?? null,
       p_unseen_days: body.unseen_days ?? null,
       p_max_seen_count: body.max_seen_count ?? null,
-      // The eight dimension filters (migration 00091) — same field names as
+      // The eight dimension filters (migration 00093) — same field names as
       // the Explorer's own `POST /memories/list` body, so a `Filter[]` bar
       // translated by `filtersToGroomConditions` needs no re-mapping here.
       p_tags: body.tags ?? null,

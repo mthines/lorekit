@@ -89,7 +89,7 @@ async function resolveConditions(
 
 /**
  * `lorekit_groom_candidates` and `lorekit_groom_run` take IDENTICAL
- * parameters (00091's `lorekit_groom_run` is a thin wrapper that forwards to
+ * parameters (00093's `lorekit_groom_run` is a thin wrapper that forwards to
  * the former) — one place to build the RPC args so `handleGroomPreview` and
  * `handleGroomRun` cannot drift on which fields they send.
  */

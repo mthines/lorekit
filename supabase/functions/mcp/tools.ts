@@ -1296,7 +1296,7 @@ export async function toolPolicyCreate(
       p_min_age_days: min_age_days,
       p_unseen_days: unseen_days,
       p_max_seen_count: max_seen_count,
-      // The eight dimension filters (00091) — same field names as
+      // The eight dimension filters (00093) — same field names as
       // `POST /memories/list`'s body, absent means "not filtered".
       p_tags: params.tags ?? null,
       p_tags_mode: params.tags_mode ?? 'any',
@@ -1422,7 +1422,7 @@ async function resolveGroomRequest(
         unseen_days: params.unseen_days,
         max_seen_count: params.max_seen_count,
         // The eight dimension filters — an inline groom.preview/groom.run
-        // call can carry the same filters a saved policy can (00091).
+        // call can carry the same filters a saved policy can (00093).
         ...Object.fromEntries(
           GROOM_DIMENSION_FIELDS
             .filter((field) => params[field] !== undefined)
