@@ -50,6 +50,14 @@ alter table retention_policies
 --    list so this is additive for the same reason 00092's append was: every
 --    caller uses PostgREST's named-argument RPC form, so an appended,
 --    defaulted parameter changes no existing caller's behaviour.
+--
+--    `create or replace` only replaces a function whose PARAMETER LIST
+--    matches exactly — a longer list (even all-defaulted) creates a SECOND
+--    overload instead, and a 5-arg call then becomes ambiguous ("not unique")
+--    because both overloads can satisfy it via defaults. Drop the 00088
+--    signature first so there is exactly one `lorekit_groom_candidates`.
+drop function if exists lorekit_groom_candidates(uuid, text, integer, integer, integer);
+
 create or replace function lorekit_groom_candidates(
   p_user_id             uuid,
   p_scope               text,
@@ -113,7 +121,10 @@ grant execute on function lorekit_groom_candidates(
 ) to authenticated, service_role;
 
 -- 3. lorekit_groom_run — forwards the same eight filters to
---    lorekit_groom_candidates (never a second candidate query).
+--    lorekit_groom_candidates (never a second candidate query). Same
+--    overload hazard as above — drop the 00088 5-arg signature first.
+drop function if exists lorekit_groom_run(uuid, text, integer, integer, integer);
+
 create or replace function lorekit_groom_run(
   p_user_id             uuid,
   p_scope               text,
@@ -217,7 +228,11 @@ $$;
 
 grant execute on function lorekit_groom_sweep() to service_role;
 
--- 5. lorekit_policy_create — the eight filters, appended.
+-- 5. lorekit_policy_create — the eight filters, appended. Same overload
+--    hazard as `lorekit_groom_candidates` above — drop the 00088 8-arg
+--    signature first.
+drop function if exists lorekit_policy_create(uuid, text, text, text, boolean, integer, integer, integer);
+
 create or replace function lorekit_policy_create(
   p_user_id             uuid,
   p_scope               text,
