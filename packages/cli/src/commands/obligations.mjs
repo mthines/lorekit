@@ -34,7 +34,16 @@
 //      stdin is not a TTY
 //
 // Exit code: 0 by default; 1 when `--strict` is given AND any path obligation
-// is unmet. `run:` obliges are advisory (`met: null`) and never gate.
+// belonging to a `gating` entry is unmet. `run:` obliges are advisory
+// (`met: null`) and never gate.
+//
+// `--strict` respects each entry's `state` (see `../shared/obligations-map.mjs`):
+// an `advisory` entry is reported and never gates, because an entry with no
+// independent `guard` asserts only its author's belief. `error-code-doc` is the
+// motivating case — its own note calls it "a documented path-proxy, not a
+// content predicate" that "may over-flag", and it was nonetheless failing
+// `--strict` on any edit to `mcp-handler.ts`. `--strict-all` restores the
+// previous behaviour of gating on every unmet obligation regardless of state.
 import process from 'node:process';
 import { log, heading, c } from '../shared/util.mjs';
 import { checkObligations } from '../shared/obligations-pure.mjs';
@@ -83,21 +92,25 @@ function dedupe(list) {
 
 export async function obligations(args) {
   const changedFiles = await resolveChangedFiles(args);
-  const strict = Boolean(args.strict);
+  const strictAll = Boolean(args['strict-all']);
+  const strict = Boolean(args.strict) || strictAll;
   const result = checkObligations({ changedFiles, map: SURFACE_PARTNER_MAP });
+  const gatingUnmet = strictAll ? result.unmet : result.unmetGating;
 
   if (args.json) {
-    log(JSON.stringify({ ...result, strict }, null, 2));
+    log(JSON.stringify({ ...result, strict, strictAll }, null, 2));
   } else {
     render(result, changedFiles);
   }
 
   return {
-    exitCode: strict && result.unmet > 0 ? 1 : 0,
+    exitCode: strict && gatingUnmet > 0 ? 1 : 0,
     'lorekit.cli.obligations.files': changedFiles.length,
     'lorekit.cli.obligations.matched': result.matched.length,
     'lorekit.cli.obligations.unmet': result.unmet,
+    'lorekit.cli.obligations.unmetGating': result.unmetGating,
     'lorekit.cli.obligations.strict': strict,
+    'lorekit.cli.obligations.strictAll': strictAll,
   };
 }
 
@@ -114,7 +127,11 @@ function render(result, changedFiles) {
 
   for (const entry of result.matched) {
     log('');
-    log(`  ${c.bold(entry.id)}${entry.guard ? c.dim(`  (guard: ${entry.guard})`) : ''}`);
+    const stateTag = entry.state === 'gating' ? c.dim('[gating]') : c.dim('[advisory]');
+    log(
+      `  ${c.bold(entry.id)} ${stateTag}${entry.guard ? c.dim(`  (guard: ${entry.guard})`) : c.dim('  (no guard — advisory only)')}`,
+    );
+    if (entry.cluster) log(`    ${c.dim(`class: ${entry.cluster.name}`)}`);
     if (entry.note) log(`    ${c.dim(entry.note)}`);
     for (const o of entry.obliges) {
       const mark = o.kind === 'action' ? c.cyan('•') : o.met ? c.green('✓') : c.yellow('!');
@@ -130,6 +147,12 @@ function render(result, changedFiles) {
   } else {
     const plural = result.unmet === 1 ? '' : 's';
     log(`  ${c.yellow('!')} ${result.unmet} unmet obligation${plural} — sweep the partner${plural} above`);
+    const advisoryOnly = result.unmet - result.unmetGating;
+    if (advisoryOnly > 0) {
+      log(
+        `    ${c.dim(`${result.unmetGating} from gating entries; ${advisoryOnly} advisory (reported, never gates)`)}`,
+      );
+    }
   }
   log('');
 }

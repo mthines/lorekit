@@ -487,8 +487,17 @@ against the map and never reads the filesystem or resolves scope from the
 current directory — the changed-set can come from a real `git diff`, a PR
 file list, or by hand, from anywhere.
 
-Exits 0 by default; `--strict` exits non-zero when any PATH obligation is
-unmet. `--json` → `{ files, matched, unmet, ok }`. CLI-only (`native` — no MCP
+Each entry declares a `state`: `advisory` is reported but gates nothing,
+`gating` fails `--strict`, `retired` is not reported. An entry may only be
+`gating` if it has a `guard` — something independent of this map that already
+asserts the partnership — so the two guard-less entries (`perf-index`,
+`error-code-doc`) stay advisory by construction, enforced in the tests. Entries
+also name the recurrence CLASS they instantiate rather than a bare lesson key,
+so obligations sharing a root cause read as one problem.
+
+Exits 0 by default; `--strict` exits non-zero when a GATING entry's PATH
+obligation is unmet, `--strict-all` on ANY unmet obligation regardless of
+state. `--json` → `{ files, matched, unmet, unmetGating, ok, okGating }`. CLI-only (`native` — no MCP
 tool, no REST route, no `tool-catalog.ts` entry): a path-matching lint utility
 is not an operation surface. Slice 1 of a larger design — wiring a
 `PreToolUse` hook to call this at edit time, and server-side retrieval
@@ -1054,7 +1063,8 @@ also returns their headroom against the plan's memory cap.
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--files <path>...` | Changed files to check (`obligations`); also accepted as positionals or newline-separated stdin |
-| `--strict` | Exit non-zero on any unmet obligation (`obligations`) |
+| `--strict` | Exit non-zero on an unmet obligation from a `gating` entry (`obligations`) |
+| `--strict-all` | Exit non-zero on ANY unmet obligation, advisory entries included (`obligations`) |
 | `--retention-days <1..365>` | Only purge archived memories older than this (`purge`; default `30`, derived from the tool catalog) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |

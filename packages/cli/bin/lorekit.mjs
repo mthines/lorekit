@@ -139,7 +139,8 @@ ${c.bold('Options')}
       --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe / link)
                           On show / write it NAMES the scope, overriding the positional
       --files <path>...   Changed files to check (obligations); also accepted as positionals or newline-separated stdin
-      --strict            Exit non-zero on any unmet obligation (obligations)
+      --strict            Exit non-zero on an unmet obligation from a gating entry (obligations)
+      --strict-all        Exit non-zero on ANY unmet obligation, advisory entries included (obligations)
       --key <key>         Name the key explicitly (show / write / link) — the way to
                           address a key that itself contains \`::\`
       --link              Print the equivalent dashboard deep-link URL instead of running (show / search / list / tree)
@@ -1033,7 +1034,7 @@ const KNOWN_FLAGS = [
   'name', 'mode', 'enabled', 'disabled',
   'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'off',
   // `obligations`
-  'files', 'strict',
+  'files', 'strict', 'strict-all',
 ];
 
 async function main() {
@@ -1046,7 +1047,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'strict'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'strict', 'strict-all'],
     known: KNOWN_FLAGS,
   });
 
