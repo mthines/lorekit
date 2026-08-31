@@ -486,13 +486,20 @@ export function FilterMenu({
   // it is not the default — otherwise switching to Archived and closing the
   // menu leaves nothing on the toolbar naming the view.
   const statusIsNonDefault = status !== undefined && status !== DEFAULT_STATUS;
-  const triggerDescription = [
+  // Preserves the original two-state copy exactly ("Add filter" when nothing
+  // is narrowing the view, "<what's applied>. Add or edit a filter"
+  // otherwise) — only the middle clause is new. A version that always
+  // appended "Add or edit a filter" would read as "you already have a
+  // filter" on first load, which is what `FilterMenu.test.stories.tsx`'s
+  // `/add filter/i` queries pin against regressing.
+  const appliedDescriptors = [
     activeCount > 0 ? `Filters: ${activeCount} applied.` : null,
     statusIsNonDefault ? `Status: ${STATUS_LABELS[status]}.` : null,
-    'Add or edit a filter',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  ].filter(Boolean);
+  const triggerDescription =
+    appliedDescriptors.length > 0
+      ? `${appliedDescriptors.join(' ')} Add or edit a filter`
+      : 'Add filter';
   // Mobile's badge is a single number (no room for a label) — it already
   // meant "how many things are narrowing this view", so a non-default status
   // counts toward it exactly like a pill does.
