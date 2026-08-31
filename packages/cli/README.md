@@ -487,12 +487,61 @@ against the map and never reads the filesystem or resolves scope from the
 current directory — the changed-set can come from a real `git diff`, a PR
 file list, or by hand, from anywhere.
 
-Exits 0 by default; `--strict` exits non-zero when any PATH obligation is
-unmet. `--json` → `{ files, matched, unmet, ok }`. CLI-only (`native` — no MCP
+Each entry declares a `state`: `advisory` is reported but gates nothing,
+`gating` fails `--strict`, `retired` is not reported. An entry may only be
+`gating` if it has a `guard` — something independent of this map that already
+asserts the partnership — so the two guard-less entries (`perf-index`,
+`error-code-doc`) stay advisory by construction, enforced in the tests. Entries
+also name the recurrence CLASS they instantiate rather than a bare lesson key,
+so obligations sharing a root cause read as one problem.
+
+Exits 0 by default; `--strict` exits non-zero when a GATING entry's PATH
+obligation is unmet, `--strict-all` on ANY unmet obligation regardless of
+state. `--json` → `{ files, matched, unmet, unmetGating, ok, okGating }`. CLI-only (`native` — no MCP
 tool, no REST route, no `tool-catalog.ts` entry): a path-matching lint utility
 is not an operation surface. Slice 1 of a larger design — wiring a
 `PreToolUse` hook to call this at edit time, and server-side retrieval
 changes, are named follow-ups, not built here.
+
+### `lorekit invariants candidates`
+
+The compile pipeline's candidate scan — `cluster → groom-merge → compile
+candidate → invariant`. A **read-only** survey that reuses `dedupe`'s Jaccard
+clustering over the memory store, then ranks the clusters worth compiling
+into a hand-written `obligations-map.mjs` entry:
+
+```bash
+lorekit invariants candidates
+lorekit invariants candidates --min-seen-count 5 --json
+lorekit invariants candidates --scope repo::owner/repo
+```
+
+A cluster is a candidate when the **summed `seen_count`** across its members
+is at least `--min-seen-count` (default `3`), or any member's own
+`<!-- meta: seen_count=… status=… trigger-context="…" -->` comment (the
+convention documented in the `lorekit-setup` skill's
+`self-improvement-loops.md`) already declares a non-`"active"` status.
+Candidates are ranked by (summed `seen_count` × distinct scopes), descending.
+**For each candidate it prints every memory the merge would collapse** —
+that list is the whole point of the command.
+
+It reuses the same `dedupe` ↔ `recurrence-clusters.mjs` join, so a candidate
+whose members already resolve to a named recurrence class is flagged as a
+stronger case ("this should join an existing invariant") than a merely
+similar one ("this might be a new class").
+
+It deliberately does **not** classify a `trigger-context` into a
+glob/command/error-shape — that judgment is the human step the compile
+pipeline's "never auto-compile, never auto-gate" rule protects, so the raw
+string is printed, never interpreted — and it does **not** know about
+`compiled_to` (no such field exists yet, so an already-compiled candidate can
+still surface here — a known, named gap, not a silent omission).
+
+Offline + Remote split like `dedupe`, with the same population cap. `--json`
+→ `{ root, scopes, minSeenCount, offline, remote }`; each candidate carries
+`members` (`scope`, `key`, `seenCount`, `meta`), `score`, and
+`recurrenceClass`. CLI-only (`native` — no MCP tool, no REST route, no
+`tool-catalog.ts` entry), matching how `obligations` is registered.
 
 ### `lorekit link` (alias `url`)
 
@@ -1047,14 +1096,16 @@ also returns their headroom against the plan's memory cap.
 | `--mcp-json` | Also write a committable project `.mcp.json` (auth via `${LOREKIT_TOKEN}`, no embedded token) for Claude Code on the web (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `purge` / `purge-expired`) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `invariants candidates` / `link` / `purge` / `purge-expired`) |
 | `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. On `show` / `write` it **names** the scope, overriding the positional |
 | `--key <key>` | Name the key outright (`show` / `write` / `link`) — the way to address a key that itself contains `::` |
 | `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--files <path>...` | Changed files to check (`obligations`); also accepted as positionals or newline-separated stdin |
-| `--strict` | Exit non-zero on any unmet obligation (`obligations`) |
+| `--strict` | Exit non-zero on an unmet obligation from a `gating` entry (`obligations`) |
+| `--strict-all` | Exit non-zero on ANY unmet obligation, advisory entries included (`obligations`) |
+| `--min-seen-count <n>` | Minimum summed `seen_count` for a cluster to be a candidate (`invariants candidates`; default `3`) |
 | `--retention-days <1..365>` | Only purge archived memories older than this (`purge`; default `30`, derived from the tool catalog) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |

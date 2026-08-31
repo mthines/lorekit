@@ -45,6 +45,8 @@
 // `stemOf` (below) is the simpler, general-purpose primitive — a plain
 // basename-without-extension — exported for standalone use and unit testing.
 
+import { clusterForEntry, lessonKeyForEntry } from './recurrence-clusters.mjs';
+
 export const RUN_PREFIX = 'run:';
 export const REGEX_PREFIX = 're:';
 
@@ -217,10 +219,15 @@ export function checkObligations({ changedFiles = [], map = [] } = {}) {
 
       let bucket = byId.get(entry.id);
       if (!bucket) {
+        const cluster = clusterForEntry(entry);
         bucket = {
           id: entry.id,
-          lessonKey: entry.lessonKey ?? null,
+          state: entry.state ?? 'advisory',
+          cluster: cluster ? { id: cluster.id, name: cluster.name, why: cluster.why } : null,
+          lessonKey: lessonKeyForEntry(entry),
           guard: entry.guard ?? null,
+          owner: entry.owner ?? null,
+          reviewBy: entry.reviewBy ?? null,
           note: entry.note ?? null,
           obliges: new Map(),
         };
@@ -232,15 +239,25 @@ export function checkObligations({ changedFiles = [], map = [] } = {}) {
     }
   }
 
-  const matched = [...byId.values()].map((b) => ({
-    id: b.id,
-    lessonKey: b.lessonKey,
-    guard: b.guard,
-    note: b.note,
-    obliges: [...b.obliges.values()],
-  }));
+  const matched = [...byId.values()]
+    .filter((b) => b.state !== 'retired')
+    .map((b) => ({
+      id: b.id,
+      state: b.state,
+      cluster: b.cluster,
+      lessonKey: b.lessonKey,
+      guard: b.guard,
+      owner: b.owner,
+      reviewBy: b.reviewBy,
+      note: b.note,
+      obliges: [...b.obliges.values()],
+    }));
 
-  const unmet = matched.reduce((n, e) => n + e.obliges.filter((o) => o.met === false).length, 0);
+  const countUnmet = (entries) =>
+    entries.reduce((n, e) => n + e.obliges.filter((o) => o.met === false).length, 0);
 
-  return { files, matched, unmet, ok: unmet === 0 };
+  const unmet = countUnmet(matched);
+  const unmetGating = countUnmet(matched.filter((e) => e.state === 'gating'));
+
+  return { files, matched, unmet, unmetGating, ok: unmet === 0, okGating: unmetGating === 0 };
 }

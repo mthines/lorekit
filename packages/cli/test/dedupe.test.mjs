@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { tokenize, similarity, clusterDuplicates, clusterByKeyPattern, compileKeyPattern } from '../src/shared/lessons-view.mjs';
 import { parseThreshold, repoThreshold } from '../src/commands/dedupe.mjs';
+import { RECURRENCE_CLUSTERS } from '../src/shared/recurrence-clusters.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -304,6 +305,62 @@ test('dedupe degrades an unconfigured remote to a note, never an error', () => {
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /Remote/);
   assert.match(res.stdout, /unavailable/);
+});
+
+// ── the recurrence-clusters join ──────────────────────────────────────────────
+//
+// A dedupe cluster whose member key literally equals a known recurrence
+// class's canonical lessonKey is a merge candidate with a known class, not
+// just a lexical near-duplicate — the join `resolveRecurrenceClass` supplies.
+
+function seedProjectWithClassedMember() {
+  const root = tmp('lk-dedupe-class-proj-');
+  const home = tmp('lk-dedupe-class-home-');
+  const projectName = path.basename(root).toLowerCase();
+  const store = path.join(root, '.lorekit');
+  const canonicalKey = RECURRENCE_CLUSTERS.find((c) => c.id === 'sibling-set').lessonKey;
+  fs.mkdirSync(path.join(store, 'global'), { recursive: true });
+  fs.mkdirSync(path.join(store, 'project', projectName), { recursive: true });
+  const write = (rel, e) => fs.writeFileSync(path.join(store, rel), entry(e));
+  write('global/a.md', {
+    scope: 'global',
+    key: canonicalKey,
+    value: 'a set-enumerating surface gains a hole when a member is added or moved silently',
+  });
+  write(`project/${projectName}/b.md`, {
+    scope: `project::${projectName}`,
+    key: 'variant-of-the-same-problem',
+    value: 'a set-enumerating surface gains a hole when a member is added or moved silently again',
+  });
+  return { root, home, projectName, canonicalKey };
+}
+
+test('dedupe --json attaches recurrenceClass when a member key resolves to a known class', () => {
+  const { root, home, canonicalKey } = seedProjectWithClassedMember();
+  const res = runDedupe(root, home, ['--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.offline.clusters.length, 1);
+  const cluster = out.offline.clusters[0];
+  assert.equal(cluster.recurrenceClass.classId, 'sibling-set');
+  assert.deepEqual(cluster.recurrenceClass.matched, [canonicalKey]);
+  assert.equal(cluster.recurrenceClass.pure, false, 'only one of the two members resolves to the class');
+});
+
+test('the rendered output names the recurrence class on a classed cluster', () => {
+  const { root, home } = seedProjectWithClassedMember();
+  const res = runDedupe(root, home);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /class: A set-enumerating surface gains a hole/);
+  assert.match(res.stdout, /partial/);
+});
+
+test('an ordinary duplicate cluster with no classed member reports recurrenceClass: null', () => {
+  const { root, home } = seedProject();
+  const res = runDedupe(root, home, ['--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.offline.clusters[0].recurrenceClass.classId, null);
 });
 
 // ── --cluster-by-key (key-shape clustering) ───────────────────────────────────

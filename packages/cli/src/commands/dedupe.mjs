@@ -16,6 +16,7 @@ import { deriveScope } from '../shared/scope.mjs';
 import { resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBlocked, clusterByKeyPattern, compileKeyPattern, DEFAULT_MAX } from '../shared/lessons-view.mjs';
+import { resolveRecurrenceClass } from '../shared/recurrence-clusters.mjs';
 import { log, heading, status, err, c } from '../shared/util.mjs';
 
 const DEFAULT_THRESHOLD = 0.8;
@@ -36,6 +37,15 @@ const DEDUPE_POP_CAP = 2000;
 // possible Jaccard behaves identically to 0+ while preserving that invariant,
 // so we floor to a tiny epsilon rather than accept a literal 0.
 const MIN_THRESHOLD = Number.EPSILON;
+
+// Attach the compile-pipeline join to every cluster: does this dedupe cluster
+// already resolve to a NAMED recurrence class (`recurrence-clusters.mjs`)?
+// Unconditional, like `withReadFields` — additive decoration, never a flag,
+// since a null `recurrenceClass` costs nothing and a match is worth surfacing
+// on every run rather than behind an opt-in.
+function attachRecurrenceClasses(clusters) {
+  return clusters.map((cl) => ({ ...cl, recurrenceClass: resolveRecurrenceClass(cl.members) }));
+}
 
 // Parse `--threshold` into a number in (0, 1]; anything unparseable or out of
 // range falls back to the default (never a crash on bad input). Pure-ish helper.
@@ -189,9 +199,9 @@ export async function dedupe(args) {
       }
       return {
         available: true,
-        clusters: byKeyMode
-          ? clusterByKeyPattern(entries, keyPattern)
-          : clusterDuplicatesBlocked(entries, threshold),
+        clusters: attachRecurrenceClasses(
+          byKeyMode ? clusterByKeyPattern(entries, keyPattern) : clusterDuplicatesBlocked(entries, threshold),
+        ),
         errored: flat.errored,
         popCapped,
       };
@@ -199,9 +209,9 @@ export async function dedupe(args) {
     const { entries, errored, popCapped } = await streamAccumulate(store);
     return {
       available: true,
-      clusters: byKeyMode
-        ? clusterByKeyPattern(entries, keyPattern)
-        : clusterDuplicatesBlocked(entries, threshold),
+      clusters: attachRecurrenceClasses(
+        byKeyMode ? clusterByKeyPattern(entries, keyPattern) : clusterDuplicatesBlocked(entries, threshold),
+      ),
       errored,
       popCapped,
     };
@@ -318,6 +328,10 @@ function renderDedupeSection(header, section) {
       signal = `${cluster.size} memories, similarity ${range}`;
     }
     log(`  ${c.yellow('•')} cluster ${n} ${c.dim(`(${signal})`)}`);
+    if (cluster.recurrenceClass?.classId) {
+      const pureTag = cluster.recurrenceClass.pure ? ' — pure' : ' — partial';
+      log(`    ${c.dim(`class: ${cluster.recurrenceClass.className}${pureTag}`)}`);
+    }
     for (const m of cluster.members) {
       log(`    ${c.cyan('-')} ${m.scope}::${m.key}`);
     }
