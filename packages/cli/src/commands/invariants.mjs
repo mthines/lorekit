@@ -202,6 +202,20 @@ async function candidates(args) {
 
   const offlineCount = offlineSection.available ? offlineSection.candidates.length : 0;
   const remoteCount = remoteSection.available ? remoteSection.candidates.length : 0;
+  // Store-read failures are surfaced to the user (rendered/JSON `errored`
+  // arrays above) but were previously invisible to telemetry — a broken
+  // connection silently reported the same "0 candidates" shape as a genuinely
+  // clean store. Count them so that distinction is visible server-side too.
+  const erroredScopeCount =
+    (offlineSection.available ? (offlineSection.errored || []).length : 0) +
+    (remoteSection.available ? (remoteSection.errored || []).length : 0);
+  // How many surfaced candidates already resolve to a named recurrence class
+  // — the compile pipeline's core value proposition (recognizing a recurring
+  // pattern the maintainers already named) had no telemetry signal at all.
+  const recurrenceClassMatchCount =
+    (offlineSection.available ? offlineSection.candidates : [])
+      .concat(remoteSection.available ? remoteSection.candidates : [])
+      .filter((cand) => cand.recurrenceClass?.classId).length;
 
   if (args.json) {
     log(
@@ -250,6 +264,8 @@ async function candidates(args) {
     'lorekit.cli.invariants.candidates.offline_count': offlineCount,
     'lorekit.cli.invariants.candidates.remote_count': remoteCount,
     'lorekit.cli.invariants.candidates.remote_available': remoteAvailable,
+    'lorekit.cli.invariants.candidates.errored_scope_count': erroredScopeCount,
+    'lorekit.cli.invariants.candidates.recurrence_class_match_count': recurrenceClassMatchCount,
   };
 }
 

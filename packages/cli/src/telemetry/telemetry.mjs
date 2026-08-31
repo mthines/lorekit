@@ -3,10 +3,13 @@
 // The CLI is strictly zero-dependency (see packages/cli/package.json), so this
 // mirrors the Edge Function's SDK-free approach (supabase/functions/_shared/
 // otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
-// packages. One span + one counter data point per human-facing command
-// (install / uninstall / doctor / list / search / show / stats / scopes / diff /
-// tree / lint / dedupe / obligations / link / migrate), fired to Dash0 so the maintainers can
-// see which commands people actually run.
+// packages. One span + one counter data point per human-facing command (every
+// entry in commands.mjs with `traced: true` — install / uninstall / doctor /
+// list / search / show / stats / scopes / diff / tree / lint / dedupe /
+// obligations / invariants / link / migrate / bootstrap / write / archive /
+// delete / restore / purge / purge-expired / groom / policy / protect / pin /
+// unpin), fired to Dash0 so the maintainers can see which commands people
+// actually run.
 //
 // Privacy — this runs on end-users' machines, so it is deliberately narrow:
 //   • Opt-out honored: LOREKIT_TELEMETRY=0|off|false|no|disable, or the
@@ -723,7 +726,11 @@ export async function meterCommand(command, version, run) {
  * `lint` finding) reports `lorekit.cli.outcome=failure` on a span the exporter
  * emits as STATUS_CODE_OK — never ERROR.
  *
- * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | obligations | link | migrate
+ * @param {string} command  bounded: any `commands.mjs` entry with `traced: true`
+ *   (install | uninstall | doctor | list | search | show | stats | scopes |
+ *   diff | tree | lint | dedupe | obligations | invariants | link | migrate |
+ *   bootstrap | write | archive | delete | restore | purge | purge-expired |
+ *   groom | policy | protect | pin | unpin)
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler

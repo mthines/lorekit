@@ -233,6 +233,14 @@ export async function dedupe(args) {
 
   const offlineClusters = offlineSection.available ? offlineSection.clusters.length : 0;
   const remoteClusters = remoteSection.available ? remoteSection.clusters.length : 0;
+  // How many clusters already resolve to a named recurrence class — the whole
+  // point of the compile-pipeline join is recognizing a pattern the
+  // maintainers already named, and that had no telemetry signal at all.
+  // `attachRecurrenceClasses` runs in both value- and key-shape mode.
+  const recurrenceClassMatches =
+    (offlineSection.available ? offlineSection.clusters : [])
+      .concat(remoteSection.available ? remoteSection.clusters : [])
+      .filter((cl) => cl.recurrenceClass?.classId).length;
 
   if (args.json) {
     log(JSON.stringify(buildJson({ root, scopes, threshold, byKeyMode, keyPattern, offlineSection, remoteSection }), null, 2));
@@ -287,6 +295,7 @@ export async function dedupe(args) {
     ...(byKeyMode ? {} : { 'lorekit.cli.dedupe.threshold': threshold }),
     'lorekit.cli.dedupe.offline_clusters': offlineClusters,
     'lorekit.cli.dedupe.remote_clusters': remoteClusters,
+    'lorekit.cli.dedupe.recurrence_class_matches': recurrenceClassMatches,
     'lorekit.cli.dedupe.remote_available': remoteAvailable,
   };
 }
