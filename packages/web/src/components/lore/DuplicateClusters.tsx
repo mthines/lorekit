@@ -225,14 +225,11 @@ export function DuplicateClusters({ scope, scopeLabel, onOpenLesson }: Duplicate
                 ) : (
                   <div className="grid gap-3 @2xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
                     {/* ── The clusters ─────────────────────────────────────
-                        A radiogroup rather than a list of links: picking one
-                        changes what the detail pane shows and navigates
-                        nowhere. */}
-                    {/* A `radiogroup` of buttons rather than a `ul` of links:
+                        A `radiogroup` of buttons rather than a `ul` of links:
                         these are OPTIONS (picking one changes what the pane
                         beside it shows and navigates nowhere), and a list of
-                        list-items carrying `role="none"` would be two
-                        semantics fighting. */}
+                        list-items carrying `role="none"` would be two semantics
+                        fighting. */}
                     <div
                       role="radiogroup"
                       aria-label="Duplicate clusters"
