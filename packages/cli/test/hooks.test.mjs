@@ -336,6 +336,29 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
   assert.equal(sharedWinners[0].scope, scope.readOrder[0]);
 });
 
+test('fetchLessons excludes non-lesson kinds (bus/signal state records) from the generic digest', async () => {
+  // A `kind: 'bus'` row (e.g. a PR-reviewer state record) and a `kind:
+  // 'signal'` row are loop-owned state with their own dedicated reader — an
+  // exact scope+key read or a tag-filtered list — not general advice for
+  // whichever agent next opens a session in that scope. A row with no `kind`
+  // at all (the common case — most lessons never set one) must still pass.
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+  const byScope = {
+    [s]: [
+      { scope: s, key: 'state-record', value: '{"v":1}', kind: 'bus' },
+      { scope: s, key: 'comment-filter', value: 'seen fingerprints', kind: 'signal' },
+      { scope: s, key: 'explicit-lesson', value: 'a real lesson', kind: 'lesson' },
+      { scope: s, key: 'legacy-lesson', value: 'predates kind' },
+    ],
+  };
+  const { lessons } = await fetchLessons(fakeStore(byScope), process.cwd());
+  assert.deepEqual(
+    lessons.map((l) => l.key).sort(),
+    ['explicit-lesson', 'legacy-lesson'],
+  );
+});
+
 test('fetchLessons caps each loop bucket in the injected set (wires capPerBucket)', async () => {
   // A scope flooded by two self-improvement loops plus two general lessons.
   // Without the cap the loops take every slot; with it each bucket contributes
