@@ -62,11 +62,11 @@ export const STATUS_HINTS: Record<MemoryStatus, string> = {
  * One icon per state, beside its label and its hint.
  *
  * It lives here rather than in the control because it has TWO consumers — the
- * `StatusControl` trigger, which collapses to icon-only at the phone width, and
- * the Explorer's per-status empty state. Two records of the same three icons
- * drift; one exhaustive `Record` means a fourth status cannot ship without one.
- * (`audit-actions.ts` and `docs/sections.ts` already pair icons with their
- * vocabulary in `lib/` for the same reason.)
+ * pinned Status radiogroup inside `FilterMenu`, and the Explorer's per-status
+ * empty state. Two records of the same three icons drift; one exhaustive
+ * `Record` means a fourth status cannot ship without one. (`audit-actions.ts`
+ * and `docs/sections.ts` already pair icons with their vocabulary in `lib/`
+ * for the same reason.)
  */
 export const STATUS_ICONS: Record<MemoryStatus, LucideIcon> = {
   active: BookOpen,
