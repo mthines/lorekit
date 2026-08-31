@@ -26,6 +26,12 @@ describe('parseMetaComment', () => {
     const meta = parseMetaComment('<!-- meta: trigger-context="says \\"hello\\" to it" -->');
     assert.equal(meta['trigger-context'], 'says "hello" to it');
   });
+
+  test('a `>` inside the meta comment body (e.g. a trigger-context guard) does not truncate the match', () => {
+    const meta = parseMetaComment('<!-- meta: seen_count=1 trigger-context="length > 0" -->\n\n# title');
+    assert.equal(meta.seen_count, '1');
+    assert.equal(meta['trigger-context'], 'length > 0');
+  });
 });
 
 describe('isCandidate', () => {
