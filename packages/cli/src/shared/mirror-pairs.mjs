@@ -82,6 +82,13 @@ export const mirrorPairs = [
   // `policy_id` or inline request into the conditions struct the RPC takes.
   // Both copies are import-free, so the byte-comparison drift check applies.
   { core: 'packages/mcp-core/src/retention/groom.ts', edge: 'supabase/functions/_shared/retention/groom.ts', driftChecked: true },
+  // Near-duplicate clustering behind `GET /memories/clusters` and the Lore
+  // Explorer's Duplicate Clusters panel. Both copies are import-free, so the
+  // byte comparison applies. Like `lesson-rank.ts` above it also has a SECOND,
+  // cross-LANGUAGE twin no byte comparison can cover — the CLI's own
+  // `lessons-view.mjs` clustering, which is what `lorekit dedupe` runs — guarded
+  // behaviourally by `duplicate-clusters-parity.spec.ts` instead.
+  { core: 'packages/mcp-core/src/clusters/duplicate-clusters.ts', edge: 'supabase/functions/_shared/clusters/duplicate-clusters.ts', driftChecked: true },
   // Excluded from the byte-comparison drift check: the edge copy types the
   // client as `ReturnType<typeof createClient>` off an `npm:` specifier where
   // mcp-core imports a typed `SupabaseClient`, and additionally carries

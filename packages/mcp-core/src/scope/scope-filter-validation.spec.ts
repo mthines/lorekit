@@ -194,6 +194,13 @@ const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]>
   // ("rank THIS scope"), so an ungrammatical one is a 400, matching every
   // other scope-bearing analytics route.
   ['read-ranking.ts', 'handleReadRanking', 'validateScope'],
+  // Also reads `memories.scope`, and takes the reject-only validator the other
+  // `memories.scope` readers take rather than read-ranking's normalising one.
+  // Both are fail-LOUD (a scope filter here IS the question — "which of THIS
+  // scope's lore is redundant" — so an ungrammatical one is a 400); they differ
+  // only on case, and this route filters the column the REST write path stores
+  // VERBATIM, so lowercasing would report a mixed-case scope as duplicate-free.
+  ['clusters.ts', 'handleClusters', 'parseScopeFilter'],
 ];
 
 describe('REST scope filters are validated before they reach a query', () => {

@@ -44,6 +44,8 @@ import {
   ReadActivityResponseSchema,
   ReadRankingQuerySchema,
   ReadRankingResponseSchema,
+  ClustersQuerySchema,
+  ClustersResponseSchema,
 } from '../memory.ts';
 import {
   OrgResponseSchema,
@@ -396,6 +398,34 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { query: ReadRankingQuerySchema },
     responses: {
       200: { description: 'Ranked memories', content: { 'application/json': { schema: ReadRankingResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/clusters',
+    summary: 'Groups of near-duplicate memories, ranked as merge candidates (read-only)',
+    tags: ['Memories'],
+    description:
+      'Clusters the caller\'s recent lore by Jaccard similarity over tokenized bodies and returns ' +
+      'each group with its member count, its similarity RANGE (`min_similarity`/`max_similarity` — ' +
+      'a cluster is built transitively, so two members can sit below `threshold` and still share ' +
+      'one) and, when the member keys match a known recurrence class, that class plus whether the ' +
+      'match is `pure` (every member matched, nothing else joined). Ordering is by score: summed ' +
+      '`seen_count` first, then size, then similarity — "which redundancy has cost the most".\n\n' +
+      '**Read-only is the contract, not a phase.** Deciding that N near-duplicate lessons are ' +
+      'really one entry is a human judgment, so there is deliberately no merge counterpart and no ' +
+      'parameter that makes this route act. It surfaces and ranks the evidence and stops.\n\n' +
+      '**It answers a WINDOWED question.** Candidates are cut at a server-side cap in ' +
+      '`updated_at desc` order *before* clustering, so `candidates` saturating at that cap means ' +
+      'the answer is "what have I recently written that duplicates something else recent", not ' +
+      '"what are all the duplicates in my store". `lorekit dedupe` streams the whole scope through ' +
+      'the identical clustering core and is the answer to the second question.\n\n' +
+      'Member bodies are never returned — only `hook`, the first line — for the same reason ' +
+      '`GET /memories/relevant` returns none: the point is deciding which lessons to look at. ' +
+      'An invalid `scope` is a `400`, not a silently ignored filter.',
+    security, request: { query: ClustersQuerySchema },
+    responses: {
+      200: { description: 'Ranked duplicate clusters', content: { 'application/json': { schema: ClustersResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });
