@@ -407,9 +407,10 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     tags: ['Memories'],
     description:
       'Clusters the caller\'s recent lore by Jaccard similarity over tokenized bodies and returns ' +
-      'each group with its member count, its similarity RANGE (`min_similarity`/`max_similarity` — ' +
-      'a cluster is built transitively, so two members can sit below `threshold` and still share ' +
-      'one) and, when the member keys match a known recurrence class, that class plus whether the ' +
+      'each group with its member count, its similarity RANGE (`min_similarity`/`max_similarity`, ' +
+      'measured over the pairs that LINKED the group, so both are `>= threshold`; clusters form ' +
+      'transitively, so two members of one cluster may be less alike than `min_similarity` reads) ' +
+      'and, when the member keys match a known recurrence class, that class plus whether the ' +
       'match is `pure` (every member matched, nothing else joined). Ordering is by score: summed ' +
       '`seen_count` first, then size, then similarity — "which redundancy has cost the most".\n\n' +
       '**Read-only is the contract, not a phase.** Deciding that N near-duplicate lessons are ' +

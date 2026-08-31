@@ -39,6 +39,13 @@ export const PREFERENCE_KEYS = {
   explorerInstrumentsOpen: 'lorekit:explorer-instruments-open',
   /** Which instrument that panel shows. */
   explorerInstrument: 'lorekit:explorer-instrument',
+  /**
+   * Whether the Lore Explorer's Duplicate Clusters panel is expanded.
+   *
+   * Load-bearing beyond taste, unlike the two above: the panel's query is
+   * `enabled` on this, so a folded panel issues no clustering request at all.
+   */
+  explorerClustersOpen: 'lorekit:explorer-clusters-open',
 } as const;
 
 export type PreferenceKey = (typeof PREFERENCE_KEYS)[keyof typeof PREFERENCE_KEYS];

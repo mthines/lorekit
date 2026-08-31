@@ -1157,7 +1157,14 @@ export const DuplicateClusterSchema = z.object({
   size: z.number().int().min(2),
   /** Summed `seen_count` × distinct scopes — recurrence weighted by spread. */
   score: z.number().nonnegative(),
-  /** The WEAKEST link that still met the threshold — how tight the cluster is. */
+  /**
+   * The WEAKEST and STRONGEST of the pairs that LINKED this cluster — how tight
+   * it is. Both are `>= threshold` by construction, because a weaker pair never
+   * links. Note the asymmetry that follows: clusters form transitively, so two
+   * members can be less alike than `min_similarity` suggests (A–B and B–C both
+   * cleared the bar; A–C was never required to). Present the range as the
+   * evidence for the grouping, never as a floor on every pair inside it.
+   */
   min_similarity: z.number().min(0).max(1),
   max_similarity: z.number().min(0).max(1),
   recurrence_class: RecurrenceClassSchema.nullable(),
@@ -1168,14 +1175,23 @@ export type DuplicateCluster = z.infer<typeof DuplicateClusterSchema>;
 export const ClustersResponseSchema = z.object({
   threshold: z.number(),
   /**
-   * How many rows were fetched before clustering. SATURATES at the handler's
-   * candidate cap, so a value equal to the cap means "at least that many",
-   * never "exactly that many" — and a cluster whose members fall outside that
-   * recency window is not reported at all. Stated here because a caller reading
-   * an empty `clusters` array otherwise has no way to tell "no duplicates" from
-   * "the window did not reach them".
+   * How many rows were fetched before clustering. SATURATES at
+   * {@link ClustersResponse.candidate_limit}, so a value equal to it means "at
+   * least that many", never "exactly that many" — and a cluster whose members
+   * fall outside that recency window is not reported at all.
    */
   candidates: z.number().int().nonnegative(),
+  /**
+   * The server's candidate cap — the size of the `updated_at desc` window the
+   * clustering ran over.
+   *
+   * Reported so a caller can DETECT the saturation above (`candidates ===
+   * candidate_limit`) instead of hardcoding a number that lives in the handler.
+   * Without it, an empty `clusters` array is ambiguous between "you have no
+   * near-duplicates" and "the window did not reach them" — and a UI that renders
+   * the first when the second is true tells the reader something false.
+   */
+  candidate_limit: z.number().int().positive(),
   clusters: z.array(DuplicateClusterSchema),
 });
 export type ClustersResponse = z.infer<typeof ClustersResponseSchema>;

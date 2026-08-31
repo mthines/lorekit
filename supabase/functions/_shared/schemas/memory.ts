@@ -1162,7 +1162,14 @@ export const DuplicateClusterSchema = z.object({
   size: z.number().int().min(2),
   /** Summed `seen_count` × distinct scopes — recurrence weighted by spread. */
   score: z.number().nonnegative(),
-  /** The WEAKEST link that still met the threshold — how tight the cluster is. */
+  /**
+   * The WEAKEST and STRONGEST of the pairs that LINKED this cluster — how tight
+   * it is. Both are `>= threshold` by construction, because a weaker pair never
+   * links. Note the asymmetry that follows: clusters form transitively, so two
+   * members can be less alike than `min_similarity` suggests (A–B and B–C both
+   * cleared the bar; A–C was never required to). Present the range as the
+   * evidence for the grouping, never as a floor on every pair inside it.
+   */
   min_similarity: z.number().min(0).max(1),
   max_similarity: z.number().min(0).max(1),
   recurrence_class: RecurrenceClassSchema.nullable(),

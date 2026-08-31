@@ -198,7 +198,14 @@ export async function handleClusters(
   });
 
   const res = ok(
-    { threshold: params.threshold, candidates: entries.length, clusters },
+    {
+      threshold: params.threshold,
+      candidates: entries.length,
+      // The cap travels WITH the count so a caller can detect saturation
+      // (`candidates === candidate_limit`) rather than hardcoding this number.
+      candidate_limit: CANDIDATE_LIMIT,
+      clusters,
+    },
     cors,
   );
   // Let the router record the RECORD count, not just the call — the number of
