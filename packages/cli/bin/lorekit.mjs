@@ -82,6 +82,11 @@ ${c.bold('Commands')}
               Cwd-independent — matches path strings, never reads the FS.
               --files <path>..., positionals, or stdin (newline-separated).
               --json, --strict (exit non-zero on any unmet obligation).
+  invariants  \`invariants candidates\`: a read-only compile-pipeline scan —
+              reuses dedupe's clustering to rank near-duplicate memories as
+              merge candidates for a hand-written obligations-map.mjs entry.
+              Never auto-compiles or gates anything; prints every memory a
+              candidate would collapse. --json, --scope <s>, --min-seen-count <n>.
   link (url)  Print a shareable dashboard deep-link URL for the current context,
               a scope, or a specific lesson (opens its detail sheet). No args
               links to the cwd's most-specific scope. Filter flags mirror the
@@ -135,7 +140,8 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
-      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe / obligations / link)
+      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe / obligations / invariants / link)
+      --min-seen-count <n> Minimum summed seen_count for a cluster to be a candidate (invariants candidates; default 3)
       --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe / link)
                           On show / write it NAMES the scope, overriding the positional
       --files <path>...   Changed files to check (obligations); also accepted as positionals or newline-separated stdin
@@ -635,6 +641,39 @@ ${c.bold('Examples')}
   npx @lorekit/cli obligations --files packages/schemas/src/shared/tool-catalog.ts --json
   git diff --name-only origin/main... | npx @lorekit/cli obligations --strict
 `,
+  invariants: `${c.bold('lorekit invariants candidates')} — the compile pipeline's candidate scan
+
+${c.bold('Usage')}
+  npx @lorekit/cli invariants candidates [options]
+
+A read-only survey that reuses dedupe's Jaccard clustering to find
+near-duplicate memories, then ranks the clusters worth compiling into a
+hand-written obligations-map.mjs entry. It never auto-compiles and never
+gates anything — it prints candidates for a HUMAN to review. For each
+candidate it prints every memory the merge would collapse, which is the
+whole point of the command.
+
+A cluster is a candidate when the summed seen_count across its members is at
+least --min-seen-count, or a member's own \`<!-- meta: ... status=... -->\`
+comment already declares a non-"active" status. Ranked by (summed seen_count
+× distinct scopes), descending. It does not classify a trigger-context into a
+glob/command/error-shape (a human step), and it does not know about
+compiled_to (no such field exists yet), so an already-compiled candidate can
+still surface here.
+
+${c.bold('Options')}
+  -d, --dir <path>          Target project root (default: current directory)
+      --scope <scope>       Restrict to a single scope (default: all applicable)
+      --min-seen-count <n>  Minimum summed seen_count for a candidate (default: 3)
+      --json                Machine-readable output (candidates + members)
+  -e, --endpoint <url>      Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>       Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>        Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli invariants candidates
+  npx @lorekit/cli invariants candidates --min-seen-count 5 --json
+`,
   link: `${c.bold('lorekit link')} — print a shareable dashboard deep-link URL ${c.dim('(alias: url)')}
 
 ${c.bold('Usage')}
@@ -1029,6 +1068,8 @@ const KNOWN_FLAGS = [
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
+  // `invariants candidates`
+  'min-seen-count',
   // groom / policy / protect / pin / unpin
   'policy-id', 'min-age-days', 'unseen-days', 'max-seen-count', 'run',
   'name', 'mode', 'enabled', 'disabled',
