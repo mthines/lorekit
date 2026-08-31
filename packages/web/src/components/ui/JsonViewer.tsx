@@ -214,7 +214,7 @@ function JsonNode({ nodeKey, value, path, depth, expanded, onToggle, isLast }: J
           onClick={() => onToggle(path)}
           aria-expanded={isOpen}
           aria-label={isOpen ? 'Collapse' : 'Expand'}
-          className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center text-[var(--color-content-tertiary)] transition-transform duration-150"
+          className="-mt-0.5 flex size-6 shrink-0 items-center justify-center text-[var(--color-content-tertiary)] transition-transform duration-150"
         >
           <ChevronRight
             className={['size-3', isOpen ? 'rotate-90' : ''].join(' ')}
