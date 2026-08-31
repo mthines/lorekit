@@ -28,7 +28,7 @@ import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/limits/created-at.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/provenance/origin.ts';
-import { recordAudit } from '../_shared/audit/audit.ts';
+import { recordAuditDeferred } from '../_shared/audit/audit.ts';
 import { applyTenantScope, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';
@@ -234,7 +234,7 @@ export async function toolWrite(
   // the audit_log table.
   span.setAttributes({ 'lorekit.write.inserted': row.inserted !== false });
 
-  await recordAudit(
+  await recordAuditDeferred(
     db,
     {
       action: row.inserted === false ? 'memory.update' : 'memory.create',
@@ -518,7 +518,7 @@ export async function toolDelete(
     'lorekit.result.existed': row.existed,
   });
   if (row.deleted || row.archived) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       {
         action: row.deleted ? 'memory.delete' : 'memory.archive',
@@ -647,7 +647,7 @@ export async function toolArchive(
   const row = data as { deleted: boolean; archived: boolean; existed: boolean };
   span.setAttributes({ 'lorekit.result.archived': row.archived, 'lorekit.result.existed': row.existed });
   if (row.archived) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
@@ -733,7 +733,7 @@ export async function toolRestore(
   const row = data as { restored: boolean; existed: boolean };
   span.setAttributes({ 'lorekit.result.restored': row.restored, 'lorekit.result.existed': row.existed });
   if (row.restored) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
       userId,
@@ -780,7 +780,7 @@ export async function toolPurge(
   if (purged > 0) {
     // One summary event per purge run (D6) — the RPC returns only a count,
     // not the purged rows, so a per-row audit event isn't possible.
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       {
         action: 'memory.delete',
@@ -1034,7 +1034,7 @@ export async function toolPurgeExpired(
   span.setAttributes({ 'lorekit.result.purged_expired': purged });
 
   if (purged > 0) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       {
         action: 'memory.delete',
@@ -1319,7 +1319,7 @@ export async function toolPolicyCreate(
   if (error) throw new Error((error as { message: string }).message);
 
   const row = data as RetentionPolicyDbRow;
-  await recordAudit(
+  await recordAuditDeferred(
     db,
     { action: 'policy.create', resourceType: 'retention_policy', resourceId: row.id, target: name, metadata: { scope, mode, enabled } },
     userId,
@@ -1363,7 +1363,7 @@ export async function toolPolicyUpdate(
   const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
   if (!row) throw new UserInputError(`no retention policy found for id=${id}`);
 
-  await recordAudit(
+  await recordAuditDeferred(
     db,
     { action: 'policy.update', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: patch },
     userId,
@@ -1392,7 +1392,7 @@ export async function toolPolicyDelete(
   if (error) throw new Error((error as { message: string }).message);
   const row = ((data ?? []) as unknown as RetentionPolicyDbRow[])[0] ?? null;
   if (row) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       { action: 'policy.delete', resourceType: 'retention_policy', resourceId: row.id, target: row.name, metadata: { scope: row.scope } },
       userId,
@@ -1537,7 +1537,7 @@ export async function toolGroomRun(
   // layer") — one memory.archive row per archived lesson, reusing the
   // existing action rather than minting memory.groom.
   for (const k of row.keys ?? []) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       { action: 'memory.archive', resourceType: 'memory', target: k.key, metadata: { scope: k.scope, key: k.key, via: 'groom.run' } },
       userId,
@@ -1573,7 +1573,7 @@ export async function toolProtect(
 
   const changed = Boolean(data);
   if (changed) {
-    await recordAudit(
+    await recordAuditDeferred(
       db,
       { action: 'memory.protect', resourceType: 'memory', target: key, metadata: { scope, key, protected: isProtected } },
       userId,
