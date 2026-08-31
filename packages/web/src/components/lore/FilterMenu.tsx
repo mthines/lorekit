@@ -75,6 +75,20 @@
  * On the phone breakpoint (`variant="mobile"`) the same body opens in the
  * shared `BottomSheet` instead, per the repo-wide rule for transient selection
  * surfaces.
+ *
+ * ## Status lives here too, but it is NOT a dimension
+ * A pinned "Status" row group sits above the search box at level 1, built
+ * from `MEMORY_STATUSES`/`STATUS_LABELS`/`STATUS_ICONS` (`lib/status-filter.ts`
+ * — the same source the old standalone `StatusControl` button read from
+ * before it was folded in here). It is a radiogroup, not part of
+ * `rootRows`/`valueRows`: a memory is always in exactly one of
+ * active/archived/expiring, so "select more than one" has to stay
+ * unreachable, the same constraint `StatusControl` enforced. Picking a status
+ * calls `onStatusChange` directly and never touches `filters` or the pill
+ * row — it selects which population the list reads from, the same
+ * `?status=` URL param as before, just relocated into this menu instead of a
+ * separate toolbar button. See `LoreExplorer`'s `isNarrowedWithinView` for why
+ * that distinction (population vs. predicate) matters beyond this component.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -115,6 +129,14 @@ import {
   type Filter,
   type FilterField,
 } from '@/lib/filters';
+import {
+  DEFAULT_STATUS,
+  MEMORY_STATUSES,
+  STATUS_HINTS,
+  STATUS_ICONS,
+  STATUS_LABELS,
+  type MemoryStatus,
+} from '@/lib/status-filter';
 
 /** One icon per dimension, so a row is recognisable before it is read. */
 export const FIELD_ICONS: Record<FilterField, LucideIcon> = {
@@ -143,9 +165,16 @@ interface FilterMenuProps {
   filters: Filter[];
   onToggleValue: (field: FilterField, value: string) => void;
   /**
+   * The Explorer's Status selection, rendered as a pinned radiogroup at level
+   * 1 (see "Status lives here too" above). Optional so a caller that has no
+   * use for it (a story, a future embed) can render the menu without it —
+   * omitting either prop simply hides the section, it does not error.
+   */
+  status?: MemoryStatus;
+  onStatusChange?: (status: MemoryStatus) => void;
+  /**
    * `desktop` anchors a popover and labels the trigger; `mobile` opens the same
-   * body in a `BottomSheet` and shows an icon with a count badge, matching the
-   * archived toggle beside it.
+   * body in a `BottomSheet` and shows an icon with a count badge.
    */
   variant: 'desktop' | 'mobile';
   /**
@@ -163,6 +192,8 @@ export function FilterMenu({
   facets,
   filters,
   onToggleValue,
+  status,
+  onStatusChange,
   variant,
   openAtField = null,
   onOpenAtFieldHandled,
@@ -450,10 +481,29 @@ export function FilterMenu({
   // counts committed conditions rather than array entries — the same
   // defensiveness `filtersPhrase` already gives this prop in `FilterBar`.
   const activeCount = filterCount(filters);
+  // Status has no standalone button any more (see "Status lives here too"
+  // above), so the trigger has to say which population is showing whenever
+  // it is not the default — otherwise switching to Archived and closing the
+  // menu leaves nothing on the toolbar naming the view.
+  const statusIsNonDefault = status !== undefined && status !== DEFAULT_STATUS;
+  // Preserves the original two-state copy exactly ("Add filter" when nothing
+  // is narrowing the view, "<what's applied>. Add or edit a filter"
+  // otherwise) — only the middle clause is new. A version that always
+  // appended "Add or edit a filter" would read as "you already have a
+  // filter" on first load, which is what `FilterMenu.test.stories.tsx`'s
+  // `/add filter/i` queries pin against regressing.
+  const appliedDescriptors = [
+    activeCount > 0 ? `Filters: ${activeCount} applied.` : null,
+    statusIsNonDefault ? `Status: ${STATUS_LABELS[status]}.` : null,
+  ].filter(Boolean);
   const triggerDescription =
-    activeCount > 0
-      ? `Filters: ${activeCount} applied. Add or edit a filter`
+    appliedDescriptors.length > 0
+      ? `${appliedDescriptors.join(' ')} Add or edit a filter`
       : 'Add filter';
+  // Mobile's badge is a single number (no room for a label) — it already
+  // meant "how many things are narrowing this view", so a non-default status
+  // counts toward it exactly like a pill does.
+  const mobileBadgeCount = activeCount + (statusIsNonDefault ? 1 : 0);
 
   // List sizing.
   //
@@ -657,6 +707,44 @@ export function FilterMenu({
         </div>
       )}
 
+      {/* Status — pinned above the dimension list, level 1 only. A radiogroup,
+          not a set of `rootRows`: exactly one of the three is ever selected,
+          and clicking one applies immediately without closing the menu (a
+          reader picking "Archived" is very likely about to also want to
+          narrow it further with a real filter). See "Status lives here too"
+          above for why this cannot become a fourth `rootRows` entry. */}
+      {!field && status !== undefined && onStatusChange && (
+        <div
+          role="radiogroup"
+          aria-label="Status"
+          className="flex items-center gap-1 border-b border-[var(--color-border)] p-1.5"
+        >
+          {MEMORY_STATUSES.map((s) => {
+            const Icon = STATUS_ICONS[s];
+            const selected = s === status;
+            return (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                title={STATUS_HINTS[s]}
+                onClick={() => onStatusChange(s)}
+                className={[
+                  'flex min-h-7 flex-1 items-center justify-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition-colors duration-150',
+                  selected
+                    ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+                    : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+                ].join(' ')}
+              >
+                <Icon className="size-3.5 shrink-0" aria-hidden />
+                {STATUS_LABELS[s]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Search — borderless and transparent so it reads as part of the surface
           and flows straight into the rows (mirrors CommandPalette). The input
           holds focus the whole time the menu is open, so its own focus ring is
@@ -745,10 +833,13 @@ export function FilterMenu({
       >
         <ListFilter className={desktop ? 'size-3.5 shrink-0' : 'size-4 shrink-0'} aria-hidden />
         {desktop ? (
-          <span>Filter</span>
+          // Names the current status once it departs from the default, the
+          // same way a pill would — otherwise the toolbar has nothing left
+          // that says "you are looking at Archived" once the menu is closed.
+          <span>{statusIsNonDefault ? `Filter · ${STATUS_LABELS[status]}` : 'Filter'}</span>
         ) : (
-          activeCount > 0 && (
-            <span className="text-xs font-medium tabular-nums">{activeCount}</span>
+          mobileBadgeCount > 0 && (
+            <span className="text-xs font-medium tabular-nums">{mobileBadgeCount}</span>
           )
         )}
       </button>

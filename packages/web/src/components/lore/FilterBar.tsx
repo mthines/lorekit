@@ -8,8 +8,9 @@
  * than one.
  *
  * ## Where it sits, and why not in the control row
- * The menu's trigger lives in the control row beside search / date / archived
- * (it is a control). The pills live BELOW it, on their own line, because they
+ * The menu's trigger lives in the control row beside search / date (it is a
+ * control; Status rides along inside the same trigger's menu — see
+ * `FilterMenu`). The pills live BELOW it, on their own line, because they
  * are state rather than controls: their number is unbounded, and pushing an
  * unbounded set into a fixed row either truncates the filters or truncates the
  * search box. The row collapses entirely when nothing is filtered, so the cost
@@ -26,6 +27,7 @@ import { AnimatePresence } from 'motion/react';
 import { FilterMenu } from './FilterMenu';
 import { FilterPill } from './FilterPill';
 import { filtersPhrase, type FacetValue, type Filter, type FilterField, type FilterOperator } from '@/lib/filters';
+import type { MemoryStatus } from '@/lib/status-filter';
 
 interface FilterBarProps {
   facets: FacetValue[];
@@ -38,6 +40,12 @@ interface FilterBarProps {
   editingField: FilterField | null;
   onEditField: (field: FilterField | null) => void;
   variant: 'desktop' | 'mobile';
+  /** The Explorer's Status selection — see `FilterMenu`'s "Status lives here
+   *  too" for why it rides along on the trigger rather than getting its own
+   *  prop group. Optional so a caller with no status concept (none today)
+   *  can omit both and get the plain filter-only menu. */
+  status?: MemoryStatus;
+  onStatusChange?: (status: MemoryStatus) => void;
 }
 
 /** The menu trigger alone — rendered inside the control row. */
@@ -45,18 +53,29 @@ export function FilterMenuTrigger({
   facets,
   filters,
   onToggleValue,
+  status,
+  onStatusChange,
   editingField,
   onEditField,
   variant,
 }: Pick<
   FilterBarProps,
-  'facets' | 'filters' | 'onToggleValue' | 'editingField' | 'onEditField' | 'variant'
+  | 'facets'
+  | 'filters'
+  | 'onToggleValue'
+  | 'status'
+  | 'onStatusChange'
+  | 'editingField'
+  | 'onEditField'
+  | 'variant'
 >) {
   return (
     <FilterMenu
       facets={facets}
       filters={filters}
       onToggleValue={onToggleValue}
+      status={status}
+      onStatusChange={onStatusChange}
       variant={variant}
       openAtField={editingField}
       onOpenAtFieldHandled={() => onEditField(null)}

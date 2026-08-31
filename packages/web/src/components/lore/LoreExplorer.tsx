@@ -81,7 +81,6 @@ import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { useExplorerResults } from '@/components/providers/ExplorerResultsProvider';
 import { isExplorerViewFiltered } from '@/lib/explorer-result-count';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { StatusControl } from './StatusControl';
 import {
   EXPIRING_WITHIN_DAYS,
   expiringWithinDays,
@@ -156,7 +155,7 @@ const NO_FILTERS: Filter[] = [];
  */
 const DEFAULT_EXPLORER_RANGE: TimeRange = null;
 
-// ── Filter bar (search + filters + date + status) ─────────────────────────────
+// ── Filter bar (search + filters + date) ───────────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
 // differences between the desktop and mobile renders: the desktop bar sits in a
 // bordered header (`border-b`/padding), uses smaller type + the page `bg`, and
@@ -170,6 +169,11 @@ const DEFAULT_EXPLORER_RANGE: TimeRange = null;
 // the number of dimensions. Its committed conditions render as pills on their
 // own line below (`FilterPillRow`), because a control row is fixed-width and a
 // filter set is not. See `FilterMenu`.
+//
+// Status (active / archived / expiring) rides along on the SAME trigger as a
+// pinned section inside the menu, rather than its own button beside it — see
+// `FilterMenu`'s "Status lives here too" docblock for why it stays a
+// radiogroup instead of becoming a filter dimension.
 
 function ControlRow({
   variant,
@@ -237,6 +241,8 @@ function ControlRow({
         facets={facets}
         filters={filters}
         onToggleValue={onToggleFilterValue}
+        status={status}
+        onStatusChange={onStatusChange}
         editingField={editingField}
         onEditField={onEditField}
         variant={variant}
@@ -255,7 +261,6 @@ function ControlRow({
         active={dateActive}
         className="shrink-0"
       />
-      <StatusControl value={status} onChange={onStatusChange} variant={variant} />
     </div>
   );
 }
@@ -998,9 +1003,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           Overview and the Explorer. See InsightsPage.tsx. */}
 
       {/* ── Results ─────────────────────────────────────────────────────────
-          The filter bar (search / filters / date / status) sits above the memory
-          list — ownership is a dimension INSIDE the filter menu now, not a
-          separate bar. Scope now
+          The filter bar (search / filters / date) sits above the memory
+          list — ownership is a dimension INSIDE the filter menu, and Status
+          is a pinned radiogroup inside the SAME menu (see `FilterMenu`), so
+          neither gets a separate bar or button any more. Scope
           lives in the chip row at the top of the page, so the list is a single
           full-width column — no more left scope rail. Both breakpoints are still
           mounted and CSS-toggled (not a JS conditional render) so each keeps a

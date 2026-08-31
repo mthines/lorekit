@@ -30,8 +30,11 @@
  *
  * Visible segments spend width in proportion to the number of options, and each
  * segment has nowhere to put an explanation. When either matters, use `Combobox`
- * instead — `StatusControl` is the worked example of choosing the combobox
- * deliberately over this control, and that reasoning still stands.
+ * instead — the Lore Explorer's Status selector (a pinned radiogroup inside
+ * `FilterMenu`, `lib/status-filter.ts`) is the worked example of choosing a
+ * combobox-style single-select deliberately over this control's fixed-width
+ * segments, and that reasoning still stands even though its rendering has
+ * since moved.
  */
 
 import type { LucideIcon } from 'lucide-react';
