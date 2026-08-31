@@ -108,3 +108,54 @@ export function clusterMembers(clusterId, map = []) {
   }
   return out;
 }
+
+/**
+ * The join to `dedupe`: does a group of memory keys (a dedupe cluster's
+ * members) already belong to a NAMED recurrence class? A member's `key`
+ * resolves to a class when it equals that class's canonical `lessonKey` or
+ * appears in its `sourceKeys` — the other sightings the class is known to
+ * subsume.
+ *
+ * This is a stronger signal than lexical similarity alone: a dedupe cluster
+ * that resolves here isn't just "these look alike", it's "this is (at least
+ * partly) another sighting of a class we already named and can cite."
+ *
+ * `pure: true` only when EVERY member resolves to the SAME single class — the
+ * strongest case, where merging under the class's canonical key loses no
+ * stragglers. A mixed match (some members resolve, some don't, or they split
+ * across classes) still reports the majority class via `matched`, so a
+ * partial hit isn't silently discarded — ties break by registry order.
+ *
+ * Total: no members, or no member resolving to any class, returns the null
+ * shape rather than throwing or returning undefined fields.
+ */
+export function resolveRecurrenceClass(members = [], clusters = RECURRENCE_CLUSTERS) {
+  const list = Array.isArray(members) ? members : [];
+  const counts = new Map();
+  const matched = [];
+  for (const m of list) {
+    const key = m?.key;
+    if (typeof key !== 'string' || !key) continue;
+    for (const cl of clusters) {
+      const sourceKeys = Array.isArray(cl.sourceKeys) ? cl.sourceKeys : [];
+      if (key !== cl.lessonKey && !sourceKeys.includes(key)) continue;
+      matched.push(key);
+      counts.set(cl.id, (counts.get(cl.id) ?? 0) + 1);
+      break;
+    }
+  }
+  if (matched.length === 0) return { classId: null, className: null, matched: [], pure: false };
+
+  let bestId = null;
+  let bestCount = -1;
+  for (const cl of clusters) {
+    const n = counts.get(cl.id) ?? 0;
+    if (n > bestCount) {
+      bestCount = n;
+      bestId = cl.id;
+    }
+  }
+  const best = clusters.find((cl) => cl.id === bestId) ?? null;
+  const pure = matched.length === list.length && counts.size === 1;
+  return { classId: best?.id ?? null, className: best?.name ?? null, matched, pure };
+}
