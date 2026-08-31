@@ -17,7 +17,7 @@
 // command (`../commands/invariants.mjs`). Zero-dep, total: malformed input
 // degrades to the empty/default case rather than throwing.
 
-const META_COMMENT_RE = /<!--\s*meta:([^>]*)-->/;
+const META_COMMENT_RE = /<!--\s*meta:([\s\S]*?)-->/;
 const META_FIELD_RE = /([\w-]+)=("(?:[^"\\]|\\.)*"|\S+)/g;
 
 /**

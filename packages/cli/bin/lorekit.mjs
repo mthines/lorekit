@@ -81,7 +81,7 @@ ${c.bold('Commands')}
               files/actions and flags any partner NOT in the given set.
               Cwd-independent — matches path strings, never reads the FS.
               --files <path>..., positionals, or stdin (newline-separated).
-              --json, --strict (exit non-zero on any unmet obligation).
+              --json, --strict (exit non-zero on an unmet obligation from a gating entry).
   invariants  \`invariants candidates\`: a read-only compile-pipeline scan —
               reuses dedupe's clustering to rank near-duplicate memories as
               merge candidates for a hand-written obligations-map.mjs entry.
