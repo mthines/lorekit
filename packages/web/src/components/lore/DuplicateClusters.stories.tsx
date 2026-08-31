@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { http, HttpResponse } from 'msw';
+import { fn } from 'storybook/test';
 
 import { DuplicateClusters } from './DuplicateClusters';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
@@ -99,6 +100,15 @@ function handler(body: ClustersResponse) {
  * render (rather than clicking after it) is what makes the baseline capture a
  * settled state instead of racing an animated unfold.
  */
+/**
+ * A recorded no-op for the "open this lesson" hand-off.
+ *
+ * These are screenshot stories, so nothing asserts on it — but a spy states
+ * "deliberately inert here" where a bare `() => {}` reads as an oversight, and
+ * it keeps the prop visible in the Storybook Actions panel.
+ */
+const openLesson = fn().mockName('onOpenLesson');
+
 function Panel(props: { scopeLabel?: string }) {
   writePersistedPreference(PREFERENCE_KEYS.explorerClustersOpen, '1');
   return (
@@ -106,7 +116,7 @@ function Panel(props: { scopeLabel?: string }) {
       <DuplicateClusters
         scope="repo::mthines/lorekit"
         scopeLabel={props.scopeLabel ?? 'repo::mthines/lorekit'}
-        onOpenLesson={() => {}}
+        onOpenLesson={openLesson}
       />
     </div>
   );

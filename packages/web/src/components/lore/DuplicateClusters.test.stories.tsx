@@ -78,8 +78,13 @@ function handler(over: Partial<ClustersResponse> = {}) {
   });
 }
 
-/** The prop spy for story 3. Cleared in `render` so a re-run starts empty. */
-const openLessonSpy = fn();
+/**
+ * The prop spy story 3 asserts on, and the inert default for the other three.
+ *
+ * Story 3 `mockClear()`s it in its own `render`, so sharing it costs nothing and
+ * beats a bare `() => {}` no-op: every story states the hand-off is wired.
+ */
+const openLessonSpy = fn().mockName('onOpenLesson');
 
 const meta: Meta<typeof DuplicateClusters> = {
   title: 'Lore/DuplicateClusters/Tests',
@@ -97,7 +102,7 @@ export default meta;
 type Story = StoryObj<typeof DuplicateClusters>;
 
 /** Seeded EXPANDED — the default is collapsed, and story 1 covers that path. */
-function expanded(onOpenLesson: (ref: { scope: string; key: string }) => void = () => {}) {
+function expanded(onOpenLesson: (ref: { scope: string; key: string }) => void = openLessonSpy) {
   writePersistedPreference(PREFERENCE_KEYS.explorerClustersOpen, '1');
   return <DuplicateClusters scope="global" scopeLabel="global" onOpenLesson={onOpenLesson} />;
 }
@@ -108,7 +113,7 @@ export const FoldedMeansNotFetched: Story = {
     // Explicitly collapsed rather than relying on the default, so this test
     // cannot start passing for the wrong reason if that default ever flips.
     writePersistedPreference(PREFERENCE_KEYS.explorerClustersOpen, '0');
-    return <DuplicateClusters scope="global" scopeLabel="global" onOpenLesson={() => {}} />;
+    return <DuplicateClusters scope="global" scopeLabel="global" onOpenLesson={openLessonSpy} />;
   },
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
