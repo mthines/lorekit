@@ -12,9 +12,11 @@ import { Badge } from '@/components/ui/Badge';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
+import { JsonViewer } from '@/components/ui/JsonViewer';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
 import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
+import { tryParseJsonContainer } from '@/lib/json-tree';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -182,6 +184,11 @@ interface ContentSectionProps {
 function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd, error }: ContentSectionProps) {
   const tabRefs = useRef<Record<ContentTab, HTMLButtonElement | null>>({ preview: null, edit: null });
   const effectiveTab: ContentTab = canEdit ? tab : 'preview';
+  // Some memory kinds (e.g. `bus` events, automation payloads) store a JSON
+  // document as their value rather than prose. Detected on every render — the
+  // parse is cheap (see `tryParseJsonContainer`'s pre-check) and value only
+  // changes on user edits or opening a different lesson, not on scroll/focus.
+  const jsonValue = useMemo(() => tryParseJsonContainer(value), [value]);
 
   function selectTab(next: ContentTab) {
     if (next === 'edit' && !canEdit) return;
@@ -259,7 +266,7 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
           // invisibly, against packages/web/CLAUDE.md's visible-focus floor.
           className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
         >
-          <MarkdownPreview value={value} />
+          {jsonValue !== undefined ? <JsonViewer value={jsonValue} /> : <MarkdownPreview value={value} />}
         </div>
       ) : (
         <div role="tabpanel" id="content-panel-edit" aria-labelledby="content-tab-edit">
