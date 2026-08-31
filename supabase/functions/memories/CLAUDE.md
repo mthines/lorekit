@@ -23,6 +23,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | /activity | activity.ts | read |
 | GET | /pivot | pivot.ts | read |
 | GET | /read-activity | read-activity.ts | read |
+| GET | /clusters | clusters.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
@@ -469,6 +470,91 @@ There is **no MCP tool** for this yet. `usage_events.tool_name` is `memory.relev
 name rather than folding into `memory.search`, because the two answer different questions and
 collapsing them would make it impossible to tell whether agents actually reach for the ranking.
 
+## `GET /clusters`
+
+Groups of NEAR-DUPLICATE lessons, using the same Jaccard heuristic `lorekit dedupe` runs,
+joined to the named recurrence classes and ranked as merge candidates. Feeds the Lore
+Explorer's Duplicate Clusters panel.
+
+```json
+{
+  "threshold": 0.8,
+  "candidates": 64,
+  "candidate_limit": 150,
+  "clusters": [
+    {
+      "size": 3,
+      "score": 42,
+      "min_similarity": 0.86,
+      "max_similarity": 0.97,
+      "recurrence_class": { "id": "edge-mirror-drift", "name": "Edge mirror drift",
+                            "matched": ["edge-mirror-parity", "mirror-pairs-registration"],
+                            "pure": false },
+      "members": [
+        { "scope": "repo::acme/app", "key": "edge-mirror-parity",
+          "hook": "A pure module added to mcp-core needs its `_shared/` twin in the SAME commit.",
+          "seen_count": 9, "updated_at": "2026-08-30T09:12:00.000Z", "status": null }
+      ]
+    }
+  ]
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `scope` | all visible | One EXACT scope. Invalid ⇒ `400` (`parseScopeFilter`, reject-only). |
+| `threshold` | `0.8` | Jaccard floor for two lessons to link, bounded 0.5–1. |
+| `min_seen_count` | `3` | Summed-`seen_count` floor for a cluster to count as a candidate. `0` = show every group. |
+| `limit` | `20` | 1–50 clusters. |
+
+**READ-ONLY is the contract, not a phase.** The compile pipeline's rule is "never
+auto-compile, never auto-gate" — deciding that N near-duplicate lessons are really one entry is
+a human judgment. So there is deliberately no companion merge route, no parameter that makes
+this one act, no audit event, and nothing to dry-run. It is a `GET` with `requires: 'read'` for
+that reason and not by omission.
+
+**Two phases, and the split is the design** — verbatim the arrangement `GET /relevant`
+documents. Postgres SELECTS the bounded candidate set (active, in scope, tenant-visible: an
+indexed read that must run in the database); the shared core CLUSTERS and RANKS it in
+TypeScript. Not SQL: the clustering is set-relative in the strongest sense (union-find over
+candidate pairs) and it must agree exactly with what `lorekit dedupe` reports, which no plpgsql
+copy could be held to. `packages/mcp-core/src/clusters/duplicate-clusters.ts` is that core,
+mirrored byte-identically into `_shared/clusters/` (`mirror-pairs.mjs`, so
+`edge-parity.spec.ts` byte-compares it) and held to the CLI's `lessons-view.mjs` behaviourally
+by `duplicate-clusters-parity.spec.ts`. **That is why this feature has no migration.**
+
+**It answers a WINDOWED question, and `candidate_limit` is how a caller can tell.** Candidates
+are cut at `CANDIDATE_LIMIT` (150) in `updated_at desc` order BEFORE clustering — lower than
+`/relevant`'s 200 because clustering is quadratic in the worst case and every candidate's full
+BODY is fetched to be tokenized, so the cap bounds a CPU cost and not just a transfer. When
+`candidates === candidate_limit` the honest reading is "what have I recently written that
+duplicates something else recent", never "these are all my duplicates": a duplicate pair whose
+members both sit outside the window is invisible and no threshold recovers it. The cap travels
+in the response precisely so a UI can say so instead of rendering an empty `clusters` array as a
+clean bill of health. `lorekit dedupe` streams the whole scope and is the answer to the
+whole-store question — which is why this route does not need to be, and why widening the cap
+(which only moves the cliff) is not the fix.
+
+**`min_similarity`/`max_similarity` are over the pairs that LINKED the cluster**, so both are
+`>= threshold` by construction. Clusters form transitively, so two members can be less alike
+than `min_similarity` reads (A–B and B–C cleared the bar; A–C was never required to) — present
+the range as evidence for the grouping, never as a floor on every pair inside it.
+
+**`recurrence_class` may be a PARTIAL match.** A class is reported when the majority of member
+keys resolve to it, and `pure` is true ONLY when every member does. A consumer must read `pure`
+before presenting the class as a complete account of the cluster.
+
+Bodies are never returned — only `lessonHook`'s first line, for the `/relevant` reason.
+`status` is reported verbatim from a lesson's own `<!-- meta: … -->` comment and is NOT
+validated against a vocabulary: none is defined anywhere in this codebase, and inventing one
+here would be the classification step the read-only boundary exists to prevent.
+
+There is **no MCP tool and no CLI command**, recorded as a guarded `restOnly` entry in
+`telemetry-vocabulary.ts` (`usage_events.tool_name` is `memory.clusters`) — so re-proposing one
+argues with a decision rather than filing a gap. The reason is stronger than the sibling
+analytics reads': the agent-side spelling already exists and is BETTER, because `lorekit
+dedupe` sees the whole scope where this route sees one window.
+
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,
@@ -598,7 +684,8 @@ would answer "reads everywhere" under the label the caller asked for. Same call 
 second grammar.
 
 **That rule now holds on every scope-filtering route, not just this one.**
-`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `DELETE /?scope=…&key=…`
+`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `GET /clusters`,
+`DELETE /?scope=…&key=…`
 and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. **So do the body
 transports** `POST /list`, `POST /activity` and `POST /facets`: each decodes into the same
 module-private reader as its `GET` twin (`respondWithPage` / `runActivity` / `runFacets`),
