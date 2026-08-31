@@ -67,7 +67,7 @@ import { Search, Loader2 } from 'lucide-react';
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
-import { DuplicateClusters } from './DuplicateClusters';
+import { DuplicateClustersPanel } from './DuplicateClustersPanel';
 import { ExplorerInsights } from './ExplorerInsights';
 import { ExplorerInstruments } from './ExplorerInstruments';
 import { MatrixInstrument } from './MatrixInstrument';
@@ -1010,8 +1010,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           dimension), so it lives beside the instrument panel rather than inside
           it. It opens collapsed and its query is gated on that — see the
           component. Members open in this page's own detail sheet through the
-          existing `?lesson=` param, so the panel adds no URL surface. */}
-      <DuplicateClusters
+          existing `?lesson=` param, so the panel adds no URL surface.
+
+          Behind `lore-explorer-duplicate-clusters`, and the flag read is NOT
+          here: `DuplicateClustersPanel` is the copy-and-suffix RESOLVER, so this
+          page has no `&&` to unpick when the rollout ends. Unlike the
+          instruments block above (a plain boolean read, which is why it carries
+          one), the whole panel is the unit being gated. */}
+      <DuplicateClustersPanel
         scope={selectedScope}
         scopeLabel={selectedScopeLabel}
         onOpenLesson={(ref) => openLessonById(ref)}

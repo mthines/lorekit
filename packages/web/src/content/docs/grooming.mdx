@@ -136,7 +136,10 @@ Retention rules catch lore that has gone **stale**. A different kind of clutter
 is the same lesson learned two or three times under slightly different keys —
 which no age condition can see, because every copy keeps recurring.
 
-The [Lore Explorer](/lore) has a **Duplicate clusters** panel for that. Expand
+The [Lore Explorer](/lore) has a **Duplicate clusters** panel for that. It is
+**rolling out behind a feature flag**, so you may not see it yet — the CLI's
+`lorekit dedupe` (below) answers the same question in the meantime, and answers
+it over your whole store. Once the panel is on, expand
 it and it groups the current scope's near-duplicate lessons by how much
 vocabulary they share (the same Jaccard heuristic `lorekit dedupe` uses),
 ranks the groups by how often their members have recurred, and — where the keys

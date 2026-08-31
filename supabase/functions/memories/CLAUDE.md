@@ -555,6 +555,15 @@ argues with a decision rather than filing a gap. The reason is stronger than the
 analytics reads': the agent-side spelling already exists and is BETTER, because `lorekit
 dedupe` sees the whole scope where this route sees one window.
 
+**The route is NOT feature-flagged, and that is deliberate.** Its only caller — the Explorer's
+Duplicate Clusters panel — is gated by `lore-explorer-duplicate-clusters` (default `off`), so
+flag-off already means no traffic here. Gating the route as well would put a Node-only
+OpenFeature dependency inside a self-contained Deno function, which
+`docs/decisions.md#edge-function-is-self-contained-deno-no-import-map` forbids; the retention
+routes needed a second gate only because they have agent-side callers this one does not
+(`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret). A `GET` that is read-only, additive
+and unreferenced is safe to serve unconditionally.
+
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,

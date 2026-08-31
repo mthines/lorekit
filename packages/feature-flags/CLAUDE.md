@@ -32,12 +32,15 @@ it before touching this package if you haven't already.
 - **A UI-affecting experiment's arms are separate components, never inline
   branches.** The copy-and-suffix convention
   (`ComponentName.tsx` resolver + `ComponentName.<variant>.tsx` per arm) is
-  documented in `docs/feature-flags.md` § "UI variants", which carries the
-  complete snippet — there is no reference implementation in the tree, and
-  adding one back means adding a registry flag that gates nothing (see
-  `registry.ts`'s header). Reach for a plain `useFeatureFlag`/`getServerFlag`
-  boolean read instead when a flag only gates one small prop or class, not a
-  component's whole shape.
+  documented in `docs/feature-flags.md` § "UI variants". The live example is
+  `packages/web/src/components/lore/DuplicateClustersPanel{,.on,.off}.tsx`
+  (`lore-explorer-duplicate-clusters`) — copy its shape, including the `off` arm
+  being a whole component that returns `null` and the arm being separate from the
+  implementation it renders. Do NOT add an example that gates nothing just to
+  demonstrate the pattern; that is what was removed (see `registry.ts`'s header).
+  Reach for a plain `useFeatureFlag`/`getServerFlag` boolean read instead when a
+  flag only gates one small prop or class, not a component's whole shape —
+  `lore-explorer-instruments` is the reference for that lighter case.
 - **Overrides select a VARIANT KEY, never a raw value.** `parseFlagOverrides`
   validates every override against the live registry (unknown flag, unknown
   variant → silently dropped) — never trust an override cookie's contents
