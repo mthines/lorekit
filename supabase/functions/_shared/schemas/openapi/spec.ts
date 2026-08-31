@@ -416,8 +416,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '**Read-only is the contract, not a phase.** Deciding that N near-duplicate lessons are ' +
       'really one entry is a human judgment, so there is deliberately no merge counterpart and no ' +
       'parameter that makes this route act. It surfaces and ranks the evidence and stops.\n\n' +
-      '**It answers a WINDOWED question.** Candidates are cut at a server-side cap in ' +
-      '`updated_at desc` order *before* clustering, so `candidates` saturating at that cap means ' +
+      '**It answers a WINDOWED question.** Candidates are cut at `candidate_limit` in ' +
+      '`updated_at desc` order *before* clustering, so `candidates === candidate_limit` means ' +
       'the answer is "what have I recently written that duplicates something else recent", not ' +
       '"what are all the duplicates in my store". `lorekit dedupe` streams the whole scope through ' +
       'the identical clustering core and is the answer to the second question.\n\n' +

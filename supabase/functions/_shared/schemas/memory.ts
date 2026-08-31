@@ -1180,14 +1180,23 @@ export type DuplicateCluster = z.infer<typeof DuplicateClusterSchema>;
 export const ClustersResponseSchema = z.object({
   threshold: z.number(),
   /**
-   * How many rows were fetched before clustering. SATURATES at the handler's
-   * candidate cap, so a value equal to the cap means "at least that many",
-   * never "exactly that many" — and a cluster whose members fall outside that
-   * recency window is not reported at all. Stated here because a caller reading
-   * an empty `clusters` array otherwise has no way to tell "no duplicates" from
-   * "the window did not reach them".
+   * How many rows were fetched before clustering. SATURATES at
+   * {@link ClustersResponse.candidate_limit}, so a value equal to it means "at
+   * least that many", never "exactly that many" — and a cluster whose members
+   * fall outside that recency window is not reported at all.
    */
   candidates: z.number().int().nonnegative(),
+  /**
+   * The server's candidate cap — the size of the `updated_at desc` window the
+   * clustering ran over.
+   *
+   * Reported so a caller can DETECT the saturation above (`candidates ===
+   * candidate_limit`) instead of hardcoding a number that lives in the handler.
+   * Without it, an empty `clusters` array is ambiguous between "you have no
+   * near-duplicates" and "the window did not reach them" — and a UI that renders
+   * the first when the second is true tells the reader something false.
+   */
+  candidate_limit: z.number().int().positive(),
   clusters: z.array(DuplicateClusterSchema),
 });
 export type ClustersResponse = z.infer<typeof ClustersResponseSchema>;
