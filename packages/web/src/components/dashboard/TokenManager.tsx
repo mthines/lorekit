@@ -101,7 +101,7 @@ function NewTokenDisplay({
         <div className="flex shrink-0 items-center gap-1">
           <IconButton
             variant="ghost"
-            size="lg"
+            size="sm"
             onClick={() => setVisible((v) => !v)}
             label={visible ? 'Hide token' : 'Show token'}
             icon={visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -383,7 +383,7 @@ function TokenRow({
           <IconButton
             ref={editorToggleRef}
             variant="ghost"
-            size="lg"
+            size="sm"
             onClick={() => (editing ? closeEditor(false) : openEditor())}
             {...editorTriggerProps}
             label={`Edit scoping for token ${token.name}`}
@@ -397,7 +397,7 @@ function TokenRow({
             // Close the editor first. No focus return — the control it would go
             // to is the one being replaced.
             variant="ghost"
-            size="lg"
+            size="sm"
             onClick={() => {
               if (editing) closeEditor(false);
               setConfirming(true);

@@ -90,7 +90,7 @@ export const Playground: Story = {
   args: { children: 'Generate token', variant: 'primary', size: 'md' },
   argTypes: {
     variant: { control: 'select', options: VARIANTS, description: 'Visual style.' },
-    size: { control: 'select', options: SIZES, description: 'sm / md / lg (lg is the 44px CTA).' },
+    size: { control: 'select', options: SIZES, description: 'sm 32 / md 36 (default) / lg 40 (full-width CTA).' },
     isLoading: { control: 'boolean', description: 'Spinner + aria-busy + disabled.' },
     fullWidth: { control: 'boolean' },
     disabled: { control: 'boolean' },

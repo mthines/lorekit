@@ -69,14 +69,17 @@ const VARIANT_STYLES: Record<ButtonVariant, string> = {
 /**
  * Sizing per size, both the text and icon-only forms in one record so adding a
  * size is a single type-checked edit. `text` is a min-height + horizontal
- * padding + text size; `icon` is a square. `lg` is 44px tall so primary CTAs
- * meet the packages/web accessibility floor for primary actions; `sm`/`md`
- * clear the 24px minimum comfortably.
+ * padding + text size; `icon` is a square. The scale is tuned to this
+ * dashboard's compact input density: `md` (36px) is the default inline action;
+ * `lg` (40px) is for full-width / hero CTAs (login, a full-width primary),
+ * NOT inline form footers; `sm` (32px) is for dense list-row actions. Every
+ * size clears the WCAG 2.2 minimum target of 24px comfortably — a full-width
+ * `lg` clears the 44px enhanced target on width regardless of its height.
  */
 const SIZE_STYLES: Record<ButtonSize, { text: string; icon: string }> = {
   sm: { text: 'min-h-8 px-3 text-xs', icon: 'size-8' },
-  md: { text: 'min-h-10 px-4 text-sm', icon: 'size-10' },
-  lg: { text: 'min-h-11 px-5 text-sm', icon: 'size-11' },
+  md: { text: 'min-h-9 px-3.5 text-sm', icon: 'size-9' },
+  lg: { text: 'min-h-10 px-4 text-sm', icon: 'size-10' },
 };
 
 export interface ButtonClassOptions {

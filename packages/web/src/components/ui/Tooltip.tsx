@@ -4,8 +4,9 @@
  * Tooltip — lightweight accessible tooltip for icon triggers.
  *
  * Renders children as the trigger (typically an icon button or an `<Info>`
- * icon) and shows `content` above (default) or below on hover (desktop) or
- * tap (mobile). A second tap dismisses. Clicking outside also dismisses.
+ * icon) and shows `content` above (default) or below on hover (desktop),
+ * keyboard focus (Tab), or tap (mobile). A second tap dismisses; blurring the
+ * trigger, clicking outside, or Escape also dismisses.
  *
  * Semantics: the tooltip panel is `role="tooltip"`, the trigger carries
  * `aria-describedby` pointing at it, and the panel is `aria-hidden` when not
@@ -205,6 +206,12 @@ export function Tooltip({
       // Show on mouse-enter; hide on mouse-leave for pointer devices.
       onMouseEnter={() => setVisible(true)}
       onMouseLeave={() => setVisible(false)}
+      // Show on keyboard focus, hide on blur — the ARIA tooltip pattern, so a
+      // Tab-navigating user sees the same hint a mouse user does. React's
+      // onFocus/onBlur use focusin/focusout, which bubble from the inner
+      // trigger to this wrapper even though the wrapper itself is not focusable.
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
       // Toggle on tap for touch devices.
       onClick={() => setVisible((v) => !v)}
     >

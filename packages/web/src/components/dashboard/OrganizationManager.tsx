@@ -190,7 +190,7 @@ function CreateOrgForm({
         <Button
           type="submit"
           variant="primary"
-          size="lg"
+          size="md"
           isLoading={pending}
           disabled={!name.trim() || !slug.trim()}
           leftIcon={<Plus className="size-4" />}
@@ -198,7 +198,7 @@ function CreateOrgForm({
           Create
         </Button>
         {onCancel && (
-          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
+          <Button type="button" variant="outline" size="md" onClick={onCancel}>
             Cancel
           </Button>
         )}
@@ -302,14 +302,14 @@ function InviteForm({
         <Button
           type="submit"
           variant="primary"
-          size="lg"
+          size="md"
           isLoading={pending}
           leftIcon={<Plus className="size-4" />}
         >
           Send invite
         </Button>
         {onCancel && (
-          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
+          <Button type="button" variant="outline" size="md" onClick={onCancel}>
             Cancel
           </Button>
         )}
@@ -424,7 +424,7 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: B
         <Button
           type="submit"
           variant="primary"
-          size="lg"
+          size="md"
           isLoading={pending}
           disabled={!scope.trim()}
           leftIcon={<Link className="size-4" aria-hidden />}
@@ -432,7 +432,7 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: B
           Bind scope
         </Button>
         {onCancel && (
-          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
+          <Button type="button" variant="outline" size="md" onClick={onCancel}>
             Cancel
           </Button>
         )}
@@ -467,7 +467,7 @@ function DisclosureButton({ label, onClick }: { label: string; onClick: () => vo
     <Button
       type="button"
       variant="secondary"
-      size="lg"
+      size="md"
       className="self-start"
       onClick={onClick}
       leftIcon={<Plus className="size-4" aria-hidden />}
@@ -501,7 +501,7 @@ function OrgListView({ orgs, showCreateForm, onShowCreateForm, onCreated, onSele
         <Button
           type="button"
           variant="primary"
-          size="lg"
+          size="md"
           onClick={() => onShowCreateForm(true)}
           leftIcon={<Plus className="size-4" aria-hidden />}
         >
@@ -910,7 +910,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                         <IconButton
                           type="button"
                           variant="ghost"
-                          size="lg"
+                          size="sm"
                           onClick={() =>
                             setConfirm({ kind: 'remove', member, label: identity?.handle ?? displayName })
                           }
@@ -1054,7 +1054,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
               <Button
                 type="button"
                 variant="secondary"
-                size="lg"
+                size="md"
                 onClick={() => setConfirm({ kind: 'leave' })}
                 leftIcon={<LogOut className="size-4" aria-hidden />}
               >
@@ -1065,7 +1065,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                   <Button
                     type="button"
                     variant="secondary"
-                    size="lg"
+                    size="md"
                     onClick={handleExportLore}
                     isLoading={pending}
                     leftIcon={<Download className="size-4" aria-hidden />}
@@ -1075,7 +1075,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                   <Button
                     type="button"
                     variant="danger-outline"
-                    size="lg"
+                    size="md"
                     onClick={() => setConfirm({ kind: 'delete' })}
                     leftIcon={<Trash2 className="size-4" aria-hidden />}
                   >

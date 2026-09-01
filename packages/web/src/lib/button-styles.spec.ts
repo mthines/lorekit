@@ -16,7 +16,7 @@ describe('buttonClasses', () => {
   it('defaults to the secondary md variant', () => {
     const classes = buttonClasses();
     expect(classes).toContain('bg-[var(--color-bg-elevated)]');
-    expect(classes).toContain('min-h-10');
+    expect(classes).toContain('min-h-9');
   });
 
   it('uses page-background foreground for the primary CTA (not a raw hex)', () => {
@@ -40,16 +40,16 @@ describe('buttonClasses', () => {
 
   it('maps each size to its height', () => {
     expect(buttonClasses({ size: 'sm' })).toContain('min-h-8');
-    expect(buttonClasses({ size: 'md' })).toContain('min-h-10');
-    // lg is 44px — the accessibility floor for a primary action.
-    expect(buttonClasses({ size: 'lg' })).toContain('min-h-11');
+    expect(buttonClasses({ size: 'md' })).toContain('min-h-9');
+    // lg (40px) is the full-width / hero CTA size, not an inline footer.
+    expect(buttonClasses({ size: 'lg' })).toContain('min-h-10');
   });
 
   it('swaps horizontal padding for square sizing in icon-only mode', () => {
     const icon = buttonClasses({ size: 'md', iconOnly: true });
-    expect(icon).toContain('size-10');
+    expect(icon).toContain('size-9');
     expect(icon).toContain('shrink-0');
-    expect(icon).not.toContain('px-4');
+    expect(icon).not.toContain('px-3.5');
   });
 
   it('adds a full-width utility only when asked', () => {

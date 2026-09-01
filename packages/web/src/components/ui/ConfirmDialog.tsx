@@ -168,13 +168,13 @@ export function ConfirmDialog({
               </div>
             )}
             <div className="flex justify-end gap-2">
-              <Button ref={cancelRef} type="button" variant="outline" size="lg" onClick={onCancel}>
+              <Button ref={cancelRef} type="button" variant="outline" size="md" onClick={onCancel}>
                 {cancelLabel}
               </Button>
               <Button
                 type="button"
                 variant={destructive ? 'danger' : 'primary'}
-                size="lg"
+                size="md"
                 onClick={onConfirm}
                 disabled={pending || !phraseSatisfied}
               >

@@ -166,5 +166,12 @@ export const IconButtonHasNameAndTooltip: Story = {
       await userEvent.unhover(button);
       await expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     });
+
+    await step('Keyboard focus also reveals the tooltip', async () => {
+      await userEvent.tab();
+      await expect(button).toHaveFocus();
+      const tip = await screen.findByRole('tooltip');
+      await expect(tip).toHaveTextContent(/delete token/i);
+    });
   },
 };
