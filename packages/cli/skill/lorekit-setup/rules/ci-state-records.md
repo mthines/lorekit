@@ -90,11 +90,17 @@ Three concrete limits make this a hard rule rather than a style preference:
 - **5 000** active memories per user by default, enforced by a DB trigger.
 - **120 requests/min** per user across every LoreKit surface.
 
-And one soft limit that bites sooner: the agent SessionStart hook lists each scope
-with a **read cap and no tag filter**, ordered by recency. Per-run CI writes are
-the most recently updated rows in the repo scope, so they would displace the
-lessons the hook exists to inject. Bounded cardinality is what keeps CI records
-cheap enough to live in the same scope agents read.
+And one mechanism that matters more than any of the three limits above for
+keeping state records out of the way: the SessionStart digest is built by
+`fetchLessons`, which keeps only entries where `isGeneralLesson(kind)`
+is true — `kind == null || kind === 'lesson'`. A record written with `--kind bus`
+or `--kind signal` is excluded from the digest outright, no matter how recent it
+is; it never competes with lessons for the read cap in the first place. The
+exclusion is by `kind`, not by volume — writing a state record does not, by
+itself, protect it. A record left with `kind` unset (`null`) still passes
+`isGeneralLesson` and *does* count toward the digest like any other lesson,
+which is exactly why the Conventions section below requires `--kind` explicitly
+rather than leaving it to infer.
 
 ---
 
@@ -107,9 +113,17 @@ lesson bucket:
   Deliberately **not** `loop::…`; that prefix is the lessons grammar.
 - **Key:** `ci-state::<slug>` — e.g. `ci-state::flaky-tests`. One slug per fact.
 - **Taxonomy:** pass `--kind bus --host ci` explicitly. `kind`/`host` are only
-  inferred from `loop::` tags, so a `ci::` tag leaves them NULL unless you say so.
-  Setting them buys `lorekit list --kind bus --host ci` — one command that shows
-  every state record and nothing else.
+  inferred from `loop::` tags, so a `ci::` tag leaves them NULL unless you say so
+  — and a NULL `kind` still passes `isGeneralLesson`, so an un-kinded state
+  record renders as a raw JSON blob inline in every session's SessionStart
+  digest, right alongside actual lessons. Setting `--kind` is what keeps it out
+  of the digest at all, not just what makes it easy to find. It also buys
+  `lorekit list --kind bus --host ci` — one command that shows every state
+  record and nothing else — but that's secondary to keeping the digest clean.
+  The `kind` vocabulary is **closed** — `lesson`, `bus`, `signal` — adding a
+  new one is a schema change (`MemoryKindSchema` in `@lorekit/schemas`), so if
+  none of the three fits your record, pick whichever is closest rather than
+  inventing a fourth.
 
 Scope, by what the fact is about:
 
@@ -401,9 +415,11 @@ do:
 6. **Version every record.** An unrecognised `v` means fall back to the first-run
    path and log it — never parse a shape you do not recognise.
 7. **Remember agents read this scope.** State records land in `repo::` alongside
-   lessons and will surface in an agent's SessionStart injection. That is the point
-   (see below) — but it means the value should read sensibly to a human skimming
-   it, and stay small.
+   lessons, and a correctly-kinded one (`--kind bus`/`--kind signal`) is excluded
+   from SessionStart's automatic digest — an agent finds it by explicitly listing
+   or reading the scope (see below), not by it appearing unprompted. It still
+   means the value should read sensibly to a human or agent skimming it, and stay
+   small.
 
 ---
 
@@ -413,8 +429,10 @@ Job-to-job persistence alone does not justify LoreKit over `actions/cache`. What
 does is that **both sides of the loop read the same store**:
 
 - CI writes `ci-state::flaky-tests` deterministically on every run of `main`.
-- An agent asked to "fix the flaky tests" reads it at SessionStart — the same repo
-  scope, no extra wiring — and starts from the real list instead of re-deriving it.
+- An agent asked to "fix the flaky tests" reads it with `lorekit list --kind bus
+  --host ci` (or a direct `memory_read` of the key) — the same repo scope, no
+  extra wiring, just an explicit lookup instead of the automatic digest — and
+  starts from the real list instead of re-deriving it.
 - The agent's own findings go back as a **lesson** in the `loop::` bucket, in the
   same repo scope, where the next human and the next agent both see it.
 - The dashboard shows both, with each state record linked back to the exact
