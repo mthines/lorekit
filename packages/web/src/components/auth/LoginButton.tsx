@@ -291,7 +291,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       // has no signal that anything went wrong, let alone what.
       <div className="flex items-center gap-2">
         {error && (
-          <p role="alert" className="max-w-[16rem] text-right text-xs text-red-400">
+          <p role="alert" className="max-w-[16rem] text-right text-xs text-[var(--color-error)]">
             {error}
           </p>
         )}
@@ -406,7 +406,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         />
 
         {error && (
-          <p role="alert" className="text-xs text-red-400">
+          <p role="alert" className="text-xs text-[var(--color-error)]">
             {error}
           </p>
         )}
@@ -488,7 +488,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           className={FIELD_CLASS}
         />
         {error && (
-          <p role="alert" className="text-xs text-red-400">
+          <p role="alert" className="text-xs text-[var(--color-error)]">
             {error}
           </p>
         )}
@@ -530,7 +530,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       {/* A failed OAuth initiation never navigates away, so this step has to be
           able to say so — the password and magic-link steps already do. */}
       {error && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-[var(--color-error)]">
           {error}
         </p>
       )}

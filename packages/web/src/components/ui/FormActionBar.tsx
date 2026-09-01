@@ -33,7 +33,9 @@
  */
 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Check, RotateCcw, AlertCircle, Loader2 } from 'lucide-react';
+import { Check, RotateCcw, AlertCircle } from 'lucide-react';
+
+import { Button } from './Button';
 
 export interface FormActionBarProps {
   /** Show the bar only when there are unsaved changes. */
@@ -102,48 +104,30 @@ export function FormActionBar({
           {/* Action buttons */}
           <div className="flex gap-2">
             {/* Discard */}
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              className="flex-1"
               onClick={onDiscard}
               disabled={isSaving}
               aria-label="Discard changes"
-              className={[
-                'flex flex-1 min-h-9 items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-all duration-150',
-                isSaving
-                  ? 'cursor-not-allowed opacity-40'
-                  : 'hover:bg-[var(--color-bg)] hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-primary)]',
-              ].join(' ')}
+              leftIcon={<RotateCcw className="size-3.5" aria-hidden />}
             >
-              <RotateCcw className="size-3.5" aria-hidden />
               Discard
-            </button>
+            </Button>
 
             {/* Save */}
-            <button
+            <Button
               type="submit"
+              variant="primary"
+              className="flex-1"
               onClick={(e) => void onSave(e)}
-              disabled={isSaving}
+              isLoading={isSaving}
               aria-label={isSaving ? 'Saving…' : 'Save changes'}
-              aria-busy={isSaving}
-              className={[
-                'flex flex-1 min-h-9 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all duration-150',
-                isSaving
-                  ? 'cursor-not-allowed bg-[var(--color-accent)] opacity-60 text-[var(--color-bg)]'
-                  : 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:brightness-110 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg-raised)]',
-              ].join(' ')}
+              leftIcon={<Check className="size-3.5" aria-hidden />}
             >
-              {isSaving ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Check className="size-3.5" aria-hidden />
-                  Save
-                </>
-              )}
-            </button>
+              {isSaving ? 'Saving…' : 'Save'}
+            </Button>
           </div>
 
           {/* Keyboard hint — hidden on mobile (pointer: coarse) */}

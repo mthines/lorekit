@@ -4,13 +4,14 @@ import { useState, useTransition, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Key, Plus, Trash2, Copy, CheckCheck, Eye, EyeOff,
-  ShieldCheck, ShieldAlert, Pencil, Clock, Loader2, SlidersHorizontal
+  ShieldCheck, ShieldAlert, Pencil, Clock, SlidersHorizontal
 } from 'lucide-react';
 import { generateToken, revokeToken, setTokenScoping, type ApiToken, type TokenPermission } from '@/lib/tokens';
 import { PERMISSION_TIERS, tierFor, type PermissionTierValue } from '@/lib/token-permission';
 import { type TokenScoping } from '@/lib/token-scoping';
 import { ScopingBadges, ScopingFields } from '@/components/dashboard/TokenScoping';
 import { DisclosurePanel, useDisclosure } from '@/components/ui/DisclosurePanel';
+import { Button, IconButton } from '@/components/ui/Button';
 
 const TIER_ICONS: Record<PermissionTierValue, typeof ShieldCheck> = {
   rw: ShieldCheck,
@@ -98,17 +99,19 @@ function NewTokenDisplay({
           {token}
         </code>
         <div className="flex shrink-0 items-center gap-1">
-          <button
+          <IconButton
+            variant="ghost"
+            size="lg"
             onClick={() => setVisible((v) => !v)}
-            aria-label={visible ? 'Hide token' : 'Show token'}
-            className="flex size-11 items-center justify-center rounded text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]"
-          >
-            {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-          </button>
+            label={visible ? 'Hide token' : 'Show token'}
+            icon={visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          />
+          {/* Accent-tinted copy affordance — a deliberately branded control, not
+              a generic Button variant, so it stays hand-styled. */}
           <button
             onClick={handleCopy}
             aria-label="Copy token"
-            className="flex items-center gap-1 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--color-accent)] transition-all duration-150 hover:bg-[var(--color-accent)] hover:text-[#000]"
+            className="flex items-center gap-1 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--color-accent)] transition-all duration-150 hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)]"
           >
             {copied ? <><CheckCheck className="size-3" /> Copied!</> : <><Copy className="size-3" /> Copy</>}
           </button>
@@ -225,14 +228,15 @@ function GenerateForm({
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
       <div className="flex gap-2">
-        <button
+        <Button
           type="submit"
-          disabled={pending || !name.trim() || incompleteOrgs}
-          className="flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+          variant="primary"
+          isLoading={pending}
+          disabled={!name.trim() || incompleteOrgs}
+          leftIcon={<Key className="size-4" />}
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : <Key className="size-4" />}
           Generate token
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -362,47 +366,45 @@ function TokenRow({
       {confirming ? (
         <div className="flex shrink-0 items-center gap-1.5">
           <span className="text-xs text-[var(--color-error)]">Revoke?</span>
-          <button
+          <Button
+            variant="danger-outline"
+            size="sm"
             onClick={handleRevoke}
-            disabled={pending}
-            className="rounded-md border border-[var(--color-error)] px-2 py-0.5 text-xs text-[var(--color-error)] transition-colors hover:bg-[var(--color-error)] hover:text-white"
+            isLoading={pending}
           >
-            {pending ? '…' : 'Yes'}
-          </button>
-          <button
-            onClick={() => setConfirming(false)}
-            className="rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors hover:text-[var(--color-content-primary)]"
-          >
+            Yes
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
             Cancel
-          </button>
+          </Button>
         </div>
       ) : (
         <>
-          <button
+          <IconButton
             ref={editorToggleRef}
+            variant="ghost"
+            size="lg"
             onClick={() => (editing ? closeEditor(false) : openEditor())}
             {...editorTriggerProps}
-            aria-label={`Edit scoping for token ${token.name}`}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
-          >
-            <SlidersHorizontal className="size-3.5" aria-hidden />
-          </button>
-          <button
+            label={`Edit scoping for token ${token.name}`}
+            icon={<SlidersHorizontal className="size-3.5" aria-hidden />}
+          />
+          <IconButton
             // Confirming swaps this whole button group out for Yes/Cancel, so
             // the editor toggle unmounts while the panel below it does not:
             // `aria-controls` would point at a panel with no trigger, and
             // Escape's focus return would target a node that no longer exists.
             // Close the editor first. No focus return — the control it would go
             // to is the one being replaced.
+            variant="ghost"
+            size="lg"
             onClick={() => {
               if (editing) closeEditor(false);
               setConfirming(true);
             }}
-            aria-label={`Revoke token ${token.name}`}
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
-          >
-            <Trash2 className="size-3.5" aria-hidden />
-          </button>
+            label={`Revoke token ${token.name}`}
+            icon={<Trash2 className="size-3.5" aria-hidden />}
+          />
         </>
       )}
       </div>
@@ -436,22 +438,19 @@ function TokenRow({
           )}
           {saveError && <p className="text-xs text-[var(--color-error)]">{saveError}</p>}
           <div className="flex gap-2">
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="sm"
               onClick={handleSaveScoping}
-              disabled={saving || draftIncomplete}
-              className="flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+              isLoading={saving}
+              disabled={draftIncomplete}
             >
-              {saving && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
               Save scoping
-            </button>
-            <button
-              type="button"
-              onClick={() => closeEditor(true)}
-              className="min-h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-tertiary)] transition-colors hover:text-[var(--color-content-primary)]"
-            >
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => closeEditor(true)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </DisclosurePanel>
@@ -595,22 +594,25 @@ export function TokenManager({
           secret the user has to copy before it is gone, and a second form under
           it invites them to walk away from it. */}
       {!newToken && (
-        <button
+        <Button
           ref={formTriggerRef}
+          variant="secondary"
+          className="self-start"
           onClick={() => (showForm ? closeForm(true) : setShowForm(true))}
           {...formTriggerProps}
-          className="flex items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+          leftIcon={
+            // One icon that rotates rather than two that swap: the 45° turn from
+            // + to × is the same glyph continuing, which reads as one control
+            // changing state instead of two controls replacing each other.
+            <Plus
+              className="size-4 transition-transform duration-200 ease-[var(--ease-out-smooth)]"
+              style={{ transform: showForm ? 'rotate(45deg)' : 'rotate(0deg)' }}
+              aria-hidden
+            />
+          }
         >
-          {/* One icon that rotates rather than two that swap: the 45° turn from
-              + to × is the same glyph continuing, which reads as one control
-              changing state instead of two controls replacing each other. */}
-          <Plus
-            className="size-4 transition-transform duration-200 ease-[var(--ease-out-smooth)]"
-            style={{ transform: showForm ? 'rotate(45deg)' : 'rotate(0deg)' }}
-            aria-hidden
-          />
           {showForm ? 'Cancel' : 'Generate new token'}
-        </button>
+        </Button>
       )}
     </div>
   );

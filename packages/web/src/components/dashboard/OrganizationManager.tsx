@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Users, Plus, Loader2, Mail, X, LogOut, Trash2, Download, Link, Unlink,
+  Users, Plus, Mail, X, LogOut, Trash2, Download, Link, Unlink,
   ArrowLeft, ChevronRight,
 } from 'lucide-react';
 import {
@@ -46,6 +46,7 @@ import {
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Button, IconButton } from '@/components/ui/Button';
 import { showToast } from '@/lib/toast';
 
 const ROLE_LABEL: Record<OrgRole, string> = {
@@ -186,22 +187,20 @@ function CreateOrgForm({
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
       <div className="flex gap-2">
-        <button
+        <Button
           type="submit"
-          disabled={pending || !name.trim() || !slug.trim()}
-          className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+          variant="primary"
+          size="lg"
+          isLoading={pending}
+          disabled={!name.trim() || !slug.trim()}
+          leftIcon={<Plus className="size-4" />}
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
           Create
-        </button>
+        </Button>
         {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
-          >
+          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         )}
       </div>
     </form>
@@ -300,22 +299,19 @@ function InviteForm({
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
       <div className="flex gap-2">
-        <button
+        <Button
           type="submit"
-          disabled={pending}
-          className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+          variant="primary"
+          size="lg"
+          isLoading={pending}
+          leftIcon={<Plus className="size-4" />}
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
           Send invite
-        </button>
+        </Button>
         {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
-          >
+          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         )}
       </div>
     </form>
@@ -425,22 +421,20 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: B
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
       <div className="flex gap-2">
-        <button
+        <Button
           type="submit"
-          disabled={pending || !scope.trim()}
-          className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+          variant="primary"
+          size="lg"
+          isLoading={pending}
+          disabled={!scope.trim()}
+          leftIcon={<Link className="size-4" aria-hidden />}
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : <Link className="size-4" aria-hidden />}
           Bind scope
-        </button>
+        </Button>
         {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
-          >
+          <Button type="button" variant="outline" size="lg" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         )}
       </div>
     </form>
@@ -470,14 +464,16 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 /** Progressive-disclosure trigger: an outline "+ label" button that opens a form. */
 function DisclosureButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="secondary"
+      size="lg"
+      className="self-start"
       onClick={onClick}
-      className="flex min-h-11 items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+      leftIcon={<Plus className="size-4" aria-hidden />}
     >
-      <Plus className="size-4" aria-hidden />
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -502,14 +498,15 @@ function OrgListView({ orgs, showCreateForm, onShowCreateForm, onCreated, onSele
           title="Create an organization"
           description="You'll become its owner and can invite teammates once it exists."
         />
-        <button
+        <Button
           type="button"
+          variant="primary"
+          size="lg"
           onClick={() => onShowCreateForm(true)}
-          className="flex min-h-11 items-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 hover:opacity-90"
+          leftIcon={<Plus className="size-4" aria-hidden />}
         >
-          <Plus className="size-4" aria-hidden />
           Create organization
-        </button>
+        </Button>
       </div>
     );
   }
@@ -519,14 +516,15 @@ function OrgListView({ orgs, showCreateForm, onShowCreateForm, onCreated, onSele
       {!showCreateForm && (
         <div className="flex items-center justify-between gap-3">
           <SectionLabel>Your organizations</SectionLabel>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => onShowCreateForm(true)}
-            className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+            leftIcon={<Plus className="size-3.5" aria-hidden />}
           >
-            <Plus className="size-3.5" aria-hidden />
             New organization
-          </button>
+          </Button>
         </div>
       )}
 
@@ -909,16 +907,16 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                       )}
 
                       {canRemove && (
-                        <button
+                        <IconButton
                           type="button"
+                          variant="ghost"
+                          size="lg"
                           onClick={() =>
                             setConfirm({ kind: 'remove', member, label: identity?.handle ?? displayName })
                           }
-                          aria-label={`Remove ${identity?.handle ?? displayName}`}
-                          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
-                        >
-                          <X className="size-4" aria-hidden />
-                        </button>
+                          label={`Remove ${identity?.handle ?? displayName}`}
+                          icon={<X className="size-4" aria-hidden />}
+                        />
                       )}
                     </motion.div>
                   );
@@ -955,14 +953,15 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                       </div>
                     </div>
                     {caps?.canInvite && (
-                      <button
+                      <Button
                         type="button"
+                        variant="danger-outline"
+                        size="sm"
                         onClick={() => setConfirm({ kind: 'revoke', invite })}
                         aria-label={`Revoke invite for ${invite.invitee_handle ?? invite.invitee_email}`}
-                        className="flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-error)]/40 hover:text-[var(--color-error)]"
                       >
                         Revoke
-                      </button>
+                      </Button>
                     )}
                   </motion.div>
                   ))}
@@ -1011,15 +1010,16 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                       <span className="min-w-0 flex-1 truncate font-mono text-sm text-[var(--color-content-primary)]">
                         {binding.scope}
                       </span>
-                      <button
+                      <Button
                         type="button"
+                        variant="danger-outline"
+                        size="sm"
                         onClick={() => setConfirm({ kind: 'unbind', binding })}
                         aria-label={`Unbind scope ${binding.scope}`}
-                        className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-error)]/40 hover:text-[var(--color-error)]"
+                        leftIcon={<Unlink className="size-3.5" aria-hidden />}
                       >
-                        <Unlink className="size-3.5" aria-hidden />
                         Unbind
-                      </button>
+                      </Button>
                     </motion.div>
                   ))}
                 </AnimatePresence>
@@ -1051,33 +1051,36 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
               Danger zone
             </p>
             <div className="flex flex-wrap gap-2">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="lg"
                 onClick={() => setConfirm({ kind: 'leave' })}
-                className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+                leftIcon={<LogOut className="size-4" aria-hidden />}
               >
-                <LogOut className="size-4" aria-hidden />
                 Leave organization
-              </button>
+              </Button>
               {caps?.canDelete && (
                 <>
-                  <button
+                  <Button
                     type="button"
+                    variant="secondary"
+                    size="lg"
                     onClick={handleExportLore}
-                    disabled={pending}
-                    className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-50"
+                    isLoading={pending}
+                    leftIcon={<Download className="size-4" aria-hidden />}
                   >
-                    <Download className="size-4" aria-hidden />
                     Export lore
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="danger-outline"
+                    size="lg"
                     onClick={() => setConfirm({ kind: 'delete' })}
-                    className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-error)]/40 bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-error)] transition-colors duration-150 hover:bg-[var(--color-error)] hover:text-[#1a0000]"
+                    leftIcon={<Trash2 className="size-4" aria-hidden />}
                   >
-                    <Trash2 className="size-4" aria-hidden />
                     Delete organization
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
