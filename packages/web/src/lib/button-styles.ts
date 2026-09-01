@@ -67,21 +67,16 @@ const VARIANT_STYLES: Record<ButtonVariant, string> = {
 };
 
 /**
- * Text-button sizing. `lg` is 44px tall so primary CTAs meet the
- * packages/web accessibility floor for primary actions; `sm`/`md` clear the
- * 24px minimum comfortably.
+ * Sizing per size, both the text and icon-only forms in one record so adding a
+ * size is a single type-checked edit. `text` is a min-height + horizontal
+ * padding + text size; `icon` is a square. `lg` is 44px tall so primary CTAs
+ * meet the packages/web accessibility floor for primary actions; `sm`/`md`
+ * clear the 24px minimum comfortably.
  */
-const TEXT_SIZE_STYLES: Record<ButtonSize, string> = {
-  sm: 'min-h-8 px-3 text-xs',
-  md: 'min-h-10 px-4 text-sm',
-  lg: 'min-h-11 px-5 text-sm',
-};
-
-/** Icon-button sizing — square, matching the text heights. */
-const ICON_SIZE_STYLES: Record<ButtonSize, string> = {
-  sm: 'size-8',
-  md: 'size-10',
-  lg: 'size-11',
+const SIZE_STYLES: Record<ButtonSize, { text: string; icon: string }> = {
+  sm: { text: 'min-h-8 px-3 text-xs', icon: 'size-8' },
+  md: { text: 'min-h-10 px-4 text-sm', icon: 'size-10' },
+  lg: { text: 'min-h-11 px-5 text-sm', icon: 'size-11' },
 };
 
 export interface ButtonClassOptions {
@@ -107,7 +102,7 @@ export function buttonClasses({
   return cn(
     BASE,
     VARIANT_STYLES[variant],
-    iconOnly ? cn(ICON_SIZE_STYLES[size], 'shrink-0') : TEXT_SIZE_STYLES[size],
+    iconOnly ? cn(SIZE_STYLES[size].icon, 'shrink-0') : SIZE_STYLES[size].text,
     fullWidth && 'w-full',
   );
 }
