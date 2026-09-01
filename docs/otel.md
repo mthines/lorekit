@@ -380,6 +380,22 @@ returns `'disabled: …'` and posts nothing until an operator provisions
 `lorekit_groom_sweep()` keeps running nightly exactly as it always has — this
 migration adds observability, it does not gate the archiving itself.
 
+### No check watches this yet
+
+Neither `lorekit.groom.sweep.runs` nor `lorekit.groom.sweep.archived` has a
+Dash0 Check Rule or dashboard panel watching it as of this migration — the
+metrics exist but nothing pages on them yet. Once this ships and the Vault
+secrets are set (so the series actually has data to alert on), propose two
+checks via Dash0 chat (the `dash0` agent builds a Check Rule for a human to
+review and create — this skill never creates one directly):
+
+- **Stalled sweep**: `increase(lorekit_groom_sweep_runs_total[26h]) == 0` — the
+  cron stopped firing.
+- **Sweep running but archiving nothing**: the same absence over
+  `lorekit_groom_sweep_archived_total`, scoped to when at least one
+  `retention_policies` row has `mode='auto' AND enabled=true` — otherwise a
+  quiet org with no auto policies would page for doing exactly what it should.
+
 ### Verifying it
 
 ```bash
