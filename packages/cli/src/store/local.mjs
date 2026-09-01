@@ -100,7 +100,7 @@ class LocalStore {
   // contract's error surfacing.
   async write({
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
-    origin_repo, origin_branch, origin_commit, origin_pr,
+    origin_repo, origin_branch, origin_commit, origin_pr, kind, host,
   } = {}) {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
@@ -129,6 +129,10 @@ class LocalStore {
       origin_branch: origin_branch ?? existing?.entry.origin_branch ?? null,
       origin_commit: origin_commit ?? existing?.entry.origin_commit ?? null,
       origin_pr: origin_pr ?? existing?.entry.origin_pr ?? null,
+      // Taxonomy, same last-known-wins provenance as origin above: an
+      // omitted --kind/--host on a re-write must not erase a prior value.
+      kind: kind ?? existing?.entry.kind ?? null,
+      host: host ?? existing?.entry.host ?? null,
       created,
       updated: existing ? now : override || now,
       archived_at: null,
@@ -175,6 +179,8 @@ class LocalStore {
       origin_branch: entry.origin_branch ?? null,
       origin_commit: entry.origin_commit ?? null,
       origin_pr: entry.origin_pr ?? null,
+      kind: entry.kind ?? null,
+      host: entry.host ?? null,
       created: entry.created ?? now,
       updated: entry.updated ?? now,
       archived_at: entry.archived_at ?? null,

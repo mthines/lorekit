@@ -27,6 +27,8 @@ test('serializeEntry / parseEntry round-trip', () => {
     origin_pr: null,
     expires_at: null,
     seen_count: null,
+    kind: null,
+    host: null,
     value: 'First line of the lesson.\nSecond line with details.',
   };
   const parsed = parseEntry(serializeEntry(entry));
@@ -282,6 +284,8 @@ test('putEntry upserts verbatim by scope+key, preserving created/updated/archive
     origin_pr: null,
     expires_at: null,
     seen_count: null,
+    kind: null,
+    host: null,
     value: 'preserved body',
   };
   await store.putEntry(entry);
@@ -389,6 +393,8 @@ test('origin fields round-trip through the on-disk format', () => {
     origin_pr: 482,
     expires_at: null,
     seen_count: null,
+    kind: null,
+    host: null,
     value: 'A lesson learned in a pull request.',
   };
   assert.deepEqual(parseEntry(serializeEntry(entry)), entry);
@@ -446,4 +452,30 @@ test('local write leaves origin null when none is supplied', async () => {
   const { entry } = await store.write({ scope: 'global', key: 'k', value: 'v' });
   assert.equal(entry.origin_repo, null);
   assert.equal(entry.origin_pr, null);
+});
+
+// ── Taxonomy (kind/host) round-trip and last-known-wins upsert ────────────────
+
+test('local write persists --kind/--host and keeps the last KNOWN value per field', async () => {
+  const store = createLocalStore(tmpDir());
+  await store.write({ scope: 'global', key: 'k', value: 'v1', kind: 'bus', host: 'aw' });
+
+  // A later write with no taxonomy flags must not erase what the first write
+  // recorded — mirrors the origin_* coalesce rule and the hosted memory_write.
+  const { entry } = await store.write({ scope: 'global', key: 'k', value: 'v2' });
+
+  assert.equal(entry.value, 'v2');
+  assert.equal(entry.kind, 'bus');
+  assert.equal(entry.host, 'aw');
+
+  const back = store.getEntry({ scope: 'global', key: 'k' });
+  assert.equal(back.kind, 'bus');
+  assert.equal(back.host, 'aw');
+});
+
+test('local write leaves kind/host null when neither is supplied', async () => {
+  const store = createLocalStore(tmpDir());
+  const { entry } = await store.write({ scope: 'global', key: 'k', value: 'v' });
+  assert.equal(entry.kind, null);
+  assert.equal(entry.host, null);
 });
