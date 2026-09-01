@@ -8510,6 +8510,50 @@ begin
 end;
 $$;
 
+-- ── 97. memories per-user keyset-covering index for the unscoped clusters
+--        read (00095) ────────────────────────────────────────────────────────
+-- `GET /memories/clusters` run with no `?scope=` is the one read on this table
+-- with no `scope` predicate (`handlers/clusters.ts`'s CANDIDATE_LIMIT fetch),
+-- so it cannot use `memories_scope_updated_at_id_idx` (00061) or any other
+-- `scope`-leading index. It resolves to one user's rows either via RLS
+-- (`user_id = auth.uid()`, 00001) or `applyRestTenantScope`'s explicit
+-- `.eq('user_id', …)`, but the only pre-existing index on `user_id` carried
+-- neither the `archived_at` predicate nor the `updated_at`/`id` ordering the
+-- query needs — the same gap 00061 closed for the `scope`-scoped list, one
+-- column over. Mirrors §78's assertions on 00061's index exactly, against
+-- the new one from 00095.
+do $$
+declare
+  v_idx     boolean;
+  v_partial boolean;
+  v_columns boolean;
+begin
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_user_updated_at_id_idx'
+  ) into v_idx;
+  assert v_idx,
+    '97: (user_id, updated_at desc, id desc) covering index must exist';
+
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_user_updated_at_id_idx'
+      and indexdef ilike '%where (archived_at IS NULL)%'
+  ) into v_partial;
+  assert v_partial,
+    '97: the covering index must stay partial on archived_at is null';
+
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_user_updated_at_id_idx'
+      and indexdef ilike '%(user_id, updated_at desc, id desc)%'
+  ) into v_columns;
+  assert v_columns,
+    '97: the covering index must be on (user_id, updated_at desc, id desc) '
+    'in that order — a same-named index over other columns is not the fix';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
