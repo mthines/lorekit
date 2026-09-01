@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.63.2](https://github.com/mthines/lorekit/compare/cli-v1.63.1...cli-v1.63.2) (2026-09-01)
+
+
+### Documentation
+
+* **cli:** fix stale two-tier frontmatter in lorekit-setup SKILL.md ([b89a801](https://github.com/mthines/lorekit/commit/b89a8015b3634f0533b9daacfc6663b0b6d6d85b))
+* **cli:** fix stale two-tier frontmatter in lorekit-setup SKILL.md ([cf7904c](https://github.com/mthines/lorekit/commit/cf7904c27f84df6d4bd5517bd6bd51d53b0ae14c))
+
 ## [1.63.1](https://github.com/mthines/lorekit/compare/cli-v1.63.0...cli-v1.63.1) (2026-09-01)
 
 
