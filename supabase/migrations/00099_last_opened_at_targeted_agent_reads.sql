@@ -1,8 +1,8 @@
 -- `unseen_days` should mean "no agent has deliberately opened this lesson in
 -- N days" — not "nothing touched this row", which is what `last_read_at`
--- (repointed here from the dead `last_seen_at` by 00096) actually measures.
+-- (repointed here from the dead `last_seen_at` by 00098) actually measures.
 --
--- THE GAP 00096 LEFT: `last_read_at` is bumped by `lorekit_record_memory_reads`
+-- THE GAP 00098 LEFT: `last_read_at` is bumped by `lorekit_record_memory_reads`
 -- for EVERY read that returns a row, `targeted` (`memory.read` / `GET /:id`)
 -- OR `bulk` (`memory.list` / `.search` / `.list_archived`) — and `GET /:id` is
 -- the SAME route the web dashboard's LessonDetailSheet calls to render a
@@ -42,8 +42,8 @@ alter table memories add column if not exists last_opened_at timestamptz;
 comment on column memories.last_opened_at is
   'Last time this exact memory was individually retrieved by an agent over
    MCP or the CLI (read_kind = targeted, client in (mcp, cli)) — migration
-   00097. NULL means never targeted-opened by an agent. Distinct from
-   last_read_at (migration 00084/00096), which also moves on a bulk
+   00099. NULL means never targeted-opened by an agent. Distinct from
+   last_read_at (migration 00084/00098), which also moves on a bulk
    list/search appearance or a human viewing the web dashboard.';
 
 -- ── writer: add a trailing p_client, gate last_opened_at on it ─────────────
@@ -106,7 +106,7 @@ comment on function lorekit_record_memory_reads(uuid[], text, text) is
   'Increments memories.read_count/.last_read_at and today''s memory_read_daily
    row (UTC day, keyed by read_kind) for every memory id a read call actually
    returned, in ONE statement regardless of array size. Also sets
-   memories.last_opened_at (migration 00097) when read_kind = targeted AND
+   memories.last_opened_at (migration 00099) when read_kind = targeted AND
    client in (mcp, cli) -- an agent deliberately reaching for this one lesson,
    as opposed to a bulk list/search appearance or a dashboard view. read_kind
    is targeted (memory.read / GET /:id) or bulk (memory.list / memory.search /

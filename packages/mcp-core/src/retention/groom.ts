@@ -261,7 +261,7 @@ export interface GroomCandidateMemory {
   created_at: string;
   /**
    * `null` means never individually opened by an agent — see migration
-   * 00097. Distinct from `last_read_at` (00084/00096), which also moves on a
+   * 00099. Distinct from `last_read_at` (00084/00098), which also moves on a
    * bulk list/search appearance or a dashboard view; `unseen_days` wants the
    * narrower signal.
    */
@@ -285,7 +285,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * excludes protected rows unconditionally, and — the case this module exists
  * to make testable — a NULL `last_opened_at` (never individually opened by an
  * agent) matches ANY `unseen_days` threshold, mirroring the SQL's
- * `coalesce(last_opened_at, '-infinity')` clamp (migration 00097 — it used to
+ * `coalesce(last_opened_at, '-infinity')` clamp (migration 00099 — it used to
  * be `last_read_at`, which also counted a bulk list/search appearance or a
  * dashboard view; see that migration's header).
  */

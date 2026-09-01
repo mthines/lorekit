@@ -264,7 +264,7 @@ async function respondWithPage(
   // exactly as `GET /:id` does; it is how both the CLI's `read`/`show` command
   // and the dashboard's lesson-by-ref lookup fetch a single lesson, since
   // neither knows its id up front. Recording it as TARGETED is what lets
-  // migration 00097's last_opened_at (an agent deliberately reaching for this
+  // migration 00099's last_opened_at (an agent deliberately reaching for this
   // lesson) fire from the CLI's `read` command — without this it would look
   // exactly like a bulk list and unseen_days could never resolve it.
   const readKind = scopeFilter && params.key ? 'targeted' : 'bulk';

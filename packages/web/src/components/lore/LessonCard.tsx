@@ -63,12 +63,12 @@ export interface LessonEntry extends MemoryOriginFields {
   read_count?: number;
   last_read_at?: string | null;
   /**
-   * Narrower than `last_read_at` (migration 00097): only moves when an agent
+   * Narrower than `last_read_at` (migration 00099): only moves when an agent
    * individually retrieves THIS lesson over MCP (`memory.read`) or the CLI
    * (`lorekit read`/`show`) — never from riding along in a `memory.list`/
    * `.search` result page, and never from a human browsing the dashboard.
    * This is what `unseen_days` retention filtering keys on. Undefined for a
-   * pre-00097 backend; null means never opened this way.
+   * pre-00099 backend; null means never opened this way.
    */
   last_opened_at?: string | null;
 }

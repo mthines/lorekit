@@ -37,7 +37,7 @@ export type MemoryReadKind = 'targeted' | 'bulk';
  * turn into 31 statements on a hot path. No-ops (never queries) on an empty
  * array, since a call that matched nothing touched no memory.
  *
- * `client` (migration 00097) additionally bumps `memories.last_opened_at`
+ * `client` (migration 00099) additionally bumps `memories.last_opened_at`
  * when `readKind === 'targeted'` and `client` is `'mcp'` or `'cli'` — an agent
  * deliberately reaching for this one lesson, as opposed to a bulk list/search
  * appearance or a human viewing the web dashboard. Optional and defaulted to

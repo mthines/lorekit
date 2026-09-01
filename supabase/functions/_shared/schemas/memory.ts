@@ -799,12 +799,12 @@ export const MemoryEntrySchema = z.object({
   // genuinely nullable column (a never-read-since-00077 memory has none).
   read_count: z.number().int().nonnegative().optional(),
   last_read_at: z.string().datetime().nullable().optional(),
-  // The narrower agent-open signal (migration 00097) `unseen_days` retention
+  // The narrower agent-open signal (migration 00099) `unseen_days` retention
   // filtering actually keys on: set ONLY when a TARGETED read (one exact
   // scope+key, not a bulk list/search page) is attributed to the `mcp` or
   // `cli` client — never a dashboard view. Optional/nullable for the same
   // backward-compat reason as `last_read_at`: a memory nobody has
-  // individually opened since this shipped (or a pre-00097 backend) has none.
+  // individually opened since this shipped (or a pre-00099 backend) has none.
   last_opened_at: z.string().datetime().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.

@@ -287,7 +287,7 @@ export async function toolRead(
   // memory.read is a TARGETED read (one exact scope+key) for the per-memory
   // counter (migration 00077) — and, since the transport IS MCP, an agent
   // deliberately opening this lesson, so it also bumps last_opened_at
-  // (migration 00097).
+  // (migration 00099).
   recordMemoryReads(db, [data.id], 'targeted', 'mcp');
   const { id: _id, ...rest } = data;
   return rest;

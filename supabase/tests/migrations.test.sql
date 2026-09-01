@@ -8585,11 +8585,11 @@ begin
 end;
 $$;
 
--- ── 98. memories.last_opened_at — targeted agent opens only (00097) ─────────
+-- ── 98. memories.last_opened_at — targeted agent opens only (00099) ─────────
 -- unseen_days used to key on last_read_at, which also moves on a bulk
 -- list/search appearance or a human viewing the web dashboard's detail
 -- sheet — so a retention policy's "unseen 90d" was satisfied by the
--- Explorer being opened, not by an agent reading the lesson back. 00097
+-- Explorer being opened, not by an agent reading the lesson back. 00099
 -- adds last_opened_at, bumped by lorekit_record_memory_reads ONLY when
 -- read_kind = 'targeted' AND client IN ('mcp', 'cli').
 -- AC-1: targeted + mcp sets last_opened_at.
