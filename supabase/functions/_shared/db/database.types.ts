@@ -679,6 +679,33 @@ export type Database = {
         }
         Relationships: []
       }
+      groom_sweep_stats: {
+        Row: {
+          archived_total: number
+          id: boolean
+          last_run_at: string | null
+          policies_evaluated: number
+          runs_total: number
+          started_at: string
+        }
+        Insert: {
+          archived_total?: number
+          id?: boolean
+          last_run_at?: string | null
+          policies_evaluated?: number
+          runs_total?: number
+          started_at?: string
+        }
+        Update: {
+          archived_total?: number
+          id?: boolean
+          last_run_at?: string | null
+          policies_evaluated?: number
+          runs_total?: number
+          started_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
