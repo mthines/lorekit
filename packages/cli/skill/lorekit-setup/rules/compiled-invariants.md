@@ -68,8 +68,10 @@ candidate → advisory → gating → retired
 - **candidate** — surfaced by `lorekit invariants candidates` (below), not yet a
   map entry. Exists only in a scan's output, never in the repo.
 - **advisory** — a hand-written `obligations-map.mjs` entry (`state: 'advisory'`).
-  Reported by `lorekit obligations` on every hit, gates nothing, not even under
-  `--strict`. This is where every new entry starts.
+  Reported by `lorekit obligations` on every hit, gates nothing under `--strict`
+  (only `--strict-all` counts it, per its own note: "restores the previous
+  behaviour of gating on every unmet obligation regardless of state"). This is
+  where every new entry starts.
 - **gating** — fails `--strict`. An entry may only be `gating` if it declares an
   independent `guard`: an existing CI spec or script that *already* asserts the
   partnership on its own, so the map entry is surfacing a real check earlier,
