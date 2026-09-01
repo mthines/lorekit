@@ -1,10 +1,20 @@
 # aw-target for aw-tester — LoreKit dashboard (@lorekit/web, Next.js 15).
 #
 # Local dev server: `pnpm nx serve web` (or `pnpm --filter @lorekit/web dev`)
-# → http://localhost:3000. Auth is Supabase (GitHub OAuth + magic-link email OTP),
-# both external/passwordless flows — so we capture a session once, headfully.
+# → http://localhost:3000. Auth is Supabase; the dedicated test account signs in
+# with email + password headlessly, so the session refreshes unattended.
+#
+# Credentials come from LOREKIT_TESTING_USER_NAME (the account email) and
+# LOREKIT_TESTING_USER_PW. Locally they live in .env.local; on Claude Web they
+# are already in the shell. Neither is stored in this file.
 #
 # Re-run `/aw-setup` when the session expires or you need to switch accounts.
+#
+# Can't run locally? (e.g. aw-tester in the Claude Web environment, no dev
+# server.) Verify against the PR's Vercel preview deployment instead — use the
+# sibling `preview` target (.claude/aw-targets/preview.yml). Note the auth is
+# per-host: this localhost session does NOT authenticate a *.vercel.app origin,
+# so the preview target captures its own session against that exact host.
 name: local
 base_url: http://localhost:3000
 
@@ -12,19 +22,26 @@ auth:
   strategy: storage-state
   storage_state: ./.auth/local.json
   identity:
-    email: mads.thines@dash0.com
+    # The email is supplied at bootstrap time via LOREKIT_TESTING_USER_NAME —
+    # not committed here (it is a test-account credential).
+    email: env:LOREKIT_TESTING_USER_NAME
     role: user
   refresh:
     when: missing-or-expired
-    # Interactive headful capture: opens a real browser, you log in via GitHub
-    # or magic-link, and the session is saved to ./.auth/local.json. Auto-saves
-    # and closes once the URL reaches /overview (or on manual window close).
+    # Automated credentials capture: headless Chromium fills the email + password
+    # form and saves the session to ./.auth/local.json once the URL reaches
+    # /overview. The `. ./.env.local` sourcing loads the creds on a local machine
+    # and is a harmless no-op on Claude Web, where they are already exported.
     command: |
+      set -a
+      [ -f .env.local ] && . ./.env.local
+      [ -f packages/web/.env.local ] && . ./packages/web/.env.local
+      set +a
       AUTH_LOGIN_URL=http://localhost:3000/login \
         AUTH_STORAGE_STATE=./.auth/local.json \
         AUTH_POST_LOGIN_URL_PATTERN='/overview' \
-        node scripts/auth-bootstrap-headful.mjs
-    timeout_seconds: 600   # generous — user-driven login step
+        node scripts/auth-bootstrap-credentials.mjs
+    timeout_seconds: 120
 
 # No seed command in this repo — aw-tester verifies against the data already
 # present in the logged-in account. Add a `seed:` command here if that changes.

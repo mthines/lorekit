@@ -1,0 +1,58 @@
+# aw-target for aw-tester — LoreKit dashboard, VERCEL PREVIEW deployment.
+#
+# Use this target when the change CANNOT be verified locally — e.g. aw-tester is
+# running in the Claude Web environment, where there is no local dev server. Each
+# PR gets a Vercel preview deployment; verify against that live URL instead.
+#
+# ── How the executor uses this target ────────────────────────────────────────
+# 1. Resolve the PR's Vercel preview origin (e.g. from the Vercel bot's PR
+#    comment, `gh pr view --json`, or the Vercel deployment API). It looks like
+#    https://lorekit-web-<hash>-<scope>.vercel.app
+# 2. Export it once and substitute it into base_url below (they must match):
+#       export AW_PREVIEW_URL="https://lorekit-web-<hash>-<scope>.vercel.app"
+#    Then set this file's `base_url:` to the same origin (a one-line edit or sed).
+#    aw-tester reads base_url LITERALLY — it does not expand env vars — so the
+#    real origin must be written here; the refresh command below reads the env
+#    var so the two stay in step.
+# 3. Run aw-tester with `aw-target: preview`.
+#
+# ── Auth is PER-HOST (the load-bearing gotcha) ───────────────────────────────
+# The localhost session in ./.auth/local.json will NOT authenticate a
+# *.vercel.app host — the Supabase session cookie is host-scoped. aw-tester must
+# capture a FRESH session against the exact preview origin. The refresh command
+# does exactly that with the same test credentials, writing ./.auth/preview.json.
+name: preview
+
+# Set to the PR's Vercel preview origin before running (see step 2 above).
+base_url: https://REPLACE-WITH-PR-VERCEL-PREVIEW-ORIGIN
+
+auth:
+  strategy: storage-state
+  # A SEPARATE file from local.json — the preview session is host-specific and
+  # must never be confused with the localhost one.
+  storage_state: ./.auth/preview.json
+  identity:
+    # Same test account as local; email supplied via LOREKIT_TESTING_USER_NAME.
+    email: env:LOREKIT_TESTING_USER_NAME
+    role: user
+  refresh:
+    # A preview session cannot be reused across hosts, so always re-capture.
+    when: always
+    # Headless email + password login against the PREVIEW origin. AW_PREVIEW_URL
+    # must be exported to the same value as base_url above. Creds come from
+    # .env.local locally, or the shell on Claude Web (a no-op source either way).
+    command: |
+      set -a
+      [ -f .env.local ] && . ./.env.local
+      [ -f packages/web/.env.local ] && . ./packages/web/.env.local
+      set +a
+      : "${AW_PREVIEW_URL:?export AW_PREVIEW_URL to the PR preview origin (match base_url)}"
+      AUTH_LOGIN_URL="$AW_PREVIEW_URL/login" \
+        AUTH_STORAGE_STATE=./.auth/preview.json \
+        AUTH_POST_LOGIN_URL_PATTERN='/overview' \
+        node scripts/auth-bootstrap-credentials.mjs
+    timeout_seconds: 120
+
+# Same as local — no seed command; verify against the account's existing data.
+fixtures:
+  seed: null
