@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.64.0](https://github.com/mthines/lorekit/compare/cli-v1.63.2...cli-v1.64.0) (2026-09-01)
+
+
+### Features
+
+* **cli:** add unkinded-state-record lint rule ([79d309f](https://github.com/mthines/lorekit/commit/79d309fc5843a2af2e93eb67a10fc6175044cf25))
+
+
+### Documentation
+
+* **cli:** sync the local-store frontmatter field list with FIELDS ([8fb1f97](https://github.com/mthines/lorekit/commit/8fb1f97090000ca39b771a92122334f77cc089bb))
+
 ## [1.63.2](https://github.com/mthines/lorekit/compare/cli-v1.63.1...cli-v1.63.2) (2026-09-01)
 
 
