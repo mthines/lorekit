@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle } from 'lucide-react';
 
+import { Button } from './Button';
+
 export interface ConfirmDialogProps {
   open: boolean;
   title: string;
@@ -166,27 +168,18 @@ export function ConfirmDialog({
               </div>
             )}
             <div className="flex justify-end gap-2">
-              <button
-                ref={cancelRef}
-                type="button"
-                onClick={onCancel}
-                className="flex min-h-11 items-center justify-center rounded-lg border border-[var(--color-border)] px-4 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
-              >
+              <Button ref={cancelRef} type="button" variant="outline" size="md" onClick={onCancel}>
                 {cancelLabel}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant={destructive ? 'danger' : 'primary'}
+                size="md"
                 onClick={onConfirm}
                 disabled={pending || !phraseSatisfied}
-                className={[
-                  'flex min-h-11 items-center justify-center rounded-lg px-4 text-sm font-medium transition-opacity duration-150 disabled:opacity-50',
-                  destructive
-                    ? 'bg-[var(--color-error)] text-[#1a0000] hover:opacity-90'
-                    : 'bg-[var(--color-accent)] text-[#000] hover:opacity-90',
-                ].join(' ')}
               >
                 {confirmLabel}
-              </button>
+              </Button>
             </div>
           </motion.div>
         </>

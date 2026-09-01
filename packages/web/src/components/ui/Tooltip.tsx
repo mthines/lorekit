@@ -4,8 +4,9 @@
  * Tooltip — lightweight accessible tooltip for icon triggers.
  *
  * Renders children as the trigger (typically an icon button or an `<Info>`
- * icon) and shows `content` above (default) or below on hover (desktop) or
- * tap (mobile). A second tap dismisses. Clicking outside also dismisses.
+ * icon) and shows `content` above (default) or below on hover (desktop),
+ * keyboard focus (Tab), or tap (mobile). A second tap dismisses; blurring the
+ * trigger, clicking outside, or Escape also dismisses.
  *
  * Semantics: the tooltip panel is `role="tooltip"`, the trigger carries
  * `aria-describedby` pointing at it, and the panel is `aria-hidden` when not
@@ -103,6 +104,14 @@ export function Tooltip({
   const [visible, setVisible] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  // The tooltip is visible while EITHER the pointer hovers OR the trigger is
+  // keyboard-focused, so hiding is only correct when neither holds. Tracking
+  // the two independently (in refs, since they gate an event handler rather
+  // than drive the render) stops `onMouseLeave` from tearing down a
+  // still-focused tooltip — and symmetrically stops `onBlur` from hiding one
+  // the mouse is still over.
+  const hoveringRef = useRef(false);
+  const focusedRef = useRef(false);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const panelRef = useRef<HTMLSpanElement>(null);
@@ -154,6 +163,13 @@ export function Tooltip({
     };
   }, [visible, reposition]);
 
+  // Hide only when neither the pointer nor keyboard focus is keeping the
+  // tooltip open. Called from `onMouseLeave` and `onBlur` so leaving with one
+  // input never dismisses a tooltip the other input still holds open.
+  const maybeHide = useCallback(() => {
+    if (!hoveringRef.current && !focusedRef.current) setVisible(false);
+  }, []);
+
   // Dismiss when the user clicks/taps outside the wrapper.
   const onOutsideDown = useCallback((e: PointerEvent) => {
     if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
@@ -202,9 +218,29 @@ export function Tooltip({
     <span
       ref={wrapperRef}
       className={`relative inline-flex items-center ${className}`}
-      // Show on mouse-enter; hide on mouse-leave for pointer devices.
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
+      // Show on mouse-enter; hide on mouse-leave for pointer devices — but only
+      // if keyboard focus is not also holding the tooltip open.
+      onMouseEnter={() => {
+        hoveringRef.current = true;
+        setVisible(true);
+      }}
+      onMouseLeave={() => {
+        hoveringRef.current = false;
+        maybeHide();
+      }}
+      // Show on keyboard focus, hide on blur — the ARIA tooltip pattern, so a
+      // Tab-navigating user sees the same hint a mouse user does. React's
+      // onFocus/onBlur use focusin/focusout, which bubble from the inner
+      // trigger to this wrapper even though the wrapper itself is not focusable.
+      // Blur only hides when the pointer is not still hovering.
+      onFocus={() => {
+        focusedRef.current = true;
+        setVisible(true);
+      }}
+      onBlur={() => {
+        focusedRef.current = false;
+        maybeHide();
+      }}
       // Toggle on tap for touch devices.
       onClick={() => setVisible((v) => !v)}
     >

@@ -62,6 +62,58 @@ export const HoverRevealsTooltip: Story = {
   },
 };
 
+export const KeyboardFocusRevealsTooltip: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const trigger = await canvas.findByRole('button', { name: /copy/i });
+
+    await step('Tooltip is hidden at rest', async () => {
+      await expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+
+    await step('Tabbing focus onto the trigger reveals the tooltip', async () => {
+      await userEvent.tab();
+      await expect(trigger).toHaveFocus();
+      const tip = await screen.findByRole('tooltip');
+      await expect(tip).toHaveTextContent(/copied to clipboard/i);
+    });
+
+    await step('Blurring the trigger hides it', async () => {
+      await userEvent.tab();
+      await expect(trigger).not.toHaveFocus();
+      await expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+  },
+};
+
+export const MouseLeaveKeepsFocusedTooltip: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const trigger = await canvas.findByRole('button', { name: /copy/i });
+
+    await step('Tabbing focus onto the trigger reveals the tooltip', async () => {
+      await userEvent.tab();
+      await expect(trigger).toHaveFocus();
+      await screen.findByRole('tooltip');
+    });
+
+    await step('Hovering then leaving with the mouse leaves the focused tooltip up', async () => {
+      await userEvent.hover(trigger);
+      await userEvent.unhover(trigger);
+      // The trigger is still keyboard-focused, so mouse-leave must NOT hide it —
+      // the ARIA-pattern guarantee the doc comment claims.
+      await expect(trigger).toHaveFocus();
+      await expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    });
+
+    await step('Blurring the trigger then hides it', async () => {
+      await userEvent.tab();
+      await expect(trigger).not.toHaveFocus();
+      await expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+  },
+};
+
 export const EscapeDismissesTooltip: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
