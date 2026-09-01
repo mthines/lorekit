@@ -20,6 +20,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Terminal, GitPullRequest, Bot, HelpCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { useUsageRuns, useRunUsage } from '@/lib/queries/usage-runs';
 
 const SESSION_KIND_META: Record<string, { label: string; icon: typeof Terminal; variant: 'blue' | 'purple' | 'green' | 'default' }> = {
@@ -118,22 +119,17 @@ export function RunsList() {
         ))}
       </ul>
       <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={handlePrevPage}
+        <Button
+          variant="outline"
+          size="sm"
           disabled={cursorHistory.length === 0}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-content-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={handlePrevPage}
         >
           Previous
-        </button>
-        <button
-          type="button"
-          onClick={handleNextPage}
-          disabled={!data?.next_cursor}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-content-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        </Button>
+        <Button variant="outline" size="sm" disabled={!data?.next_cursor} onClick={handleNextPage}>
           Next
-        </button>
+        </Button>
       </div>
     </div>
   );

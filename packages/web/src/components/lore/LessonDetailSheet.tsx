@@ -9,6 +9,7 @@ import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
 import { Badge } from '@/components/ui/Badge';
+import { Button, IconButton } from '@/components/ui/Button';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
@@ -584,15 +585,14 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                   {lesson.key}
                 </code>
               </div>
-              <button
+              <IconButton
                 ref={closeRef}
-                type="button"
+                variant="ghost"
+                size="lg"
+                icon={<X className="size-4" />}
+                label="Close detail panel"
                 onClick={onClose}
-                aria-label="Close detail panel"
-                className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+              />
             </div>
 
             {/* Body — scrollable */}
@@ -914,30 +914,17 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
               <div className="shrink-0">
                 {/* Archive / restore button */}
                 <div className="border-t border-[var(--color-border)] p-4">
-                  <button
-                    type="button"
-                    onClick={handleArchive}
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    fullWidth
+                    leftIcon={isArchived ? <RotateCcw className="size-4" /> : <Archive className="size-4" />}
                     disabled={isPending || isSaving}
-                    className={[
-                      'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-150',
-                      isArchived
-                        ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)]'
-                        : 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:border-amber-400/40 hover:bg-amber-400/10 hover:text-amber-400',
-                      isPending || isSaving ? 'cursor-not-allowed opacity-50' : '',
-                    ].join(' ')}
+                    aria-busy={isPending}
+                    onClick={handleArchive}
                   >
-                    {isArchived ? (
-                      <>
-                        <RotateCcw className="size-4" aria-hidden />
-                        {isPending ? 'Restoring…' : 'Restore'}
-                      </>
-                    ) : (
-                      <>
-                        <Archive className="size-4" aria-hidden />
-                        {isPending ? 'Archiving…' : 'Archive'}
-                      </>
-                    )}
-                  </button>
+                    {isArchived ? (isPending ? 'Restoring…' : 'Restore') : isPending ? 'Archiving…' : 'Archive'}
+                  </Button>
                 </div>
 
                 {/* Animated save/discard bar — appears only when form is dirty */}
