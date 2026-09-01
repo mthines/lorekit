@@ -73,3 +73,38 @@ export const AllScopesClears: Story = {
     });
   },
 };
+
+/**
+ * Branch scopes are noise here — they churn constantly — so this picker
+ * excludes them entirely, both from the strip and from Browse all's
+ * searchable list. `GroomingRuleBuilder` has its own separate scope picker
+ * that still surfaces branches.
+ */
+export const BranchScopesHidden: Story = {
+  args: {
+    // A branch nests under its repo, matching the shape `buildScopeTree`
+    // produces — never a top-level array entry.
+    nodes: NODES.map((node): ScopeNode =>
+      node.scope === 'repo::mthines/lorekit'
+        ? {
+            ...node,
+            children: [
+              { scope: 'branch::mthines/lorekit::feat/x', type: 'branch', label: 'feat/x', count: 3 },
+            ],
+          }
+        : node,
+    ),
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('the strip never lights a chip for the branch', async () => {
+      const row = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
+      expect(row.queryByText('feat/x')).not.toBeInTheDocument();
+    });
+    await step('Browse all never lists the branch either', async () => {
+      await userEvent.click(await canvas.findByRole('button', { name: /browse all/i }));
+      const list = within(await canvas.findByRole('radiogroup', { name: 'All scopes' }));
+      expect(list.queryByText('feat/x')).not.toBeInTheDocument();
+    });
+  },
+};
