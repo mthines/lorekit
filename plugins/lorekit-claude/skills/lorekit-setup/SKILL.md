@@ -4,8 +4,10 @@ description: >
   Sets up a self-improvement loop for a skill, workflow, or agent using LoreKit,
   so a host gets better across runs by reading its own accumulated lessons at
   the start of every run and hardening the proven ones into permanent rules.
-  Designs the two tiers (a fast episodic tier of LoreKit lessons, advisory-only;
-  a slow procedural tier that promotes a recurring lesson into a host rule),
+  Designs the lessons loop (a fast episodic tier of LoreKit lessons, advisory-only;
+  a slow procedural tier that promotes a recurring lesson into a host rule; and,
+  for the rarer judgement-free, independently-checkable case, a third rung that
+  compiles a recurring lesson into a mechanically-enforced CI invariant instead),
   chooses the lesson bucket (tag + key namespace) and scopes, and installs the
   entrenchment guards that stop a learning loop from reinforcing its own
   mistakes. Also covers the non-LLM case: giving a deterministic job (a GitHub
