@@ -82,10 +82,12 @@ candidate → advisory → gating → retired
 
 Two more rules keep the ladder honest once an entry reaches `gating`:
 
-- **Auto-demotion on false positives.** A `gating` entry that fires on an edit
-  it should not have (its `guard` disagrees, or a human overrides it) is a signal
-  the entry is too broad or the wrong shape — demote it back to `advisory` rather
-  than letting the disagreement stand.
+- **Demote on false positives.** Nothing in `lorekit obligations` runs a `guard`
+  or writes `state` back — this is a manual policy, not automation. A `gating`
+  entry that fires on an edit it should not have (its `guard` disagrees, or a
+  human overrides it) is a signal the entry is too broad or the wrong shape —
+  a human should demote it back to `advisory` rather than letting the
+  disagreement stand.
 - **A review date.** Every entry carries `reviewBy`; an entry with no independent
   guard gets a shorter horizon than one that does, because it is more likely to
   have been an over-generalization from a single incident.
