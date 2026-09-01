@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.62.0](https://github.com/mthines/lorekit/compare/cli-v1.61.0...cli-v1.62.0) (2026-09-01)
+
+
+### Features
+
+* Duplicate Clusters panel in the Lore Explorer (+ GET /memories/clusters) ([ceb1cf8](https://github.com/mthines/lorekit/commit/ceb1cf8b196fbfa8676ef2d3835765f11c0cd6c3))
+
 ## [1.61.0](https://github.com/mthines/lorekit/compare/cli-v1.60.0...cli-v1.61.0) (2026-08-31)
 
 
