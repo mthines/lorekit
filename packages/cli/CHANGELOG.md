@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.63.1](https://github.com/mthines/lorekit/compare/cli-v1.63.0...cli-v1.63.1) (2026-09-01)
+
+
+### Documentation
+
+* **cli:** advisory does gate under --strict-all ([1b76eb2](https://github.com/mthines/lorekit/commit/1b76eb2e2af30f35cc4f7dd9742a7d397372d0e8))
+* **cli:** bring lorekit-setup skill current with the compile pipeline ([06a6149](https://github.com/mthines/lorekit/commit/06a6149cc346a6518225de5f869e28e57d2dcd79))
+* **cli:** bring lorekit-setup skill current with the compile pipeline ([a8a843b](https://github.com/mthines/lorekit/commit/a8a843b8f268aa4650d9c7e4aad9772c6cabd12f))
+* **cli:** demotion on false positives is a manual policy, not automation ([b25ab6e](https://github.com/mthines/lorekit/commit/b25ab6e8edbcb2e4100accce9c5099733ccdab28))
+
 ## [1.63.0](https://github.com/mthines/lorekit/compare/cli-v1.62.0...cli-v1.63.0) (2026-09-01)
 
 
