@@ -180,6 +180,18 @@ export const SURFACE_PARTNER_MAP = [
     note: 'The flag table and per-command help in bin/lorekit.mjs is the origin of every flag claim; docs/cli.md, the package README (prose AND its flag table) and CLAUDE.md each restate it. Found by running this command against its own changed-set while changing the meaning of --strict: nothing fired, because the map covered every generated surface and no hand-written one. A path proxy, not a content predicate — bin/lorekit.mjs changes for reasons unrelated to flags — so advisory by construction, like error-code-doc.',
   },
   {
+    id: 'digest-contract-doc',
+    state: 'advisory',
+    owner: '@mthines',
+    added: '2026-09-01',
+    reviewBy: '2026-12-01',
+    match: 'packages/cli/src/core/lessons.mjs',
+    obliges: ['packages/cli/skill/lorekit-setup/rules/ci-state-records.md'],
+    cluster: 'copies-a-claim',
+    guard: null,
+    note: 'lessons.mjs owns the SessionStart digest contract (fetchLessons\' isGeneralLesson kind filter); ci-state-records.md documents that contract for authors of non-lesson records. This is the second instance of the same class in two consecutive changes — the first was cli-flag-doc (bin/lorekit.mjs → the docs copying its flag claims) — which is the recurrence the whole compile pipeline exists to notice. Advisory, no guard: lessons.mjs changes for many reasons unrelated to the digest contract, so this is a path proxy, not a content predicate.',
+  },
+  {
     id: 'perf-index',
     state: 'advisory',
     owner: '@mthines',
