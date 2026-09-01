@@ -2,11 +2,13 @@
 
 import {
   keepPreviousData,
+  useQueries,
   useQuery,
   useInfiniteQuery,
   useMutation,
   useQueryClient,
   type InfiniteData,
+  type QueryClient,
 } from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
 import { dayCountsFromActivity } from '@/lib/aggregations';
@@ -383,9 +385,14 @@ export function useMemoryById(id: string | null) {
 // memory. Disabled (no fetch) when `ref` is null.
 // ---------------------------------------------------------------------------
 
+/** The one `lesson-by-ref` query key builder — shared by every reader AND writer of that cache slot. */
+function lessonByRefQueryKey(ref: { scope: string; key: string } | null | undefined) {
+  return ['lesson-by-ref', ref?.scope, ref?.key] as const;
+}
+
 export function useLessonByRef(ref: { scope: string; key: string } | null) {
   return useQuery<LessonEntry | null>({
-    queryKey: ['lesson-by-ref', ref?.scope, ref?.key],
+    queryKey: lessonByRefQueryKey(ref),
     enabled: ref !== null,
     queryFn: async ({ signal }) => {
       if (!ref) return null;
@@ -396,6 +403,51 @@ export function useLessonByRef(ref: { scope: string; key: string } | null) {
     staleTime: 90_000,
     retry: retryUnlessSignedOut,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Several memories by ref at once — the Duplicate Clusters sidebar's "show the
+// selected cluster's members in the Explorer's own list" surface. Each query
+// shares its cache slot (and its network request) with `useLessonByRef` and
+// with the deep-link path in `MemorySidebarProvider`: selecting a member's row
+// to open it goes through the SAME `['lesson-by-ref', scope, key]` entry this
+// hook is already populating, so there is nothing left to fetch.
+// ---------------------------------------------------------------------------
+
+export function useLessonsByRefs(refs: readonly { scope: string; key: string }[]) {
+  return useQueries({
+    queries: refs.map((ref) => ({
+      queryKey: lessonByRefQueryKey(ref),
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const token = await requireBrowserToken();
+        const entry = await getMemoryByRefRequest(token, ref.scope, ref.key, signal);
+        return entry ? lessonFromMemoryEntry(entry) : null;
+      },
+      staleTime: 90_000,
+      retry: retryUnlessSignedOut,
+    })),
+  });
+}
+
+/**
+ * Seed the `lesson-by-ref` cache with a stand-in entry, then mark it stale so
+ * the actively-observed query (whichever of the two hooks above is mounted for
+ * this ref) refetches the real row in the background — "show something now,
+ * replace it once the rest has loaded."
+ *
+ * `setQueryData` alone would leave the stand-in fresh for `staleTime` (90s):
+ * nothing would ever ask for the real row unless a refetch happened to be
+ * triggered some other way. Invalidating right after seeding is what turns
+ * this into progressive loading instead of a cache entry that never resolves.
+ */
+export function seedOptimisticLesson(
+  queryClient: QueryClient,
+  ref: { scope: string; key: string },
+  entry: LessonEntry,
+) {
+  const queryKey = lessonByRefQueryKey(ref);
+  queryClient.setQueryData(queryKey, entry);
+  void queryClient.invalidateQueries({ queryKey, exact: true });
 }
 
 // ---------------------------------------------------------------------------
