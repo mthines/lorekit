@@ -108,3 +108,35 @@ export const BranchScopesHidden: Story = {
     });
   },
 };
+
+/**
+ * A selected branch scope — e.g. a deep link into a branch — gets no fallback
+ * chip in the strip either. The strip's "selected but off-strip" fallback
+ * only ever re-adds a repo/project/global scope picked from Browse all; a
+ * branch is never eligible, since it is filtered out of `allScopes` before
+ * that lookup runs.
+ */
+export const SelectedBranchGetsNoFallbackChip: Story = {
+  args: {
+    nodes: NODES.map((node): ScopeNode =>
+      node.scope === 'repo::mthines/lorekit'
+        ? {
+            ...node,
+            children: [
+              { scope: 'branch::mthines/lorekit::feat/x', type: 'branch', label: 'feat/x', count: 3 },
+            ],
+          }
+        : node,
+    ),
+    selected: 'branch::mthines/lorekit::feat/x',
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('the strip has no chip for the selected branch', async () => {
+      const row = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
+      expect(row.queryByText('feat/x')).not.toBeInTheDocument();
+      // "All scopes" + one per top-level NODES entry — no extra fallback chip.
+      await expect(row.getAllByRole('radio')).toHaveLength(NODES.length + 1);
+    });
+  },
+};
