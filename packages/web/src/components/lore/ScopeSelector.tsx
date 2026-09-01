@@ -21,11 +21,13 @@
  * first chip (clears the filter).
  *
  * To its right, ALWAYS visible and outside the scroll, is a compact `Browse all`
- * button — the second way in. It opens the same set as a searchable list, which
- * is how you reach a branch scope (they hang under their repo and are not in the
- * strip) or find one by name in a long tail. On the phone breakpoint that list
- * is the shared `BottomSheet`, per the repo-wide rule for transient selection
- * surfaces; on the desktop it expands inline beneath the row.
+ * button — the second way in. It opens the same set as a searchable list, for
+ * finding a repo/project/global scope by name in a long tail. Branch scopes
+ * (one-off PR/feature branches) are excluded from BOTH the strip and Browse
+ * all — they churn too fast to be useful navigation here; `GroomingRuleBuilder`
+ * still surfaces them for its own, separate scope picker. On the phone
+ * breakpoint that list is the shared `BottomSheet`, per the repo-wide rule for
+ * transient selection surfaces; on the desktop it expands inline beneath the row.
  *
  * Single-select, so it uses radiogroup / radio semantics (`aria-checked`).
  */
@@ -105,17 +107,27 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   const [query, setQuery] = useState('');
   const isMobile = useIsMobile();
 
-  const allScopes = useMemo(() => flattenScopeTree(nodes), [nodes]);
+  // Branch scopes (one-off PR/feature branches) are noise in this picker —
+  // they churn constantly and would dominate both the strip and Browse all.
+  // Excluded here, in the picker itself, rather than in `flattenScopeTree` or
+  // `buildScopeTree`, which `GroomingRuleBuilder`'s own scope picker also
+  // relies on and still needs branches for (pruning stale branch lessons).
+  const topNodes = useMemo(() => nodes.filter((n) => n.type !== 'branch'), [nodes]);
+  const allScopes = useMemo(
+    () => flattenScopeTree(nodes).filter((n) => n.type !== 'branch'),
+    [nodes],
+  );
 
   // The strip shows every top-level scope, PLUS the selected one when it is not
-  // among them — a branch (branches hang under their repo, off-strip) or any
-  // scope picked from Browse all. Without this the strip would light no chip for
-  // a valid selection and read as "All scopes" when it is not.
+  // among them — any scope picked from Browse all. Without this the strip
+  // would light no chip for a valid selection and read as "All scopes" when it
+  // is not. A selected branch scope (e.g. a deep link) never gets a chip here,
+  // consistent with branches being hidden from this picker entirely.
   const stripNodes = useMemo(() => {
-    if (!selected || nodes.some((n) => n.scope === selected)) return nodes;
+    if (!selected || topNodes.some((n) => n.scope === selected)) return topNodes;
     const selectedNode = allScopes.find((n) => n.scope === selected);
-    return selectedNode ? [...nodes, selectedNode] : nodes;
-  }, [nodes, allScopes, selected]);
+    return selectedNode ? [...topNodes, selectedNode] : topNodes;
+  }, [topNodes, allScopes, selected]);
 
   // The searchable list matches on the canonical scope OR its label, so both
   // `mthines/lorekit` and `lorekit` find the same chip.

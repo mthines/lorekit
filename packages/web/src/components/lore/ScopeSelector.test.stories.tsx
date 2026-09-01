@@ -73,3 +73,70 @@ export const AllScopesClears: Story = {
     });
   },
 };
+
+/**
+ * Branch scopes are noise here — they churn constantly — so this picker
+ * excludes them entirely, both from the strip and from Browse all's
+ * searchable list. `GroomingRuleBuilder` has its own separate scope picker
+ * that still surfaces branches.
+ */
+export const BranchScopesHidden: Story = {
+  args: {
+    // A branch nests under its repo, matching the shape `buildScopeTree`
+    // produces — never a top-level array entry.
+    nodes: NODES.map((node): ScopeNode =>
+      node.scope === 'repo::mthines/lorekit'
+        ? {
+            ...node,
+            children: [
+              { scope: 'branch::mthines/lorekit::feat/x', type: 'branch', label: 'feat/x', count: 3 },
+            ],
+          }
+        : node,
+    ),
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('the strip never lights a chip for the branch', async () => {
+      const row = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
+      expect(row.queryByText('feat/x')).not.toBeInTheDocument();
+    });
+    await step('Browse all never lists the branch either', async () => {
+      await userEvent.click(await canvas.findByRole('button', { name: /browse all/i }));
+      const list = within(await canvas.findByRole('radiogroup', { name: 'All scopes' }));
+      expect(list.queryByText('feat/x')).not.toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * A selected branch scope — e.g. a deep link into a branch — gets no fallback
+ * chip in the strip either. The strip's "selected but off-strip" fallback
+ * only ever re-adds a repo/project/global scope picked from Browse all; a
+ * branch is never eligible, since it is filtered out of `allScopes` before
+ * that lookup runs.
+ */
+export const SelectedBranchGetsNoFallbackChip: Story = {
+  args: {
+    nodes: NODES.map((node): ScopeNode =>
+      node.scope === 'repo::mthines/lorekit'
+        ? {
+            ...node,
+            children: [
+              { scope: 'branch::mthines/lorekit::feat/x', type: 'branch', label: 'feat/x', count: 3 },
+            ],
+          }
+        : node,
+    ),
+    selected: 'branch::mthines/lorekit::feat/x',
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('the strip has no chip for the selected branch', async () => {
+      const row = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
+      expect(row.queryByText('feat/x')).not.toBeInTheDocument();
+      // "All scopes" + one per top-level NODES entry — no extra fallback chip.
+      await expect(row.getAllByRole('radio')).toHaveLength(NODES.length + 1);
+    });
+  },
+};
