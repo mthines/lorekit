@@ -711,6 +711,35 @@ error **message** is deliberately never reported: it is prose, it is localised,
 and it can embed the address that was typed — unbounded and PII-bearing, the two
 things a grouping key must not be.
 
+**One exception: `email_send_failed`.** A broken mailer (bad SMTP credentials, a
+DNS record the sending domain needs but doesn't have, an unreachable relay)
+never gets a `code` from GoTrue, and `name` is the same generic `AuthApiError`
+every other server-side auth fault carries — so without a special case, the one
+failure class an operator most needs to alert on independently was indistinguishable
+from any other API error. `isEmailSendFailure` (`lib/auth-email-failure.ts`)
+recognises it from the message's stable `"Error sending … email"` prefix — the
+one part of the message that is neither prose nor PII — shared with
+`friendlyAuthError`'s user-facing copy so the two can never classify the same
+error differently.
+
+**Signup can also succeed at the API layer and still never notify anyone.**
+When the project requires confirmation, `email_password_signup` reaches a third
+branch that emits neither `auth.attempt`'s failure nor its success (see below)
+— by design, since Supabase returns the identical response for a brand-new
+signup and a resubmission to an already-registered address, and reporting
+success there would leak that distinction. That symmetry is also exactly what
+made a delivered-nowhere signup invisible: the API call itself succeeded, so
+`reportAuthFailure` never ran, and nothing else was watching. `reportAuthPending`
+(`auth.pending`, `LoginButton.tsx`) closes that gap without breaking the
+symmetry — it fires identically for both cases, proving only that a signup
+reached this state. Paired against `auth.success` for
+`auth.method = email_confirmation` (`WelcomeContent.tsx`, emitted when the link
+is actually opened), a sustained gap — many pending, few completions, over a
+window wider than a normal inbox-checking delay — is the regression signal for
+a mailer that is silently failing every delivery: the signal this funnel had no
+way to surface before, and the one a misconfigured DNS record on the sending
+domain trips first.
+
 The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method` — for
 every method that emits both. Three do not, in different directions, so read
 those rows differently:
@@ -721,22 +750,28 @@ those rows differently:
   is the only call site), so its subtraction is *negative* — the matching intent
   was recorded on the signup page one document earlier, as
   `email_password_signup`.
-- `email_password_signup` emits both — but only on the two branches that
-  terminate in this document (`data.session` → success, `signUpError` →
-  failure). When the project requires confirmation, the attempt ends on the
-  "check your inbox" screen having emitted *neither*, for the reason below, so
-  its subtraction counts every confirmation-pending signup as drop-off. Those
-  are the ones that reappear as `email_confirmation` successes on `/welcome`,
-  which is why the two rows have to be read as a pair.
+- `email_password_signup` emits an attempt on every submission and, on the two
+  branches that terminate in this document, `data.session` → success or
+  `signUpError` → failure — so its plain subtraction still overstates
+  drop-off by every confirmation-pending signup, which is neither. When the
+  project requires confirmation, the attempt instead ends on the "check your
+  inbox" screen emitting `auth.pending` (see below), so read this row as
+  `attempt − success − pending` for the true abandonment/error count, and
+  `pending` on its own — compared against `email_confirmation` successes on
+  `/welcome` — as the signal for a mailer that accepted the signup and never
+  delivered it.
 
 Two paths deliberately emit no `auth.success`:
 
 - **GitHub OAuth** — success is a redirect to a new document, so the page that
   would report it is already gone. Arrival at the destination is the evidence.
 - **The "confirm your email" screen** — no session exists yet, and Supabase
-  routes an already-registered address down the same branch. Counting it would
-  overstate signups *and* leak the distinction the screen exists to hide. That
-  path completes as `email_confirmation` on `/welcome`.
+  routes an already-registered address down the same branch. Counting it as a
+  success would overstate signups *and* leak the distinction the screen exists
+  to hide, so it emits the neutral `auth.pending` instead (identically for
+  both cases, preserving that symmetry) — see `reportAuthPending` in
+  `lib/auth-telemetry.ts`. That path completes as `email_confirmation` on
+  `/welcome`.
 
 > **These used to be signal attributes, and must never go back to being any.**
 > The surfaces previously called `addSignalAttribute('auth.method', …)`, which

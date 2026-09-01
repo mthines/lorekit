@@ -13,6 +13,7 @@
  */
 
 import { MIN_PASSWORD_LENGTH } from './password-policy';
+import { isEmailSendFailure } from './auth-email-failure';
 
 /**
  * Structural subset of `@supabase/supabase-js`'s `AuthError` this module
@@ -111,8 +112,9 @@ export function friendlyAuthError(error: AuthErrorLike): string {
     return 'Sign-up is currently disabled. Please contact the administrator.';
   }
 
-  // -- Email provider rejected delivery (bounced, no such domain, ...) ------
-  if (msg.includes('smtp') || msg.includes('delivery')) {
+  // -- Email provider rejected delivery, or the mailer itself is broken -----
+  // (bounced, no such domain, unreachable SMTP relay, DNS lookup failure, ...)
+  if (isEmailSendFailure(msg)) {
     return "We couldn't deliver an email to that address. Please check the address and try again.";
   }
 
