@@ -1,5 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 
+import { Button } from '@/components/ui/Button';
+
 interface EmptyStateProps {
   icon: LucideIcon;
   title: string;
@@ -26,13 +28,9 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
         <p className="text-xs text-[var(--color-content-tertiary)]">{description}</p>
       </div>
       {action && (
-        <button
-          type="button"
-          onClick={action.onClick}
-          className="min-h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:text-[var(--color-content-primary)]"
-        >
+        <Button variant="secondary" size="sm" onClick={action.onClick}>
           {action.label}
-        </button>
+        </Button>
       )}
     </div>
   );

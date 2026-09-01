@@ -14,6 +14,7 @@ import { useEffect, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { X } from 'lucide-react';
 import { GettingStartedContent } from '@/components/learn/GettingStartedContent';
+import { IconButton } from '@/components/ui/Button';
 
 interface GettingStartedDialogProps {
   open: boolean;
@@ -108,15 +109,14 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
               >
                 Setup guide
               </h2>
-              <button
+              <IconButton
                 ref={closeRef}
-                type="button"
+                variant="ghost"
+                size="sm"
+                icon={<X className="size-4" />}
+                label="Close setup guide"
                 onClick={onClose}
-                aria-label="Close setup guide"
-                className="flex size-8 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+              />
             </div>
 
             {/* Scrollable body */}

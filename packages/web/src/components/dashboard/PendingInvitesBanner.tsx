@@ -23,6 +23,7 @@ import { serialise } from '@/lib/hooks/useUrlState';
 import type { Filter } from '@/lib/filters';
 import { showToast } from '@/lib/toast';
 import { InviteDetailsDialog } from '@/components/dashboard/InviteDetailsDialog';
+import { Button, IconButton } from '@/components/ui/Button';
 
 interface PendingInvitesBannerProps {
   initialInvites: OrgInvite[];
@@ -105,39 +106,23 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
                 <span className="font-medium">{invite.org?.name ?? 'an organization'}</span>.
               </p>
               <div className="mt-2.5 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleAccept(invite)}
-                  disabled={pending}
-                  className="flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
-                >
+                <Button variant="primary" onClick={() => handleAccept(invite)} disabled={pending}>
                   Accept
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDecline(invite)}
-                  disabled={pending}
-                  className="flex min-h-11 items-center justify-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-50"
-                >
+                </Button>
+                <Button variant="outline" onClick={() => handleDecline(invite)} disabled={pending}>
                   Decline
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewingInvite(invite)}
-                  className="flex min-h-11 items-center justify-center rounded-lg px-3 text-sm text-[var(--color-content-secondary)] underline-offset-2 transition-colors duration-150 hover:text-[var(--color-content-primary)] hover:underline"
-                >
+                </Button>
+                <Button variant="ghost" onClick={() => setViewingInvite(invite)}>
                   View details
-                </button>
+                </Button>
               </div>
             </div>
-            <button
-              type="button"
+            <IconButton
+              variant="ghost"
               onClick={() => dismiss(invite.id)}
-              aria-label="Dismiss invitation banner"
-              className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
-            >
-              <X className="size-4" aria-hidden />
-            </button>
+              label="Dismiss invitation banner"
+              icon={<X className="size-4" aria-hidden />}
+            />
           </div>
         </motion.div>
       )}

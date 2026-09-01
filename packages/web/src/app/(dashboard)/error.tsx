@@ -9,8 +9,9 @@
 import { useEffect } from 'react';
 import { motion } from 'motion/react';
 import { RotateCcw, AlertTriangle } from 'lucide-react';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+
+import { Button } from '@/components/ui/Button';
 
 interface ErrorProps {
   error: Error & { digest?: string };
@@ -55,19 +56,12 @@ export default function DashboardError({ error, reset }: ErrorProps) {
 
       {/* Actions */}
       <div className="flex gap-2">
-        <button
-          onClick={reset}
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-[var(--color-content-primary)] px-4 text-sm font-medium text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90"
-        >
-          <RotateCcw className="size-3.5" aria-hidden />
+        <Button variant="primary" leftIcon={<RotateCcw className="size-3.5" />} onClick={reset}>
           Retry
-        </button>
-        <Link
-          href="/overview"
-          className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)]"
-        >
+        </Button>
+        <Button variant="secondary" href="/overview">
           Overview
-        </Link>
+        </Button>
       </div>
 
       {/* Digest — subtle, for support */}

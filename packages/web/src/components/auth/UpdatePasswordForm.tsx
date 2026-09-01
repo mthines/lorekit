@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { friendlyAuthError } from '@/lib/auth-errors';
 import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { validatePasswordConfirmation } from '@/lib/password-policy';
 import { DEFAULT_POST_LOGIN_PATH } from '@/lib/auth-redirect';
+import { Button } from '@/components/ui/Button';
 import { FIELD_CLASS } from './field-styles';
 
 type SessionState = 'checking' | 'ready' | 'missing';
@@ -82,12 +82,9 @@ export function UpdatePasswordForm() {
         <p role="alert" className="text-sm text-red-400">
           This reset link is invalid, expired, or was already used.
         </p>
-        <Link
-          href="/forgot-password"
-          className="flex h-11 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)]"
-        >
+        <Button href="/forgot-password" variant="secondary" size="lg" fullWidth>
           Request a new link
-        </Link>
+        </Button>
       </div>
     );
   }
@@ -133,14 +130,16 @@ export function UpdatePasswordForm() {
         </p>
       )}
 
-      <button
+      <Button
         type="submit"
+        variant="secondary"
+        size="lg"
+        fullWidth
         disabled={busy || done}
         aria-busy={busy}
-        className="flex h-11 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         {done ? 'Password updated' : busy ? 'Updating...' : 'Update password'}
-      </button>
+      </Button>
     </form>
   );
 }

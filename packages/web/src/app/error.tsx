@@ -8,7 +8,8 @@
 import { useEffect } from 'react';
 import { motion } from 'motion/react';
 import { RotateCcw, Home, AlertTriangle } from 'lucide-react';
-import Link from 'next/link';
+
+import { Button } from '@/components/ui/Button';
 
 interface ErrorProps {
   error: Error & { digest?: string };
@@ -54,20 +55,17 @@ export default function RootError({ error, reset }: ErrorProps) {
 
         {/* Actions */}
         <div className="flex w-full flex-col gap-2">
-          <button
-            onClick={reset}
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-content-primary)] text-sm font-medium text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90"
-          >
-            <RotateCcw className="size-4" aria-hidden />
+          <Button variant="primary" fullWidth leftIcon={<RotateCcw className="size-4" />} onClick={reset}>
             Try again
-          </button>
-          <Link
+          </Button>
+          <Button
+            variant="secondary"
+            fullWidth
             href="/overview"
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
+            leftIcon={<Home className="size-4" />}
           >
-            <Home className="size-4" aria-hidden />
             Go to dashboard
-          </Link>
+          </Button>
         </div>
 
         {/* Digest — for support, intentionally de-emphasised */}

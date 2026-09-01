@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from 'react';
 import {
-  Copy, CheckCheck, Eye, EyeOff, KeyRound, ShieldAlert, ExternalLink, Loader2, Clock,
+  Copy, CheckCheck, Eye, EyeOff, KeyRound, ShieldAlert, ExternalLink, Clock,
 } from 'lucide-react';
 import { getSessionToken, type SessionToken } from '@/lib/session-token';
+import { Button } from '@/components/ui/Button';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -83,14 +84,15 @@ export function SessionTokenPanel() {
 
         {/* Reveal button — nothing is fetched or shown until the user asks */}
         {!revealed && session !== 'signed-out' && (
-          <button
+          <Button
+            variant="secondary"
+            size="lg"
             onClick={handleReveal}
-            disabled={pending}
-            className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            isLoading={pending}
+            leftIcon={<Eye className="size-4" aria-hidden />}
           >
-            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Eye className="size-4" aria-hidden />}
             Reveal session token
-          </button>
+          </Button>
         )}
 
         {/* Signed-out fallback — should not happen on this authed page, but be total */}

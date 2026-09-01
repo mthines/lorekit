@@ -15,6 +15,7 @@
 import { useState, useTransition } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { showToast } from '@/lib/toast';
 import {
@@ -84,15 +85,15 @@ export function DeveloperFlagsPanel({ rows }: { rows: readonly DeveloperFlagRow[
           {anyOverrideActive ? ' Overrides apply only to your own session.' : ' No overrides active.'}
         </p>
         {anyOverrideActive && (
-          <button
-            type="button"
-            onClick={resetAll}
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={<RotateCcw className="size-3.5" />}
             disabled={isPending}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium text-[var(--color-content-secondary)] transition-colors hover:text-[var(--color-content-primary)] disabled:opacity-50"
+            onClick={resetAll}
           >
-            <RotateCcw className="size-3.5" aria-hidden />
             Reset all
-          </button>
+          </Button>
         )}
       </div>
 

@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { friendlyAuthError } from '@/lib/auth-errors';
 import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
+import { Button } from '@/components/ui/Button';
 import { FIELD_CLASS } from './field-styles';
 
 /**
@@ -92,14 +93,9 @@ export function ForgotPasswordForm() {
           {error}
         </p>
       )}
-      <button
-        type="submit"
-        disabled={busy}
-        aria-busy={busy}
-        className="flex h-11 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
+      <Button type="submit" variant="secondary" size="lg" fullWidth disabled={busy} aria-busy={busy}>
         {busy ? 'Sending...' : 'Send reset link'}
-      </button>
+      </Button>
       <Link
         href="/login"
         className="text-center text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline"

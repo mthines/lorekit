@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { friendlyAuthError } from '@/lib/auth-errors';
 import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { MIN_PASSWORD_LENGTH, validatePasswordConfirmation } from '@/lib/password-policy';
+import { Button } from '@/components/ui/Button';
 
 const LABEL_CLASS = 'text-xs font-medium text-[var(--color-content-secondary)]';
 
@@ -156,15 +157,17 @@ export function PasswordPanel() {
         </p>
       )}
 
-      <button
+      <Button
         type="submit"
+        variant="secondary"
+        size="lg"
+        fullWidth
+        leftIcon={<KeyRound className="size-4 shrink-0" />}
         disabled={busy}
         aria-busy={busy}
-        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <KeyRound className="size-4 shrink-0" aria-hidden />
         {busy ? 'Saving...' : 'Save password'}
-      </button>
+      </Button>
     </form>
   );
 }

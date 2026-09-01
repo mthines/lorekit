@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { isDeveloperEmail } from '@/lib/developer-users';
 import { registerClick } from '@/lib/click-gesture';
 import { toggleDeveloperNavRevealed } from '@/lib/hooks/useDeveloperNavRevealed';
+import { Button } from '@/components/ui/Button';
 
 /**
  * 5 consecutive clicks (within 2s of each other) toggles the developer nav's
@@ -133,24 +134,28 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
       {/* ── Actions ────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-3">
         {/* Sign out */}
-        <button
-          onClick={handleSignOut}
+        <Button
+          variant="secondary"
+          size="lg"
+          fullWidth
+          leftIcon={<LogOut className="size-4 shrink-0" />}
           disabled={signOutLoading}
-          className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors hover:bg-[var(--color-bg-raised)] hover:text-[var(--color-content-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={handleSignOut}
         >
-          <LogOut className="size-4 shrink-0" aria-hidden />
           {signOutLoading ? 'Signing out...' : 'Sign out'}
-        </button>
+        </Button>
 
         {/* Delete account */}
         {deleteStep === 'idle' && (
-          <button
+          <Button
+            variant="danger-outline"
+            size="lg"
+            fullWidth
+            leftIcon={<Trash2 className="size-4 shrink-0" />}
             onClick={handleDeleteAccount}
-            className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-red-800/40 bg-red-950/20 px-4 text-sm text-red-400 transition-colors hover:bg-red-950/40 hover:text-red-300"
           >
-            <Trash2 className="size-4 shrink-0" aria-hidden />
             Delete account
-          </button>
+          </Button>
         )}
 
         {(deleteStep === 'confirm' || deleteStep === 'deleting') && (
@@ -166,21 +171,23 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
               <p role="alert" className="text-xs text-red-400">{deleteError}</p>
             )}
             <div className="flex gap-2">
-              <button
-                onClick={() => { setDeleteStep('idle'); setDeleteError(''); }}
+              <Button
+                variant="outline"
+                className="flex-1"
                 disabled={deleteStep === 'deleting'}
-                className="flex-1 rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm text-[var(--color-content-secondary)] transition-colors hover:bg-[var(--color-bg-raised)] disabled:opacity-50"
+                onClick={() => { setDeleteStep('idle'); setDeleteError(''); }}
               >
                 Cancel
-              </button>
-              <button
-                onClick={handleDeleteAccount}
+              </Button>
+              <Button
+                variant="danger"
+                className="flex-1"
                 disabled={deleteStep === 'deleting'}
                 aria-busy={deleteStep === 'deleting'}
-                className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={handleDeleteAccount}
               >
                 {deleteStep === 'deleting' ? 'Deleting...' : 'Yes, delete everything'}
-              </button>
+              </Button>
             </div>
           </div>
         )}
