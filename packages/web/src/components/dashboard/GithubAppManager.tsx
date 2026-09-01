@@ -30,7 +30,6 @@ import {
   ExternalLink,
   Link as LinkIcon,
   X,
-  Loader2,
   Search,
   Sparkles,
   ChevronDown,
@@ -39,6 +38,7 @@ import type { GithubInstallation } from '@/lib/github-installations';
 import type { OrgMembership } from '@/lib/orgs';
 import { bindScope, unbindScope } from '@/lib/scope-bindings';
 import { showToast } from '@/lib/toast';
+import { Button } from '@/components/ui/Button';
 import {
   partitionRepos,
   bindingSuggestion,
@@ -125,15 +125,16 @@ function SuggestionBanner({
         <span className="font-medium text-[var(--color-content-primary)]">{suggestion.org.name}</span>?
         Their PR review comments become {suggestion.org.name} memories.
       </p>
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        size="sm"
+        className="shrink-0"
         onClick={() => onBind(suggestion.org.id, suggestion.repos)}
-        disabled={busy}
-        className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3.5 text-xs font-semibold text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-50"
+        isLoading={busy}
+        leftIcon={<LinkIcon className="size-3.5" aria-hidden />}
       >
-        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <LinkIcon className="size-3.5" aria-hidden />}
         Share all
-      </button>
+      </Button>
     </div>
   );
 }
@@ -259,15 +260,15 @@ function BindActionBar({
           />
         </div>
       </div>
-      <button
-        type="button"
+      <Button
+        variant="primary"
         onClick={onBind}
         disabled={busy || selectedCount === 0 || !targetOrgId}
-        className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        isLoading={busy}
+        leftIcon={<LinkIcon className="size-4" aria-hidden />}
       >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LinkIcon className="size-4" aria-hidden />}
         {selectedCount === 0 ? 'Select repos to share' : `Share ${selectedCount}`}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -504,15 +505,16 @@ function InstallationCard({
                 {suggestion && (
                   <SuggestionBanner suggestion={suggestion} busy={pending} onBind={doBind} />
                 )}
-                <button
+                <Button
                   ref={shareEntryRef}
-                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="self-start"
                   onClick={() => setSharing(true)}
-                  className="flex min-h-11 items-center justify-center gap-1.5 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)]"
+                  leftIcon={<LinkIcon className="size-3.5 shrink-0" aria-hidden />}
                 >
-                  <LinkIcon className="size-3.5 shrink-0" aria-hidden />
                   {suggestion ? 'Choose specific repos to share' : 'Share repositories with an organization'}
-                </button>
+                </Button>
               </div>
             )}
 
@@ -530,13 +532,9 @@ function InstallationCard({
                 />
                 {/* Exit only — bindings apply on Share, so leaving keeps any
                     in-progress selection rather than silently discarding it. */}
-                <button
-                  type="button"
-                  onClick={() => setSharing(false)}
-                  className="min-h-11 self-start text-[11px] text-[var(--color-content-secondary)] transition-colors hover:text-[var(--color-content-primary)]"
-                >
+                <Button variant="ghost" size="sm" className="self-start" onClick={() => setSharing(false)}>
                   Done
-                </button>
+                </Button>
               </div>
             )}
 

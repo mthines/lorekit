@@ -30,6 +30,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Archive, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { GroomRequest, RetentionPolicy } from '@lorekit/schemas/retention';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
+import { Button, IconButton } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { FormDialog } from '@/components/ui/FormDialog';
 import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
@@ -556,22 +557,17 @@ function PolicyForm({
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onClick={requestRun}
-          disabled={!request || run.isPending}
-          className="flex min-h-11 items-center justify-center rounded-lg border border-[var(--color-border)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-colors hover:bg-[var(--color-bg)] disabled:opacity-50"
-        >
+        <Button variant="outline" size="lg" disabled={!request || run.isPending} onClick={requestRun}>
           {run.isPending ? 'Running…' : 'Run now'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleSave()}
+        </Button>
+        <Button
+          variant="primary"
+          size="lg"
           disabled={!request || !name.trim() || savePending}
-          className="flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90 disabled:opacity-50"
+          onClick={() => void handleSave()}
         >
           {initialPolicy ? 'Save changes' : 'Save policy'}
-        </button>
+        </Button>
       </div>
 
       <ConfirmDialog
@@ -645,22 +641,18 @@ function PolicyRow({
         label={`Auto (nightly) for ${policy.name}`}
         onChange={onToggle}
       />
-      <button
-        type="button"
-        aria-label={`Edit ${policy.name}`}
+      <IconButton
+        variant="ghost"
+        icon={<Pencil className="size-4" />}
+        label={`Edit ${policy.name}`}
         onClick={onEdit}
-        className="flex size-9 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
-      >
-        <Pencil className="size-4" aria-hidden />
-      </button>
-      <button
-        type="button"
-        aria-label={`Delete ${policy.name}`}
+      />
+      <IconButton
+        variant="ghost"
+        icon={<Trash2 className="size-4" />}
+        label={`Delete ${policy.name}`}
         onClick={onDelete}
-        className="flex size-9 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors hover:bg-[var(--color-error)]/10 hover:text-[var(--color-error)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
-      >
-        <Trash2 className="size-4" aria-hidden />
-      </button>
+      />
     </div>
   );
 }
@@ -741,14 +733,15 @@ export function GroomingRuleBuilder() {
           Saved rules archive stale lore for you — reviewed by hand or swept nightly. A rule only ever
           archives; it never permanently deletes.
         </p>
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="lg"
+          className="shrink-0"
+          leftIcon={<Plus className="size-4" />}
           onClick={openCreate}
-          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
         >
-          <Plus className="size-4" aria-hidden />
           Add policy
-        </button>
+        </Button>
       </div>
 
       {policiesLoading ? (
@@ -761,14 +754,9 @@ export function GroomingRuleBuilder() {
           <p className="max-w-sm text-sm text-[var(--color-content-secondary)]">
             Retention policies archive stale lore automatically, on your rules. Never a hard delete.
           </p>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
-          >
-            <Plus className="size-4" aria-hidden />
+          <Button variant="primary" size="lg" leftIcon={<Plus className="size-4" />} onClick={openCreate}>
             Add policy
-          </button>
+          </Button>
         </div>
       ) : (
         <motion.ul layout={!reduceMotion} className="flex flex-col gap-2">

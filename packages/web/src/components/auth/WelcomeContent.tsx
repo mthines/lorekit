@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
@@ -9,6 +8,7 @@ import { friendlyAuthError } from '@/lib/auth-errors';
 import { reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { DEFAULT_POST_LOGIN_PATH } from '@/lib/auth-redirect';
 import { fragmentCarriesAuthResult } from '@/lib/auth-callback-params';
+import { Button } from '@/components/ui/Button';
 
 /**
  * How long to wait for supabase-js to resolve an implicit-flow fragment
@@ -113,12 +113,9 @@ export function WelcomeContent() {
         <p role="alert" className="text-sm text-red-400">
           {friendlyAuthError({ message: errorCode, code: errorCode })}
         </p>
-        <Link
-          href="/login"
-          className="flex h-11 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)]"
-        >
+        <Button href="/login" variant="secondary" size="lg" fullWidth>
           Go to sign in
-        </Link>
+        </Button>
       </div>
     );
   }
@@ -140,12 +137,9 @@ export function WelcomeContent() {
             Your email is confirmed and you&apos;re signed in.
           </p>
         </div>
-        <button
-          onClick={handleContinue}
-          className="flex h-11 items-center justify-center rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-4 text-sm font-semibold text-[var(--color-accent)] transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-        >
+        <Button variant="primary" size="lg" fullWidth onClick={handleContinue}>
           Continue to your dashboard
-        </button>
+        </Button>
       </div>
     );
   }
@@ -163,12 +157,9 @@ export function WelcomeContent() {
         Sign in with your email and password to continue. (If you opened this link on a different
         device from the one you signed up on, that&apos;s expected — you only need to confirm once.)
       </p>
-      <Link
-        href="/login"
-        className="flex h-11 items-center justify-center rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-4 text-sm font-semibold text-[var(--color-accent)] transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-      >
+      <Button href="/login" variant="primary" size="lg" fullWidth>
         Continue to sign in
-      </Link>
+      </Button>
     </div>
   );
 }

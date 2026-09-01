@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { X, Rocket, HardDrive, Cloud, Users, Lock, Tag, FileCog, Zap } from 'lucide-react';
+import { IconButton } from '@/components/ui/Button';
 
 // ── Shared primitives (inlined — no auth-gated imports) ───────────────────────
 
@@ -752,14 +753,13 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
             {/* Sticky header */}
             <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
               <p className="text-sm font-semibold text-[var(--color-content-primary)]">Setup guide</p>
-              <button
-                type="button"
+              <IconButton
+                variant="ghost"
+                size="sm"
+                icon={<X className="size-4" />}
+                label="Close setup guide"
                 onClick={onClose}
-                className="flex size-8 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-                aria-label="Close setup guide"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+              />
             </div>
 
             {/* Body: sidebar + content */}

@@ -20,6 +20,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { X } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
+import { IconButton } from './Button';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 
 export interface FormDialogProps {
@@ -157,14 +158,12 @@ export function FormDialog({ open, title, description, onClose, children, classN
                   </p>
                 )}
               </div>
-              <button
-                type="button"
+              <IconButton
+                variant="ghost"
+                icon={<X className="size-4" />}
+                label="Close"
                 onClick={onClose}
-                aria-label="Close"
-                className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+              />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
           </motion.div>

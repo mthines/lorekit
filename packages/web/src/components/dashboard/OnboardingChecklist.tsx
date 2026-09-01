@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 import type { OnboardingStep } from '@/lib/onboarding';
+import { Button, IconButton } from '@/components/ui/Button';
 
 // Re-exported for callers that build steps and render the checklist together.
 export type { OnboardingStep } from '@/lib/onboarding';
@@ -171,13 +172,9 @@ function AllSetPanel({ onReview }: { onReview: () => void }) {
         Every setup step is complete. Your agents can read and write lore, and PR
         review comments flow in automatically. You can revisit this page any time.
       </p>
-      <button
-        onClick={onReview}
-        className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-      >
-        <ListChecks className="size-4" aria-hidden />
+      <Button variant="secondary" onClick={onReview} leftIcon={<ListChecks className="size-4" aria-hidden />}>
         Review the steps
-      </button>
+      </Button>
     </motion.div>
   );
 }
@@ -264,14 +261,14 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
       {/* Dismiss button — inline card only, kept outside the toggle button */}
       {variant === 'inline' && (
         <div className="absolute right-4 top-4 flex items-center gap-1">
-          <button
+          <IconButton
+            variant="ghost"
+            size="sm"
             onClick={dismiss}
-            aria-label="Hide onboarding checklist"
-            title="Hide — reopen from Getting started in the sidebar"
-            className="flex size-7 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
-          >
-            <X className="size-3.5" aria-hidden />
-          </button>
+            label="Hide onboarding checklist"
+            tooltip="Hide — reopen from Getting started in the sidebar"
+            icon={<X className="size-3.5" aria-hidden />}
+          />
         </div>
       )}
 
