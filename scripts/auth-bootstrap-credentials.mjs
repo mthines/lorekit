@@ -79,7 +79,7 @@ async function launchBrowser() {
     if (/Executable doesn.?t exist|playwright install/i.test(err.message)) {
       console.error('Chromium binary missing; running `playwright install chromium`...');
       try {
-        execSync('npx --yes playwright install chromium', { stdio: 'inherit' });
+        execSync('pnpm exec playwright install chromium', { stdio: 'inherit' });
       } catch {
         /* egress may block cdn.playwright.dev — fall through to retry, which rethrows */
       }
