@@ -10,6 +10,7 @@ import {
   reportAuthAttempt,
   reportAuthFailure,
   reportAuthOptionSelected,
+  reportAuthPending,
   reportAuthSuccess,
   type AuthMethod,
 } from '@/lib/auth-telemetry';
@@ -275,9 +276,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // this same screen is shown either way — it must not reveal which.
     //
     // Deliberately NOT reported as a success: no session exists yet, and the
-    // branch is also what an already-registered address takes. Counting it
-    // would both overstate signups and leak the distinction the screen exists
-    // to hide. `email_confirmation` on /welcome is where that path completes.
+    // branch is also what an already-registered address takes. Counting it as
+    // a success would both overstate signups and leak the distinction the
+    // screen exists to hide. `email_confirmation` on /welcome is where that
+    // path completes — but this is still the only place a signup that fully
+    // succeeded here (and needs an email neither of us can confirm was ever
+    // delivered) can be counted at all. See `reportAuthPending`.
+    reportAuthPending(method);
     setStep('confirm');
   }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { sendEvent } from '@dash0/sdk-web';
+import { isEmailSendFailure } from './auth-email-failure';
 
 /**
  * Discrete telemetry for the authentication funnel.
@@ -102,6 +103,7 @@ export const AUTH_ATTEMPT_EVENT = 'auth.attempt';
 export const AUTH_SUCCESS_EVENT = 'auth.success';
 export const AUTH_FAILURE_EVENT = 'auth.failure';
 export const AUTH_OPTION_SELECTED_EVENT = 'auth.option_selected';
+export const AUTH_PENDING_EVENT = 'auth.pending';
 
 /** The SDK's own event options, derived from `sendEvent` so the two cannot drift. */
 type AuthEventOptions = NonNullable<Parameters<typeof sendEvent>[1]>;
@@ -131,6 +133,7 @@ function emit(name: string, options: AuthEventOptions): void {
 interface AuthErrorLike {
   code?: string | undefined;
   name?: string | undefined;
+  message?: string | undefined;
 }
 
 /**
@@ -139,15 +142,26 @@ interface AuthErrorLike {
  * Supabase populates `code` for the errors that have a stable contract
  * (`invalid_credentials`, `email_not_confirmed`, …) and leaves it undefined for
  * transport-level ones, where `name` is the next most stable thing. The MESSAGE
- * is deliberately never used: it is prose, it is localised, and it can embed the
- * address that was typed — unbounded and PII-bearing, the two things a grouping
- * key must not be.
+ * itself is deliberately never reported verbatim: it is prose, it is localised,
+ * and it can embed the address that was typed — unbounded and PII-bearing, the
+ * two things a grouping key must not be.
+ *
+ * One exception: a broken mailer (bad SMTP credentials, a missing DNS record on
+ * the sending domain, an unreachable relay) never gets a `code` from GoTrue, and
+ * `name` is just the same generic `AuthApiError` every other server-side auth
+ * failure carries — so without this check that entire failure class collapsed
+ * into a bucket indistinguishable from any other API error, with no way to alert
+ * on it specifically. `isEmailSendFailure` (`auth-email-failure.ts`) recognises
+ * it from the message's stable "Error sending … email" prefix — the one part of
+ * the message that is neither prose nor PII — and reports the bounded
+ * `email_send_failed` instead.
  *
  * Total function: any shape of input yields a usable string, because telemetry
  * must never be the reason an auth handler throws.
  */
 export function authErrorCode(error: AuthErrorLike | null | undefined): string {
   if (!error) return 'unknown';
+  if (isEmailSendFailure(error.message)) return 'email_send_failed';
   return error.code ?? error.name ?? 'unknown';
 }
 
@@ -217,6 +231,43 @@ export function reportAuthFailure(method: AuthMethod, error: AuthErrorLike | nul
 export function reportAuthOptionSelected(method: AuthMethod): void {
   emit(AUTH_OPTION_SELECTED_EVENT, {
     title: `Auth option selected: ${method}`,
+    attributes: { 'auth.method': method, 'auth.intent': authIntent(method) },
+  });
+}
+
+/**
+ * Record that a signup reached the "check your inbox" screen with neither an
+ * error nor a session — `email_password_signup`'s third branch
+ * (`LoginButton.tsx`), taken when the project requires confirmation.
+ *
+ * ## Why this exists
+ *
+ * That branch is a genuine blind spot, and by design: Supabase returns the
+ * exact same response — no error, no session — whether this is a brand-new
+ * signup awaiting confirmation or a resubmission to an already-registered
+ * address, so reporting `auth.success` there would overstate signups *and*
+ * leak the distinction the screen exists to hide (see the comment at the call
+ * site). The result is that this event, `reportAuthFailure` and
+ * `reportAuthSuccess` are jointly exhaustive over the outcomes this document
+ * can observe — but none of the three previously fired here, so a signup that
+ * fully succeeded at the API layer and was then never delivered (a
+ * misconfigured DNS record on the sending domain, an unreachable SMTP relay,
+ * a silently-dropped async send) looked, in the browser's own telemetry,
+ * identical to one that never happened at all.
+ *
+ * This event does not — cannot — prove the email was delivered; Supabase
+ * never tells the browser that. What it proves is the one fact the browser
+ * *can* attest to: the signup reached this state. Paired with the
+ * `auth.success` events for `auth.method = email_confirmation`
+ * (`WelcomeContent.tsx`, emitted when the link is actually opened), a
+ * sustained gap between the two — many pending, few completions, over a
+ * window wider than a normal inbox-checking delay — is the regression signal
+ * for exactly the failure mode this event exists to catch, and the only one
+ * this funnel can offer for it.
+ */
+export function reportAuthPending(method: AuthMethod): void {
+  emit(AUTH_PENDING_EVENT, {
+    title: `Auth pending: ${method}`,
     attributes: { 'auth.method': method, 'auth.intent': authIntent(method) },
   });
 }

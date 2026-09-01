@@ -1,6 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { authErrorCode, authIntent, type AuthMethod } from './auth-telemetry';
+// Mirrors `lib/analytics/track.spec.ts`'s stand-in: records the wire shape
+// `emit()` hands `sendEvent` rather than asserting against the real SDK, which
+// never runs in a unit test.
+vi.mock('@dash0/sdk-web', () => {
+  const calls: Array<{ name: string; attributes: Record<string, string> }> = [];
+  return {
+    sendEvent: (name: string, options: { attributes: Record<string, string> }) => {
+      calls.push({ name, attributes: options.attributes });
+    },
+    __calls: calls,
+  };
+});
+
+import {
+  authErrorCode,
+  authIntent,
+  AUTH_PENDING_EVENT,
+  reportAuthPending,
+  type AuthMethod,
+} from './auth-telemetry';
+
+const { __calls: calls } = (await import('@dash0/sdk-web')) as unknown as {
+  __calls: Array<{ name: string; attributes: Record<string, string> }>;
+};
+
+beforeEach(() => {
+  calls.length = 0;
+});
 
 describe('authErrorCode', () => {
   it('prefers the stable Supabase error code', () => {
@@ -22,6 +49,22 @@ describe('authErrorCode', () => {
   it('reports unknown for null and undefined', () => {
     expect(authErrorCode(null)).toBe('unknown');
     expect(authErrorCode(undefined)).toBe('unknown');
+  });
+
+  // GoTrue gives a broken mailer no stable `code` — only a message. Without
+  // this, a DNS-misconfigured sending domain and every other server-side auth
+  // fault reported the same generic `name`, with no way to alert on the
+  // mailer specifically.
+  it('classifies a broken mailer as email_send_failed even with no stable code', () => {
+    expect(
+      authErrorCode({ name: 'AuthApiError', message: 'Error sending confirmation email' }),
+    ).toBe('email_send_failed');
+    expect(
+      authErrorCode({
+        name: 'AuthApiError',
+        message: 'Error sending confirmation email: dial tcp: lookup mail.example.com: no such host',
+      }),
+    ).toBe('email_send_failed');
   });
 });
 
@@ -65,5 +108,21 @@ describe('authIntent', () => {
     for (const method of methods) {
       expect(authIntent(method)).toBeTruthy();
     }
+  });
+});
+
+describe('reportAuthPending', () => {
+  // This is the one event on the "check your inbox" branch — see the
+  // docblock at its definition for why neither success nor failure fires
+  // there, and why that used to mean nothing did.
+  it('emits auth.pending with the method and its intent', () => {
+    reportAuthPending('email_password_signup');
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.name).toBe(AUTH_PENDING_EVENT);
+    expect(calls[0]!.attributes).toEqual({
+      'auth.method': 'email_password_signup',
+      'auth.intent': 'signup',
+    });
   });
 });

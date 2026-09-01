@@ -104,6 +104,16 @@ describe('friendlyAuthError', () => {
     );
   });
 
+  // The failure that motivated this: a DNS-misconfigured sending domain fails
+  // the mail relay's lookup, and that error text never mentions "smtp".
+  it('maps a DNS-resolution mailer failure that never mentions smtp', () => {
+    expect(
+      friendlyAuthError({
+        message: 'Error sending confirmation email: dial tcp: lookup mail.example.com: no such host',
+      }),
+    ).toContain("couldn't deliver");
+  });
+
   it('falls back to the capitalised raw message', () => {
     expect(friendlyAuthError({ message: 'something odd happened' })).toBe(
       'Something odd happened',
