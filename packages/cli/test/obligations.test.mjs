@@ -420,7 +420,15 @@ describe('recurrence clusters', () => {
     const members = clusterMembers('sibling-set', SURFACE_PARTNER_MAP);
     assert.deepEqual(members, ['docs-section', 'plugin-skill', 'perf-index']);
     const copies = clusterMembers('copies-a-claim', SURFACE_PARTNER_MAP);
-    assert.equal(new Set(copies).size, copies.length, 'generated rows must not duplicate an id');
+    assert.deepEqual(copies, [
+      'edge-mirror',
+      'edge-mirror-core',
+      'tool-catalog',
+      'llms-generated',
+      'cli-flag-doc',
+      'digest-contract-doc',
+      'error-code-doc',
+    ]);
   });
 });
 
