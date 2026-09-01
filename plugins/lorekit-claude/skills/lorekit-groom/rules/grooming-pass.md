@@ -56,6 +56,10 @@ Findings are structural, not semantic — each names its rule:
   frozen at 1. Re-key it onto the structural pattern and move the identifier
   into the body.
 - **malformed-scope** — the scope string is invalid.
+- **unkinded-state-record** — the value parses as a JSON object/array but the
+  entry has no `kind`, so it renders as a raw JSON blob in every SessionStart
+  digest instead of being excluded by `isGeneralLesson`. Set `--kind bus` or
+  `--kind signal` on the record.
 
 These are the cheapest wins and the least controversial, so clear them first.
 For each: either **fix it in place** (rewrite a too-short value into a real
