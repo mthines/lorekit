@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.63.0](https://github.com/mthines/lorekit/compare/cli-v1.62.0...cli-v1.63.0) (2026-09-01)
+
+
+### Features
+
+* **cli:** add digest-contract-doc obligations-map entry ([e514da4](https://github.com/mthines/lorekit/commit/e514da4f5f33862b8357ee6a9ab361b5d4097522))
+* **cli:** add digest-contract-doc obligations-map entry ([3e74be8](https://github.com/mthines/lorekit/commit/3e74be808c64400d3be67804cd853f1f353850ca))
+
 ## [1.62.0](https://github.com/mthines/lorekit/compare/cli-v1.61.0...cli-v1.62.0) (2026-09-01)
 
 
