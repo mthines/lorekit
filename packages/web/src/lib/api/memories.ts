@@ -14,6 +14,8 @@ import type {
   ActivityBody,
   ActivityQuery,
   ActivityResponse,
+  ClustersQuery,
+  ClustersResponse,
   FacetsResponse,
   ListFacetsBody,
   PivotBody,
@@ -243,6 +245,33 @@ export function readRankingRequest(
   signal?: AbortSignal,
 ): Promise<ReadRankingResponse> {
   return restFetch<ReadRankingResponse>('/memories/read-ranking', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/clusters` — groups of near-duplicate memories, ranked as merge
+ * candidates, using the same Jaccard heuristic `lorekit dedupe` runs.
+ *
+ * READ-ONLY, and there is no companion write: deciding that N near-duplicate
+ * lessons are really one entry is a human judgment, so the panel this feeds
+ * (`components/lore/DuplicateClusters.tsx`) surfaces the evidence and stops.
+ *
+ * The answer is WINDOWED — the server clusters the newest `candidate_limit` rows
+ * and reports that cap alongside the count, so a caller can tell "no duplicates"
+ * from "the window did not reach them" (`lib/duplicate-clusters-view.ts`'s
+ * `windowSaturated`). REST-only: no MCP tool, no CLI command
+ * (`telemetry-vocabulary.ts`) — `lorekit dedupe` is the agent-side answer, and it
+ * sees the whole scope.
+ */
+export function clustersRequest(
+  accessToken: string,
+  params: Partial<ClustersQuery>,
+  signal?: AbortSignal,
+): Promise<ClustersResponse> {
+  return restFetch<ClustersResponse>('/memories/clusters', {
     accessToken,
     query: { ...params },
     ...(signal ? { signal } : {}),

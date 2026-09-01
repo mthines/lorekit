@@ -99,16 +99,20 @@ describe('telemetry vocabulary closure', () => {
 });
 
 describe('the analytics reads stay REST-only (D17)', () => {
-  // Seven as of migrations 00077/00078's read-ranking endpoint and 00083's
-  // Runs view — the decision's ORIGINAL five plus two, not a re-litigation of
-  // it: `memory.read-ranking` is the same "name-bearing scope-leak surface
-  // nothing agent-side asked for" shape as `tags`/`facets`/`activity`, and
-  // `memory.usage-runs` is the same "chart, not an agent primitive" shape as
-  // the other five — both added to the SAME guarded set rather than exempted
-  // from it. See docs/decisions.md → "Dashboard analytics reads stay
+  // Nine as of migrations 00077/00078's read-ranking endpoint, 00083's Runs
+  // view, and `GET /memories/clusters` — the decision's ORIGINAL five plus
+  // four, not a re-litigation of it: `memory.read-ranking` is the same
+  // "name-bearing scope-leak surface nothing agent-side asked for" shape as
+  // `tags`/`facets`/`activity`, `memory.usage-runs` is the same "chart, not an
+  // agent primitive" shape as the other five, and `memory.clusters` is the
+  // same call again with an extra reason — the agent-side spelling
+  // (`lorekit dedupe`) already exists and sees the WHOLE scope where the route
+  // sees one recent window. All added to the SAME guarded set rather than
+  // exempted from it. See docs/decisions.md → "Dashboard analytics reads stay
   // REST-only".
   const RESTONLY_NAMES = [
     'memory.activity',
+    'memory.clusters',
     'memory.facets',
     'memory.pivot',
     'memory.read-activity',
@@ -118,11 +122,11 @@ describe('the analytics reads stay REST-only (D17)', () => {
     'memory.usage-runs',
   ];
 
-  it('records exactly these eight as a decision, by name', () => {
+  it('records exactly these nine as a decision, by name', () => {
     expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
-  it('keeps memory.relevant OUT of the eight — it is already covered agent-side', () => {
+  it('keeps memory.relevant OUT of the nine — it is already covered agent-side', () => {
     // The near-miss, and the reason `restOnly` is a separate field rather than
     // "has no MCP tool". `GET /memories/relevant` has no tool of its own, but
     // the CAPABILITY is on the agent surface twice over (`memory.list
@@ -134,14 +138,14 @@ describe('the analytics reads stay REST-only (D17)', () => {
     expect(REST_ONLY_OP_NAMES).not.toContain('memory.relevant');
   });
 
-  it('gives none of the seven an MCP tool', () => {
+  it('gives none of the nine an MCP tool', () => {
     const catalogued = new Set(MCP_TOOLS.map((t) => t.name));
     for (const name of REST_ONLY_OP_NAMES) {
       expect(catalogued.has(name), `${name} is REST-only but the catalog now declares a tool`).toBe(false);
     }
   });
 
-  it('gives none of the seven a CLI command either', () => {
+  it('gives none of the nine a CLI command either', () => {
     // Scanned rather than reasoned about: the CLI is free to call any REST
     // endpoint directly (it has no catalog dependency), so "no MCP tool"
     // does not imply "no CLI command". `/relevant` is the proof the scan
@@ -158,8 +162,12 @@ describe('the analytics reads stay REST-only (D17)', () => {
       '/memories/relevant',
     );
 
+    // `/memories/clusters` is the load-bearing one here: the CLI answers the
+    // SAME question locally (`lorekit dedupe`, over the whole scope), so a CLI
+    // call to this route would mean the weaker windowed answer had quietly
+    // replaced the stronger one.
     for (const endpoint of ['/memories/usage', '/memories/tags', '/memories/facets',
-      '/memories/activity', '/memories/read-activity']) {
+      '/memories/activity', '/memories/read-activity', '/memories/clusters']) {
       expect(hay.includes(endpoint), `a CLI command now calls ${endpoint}`).toBe(false);
     }
   });

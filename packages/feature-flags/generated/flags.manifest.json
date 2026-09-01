@@ -53,6 +53,24 @@
         "lore-explorer",
         "rollout"
       ]
+    },
+    {
+      "key": "lore-explorer-duplicate-clusters",
+      "description": "Lore Explorer — the collapsible Duplicate Clusters panel: groups of near-duplicate lessons in the selected scope, ranked as merge candidates. READ-ONLY, and there is no write counterpart to gate: deciding that N near-duplicates are one lesson is a human judgment, so the panel surfaces the evidence and stops. Gates only the panel; with it off `/lore` renders exactly as before AND issues no clustering request, because the panel is the route's only caller. `GET /memories/clusters` itself ships unconditionally — it is additive, read-only and safe to serve whether or not this is on, the same call `lore-explorer-instruments` makes about `POST /memories/pivot`.",
+      "type": "boolean",
+      "variants": {
+        "off": false,
+        "on": true
+      },
+      "defaultVariant": "off",
+      "experiment": null,
+      "owner": "@lorekit/web",
+      "tags": [
+        "dashboard",
+        "web",
+        "lore-explorer",
+        "rollout"
+      ]
     }
   ]
 }

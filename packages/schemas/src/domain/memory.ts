@@ -1064,3 +1064,134 @@ export const ReadRankingResponseSchema = z.object({
   entries: z.array(ReadRankingEntrySchema),
 });
 export type ReadRankingResponse = z.infer<typeof ReadRankingResponseSchema>;
+
+/**
+ * `GET /memories/clusters` — groups of NEAR-DUPLICATE lessons, using the same
+ * Jaccard heuristic `lorekit dedupe` runs, joined to the named recurrence
+ * classes and ranked as merge candidates.
+ *
+ * READ-ONLY, and that is the contract rather than a current limitation. The
+ * compile pipeline's rule is "never auto-compile, never auto-gate": deciding
+ * that N near-duplicate lessons are really one entry is a human judgment, so
+ * this route surfaces and ranks the evidence and stops there. There is no
+ * companion merge route, and a caller cannot ask this one to act.
+ *
+ * REST-only (`telemetry-vocabulary.ts`'s `NON_CATALOG_OPS`) for the reason every
+ * sibling analytics read is: the response names individual scopes AND lesson
+ * keys, the same scope-leak surface as `memory.tags`/`memory.facets`, and no
+ * agent loop has asked to be handed its own duplicate list. An agent that wants
+ * near-duplicates has `lorekit dedupe` locally.
+ */
+export const ClustersQuerySchema = z.object({
+  scope: RawScopeSchema.optional(),
+  /**
+   * Jaccard similarity floor for two lessons to link.
+   *
+   * Floored at 0.5, not 0: below roughly half-shared-vocabulary the heuristic
+   * links documents that merely discuss the same subject, which produces one
+   * enormous cluster and no information. The floor is also what keeps the
+   * inverted-index sweep provably equivalent to the all-pairs reference — the
+   * equivalence argument needs `threshold > 0` (see
+   * `clusterDuplicatesBlocked`'s docblock).
+   */
+  threshold: z.coerce.number().min(0.5).max(1).optional().default(0.8),
+  /**
+   * Summed-`seen_count` floor for a cluster to count as a merge candidate.
+   *
+   * `0` is legal and means "show me every near-duplicate group regardless of
+   * recurrence" — useful for browsing, whereas the default 3 is the
+   * "this keeps happening" threshold the self-improvement loop documents. A
+   * cluster whose member declares a non-`active` status qualifies either way.
+   */
+  min_seen_count: z.coerce.number().int().min(0).max(1000).optional().default(3),
+  // `z.coerce` for the `ReadRankingQuerySchema` reason — `validateQuery` feeds
+  // every value in as a string, so a bare `z.number()` 400s on any caller that
+  // passes the param at all.
+  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+});
+export type ClustersQuery = z.infer<typeof ClustersQuerySchema>;
+
+/**
+ * One member of a cluster.
+ *
+ * `hook` rather than the full body, for the `GET /memories/relevant` reason: the
+ * point of the route is deciding WHICH lessons deserve attention, and returning
+ * the full text of every member of every cluster would spend the context it
+ * just saved. Fetch a body with `GET /:id` or `memory.read` — which is what the
+ * dashboard's detail sheet does when a member is opened.
+ */
+export const ClusterMemberSchema = z.object({
+  scope: z.string(),
+  key: z.string(),
+  /** First meaningful line of the lesson. */
+  hook: z.string(),
+  seen_count: z.number().int().nonnegative().nullable(),
+  updated_at: z.string().datetime().nullable(),
+  /**
+   * `status` as the lesson's own `<!-- meta: … -->` comment declares it, when it
+   * has one. Reported verbatim and NOT validated against a vocabulary — none is
+   * defined anywhere in this codebase, and inventing one here would be the
+   * classification step the read-only boundary above exists to prevent.
+   */
+  status: z.string().nullable(),
+});
+export type ClusterMember = z.infer<typeof ClusterMemberSchema>;
+
+/** The named recurrence class a cluster resolved to, when it resolved to one. */
+export const RecurrenceClassSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** The member keys that resolved. */
+  matched: z.array(z.string()),
+  /**
+   * True ONLY when every member resolves to this one class — the case where
+   * merging under its canonical key loses no stragglers. A mixed match still
+   * reports the majority class, so a consumer MUST read `pure` before
+   * presenting the class as a complete account of the cluster.
+   */
+  pure: z.boolean(),
+});
+export type RecurrenceClass = z.infer<typeof RecurrenceClassSchema>;
+
+export const DuplicateClusterSchema = z.object({
+  size: z.number().int().min(2),
+  /** Summed `seen_count` × distinct scopes — recurrence weighted by spread. */
+  score: z.number().nonnegative(),
+  /**
+   * The WEAKEST and STRONGEST of the pairs that LINKED this cluster — how tight
+   * it is. Both are `>= threshold` by construction, because a weaker pair never
+   * links. Note the asymmetry that follows: clusters form transitively, so two
+   * members can be less alike than `min_similarity` suggests (A–B and B–C both
+   * cleared the bar; A–C was never required to). Present the range as the
+   * evidence for the grouping, never as a floor on every pair inside it.
+   */
+  min_similarity: z.number().min(0).max(1),
+  max_similarity: z.number().min(0).max(1),
+  recurrence_class: RecurrenceClassSchema.nullable(),
+  members: z.array(ClusterMemberSchema),
+});
+export type DuplicateCluster = z.infer<typeof DuplicateClusterSchema>;
+
+export const ClustersResponseSchema = z.object({
+  threshold: z.number(),
+  /**
+   * How many rows were fetched before clustering. SATURATES at
+   * {@link ClustersResponse.candidate_limit}, so a value equal to it means "at
+   * least that many", never "exactly that many" — and a cluster whose members
+   * fall outside that recency window is not reported at all.
+   */
+  candidates: z.number().int().nonnegative(),
+  /**
+   * The server's candidate cap — the size of the `updated_at desc` window the
+   * clustering ran over.
+   *
+   * Reported so a caller can DETECT the saturation above (`candidates ===
+   * candidate_limit`) instead of hardcoding a number that lives in the handler.
+   * Without it, an empty `clusters` array is ambiguous between "you have no
+   * near-duplicates" and "the window did not reach them" — and a UI that renders
+   * the first when the second is true tells the reader something false.
+   */
+  candidate_limit: z.number().int().positive(),
+  clusters: z.array(DuplicateClusterSchema),
+});
+export type ClustersResponse = z.infer<typeof ClustersResponseSchema>;

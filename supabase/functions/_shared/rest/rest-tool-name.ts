@@ -71,6 +71,11 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   // is worth reading) and collapsing them would make it impossible to tell
   // whether agents actually reach for the ranking.
   'memories GET /relevant': 'memory.relevant',
+  // Near-duplicate clusters. Its own tool name and NOT folded into
+  // `memory.list`: the two read the same rows but answer different questions
+  // (which lore is there vs which of it is redundant), and folding it in would
+  // inflate `memory.list` with panel refreshes.
+  'memories GET /clusters': 'memory.clusters',
   // ── retention policies ("grooming") ─────────────────────────────────────
   'memories GET /policies': 'policy.list',
   'memories POST /policies': 'policy.create',

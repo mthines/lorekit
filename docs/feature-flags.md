@@ -56,8 +56,9 @@ it can never ship a flag that silently resolves to `undefined`.
 
 > **Every `example-*` key in this document is illustrative, not a real flag.**
 > Grep for one and you will find only this file. The registry holds exactly the
-> flags that gate live behaviour — today the two rollout gates `insights-page`
-> and `retention-policies`, both plain booleans. It briefly also held five
+> flags that gate live behaviour — today four rollout gates, all plain booleans:
+> `insights-page`, `retention-policies`, `lore-explorer-instruments` and
+> `lore-explorer-duplicate-clusters`. It briefly also held five
 > demonstration entries (an A/B experiment, two unread toggles, and one each to
 > exercise the `string` and `object` paths); they were removed, because a flag
 > that gates nothing is indistinguishable at a call site from one left behind
@@ -72,7 +73,7 @@ this isn't a subset:
 
 | `type` | Variant value | Illustrative example |
 |--------|---------------|----------------------|
-| `boolean` | `true` / `false` | `example-onboarding-flow` (and both real flags today) |
+| `boolean` | `true` / `false` | `example-onboarding-flow` (and every real flag today) |
 | `string` | any string | `example-plan-badge-copy` — `{ beta: 'Beta', earlyAccess: 'Early Access' }` |
 | `number` | any number | — |
 | `object` | any JSON value (nested objects/arrays included) | `example-empty-state-copy` — a whole `{ title, ctaLabel, ctaHref }` copy block per variant |
@@ -376,15 +377,28 @@ export function OnboardingPreview() {
 }
 ```
 
-The snippet above is the whole convention — there is deliberately no reference
-implementation in the tree to copy from. One used to exist
+**The live example in the tree is the Lore Explorer's Duplicate Clusters panel**
+(`packages/web/src/components/lore/DuplicateClustersPanel{,.on,.off}.tsx`, gated
+by `lore-explorer-duplicate-clusters`). Read it for the shape, and note two
+things it does on purpose:
+
+- The `off` arm is a whole component that returns `null`, not a `null` literal
+  inlined into the resolver. Retiring the flag is then "delete this file", a
+  complete instruction — and if `off` ever needs to become a placeholder, that
+  lands in a file rather than growing a branch inside a component.
+- The arm is separate from the IMPLEMENTATION: `.on.tsx` renders
+  `DuplicateClusters.tsx`, which owns the behaviour, the stories and the pixel
+  baselines. So the flag's blast radius is three small files, and retiring it
+  never touches the component under test.
+
+It earns its place by gating something real. An earlier example did not
 (`components/dashboard/onboarding-preview/`, a resolver plus two arms rendered
-live on `/settings/developer`), but it gated nothing: it existed to demonstrate
-this pattern, and it required a matching demo flag in `registry.ts` to keep it
-alive. Both were removed. A registry entry is a live product decision, and one
-that exists to serve a documentation example is indistinguishable at a call
-site from one left behind after a rollout finished — so the example lives here,
-in prose, where it costs nothing.
+live on `/settings/developer`): it existed to demonstrate this pattern and
+required a matching demo flag in `registry.ts` to stay alive. Both were removed,
+because a registry entry is a live product decision, and one that exists to serve
+a documentation example is indistinguishable at a call site from one left behind
+after a rollout finished. So: illustrate with a flag that ships, or illustrate in
+prose — never register one for the docs' sake.
 
 **Why this is worth the extra files:** the entire point is what happens when
 the experiment ENDS. With two standalone components, shipping the winner is:

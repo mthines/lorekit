@@ -67,6 +67,7 @@ import { Search, Loader2 } from 'lucide-react';
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
+import { DuplicateClustersPanel } from './DuplicateClustersPanel';
 import { ExplorerInsights } from './ExplorerInsights';
 import { ExplorerInstruments } from './ExplorerInstruments';
 import { MatrixInstrument } from './MatrixInstrument';
@@ -996,6 +997,31 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           activeFilterCount={filters.length}
         />
       )}
+
+      {/* ── Duplicate clusters ──────────────────────────────────────────────
+          Groups of near-duplicate lessons in the current scope, ranked as
+          merge candidates. READ-ONLY: it surfaces the evidence and stops —
+          deciding that N lessons are really one entry is a human judgment (the
+          same boundary `lorekit dedupe` keeps).
+
+          A panel and NOT an instrument: it passes the instrument contract's
+          first half (click a member and you are holding that lesson) and fails
+          its second (a computed grouping over bodies is not a `?filters=`
+          dimension), so it lives beside the instrument panel rather than inside
+          it. It opens collapsed and its query is gated on that — see the
+          component. Members open in this page's own detail sheet through the
+          existing `?lesson=` param, so the panel adds no URL surface.
+
+          Behind `lore-explorer-duplicate-clusters`, and the flag read is NOT
+          here: `DuplicateClustersPanel` is the copy-and-suffix RESOLVER, so this
+          page has no `&&` to unpick when the rollout ends. Unlike the
+          instruments block above (a plain boolean read, which is why it carries
+          one), the whole panel is the unit being gated. */}
+      <DuplicateClustersPanel
+        scope={selectedScope}
+        scopeLabel={selectedScopeLabel}
+        onOpenLesson={(ref) => openLessonById(ref)}
+      />
 
       {/* Scope consumption, hot/cold lore, operational health and "who's
           reading" all moved to the dedicated /insights page — one place to

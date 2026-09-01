@@ -24,6 +24,7 @@ describe('generateSpec', () => {
       '/blog/likes',
       '/memories',
       '/memories/activity',
+      '/memories/clusters',
       '/memories/facets',
       '/memories/list',
       '/memories/pivot',

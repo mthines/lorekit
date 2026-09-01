@@ -1,8 +1,8 @@
 ---
 title: "Retention policies"
-description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything."
+description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the read-only Duplicate Clusters panel for spotting the same lesson written twice."
 order: 11
-keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli"]
+keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli", "duplicates", "dedupe", "clusters", "near-duplicate"]
 ---
 
 Retention policies automate the manual archiving you would otherwise do by
@@ -129,3 +129,41 @@ flip `--enabled` on.
 **All server-side, no local-store equivalent.** `groom`, `policy`, `protect`
 and `pin`/`unpin` are remote-only commands — retention policies are
 account-wide state, the same posture as `lorekit purge`.
+
+## Spotting the same lesson written twice
+
+Retention rules catch lore that has gone **stale**. A different kind of clutter
+is the same lesson learned two or three times under slightly different keys —
+which no age condition can see, because every copy keeps recurring.
+
+The [Lore Explorer](/lore) has a **Duplicate clusters** panel for that. It is
+**rolling out behind a feature flag**, so you may not see it yet — the CLI's
+`lorekit dedupe` (below) answers the same question in the meantime, and answers
+it over your whole store. Once the panel is on, expand
+it and it groups the current scope's near-duplicate lessons by how much
+vocabulary they share (the same Jaccard heuristic `lorekit dedupe` uses),
+ranks the groups by how often their members have recurred, and — where the keys
+match a known recurrence class — names it. Pick a group to page through its
+members and open any one of them in the detail sheet.
+
+It is **read-only, by design**: nothing in it merges, edits or deletes lore.
+Deciding that three near-duplicate lessons are really one entry is a judgment
+call about meaning, so the panel gets you to the evidence and stops. Rewriting
+them into one lesson is an ordinary `memory.write` (the surviving key) plus an
+archive of the others.
+
+Two things worth knowing before you read it as a clean bill of health:
+
+- **It is a recency window, not your whole store.** The panel clusters the most
+  recently updated lessons in the scope and says so in its footnote when that
+  window was full. A duplicate pair whose members were both last touched long
+  ago will not appear.
+- **`lorekit dedupe` is the whole-store answer.** It streams every lesson in the
+  scope through the identical clustering, so it has no window at all — use it
+  when you want the complete list rather than "what have I written lately that
+  duplicates something else lately".
+
+```bash
+# The whole scope, not just the recent window
+npx @lorekit/cli dedupe --scope repo::acme/app
+```

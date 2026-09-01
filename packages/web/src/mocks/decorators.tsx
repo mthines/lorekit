@@ -12,7 +12,7 @@
 import type { Decorator } from '@storybook/nextjs-vite';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import type { FlagValueMap } from '@lorekit/feature-flags';
+import type { FlagKey, FlagValueMap } from '@lorekit/feature-flags';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
 import { ExplorerResultsProvider } from '@/components/providers/ExplorerResultsProvider';
 import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
@@ -133,12 +133,14 @@ const DEFAULT_FLAG_VALUES: FlagValueMap = {
   'insights-page': false,
   'retention-policies': false,
   'lore-explorer-instruments': false,
+  'lore-explorer-duplicate-clusters': false,
 };
 
 const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = {
   'insights-page': 'off',
   'retention-policies': 'off',
   'lore-explorer-instruments': 'off',
+  'lore-explorer-duplicate-clusters': 'off',
 };
 
 /**
@@ -153,3 +155,33 @@ export const withFeatureFlags: Decorator = (Story) => (
     <Story />
   </FeatureFlagsProvider>
 );
+
+/**
+ * The registry defaults with named flags forced ON — for a story of a surface
+ * that is gated OFF by default.
+ *
+ * Takes VARIANT keys, not values, because a copy-and-suffix resolver dispatches
+ * on the variant; the boolean value is derived from it here so the two halves of
+ * the provider cannot disagree in a story the way they could if each were seeded
+ * by hand. Only `boolean` flags are expressible this way, which is every flag in
+ * the registry today — a `string`/`object` flag would need its value passed too,
+ * and this deliberately does not pretend otherwise.
+ */
+export function withFlagVariants(overrides: Partial<Record<FlagKey, string>>): Decorator {
+  const values: FlagValueMap = { ...DEFAULT_FLAG_VALUES };
+  const variants: Record<string, string> = { ...DEFAULT_FLAG_VARIANTS };
+  for (const [key, variant] of Object.entries(overrides) as [FlagKey, string][]) {
+    variants[key] = variant;
+    // Every flag in the registry is `boolean`, so the value IS "is this the `on`
+    // arm" — which is also why an unknown variant seeds `false`, matching the
+    // resolver's `default → off`. The cast is needed because `FlagValueMap` is a
+    // per-key mapped type and `key` is only known to be some member of the union.
+    (values as Record<FlagKey, boolean>)[key] = variant === 'on';
+  }
+  const Wrapped: Decorator = (Story) => (
+    <FeatureFlagsProvider flags={values} variants={variants}>
+      <Story />
+    </FeatureFlagsProvider>
+  );
+  return Wrapped;
+}
