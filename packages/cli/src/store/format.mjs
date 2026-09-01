@@ -34,6 +34,13 @@ export const FIELDS = [
   // columns above: a file written before this existed decodes it as absent,
   // which the read projection reports as 0 rather than inventing a count.
   'seen_count',
+  // Taxonomy — `kind` ('lesson'/'bus'/'signal') and `host` (which agent loop
+  // wrote it), mirroring the hosted `memories.kind`/`memories.host` columns.
+  // Appended like the columns above: a file written before these existed
+  // decodes them as absent, which `normalizeEntry` in lessons-view.mjs falls
+  // back to inferring from tags for, same as an absent remote value.
+  'kind',
+  'host',
 ];
 
 // Serialize an entry ({ ...columns, value }) into file text.
