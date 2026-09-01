@@ -63,12 +63,14 @@
 
 import { useCallback, useEffect, useMemo, useTransition, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { Search, Loader2 } from 'lucide-react';
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { flattenScopeTree } from '@/lib/scope-tree';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { DuplicateClustersPanel } from './DuplicateClustersPanel';
+import { DuplicateClustersSidebarPanel } from './DuplicateClustersSidebarPanel';
 import { ExplorerInsights } from './ExplorerInsights';
 import { ExplorerInstruments } from './ExplorerInstruments';
 import { MatrixInstrument } from './MatrixInstrument';
@@ -99,7 +101,27 @@ import {
   toDayRange,
   type TimeRange,
 } from '@/lib/time-range';
-import { useFacetCatalog, useMemories, usePivot } from '@/lib/queries/lore';
+import {
+  useFacetCatalog,
+  useLessonsByRefs,
+  useMemories,
+  usePivot,
+  seedOptimisticLesson,
+} from '@/lib/queries/lore';
+import {
+  DEFAULT_CLUSTERS_OPEN,
+  clusterId,
+  lessonEntryFromClusterMember,
+  sizeLabel,
+} from '@/lib/duplicate-clusters-view';
+import {
+  PREFERENCE_KEYS,
+  isResolved,
+  parseBooleanPreference,
+  serializeBooleanPreference,
+} from '@/lib/persisted-preference';
+import { usePersistedPreference } from '@/lib/hooks/usePersistedPreference';
+import type { DuplicateCluster } from '@lorekit/schemas/memory';
 import {
   filtersParamValue,
   removeFilter,
@@ -624,6 +646,69 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     closeLesson();
   }
 
+  // ── Duplicate clusters ───────────────────────────────────────────────────
+  // The sidebar's open/closed state lives here, not inside the trigger or the
+  // sidebar itself — both `DuplicateClustersPanel` (the trigger, above the
+  // results card) and `DuplicateClustersSidebarPanel` (the sidebar, a flex
+  // column beside it) need the SAME boolean to decide what they render, and
+  // they are siblings in the tree rather than parent/child.
+  const clustersOpenPref = usePersistedPreference(PREFERENCE_KEYS.explorerClustersOpen);
+  const clustersOpenResolved = isResolved(clustersOpenPref.raw);
+  const clustersOpen =
+    clustersOpenResolved && parseBooleanPreference(clustersOpenPref.raw, DEFAULT_CLUSTERS_OPEN);
+
+  const queryClient = useQueryClient();
+
+  // The cluster currently driving the list, or null for the ordinary
+  // server-filtered view. Held as the full object (not just an id) because the
+  // list needs its members' refs directly — see `renderResults`.
+  const [selectedCluster, setSelectedCluster] = useState<DuplicateCluster | null>(null);
+  const selectedClusterId = selectedCluster ? clusterId(selectedCluster) : null;
+
+  const clusterMemberRefs = useMemo(
+    () => selectedCluster?.members.map((m) => ({ scope: m.scope, key: m.key })) ?? [],
+    [selectedCluster],
+  );
+  // One query per member, sharing its cache slot (`['lesson-by-ref', scope,
+  // key]`) with `useLessonByRef` and the detail sheet — see `lib/queries/lore.ts`.
+  const clusterMemberQueries = useLessonsByRefs(clusterMemberRefs);
+
+  function handleSelectCluster(cluster: DuplicateCluster | null) {
+    setSelectedCluster(cluster);
+    if (cluster) {
+      // Seed every member's cache slot with a stand-in built from what the
+      // clusters response already carries (the `hook` line), so the list has
+      // something to render on the very first paint instead of a row of
+      // skeletons — then invalidate so the real row loads in behind it.
+      for (const member of cluster.members) {
+        seedOptimisticLesson(
+          queryClient,
+          { scope: member.scope, key: member.key },
+          lessonEntryFromClusterMember(member),
+        );
+      }
+    }
+    // A cluster selection describes a moment in a specific lesson's history —
+    // it does not survive a lesson newly opened from elsewhere.
+    closeLesson();
+  }
+
+  // Opening a member from the cluster view deliberately passes NO prefetch —
+  // unlike `handleLessonClick` below. The row's `lesson` prop may still be the
+  // optimistic stand-in (the real row can still be loading), and passing it as
+  // `openLessonById`'s prefetch would freeze the detail sheet on that stand-in
+  // forever (`lessonResolvedLocally` treats a prefetch as fully resolved and
+  // never fetches). Omitting it lets `MemorySidebarProvider` read the SAME
+  // `lesson-by-ref` cache slot instead, which keeps resolving as the
+  // background fetch above completes.
+  function handleClusterMemberClick(lesson: LessonEntry) {
+    if (openLesson?.key === lesson.key && openLesson?.scope === lesson.scope) {
+      closeLesson();
+    } else {
+      openLessonById({ scope: lesson.scope, key: lesson.key });
+    }
+  }
+
   const renderInstrument = (instrument: Instrument) =>
     instrument === 'matrix' ? (
       <MatrixInstrument
@@ -714,25 +799,30 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
   // memory that is no longer in the list behind it is a lie about what you are
-  // looking at.
+  // looking at. A selected cluster is cleared for the same reason — its
+  // members were computed for the PREVIOUS predicate.
   function handleToggleFilterValue(field: FilterField, value: string) {
     setFilters(toggleFilterValue(filters, field, value));
     closeLesson();
+    setSelectedCluster(null);
   }
 
   function handleOperatorChange(field: FilterField, operator: FilterOperator) {
     setFilters(setFilterOperator(filters, field, operator));
     closeLesson();
+    setSelectedCluster(null);
   }
 
   function handleRemoveFilter(field: FilterField) {
     setFilters(removeFilter(filters, field));
     closeLesson();
+    setSelectedCluster(null);
   }
 
   function handleClearFilters() {
     setFilters(NO_FILTERS);
     closeLesson();
+    setSelectedCluster(null);
   }
 
   function handleStatusChange(next: MemoryStatus) {
@@ -743,14 +833,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     setRawStatus(statusParamValue(next, legacyArchived));
     // Close the sidebar — the open lesson may not exist in the other population.
     closeLesson();
+    setSelectedCluster(null);
   }
 
   function handleScopeSelect(scope: string | null) {
     startTransition(() => {
       setSelectedScope(scope);
       // Close the sidebar when switching scope — the previous lesson may not
-      // be present in the new scope.
+      // be present in the new scope. A held cluster selection is cleared for
+      // the same reason: it was computed for the previous scope's window.
       closeLesson();
+      setSelectedCluster(null);
     });
   }
 
@@ -844,6 +937,54 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // animation even when the same cards remain. Inlining the returned JSX keeps
   // each keyed card mounted across renders, so only genuinely-new cards animate.
   const renderResults = () => {
+    // A selected cluster REPLACES the server-filtered view with exactly that
+    // cluster's members — same `LessonCard`, same click-to-open behaviour, so
+    // there is still only one place on this page to look at a lesson. See
+    // `handleSelectCluster` for how each row's cache slot gets seeded.
+    if (selectedCluster) {
+      return (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2">
+            <p className="text-xs text-[var(--color-content-secondary)]">
+              Viewing {sizeLabel(selectedCluster.size)} in this duplicate cluster.
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedCluster(null)}
+              className="ml-auto text-xs font-medium text-[var(--color-accent)] hover:underline"
+            >
+              Clear
+            </button>
+          </div>
+
+          <div role="list" aria-label="Duplicate cluster members">
+            {selectedCluster.members.map((member, i) => {
+              const lesson = clusterMemberQueries[i]?.data;
+              if (!lesson) {
+                return (
+                  <div
+                    key={`${member.scope}::${member.key}`}
+                    className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+                    aria-hidden
+                  />
+                );
+              }
+              return (
+                <div key={`${member.scope}::${member.key}`} role="listitem">
+                  <LessonCard
+                    lesson={lesson}
+                    selected={isLessonSelected(lesson)}
+                    onClick={() => handleClusterMemberClick(lesson)}
+                    index={i}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
     if (isLoading) {
       return (
         <div className="flex flex-col gap-2 p-3" aria-label="Loading memories" role="status">
@@ -1024,11 +1165,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           here: `DuplicateClustersPanel` is the copy-and-suffix RESOLVER, so this
           page has no `&&` to unpick when the rollout ends. Unlike the
           instruments block above (a plain boolean read, which is why it carries
-          one), the whole panel is the unit being gated. */}
+          one), the whole trigger is the unit being gated. Pressing it opens
+          `DuplicateClustersSidebarPanel` below — a flex column beside the
+          results card, not a modal, so switching scope/filters is still one
+          click away while it's open. */}
       <DuplicateClustersPanel
         scope={selectedScope}
         scopeLabel={selectedScopeLabel}
-        onOpenLesson={(ref) => openLessonById(ref)}
+        open={clustersOpen}
+        onToggleOpen={() => clustersOpenPref.write(serializeBooleanPreference(!clustersOpen))}
       />
 
       {/* Scope consumption, hot/cold lore, operational health and "who's
@@ -1045,99 +1190,118 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           full-width column — no more left scope rail. Both breakpoints are still
           mounted and CSS-toggled (not a JS conditional render) so each keeps a
           live FilterMenu, exactly as before; `variant` carries the only styling
-          difference between them. */}
+          difference between them.
 
-      {/* Desktop */}
-      <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
-        <ControlRow
-          variant="desktop"
-          search={search}
-          onSearchChange={setSearch}
-          facets={facets ?? []}
-          filters={filters}
-          onToggleFilterValue={handleToggleFilterValue}
-          editingField={isMobile ? null : editingField}
-          onEditField={setEditingField}
-          range={pickerRange}
-          onRangeChange={handleDatePickerChange}
-          dateLabel={dateLabel}
-          dateActive={dateActive}
-          status={status}
-          onStatusChange={handleStatusChange}
-          retentionEnabled={retentionPoliciesEnabled}
-          retentionConditions={retentionConditions}
-          retentionPanelOpen={retentionPanelOpen}
-          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
+          The Duplicate Clusters sidebar is a flex sibling of this whole block,
+          not an overlay — `md:flex-row` puts it to the LEFT on desktop and
+          `DuplicateClustersSidebarPanel` renders nothing (no DOM, no query)
+          while closed or flagged off, so it costs this layout nothing when
+          absent. There is deliberately no backdrop: see the sidebar's own
+          docblock for why a modal would fight the workflow it exists for. */}
+      <div className="flex flex-1 flex-col gap-4 overflow-hidden md:flex-row md:items-start">
+        <DuplicateClustersSidebarPanel
+          open={clustersOpen}
+          scope={selectedScope}
+          scopeLabel={selectedScopeLabel}
+          selectedClusterId={selectedClusterId}
+          onSelectCluster={handleSelectCluster}
+          onClose={() => clustersOpenPref.write(serializeBooleanPreference(false))}
         />
 
-        {retentionPoliciesEnabled && retentionPanelOpen && (
-          <RetentionConditionsPanel
-            conditions={retentionConditions}
-            onChange={setRetentionConditions}
-            onClose={() => setRetentionPanelOpen(false)}
-            onCreatePolicy={handleCreatePolicy}
-            filterCount={filters.length}
-          />
-        )}
-
-        <FilterPillRow
-          filters={filters}
-          onOperatorChange={handleOperatorChange}
-          onRemove={handleRemoveFilter}
-          onClearAll={handleClearFilters}
-          onEditField={setEditingField}
-        />
-
-        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
-      </div>
-
-      {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
-          clear the bottom edge of the scroll container. */}
-      <div className="flex md:hidden flex-col gap-3 pb-6">
-        <ControlRow
-          variant="mobile"
-          search={search}
-          onSearchChange={setSearch}
-          facets={facets ?? []}
-          filters={filters}
-          onToggleFilterValue={handleToggleFilterValue}
-          editingField={isMobile ? editingField : null}
-          onEditField={setEditingField}
-          range={pickerRange}
-          onRangeChange={handleDatePickerChange}
-          dateLabel={dateLabel}
-          dateActive={dateActive}
-          status={status}
-          onStatusChange={handleStatusChange}
-          retentionEnabled={retentionPoliciesEnabled}
-          retentionConditions={retentionConditions}
-          retentionPanelOpen={retentionPanelOpen}
-          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
-        />
-
-        {retentionPoliciesEnabled && retentionPanelOpen && (
-          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
-            <RetentionConditionsPanel
-              conditions={retentionConditions}
-              onChange={setRetentionConditions}
-              onClose={() => setRetentionPanelOpen(false)}
-              onCreatePolicy={handleCreatePolicy}
-              filterCount={filters.length}
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          {/* Desktop */}
+          <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <ControlRow
+              variant="desktop"
+              search={search}
+              onSearchChange={setSearch}
+              facets={facets ?? []}
+              filters={filters}
+              onToggleFilterValue={handleToggleFilterValue}
+              editingField={isMobile ? null : editingField}
+              onEditField={setEditingField}
+              range={pickerRange}
+              onRangeChange={handleDatePickerChange}
+              dateLabel={dateLabel}
+              dateActive={dateActive}
+              status={status}
+              onStatusChange={handleStatusChange}
+              retentionEnabled={retentionPoliciesEnabled}
+              retentionConditions={retentionConditions}
+              retentionPanelOpen={retentionPanelOpen}
+              onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
             />
+
+            {retentionPoliciesEnabled && retentionPanelOpen && (
+              <RetentionConditionsPanel
+                conditions={retentionConditions}
+                onChange={setRetentionConditions}
+                onClose={() => setRetentionPanelOpen(false)}
+                onCreatePolicy={handleCreatePolicy}
+                filterCount={filters.length}
+              />
+            )}
+
+            <FilterPillRow
+              filters={filters}
+              onOperatorChange={handleOperatorChange}
+              onRemove={handleRemoveFilter}
+              onClearAll={handleClearFilters}
+              onEditField={setEditingField}
+            />
+
+            <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
           </div>
-        )}
 
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
-          <FilterPillRow
-            filters={filters}
-            onOperatorChange={handleOperatorChange}
-            onRemove={handleRemoveFilter}
-            onClearAll={handleClearFilters}
-            onEditField={setEditingField}
-          />
+          {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
+              clear the bottom edge of the scroll container. */}
+          <div className="flex md:hidden flex-col gap-3 pb-6">
+            <ControlRow
+              variant="mobile"
+              search={search}
+              onSearchChange={setSearch}
+              facets={facets ?? []}
+              filters={filters}
+              onToggleFilterValue={handleToggleFilterValue}
+              editingField={isMobile ? editingField : null}
+              onEditField={setEditingField}
+              range={pickerRange}
+              onRangeChange={handleDatePickerChange}
+              dateLabel={dateLabel}
+              dateActive={dateActive}
+              status={status}
+              onStatusChange={handleStatusChange}
+              retentionEnabled={retentionPoliciesEnabled}
+              retentionConditions={retentionConditions}
+              retentionPanelOpen={retentionPanelOpen}
+              onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
+            />
+
+            {retentionPoliciesEnabled && retentionPanelOpen && (
+              <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+                <RetentionConditionsPanel
+                  conditions={retentionConditions}
+                  onChange={setRetentionConditions}
+                  onClose={() => setRetentionPanelOpen(false)}
+                  onCreatePolicy={handleCreatePolicy}
+                  filterCount={filters.length}
+                />
+              </div>
+            )}
+
+            <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
+              <FilterPillRow
+                filters={filters}
+                onOperatorChange={handleOperatorChange}
+                onRemove={handleRemoveFilter}
+                onClearAll={handleClearFilters}
+                onEditField={setEditingField}
+              />
+            </div>
+
+            <div>{renderResults()}</div>
+          </div>
         </div>
-
-        <div>{renderResults()}</div>
       </div>
     </div>
   );

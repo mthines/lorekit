@@ -5,12 +5,11 @@ import {
   clusterId,
   clustersSummary,
   findCluster,
-  findMemberIndex,
+  lessonEntryFromClusterMember,
   memberLabel,
   recurrenceLabel,
   similarityLabel,
   sizeLabel,
-  stepMemberIndex,
   windowSaturated,
 } from './duplicate-clusters-view';
 
@@ -76,45 +75,6 @@ describe('findCluster', () => {
   it('returns null for an empty or absent list — the panel\'s empty state', () => {
     expect(findCluster([], clusterId(A))).toBeNull();
     expect(findCluster(undefined, null)).toBeNull();
-  });
-});
-
-describe('findMemberIndex', () => {
-  it('resolves a held member label to its position', () => {
-    expect(findMemberIndex(B, 'global::e')).toBe(2);
-  });
-
-  it('falls back to the first member when the held one has left the cluster', () => {
-    expect(findMemberIndex(B, 'global::gone')).toBe(0);
-  });
-
-  it('reports -1 only when there is genuinely nothing to select', () => {
-    expect(findMemberIndex(null, 'global::a')).toBe(-1);
-    expect(findMemberIndex({ members: [] }, null)).toBe(-1);
-  });
-});
-
-describe('stepMemberIndex', () => {
-  it('steps forwards and backwards', () => {
-    expect(stepMemberIndex(0, 3, 1)).toBe(1);
-    expect(stepMemberIndex(2, 3, -1)).toBe(1);
-  });
-
-  it('CLAMPS at both ends rather than wrapping', () => {
-    // Wrapping under a "next" affordance reads as a jump, and the panel shows a
-    // visible "3 of 3" that a wrap would contradict.
-    expect(stepMemberIndex(2, 3, 1)).toBe(2);
-    expect(stepMemberIndex(0, 3, -1)).toBe(0);
-  });
-
-  it('clamps an out-of-range starting index too, so a stale index cannot escape', () => {
-    expect(stepMemberIndex(9, 3, 1)).toBe(2);
-    expect(stepMemberIndex(-4, 3, -1)).toBe(0);
-  });
-
-  it('is total on an empty cluster', () => {
-    expect(stepMemberIndex(0, 0, 1)).toBe(-1);
-    expect(stepMemberIndex(0, -1, 1)).toBe(-1);
   });
 });
 
@@ -213,5 +173,42 @@ describe('clustersSummary', () => {
 describe('DEFAULT_CLUSTERS_OPEN', () => {
   it('opens collapsed, like the instrument panel', () => {
     expect(DEFAULT_CLUSTERS_OPEN).toBe(false);
+  });
+});
+
+describe('lessonEntryFromClusterMember', () => {
+  it('builds a legal LessonEntry, with the hook standing in for the body', () => {
+    const entry = lessonEntryFromClusterMember({
+      scope: 'repo::o/r',
+      key: 'x',
+      hook: 'first line of the lesson',
+      seen_count: 4,
+      updated_at: '2026-01-01T00:00:00.000Z',
+      status: null,
+    });
+    expect(entry).toEqual({
+      key: 'x',
+      value: 'first line of the lesson',
+      tags: [],
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      scope: 'repo::o/r',
+      scope_type: 'repo',
+      seen_count: 4,
+    });
+  });
+
+  it('is total on a null timestamp and a null seen_count', () => {
+    const entry = lessonEntryFromClusterMember({
+      scope: 'global',
+      key: 'y',
+      hook: 'hook',
+      seen_count: null,
+      updated_at: null,
+      status: null,
+    });
+    expect(entry.created_at).toBe(new Date(0).toISOString());
+    expect(entry.scope_type).toBe('global');
+    expect(entry).not.toHaveProperty('seen_count');
   });
 });

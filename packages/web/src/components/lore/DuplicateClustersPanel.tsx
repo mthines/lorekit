@@ -1,13 +1,17 @@
 'use client';
 
 /**
- * The flag resolver for the Explorer's Duplicate Clusters panel.
+ * The flag resolver for the Explorer's Duplicate Clusters TRIGGER bar.
  *
- * `lore-explorer-duplicate-clusters` decides whether the panel exists at all, and
- * this is the ONLY file the Explorer imports — so `LoreExplorer.tsx` carries no
- * flag read, no `&&`, and nothing to untangle when the rollout finishes.
+ * `lore-explorer-duplicate-clusters` decides whether the trigger exists at
+ * all, and this is the ONLY file the Explorer imports for it — so
+ * `LoreExplorer.tsx` carries no flag read, no `&&`, and nothing to untangle
+ * when the rollout finishes. `DuplicateClustersSidebarPanel` is this trigger's
+ * sibling resolver for the sidebar body it opens — see that file for why the
+ * two are separate (the sidebar renders in a different part of the page's
+ * layout, beside the results card rather than above it).
  *
- * ## Why a resolver rather than `{enabled && <Panel/>}`
+ * ## Why a resolver rather than `{enabled && <Trigger/>}`
  *
  * The copy-and-suffix convention (`packages/feature-flags/CLAUDE.md` § "A
  * UI-affecting experiment's arms are separate components"): each arm is a whole
@@ -20,10 +24,10 @@
  * ## `default` is OFF, deliberately
  *
  * The `default` arm catches an unknown variant — a stale override cookie, or a
- * variant renamed in the registry — and it lands on `off`. For a panel that
- * issues a quadratic-in-the-worst-case server read, "I could not tell" must mean
- * "do not render", never "render it anyway". This matches the registry's
- * `defaultVariant: 'off'` so the two cannot disagree.
+ * variant renamed in the registry — and it lands on `off`. For a trigger that,
+ * once opened, issues a quadratic-in-the-worst-case server read, "I could not
+ * tell" must mean "do not render", never "render it anyway". This matches the
+ * registry's `defaultVariant: 'off'` so the two cannot disagree.
  */
 
 import { useFeatureFlagVariant } from '@/components/providers/FeatureFlagsProvider';
@@ -33,10 +37,12 @@ import { DuplicateClustersPanelOn } from './DuplicateClustersPanel.on';
 export interface DuplicateClustersPanelProps {
   /** The Explorer's selected scope, or `null` for every scope the viewer can see. */
   scope: string | null;
-  /** Human label for the current scope, for the panel's captions. */
+  /** Human label for the current scope, for the trigger's caption. */
   scopeLabel: string;
-  /** Opens a member in the Explorer's detail sheet. */
-  onOpenLesson: (ref: { scope: string; key: string }) => void;
+  /** Whether the sidebar is currently open — controlled by the caller (`LoreExplorer`). */
+  open: boolean;
+  /** Toggles the sidebar open/closed. */
+  onToggleOpen: () => void;
 }
 
 export function DuplicateClustersPanel(props: DuplicateClustersPanelProps) {

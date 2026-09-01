@@ -1,6 +1,6 @@
 ---
 title: "Retention policies"
-description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the read-only Duplicate Clusters panel for spotting the same lesson written twice."
+description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the read-only Duplicate Clusters sidebar for spotting the same lesson written twice."
 order: 11
 keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli", "duplicates", "dedupe", "clusters", "near-duplicate"]
 ---
@@ -136,25 +136,26 @@ Retention rules catch lore that has gone **stale**. A different kind of clutter
 is the same lesson learned two or three times under slightly different keys —
 which no age condition can see, because every copy keeps recurring.
 
-The [Lore Explorer](/lore) has a **Duplicate clusters** panel for that. It is
+The [Lore Explorer](/lore) has a **Duplicate clusters** trigger for that. It is
 **rolling out behind a feature flag**, so you may not see it yet — the CLI's
 `lorekit dedupe` (below) answers the same question in the meantime, and answers
-it over your whole store. Once the panel is on, expand
-it and it groups the current scope's near-duplicate lessons by how much
+it over your whole store. Once it's on, click the trigger and a sidebar opens
+beside the list — not a popup, so you can keep clicking lessons while it's
+open. It groups the current scope's near-duplicate lessons by how much
 vocabulary they share (the same Jaccard heuristic `lorekit dedupe` uses),
 ranks the groups by how often their members have recurred, and — where the keys
-match a known recurrence class — names it. Pick a group to page through its
-members and open any one of them in the detail sheet.
+match a known recurrence class — names it. Pick a cluster and its members
+replace the list, so opening one is the same click you'd use on any lesson.
 
 It is **read-only, by design**: nothing in it merges, edits or deletes lore.
 Deciding that three near-duplicate lessons are really one entry is a judgment
-call about meaning, so the panel gets you to the evidence and stops. Rewriting
+call about meaning, so the sidebar gets you to the evidence and stops. Rewriting
 them into one lesson is an ordinary `memory.write` (the surviving key) plus an
 archive of the others.
 
 Two things worth knowing before you read it as a clean bill of health:
 
-- **It is a recency window, not your whole store.** The panel clusters the most
+- **It is a recency window, not your whole store.** The sidebar clusters the most
   recently updated lessons in the scope and says so in its footnote when that
   window was full. A duplicate pair whose members were both last touched long
   ago will not appear.

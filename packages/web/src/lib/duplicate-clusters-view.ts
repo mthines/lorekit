@@ -26,6 +26,8 @@
  * which is the boundary the whole feature keeps (see the route's own docblock).
  */
 
+import { scopeType } from '@/lib/scope';
+import type { LessonEntry } from '@/components/lore/LessonCard';
 import type { ClusterMember, ClustersResponse, DuplicateCluster } from '@lorekit/schemas/memory';
 
 /**
@@ -83,44 +85,6 @@ export function findCluster(
     if (held) return held;
   }
   return list[0] ?? null;
-}
-
-/**
- * Resolve a held member key against the selected cluster's members.
- *
- * Returns the INDEX, because prev/next is index arithmetic and the panel needs
- * both the position ("2 of 5") and the member. `-1` only when the cluster has no
- * members at all, which the schema's `size >= 2` makes unreachable from the
- * server — handled anyway so the panel has no crash path on a hand-built value.
- */
-export function findMemberIndex(
-  cluster: Pick<DuplicateCluster, 'members'> | null,
-  label: string | null,
-): number {
-  const members = cluster?.members ?? [];
-  if (members.length === 0) return -1;
-  if (label !== null) {
-    const at = members.findIndex((member) => memberLabel(member) === label);
-    if (at !== -1) return at;
-  }
-  return 0;
-}
-
-/**
- * Step a member index by `delta`, CLAMPED to the ends.
- *
- * Clamped rather than wrapping: a cluster is a small set presented as a list
- * with a visible "3 of 5", and wrapping from the last member back to the first
- * under a "next" affordance reads as a jump, not a step. The panel disables the
- * buttons at the ends, and this function is what makes that safe to rely on —
- * a disabled button that was somehow activated still cannot move out of range.
- */
-export function stepMemberIndex(index: number, total: number, delta: number): number {
-  if (total <= 0) return -1;
-  const next = index + delta;
-  if (next < 0) return 0;
-  if (next > total - 1) return total - 1;
-  return next;
 }
 
 /** Round a 0–1 similarity to a whole percent. */
@@ -204,4 +168,32 @@ export function clustersSummary(response: ClustersResponse | undefined): string 
   if (clusters.length === 0) return 'None found';
   const lessons = clusters.reduce((total, cluster) => total + cluster.size, 0);
   return `${clusters.length} cluster${clusters.length === 1 ? '' : 's'} · ${sizeLabel(lessons)}`;
+}
+
+/**
+ * An OPTIMISTIC stand-in for a cluster member, shaped as a {@link LessonEntry}.
+ *
+ * Selecting a cluster shows its members in the Explorer's own list immediately,
+ * before their full rows have loaded — and opening one reuses the same
+ * `lesson-by-ref` cache entry the detail sheet reads. This is what fills that
+ * cache slot the instant a cluster is selected, so the list (and the sheet, if
+ * opened right away) has *something* to render on the very first paint.
+ *
+ * `value` holds `member.hook` — the first line only ({@link ClusterMemberSchema}'s
+ * docblock), never the full body. That is exactly why this is a STAND-IN: the
+ * caller must pair it with a query that overwrites this cache entry once the
+ * real row (`GET /:id` / `memory.read`) arrives, never present it as final.
+ */
+export function lessonEntryFromClusterMember(member: ClusterMember): LessonEntry {
+  const timestamp = member.updated_at ?? new Date(0).toISOString();
+  return {
+    key: member.key,
+    value: member.hook,
+    tags: [],
+    created_at: timestamp,
+    updated_at: timestamp,
+    scope: member.scope,
+    scope_type: scopeType(member.scope),
+    ...(member.seen_count !== null ? { seen_count: member.seen_count } : {}),
+  };
 }
