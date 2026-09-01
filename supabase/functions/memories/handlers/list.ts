@@ -18,6 +18,8 @@ import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
 import { likeNeedle } from '../../_shared/schemas/filter.ts';
 import { expiringWindow } from '../../_shared/limits/expiring-window.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
+import { CLIENT_HEADER } from '../../_shared/api/router.ts';
+import { parseUsageClient } from '../../_shared/telemetry/usage-stats.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/db/database.types.ts';
 
@@ -47,7 +49,7 @@ interface ListParams {
   /**
    * The retention-policy preview trio — see migration 00092. Plain optional
    * scalars, like `expiring_within_days` above, not a `MemoryDimensions`
-   * entry: they are numeric thresholds against `created_at`/`last_seen_at`/
+   * entry: they are numeric thresholds against `created_at`/`last_read_at`/
    * `seen_count`, not a categorical value-list.
    */
   min_age_days?: number | undefined;
@@ -108,6 +110,7 @@ function shapeRpcRow(row: ListRpcRow): Record<string, unknown> {
  */
 async function respondWithPage(
   params: ListParams,
+  req: Request,
   auth: AuthContext,
   db: DbClient,
   span: Span,
@@ -255,8 +258,17 @@ async function respondWithPage(
   const res = ok({ ...page, entries: page.entries.map(shapeRpcRow), total }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   // memory.list is a BULK read (every row a listing call returned) for the
-  // per-memory counter (migration 00077) — one statement for the whole page.
-  recordMemoryReads(db, page.entries.map((e) => e.id), 'bulk');
+  // per-memory counter (migration 00077) — one statement for the whole page —
+  // UNLESS the caller named an exact scope AND key. `(tenant, scope, key)` is
+  // unique for a live row, so that combination identifies ONE specific lesson
+  // exactly as `GET /:id` does; it is how both the CLI's `read`/`show` command
+  // and the dashboard's lesson-by-ref lookup fetch a single lesson, since
+  // neither knows its id up front. Recording it as TARGETED is what lets
+  // migration 00097's last_opened_at (an agent deliberately reaching for this
+  // lesson) fire from the CLI's `read` command — without this it would look
+  // exactly like a bulk list and unseen_days could never resolve it.
+  const readKind = scopeFilter && params.key ? 'targeted' : 'bulk';
+  recordMemoryReads(db, page.entries.map((e) => e.id), readKind, parseUsageClient(req.headers.get(CLIENT_HEADER)));
   return res;
 }
 
@@ -294,7 +306,7 @@ export async function handleList(
     limit: p.limit,
     cursor: p.cursor,
     dimensions: dimensionsFromQuery(p),
-  }, auth, db, span, cors);
+  }, req, auth, db, span, cors);
 }
 
 /**
@@ -336,5 +348,5 @@ export async function handleListPost(
     limit: b.limit,
     cursor: b.cursor,
     dimensions: dimensionsFromBody(b),
-  }, auth, db, span, cors);
+  }, req, auth, db, span, cors);
 }

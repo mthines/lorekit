@@ -21,7 +21,7 @@ same eight dimension filters the Lore Explorer's filter bar offers:
 | Condition | Meaning |
 | --- | --- |
 | `min_age_days` | Only lessons at least this many days old |
-| `unseen_days` | Only lessons unseen for at least this many days — a lesson that has never been read matches at ANY threshold |
+| `unseen_days` | Only lessons no agent has individually opened (over MCP or the `lorekit` CLI) in at least this many days — a lesson that has never been opened this way matches at ANY threshold. A bulk `memory.list`/`memory.search` appearance or a human viewing the dashboard does NOT count as "seen"; see the note below |
 | `max_seen_count` | Only lessons that have recurred at most this many times |
 | `tags` / `tags_mode` | Labels a lesson must carry — `any` (default), `all`, or `none` |
 | `source_agent` / `source_agent_mode` | The writing agent — `in` (default) or `nin` |
@@ -31,6 +31,21 @@ same eight dimension filters the Lore Explorer's filter bar offers:
 | `origin_repo` / `origin_repo_mode` | `owner/repo` — `in` (default) or `nin` |
 | `origin_branch` / `origin_branch_mode` | The branch name — `in` (default) or `nin` |
 | `origin_pr` / `origin_pr_mode` | Pull-request numbers, as digit strings — `in` (default) or `nin` |
+
+`unseen_days` is deliberately the NARROWEST of the three "has this been
+touched" signals a lesson carries, and the Lore Explorer's detail sheet shows
+all three side by side so they're never confused for one another:
+"Recurrence" (`seen_count` — how many times the lesson has been **written**,
+unrelated to reading), "Consumption" (`read_count` / `last_read_at` — how
+many times it has been **read back**, by ANY surface: a bulk
+`memory.list`/`.search` result page, `GET /memories/:id`, or a human opening
+the dashboard's own detail sheet all bump it), and "Last agent open"
+(`last_opened_at`). `unseen_days` reads only the last of those — it only
+moves when an agent deliberately retrieves this ONE lesson over MCP
+(`memory.read`) or the CLI (`lorekit read`/`show`), never from riding along
+in a list page or from a person browsing the dashboard. That is what keeps
+"unseen for 90 days" honest: reloading the Explorer, or a `memory.list` call
+that happens to include the lesson, does not reset the clock.
 
 Preview what a rule would catch before saving it as a policy, with the CLI:
 

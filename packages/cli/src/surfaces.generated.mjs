@@ -521,7 +521,7 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "maximum": 3650,
-          "description": "Match lessons unseen for at least this many days. A never-seen lesson always matches."
+          "description": "Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson always matches."
         },
         "max_seen_count": {
           "type": "integer",
@@ -700,7 +700,7 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "maximum": 3650,
-          "description": "Match lessons unseen for at least this many days. Omit to leave unchanged; pass explicit null to clear."
+          "description": "Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). Omit to leave unchanged; pass explicit null to clear."
         },
         "max_seen_count": {
           "type": "integer",
@@ -880,7 +880,7 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "maximum": 3650,
-          "description": "Match lessons unseen for at least this many days. A never-seen lesson always matches."
+          "description": "Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson always matches."
         },
         "max_seen_count": {
           "type": "integer",
@@ -1044,7 +1044,7 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "maximum": 3650,
-          "description": "Match lessons unseen for at least this many days. A never-seen lesson always matches."
+          "description": "Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson always matches."
         },
         "max_seen_count": {
           "type": "integer",

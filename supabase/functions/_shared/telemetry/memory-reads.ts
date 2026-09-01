@@ -17,6 +17,7 @@
 
 import { background } from '../runtime/background.ts';
 import type { DbClient } from '../db/db-client.ts';
+import type { UsageClient } from './usage-stats.ts';
 
 /**
  * `targeted` = `memory.read` (one exact scope+key). `bulk` = `memory.list` /
@@ -36,6 +37,13 @@ export type MemoryReadKind = 'targeted' | 'bulk';
  * turn into 31 statements on a hot path. No-ops (never queries) on an empty
  * array, since a call that matched nothing touched no memory.
  *
+ * `client` (migration 00097) additionally bumps `memories.last_opened_at`
+ * when `readKind === 'targeted'` and `client` is `'mcp'` or `'cli'` — an agent
+ * deliberately reaching for this one lesson, as opposed to a bulk list/search
+ * appearance or a human viewing the web dashboard. Optional and defaulted to
+ * `null` (no attribution, `last_opened_at` untouched) so a caller that cannot
+ * name its surface degrades gracefully rather than being required to guess.
+ *
  * Never throws. A failing counter update must not fail the read it is
  * measuring — same posture as `recordUsageEvent`.
  */
@@ -43,6 +51,7 @@ export function recordMemoryReads(
   db: DbClient,
   memoryIds: readonly string[],
   readKind: MemoryReadKind,
+  client: UsageClient | null = null,
 ): void {
   if (memoryIds.length === 0) return;
 
@@ -50,6 +59,7 @@ export function recordMemoryReads(
     db.rpc('lorekit_record_memory_reads', {
       p_memory_ids: memoryIds as string[],
       p_read_kind: readKind,
+      p_client: client,
     }),
   ).then(() => { /* fire-and-forget */ }, () => { /* swallow */ });
 

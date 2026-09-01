@@ -8191,11 +8191,11 @@ begin
   -- other-repo: must NOT match a repo::acme/app policy despite a shared prefix.
   insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
     values (v_user, 'repo::acme/app-2', 'groom87-other-repo', 'v', now() - interval '60 days', now() - interval '60 days', 1);
-  -- seen-recently: last_seen_at 1 day ago — fails unseen_days=14.
-  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_seen_at)
+  -- seen-recently: last_opened_at 1 day ago — fails unseen_days=14.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_opened_at)
     values (v_user, 'global', 'groom87-seen-recently', 'v', now() - interval '60 days', now() - interval '60 days', 1, now() - interval '1 day');
-  -- unseen-long: last_seen_at 30 days ago — matches unseen_days=14.
-  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_seen_at)
+  -- unseen-long: last_opened_at 30 days ago — matches unseen_days=14.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count, last_opened_at)
     values (v_user, 'global', 'groom87-unseen-long', 'v', now() - interval '60 days', now() - interval '60 days', 1, now() - interval '30 days');
   -- high-seen-count: seen_count 10 — fails max_seen_count=3.
   insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
@@ -8222,8 +8222,8 @@ begin
   assert v_count = 6,
     format('95-CAND-1: min_age_days=30 over global should catch 6, got %s', v_count);
 
-  -- Never-seen (last_seen_at IS NULL) must match unseen_days regardless of
-  -- the threshold — the literal "never-seen lessons match" reading.
+  -- Never-opened (last_opened_at IS NULL) must match unseen_days regardless
+  -- of the threshold — the literal "never-seen lessons match" reading.
   select count(*) into v_count
     from lorekit_groom_candidates(v_user, 'global', null, 3650, null) c
    where c.key = 'groom87-old-global';
@@ -8582,6 +8582,95 @@ begin
   assert v_columns,
     '97: the covering index must be on (user_id, updated_at desc, id desc) '
     'in that order — a same-named index over other columns is not the fix';
+end;
+$$;
+
+-- ── 98. memories.last_opened_at — targeted agent opens only (00097) ─────────
+-- unseen_days used to key on last_read_at, which also moves on a bulk
+-- list/search appearance or a human viewing the web dashboard's detail
+-- sheet — so a retention policy's "unseen 90d" was satisfied by the
+-- Explorer being opened, not by an agent reading the lesson back. 00097
+-- adds last_opened_at, bumped by lorekit_record_memory_reads ONLY when
+-- read_kind = 'targeted' AND client IN ('mcp', 'cli').
+-- AC-1: targeted + mcp sets last_opened_at.
+-- AC-2: targeted + cli sets last_opened_at.
+-- AC-3: targeted + dashboard does NOT set last_opened_at.
+-- AC-4: targeted + no client (null/unattributed) does NOT set last_opened_at.
+-- AC-5: bulk + mcp does NOT set last_opened_at, even though it still bumps
+--       the broader last_read_at.
+-- AC-6: lorekit_groom_candidates' unseen_days reads last_opened_at, not
+--       last_read_at — a row read constantly but never individually opened
+--       must still match "unseen".
+do $$
+declare
+  v_m1 uuid;
+  v_m2 uuid;
+  v_m3 uuid;
+  v_m4 uuid;
+  v_m5 uuid;
+  v_m6 uuid;
+  v_opened      timestamptz;
+  v_last_read   timestamptz;
+  v_count       int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '97-targeted-mcp', 'v') returning id into v_m1;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '97-targeted-cli', 'v') returning id into v_m2;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '97-targeted-dashboard', 'v') returning id into v_m3;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '97-targeted-unattributed', 'v') returning id into v_m4;
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '97-bulk-mcp', 'v') returning id into v_m5;
+  insert into memories (user_id, scope, key, value, created_at, seen_count)
+    values ('00000000-0000-0000-0000-0000000000a1', 'global', '97-read-often-opened-never', 'v', now() - interval '60 days', 1)
+    returning id into v_m6;
+
+  -- AC-1 / AC-2: agent surfaces set last_opened_at.
+  perform lorekit_record_memory_reads(array[v_m1], 'targeted', 'mcp');
+  select last_opened_at into v_opened from memories where id = v_m1;
+  assert v_opened is not null, '98 AC-1: targeted + mcp must set last_opened_at';
+
+  perform lorekit_record_memory_reads(array[v_m2], 'targeted', 'cli');
+  select last_opened_at into v_opened from memories where id = v_m2;
+  assert v_opened is not null, '98 AC-2: targeted + cli must set last_opened_at';
+
+  -- AC-3: the dashboard viewing a lesson is not an agent opening it.
+  perform lorekit_record_memory_reads(array[v_m3], 'targeted', 'dashboard');
+  select last_opened_at into v_opened from memories where id = v_m3;
+  assert v_opened is null, '98 AC-3: targeted + dashboard must NOT set last_opened_at';
+
+  -- AC-4: an unattributed caller (no X-LoreKit-Client) is not assumed to be
+  -- an agent either — fail-safe defaults to "not opened".
+  perform lorekit_record_memory_reads(array[v_m4], 'targeted', null);
+  select last_opened_at into v_opened from memories where id = v_m4;
+  assert v_opened is null, '98 AC-4: targeted + unattributed must NOT set last_opened_at';
+
+  -- AC-5: a bulk read never counts as "opened", even from an agent surface —
+  -- it still bumps the broader read_count/last_read_at.
+  perform lorekit_record_memory_reads(array[v_m5], 'bulk', 'mcp');
+  select last_opened_at, last_read_at into v_opened, v_last_read from memories where id = v_m5;
+  assert v_opened is null, '98 AC-5: bulk + mcp must NOT set last_opened_at';
+  assert v_last_read is not null, '98 AC-5: bulk + mcp must still set the broader last_read_at';
+
+  -- AC-6: unseen_days on lorekit_groom_candidates reads last_opened_at, not
+  -- last_read_at. v_m6 is read constantly (bulk) but never individually
+  -- opened by an agent, so it must still be caught as "unseen".
+  perform lorekit_record_memory_reads(array[v_m6], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_m6], 'bulk', 'mcp');
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a1', 'global', null, 1, null) c
+   where c.key = '97-read-often-opened-never';
+  assert v_count = 1,
+    '98 AC-6: a row read constantly via bulk calls but never individually opened must match unseen_days';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
