@@ -709,7 +709,9 @@ loops: a per-user **home** tier plus an opt-in per-repo **project** tier.
 
 Each tier is foldered by canonical scope, one markdown file per lesson, with
 YAML frontmatter (`scope, key, tags, source_agent, trigger, created, updated,
-archived_at`) and the lesson as the body:
+archived_at, origin_repo, origin_branch, origin_commit, origin_pr,
+expires_at, seen_count, kind, host` — the same column set as `format.mjs`'s
+`FIELDS`) and the lesson as the body:
 
 ```
 ~/.lorekit/            <repo>/.lorekit/     (opt-in)
