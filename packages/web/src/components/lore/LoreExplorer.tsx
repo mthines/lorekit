@@ -65,6 +65,7 @@ import { useCallback, useEffect, useMemo, useTransition, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import { Search, Loader2 } from 'lucide-react';
 import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
+import { flattenScopeTree } from '@/lib/scope-tree';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { DuplicateClustersPanel } from './DuplicateClustersPanel';
@@ -788,12 +789,19 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     setRange(next ?? { preset: 'all' });
   }
 
+  // `scopes` is a TREE (branches nest under their repo — see `buildScopeTree`),
+  // so a lookup or a total over `scopes` alone would miss every branch. Flatten
+  // once and reuse for both: `selectedScope` can itself be a branch (a deep
+  // link, or one picked from `ScopeSelector`'s Browse-all), and the total needs
+  // every exact-scope count, nested or not.
+  const allScopeNodes = useMemo(() => flattenScopeTree(scopes), [scopes]);
+
   const selectedScopeLabel =
     selectedScope === null
       ? 'All scopes'
-      : (scopes.find((s) => s.scope === selectedScope)?.label ?? selectedScope);
+      : (allScopeNodes.find((s) => s.scope === selectedScope)?.label ?? selectedScope);
 
-  const totalCount = scopes.reduce((sum, s) => sum + s.count, 0);
+  const totalCount = allScopeNodes.reduce((sum, s) => sum + s.count, 0);
 
   const isLessonSelected = (lesson: LessonEntry) =>
     openLesson?.key === lesson.key && openLesson?.scope === lesson.scope;

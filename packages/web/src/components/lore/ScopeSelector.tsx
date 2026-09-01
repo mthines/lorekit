@@ -36,6 +36,7 @@ import { scopeIcon } from '@/components/memory/scope-meta';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { FadeScroller } from '@/components/ui/FadeScroller';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+import { flattenScopeTree } from '@/lib/scope-tree';
 import type { ScopeNode } from './ScopeTree';
 
 /**
@@ -50,20 +51,6 @@ const TYPE_COLOR: Record<ScopeNode['type'], string> = {
   global: 'text-[var(--color-scope-global)]',
   branch: 'text-[var(--color-scope-branch)]',
 };
-
-/**
- * Flatten the tree into a single list of selectable scopes — top-level nodes
- * (repos, global, projects) AND their branch children — so `Browse all` and its
- * search can reach a branch scope, not only the repo it hangs under.
- */
-function flattenScopes(nodes: ScopeNode[]): ScopeNode[] {
-  const out: ScopeNode[] = [];
-  for (const node of nodes) {
-    out.push(node);
-    if (node.children?.length) out.push(...flattenScopes(node.children));
-  }
-  return out;
-}
 
 interface ScopeChipProps {
   type: ScopeNode['type'];
@@ -118,7 +105,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   const [query, setQuery] = useState('');
   const isMobile = useIsMobile();
 
-  const allScopes = useMemo(() => flattenScopes(nodes), [nodes]);
+  const allScopes = useMemo(() => flattenScopeTree(nodes), [nodes]);
 
   // The strip shows every top-level scope, PLUS the selected one when it is not
   // among them — a branch (branches hang under their repo, off-strip) or any

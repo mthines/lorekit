@@ -39,7 +39,7 @@ import { scopeIcon } from '@/components/memory/scope-meta';
 import { showToast } from '@/lib/toast';
 import { isCanonicalScope } from '@/lib/scope';
 import { useFacetCatalog, useScopeTree } from '@/lib/queries/lore';
-import type { ScopeNode } from '@/components/lore/ScopeTree';
+import { flattenScopeTree } from '@/lib/scope-tree';
 import {
   useCreatePolicy,
   useDeletePolicy,
@@ -195,16 +195,6 @@ function isAutoEnabled(policy: Pick<RetentionPolicy, 'mode' | 'enabled'>): boole
   return policy.mode === 'auto' && policy.enabled;
 }
 
-/** Flatten the scope tree into a single selectable list (top-level + branches). */
-function flattenScopeNodes(nodes: ScopeNode[]): ScopeNode[] {
-  const out: ScopeNode[] = [];
-  for (const node of nodes) {
-    out.push(node);
-    if (node.children?.length) out.push(...flattenScopeNodes(node.children));
-  }
-  return out;
-}
-
 /**
  * The scope field: a single-select searchable `Combobox` over the account's
  * scope catalog, `creatable` so a scope with no memories yet stays selectable,
@@ -216,7 +206,7 @@ function ScopeField({ value, onChange }: { value: string; onChange: (scope: stri
 
   const options: ComboboxItem[] = useMemo(
     () =>
-      flattenScopeNodes(scopeNodes).map((n) => ({
+      flattenScopeTree(scopeNodes).map((n) => ({
         value: n.scope,
         label: n.label,
         hint: n.scope,

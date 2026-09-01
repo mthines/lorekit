@@ -193,6 +193,20 @@ export function scopeReadLimit(maxLessons) {
   return Math.min(Math.max(ceiling, SCOPE_READ_LIMIT), MAX_STORE_LIST_LIMIT);
 }
 
+// Is this row fit for the generic SessionStart digest? `kind: 'bus'` /
+// `'signal'` rows (a reviewer's PR-state record, a comment-relevance filter)
+// are loop-owned state with their own dedicated reader — an exact scope+key
+// read or a tag-filtered list, both bypassing this scope-wide, untagged read
+// entirely — not advice for whichever agent next opens a session in that
+// scope. Left in, one renders as a raw JSON blob dressed up as a lesson line
+// (`lessonHook` has no way to know it isn't prose) and the other misstates a
+// state record as considered guidance. `kind` absent or `'lesson'` passes: an
+// explicit kind is opt-in, so a row that never set one — the common case for
+// hand-written and pre-`kind` lessons — must not be silently dropped. Pure.
+function isGeneralLesson(kind) {
+  return kind == null || kind === 'lesson';
+}
+
 // `scope` may be injected instead of derived from `cwd` — a seam for callers
 // that already hold a resolved scope and for tests that need a deterministic
 // branch (deriveScope shells out to git, so the ambient branch — often a
@@ -238,7 +252,7 @@ export async function fetchLessons(
     const raw = Array.isArray(res.entries) ? res.entries : [];
     if (raw.length >= readLimit) truncatedScopes.add(s);
     const entries = raw
-      .filter((e) => e && e.key)
+      .filter((e) => e && e.key && isGeneralLesson(e.kind))
       .map((e) => ({ ...e, scope: s }));
     groups.push({ scope: s, error: null, entries });
   }

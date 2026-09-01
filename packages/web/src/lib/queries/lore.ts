@@ -8,7 +8,7 @@ import {
   useQueryClient,
   type InfiniteData,
 } from '@tanstack/react-query';
-import { scopeType } from '@/lib/scope';
+import { buildScopeTree } from '@/lib/scope-tree';
 import { dayCountsFromActivity } from '@/lib/aggregations';
 import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
@@ -146,16 +146,7 @@ async function requireBrowserToken(): Promise<string> {
 async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
   const token = await requireBrowserToken();
   const { scopes } = await listScopesRequest(token, signal);
-
-  return scopes.map(({ scope, count }) => {
-    const parts = scope.split('::');
-    return {
-      scope,
-      type: scopeType(scope),
-      label: parts[parts.length - 1] ?? scope,
-      count,
-    };
-  });
+  return buildScopeTree(scopes);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,15 +313,7 @@ async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
     activityRequest(token, { bucket: 'day', since: heatmapSince(new Date().toISOString()) }, signal),
   ]);
 
-  const scopes: ScopeNode[] = scopesRes.scopes.map(({ scope, count }) => {
-    const parts = scope.split('::');
-    return {
-      scope,
-      type: scopeType(scope),
-      label: parts[parts.length - 1] ?? scope,
-      count,
-    };
-  });
+  const scopes: ScopeNode[] = buildScopeTree(scopesRes.scopes);
 
   return {
     scopes,
