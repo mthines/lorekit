@@ -80,16 +80,21 @@ export function GithubAppTeaser({ hasWebhook }: GithubAppTeaserProps) {
 
   return (
     <div className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
-      {/* Dismiss button */}
-      <IconButton
-        variant="ghost"
-        size="sm"
-        onClick={handleDismiss}
-        label="Dismiss GitHub App suggestion"
-        tooltip="Dismiss"
-        icon={<X className="size-3.5" aria-hidden />}
-        className="absolute right-3 top-3"
-      />
+      {/* Dismiss button — the positioning wrapper is a plain div, not a
+          className on IconButton itself: IconButton's Tooltip wraps the
+          trigger in its own `position: relative` span, so `absolute` classes
+          passed straight through would resolve against that tiny span
+          instead of this card. */}
+      <div className="absolute right-3 top-3">
+        <IconButton
+          variant="ghost"
+          size="sm"
+          onClick={handleDismiss}
+          label="Dismiss GitHub App suggestion"
+          tooltip="Dismiss"
+          icon={<X className="size-3.5" aria-hidden />}
+        />
+      </div>
 
       <div className="flex items-start gap-3 pr-8">
         {/* Icon */}
