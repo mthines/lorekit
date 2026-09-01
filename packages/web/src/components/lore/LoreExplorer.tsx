@@ -1201,98 +1201,98 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         />
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-      {/* Desktop */}
-      <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
-        <ControlRow
-          variant="desktop"
-          search={search}
-          onSearchChange={setSearch}
-          facets={facets ?? []}
-          filters={filters}
-          onToggleFilterValue={handleToggleFilterValue}
-          editingField={isMobile ? null : editingField}
-          onEditField={setEditingField}
-          range={pickerRange}
-          onRangeChange={handleDatePickerChange}
-          dateLabel={dateLabel}
-          dateActive={dateActive}
-          status={status}
-          onStatusChange={handleStatusChange}
-          retentionEnabled={retentionPoliciesEnabled}
-          retentionConditions={retentionConditions}
-          retentionPanelOpen={retentionPanelOpen}
-          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
-        />
-
-        {retentionPoliciesEnabled && retentionPanelOpen && (
-          <RetentionConditionsPanel
-            conditions={retentionConditions}
-            onChange={setRetentionConditions}
-            onClose={() => setRetentionPanelOpen(false)}
-            onCreatePolicy={handleCreatePolicy}
-            filterCount={filters.length}
-          />
-        )}
-
-        <FilterPillRow
-          filters={filters}
-          onOperatorChange={handleOperatorChange}
-          onRemove={handleRemoveFilter}
-          onClearAll={handleClearFilters}
-          onEditField={setEditingField}
-        />
-
-        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
-      </div>
-
-      {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
-          clear the bottom edge of the scroll container. */}
-      <div className="flex md:hidden flex-col gap-3 pb-6">
-        <ControlRow
-          variant="mobile"
-          search={search}
-          onSearchChange={setSearch}
-          facets={facets ?? []}
-          filters={filters}
-          onToggleFilterValue={handleToggleFilterValue}
-          editingField={isMobile ? editingField : null}
-          onEditField={setEditingField}
-          range={pickerRange}
-          onRangeChange={handleDatePickerChange}
-          dateLabel={dateLabel}
-          dateActive={dateActive}
-          status={status}
-          onStatusChange={handleStatusChange}
-          retentionEnabled={retentionPoliciesEnabled}
-          retentionConditions={retentionConditions}
-          retentionPanelOpen={retentionPanelOpen}
-          onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
-        />
-
-        {retentionPoliciesEnabled && retentionPanelOpen && (
-          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
-            <RetentionConditionsPanel
-              conditions={retentionConditions}
-              onChange={setRetentionConditions}
-              onClose={() => setRetentionPanelOpen(false)}
-              onCreatePolicy={handleCreatePolicy}
-              filterCount={filters.length}
+          {/* Desktop */}
+          <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <ControlRow
+              variant="desktop"
+              search={search}
+              onSearchChange={setSearch}
+              facets={facets ?? []}
+              filters={filters}
+              onToggleFilterValue={handleToggleFilterValue}
+              editingField={isMobile ? null : editingField}
+              onEditField={setEditingField}
+              range={pickerRange}
+              onRangeChange={handleDatePickerChange}
+              dateLabel={dateLabel}
+              dateActive={dateActive}
+              status={status}
+              onStatusChange={handleStatusChange}
+              retentionEnabled={retentionPoliciesEnabled}
+              retentionConditions={retentionConditions}
+              retentionPanelOpen={retentionPanelOpen}
+              onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
             />
+
+            {retentionPoliciesEnabled && retentionPanelOpen && (
+              <RetentionConditionsPanel
+                conditions={retentionConditions}
+                onChange={setRetentionConditions}
+                onClose={() => setRetentionPanelOpen(false)}
+                onCreatePolicy={handleCreatePolicy}
+                filterCount={filters.length}
+              />
+            )}
+
+            <FilterPillRow
+              filters={filters}
+              onOperatorChange={handleOperatorChange}
+              onRemove={handleRemoveFilter}
+              onClearAll={handleClearFilters}
+              onEditField={setEditingField}
+            />
+
+            <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
           </div>
-        )}
 
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
-          <FilterPillRow
-            filters={filters}
-            onOperatorChange={handleOperatorChange}
-            onRemove={handleRemoveFilter}
-            onClearAll={handleClearFilters}
-            onEditField={setEditingField}
-          />
-        </div>
+          {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
+              clear the bottom edge of the scroll container. */}
+          <div className="flex md:hidden flex-col gap-3 pb-6">
+            <ControlRow
+              variant="mobile"
+              search={search}
+              onSearchChange={setSearch}
+              facets={facets ?? []}
+              filters={filters}
+              onToggleFilterValue={handleToggleFilterValue}
+              editingField={isMobile ? editingField : null}
+              onEditField={setEditingField}
+              range={pickerRange}
+              onRangeChange={handleDatePickerChange}
+              dateLabel={dateLabel}
+              dateActive={dateActive}
+              status={status}
+              onStatusChange={handleStatusChange}
+              retentionEnabled={retentionPoliciesEnabled}
+              retentionConditions={retentionConditions}
+              retentionPanelOpen={retentionPanelOpen}
+              onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
+            />
 
-        <div>{renderResults()}</div>
-      </div>
+            {retentionPoliciesEnabled && retentionPanelOpen && (
+              <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+                <RetentionConditionsPanel
+                  conditions={retentionConditions}
+                  onChange={setRetentionConditions}
+                  onClose={() => setRetentionPanelOpen(false)}
+                  onCreatePolicy={handleCreatePolicy}
+                  filterCount={filters.length}
+                />
+              </div>
+            )}
+
+            <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
+              <FilterPillRow
+                filters={filters}
+                onOperatorChange={handleOperatorChange}
+                onRemove={handleRemoveFilter}
+                onClearAll={handleClearFilters}
+                onEditField={setEditingField}
+              />
+            </div>
+
+            <div>{renderResults()}</div>
+          </div>
         </div>
       </div>
     </div>
