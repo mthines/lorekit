@@ -104,6 +104,19 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
     reason: 'Hot/cold lore ranked by memories.read_count (migration 00077) for the dashboard.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
+  'memory.clusters': {
+    reason:
+      'Near-duplicate clusters for the Explorer’s Duplicate Clusters panel — a redundancy '
+      + 'READING over a recent-writes window, not a lesson read.',
+    restOnly:
+      'The agent-side spelling of this question already exists and is BETTER: `lorekit dedupe` '
+      + 'streams the whole scope and shares the identical clustering core, where this route can '
+      + 'only cluster the newest CANDIDATE_LIMIT rows. So an MCP twin would be a strictly weaker '
+      + 'answer to a question the CLI already answers, on a name-bearing surface (it returns '
+      + 'scope + key + a body hook per member) that would have to thread p_key_scopes to stay '
+      + 'inside a restricted key. Same call as memory.tags, for a capability the agent loop '
+      + 'reaches through the CLI instead.',
+  },
 
   // ── No MCP tool, but no decision against one either ───────────────────────
   'memory.relevant': {

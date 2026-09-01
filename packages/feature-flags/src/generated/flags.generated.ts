@@ -8,13 +8,15 @@
 export type FlagKey =
   | 'insights-page'
   | 'retention-policies'
-  | 'lore-explorer-instruments';
+  | 'lore-explorer-instruments'
+  | 'lore-explorer-duplicate-clusters';
 
 /** Flag key -> its evaluated value type. */
 export interface FlagValueMap {
   'insights-page': boolean;
   'retention-policies': boolean;
   'lore-explorer-instruments': boolean;
+  'lore-explorer-duplicate-clusters': boolean;
 }
 
 /** The value type `evaluateFlag(key, ...)` resolves to for a given key. */
@@ -24,5 +26,6 @@ export type FlagValue<K extends FlagKey> = FlagValueMap[K];
 export const FLAG_KEYS: readonly FlagKey[] = [
     "insights-page",
     "retention-policies",
-    "lore-explorer-instruments"
+    "lore-explorer-instruments",
+    "lore-explorer-duplicate-clusters"
   ];

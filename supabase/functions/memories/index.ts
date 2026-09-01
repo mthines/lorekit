@@ -22,6 +22,7 @@ import { handlePivot, handlePivotPost } from './handlers/pivot.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
 import { handleReadRanking } from './handlers/read-ranking.ts';
 import { handleRelevant } from './handlers/relevant.ts';
+import { handleClusters } from './handlers/clusters.ts';
 import { handlePolicyList, handlePolicyCreate, handlePolicyUpdate, handlePolicyDelete } from './handlers/policies.ts';
 import { handleGroomPreview, handleGroomRun } from './handlers/groom.ts';
 import { handleProtect } from './handlers/protect.ts';
@@ -72,6 +73,9 @@ const router = createRouter([
   { method: 'GET',    path: '/read-activity',  handler: handleReadActivity, requires: 'read'  },
   { method: 'GET',    path: '/read-ranking',   handler: handleReadRanking,  requires: 'read'  },
   { method: 'GET',    path: '/relevant',       handler: handleRelevant,     requires: 'read'  },
+  // Near-duplicate clusters. `requires: 'read'` and GET-only by contract, not by
+  // omission — see handlers/clusters.ts on why there is no merge counterpart.
+  { method: 'GET',    path: '/clusters',       handler: handleClusters,     requires: 'read'  },
   // ── retention policies ("grooming") — literal routes, precede /:id ─────────
   { method: 'GET',    path: '/policies',       handler: handlePolicyList,   requires: 'read'  },
   { method: 'POST',   path: '/policies',       handler: handlePolicyCreate, requires: 'write' },

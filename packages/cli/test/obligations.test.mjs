@@ -18,6 +18,12 @@ import {
   checkObligations,
 } from '../src/shared/obligations-pure.mjs';
 import { SURFACE_PARTNER_MAP } from '../src/shared/obligations-map.mjs';
+import {
+  RECURRENCE_CLUSTERS,
+  clusterForEntry,
+  lessonKeyForEntry,
+  clusterMembers,
+} from '../src/shared/recurrence-clusters.mjs';
 import { obligations } from '../src/commands/obligations.mjs';
 import { setWriters } from '../src/shared/util.mjs';
 
@@ -229,8 +235,9 @@ describe('checkObligations', () => {
   });
 
   test('is pure and total: malformed input degrades to no matches rather than throwing', () => {
-    assert.deepEqual(checkObligations({}), { files: [], matched: [], unmet: 0, ok: true });
-    assert.deepEqual(checkObligations({ changedFiles: null, map: null }), { files: [], matched: [], unmet: 0, ok: true });
+    const empty = { files: [], matched: [], unmet: 0, unmetGating: 0, ok: true, okGating: true };
+    assert.deepEqual(checkObligations({}), empty);
+    assert.deepEqual(checkObligations({ changedFiles: null, map: null }), empty);
     assert.doesNotThrow(() => checkObligations({ changedFiles: ['x'], map: [{ id: 'bad', match: 42, obliges: 'oops' }] }));
   });
 });
@@ -244,7 +251,7 @@ describe('checkObligations', () => {
 const GROUPED_IDS = new Set(['edge-mirror', 'edge-mirror-core']);
 
 describe('SURFACE_PARTNER_MAP integrity', () => {
-  test('every entry has a stable id, a match, obliges, and a lessonKey', () => {
+  test('every entry has a stable id, a match, obliges, and a resolvable lesson key', () => {
     assert.ok(SURFACE_PARTNER_MAP.length >= 7, `expected at least 7 seed entries, got ${SURFACE_PARTNER_MAP.length}`);
     const singularIds = new Set();
     for (const entry of SURFACE_PARTNER_MAP) {
@@ -258,8 +265,9 @@ describe('SURFACE_PARTNER_MAP integrity', () => {
         `${entry.id}: match must be a string or string[]`,
       );
       assert.ok(Array.isArray(entry.obliges) && entry.obliges.length > 0, `${entry.id}: obliges must be a non-empty array`);
-      assert.equal(typeof entry.lessonKey, 'string', `${entry.id}: lessonKey must be a string`);
-      assert.ok(entry.lessonKey.length > 0, `${entry.id}: lessonKey must be non-empty`);
+      const lessonKey = lessonKeyForEntry(entry);
+      assert.equal(typeof lessonKey, 'string', `${entry.id}: must resolve to a lesson key`);
+      assert.ok(lessonKey.length > 0, `${entry.id}: resolved lesson key must be non-empty`);
     }
   });
 
@@ -369,5 +377,162 @@ describe('obligations command', () => {
     );
     assert.equal(result.exitCode, 0, 'both partners supplied across positional + --files should satisfy the obligation');
     assert.equal(result['lorekit.cli.obligations.files'], 2);
+  });
+});
+
+// ── recurrence clusters + the state ladder ───────────────────────────────────
+//
+// A map entry names the recurrence CLASS it instantiates rather than a bare
+// lesson key, and carries a lifecycle (`state`, `owner`, `added`, `reviewBy`).
+// The load-bearing rule is the guard/state coupling: an entry may only gate if
+// something independent of the map already asserts the partnership.
+
+describe('recurrence clusters', () => {
+  test('every seed entry resolves to a known cluster and cites its lesson key', () => {
+    for (const entry of SURFACE_PARTNER_MAP) {
+      const cluster = clusterForEntry(entry);
+      assert.ok(cluster, `entry ${entry.id} belongs to no known recurrence cluster`);
+      assert.equal(typeof cluster.why, 'string');
+      assert.ok(cluster.why.length > 0, `cluster ${cluster.id} must say why it recurs`);
+      assert.equal(lessonKeyForEntry(entry), cluster.lessonKey);
+    }
+  });
+
+  test('an explicit lessonKey on an entry overrides its cluster canonical key', () => {
+    const entry = { id: 'x', cluster: 'sibling-set', lessonKey: 'other::key' };
+    assert.equal(clusterForEntry(entry).id, 'sibling-set');
+    assert.equal(lessonKeyForEntry(entry), 'other::key');
+  });
+
+  test('a bare lessonKey still resolves to its cluster, for un-migrated entries', () => {
+    const cluster = RECURRENCE_CLUSTERS[0];
+    assert.equal(clusterForEntry({ id: 'x', lessonKey: cluster.lessonKey }).id, cluster.id);
+  });
+
+  test('an unknown cluster or lesson key resolves to null rather than throwing', () => {
+    assert.equal(clusterForEntry({ id: 'x', cluster: 'nope' }), null);
+    assert.equal(clusterForEntry({ id: 'x', lessonKey: 'nope::nope' }), null);
+    assert.equal(clusterForEntry(null), null);
+    assert.equal(lessonKeyForEntry({ id: 'x' }), null);
+  });
+
+  test('clusterMembers lists each member id once, in map order', () => {
+    const members = clusterMembers('sibling-set', SURFACE_PARTNER_MAP);
+    assert.deepEqual(members, ['docs-section', 'plugin-skill', 'perf-index']);
+    const copies = clusterMembers('copies-a-claim', SURFACE_PARTNER_MAP);
+    assert.equal(new Set(copies).size, copies.length, 'generated rows must not duplicate an id');
+  });
+});
+
+describe('the state ladder', () => {
+  test('every seed entry declares a full lifecycle', () => {
+    for (const entry of SURFACE_PARTNER_MAP) {
+      assert.ok(
+        ['advisory', 'gating', 'retired'].includes(entry.state),
+        `entry ${entry.id} has an invalid state: ${entry.state}`,
+      );
+      assert.match(entry.owner ?? '', /^@/, `entry ${entry.id} needs an owner`);
+      assert.match(entry.added ?? '', /^\d{4}-\d{2}-\d{2}$/);
+      assert.match(entry.reviewBy ?? '', /^\d{4}-\d{2}-\d{2}$/);
+      assert.ok(entry.reviewBy > entry.added, `entry ${entry.id} reviewBy must follow added`);
+    }
+  });
+
+  test('an entry with no independent guard may never be gating', () => {
+    // The compilability rule, asserted in code: a gating check needs an
+    // expected value that comes from somewhere other than this map. Without a
+    // `guard`, the entry asserts only its author's belief and must stay
+    // advisory — `perf-index` and `error-code-doc` are the two such entries.
+    for (const entry of SURFACE_PARTNER_MAP) {
+      if (entry.guard) continue;
+      assert.equal(
+        entry.state,
+        'advisory',
+        `entry ${entry.id} has no guard, so it must not be gating`,
+      );
+    }
+  });
+
+  test('checkObligations reports each matched entry state and cluster', () => {
+    const { matched } = checkObligations({
+      changedFiles: ['a/x.ts'],
+      map: [
+        { id: 'e', state: 'gating', cluster: 'sibling-set', match: 'a/*.ts', obliges: ['b/y.ts'] },
+      ],
+    });
+    assert.equal(matched[0].state, 'gating');
+    assert.equal(matched[0].cluster.id, 'sibling-set');
+    assert.equal(matched[0].lessonKey, RECURRENCE_CLUSTERS.find((c) => c.id === 'sibling-set').lessonKey);
+  });
+
+  test('an entry with no declared state defaults to advisory, not gating', () => {
+    const { matched, unmet, unmetGating } = checkObligations({
+      changedFiles: ['a/x.ts'],
+      map: [{ id: 'e', cluster: 'sibling-set', match: 'a/*.ts', obliges: ['b/y.ts'] }],
+    });
+    assert.equal(matched[0].state, 'advisory');
+    assert.equal(unmet, 1);
+    assert.equal(unmetGating, 0, 'an undeclared state must never gate');
+  });
+
+  test('unmetGating counts only gating entries; unmet counts every one', () => {
+    const map = [
+      { id: 'g', state: 'gating', cluster: 'sibling-set', match: 'a/*.ts', obliges: ['b/y.ts'] },
+      { id: 'a', state: 'advisory', cluster: 'sibling-set', match: 'a/*.ts', obliges: ['c/z.ts'] },
+    ];
+    const r = checkObligations({ changedFiles: ['a/x.ts'], map });
+    assert.equal(r.unmet, 2);
+    assert.equal(r.unmetGating, 1);
+    assert.equal(r.ok, false);
+    assert.equal(r.okGating, false);
+  });
+
+  test('a retired entry is not reported and cannot gate', () => {
+    const r = checkObligations({
+      changedFiles: ['a/x.ts'],
+      map: [{ id: 'e', state: 'retired', cluster: 'sibling-set', match: 'a/*.ts', obliges: ['b/y.ts'] }],
+    });
+    assert.deepEqual(r.matched, []);
+    assert.equal(r.unmet, 0);
+    assert.equal(r.unmetGating, 0);
+  });
+});
+
+describe('obligations command — strict respects state', () => {
+  test('--strict does not gate on an advisory-only miss', async () => {
+    // `error-code-doc` (no guard, advisory) is the only entry matching this
+    // file, and its own note says it may over-flag. It must not fail a build.
+    const { result } = await capture(() =>
+      obligations({ _: ['obligations', 'supabase/functions/mcp/mcp-handler.ts'], strict: true }),
+    );
+    assert.ok(result['lorekit.cli.obligations.unmet'] > 0, 'the advisory entry should still report');
+    assert.equal(result['lorekit.cli.obligations.unmetGating'], 0);
+    assert.equal(result.exitCode, 0);
+  });
+
+  test('--strict-all restores gating on every unmet obligation', async () => {
+    const { result } = await capture(() =>
+      obligations({ _: ['obligations', 'supabase/functions/mcp/mcp-handler.ts'], 'strict-all': true }),
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal(result['lorekit.cli.obligations.strictAll'], true);
+  });
+
+  test('--strict still gates on a gating miss', async () => {
+    const { result } = await capture(() =>
+      obligations({ _: ['obligations', 'supabase/functions/mcp/auth-token.ts'], strict: true }),
+    );
+    assert.equal(result.exitCode, 1);
+    assert.ok(result['lorekit.cli.obligations.unmetGating'] > 0);
+  });
+
+  test('the rendered output labels state and names the recurrence class', async () => {
+    const { out } = await capture(() =>
+      obligations({ _: ['obligations', 'supabase/functions/mcp/mcp-handler.ts'] }),
+    );
+    assert.match(out, /error-code-doc \[advisory\]/);
+    assert.match(out, /no guard — advisory only/);
+    assert.match(out, /class: A partner copies a claim/);
+    assert.match(out, /advisory \(reported, never gates\)/);
   });
 });

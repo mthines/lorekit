@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.62.0](https://github.com/mthines/lorekit/compare/cli-v1.61.0...cli-v1.62.0) (2026-09-01)
+
+
+### Features
+
+* Duplicate Clusters panel in the Lore Explorer (+ GET /memories/clusters) ([ceb1cf8](https://github.com/mthines/lorekit/commit/ceb1cf8b196fbfa8676ef2d3835765f11c0cd6c3))
+
+## [1.61.0](https://github.com/mthines/lorekit/compare/cli-v1.60.0...cli-v1.61.0) (2026-08-31)
+
+
+### Features
+
+* **cli:** add `lorekit invariants candidates` ([6d57dc0](https://github.com/mthines/lorekit/commit/6d57dc0b851ecff52c6548408357134f64e4b922))
+* **cli:** join dedupe clusters to named recurrence classes ([cebe076](https://github.com/mthines/lorekit/commit/cebe07656af3ee36c26b0518ae9861c3946287bf))
+* **cli:** name recurrence classes and add a state ladder to obligations ([1a46d4a](https://github.com/mthines/lorekit/commit/1a46d4a0765508f6407566786c359c9a97a9974a))
+* **cli:** name recurrence classes and add a state ladder to obligations ([499fa25](https://github.com/mthines/lorekit/commit/499fa25550bb45b17902cebf335349a66ea41029))
+
+
+### Bug Fixes
+
+* **cli:** scope --strict text and allow &gt; in meta comment content ([2554330](https://github.com/mthines/lorekit/commit/2554330d45edaab69b2cd76f2400511124f1e46f))
+
 ## [1.60.0](https://github.com/mthines/lorekit/compare/cli-v1.59.1...cli-v1.60.0) (2026-08-30)
 
 
