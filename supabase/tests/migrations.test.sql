@@ -8347,6 +8347,37 @@ begin
   -- this call's return being consistent is the assertion).
   select lorekit_groom_sweep() into v_archived;
 
+  -- ── 00095: lorekit_groom_sweep_and_record — the observable entry point ──
+  -- Wraps lorekit_groom_sweep() unchanged and records the run into the
+  -- groom_sweep_stats singleton, which is what the groom-sweep Edge Function
+  -- reads to export lorekit.groom.sweep.{runs,archived} to Dash0.
+  insert into memories (user_id, scope, key, value, created_at, updated_at, seen_count)
+    values (v_user, 'repo::acme/app', 'groom95-sweep-record-target', 'v', now() - interval '60 days', now() - interval '60 days', 1);
+
+  select runs_total, archived_total into v_count, v_archived
+    from groom_sweep_stats where id = true;
+
+  select * into v_row from lorekit_groom_sweep_and_record();
+  assert v_row.runs_total = v_count + 1,
+    '95-RECORD-1: runs_total must increment by exactly 1 per call';
+  assert v_row.archived_total >= v_archived + 1,
+    '95-RECORD-2: archived_total must accumulate at least this run''s archived count';
+  assert v_row.archived_this_run >= 1,
+    format('95-RECORD-3: archived_this_run must reflect this run''s own sweep, got %s', v_row.archived_this_run);
+  assert v_row.policies_evaluated >= 1,
+    '95-RECORD-4: policies_evaluated must count the auto+enabled policies swept';
+  assert v_row.started_at is not null, '95-RECORD-5: started_at must be the counter row''s fixed series start';
+  assert v_row.last_run_at is not null, '95-RECORD-6: last_run_at must be stamped on every call';
+
+  -- Cumulative, not a per-run delta: a second call keeps accumulating from
+  -- where the first left off rather than resetting.
+  select runs_total, archived_total into v_count, v_archived from groom_sweep_stats where id = true;
+  select * into v_row from lorekit_groom_sweep_and_record();
+  assert v_row.runs_total = v_count + 1, '95-RECORD-7: a second call must accumulate runs_total, not reset it';
+  assert v_row.archived_total = v_archived,
+    '95-RECORD-8: a second call with nothing new to archive must leave archived_total unchanged';
+  assert v_row.archived_this_run = 0, '95-RECORD-9: a no-op sweep must report archived_this_run = 0, not the cumulative total';
+
   -- ── policy CRUD RPCs: JSONB patch has-key / absent / null semantics ────
   select * into v_row from lorekit_policy_update(v_user, v_policy_id, jsonb_build_object('name', '95-review-policy-renamed'));
   assert v_row.name = '95-review-policy-renamed', '95-POLICY-3: update must apply a present key';

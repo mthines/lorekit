@@ -124,6 +124,9 @@ verify_jwt = false
 [functions.profiling]
 verify_jwt = false
 
+[functions.groom-sweep]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

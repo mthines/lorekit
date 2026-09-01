@@ -55,5 +55,12 @@ does not use `createRouter` — a cron poke is not a tenant request and must not
 land in `usage_events`. See [docs/otel.md](../../docs/otel.md) →
 "Query-level profiling".
 
+The `groom-sweep` function is the operator surface for the nightly
+retention-policy sweep (`lorekit_groom_sweep_and_record` → Dash0 metrics),
+mirroring `profiling`'s shape for the identical problem: a pg_cron job whose
+work needs to be observable, not just run. Service-role ONLY, no `createRouter`,
+same reasoning as `profiling`. See [docs/otel.md](../../docs/otel.md) →
+"Retention-policy sweep".
+
 ## Deploying
 `pnpm nx fn:deploy supabase` — deploys all functions.

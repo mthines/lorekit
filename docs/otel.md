@@ -308,6 +308,113 @@ itself forever.
 
 ---
 
+## Retention-policy sweep
+
+### Why this exists
+
+`lorekit_groom_sweep()` (migrations 00088/00093) is the nightly job that
+auto-archives memories matching an enabled `mode='auto'` retention policy —
+and until migration 00095 it was invisible end-to-end. pg_cron called it
+DIRECTLY, as a raw SQL statement running entirely inside Postgres: no span, no
+metric, nothing to tell apart "ran and archived nothing" from "did not run at
+all" from "failed silently". An operator watching data they expected archived
+stay put had no telemetry to distinguish those cases — only the DB's own
+`cron.job_run_details`, which Dash0 never sees.
+
+This mirrors the identical problem [query-level profiling](#query-level-profiling)
+already solved for `pg_stat_statements` — a pg_cron job whose *work* needs to be
+observable, not just run — applied the same way:
+
+```
+pg_cron (nightly, 03:17 UTC)
+  └── lorekit_export_groom_sweep()         ← inert without vault secrets
+        └── pg_net → POST /functions/v1/groom-sweep
+              └── lorekit_groom_sweep_and_record()   ← runs lorekit_groom_sweep()
+                    │                                    UNCHANGED, then records
+                    └── buildGroomSweepMetrics()          the result
+                          └── POST → Dash0 /v1/metrics
+```
+
+`lorekit_groom_sweep_and_record()` (migration 00095) does not change
+`lorekit_groom_sweep()`'s tested archiving behaviour at all — it calls it
+exactly as pg_cron always has, then records the run into a singleton counter
+row (`groom_sweep_stats`) so the Edge Function can export TRUE cumulative
+sums, matching `lorekit.db.query.*`'s convention, instead of a per-run delta
+that would need its own reset-detection to be safe against a dropped tick.
+
+### What ships
+
+Two metrics, both **cumulative monotonic sums**:
+
+| Metric | Unit | Meaning |
+|--------|------|---------|
+| `lorekit.groom.sweep.runs` | `{run}` | Cumulative number of nightly sweep executions |
+| `lorekit.groom.sweep.archived` | `{memory}` | Cumulative number of memories auto-archived across all sweeps |
+
+No datapoint attributes — the sweep spans every user's auto+enabled policies
+in one pass, so there is no single tenant to attribute a datapoint to.
+Per-run detail (`archived_this_run`, `policies_evaluated`) is carried as
+`lorekit.groom_sweep.*` attributes on the `lorekit.groom_sweep` span instead
+of as metric dimensions, since those are per-run snapshots, not cumulative
+counters — mixing the two shapes into one Sum would misread a run-over-run
+drop as a counter reset.
+
+Reading the two together answers both halves of "is the sweep working":
+
+- **Did it run at all?** `increase(lorekit_groom_sweep_runs_total[26h])` — a
+  window a little over the 24h schedule. Zero means the cron stopped firing
+  (the `lorekit_groom_sweep-url`/`-key` vault secrets went missing, pg_net or
+  pg_cron got disabled, the Edge Function started rejecting the poke) — a
+  stall.
+- **Is it archiving what it should?** `increase(lorekit_groom_sweep_archived_total[24h])`
+  staying at 0 while `runs` keeps incrementing and enabled `auto` policies
+  exist is the regression case: the sweep is executing but nothing it
+  evaluates matches anymore (a policy's conditions drifted, `enabled` got
+  flipped off, a scope stopped resolving) — worth alerting on separately from
+  an outright stall, since both look identical from "the data isn't being
+  archived" alone.
+
+Same OFF-by-default posture as profiling: `lorekit_export_groom_sweep()`
+returns `'disabled: …'` and posts nothing until an operator provisions
+`lorekit_groom_sweep_url` / `lorekit_groom_sweep_key` in Vault. Until then,
+`lorekit_groom_sweep()` keeps running nightly exactly as it always has — this
+migration adds observability, it does not gate the archiving itself.
+
+### No check watches this yet
+
+Neither `lorekit.groom.sweep.runs` nor `lorekit.groom.sweep.archived` has a
+Dash0 Check Rule or dashboard panel watching it as of this migration — the
+metrics exist but nothing pages on them yet. Once this ships and the Vault
+secrets are set (so the series actually has data to alert on), propose two
+checks via Dash0 chat (the `dash0` agent builds a Check Rule for a human to
+review and create — this skill never creates one directly):
+
+- **Stalled sweep**: `increase(lorekit_groom_sweep_runs_total[26h]) == 0` — the
+  cron stopped firing.
+- **Sweep running but archiving nothing**: the same absence over
+  `lorekit_groom_sweep_archived_total`, scoped to when at least one
+  `retention_policies` row has `mode='auto' AND enabled=true` — otherwise a
+  quiet org with no auto policies would page for doing exactly what it should.
+
+### Verifying it
+
+```bash
+curl -sS -X POST \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/groom-sweep | jq
+```
+
+```json
+{ "exported": true, "archived_this_run": 3, "policies_evaluated": 2,
+  "runs_total": 41, "archived_total": 118,
+  "metrics": ["lorekit.groom.sweep.runs", "lorekit.groom.sweep.archived"] }
+```
+
+Status codes match profiling's: `200` exported, `401` not the service-role key,
+`502` Dash0 rejected/unreachable, `503` nothing to send or nowhere to send it.
+
+---
+
 ## Structured usage events (`usage_events` table)
 
 In addition to OTLP traces, every significant tool call outcome is recorded as
