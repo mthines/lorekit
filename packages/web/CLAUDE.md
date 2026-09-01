@@ -91,8 +91,11 @@ or `.rpc(…)` for anything other than **auth**, stop and add an endpoint instea
 - **Motion:** `motion/react` (not `framer-motion`). Respect
   `prefers-reduced-motion` — either `MotionConfig reducedMotion="user"` or lean
   on the global reduced-motion rule in `globals.css`.
-- **Accessibility floor:** ≥24px hit targets (44px for primary actions),
-  labelled landmarks, `aria-current` on active nav items, visible focus rings.
+- **Accessibility floor:** ≥24px hit targets — WCAG 2.2 AA "Target Size
+  (Minimum)", which every `Button`/`IconButton` size clears (`sm` 32 / `md` 36 /
+  `lg` 40). 44px is the AAA "Target Size (Enhanced)" target, not an AA floor: a
+  full-width `lg` CTA meets it on width, so inline actions are not held to it.
+  Also labelled landmarks, `aria-current` on active nav items, visible focus rings.
 - **Public MDX content** lives in `src/content/{docs,blog}/*.mdx`, each with a
   single-source registry (`lib/{docs,blog}/sections.ts`) guarded against drift
   by a `sections.spec.ts`. Adding a page = drop the `.mdx` + add its registry
