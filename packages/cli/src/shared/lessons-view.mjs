@@ -311,6 +311,28 @@ export const LINT_RULES = {
     const reason = scopeIssue(e.scope);
     return reason ? `malformed scope: ${reason}` : null;
   },
+  // A CI state record (ci-state-records.md) is JSON on an entry left with no
+  // `kind`. `fetchLessons`'s `isGeneralLesson(kind)` filter — `kind == null ||
+  // kind === 'lesson'` — is a hard exclusion by kind, not by shape, so a record
+  // like this is NOT excluded from the SessionStart digest: it renders inline as
+  // a raw JSON blob, unreadable next to prose lessons. Conservative by design,
+  // like `volatile-key`: only a value that PARSES as a JSON object or array
+  // fires — a bare scalar (a plain lesson body that happens to be a number or a
+  // quoted string) is excluded, that shape is `short-value`'s to judge, and this
+  // rule has no opinion on it.
+  'unkinded-state-record': (e) => {
+    if (e.kind != null) return null; // an explicit kind is exactly what this rule exists to require.
+    const v = String(e.value ?? '').trim();
+    if (!v) return null; // an empty value is `empty-value`'s to report.
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null; // not JSON — an ordinary prose lesson, not this rule's concern.
+    }
+    if (parsed === null || typeof parsed !== 'object') return null; // a bare scalar — short-value's shape to judge.
+    return 'value is a JSON object/array with no kind set — it renders as a raw JSON blob in every SessionStart digest; set --kind bus or --kind signal';
+  },
 };
 
 // Run every lint rule against one normalized entry, returning the findings it
