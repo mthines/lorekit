@@ -23,6 +23,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Building2, Loader2, ShieldQuestion, X } from 'lucide-react';
 import { getInviteOrgDetails, type OrgInvite, type InviteOrgDetails } from '@/lib/org-invites';
 import { memberCountLabel, inviteExpiryLabel } from '@/lib/org-ui';
+import { Button, IconButton } from '@/components/ui/Button';
 
 const ROLE_LABEL: Record<OrgInvite['role'], string> = {
   admin: 'Admin',
@@ -187,15 +188,13 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
                   {status === 'loaded' && details ? details.org_name : 'Invitation details'}
                 </h2>
               </div>
-              <button
+              <IconButton
                 ref={closeRef}
-                type="button"
+                variant="ghost"
                 onClick={onClose}
-                aria-label="Close invitation details"
-                className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+                label="Close invitation details"
+                icon={<X className="size-4" aria-hidden />}
+              />
             </div>
 
             {status === 'loading' && (
@@ -263,23 +262,17 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
             )}
 
             <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => onDecline(invite)}
-                disabled={pending}
-                className="flex min-h-11 items-center justify-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-50"
-              >
+              <Button variant="outline" onClick={() => onDecline(invite)} disabled={pending}>
                 Decline
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="primary"
                 onClick={() => onAccept(invite)}
                 disabled={pending || isExpired}
                 aria-describedby={isExpired ? 'invite-details-expired' : undefined}
-                className="flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 hover:opacity-90 disabled:opacity-50"
               >
                 Accept
-              </button>
+              </Button>
             </div>
           </motion.div>
         </>

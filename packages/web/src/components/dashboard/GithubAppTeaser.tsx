@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { X, Github, ArrowRight } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import { Button, IconButton } from '@/components/ui/Button';
 
 /**
  * Unchanged after the rename to `GithubAppTeaser` — the key records "this user
@@ -81,14 +81,15 @@ export function GithubAppTeaser({ hasWebhook }: GithubAppTeaserProps) {
   return (
     <div className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
       {/* Dismiss button */}
-      <button
+      <IconButton
+        variant="ghost"
+        size="sm"
         onClick={handleDismiss}
-        aria-label="Dismiss GitHub App suggestion"
-        title="Dismiss"
-        className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
-      >
-        <X className="size-3.5" aria-hidden />
-      </button>
+        label="Dismiss GitHub App suggestion"
+        tooltip="Dismiss"
+        icon={<X className="size-3.5" aria-hidden />}
+        className="absolute right-3 top-3"
+      />
 
       <div className="flex items-start gap-3 pr-8">
         {/* Icon */}
@@ -105,16 +106,20 @@ export function GithubAppTeaser({ hasWebhook }: GithubAppTeaserProps) {
             memory automatically — no manual writes needed.
           </p>
 
-          <Link
+          <Button
             href="/settings/integrations"
-            className="group mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            variant="secondary"
+            size="sm"
+            className="group mt-3"
+            rightIcon={
+              <ArrowRight
+                className="size-3 transition-transform duration-150 group-hover:translate-x-0.5"
+                aria-hidden
+              />
+            }
           >
             Set up in Settings
-            <ArrowRight
-              className="size-3 transition-transform duration-150 group-hover:translate-x-0.5"
-              aria-hidden
-            />
-          </Link>
+          </Button>
         </div>
       </div>
     </div>
