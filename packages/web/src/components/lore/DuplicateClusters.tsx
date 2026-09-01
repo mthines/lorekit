@@ -62,7 +62,7 @@ export function DuplicateClusters({ scope, open, onToggleOpen }: DuplicateCluste
       type="button"
       onClick={onToggleOpen}
       aria-expanded={open}
-      aria-controls="explorer-clusters-sidebar"
+      aria-controls={open ? 'explorer-clusters-sidebar' : undefined}
       className={[
         'flex min-h-11 w-full items-center gap-2 rounded-xl border px-4 py-2.5 text-left transition-colors duration-150',
         open
