@@ -34,7 +34,11 @@ and local operations.
 > this, mirror the flag (or disable Git deployments in the Vercel dashboard) or
 > you will double-deploy.
 >
-> The sticky comment is a Vercel-style status table exposing **both** URLs, like
+> The sticky comment reproduces **Vercel's own comment structure** — the same
+> `| Project | Deployment | Actions | Updated |` table, a `[Ready](…)` status
+> cell, a `[Preview](…)` link in the Actions cell, and a `<relative-time>`
+> timestamp — because that shape is what external tooling scrapes to find a PR's
+> preview URL. It exposes **both** URLs, like
 > the Git integration did: a **stable** `Preview` link (a `lorekit-pr-<n>-<scope>`
 > alias the job re-points to the newest deployment via `vercel alias set` — which
 > re-points, not deploys, so it costs no quota) and the **immutable** per-commit
@@ -117,6 +121,37 @@ the same comment — only the decision to deploy differs. The build itself is th
 `.github/actions/vercel-preview-deploy` composite action, shared with
 `deploy.yml` and `preview.yml`.
 
+#### The sticky comment is Vercel-shaped on purpose
+
+The comment body is rendered by
+[`scripts/ci/web-preview-comment.mjs`](../scripts/ci/web-preview-comment.mjs) and
+deliberately mirrors the comment Vercel's Git integration used to post, because
+its structure is a **contract with tooling outside this repo**: anything that
+scrapes a PR for "where is the preview?" was written against Vercel's table.
+Reproduced from it, and each line load-bearing for some parser:
+
+- the four column headers in Vercel's order, with its alignment row —
+  `| Project | Deployment | Actions | Updated |`;
+- a `![Ready](…ready.svg) [Ready](<deployment>)` **Deployment** cell, linking the
+  immutable per-commit build;
+- a `[Preview](<url>)` link as the **Actions** cell — the anchor most scrapers
+  key on, and the reason the columns cannot simply be renamed;
+- a `<relative-time datetime="…">` **Updated** cell, which GitHub renders live.
+
+A failed deploy reuses the same table with an `Error` status and no preview link.
+Two things are *not* copied: Vercel's leading `[vc]: #<hash>:<base64>` metadata
+line (a signed payload describing real Vercel projects — forging one would make
+the comment lie to anything that decodes it), and the marker, which stays this
+repo's own `<!-- lorekit-web-preview sha=<40 hex> -->`. That marker is its own
+contract: the incremental check below reads the SHA back out of it, and a FAILED
+deploy writes the marker *without* a `sha=` so the next web push re-attempts
+rather than treating the failed commit as deployed.
+
+`scripts/ci/web-preview-comment.test.mjs` pins all of it — including the
+`[Preview](…)` extraction a scraper performs — and asserts the workflow still
+renders through the module instead of inlining a table again. It runs in the
+`preview-filter` CI job.
+
 **Two gates decide whether a push spends a deployment** (the Vercel Hobby plan
 allows 100/day):
 
@@ -135,8 +170,11 @@ The filter answers one question: *can this file change what the deployed
 dashboard looks like, or how it gets deployed?* It covers `packages/web/`,
 `packages/schemas/` (a `workspace:*` dependency the dashboard compiles in), the
 **root** `package.json` (pnpm overrides reach into the dashboard's dependency
-graph), `nx.json`, the `vercel-preview-deploy` composite action, and
-`web-preview.yml` / `web-preview-deploy.yml`.
+graph), `nx.json`, the `vercel-preview-deploy` composite action,
+`web-preview.yml` / `web-preview-deploy.yml`, and
+`scripts/ci/web-preview-comment.mjs` (the sticky comment's renderer — the only
+way to see its real output is to deploy; its `.test.mjs` is *not* on the filter,
+since a test-only edit changes no output).
 
 Two paths are deliberately **off** it, because both were spending deployments on
 a dashboard nobody had changed:
@@ -163,7 +201,9 @@ written as an extended regex so the one string works under both `grep -E`
 checkout and so cannot import the module). Neither consumer can import it, so
 both carry a copy and `scripts/ci/web-preview-filter.test.mjs` holds them to it:
 the `preview-filter` CI job fails on drift in either copy, and cross-checks that
-`grep -E` and `RegExp` agree on every case.
+`grep -E` and `RegExp` agree on every case. That job also unit-tests the sticky
+comment's body (above) — the other piece of preview machinery `nx affected` never
+sees, since `scripts/**` is outside the task graph.
 
 To ask why a specific PR did or didn't get a preview:
 

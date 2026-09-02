@@ -65,7 +65,7 @@ on:
           checkout, that job runs before any toolchain setup).
         required: false
         type: string
-        default: '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'
+        default: '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|scripts/ci/web-preview-comment\.mjs$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'
     secrets:
       # Not `required: true`: on a fork PR these resolve to empty strings, and
       # the guard below turns that into an announced skip rather than a red X.
@@ -251,9 +251,17 @@ jobs:
           # Stable per-PR alias, re-pointed each run (like Vercel's branch URL).
           alias-label: pr-${{ inputs.pr-number }}
 
-      # Post (or update) a single sticky comment — a Vercel-style status table
+      # Post (or update) a single sticky comment — a VERCEL-SHAPED status table
       # with the stable "latest" preview link plus the immutable per-commit link.
       # Idempotent: it edits its own marker comment on re-run, never stacks.
+      #
+      # The body is built by scripts/ci/web-preview-comment.mjs, not inline here,
+      # because the shape is a contract with tooling OUTSIDE this repo: anything
+      # that scrapes a PR for its preview URL was written against Vercel's
+      # comment — its four-column header (Project / Deployment / Actions /
+      # Updated) and the `[Preview](…)` link in the Actions cell — so the columns
+      # cannot drift on a whim. That module is unit-tested by its own test file,
+      # which also asserts this workflow still renders through it.
       - name: Comment preview URL on the PR
         if: steps.gate.outputs.deploy == 'true' && steps.preview.outcome == 'success'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -265,29 +273,23 @@ jobs:
           FORCED: ${{ inputs.force }}
         with:
           script: |
-            const fullSha = process.env.PR_SHA;
-            // Stable find-key; the stored line also carries the full SHA so the
-            // "Decide" step above can diff the next commit against this deploy.
-            const findMarker = '<!-- lorekit-web-preview';
-            const markerLine = `<!-- lorekit-web-preview sha=${fullSha} -->`;
+            const { pathToFileURL } = require('node:url');
+            const { WEB_PREVIEW_MARKER, renderReadyComment } = await import(
+              pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/ci/web-preview-comment.mjs`).href
+            );
             const commitUrl = process.env.PREVIEW_URL;               // immutable, this commit
             const aliasUrl = process.env.ALIAS_URL || '';            // stable, latest (may be empty)
-            const previewUrl = aliasUrl || commitUrl;                // fall back if aliasing was unavailable
-            const forced = process.env.FORCED === 'true';
-            const sha = fullSha.slice(0, 7);
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            // github-script runs in a real Node runner, so Date is available here.
-            const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
-            const body = [
-              markerLine,
-              'The dashboard preview for this PR — redeployed on each push that changes the web app.',
-              '',
-              '| Name | Status | Preview | Deployment (this commit) | Updated (UTC) |',
-              '| :--- | :----- | :------ | :----------------------- | :------------ |',
-              `| **lorekit** | ✅ Ready | [Visit Preview](${previewUrl}) | [\`${sha}\`](${commitUrl}) | ${updated} |`,
-              '',
-              `<sub>**Preview** always points at the PR's latest commit; **Deployment** is this exact commit${aliasUrl ? '' : ' (stable alias unavailable this run — see workflow logs)'}. · Comment \`/web-preview\` to force a redeploy. · ${forced ? 'Deployed on demand. · ' : ''}[Workflow logs](${runUrl})</sub>`,
-            ].join('\n');
+            const body = renderReadyComment({
+              sha: process.env.PR_SHA,
+              previewUrl: aliasUrl || commitUrl,                     // fall back if aliasing was unavailable
+              commitUrl,
+              aliasAvailable: Boolean(aliasUrl),
+              forced: process.env.FORCED === 'true',
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+            // Stable find-key; the rendered marker also carries the full SHA so
+            // the "Decide" step above can diff the next commit against this deploy.
+            const findMarker = WEB_PREVIEW_MARKER;
             const { owner, repo } = context.repo;
             const issue_number = Number(process.env.PR_NUMBER);
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -307,7 +309,7 @@ jobs:
       # captured reason to the PR so the failure is visible where the work is.
       #
       # Reuses the same sticky marker as the success comment so a previously-green
-      # preview flips to "❌ Failed" in place rather than stacking — but writes NO
+      # preview flips to "Error" in place rather than stacking — but writes NO
       # `sha=` in the marker, on purpose: the "Decide" step keys its incremental
       # skip off that sha, so omitting it makes the next web push RE-ATTEMPT the
       # deploy instead of treating this failed commit as already deployed.
@@ -320,31 +322,20 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const sha = process.env.PR_SHA.slice(0, 7);
-            const findMarker = '<!-- lorekit-web-preview';
-            const markerLine = '<!-- lorekit-web-preview -->';
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { pathToFileURL } = require('node:url');
+            const { WEB_PREVIEW_MARKER, renderErrorComment } = await import(
+              pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/ci/web-preview-comment.mjs`).href
+            );
             let reason = '';
             try {
               reason = fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/vercel-deploy-error.txt`, 'utf8').trim();
-            } catch { /* no reason file — fall back to a generic message */ }
-            const detail = reason || 'The Vercel deployment did not complete. See the workflow logs for the CLI output.';
-            const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
-            const body = [
-              markerLine,
-              'The dashboard preview for this PR — redeployed on each push that changes the web app.',
-              '',
-              '| Name | Status | Preview | Deployment (this commit) | Updated (UTC) |',
-              '| :--- | :----- | :------ | :----------------------- | :------------ |',
-              `| **lorekit** | ❌ Failed | — | \`${sha}\` | ${updated} |`,
-              '',
-              '> [!WARNING]',
-              '> **The preview deploy for this commit failed — no preview is available.**',
-              '>',
-              ...detail.split('\n').map((l) => `> ${l}`),
-              '',
-              `<sub>A blocked deployment is most often the commit author's email not matching a GitHub account with project access. Fix the cause, then push again or comment \`/web-preview\` to retry. · [Workflow logs](${runUrl})</sub>`,
-            ].join('\n');
+            } catch { /* no reason file — the renderer falls back to a generic message */ }
+            const body = renderErrorComment({
+              sha: process.env.PR_SHA,
+              detail: reason,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+            const findMarker = WEB_PREVIEW_MARKER;
             const { owner, repo } = context.repo;
             const issue_number = Number(process.env.PR_NUMBER);
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
