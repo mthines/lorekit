@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.64.1](https://github.com/mthines/lorekit/compare/cli-v1.64.0...cli-v1.64.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* **retention:** key unseen_days on genuine agent opens, not any read ([5d44ac8](https://github.com/mthines/lorekit/commit/5d44ac8e490831ac30effc37be7d54521b182c9f))
+* **retention:** key unseen_days on genuine agent opens, not any read ([e70095c](https://github.com/mthines/lorekit/commit/e70095cec69156b1db4d5ef9a6f264a5c4aef85b))
+
 ## [1.64.0](https://github.com/mthines/lorekit/compare/cli-v1.63.2...cli-v1.64.0) (2026-09-01)
 
 
