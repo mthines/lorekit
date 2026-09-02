@@ -20,6 +20,9 @@ const meta: Meta<typeof ScopeConsumption> = {
   parameters: {
     layout: 'padded',
     msw: { handlers: memoryHandlers() },
+    // Each named row is a `next/link` into the Explorer, which needs the App
+    // Router context.
+    nextjs: { appDirectory: true },
   },
   decorators: [
     withFrozenClock(FROZEN_NOW),

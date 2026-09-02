@@ -74,9 +74,12 @@ export const RendersAllSixSections: Story = {
       }
     });
     await step('the at-a-glance health verdict renders in the first section, from the same usage fetch', async () => {
-      // The fixture is 10 calls, all `ok` — a 100% healthy window.
+      // The fixture is 8 `ok` calls that found 40 records — reliable AND
+      // well-covered, so reliability drives a healthy verdict.
       await waitFor(() => expect(canvas.getByText('Healthy')).toBeVisible());
-      await expect(canvas.getByText('100% of calls succeeded')).toBeVisible();
+      await expect(canvas.getByText('Agent calls are succeeding')).toBeVisible();
+      await expect(canvas.getByText('100%')).toBeVisible();
+      await expect(canvas.getByText('5.0')).toBeVisible();
     });
   },
 };
@@ -84,10 +87,16 @@ export const RendersAllSixSections: Story = {
 export const ScopeConsumptionHasItsOwnRangePicker: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await step('exactly two range pickers exist — Agent activity’s shared one and Scope consumption’s own', async () => {
+    await step('the two range pickers are DISTINGUISHABLE, not two controls both named "Time range"', async () => {
+      // Two independent windows on one page, so a generic shared name left a
+      // screen-reader user unable to tell which range they were changing.
       await waitFor(() =>
-        expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(2),
+        expect(canvas.getByRole('radiogroup', { name: 'Agent activity time range' })).toBeInTheDocument(),
       );
+      await expect(
+        canvas.getByRole('radiogroup', { name: 'Scope consumption time range' }),
+      ).toBeInTheDocument();
+      await expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(2);
     });
   },
 };

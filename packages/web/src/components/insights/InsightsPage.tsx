@@ -144,13 +144,16 @@ export function InsightsPage() {
       <Section
         icon={TrendingUp}
         title="Agent activity"
-        description="The verdict below, operational health, and who's reading all follow this window — switch it to compare periods."
+        description="The verdict below, operational health, and who's reading all follow this window — switch it to compare periods. Your own dashboard browsing is excluded from the verdict and from operational health."
         trailing={
           <RangePicker
             value={usageRange}
             onChange={setUsageRange}
             presets={AGENT_ACTIVITY_PRESETS}
             nowIso={nowIso}
+            // Two independent windows on one page, so neither picker may keep
+            // the generic default name — see RangePicker's `label` prop.
+            label="Agent activity time range"
           />
         }
       >
@@ -206,13 +209,14 @@ export function InsightsPage() {
       <Section
         icon={Layers}
         title="Scope consumption"
-        description="Scopes ranked by memory records read — including the unattributed bucket, honestly labelled rather than dropped."
+        description="Scopes ranked by memory records read — including the unattributed bucket, honestly labelled rather than dropped. Pick a scope to open it in the Explorer."
         trailing={
           <RangePicker
             value={scopeRange}
             onChange={setScopeRange}
             presets={SCOPE_CONSUMPTION_PRESETS}
             nowIso={nowIso}
+            label="Scope consumption time range"
           />
         }
       >
@@ -224,7 +228,7 @@ export function InsightsPage() {
       <Section
         icon={Flame}
         title="Hot & cold lore"
-        description="Memories ranked by how often they've actually been read back — the prune-list input the lorekit-groom skill consumes. Account-wide, all time."
+        description="Memories ranked by how often they've actually been read back — the prune-list input the lorekit-groom skill consumes. Account-wide, all time. Pick a lesson to open it in the Explorer."
       >
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
           <HotColdLore />

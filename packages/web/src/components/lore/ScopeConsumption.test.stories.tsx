@@ -18,6 +18,7 @@ const meta: Meta<typeof ScopeConsumption> = {
   parameters: {
     chromatic: { disableSnapshot: true },
     layout: 'padded',
+    nextjs: { appDirectory: true },
   },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
   args: {
@@ -65,6 +66,17 @@ export const HeadlineSumsToTotalIncludingUnattributed: Story = {
     await step('the unattributed bucket renders as its own labelled row, not dropped', async () => {
       await expect(canvas.getByText('unattributed')).toBeVisible();
       await expect(canvas.getByText((145260).toLocaleString('en-US'))).toBeVisible();
+    });
+    await step('a NAMED scope links into the Explorer narrowed to it', async () => {
+      await expect(canvas.getByRole('link', { name: /mthines\/lorekit/ })).toHaveAttribute(
+        'href',
+        '/lore?scope=repo%3A%3Amthines%2Florekit',
+      );
+    });
+    await step('the unattributed row stays INERT — there is no scope to narrow to', async () => {
+      // Linking it would silently show a different set of lore than the bar
+      // measures.
+      await expect(canvas.queryByRole('link', { name: /unattributed/ })).not.toBeInTheDocument();
     });
   },
 };

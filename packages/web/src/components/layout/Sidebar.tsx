@@ -24,9 +24,12 @@ import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 // docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
 // phone) and "Getting started" would wrap or clip there.
 const NAV = [
+  // Overview and Insights are adjacent on purpose: exactly one of them renders,
+  // and the survivor holds the FIRST slot — which is what makes "Insights takes
+  // Overview's home slot" true of the rail and not just of the root redirect.
   { href: '/overview', label: 'Overview', icon: LayoutDashboard },
-  { href: '/lore', label: 'Explorer', icon: BookOpen },
   { href: '/insights', label: 'Insights', icon: Telescope },
+  { href: '/lore', label: 'Explorer', icon: BookOpen },
   { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
 ] as const;
 
@@ -62,10 +65,11 @@ export function Sidebar({ user }: SidebarProps) {
   // insights/page.tsx); this filter — like the matching one in
   // NavigationCommands.tsx — is only a visibility nicety, matching the
   // developer-page precedent's nav-link-vs-page-check split. Overview has no
-  // equivalent page-level gate: it still mints a brand-new user's first API
-  // token (`buildOnboardingSteps({ autoGenerateToken: true })`), so it stays
-  // reachable by direct URL even while hidden from nav — see the root page's
-  // matching redirect-target switch.
+  // equivalent page-level gate, so it stays reachable by direct URL even while
+  // hidden from nav — but nothing links to it any more: `/insights` now hosts
+  // the onboarding checklist and the first-token mint it used to own alone
+  // (`buildOnboardingSteps({ autoGenerateToken: true })`), and the root page
+  // redirects there. See insights/page.tsx.
   const insightsEnabled = useFeatureFlag('insights-page');
   const nav = NAV.filter((item) => {
     if (item.href === '/insights') return insightsEnabled;

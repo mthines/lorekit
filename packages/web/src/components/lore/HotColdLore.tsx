@@ -16,6 +16,7 @@
  */
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Flame, Snowflake, Copy, Check } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/SegmentedControl';
@@ -111,20 +112,41 @@ export function HotColdLore() {
   );
 }
 
+/**
+ * Deep-links a ranked entry into the Explorer.
+ *
+ * `?scope=` + `?q=` rather than an id: the Explorer has no `?lesson=` param
+ * (its detail sheet is local state), so the closest honest target is its list
+ * narrowed to the one scope and searched for the key — which puts the row on
+ * screen for the reader to open.
+ */
+function explorerHref(entry: ReadRankingEntry): string {
+  return `/lore?scope=${encodeURIComponent(entry.scope)}&q=${encodeURIComponent(entry.key)}`;
+}
+
 function HotColdLoreRow({ entry, direction }: { entry: ReadRankingEntry; direction: ReadRankingDirection }) {
   return (
-    <li className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-xs">
-      <ScopeBadge scope={entry.scope} type={scopeType(entry.scope)} showType={false} label className="shrink-0" />
-      <code className="min-w-0 flex-1 truncate font-mono text-[var(--color-content-secondary)]">{entry.key}</code>
-      <span className="shrink-0 font-mono text-[var(--color-content-tertiary)]">
-        read {entry.read_count}×
-        {entry.seen_count != null && ` · written ${entry.seen_count}×`}
-      </span>
-      {direction === 'hot' && entry.last_read_at && (
-        <span className="hidden shrink-0 text-[var(--color-content-tertiary)] sm:inline">
-          last {new Date(entry.last_read_at).toLocaleDateString()}
+    <li>
+      {/* The row IS the link. A cold-lore list is a prune list, and pruning
+          means reading the lesson first — leaving the row inert made "go look
+          at this one" a manual re-search on another page. */}
+      <Link
+        href={explorerHref(entry)}
+        className="flex min-h-8 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-xs transition-colors duration-150 hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-raised)]"
+        title={`Open ${entry.scope}::${entry.key} in the Lore Explorer`}
+      >
+        <ScopeBadge scope={entry.scope} type={scopeType(entry.scope)} showType={false} label className="shrink-0" />
+        <code className="min-w-0 flex-1 truncate font-mono text-[var(--color-content-secondary)]">{entry.key}</code>
+        <span className="shrink-0 font-mono text-[var(--color-content-tertiary)]">
+          read {entry.read_count}×
+          {entry.seen_count != null && ` · written ${entry.seen_count}×`}
         </span>
-      )}
+        {direction === 'hot' && entry.last_read_at && (
+          <span className="hidden shrink-0 text-[var(--color-content-tertiary)] sm:inline">
+            last {new Date(entry.last_read_at).toLocaleDateString()}
+          </span>
+        )}
+      </Link>
     </li>
   );
 }

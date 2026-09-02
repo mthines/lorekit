@@ -10,6 +10,8 @@ import {
   readsByAgentFamily,
   summarizeHealth,
   healthTrend,
+  readCoverage,
+  healthVerdict,
 } from './usage-health';
 
 function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
@@ -206,6 +208,81 @@ describe('summarizeHealth', () => {
     const result = summarizeHealth([row({ outcome: 'ok', event_count: 40 })], []);
     expect(result.topFailure).toBeNull();
   });
+
+  it('carries the read coverage alongside the reliability figures', () => {
+    const rows = [row({ tool_name: 'memory.search', event_count: 10, record_count: 5 })];
+    expect(summarizeHealth(rows, []).coverage).toEqual({
+      readCalls: 10,
+      recordsFound: 5,
+      recordsPerCall: 0.5,
+    });
+  });
+});
+
+describe('readCoverage', () => {
+  it('divides records found by the reads that asked for them', () => {
+    const rows = [
+      row({ tool_name: 'memory.list', event_count: 100, record_count: 40 }),
+      row({ tool_name: 'memory.search', event_count: 100, record_count: 60 }),
+    ];
+    expect(readCoverage(rows)).toEqual({ readCalls: 200, recordsFound: 100, recordsPerCall: 0.5 });
+  });
+
+  it('ignores tools that carry no records by construction', () => {
+    // A write-heavy window must not read as a coverage failure: `memory.write`
+    // and `org.*` always report `record_count: 0`.
+    const rows = [
+      row({ tool_name: 'memory.write', event_count: 500, record_count: 0 }),
+      row({ tool_name: 'org.create', event_count: 5, record_count: 0 }),
+      row({ tool_name: 'memory.read', event_count: 10, record_count: 20 }),
+    ];
+    expect(readCoverage(rows)).toEqual({ readCalls: 10, recordsFound: 20, recordsPerCall: 2 });
+  });
+
+  it('returns null rather than 0/0 when the window has no reads at all', () => {
+    expect(readCoverage([row({ tool_name: 'memory.write', event_count: 500, record_count: 0 })])).toBeNull();
+    expect(readCoverage([])).toBeNull();
+  });
+});
+
+describe('healthVerdict', () => {
+  it('reports reliability when it is the worse of the two dimensions', () => {
+    expect(healthVerdict({ successRate: 0.8, coverage: { readCalls: 10, recordsFound: 30, recordsPerCall: 3 } })).toEqual({
+      verdict: 'unhealthy',
+      driver: 'reliability',
+    });
+  });
+
+  it('reports coverage when perfectly reliable calls are finding nothing', () => {
+    // The whole reason the verdict is two-dimensional: no `outcome` value means
+    // "found nothing", so this window is 100% `ok` and still the thing a reader
+    // came to the page to discover.
+    expect(healthVerdict({ successRate: 1, coverage: { readCalls: 1176, recordsFound: 15, recordsPerCall: 15 / 1176 } })).toEqual({
+      verdict: 'unhealthy',
+      driver: 'coverage',
+    });
+  });
+
+  it('grades thin-but-present coverage as degraded, not unhealthy', () => {
+    expect(healthVerdict({ successRate: 1, coverage: { readCalls: 100, recordsFound: 60, recordsPerCall: 0.6 } })).toEqual({
+      verdict: 'degraded',
+      driver: 'coverage',
+    });
+  });
+
+  it('falls back to reliability alone when there is no coverage to weigh', () => {
+    expect(healthVerdict({ successRate: 1, coverage: null })).toEqual({
+      verdict: 'healthy',
+      driver: 'reliability',
+    });
+  });
+
+  it('breaks a tie toward reliability', () => {
+    expect(healthVerdict({ successRate: 1, coverage: { readCalls: 10, recordsFound: 10, recordsPerCall: 1 } })).toEqual({
+      verdict: 'healthy',
+      driver: 'reliability',
+    });
+  });
 });
 
 describe('excludeDashboardReads', () => {
@@ -224,6 +301,15 @@ describe('healthTrend', () => {
   it('returns null when the previous window had no calls', () => {
     const current = [row({ outcome: 'ok', event_count: 50 })];
     expect(healthTrend(current, [])).toBeNull();
+  });
+
+  it('returns null when the previous window is too small to compare against', () => {
+    // One prior call vs. a thousand renders "+99,900%" — arithmetically correct
+    // and pure noise. MIN_TREND_CALLS is 20.
+    const current = [row({ outcome: 'ok', event_count: 1000 })];
+    expect(healthTrend(current, [row({ outcome: 'ok', event_count: 1 })])).toBeNull();
+    expect(healthTrend(current, [row({ outcome: 'ok', event_count: 19 })])).toBeNull();
+    expect(healthTrend(current, [row({ outcome: 'ok', event_count: 20 })])).not.toBeNull();
   });
 
   it('computes call-volume % change and a percentage-point success-rate delta', () => {

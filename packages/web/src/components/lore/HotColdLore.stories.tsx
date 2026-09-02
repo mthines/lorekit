@@ -39,7 +39,9 @@ function handlerFor(direction: 'hot' | 'cold', entries: ReadRankingEntry[]) {
 const meta: Meta<typeof HotColdLore> = {
   title: 'Lore/HotColdLore',
   component: HotColdLore,
-  parameters: { layout: 'padded' },
+  // `appDirectory`: each row is a `next/link` into the Explorer, which needs
+  // the App Router context.
+  parameters: { layout: 'padded', nextjs: { appDirectory: true } },
   decorators: [
     withFrozenClock(FROZEN_NOW),
     withQueryClient,

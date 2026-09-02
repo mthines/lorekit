@@ -192,6 +192,52 @@ export function coverageGapsByScopeType(rows: readonly UsageStatRow[]): Coverage
 
 // ── At-a-glance summary ──────────────────────────────────────────────────────
 
+/**
+ * Tools whose calls can return memory records, so a records-per-call ratio is
+ * a meaningful question to ask of them.
+ *
+ * Deliberately NOT every tool: `memory.write`/`memory.archive`/`org.*` carry
+ * `record_count: 0` by construction, so folding them in would make a
+ * write-heavy window look like a coverage failure. This is the one place the
+ * distinction matters — `coverageGapsByScopeType` groups by scope rather than
+ * by tool and predates the ratio being read as a headline, so it is left as it
+ * is (a per-scope-type diagnostic, read next to its own tooltip).
+ */
+const RECORD_BEARING_TOOLS = new Set(['memory.list', 'memory.read', 'memory.search']);
+
+export interface ReadCoverage {
+  /** Calls to a {@link RECORD_BEARING_TOOLS} tool in the window. */
+  readCalls: number;
+  recordsFound: number;
+  /** `recordsFound ÷ readCalls`. Never `NaN` — see {@link readCoverage}, which returns `null` instead. */
+  recordsPerCall: number;
+}
+
+/**
+ * How much lore the agents actually GOT, not just whether the call returned
+ * 200 — "asked 1,176 times, found 15 records" is the question this page exists
+ * to answer, and no `outcome` value expresses it: the vocabulary is
+ * `ok | cap_exceeded | rate_limited | permission_denied | error`, all of which
+ * describe the transport or the authorization, none of which describe an agent
+ * asking for lore and getting nothing back. A successful read of an empty
+ * scope is `ok`.
+ *
+ * `null` when the window contains no record-bearing calls at all — a
+ * write-only window has no coverage to report, and `0 / 0` presented as "0
+ * records per read" would read as a failure rather than as an absence.
+ */
+export function readCoverage(rows: readonly UsageStatRow[]): ReadCoverage | null {
+  let readCalls = 0;
+  let recordsFound = 0;
+  for (const row of rows) {
+    if (!RECORD_BEARING_TOOLS.has(row.tool_name)) continue;
+    readCalls += row.event_count;
+    recordsFound += row.record_count;
+  }
+  if (readCalls === 0) return null;
+  return { readCalls, recordsFound, recordsPerCall: recordsFound / readCalls };
+}
+
 /** Named `HealthSummaryStats`, not `HealthSummary`, to avoid colliding with the `HealthSummary` React component (`dashboard/HealthSummary.tsx`) that consumes it. */
 export interface HealthSummaryStats {
   totalCalls: number;
@@ -199,6 +245,8 @@ export interface HealthSummaryStats {
   successRate: number;
   /** The single most frequent failure in the window, or `null` when nothing failed. */
   topFailure: FailureRow | null;
+  /** How much lore the reads actually found — `null` when the window has no record-bearing calls. */
+  coverage: ReadCoverage | null;
 }
 
 /** Sum `event_count`/`ok`-outcome share directly from rows — see {@link summarizeHealth}. */
@@ -228,7 +276,69 @@ function totalsFromRows(rows: readonly UsageStatRow[]): { totalCalls: number; su
  */
 export function summarizeHealth(rows: readonly UsageStatRow[], failures: readonly FailureRow[]): HealthSummaryStats {
   const { totalCalls, successRate } = totalsFromRows(rows);
-  return { totalCalls, successRate, topFailure: failures[0] ?? null };
+  return { totalCalls, successRate, topFailure: failures[0] ?? null, coverage: readCoverage(rows) };
+}
+
+// ── Verdict ──────────────────────────────────────────────────────────────────
+
+export type Verdict = 'healthy' | 'degraded' | 'unhealthy';
+
+/** Which dimension the verdict is actually reporting on — so the banner can say. */
+export type VerdictDriver = 'reliability' | 'coverage';
+
+/** At or above this success rate, calls are reliable enough to read as healthy. */
+const HEALTHY_SUCCESS_RATE = 0.99;
+/** Below {@link HEALTHY_SUCCESS_RATE} but at or above this, reliability is a caution rather than a problem. */
+const DEGRADED_SUCCESS_RATE = 0.95;
+/** At or above this many records per read, agents are finding the lore they ask for. Same 1-record-per-call line `UsageHealth`'s coverage panel draws. */
+const HEALTHY_RECORDS_PER_CALL = 1;
+/** Below {@link HEALTHY_RECORDS_PER_CALL} but at or above this, coverage is thin rather than absent. */
+const DEGRADED_RECORDS_PER_CALL = 0.5;
+
+const VERDICT_RANK: Record<Verdict, number> = { healthy: 0, degraded: 1, unhealthy: 2 };
+
+function reliabilityVerdict(successRate: number): Verdict {
+  if (successRate >= HEALTHY_SUCCESS_RATE) return 'healthy';
+  if (successRate >= DEGRADED_SUCCESS_RATE) return 'degraded';
+  return 'unhealthy';
+}
+
+function coverageVerdict(recordsPerCall: number): Verdict {
+  if (recordsPerCall >= HEALTHY_RECORDS_PER_CALL) return 'healthy';
+  if (recordsPerCall >= DEGRADED_RECORDS_PER_CALL) return 'degraded';
+  return 'unhealthy';
+}
+
+export interface HealthVerdict {
+  verdict: Verdict;
+  /** The dimension responsible for {@link verdict} — the banner names it so a red badge is never unexplained. */
+  driver: VerdictDriver;
+}
+
+/**
+ * The verdict weighs RELIABILITY (did the calls succeed) against COVERAGE (did
+ * the reads find anything), and reports the WORSE of the two.
+ *
+ * Reliability alone was the original headline and it is very nearly a
+ * constant: LoreKit's own API is stable, and the `outcome` vocabulary contains
+ * no "found nothing" state, so a healthy account read "100% of calls
+ * succeeded" every single day. A headline that cannot vary carries no
+ * information while occupying the largest, first slot on the page — and the
+ * signal a reader actually came for (agents asking a scope for lore that is
+ * not there) was a 10px row three columns into the section below.
+ *
+ * Ties go to `reliability` as the driver, so a healthy verdict names the
+ * dimension a reader is most likely to already understand. A window with no
+ * record-bearing calls has no coverage to weigh (`coverage: null`) and falls
+ * back to reliability alone rather than inventing a zero.
+ */
+export function healthVerdict(stats: Pick<HealthSummaryStats, 'successRate' | 'coverage'>): HealthVerdict {
+  const reliability = reliabilityVerdict(stats.successRate);
+  if (stats.coverage === null) return { verdict: reliability, driver: 'reliability' };
+  const coverage = coverageVerdict(stats.coverage.recordsPerCall);
+  return VERDICT_RANK[coverage] > VERDICT_RANK[reliability]
+    ? { verdict: coverage, driver: 'coverage' }
+    : { verdict: reliability, driver: 'reliability' };
 }
 
 export interface HealthTrend {
@@ -239,21 +349,38 @@ export interface HealthTrend {
 }
 
 /**
+ * The smallest previous-window call count a period-over-period comparison is
+ * reported for.
+ *
+ * Guarding only against zero left the chip firing off a baseline of ONE call:
+ * a previous window with a single successful call and a current window with a
+ * thousand at 99% renders "+99,900%" and "−1pp", both arithmetically correct
+ * and both noise. This module is otherwise scrupulous about exactly that class
+ * of overclaim — `read_count: 0` is never rendered as "never read", the
+ * latency figure is labelled a mean rather than implied to be a p95 — so the
+ * chip is held to the same standard. Well under a day of normal agent traffic,
+ * so a real comparison is not suppressed.
+ */
+const MIN_TREND_CALLS = 20;
+
+/**
  * Compare a window's totals against the immediately preceding equal-length
  * window — "is my agent reading better this week than last" as a number
  * instead of a reader having to flip the range picker back and forth and
  * remember what the banner said.
  *
- * `null` when the previous window had no calls at all: a % change against
- * zero is either a fabricated "+100%" or a divide-by-zero, and a young scope's
- * first busy week deserves neither — there is nothing to compare against yet.
+ * `null` when the previous window carries fewer than {@link MIN_TREND_CALLS}
+ * calls: a % change against zero is either a fabricated "+100%" or a
+ * divide-by-zero, and a change against a handful is a percentage dressed up as
+ * a signal. A young scope's first busy week deserves neither — there is
+ * nothing meaningful to compare against yet.
  */
 export function healthTrend(
   currentRows: readonly UsageStatRow[],
   previousRows: readonly UsageStatRow[],
 ): HealthTrend | null {
   const previous = totalsFromRows(previousRows);
-  if (previous.totalCalls === 0) return null;
+  if (previous.totalCalls < MIN_TREND_CALLS) return null;
   const current = totalsFromRows(currentRows);
   return {
     totalCallsChangePct: pctChange(current.totalCalls, previous.totalCalls),
