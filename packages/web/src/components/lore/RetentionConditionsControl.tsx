@@ -30,7 +30,7 @@ import {
   hasRetentionConditions,
   parseCondition,
   RETENTION_CONDITION_BOUNDS,
-  RETENTION_CONDITION_PLACEHOLDERS,
+  retentionConditionPlaceholder,
   retentionConditionsCount,
   retentionConditionsPhrase,
   type RetentionConditions,
@@ -94,6 +94,12 @@ export function RetentionConditionsTrigger({
  * identical vocabulary. The older labels ("Minimum age", "Not seen in", "Seen
  * at most") named the CONDITION rather than the DATA, which left no way to
  * tell whether a given lesson genuinely matched.
+ *
+ * A blank field is NOT a set one, and the panel has to make that obvious in
+ * two places, because it previously did in neither: the placeholders are
+ * `e.g. N` rather than a bare `N` (which reads as a value in a number input),
+ * and the summary line names the conditions actually in force instead of
+ * saying "these conditions". Fill one field of three and the sentence says so.
  */
 export function RetentionConditionsPanel({
   conditions,
@@ -153,7 +159,7 @@ export function RetentionConditionsPanel({
             id={minAgeId}
             type="number"
             min={1}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.minAgeDays)}
+            placeholder={retentionConditionPlaceholder('minAgeDays')}
             className={INPUT_CLASS}
             value={conditions.minAgeDays ?? ''}
             onChange={(e) => setField('minAgeDays', e.target.value)}
@@ -166,7 +172,7 @@ export function RetentionConditionsPanel({
             id={unseenId}
             type="number"
             min={1}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.unseenDays)}
+            placeholder={retentionConditionPlaceholder('unseenDays')}
             className={INPUT_CLASS}
             value={conditions.unseenDays ?? ''}
             onChange={(e) => setField('unseenDays', e.target.value)}
@@ -183,7 +189,7 @@ export function RetentionConditionsPanel({
             id={maxSeenId}
             type="number"
             min={0}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.maxSeenCount)}
+            placeholder={retentionConditionPlaceholder('maxSeenCount')}
             className={INPUT_CLASS}
             value={conditions.maxSeenCount ?? ''}
             onChange={(e) => setField('maxSeenCount', e.target.value)}
@@ -215,13 +221,18 @@ export function RetentionConditionsPanel({
         </div>
       </div>
 
+      {/* Name the conditions actually in force rather than saying "these
+          conditions": a blank field looks filled-in (its placeholder is a
+          plausible number), so two of three left blank read as all three being
+          applied and the resulting list looked wrong. Reading the phrase back
+          is what makes the mismatch visible. */}
       {active && (
         <p className={CAPTION_CLASS}>
-          {conditionsActive && filterCount > 0
-            ? `Showing lessons these conditions and ${filterCount} filter${filterCount === 1 ? '' : 's'} would catch.`
-            : filterCount > 0
-              ? `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`
-              : 'Showing lessons a retention policy with these conditions would catch.'}
+          {conditionsActive
+            ? `Showing lessons a retention policy matching ${retentionConditionsPhrase(conditions)}${
+                filterCount > 0 ? ` and your ${filterCount} filter${filterCount === 1 ? '' : 's'}` : ''
+              } would catch.`
+            : `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`}
         </p>
       )}
     </div>

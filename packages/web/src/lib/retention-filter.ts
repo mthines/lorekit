@@ -55,12 +55,29 @@ export const NO_RETENTION_CONDITIONS: RetentionConditions = {};
  * type rather than an unlabelled blank box: a week-old lesson nobody has
  * opened in three months and has recurred at most once is the shape of lore
  * this feature is typically built to catch.
+ *
+ * Render them through {@link retentionConditionPlaceholder}, never as a bare
+ * number — see that function for why.
  */
 export const RETENTION_CONDITION_PLACEHOLDERS = {
   minAgeDays: 7,
   unseenDays: 90,
   maxSeenCount: 1,
 } as const;
+
+/**
+ * The placeholder TEXT for one condition input — `e.g. 7`, never a bare `7`.
+ *
+ * A bare number in a number input is indistinguishable from a typed value at a
+ * glance: the only difference is the placeholder's tertiary text colour, which
+ * on a phone reads as "a value, slightly dimmer". Two of these fields left
+ * blank alongside one that was filled in were reported as all three being
+ * active, and the resulting list looked like the filter was broken. `e.g. `
+ * cannot be misread as a value, and still shows the reader what to type.
+ */
+export function retentionConditionPlaceholder(field: keyof RetentionConditions): string {
+  return `e.g. ${RETENTION_CONDITION_PLACEHOLDERS[field]}`;
+}
 
 /**
  * Parse one field: an in-bounds integer, or `undefined` for anything else — never `NaN`

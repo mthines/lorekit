@@ -8,6 +8,7 @@ import {
   groomConditionsToFilters,
   hasRetentionConditions,
   normalizeRetentionConditions,
+  retentionConditionPlaceholder,
   retentionConditionsCount,
   retentionConditionsParamValue,
   retentionConditionsPhrase,
@@ -182,5 +183,22 @@ describe('retentionConditionsPhrase', () => {
 
   it('falls back to the control label when nothing is set', () => {
     expect(retentionConditionsPhrase({})).toBe('Age & activity');
+  });
+});
+
+describe('retentionConditionPlaceholder', () => {
+  // A bare number in a number input is indistinguishable from a typed value —
+  // the whole reason two blank fields were read as active ones. The `e.g. `
+  // prefix is the fix, so assert it rather than just the example number.
+  it('prefixes the example so it cannot be misread as a set value', () => {
+    expect(retentionConditionPlaceholder('minAgeDays')).toBe('e.g. 7');
+    expect(retentionConditionPlaceholder('unseenDays')).toBe('e.g. 90');
+    expect(retentionConditionPlaceholder('maxSeenCount')).toBe('e.g. 1');
+  });
+
+  it('is never a bare number for any condition', () => {
+    for (const field of ['minAgeDays', 'unseenDays', 'maxSeenCount'] as const) {
+      expect(retentionConditionPlaceholder(field)).toMatch(/^e\.g\. \d+$/);
+    }
   });
 });

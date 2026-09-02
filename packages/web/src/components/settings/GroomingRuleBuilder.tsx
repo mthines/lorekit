@@ -51,7 +51,7 @@ import {
 } from '@/lib/queries/groom';
 // Shared with the Explorer's retention-preview control (`lib/retention-filter.ts`)
 // so the same example numbers appear wherever these three fields do.
-import { RETENTION_CONDITION_PLACEHOLDERS, filtersToGroomDimensionFilters, groomConditionsToFilters } from '@/lib/retention-filter';
+import { retentionConditionPlaceholder, filtersToGroomDimensionFilters, groomConditionsToFilters } from '@/lib/retention-filter';
 import {
   filtersPhrase,
   normalizeFilters,
@@ -475,7 +475,7 @@ function PolicyForm({
             id={minAgeId}
             type="number"
             min={1}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.minAgeDays)}
+            placeholder={retentionConditionPlaceholder('minAgeDays')}
             className={INPUT_CLASS}
             value={conditions.minAgeDays}
             onChange={(e) => setConditions((c) => ({ ...c, minAgeDays: e.target.value }))}
@@ -488,7 +488,7 @@ function PolicyForm({
             id={unseenId}
             type="number"
             min={1}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.unseenDays)}
+            placeholder={retentionConditionPlaceholder('unseenDays')}
             className={INPUT_CLASS}
             value={conditions.unseenDays}
             onChange={(e) => setConditions((c) => ({ ...c, unseenDays: e.target.value }))}
@@ -501,7 +501,7 @@ function PolicyForm({
             id={maxSeenId}
             type="number"
             min={0}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.maxSeenCount)}
+            placeholder={retentionConditionPlaceholder('maxSeenCount')}
             className={INPUT_CLASS}
             value={conditions.maxSeenCount}
             onChange={(e) => setConditions((c) => ({ ...c, maxSeenCount: e.target.value }))}
