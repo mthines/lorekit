@@ -181,7 +181,10 @@ function RunRow({
         {/* The stats that used to be visible only after expanding — enough to
             tell an interesting run (lots of writes, many scopes) from a boring
             one (a handful of reads) without opening it. */}
-        <div className="ml-7 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-[var(--color-content-tertiary)]">
+        <div
+          className="ml-7 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-[var(--color-content-tertiary)]"
+          aria-hidden
+        >
           <span>{run.read_events.toLocaleString()} reads</span>
           <span>{run.records_read.toLocaleString()} records</span>
           <span>{run.write_events.toLocaleString()} writes</span>
