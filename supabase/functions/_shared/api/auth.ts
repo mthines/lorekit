@@ -77,15 +77,15 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     // the filter here is the token hash — the stored credential. The query
     // therefore runs on the raw client and only the timing is spanned, same as
     // the MCP counterpart.
-    const lookupSpan = span.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
+    const lookupSpan = span.child('SELECT user_id,permissions,scopes,org_access,org_ids,expires_at FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',
       'db.collection.name': 'api_tokens',
     }, SPAN_KIND_CLIENT);
-    let data: { user_id: string; permissions: string[] | null; scopes?: unknown; org_access?: unknown; org_ids?: unknown } | null = null;
+    let data: { user_id: string; permissions: string[] | null; scopes?: unknown; org_access?: unknown; org_ids?: unknown; expires_at?: string | null } | null = null;
     let success = false;
     try {
-      const result = await db.from('api_tokens').select('user_id,permissions,scopes,org_access,org_ids').eq('token_hash', hash).maybeSingle();
+      const result = await db.from('api_tokens').select('user_id,permissions,scopes,org_access,org_ids,expires_at').eq('token_hash', hash).maybeSingle();
       data = result.data;
       success = !result.error;
       if (result.error) {
@@ -105,6 +105,16 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
       }).end();
     }
     if (!data) { span.clientError('invalid_api_key').end(); return null; }
+    // OAuth-issued tokens expire (00095_oauth.sql). `mcp/auth.ts` already rejects
+    // them at the instant they expire rather than leaving it to the nightly
+    // sweeper; this surface must not be the softer of the two, or an expired
+    // credential keeps working over REST after MCP has stopped accepting it.
+    // Personal dashboard tokens carry a NULL `expires_at` and are unaffected.
+    const expiresAt = data.expires_at ?? null;
+    if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
+      span.clientError('expired_api_key').end();
+      return null;
+    }
     span.setAttributes({ 'auth.type': 'api_key', 'auth.outcome': 'ok', 'auth.user_id': data.user_id }).end();
     return {
       auth: {

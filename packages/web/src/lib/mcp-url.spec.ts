@@ -42,10 +42,33 @@ describe('resolveMcpUrls', () => {
     expect(resolveMcpUrls().mcpUrl).toBe(FALLBACK);
   });
 
-  it('strips both the https:// prefix and the .supabase.co suffix to isolate the ref', () => {
-    // A bare ref (no scheme, no suffix) leaves nothing to strip, so it is used
-    // verbatim as the project ref — proving the derivation is a plain replace.
+  it('expands a bare project ref into the hosted Supabase URL', () => {
+    // Not the documented form of the env var, but it has always been accepted
+    // here — falling back to production instead would silently point a
+    // self-hosted deployment at someone else's server.
     process.env[KEY] = 'myref';
     expect(resolveMcpUrls().mcpUrl).toBe('https://myref.supabase.co/functions/v1/mcp');
+  });
+
+  it('keeps a non-supabase.co origin verbatim (local dev, self-hosted)', () => {
+    // The old ref-splitting turned this into
+    // https://http://127.0.0.1:54321.supabase.co/functions/v1/mcp — harmless
+    // while it only fed a copy-paste onboarding snippet, wrong now that the
+    // OAuth protected-resource document names this URL as its `resource` and
+    // clients compare it against the server they are talking to.
+    process.env[KEY] = 'http://127.0.0.1:54321';
+    expect(resolveMcpUrls().mcpUrl).toBe('http://127.0.0.1:54321/functions/v1/mcp');
+  });
+
+  it('drops any path on the configured Supabase URL', () => {
+    process.env[KEY] = 'https://abcdefghijklmnop.supabase.co/rest/v1';
+    expect(resolveMcpUrls().mcpUrl).toBe(
+      'https://abcdefghijklmnop.supabase.co/functions/v1/mcp',
+    );
+  });
+
+  it('falls back to production for input that is neither a URL nor a ref', () => {
+    process.env[KEY] = 'not a url!!';
+    expect(resolveMcpUrls().mcpUrl).toBe(FALLBACK);
   });
 });

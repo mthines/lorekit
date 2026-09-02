@@ -16,8 +16,11 @@ export type Database = {
     Tables: {
       api_tokens: {
         Row: {
+          client_id: string | null
           created_at: string
+          expires_at: string | null
           id: string
+          kind: string
           last_used_at: string | null
           name: string
           org_access: string
@@ -29,8 +32,11 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          client_id?: string | null
           created_at?: string
+          expires_at?: string | null
           id?: string
+          kind?: string
           last_used_at?: string | null
           name: string
           org_access?: string
@@ -42,8 +48,11 @@ export type Database = {
           user_id: string
         }
         Update: {
+          client_id?: string | null
           created_at?: string
+          expires_at?: string | null
           id?: string
+          kind?: string
           last_used_at?: string | null
           name?: string
           org_access?: string
@@ -54,7 +63,15 @@ export type Database = {
           token_prefix?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "api_tokens_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "oauth_clients"
+            referencedColumns: ["client_id"]
+          },
+        ]
       }
       blog_post_likes: {
         Row: {
@@ -71,6 +88,92 @@ export type Database = {
           likes?: number
           slug?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      oauth_authorization_codes: {
+        Row: {
+          client_id: string
+          code_challenge: string
+          code_challenge_method: string
+          code_hash: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          org_ids: string[]
+          permissions: string[]
+          redirect_uri: string
+          scope: string | null
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          code_challenge: string
+          code_challenge_method?: string
+          code_hash: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          org_ids?: string[]
+          permissions?: string[]
+          redirect_uri: string
+          scope?: string | null
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          code_challenge?: string
+          code_challenge_method?: string
+          code_hash?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          org_ids?: string[]
+          permissions?: string[]
+          redirect_uri?: string
+          scope?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "oauth_authorization_codes_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "oauth_clients"
+            referencedColumns: ["client_id"]
+          },
+        ]
+      }
+      oauth_clients: {
+        Row: {
+          client_id: string
+          client_name: string
+          created_at: string
+          created_by: string | null
+          grant_types: string[]
+          last_used_at: string | null
+          redirect_uris: string[]
+          token_endpoint_auth_method: string
+        }
+        Insert: {
+          client_id: string
+          client_name: string
+          created_at?: string
+          created_by?: string | null
+          grant_types?: string[]
+          last_used_at?: string | null
+          redirect_uris: string[]
+          token_endpoint_auth_method?: string
+        }
+        Update: {
+          client_id?: string
+          client_name?: string
+          created_at?: string
+          created_by?: string | null
+          grant_types?: string[]
+          last_used_at?: string | null
+          redirect_uris?: string[]
+          token_endpoint_auth_method?: string
         }
         Relationships: []
       }

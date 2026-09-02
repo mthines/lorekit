@@ -124,6 +124,16 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // `api/oauth` and `.well-known` are excluded deliberately. Every other
+    // request benefits from the Supabase session refresh above, but these are
+    // reached by an MCP client PROCESS, not a browser: there is no session
+    // cookie to refresh, so `getUser()` is a guaranteed-useless round trip on
+    // the latency-sensitive token exchange, and the CORS preflight branch above
+    // would answer OPTIONS with a narrower `Access-Control-Allow-Methods` than
+    // those routes declare for themselves.
+    //
+    // The consent screen at `/oauth/authorize` is NOT excluded — that one IS a
+    // browser navigation and needs the session.
+    '/((?!_next/static|_next/image|favicon.ico|api/oauth|\\.well-known|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

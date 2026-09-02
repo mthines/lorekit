@@ -29,7 +29,10 @@ export interface AuthContext {
   /** api_key only: ['read'], ['write'], or ['read', 'write'] */
   permissions?: string[];
   /**
-   * api_key only: the key's scope/org restriction (migration 00068).
+   * api_key only: the key's scope/org restriction (migration 00068), which an
+   * OAuth-issued token (00055) populates the same way a scoped dashboard token
+   * does — the consent screen's per-org checkboxes map onto `org_access` +
+   * `org_ids`, never a second scoping mechanism.
    *
    * Absent for every other tier, and absent is NOT "restricted to nothing" — a
    * JWT or service-role caller has no key to restrict. `keyRestriction(auth)`
@@ -173,7 +176,7 @@ async function resolveAuthTiers(
     // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
     // and the filter here is the token hash — the stored credential. The query
     // therefore runs on the raw client and only the timing is spanned.
-    const lookupSpan = authSpan?.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
+    const lookupSpan = authSpan?.child('SELECT user_id,permissions,scopes,org_access,org_ids,expires_at FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',
       'db.collection.name': 'api_tokens',
@@ -198,7 +201,7 @@ async function resolveAuthTiers(
     try {
       const result = await serviceDb
         .from('api_tokens')
-        .select('user_id, permissions, scopes, org_access, org_ids')
+        .select('user_id, permissions, scopes, org_access, org_ids, expires_at')
         .eq('token_hash', hash)
         .maybeSingle();
       data = result.data;
@@ -224,6 +227,15 @@ async function resolveAuthTiers(
     }
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
+      return null;
+    }
+    // OAuth-issued tokens expire (00095_oauth.sql). Checked here rather than
+    // left to the nightly sweeper so an expired credential stops working at
+    // the instant it expires, not whenever housekeeping next runs. Personal
+    // dashboard tokens have a NULL expires_at and are unaffected.
+    const expiresAt = data.expires_at as string | null;
+    if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
+      span?.setAttributes({ 'auth.outcome': 'api_key_expired', 'auth.type': 'api_key' });
       return null;
     }
     // Best-effort last_used_at bump — don't block the response on it, but hand

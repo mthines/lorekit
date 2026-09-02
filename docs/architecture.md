@@ -110,7 +110,9 @@ Authorization: Bearer <token>
        │
        ├─ token starts with "lk_"?
        │    → look up SHA-256(token) in api_tokens table
+       │    → reject if expires_at has passed (OAuth-issued tokens only)
        │    → returns user_id + permissions (read | write | read+write)
+       │      + org_ids (the OAuth consent allow-list, or null = unrestricted)
        │    → service-role DB client + explicit user_id filter on every query
        │
        └─ else: validate as Supabase JWT via auth.getUser()
@@ -118,6 +120,51 @@ Authorization: Bearer <token>
 ```
 
 **Key security invariant:** API key auth uses the service-role client (bypasses RLS), so **every read is tenant-scoped in app code** — to the caller's own `user_id` **or** an org they belong to — through the single `applyTenantScope` predicate ([Organizations](#organizations)). A user can never read another user's personal memories, or an org's memories unless they're a member.
+
+### Where an `lk_*` token comes from
+
+Two paths, one credential type:
+
+- **Dashboard** → Settings → API keys. Never expires, no org restriction.
+- **OAuth 2.1 authorization code + PKCE** — the flow behind an MCP client's
+  "Authorize" button. Expires after 30 days and carries the org allow-list the
+  user chose on the consent screen.
+
+The **resource** server is the MCP Edge Function: on a request with *no*
+credential it answers `401` + `WWW-Authenticate: Bearer resource_metadata="…"`.
+A request carrying a bad token still gets an in-band JSON-RPC error at HTTP
+200 — a `401` there makes streamable-HTTP clients retry silently and hang.
+
+Everything else — **both** discovery documents and every endpoint — is served
+by the Next.js dashboard (`lorekit.io`):
+
+| Document / endpoint | Spec |
+|---|---|
+| `/.well-known/oauth-protected-resource` | RFC 9728 |
+| `/.well-known/oauth-authorization-server` | RFC 8414 |
+| `/api/oauth/register` | RFC 7591 dynamic client registration |
+| `/oauth/authorize` | consent screen |
+| `/api/oauth/token` | RFC 6749 §4.1.3 + PKCE |
+| `/api/oauth/revoke` | RFC 7009 |
+
+The protected-resource document describes the MCP endpoint but is *served*
+here: RFC 9728 §3.1 lets the challenge carry an absolute metadata URL, so
+co-location is not required, and one owner beats a pure module mirrored
+verbatim into the self-contained Deno tree for the sake of two string
+constants. The edge function still answers that path — with a `308` here — for
+a client that derives the URL from the resource identifier rather than reading
+the header. The three strings that span the split (issuer, metadata URL,
+challenge shape) are source-scanned by
+`packages/mcp-core/src/oauth-discovery.spec.ts`.
+
+The authorization server lives in the dashboard because it needs the
+Supabase-Auth session, the user's org list, and the `api_tokens` write path —
+all of which already exist in `packages/web`.
+
+`api_tokens.org_ids` is **narrowing only**: it is intersected with
+`lorekit_member_org_ids` (via `intersectTokenOrgIds` / `tokenAllowsOrgId` in
+`tenant-scope.ts`), never substituted for it, so a token can never reach an org
+its holder has left. Tables and columns: `supabase/migrations/00095_oauth.sql`.
 
 ---
 
