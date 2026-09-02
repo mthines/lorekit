@@ -25,15 +25,24 @@
  * - `content.scroll_depth`             — a reader crossed 25/50/75/100 % of an article.
  * - `content.section_read`             — a reader left a section, after dwelling in it.
  * - `content.read`                     — end-of-page-view reading summary (one per view).
+ * - `ui.button_click`                  — a primitive Button/IconButton carrying an
+ *                                        `analyticsId` was clicked (the id is the
+ *                                        static developer-authored slug, plus the
+ *                                        visual variant/size).
  *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
  * ids embed `scope::key` (user content + unbounded cardinality). `normalizeCommandId`
  * buckets those to `lore-lesson`, and we NEVER send a command's label or
- * description (lesson keys/scopes are user content). Attribute names use the
- * project's `lorekit.*` namespace, mirroring packages/mcp-core/src/telemetry/telemetry.ts.
+ * description (lesson keys/scopes are user content). The same discipline applies to
+ * `ui.button_click`: `buttonId` is a STATIC, developer-authored `<surface>.<action>`
+ * slug (bounded, like `commandId`'s static ids) — never a label, never user content,
+ * never an interpolated/template string. Attribute names use the project's
+ * `lorekit.*` namespace, mirroring packages/mcp-core/src/telemetry/telemetry.ts.
  */
 import { sendEvent } from '@dash0/sdk-web';
+
+import type { ButtonSize, ButtonVariant } from '@/lib/button-styles';
 
 import { dwellBucket, type ContentType, type ScrollMilestone } from './reading';
 
@@ -108,6 +117,20 @@ export type AnalyticsEvent =
       /** The section that held them longest, when any section did. */
       topSectionId?: string;
       completed: boolean;
+    }
+  | {
+      name: 'ui.button_click';
+      /**
+       * A STATIC `<surface>.<action>` slug authored at the call site (e.g.
+       * `invite.accept`). Bounded and developer-controlled — never a label,
+       * user content, or an interpolated string. Enforced by
+       * `components/ui/analytics-id-literals.spec.ts`.
+       */
+      buttonId: string;
+      /** The button's visual variant, when set — a bounded enum. */
+      variant?: ButtonVariant;
+      /** The button's size, when set — a bounded enum. */
+      size?: ButtonSize;
     };
 
 /**
@@ -179,6 +202,16 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
         'lorekit.content.completed': String(event.completed),
       };
       if (event.topSectionId) attrs['lorekit.content.top_section.id'] = event.topSectionId;
+      return attrs;
+    }
+    case 'ui.button_click': {
+      const attrs: Record<string, AttributeValue> = {
+        'lorekit.ui.button_id': event.buttonId,
+      };
+      // Variant/size are optional on the event; omit rather than ship an empty
+      // string that would sort ahead of every real value in a Dash0 group-by.
+      if (event.variant) attrs['lorekit.ui.button_variant'] = event.variant;
+      if (event.size) attrs['lorekit.ui.button_size'] = event.size;
       return attrs;
     }
   }
