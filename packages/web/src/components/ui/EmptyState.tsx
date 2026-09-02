@@ -28,7 +28,7 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
         <p className="text-xs text-[var(--color-content-tertiary)]">{description}</p>
       </div>
       {action && (
-        <Button variant="secondary" size="sm" onClick={action.onClick}>
+        <Button variant="secondary" size="sm" analyticsId="empty-state.action" onClick={action.onClick}>
           {action.label}
         </Button>
       )}

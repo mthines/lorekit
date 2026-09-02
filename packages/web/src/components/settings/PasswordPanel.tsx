@@ -165,6 +165,7 @@ export function PasswordPanel() {
         leftIcon={<KeyRound className="size-4 shrink-0" />}
         disabled={busy}
         aria-busy={busy}
+        analyticsId="password.update"
       >
         {busy ? 'Saving...' : 'Save password'}
       </Button>

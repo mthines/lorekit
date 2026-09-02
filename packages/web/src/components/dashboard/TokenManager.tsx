@@ -102,6 +102,7 @@ function NewTokenDisplay({
           <IconButton
             variant="ghost"
             size="sm"
+            analyticsId="token.reveal"
             onClick={() => setVisible((v) => !v)}
             label={visible ? 'Hide token' : 'Show token'}
             icon={visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -234,6 +235,7 @@ function GenerateForm({
           isLoading={pending}
           disabled={!name.trim() || incompleteOrgs}
           leftIcon={<Key className="size-4" />}
+          analyticsId="token.create-submit"
         >
           Generate token
         </Button>
@@ -369,12 +371,18 @@ function TokenRow({
           <Button
             variant="danger-outline"
             size="sm"
+            analyticsId="token.revoke-confirm"
             onClick={handleRevoke}
             isLoading={pending}
           >
             Yes
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
+          <Button
+            variant="outline"
+            size="sm"
+            analyticsId="token.revoke-cancel"
+            onClick={() => setConfirming(false)}
+          >
             Cancel
           </Button>
         </div>
@@ -384,6 +392,7 @@ function TokenRow({
             ref={editorToggleRef}
             variant="ghost"
             size="sm"
+            analyticsId="token.editor-toggle"
             onClick={() => (editing ? closeEditor(false) : openEditor())}
             {...editorTriggerProps}
             label={`Edit scoping for token ${token.name}`}
@@ -398,6 +407,7 @@ function TokenRow({
             // to is the one being replaced.
             variant="ghost"
             size="sm"
+            analyticsId="token.revoke-open"
             onClick={() => {
               if (editing) closeEditor(false);
               setConfirming(true);
@@ -442,13 +452,20 @@ function TokenRow({
               type="button"
               variant="primary"
               size="sm"
+              analyticsId="token.scoping-save"
               onClick={handleSaveScoping}
               isLoading={saving}
               disabled={draftIncomplete}
             >
               Save scoping
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => closeEditor(true)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              analyticsId="token.scoping-cancel"
+              onClick={() => closeEditor(true)}
+            >
               Cancel
             </Button>
           </div>
@@ -598,6 +615,7 @@ export function TokenManager({
           ref={formTriggerRef}
           variant="secondary"
           className="self-start"
+          analyticsId="token.form-toggle"
           onClick={() => (showForm ? closeForm(true) : setShowForm(true))}
           {...formTriggerProps}
           leftIcon={

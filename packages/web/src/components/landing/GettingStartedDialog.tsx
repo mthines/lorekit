@@ -758,6 +758,7 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
                 size="sm"
                 icon={<X className="size-4" />}
                 label="Close setup guide"
+                analyticsId="landing-getting-started.close"
                 onClick={onClose}
               />
             </div>

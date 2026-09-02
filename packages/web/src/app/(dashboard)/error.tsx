@@ -56,10 +56,15 @@ export default function DashboardError({ error, reset }: ErrorProps) {
 
       {/* Actions */}
       <div className="flex gap-2">
-        <Button variant="primary" leftIcon={<RotateCcw className="size-3.5" />} onClick={reset}>
+        <Button
+          variant="primary"
+          leftIcon={<RotateCcw className="size-3.5" />}
+          analyticsId="dashboard-error.retry"
+          onClick={reset}
+        >
           Retry
         </Button>
-        <Button variant="secondary" href="/overview">
+        <Button variant="secondary" href="/overview" analyticsId="dashboard-error.overview">
           Overview
         </Button>
       </div>

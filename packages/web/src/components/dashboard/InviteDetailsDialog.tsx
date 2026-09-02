@@ -191,6 +191,7 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
               <IconButton
                 ref={closeRef}
                 variant="ghost"
+                analyticsId="invite-details.close"
                 onClick={onClose}
                 label="Close invitation details"
                 icon={<X className="size-4" aria-hidden />}
@@ -262,11 +263,17 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
             )}
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => onDecline(invite)} disabled={pending}>
+              <Button
+                variant="outline"
+                analyticsId="invite-details.decline"
+                onClick={() => onDecline(invite)}
+                disabled={pending}
+              >
                 Decline
               </Button>
               <Button
                 variant="primary"
+                analyticsId="invite-details.accept"
                 onClick={() => onAccept(invite)}
                 disabled={pending || isExpired}
                 aria-describedby={isExpired ? 'invite-details-expired' : undefined}

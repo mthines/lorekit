@@ -113,7 +113,7 @@ export function WelcomeContent() {
         <p role="alert" className="text-sm text-red-400">
           {friendlyAuthError({ message: errorCode, code: errorCode })}
         </p>
-        <Button href="/login" variant="secondary" size="lg" fullWidth>
+        <Button href="/login" variant="secondary" size="lg" fullWidth analyticsId="welcome.go-to-sign-in">
           Go to sign in
         </Button>
       </div>
@@ -137,7 +137,13 @@ export function WelcomeContent() {
             Your email is confirmed and you&apos;re signed in.
           </p>
         </div>
-        <Button variant="primary" size="lg" fullWidth onClick={handleContinue}>
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          analyticsId="welcome.continue-dashboard"
+          onClick={handleContinue}
+        >
           Continue to your dashboard
         </Button>
       </div>
@@ -157,7 +163,7 @@ export function WelcomeContent() {
         Sign in with your email and password to continue. (If you opened this link on a different
         device from the one you signed up on, that&apos;s expected — you only need to confirm once.)
       </p>
-      <Button href="/login" variant="primary" size="lg" fullWidth>
+      <Button href="/login" variant="primary" size="lg" fullWidth analyticsId="welcome.continue-sign-in">
         Continue to sign in
       </Button>
     </div>

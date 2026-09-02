@@ -89,6 +89,7 @@ export function GithubAppTeaser({ hasWebhook }: GithubAppTeaserProps) {
         <IconButton
           variant="ghost"
           size="sm"
+          analyticsId="github-app-teaser.dismiss"
           onClick={handleDismiss}
           label="Dismiss GitHub App suggestion"
           tooltip="Dismiss"
@@ -116,6 +117,7 @@ export function GithubAppTeaser({ hasWebhook }: GithubAppTeaserProps) {
             variant="secondary"
             size="sm"
             className="group mt-3"
+            analyticsId="github-app-teaser.open-integrations"
             rightIcon={
               <ArrowRight
                 className="size-3 transition-transform duration-150 group-hover:translate-x-0.5"

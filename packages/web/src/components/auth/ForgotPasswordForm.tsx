@@ -93,7 +93,15 @@ export function ForgotPasswordForm() {
           {error}
         </p>
       )}
-      <Button type="submit" variant="secondary" size="lg" fullWidth disabled={busy} aria-busy={busy}>
+      <Button
+        type="submit"
+        variant="secondary"
+        size="lg"
+        fullWidth
+        disabled={busy}
+        aria-busy={busy}
+        analyticsId="forgot-password.submit"
+      >
         {busy ? 'Sending...' : 'Send reset link'}
       </Button>
       <Link

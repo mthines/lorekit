@@ -194,11 +194,18 @@ function CreateOrgForm({
           isLoading={pending}
           disabled={!name.trim() || !slug.trim()}
           leftIcon={<Plus className="size-4" />}
+          analyticsId="org.create-submit"
         >
           Create
         </Button>
         {onCancel && (
-          <Button type="button" variant="outline" size="md" onClick={onCancel}>
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            analyticsId="org.create-cancel"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
         )}
@@ -305,11 +312,18 @@ function InviteForm({
           size="md"
           isLoading={pending}
           leftIcon={<Plus className="size-4" />}
+          analyticsId="org.invite-submit"
         >
           Send invite
         </Button>
         {onCancel && (
-          <Button type="button" variant="outline" size="md" onClick={onCancel}>
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            analyticsId="org.invite-cancel"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
         )}
@@ -428,11 +442,18 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: B
           isLoading={pending}
           disabled={!scope.trim()}
           leftIcon={<Link className="size-4" aria-hidden />}
+          analyticsId="org.bind-scope-submit"
         >
           Bind scope
         </Button>
         {onCancel && (
-          <Button type="button" variant="outline" size="md" onClick={onCancel}>
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            analyticsId="org.bind-scope-cancel"
+            onClick={onCancel}
+          >
             Cancel
           </Button>
         )}
@@ -469,6 +490,7 @@ function DisclosureButton({ label, onClick }: { label: string; onClick: () => vo
       variant="secondary"
       size="md"
       className="self-start"
+      analyticsId="org.disclosure-toggle"
       onClick={onClick}
       leftIcon={<Plus className="size-4" aria-hidden />}
     >
@@ -502,6 +524,7 @@ function OrgListView({ orgs, showCreateForm, onShowCreateForm, onCreated, onSele
           type="button"
           variant="primary"
           size="md"
+          analyticsId="org.show-create-form-empty"
           onClick={() => onShowCreateForm(true)}
           leftIcon={<Plus className="size-4" aria-hidden />}
         >
@@ -520,6 +543,7 @@ function OrgListView({ orgs, showCreateForm, onShowCreateForm, onCreated, onSele
             type="button"
             variant="outline"
             size="sm"
+            analyticsId="org.show-create-form"
             onClick={() => onShowCreateForm(true)}
             leftIcon={<Plus className="size-3.5" aria-hidden />}
           >
@@ -911,6 +935,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                           type="button"
                           variant="ghost"
                           size="sm"
+                          analyticsId="org.member-remove"
                           onClick={() =>
                             setConfirm({ kind: 'remove', member, label: identity?.handle ?? displayName })
                           }
@@ -957,6 +982,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                         type="button"
                         variant="danger-outline"
                         size="sm"
+                        analyticsId="org.invite-revoke"
                         onClick={() => setConfirm({ kind: 'revoke', invite })}
                         aria-label={`Revoke invite for ${invite.invitee_handle ?? invite.invitee_email}`}
                       >
@@ -1014,6 +1040,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                         type="button"
                         variant="danger-outline"
                         size="sm"
+                        analyticsId="org.scope-unbind"
                         onClick={() => setConfirm({ kind: 'unbind', binding })}
                         aria-label={`Unbind scope ${binding.scope}`}
                         leftIcon={<Unlink className="size-3.5" aria-hidden />}
@@ -1055,6 +1082,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                 type="button"
                 variant="secondary"
                 size="md"
+                analyticsId="org.leave"
                 onClick={() => setConfirm({ kind: 'leave' })}
                 leftIcon={<LogOut className="size-4" aria-hidden />}
               >
@@ -1066,6 +1094,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                     type="button"
                     variant="secondary"
                     size="md"
+                    analyticsId="org.export-lore"
                     onClick={handleExportLore}
                     isLoading={pending}
                     leftIcon={<Download className="size-4" aria-hidden />}
@@ -1076,6 +1105,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                     type="button"
                     variant="danger-outline"
                     size="md"
+                    analyticsId="org.delete"
                     onClick={() => setConfirm({ kind: 'delete' })}
                     leftIcon={<Trash2 className="size-4" aria-hidden />}
                   >

@@ -90,6 +90,7 @@ export function DeveloperFlagsPanel({ rows }: { rows: readonly DeveloperFlagRow[
             size="sm"
             leftIcon={<RotateCcw className="size-3.5" />}
             disabled={isPending}
+            analyticsId="developer-flags.reset-all"
             onClick={resetAll}
           >
             Reset all

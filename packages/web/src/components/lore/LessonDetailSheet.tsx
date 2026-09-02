@@ -591,6 +591,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                 size="lg"
                 icon={<X className="size-4" />}
                 label="Close detail panel"
+                analyticsId="lesson-detail.close"
                 onClick={onClose}
               />
             </div>
@@ -921,6 +922,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                     leftIcon={isArchived ? <RotateCcw className="size-4" /> : <Archive className="size-4" />}
                     disabled={isPending || isSaving}
                     aria-busy={isPending}
+                    analyticsId="lesson-detail.archive-toggle"
                     onClick={handleArchive}
                   >
                     {isArchived ? (isPending ? 'Restoring…' : 'Restore') : isPending ? 'Archiving…' : 'Archive'}

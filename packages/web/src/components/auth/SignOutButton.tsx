@@ -26,6 +26,7 @@ export function SignOutButton() {
       icon={<LogOut className="size-4" />}
       label="Sign out"
       disabled={loading}
+      analyticsId="sign-out.button"
       onClick={handleSignOut}
     />
   );

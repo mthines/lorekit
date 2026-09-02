@@ -82,6 +82,7 @@ export function DuplicateClustersSidebar({
           <IconButton
             variant="ghost"
             size="sm"
+            analyticsId="duplicate-clusters.close"
             onClick={onClose}
             label="Hide duplicate clusters"
             icon={<X className="size-3.5" aria-hidden />}

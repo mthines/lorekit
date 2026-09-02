@@ -557,13 +557,20 @@ function PolicyForm({
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 pt-1">
-        <Button variant="outline" size="lg" disabled={!request || run.isPending} onClick={requestRun}>
+        <Button
+          variant="outline"
+          size="lg"
+          disabled={!request || run.isPending}
+          analyticsId="grooming.run-now"
+          onClick={requestRun}
+        >
           {run.isPending ? 'Running…' : 'Run now'}
         </Button>
         <Button
           variant="primary"
           size="lg"
           disabled={!request || !name.trim() || savePending}
+          analyticsId="grooming.save"
           onClick={() => void handleSave()}
         >
           {initialPolicy ? 'Save changes' : 'Save policy'}
@@ -645,12 +652,14 @@ function PolicyRow({
         variant="ghost"
         icon={<Pencil className="size-4" />}
         label={`Edit ${policy.name}`}
+        analyticsId="grooming.policy-edit"
         onClick={onEdit}
       />
       <IconButton
         variant="ghost"
         icon={<Trash2 className="size-4" />}
         label={`Delete ${policy.name}`}
+        analyticsId="grooming.policy-delete"
         onClick={onDelete}
       />
     </div>
@@ -738,6 +747,7 @@ export function GroomingRuleBuilder() {
           size="lg"
           className="shrink-0"
           leftIcon={<Plus className="size-4" />}
+          analyticsId="grooming.add-policy"
           onClick={openCreate}
         >
           Add policy
@@ -754,7 +764,13 @@ export function GroomingRuleBuilder() {
           <p className="max-w-sm text-sm text-[var(--color-content-secondary)]">
             Retention policies archive stale lore automatically, on your rules. Never a hard delete.
           </p>
-          <Button variant="primary" size="lg" leftIcon={<Plus className="size-4" />} onClick={openCreate}>
+          <Button
+            variant="primary"
+            size="lg"
+            leftIcon={<Plus className="size-4" />}
+            analyticsId="grooming.add-policy-empty"
+            onClick={openCreate}
+          >
             Add policy
           </Button>
         </div>

@@ -140,6 +140,7 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
           fullWidth
           leftIcon={<LogOut className="size-4 shrink-0" />}
           disabled={signOutLoading}
+          analyticsId="settings.sign-out"
           onClick={handleSignOut}
         >
           {signOutLoading ? 'Signing out...' : 'Sign out'}
@@ -152,6 +153,7 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
             size="lg"
             fullWidth
             leftIcon={<Trash2 className="size-4 shrink-0" />}
+            analyticsId="settings.delete-account"
             onClick={handleDeleteAccount}
           >
             Delete account
@@ -175,6 +177,7 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
                 variant="outline"
                 className="flex-1"
                 disabled={deleteStep === 'deleting'}
+                analyticsId="settings.delete-account-cancel"
                 onClick={() => { setDeleteStep('idle'); setDeleteError(''); }}
               >
                 Cancel
@@ -184,6 +187,7 @@ export function UserSettingsPanel({ user }: UserSettingsPanelProps) {
                 className="flex-1"
                 disabled={deleteStep === 'deleting'}
                 aria-busy={deleteStep === 'deleting'}
+                analyticsId="settings.delete-account-confirm"
                 onClick={handleDeleteAccount}
               >
                 {deleteStep === 'deleting' ? 'Deleting...' : 'Yes, delete everything'}
