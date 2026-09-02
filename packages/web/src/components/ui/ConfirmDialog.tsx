@@ -190,13 +190,7 @@ export function ConfirmDialog({
                 type="button"
                 variant={destructive ? 'danger' : 'primary'}
                 size="md"
-                // Forwarded via spread rather than a JSX attribute expression:
-                // the analytics-id-literals guard enforces STATIC string
-                // literals at every call site, so this wrapper passes the
-                // (always-literal) confirm slug through the object form Button
-                // itself uses. Do not inline this back to a JSX attribute — an
-                // attribute expression here would trip the guard.
-                {...{ analyticsId: confirmAnalyticsId }}
+                analyticsId={confirmAnalyticsId}
                 onClick={onConfirm}
                 disabled={pending || !phraseSatisfied}
               >

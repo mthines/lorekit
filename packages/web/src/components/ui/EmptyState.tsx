@@ -40,12 +40,7 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
         <Button
           variant="secondary"
           size="sm"
-          // Forwarded via spread rather than a JSX attribute expression: the
-          // analytics-id-literals guard enforces STATIC string literals at every
-          // call site, so this wrapper passes the (literal) caller value through
-          // the object form Button uses. Do not inline this back to a JSX
-          // attribute — an attribute expression here would trip the guard.
-          {...{ analyticsId: action.analyticsId ?? 'empty-state.action' }}
+          analyticsId={action.analyticsId ?? 'empty-state.action'}
           onClick={action.onClick}
         >
           {action.label}
