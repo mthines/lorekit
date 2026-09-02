@@ -192,7 +192,8 @@ export function coverageGapsByScopeType(rows: readonly UsageStatRow[]): Coverage
 
 // ── At-a-glance summary ──────────────────────────────────────────────────────
 
-export interface HealthSummary {
+/** Named `HealthSummaryStats`, not `HealthSummary`, to avoid colliding with the `HealthSummary` React component (`dashboard/HealthSummary.tsx`) that consumes it. */
+export interface HealthSummaryStats {
   totalCalls: number;
   /** `ok` calls ÷ total, in [0, 1]. `1` (not `NaN`) when there were no calls — nothing failed because nothing happened. */
   successRate: number;
@@ -225,7 +226,7 @@ function totalsFromRows(rows: readonly UsageStatRow[]): { totalCalls: number; su
  * reproduce the old "every client" total, or the dashboard-excluded set for
  * an agent-only one.
  */
-export function summarizeHealth(rows: readonly UsageStatRow[], failures: readonly FailureRow[]): HealthSummary {
+export function summarizeHealth(rows: readonly UsageStatRow[], failures: readonly FailureRow[]): HealthSummaryStats {
   const { totalCalls, successRate } = totalsFromRows(rows);
   return { totalCalls, successRate, topFailure: failures[0] ?? null };
 }

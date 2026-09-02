@@ -56,9 +56,9 @@ function verdictFor(successRate: number): Verdict {
 }
 
 const VERDICT_META: Record<Verdict, { icon: typeof CheckCircle2; color: string; badge: 'green' | 'amber' | 'red'; label: string }> = {
-  healthy: { icon: CheckCircle2, color: 'text-[#34d399]', badge: 'green', label: 'Healthy' },
-  degraded: { icon: AlertTriangle, color: 'text-[#f5a623]', badge: 'amber', label: 'Degraded' },
-  unhealthy: { icon: XCircle, color: 'text-[#f87171]', badge: 'red', label: 'Unhealthy' },
+  healthy: { icon: CheckCircle2, color: 'text-[var(--color-success)]', badge: 'green', label: 'Healthy' },
+  degraded: { icon: AlertTriangle, color: 'text-[var(--color-warning)]', badge: 'amber', label: 'Degraded' },
+  unhealthy: { icon: XCircle, color: 'text-[var(--color-error)]', badge: 'red', label: 'Unhealthy' },
 };
 
 export function HealthSummary({ rows, previousRows, failures, rangeCaption }: HealthSummaryProps) {
