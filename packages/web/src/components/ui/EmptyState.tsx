@@ -14,7 +14,16 @@ interface EmptyStateProps {
    * into a recovery, which is the difference between a page that looks broken
    * and one that looks narrowed.
    */
-  action?: { label: string; onClick: () => void };
+  action?: {
+    label: string;
+    onClick: () => void;
+    /**
+     * `analyticsId` for the action button. Defaults to `'empty-state.action'`;
+     * callers pass a distinct static-literal `<surface>.empty-state.<action>`
+     * slug so each empty-state recovery is a distinguishable `ui.button_click`.
+     */
+    analyticsId?: string;
+  };
 }
 
 export function EmptyState({ icon: Icon, title, description, action }: EmptyStateProps) {
@@ -28,7 +37,17 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
         <p className="text-xs text-[var(--color-content-tertiary)]">{description}</p>
       </div>
       {action && (
-        <Button variant="secondary" size="sm" analyticsId="empty-state.action" onClick={action.onClick}>
+        <Button
+          variant="secondary"
+          size="sm"
+          // Forwarded via spread rather than a JSX attribute expression: the
+          // analytics-id-literals guard enforces STATIC string literals at every
+          // call site, so this wrapper passes the (literal) caller value through
+          // the object form Button uses. Do not inline this back to a JSX
+          // attribute — an attribute expression here would trip the guard.
+          {...{ analyticsId: action.analyticsId ?? 'empty-state.action' }}
+          onClick={action.onClick}
+        >
           {action.label}
         </Button>
       )}

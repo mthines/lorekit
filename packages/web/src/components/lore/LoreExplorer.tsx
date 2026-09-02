@@ -1017,7 +1017,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           // range actually bounds something, regardless of which title branch
           // wins below.
           {...(rangeIsNarrowing
-            ? { action: { label: 'View all time', onClick: () => setRange({ preset: 'all' }) } }
+            ? {
+                action: {
+                  label: 'View all time',
+                  onClick: () => setRange({ preset: 'all' }),
+                  analyticsId: 'lore.empty-state.view-all-time',
+                },
+              }
             : {})}
           title={
             // Within-view narrowing is checked FIRST — a search or filter that
