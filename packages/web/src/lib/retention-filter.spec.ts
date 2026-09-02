@@ -62,7 +62,9 @@ describe('hasRetentionConditions / retentionConditionsCount', () => {
     expect(retentionConditionsCount({ minAgeDays: 90 })).toBe(1);
     expect(retentionConditionsCount({ minAgeDays: 90, unseenDays: 30 })).toBe(2);
     expect(retentionConditionsCount({ minAgeDays: 90, unseenDays: 30, maxSeenCount: 0 })).toBe(3);
+    expect(retentionConditionsCount({ minAgeDays: 90, unseenDays: 30, maxSeenCount: 0, maxReadCount: 0 })).toBe(4);
     expect(hasRetentionConditions({ maxSeenCount: 0 })).toBe(true);
+    expect(hasRetentionConditions({ maxReadCount: 0 })).toBe(true);
   });
 });
 
@@ -80,11 +82,20 @@ describe('retentionConditionsToListBody / retentionConditionsToGroomConditions',
     ).toEqual({ min_age_days: 90, unseen_days: 30, max_seen_count: 1 });
   });
 
+  it('carries maxReadCount as its own wire field, independent of max_seen_count', () => {
+    expect(retentionConditionsToListBody({ maxReadCount: 0 })).toEqual({ max_read_count: 0 });
+    expect(retentionConditionsToListBody({ maxSeenCount: 1, maxReadCount: 3 })).toEqual({
+      max_seen_count: 1,
+      max_read_count: 3,
+    });
+  });
+
   it('omits an unset field rather than sending it as undefined/null', () => {
     const body = retentionConditionsToListBody({ minAgeDays: 90 });
     expect(body).toEqual({ min_age_days: 90 });
     expect('unseen_days' in body).toBe(false);
     expect('max_seen_count' in body).toBe(false);
+    expect('max_read_count' in body).toBe(false);
   });
 
   it('emits only fields ListMemoriesBodySchema accepts', () => {
@@ -177,8 +188,16 @@ describe('retentionConditionsPhrase', () => {
       'created >90d ago · unopened >30d',
     );
     expect(retentionConditionsPhrase({ minAgeDays: 90, unseenDays: 30, maxSeenCount: 1 })).toBe(
-      'created >90d ago · unopened >30d · seen ≤ 1×',
+      'created >90d ago · unopened >30d · written ≤ 1×',
     );
+  });
+
+  // The two counters run in OPPOSITE directions and sit next to each other in
+  // the phrase, so neither may be called "seen" — that word is what made a
+  // write-recurrence condition read as a usage one.
+  it('names the two counters apart — written for seen_count, read for read_count', () => {
+    expect(retentionConditionsPhrase({ maxSeenCount: 1, maxReadCount: 0 })).toBe('written ≤ 1× · read ≤ 0×');
+    expect(retentionConditionsPhrase({ maxReadCount: 5 })).not.toContain('seen');
   });
 
   it('falls back to the control label when nothing is set', () => {
@@ -194,10 +213,11 @@ describe('retentionConditionPlaceholder', () => {
     expect(retentionConditionPlaceholder('minAgeDays')).toBe('e.g. 7');
     expect(retentionConditionPlaceholder('unseenDays')).toBe('e.g. 90');
     expect(retentionConditionPlaceholder('maxSeenCount')).toBe('e.g. 1');
+    expect(retentionConditionPlaceholder('maxReadCount')).toBe('e.g. 0');
   });
 
   it('is never a bare number for any condition', () => {
-    for (const field of ['minAgeDays', 'unseenDays', 'maxSeenCount'] as const) {
+    for (const field of ['minAgeDays', 'unseenDays', 'maxSeenCount', 'maxReadCount'] as const) {
       expect(retentionConditionPlaceholder(field)).toMatch(/^e\.g\. \d+$/);
     }
   });

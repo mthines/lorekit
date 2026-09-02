@@ -261,6 +261,7 @@ export const ListMemoriesQuerySchema = z.object({
   min_age_days: z.coerce.number().int().min(1).max(3650).optional(),
   unseen_days: z.coerce.number().int().min(1).max(3650).optional(),
   max_seen_count: z.coerce.number().int().min(0).max(100_000).optional(),
+  max_read_count: z.coerce.number().int().min(0).max(100_000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -972,6 +973,7 @@ export const ListMemoriesBodySchema = z.object({
   min_age_days: z.number().int().min(1).max(3650).optional(),
   unseen_days: z.number().int().min(1).max(3650).optional(),
   max_seen_count: z.number().int().min(0).max(100_000).optional(),
+  max_read_count: z.number().int().min(0).max(100_000).optional(),
   limit: z.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });

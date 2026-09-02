@@ -63,6 +63,9 @@ export const ListPopulated: Story = {
           min_age_days: null,
           unseen_days: 120,
           max_seen_count: null,
+          // The one policy carrying a read-count condition, so the list's
+          // rendering of it is covered by a visual baseline.
+          max_read_count: 5,
           ...NO_MOCK_DIMENSION_FILTERS,
           created_at: '2026-05-01T00:00:00.000Z',
           updated_at: '2026-05-01T00:00:00.000Z',
@@ -76,6 +79,7 @@ export const ListPopulated: Story = {
           min_age_days: 30,
           unseen_days: null,
           max_seen_count: 2,
+          max_read_count: null,
           ...NO_MOCK_DIMENSION_FILTERS,
           created_at: '2026-04-15T00:00:00.000Z',
           updated_at: '2026-04-15T00:00:00.000Z',

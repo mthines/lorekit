@@ -642,6 +642,7 @@ export type Database = {
           created_at: string
           enabled: boolean
           id: string
+          max_read_count: number | null
           max_seen_count: number | null
           min_age_days: number | null
           mode: string
@@ -655,6 +656,7 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           id?: string
+          max_read_count?: number | null
           max_seen_count?: number | null
           min_age_days?: number | null
           mode?: string
@@ -668,6 +670,7 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           id?: string
+          max_read_count?: number | null
           max_seen_count?: number | null
           min_age_days?: number | null
           mode?: string

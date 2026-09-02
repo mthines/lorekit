@@ -22,6 +22,7 @@ function memory(overrides: Partial<GroomCandidateMemory> = {}): GroomCandidateMe
     created_at: '2026-01-01T00:00:00.000Z',
     last_opened_at: null,
     seen_count: 1,
+    read_count: 0,
     protected: false,
     tags: null,
     source_agent: null,
@@ -41,6 +42,7 @@ function conditions(overrides: Partial<GroomConditions> & { scope: string }): Gr
     min_age_days: null,
     unseen_days: null,
     max_seen_count: null,
+    max_read_count: null,
     tags: null,
     tags_mode: null,
     source_agent: null,
@@ -69,6 +71,7 @@ const basePolicy: RetentionPolicyRow = {
   min_age_days: null,
   unseen_days: null,
   max_seen_count: null,
+  max_read_count: null,
   tags: null,
   tags_mode: null,
   source_agent: null,
@@ -261,6 +264,26 @@ describe('isGroomCandidate', () => {
   it('unseen_days: a never-opened memory older than the threshold matches', () => {
     const m = memory({ last_opened_at: null, created_at: '2026-01-01T00:00:00.000Z' });
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 90 }), NOW)).toBe(true);
+  });
+
+  // max_read_count reads `read_count` (00084), NOT `seen_count`. The two
+  // count opposite things — reads vs writes — so a lesson can match one and
+  // miss the other, which is the whole reason the condition exists.
+  it('max_read_count: an unread memory matches', () => {
+    const m = memory({ read_count: 0 });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_read_count: 0 }), NOW)).toBe(true);
+  });
+
+  it('max_read_count: a memory read more than the threshold does NOT match', () => {
+    const m = memory({ read_count: 4 });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_read_count: 3 }), NOW)).toBe(false);
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_read_count: 4 }), NOW)).toBe(true);
+  });
+
+  it('max_read_count is independent of max_seen_count', () => {
+    const writtenOftenNeverRead = memory({ seen_count: 9, read_count: 0 });
+    expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_read_count: 0 }), NOW)).toBe(true);
+    expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_seen_count: 1 }), NOW)).toBe(false);
   });
 
   it('unseen_days: a recently-opened memory does NOT match', () => {

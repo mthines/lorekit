@@ -2,12 +2,12 @@
  * The Lore Explorer's retention-preview conditions.
  *
  * A saved retention policy (`@lorekit/schemas/retention`, `GroomConditionsSchema`)
- * matches on three optional thresholds — `min_age_days`, `unseen_days`,
- * `max_seen_count` — and until now the ONLY place you could see what those
+ * matches on four optional thresholds — `min_age_days`, `unseen_days`,
+ * `max_seen_count`, `max_read_count` — and until now the ONLY place you could see what those
  * conditions would catch was the Settings → Retention Policies dialog's live
  * preview, which answers with a bare count, not the lesson cards themselves.
  *
- * This module is the same trio, modelled as an Explorer filter: set on the
+ * This module is the same set, modelled as an Explorer filter: set on the
  * list alongside the filter bar's dimensions, so the list you are already
  * looking at narrows to exactly what a policy with these conditions would
  * archive — "verify before you run it" without leaving the page. It composes
@@ -25,11 +25,13 @@ import type { GroomConditions, GroomDimensionFilters } from '@lorekit/schemas/re
 import type { ListMemoriesBody, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
 import { filtersToBody, normalizeFilters, type Filter, type FilterField, type FilterOperator } from './filters';
 
-/** The three conditions, camelCased for the UI's own state — see `GroomConditions` for the wire shape. */
+/** The four conditions, camelCased for the UI's own state — see `GroomConditions` for the wire shape. */
 export interface RetentionConditions {
   minAgeDays?: number;
   unseenDays?: number;
   maxSeenCount?: number;
+  /** Reads, not writes — `max_read_count` (00101). Bulk list/search reads count. */
+  maxReadCount?: number;
 }
 
 /**
@@ -42,6 +44,7 @@ export const RETENTION_CONDITION_BOUNDS = {
   minAgeDays: { min: 1, max: 3650 },
   unseenDays: { min: 1, max: 3650 },
   maxSeenCount: { min: 0, max: 100_000 },
+  maxReadCount: { min: 0, max: 100_000 },
 } as const;
 
 /** An empty condition set — nothing narrowed. Module-scoped for reference stability. */
@@ -51,7 +54,7 @@ export const NO_RETENTION_CONDITIONS: RetentionConditions = {};
  * Example values shown as INPUT PLACEHOLDERS, never applied as a filter on
  * their own — a blank field still means "not narrowed" (see
  * {@link normalizeRetentionConditions}). They exist purely so a reader who has
- * never used the three fields sees a concrete, sensible example of what to
+ * never used the fields sees a concrete, sensible example of what to
  * type rather than an unlabelled blank box: a week-old lesson nobody has
  * opened in three months and has recurred at most once is the shape of lore
  * this feature is typically built to catch.
@@ -63,6 +66,7 @@ export const RETENTION_CONDITION_PLACEHOLDERS = {
   minAgeDays: 7,
   unseenDays: 90,
   maxSeenCount: 1,
+  maxReadCount: 0,
 } as const;
 
 /**
@@ -98,7 +102,7 @@ export function parseCondition(raw: unknown, bounds: { min: number; max: number 
  */
 export function normalizeRetentionConditions(raw: unknown): RetentionConditions {
   if (!raw || typeof raw !== 'object') return {};
-  const { minAgeDays, unseenDays, maxSeenCount } = raw as Record<string, unknown>;
+  const { minAgeDays, unseenDays, maxSeenCount, maxReadCount } = raw as Record<string, unknown>;
 
   const out: RetentionConditions = {};
   const min = parseCondition(minAgeDays, RETENTION_CONDITION_BOUNDS.minAgeDays);
@@ -107,6 +111,8 @@ export function normalizeRetentionConditions(raw: unknown): RetentionConditions 
   if (unseen !== undefined) out.unseenDays = unseen;
   const maxSeen = parseCondition(maxSeenCount, RETENTION_CONDITION_BOUNDS.maxSeenCount);
   if (maxSeen !== undefined) out.maxSeenCount = maxSeen;
+  const maxRead = parseCondition(maxReadCount, RETENTION_CONDITION_BOUNDS.maxReadCount);
+  if (maxRead !== undefined) out.maxReadCount = maxRead;
   return out;
 }
 
@@ -115,13 +121,14 @@ export function hasRetentionConditions(conditions: RetentionConditions): boolean
   return (
     conditions.minAgeDays !== undefined ||
     conditions.unseenDays !== undefined ||
-    conditions.maxSeenCount !== undefined
+    conditions.maxSeenCount !== undefined ||
+    conditions.maxReadCount !== undefined
   );
 }
 
 /** How many conditions are set — the control's count badge. */
 export function retentionConditionsCount(conditions: RetentionConditions): number {
-  return [conditions.minAgeDays, conditions.unseenDays, conditions.maxSeenCount].filter(
+  return [conditions.minAgeDays, conditions.unseenDays, conditions.maxSeenCount, conditions.maxReadCount].filter(
     (v) => v !== undefined,
   ).length;
 }
@@ -139,16 +146,17 @@ export function retentionConditionsParamValue(
 
 /**
  * Translate into the `POST /memories/list` body fields (migration 00092) —
- * the same three field names `GroomConditionsSchema` uses, so a rename on
+ * the same field names `GroomConditionsSchema` uses, so a rename on
  * either side is a type error here rather than a silent mismatch.
  */
 export function retentionConditionsToListBody(
   conditions: RetentionConditions,
-): Pick<ListMemoriesBody, 'min_age_days' | 'unseen_days' | 'max_seen_count'> {
+): Pick<ListMemoriesBody, 'min_age_days' | 'unseen_days' | 'max_seen_count' | 'max_read_count'> {
   return {
     ...(conditions.minAgeDays !== undefined ? { min_age_days: conditions.minAgeDays } : {}),
     ...(conditions.unseenDays !== undefined ? { unseen_days: conditions.unseenDays } : {}),
     ...(conditions.maxSeenCount !== undefined ? { max_seen_count: conditions.maxSeenCount } : {}),
+    ...(conditions.maxReadCount !== undefined ? { max_read_count: conditions.maxReadCount } : {}),
   };
 }
 
@@ -185,7 +193,7 @@ export function retentionConditionsToGroomConditions(
 
 /**
  * The dimension-filter fields a policy's conditions carry — `GroomConditions`
- * minus the three age/activity thresholds. An alias of `@lorekit/schemas/retention`'s
+ * minus the four age/activity thresholds. An alias of `@lorekit/schemas/retention`'s
  * own `GroomDimensionFilters` (not a hand-written duplicate): its `*_mode`
  * fields are `.optional()` with NO zod `.default(...)` specifically so this
  * stays genuinely optional (`T | undefined`) rather than "always present, the
@@ -289,12 +297,18 @@ export function retentionConditionsPhrase(conditions: RetentionConditions): stri
   const parts: string[] = [];
   // Vocabulary matches the lesson detail sheet's metadata rows — "Created",
   // "Last agent open", "Recurrence" — so a reader can open any row the filter
-  // returned and check the claim against the same three words. "unopened"
-  // rather than the older "unseen": nothing in the product calls a read
-  // "seeing", and the pill was the phrase people quoted back when the
-  // condition did not match what they saw on the lesson.
+  // returned and check the claim against the same words. "unopened" rather
+  // than the older "unseen": nothing in the product calls a read "seeing", and
+  // the pill was the phrase people quoted back when the condition did not
+  // match what they saw on the lesson.
+  //
+  // `written` and `read` for the two counters, never "seen" for either: they
+  // count OPPOSITE directions (writes vs reads), sit next to each other in the
+  // phrase, and the older `seen ≤ N×` gave the write counter the one word a
+  // reader would naturally attach to the read one.
   if (conditions.minAgeDays !== undefined) parts.push(`created >${conditions.minAgeDays}d ago`);
   if (conditions.unseenDays !== undefined) parts.push(`unopened >${conditions.unseenDays}d`);
-  if (conditions.maxSeenCount !== undefined) parts.push(`seen ≤ ${conditions.maxSeenCount}×`);
+  if (conditions.maxSeenCount !== undefined) parts.push(`written ≤ ${conditions.maxSeenCount}×`);
+  if (conditions.maxReadCount !== undefined) parts.push(`read ≤ ${conditions.maxReadCount}×`);
   return parts.length > 0 ? parts.join(' · ') : 'Age & activity';
 }

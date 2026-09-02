@@ -83,6 +83,7 @@ export interface Conditions {
   minAgeDays: string;
   unseenDays: string;
   maxSeenCount: string;
+  maxReadCount: string;
   /**
    * The SAME eight dimension filters (label/agent/trigger/kind/host/repo/
    * branch/PR) the Lore Explorer's filter bar offers — `lib/filters.ts`'s
@@ -93,7 +94,7 @@ export interface Conditions {
   filters: Filter[];
 }
 
-const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: '', maxSeenCount: '', filters: [] };
+const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: '', maxSeenCount: '', maxReadCount: '', filters: [] };
 
 /**
  * `?prefillScope=` / `?prefillMinAgeDays=` / `?prefillUnseenDays=` /
@@ -124,6 +125,7 @@ function conditionsFromPrefillParams(params: URLSearchParams): Conditions | null
     minAgeDays: params.get('prefillMinAgeDays') ?? '',
     unseenDays: params.get('prefillUnseenDays') ?? '',
     maxSeenCount: params.get('prefillMaxSeenCount') ?? '',
+    maxReadCount: params.get('prefillMaxReadCount') ?? '',
     filters,
   };
 }
@@ -141,11 +143,13 @@ function toGroomRequest(c: Conditions): GroomRequest | null {
   const minAgeDays = parseIntField(c.minAgeDays);
   const unseenDays = parseIntField(c.unseenDays);
   const maxSeenCount = parseIntField(c.maxSeenCount);
+  const maxReadCount = parseIntField(c.maxReadCount);
   return {
     scope: c.scope.trim(),
     ...(minAgeDays !== undefined ? { min_age_days: minAgeDays } : {}),
     ...(unseenDays !== undefined ? { unseen_days: unseenDays } : {}),
     ...(maxSeenCount !== undefined ? { max_seen_count: maxSeenCount } : {}),
+    ...(maxReadCount !== undefined ? { max_read_count: maxReadCount } : {}),
     ...filtersToGroomDimensionFilters(c.filters),
   };
 }
@@ -165,6 +169,7 @@ function policyToRequest(p: RetentionPolicy): GroomRequest {
     ...(p.min_age_days !== null ? { min_age_days: p.min_age_days } : {}),
     ...(p.unseen_days !== null ? { unseen_days: p.unseen_days } : {}),
     ...(p.max_seen_count !== null ? { max_seen_count: p.max_seen_count } : {}),
+    ...(p.max_read_count !== null ? { max_read_count: p.max_read_count } : {}),
     ...filtersToGroomDimensionFilters(groomConditionsToFilters(p)),
   };
 }
@@ -176,16 +181,20 @@ function conditionsFromPolicy(p: RetentionPolicy): Conditions {
     minAgeDays: p.min_age_days !== null ? String(p.min_age_days) : '',
     unseenDays: p.unseen_days !== null ? String(p.unseen_days) : '',
     maxSeenCount: p.max_seen_count !== null ? String(p.max_seen_count) : '',
+    maxReadCount: p.max_read_count !== null ? String(p.max_read_count) : '',
     filters: groomConditionsToFilters(p),
   };
 }
 
-/** The rule as a human sentence: "Older than 90d · unseen 90d · seen ≤ 1 · Host is reviewer". */
+/** The rule as a human sentence: "Older than 90d · unseen 90d · written ≤ 1 · Host is reviewer". */
 function ruleSentence(p: RetentionPolicy): string {
   const parts: string[] = [];
   if (p.min_age_days !== null) parts.push(`Older than ${p.min_age_days}d`);
   if (p.unseen_days !== null) parts.push(`unseen ${p.unseen_days}d`);
-  if (p.max_seen_count !== null) parts.push(`seen ≤ ${p.max_seen_count}`);
+  // "written"/"read", never "seen" for either — the two counters run in
+  // opposite directions and appear side by side. See `retentionConditionsPhrase`.
+  if (p.max_seen_count !== null) parts.push(`written ≤ ${p.max_seen_count}`);
+  if (p.max_read_count !== null) parts.push(`read ≤ ${p.max_read_count}`);
   const filters = groomConditionsToFilters(p);
   if (filters.length > 0) parts.push(filtersPhrase(filters));
   return parts.length > 0 ? parts.join(' · ') : 'Every unprotected lesson in scope';
@@ -288,6 +297,7 @@ function PolicyForm({
   const minAgeId = useId();
   const unseenId = useId();
   const maxSeenId = useId();
+  const maxReadId = useId();
 
   const preview = useGroomPreview();
   const run = useGroomRun();
@@ -324,6 +334,7 @@ function PolicyForm({
     conditions.minAgeDays.trim() === '' &&
     conditions.unseenDays.trim() === '' &&
     conditions.maxSeenCount.trim() === '' &&
+    conditions.maxReadCount.trim() === '' &&
     conditions.filters.length === 0;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -339,7 +350,14 @@ function PolicyForm({
     };
     // preview.mutate is a stable identity across renders (react-query).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conditions.scope, conditions.minAgeDays, conditions.unseenDays, conditions.maxSeenCount, conditions.filters]);
+  }, [
+    conditions.scope,
+    conditions.minAgeDays,
+    conditions.unseenDays,
+    conditions.maxSeenCount,
+    conditions.maxReadCount,
+    conditions.filters,
+  ]);
 
   const matchCount = preview.data?.count;
 
@@ -383,6 +401,7 @@ function PolicyForm({
             min_age_days: parseIntField(conditions.minAgeDays) ?? null,
             unseen_days: parseIntField(conditions.unseenDays) ?? null,
             max_seen_count: parseIntField(conditions.maxSeenCount) ?? null,
+            max_read_count: parseIntField(conditions.maxReadCount) ?? null,
             tags: dimensionFilters.tags ?? null,
             tags_mode: dimensionFilters.tags_mode ?? null,
             source_agent: dimensionFilters.source_agent ?? null,
@@ -411,6 +430,7 @@ function PolicyForm({
           ...('min_age_days' in request ? { min_age_days: request.min_age_days } : {}),
           ...('unseen_days' in request ? { unseen_days: request.unseen_days } : {}),
           ...('max_seen_count' in request ? { max_seen_count: request.max_seen_count } : {}),
+          ...('max_read_count' in request ? { max_read_count: request.max_read_count } : {}),
           ...dimensionFilters,
         });
         showToast('Policy saved.', 'success');
@@ -468,9 +488,9 @@ function PolicyForm({
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={minAgeId} className={LABEL_CLASS}>Minimum age (days)</label>
+          <label htmlFor={minAgeId} className={LABEL_CLASS}>Created</label>
           <input
             id={minAgeId}
             type="number"
@@ -480,10 +500,10 @@ function PolicyForm({
             value={conditions.minAgeDays}
             onChange={(e) => setConditions((c) => ({ ...c, minAgeDays: e.target.value }))}
           />
-          <p className="text-[10px] text-[var(--color-content-tertiary)]">Created at least this long ago</p>
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">More than this many days ago</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={unseenId} className={LABEL_CLASS}>Not seen in (days)</label>
+          <label htmlFor={unseenId} className={LABEL_CLASS}>Last agent open</label>
           <input
             id={unseenId}
             type="number"
@@ -493,10 +513,10 @@ function PolicyForm({
             value={conditions.unseenDays}
             onChange={(e) => setConditions((c) => ({ ...c, unseenDays: e.target.value }))}
           />
-          <p className="text-[10px] text-[var(--color-content-tertiary)]">Not opened in at least this many days</p>
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">More than this many days ago. Never opened counts from Created.</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={maxSeenId} className={LABEL_CLASS}>Seen at most (times)</label>
+          <label htmlFor={maxSeenId} className={LABEL_CLASS}>Recurrence</label>
           <input
             id={maxSeenId}
             type="number"
@@ -506,7 +526,20 @@ function PolicyForm({
             value={conditions.maxSeenCount}
             onChange={(e) => setConditions((c) => ({ ...c, maxSeenCount: e.target.value }))}
           />
-          <p className="text-[10px] text-[var(--color-content-tertiary)]">Recurred this many times or fewer</p>
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">Written this many times or fewer</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={maxReadId} className={LABEL_CLASS}>Times read</label>
+          <input
+            id={maxReadId}
+            type="number"
+            min={0}
+            placeholder={retentionConditionPlaceholder('maxReadCount')}
+            className={INPUT_CLASS}
+            value={conditions.maxReadCount}
+            onChange={(e) => setConditions((c) => ({ ...c, maxReadCount: e.target.value }))}
+          />
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">Read this many times or fewer. Bulk list/search reads count.</p>
         </div>
       </div>
 
@@ -604,7 +637,14 @@ function PolicyRow({
     preview.mutate(policyToRequest(policy));
     // preview.mutate is a stable identity across renders (react-query).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [policy.id, policy.min_age_days, policy.unseen_days, policy.max_seen_count, policy.scope]);
+  }, [
+    policy.id,
+    policy.min_age_days,
+    policy.unseen_days,
+    policy.max_seen_count,
+    policy.max_read_count,
+    policy.scope,
+  ]);
 
   const catches = preview.data?.count;
 
