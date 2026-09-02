@@ -9,6 +9,8 @@ import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
+import { CLIENT_HEADER } from '../../_shared/api/router.ts';
+import { parseUsageClient } from '../../_shared/telemetry/usage-stats.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -44,6 +46,12 @@ export async function handleGet(
   res.headers.set('X-LoreKit-Result-Count', '1');
   // GET /:id is the REST equivalent of memory.read — one exact scope+key —
   // so it is a TARGETED read for the per-memory counter (migration 00077).
-  recordMemoryReads(db, [(data as { id: string }).id], 'targeted');
+  // This route is shared by the web dashboard's detail sheet AND the CLI's
+  // remote read/show command, so — unlike MCP's memory.read, which can
+  // hardcode 'mcp' because the transport itself is the attribution — the
+  // caller-supplied X-LoreKit-Client header decides whether this counts as an
+  // agent opening the lesson (migration 00099's last_opened_at) or a human
+  // browsing the dashboard.
+  recordMemoryReads(db, [(data as { id: string }).id], 'targeted', parseUsageClient(req.headers.get(CLIENT_HEADER)));
   return res;
 }

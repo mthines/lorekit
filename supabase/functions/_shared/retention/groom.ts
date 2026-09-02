@@ -259,8 +259,13 @@ export interface GroomCandidateMemory {
   scope: string;
   key: string;
   created_at: string;
-  /** `null` means never seen — see the "unseen_days" header note in 00088. */
-  last_seen_at: string | null;
+  /**
+   * `null` means never individually opened by an agent — see migration
+   * 00099. Distinct from `last_read_at` (00084/00098), which also moves on a
+   * bulk list/search appearance or a dashboard view; `unseen_days` wants the
+   * narrower signal.
+   */
+  last_opened_at: string | null;
   seen_count: number;
   protected: boolean;
   tags: string[] | null;
@@ -278,9 +283,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /**
  * Does one memory match a condition set? ANDs every supplied condition,
  * excludes protected rows unconditionally, and — the case this module exists
- * to make testable — a NULL `last_seen_at` (never seen) matches ANY
- * `unseen_days` threshold, mirroring the SQL's
- * `coalesce(last_seen_at, '-infinity')` clamp.
+ * to make testable — a NULL `last_opened_at` (never individually opened by an
+ * agent) matches ANY `unseen_days` threshold, mirroring the SQL's
+ * `coalesce(last_opened_at, '-infinity')` clamp (migration 00099 — it used to
+ * be `last_read_at`, which also counted a bulk list/search appearance or a
+ * dashboard view; see that migration's header).
  */
 export function isGroomCandidate(
   memory: GroomCandidateMemory,
@@ -296,8 +303,8 @@ export function isGroomCandidate(
   }
 
   if (conditions.unseen_days != null) {
-    const lastSeenMs = memory.last_seen_at == null ? -Infinity : new Date(memory.last_seen_at).getTime();
-    const unseenDays = (now.getTime() - lastSeenMs) / MS_PER_DAY;
+    const lastOpenedMs = memory.last_opened_at == null ? -Infinity : new Date(memory.last_opened_at).getTime();
+    const unseenDays = (now.getTime() - lastOpenedMs) / MS_PER_DAY;
     if (unseenDays < conditions.unseen_days) return false;
   }
 

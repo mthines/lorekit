@@ -20,7 +20,7 @@ function memory(overrides: Partial<GroomCandidateMemory> = {}): GroomCandidateMe
     scope: 'global',
     key: 'k1',
     created_at: '2026-01-01T00:00:00.000Z',
-    last_seen_at: null,
+    last_opened_at: null,
     seen_count: 1,
     protected: false,
     tags: null,
@@ -247,19 +247,19 @@ describe('isGroomCandidate', () => {
     expect(isGroomCandidate(m, conditions({ scope: 'global', min_age_days: 30 }), NOW)).toBe(true);
   });
 
-  it('unseen_days: a never-seen memory (null last_seen_at) matches ANY threshold', () => {
-    const m = memory({ last_seen_at: null, created_at: NOW.toISOString() });
+  it('unseen_days: a never-opened memory (null last_opened_at) matches ANY threshold', () => {
+    const m = memory({ last_opened_at: null, created_at: NOW.toISOString() });
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 1 }), NOW)).toBe(true);
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 3650 }), NOW)).toBe(true);
   });
 
-  it('unseen_days: a recently-seen memory does NOT match', () => {
-    const m = memory({ last_seen_at: '2026-08-25T00:00:00.000Z' }); // seen yesterday
+  it('unseen_days: a recently-opened memory does NOT match', () => {
+    const m = memory({ last_opened_at: '2026-08-25T00:00:00.000Z' }); // opened yesterday
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 14 }), NOW)).toBe(false);
   });
 
-  it('unseen_days: a memory unseen long enough matches', () => {
-    const m = memory({ last_seen_at: '2026-01-01T00:00:00.000Z' });
+  it('unseen_days: a memory unopened long enough matches', () => {
+    const m = memory({ last_opened_at: '2026-01-01T00:00:00.000Z' });
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 14 }), NOW)).toBe(true);
   });
 
@@ -293,7 +293,7 @@ describe('isGroomCandidate', () => {
   });
 
   it('ANDs every supplied condition, including dimension filters', () => {
-    const m = memory({ created_at: '2026-01-01T00:00:00.000Z', last_seen_at: null, seen_count: 1, kind: 'lesson' });
+    const m = memory({ created_at: '2026-01-01T00:00:00.000Z', last_opened_at: null, seen_count: 1, kind: 'lesson' });
     const c = conditions({ scope: 'global', min_age_days: 30, unseen_days: 30, max_seen_count: 5, kind: ['lesson'] });
     expect(isGroomCandidate(m, c, NOW)).toBe(true);
     // Fails just the kind leg.
