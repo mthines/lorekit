@@ -18,10 +18,29 @@
  * Pure and dependency-free, so it is unit-testable without a network call.
  */
 
-import type { UsageStatRow, UsageSummary } from '@lorekit/schemas/usage';
+import type { UsageStatRow } from '@lorekit/schemas/usage';
+import { pctChange } from '@/lib/aggregations';
 
 /** The closed `scope_type` vocabulary a row's value may legitimately carry. */
 const KNOWN_SCOPE_TYPES = new Set(['global', 'project', 'repo', 'branch', 'mixed', 'invalid']);
+
+/**
+ * Drop dashboard-originated rows — mirrors the `client is distinct from
+ * 'dashboard'` filter migrations 00054/00058/00069/00080 already apply to the
+ * Explorer's "Memories retrieved"/"opened" cards ("browsing your lore is
+ * visualisation, not consumption"). `/insights` had no equivalent: its own
+ * tagline is "how your agents are actually using them", yet `HealthSummary`
+ * and `UsageHealth` mixed in every dashboard page-load that happened to hit
+ * the API (e.g. paging the Explorer) as if it were agent traffic.
+ *
+ * Deliberately NOT applied to {@link readsByClient} — "who is reading" exists
+ * specifically to show the client split, dashboard included; dropping the row
+ * there would defeat the one panel that answers "how much of my traffic is me
+ * vs. my agents".
+ */
+export function excludeDashboardReads(rows: readonly UsageStatRow[]): UsageStatRow[] {
+  return rows.filter((row) => row.client !== 'dashboard');
+}
 
 /** Bucket a raw `scope_type` into the closed vocabulary, or `'other'`. */
 export function bucketScopeType(scopeType: string | null): string {
@@ -181,24 +200,63 @@ export interface HealthSummary {
   topFailure: FailureRow | null;
 }
 
+/** Sum `event_count`/`ok`-outcome share directly from rows — see {@link summarizeHealth}. */
+function totalsFromRows(rows: readonly UsageStatRow[]): { totalCalls: number; successRate: number } {
+  let totalCalls = 0;
+  let okCalls = 0;
+  for (const row of rows) {
+    totalCalls += row.event_count;
+    if (row.outcome === 'ok') okCalls += row.event_count;
+  }
+  return { totalCalls, successRate: totalCalls > 0 ? okCalls / totalCalls : 1 };
+}
+
 /**
  * The headline a reader should see BEFORE the three diagnostic panels below —
  * "is this basically fine" answered in one line, so the panels are for
  * investigating a problem this already told you exists, not the first thing
  * you have to parse to find out whether one does.
  *
- * `summary.total_events`/`by_outcome` are `/usage`'s own pre-rolled totals
- * (the SAME window `usageByTool` covers) — reading them directly keeps this
- * in agreement with the server's own count rather than re-summing
- * `usageByTool` a second time and risking the two drifting.
+ * Sums `rows` directly rather than reading `/usage`'s pre-rolled
+ * `summary.total_events`/`by_outcome`: those totals are computed server-side
+ * over EVERY client, including the dashboard's own page-loads, so they no
+ * longer agree with a caller that passed {@link excludeDashboardReads}'d rows.
+ * `rows` is what the caller actually wants summarised — pass the full set to
+ * reproduce the old "every client" total, or the dashboard-excluded set for
+ * an agent-only one.
  */
-export function summarizeHealth(summary: UsageSummary, failures: readonly FailureRow[]): HealthSummary {
-  const totalCalls = summary.total_events;
-  const okCalls = summary.by_outcome['ok'] ?? 0;
+export function summarizeHealth(rows: readonly UsageStatRow[], failures: readonly FailureRow[]): HealthSummary {
+  const { totalCalls, successRate } = totalsFromRows(rows);
+  return { totalCalls, successRate, topFailure: failures[0] ?? null };
+}
+
+export interface HealthTrend {
+  /** Period-over-period % change in call volume (current window vs. the immediately preceding one of equal length). */
+  totalCallsChangePct: number;
+  /** PERCENTAGE-POINT delta in success rate (current − previous) — a ratio-of-ratios % change would misread a rate. */
+  successRateDeltaPct: number;
+}
+
+/**
+ * Compare a window's totals against the immediately preceding equal-length
+ * window — "is my agent reading better this week than last" as a number
+ * instead of a reader having to flip the range picker back and forth and
+ * remember what the banner said.
+ *
+ * `null` when the previous window had no calls at all: a % change against
+ * zero is either a fabricated "+100%" or a divide-by-zero, and a young scope's
+ * first busy week deserves neither — there is nothing to compare against yet.
+ */
+export function healthTrend(
+  currentRows: readonly UsageStatRow[],
+  previousRows: readonly UsageStatRow[],
+): HealthTrend | null {
+  const previous = totalsFromRows(previousRows);
+  if (previous.totalCalls === 0) return null;
+  const current = totalsFromRows(currentRows);
   return {
-    totalCalls,
-    successRate: totalCalls > 0 ? okCalls / totalCalls : 1,
-    topFailure: failures[0] ?? null,
+    totalCallsChangePct: pctChange(current.totalCalls, previous.totalCalls),
+    successRateDeltaPct: Math.round((current.successRate - previous.successRate) * 1000) / 10,
   };
 }
 

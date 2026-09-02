@@ -1,12 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import type { UsageSummary } from '@lorekit/schemas/usage';
+import type { UsageStatRow } from '@lorekit/schemas/usage';
 import { HealthSummary } from './HealthSummary';
 import type { FailureRow } from '@/lib/usage-health';
 
 /**
  * Visual-regression stories for {@link HealthSummary} — the at-a-glance
  * verdict banner atop Insights. Pure/presentational (no internal fetch), so
- * these pass realistic `summary`/`failures` directly.
+ * these pass realistic `rows`/`failures` directly.
  */
 const meta: Meta<typeof HealthSummary> = {
   title: 'Dashboard/HealthSummary',
@@ -24,16 +24,14 @@ const meta: Meta<typeof HealthSummary> = {
 export default meta;
 type Story = StoryObj<typeof HealthSummary>;
 
-function summary(overrides: Partial<UsageSummary> = {}): UsageSummary {
+function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
   return {
-    total_events: 0,
-    reads: 0,
-    writes: 0,
-    other: 0,
-    records_read: 0,
-    archived: 0,
-    expired: 0,
-    by_outcome: {},
+    tool_name: 'memory.list',
+    outcome: 'ok',
+    scope_type: 'global',
+    event_count: 1,
+    record_count: 1,
+    total_duration_ms: 100,
     ...overrides,
   };
 }
@@ -48,31 +46,49 @@ const TOP_FAILURE: FailureRow = {
 /** ≥99% success — the healthy verdict, no failure line. */
 export const Healthy: Story = {
   args: {
-    summary: summary({ total_events: 1_631, by_outcome: { ok: 1_625, error: 6 } }),
+    rows: [row({ outcome: 'ok', event_count: 1_625 }), row({ outcome: 'error', event_count: 6 })],
+    previousRows: [],
     failures: [],
+    rangeCaption: 'the last 7 days',
   },
 };
 
 /** Between 95% and 99% success — the degraded (amber) verdict, with its top failure named. */
 export const Degraded: Story = {
   args: {
-    summary: summary({ total_events: 2_000, by_outcome: { ok: 1_920, error: 80 } }),
+    rows: [row({ outcome: 'ok', event_count: 1_920 }), row({ outcome: 'error', event_count: 80 })],
+    previousRows: [],
     failures: [TOP_FAILURE],
+    rangeCaption: 'the last 7 days',
   },
 };
 
 /** Below 95% success — the unhealthy (red) verdict. */
 export const Unhealthy: Story = {
   args: {
-    summary: summary({ total_events: 500, by_outcome: { ok: 325, error: 175 } }),
+    rows: [row({ outcome: 'ok', event_count: 325 }), row({ outcome: 'error', event_count: 175 })],
+    previousRows: [],
     failures: [{ ...TOP_FAILURE, event_count: 175 }],
+    rangeCaption: 'the last 7 days',
+  },
+};
+
+/** A window with a preceding equal-length window to compare against — the trend chips render. */
+export const WithTrend: Story = {
+  args: {
+    rows: [row({ outcome: 'ok', event_count: 1_150 }), row({ outcome: 'error', event_count: 6 })],
+    previousRows: [row({ outcome: 'ok', event_count: 900 }), row({ outcome: 'error', event_count: 40 })],
+    failures: [],
+    rangeCaption: 'the last 7 days',
   },
 };
 
 /** No calls in the window at all. */
 export const NoCalls: Story = {
   args: {
-    summary: summary({ total_events: 0, by_outcome: {} }),
+    rows: [],
+    previousRows: [],
     failures: [],
+    rangeCaption: 'the last 7 days',
   },
 };

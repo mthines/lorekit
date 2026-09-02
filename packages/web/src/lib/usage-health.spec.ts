@@ -1,28 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import type { UsageStatRow, UsageSummary } from '@lorekit/schemas/usage';
+import type { UsageStatRow } from '@lorekit/schemas/usage';
 import {
   bucketScopeType,
+  excludeDashboardReads,
   failuresByToolOutcome,
   meanLatencyByToolScope,
   coverageGapsByScopeType,
   readsByClient,
   readsByAgentFamily,
   summarizeHealth,
+  healthTrend,
 } from './usage-health';
-
-function summary(overrides: Partial<UsageSummary> = {}): UsageSummary {
-  return {
-    total_events: 0,
-    reads: 0,
-    writes: 0,
-    other: 0,
-    records_read: 0,
-    archived: 0,
-    expired: 0,
-    by_outcome: {},
-    ...overrides,
-  };
-}
 
 function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
   return {
@@ -192,14 +180,15 @@ describe('coverageGapsByScopeType', () => {
 });
 
 describe('summarizeHealth', () => {
-  it('computes success rate from by_outcome, not by re-summing failures', () => {
-    const result = summarizeHealth(summary({ total_events: 200, by_outcome: { ok: 187, error: 13 } }), []);
+  it('computes success rate by summing rows, not a pre-rolled summary', () => {
+    const rows = [row({ outcome: 'ok', event_count: 187 }), row({ outcome: 'error', event_count: 13 })];
+    const result = summarizeHealth(rows, []);
     expect(result.totalCalls).toBe(200);
     expect(result.successRate).toBeCloseTo(0.935, 5);
   });
 
   it('reports a 100% success rate for an empty window, not NaN', () => {
-    const result = summarizeHealth(summary({ total_events: 0, by_outcome: {} }), []);
+    const result = summarizeHealth([], []);
     expect(result.successRate).toBe(1);
   });
 
@@ -209,13 +198,41 @@ describe('summarizeHealth', () => {
       row({ tool_name: 'memory.list', outcome: 'rate_limited', event_count: 20 }),
     ];
     const failures = failuresByToolOutcome(rows);
-    const result = summarizeHealth(summary({ total_events: 500, by_outcome: { ok: 325, error: 175 } }), failures);
+    const result = summarizeHealth(rows, failures);
     expect(result.topFailure?.tool_name).toBe('org.create');
   });
 
   it('reports topFailure as null when nothing failed', () => {
-    const result = summarizeHealth(summary({ total_events: 40, by_outcome: { ok: 40 } }), []);
+    const result = summarizeHealth([row({ outcome: 'ok', event_count: 40 })], []);
     expect(result.topFailure).toBeNull();
+  });
+});
+
+describe('excludeDashboardReads', () => {
+  it('drops rows whose client is dashboard', () => {
+    const rows = [row({ client: 'dashboard', event_count: 10 }), row({ client: 'cli', event_count: 5 })];
+    expect(excludeDashboardReads(rows)).toEqual([row({ client: 'cli', event_count: 5 })]);
+  });
+
+  it('keeps rows with a non-dashboard or null client', () => {
+    const rows = [row({ client: 'mcp' }), row({ client: null })];
+    expect(excludeDashboardReads(rows)).toEqual(rows);
+  });
+});
+
+describe('healthTrend', () => {
+  it('returns null when the previous window had no calls', () => {
+    const current = [row({ outcome: 'ok', event_count: 50 })];
+    expect(healthTrend(current, [])).toBeNull();
+  });
+
+  it('computes call-volume % change and a percentage-point success-rate delta', () => {
+    const previous = [row({ outcome: 'ok', event_count: 90 }), row({ outcome: 'error', event_count: 10 })];
+    const current = [row({ outcome: 'ok', event_count: 190 }), row({ outcome: 'error', event_count: 10 })];
+    const result = healthTrend(current, previous);
+    expect(result?.totalCallsChangePct).toBeCloseTo(100, 5);
+    // previous success rate 0.9, current 0.95 -> +5.0pp
+    expect(result?.successRateDeltaPct).toBeCloseTo(5, 5);
   });
 });
 

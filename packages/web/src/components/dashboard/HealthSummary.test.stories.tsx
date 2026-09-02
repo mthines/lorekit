@@ -1,13 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { expect, within } from 'storybook/test';
-import type { UsageSummary } from '@lorekit/schemas/usage';
+import type { UsageStatRow } from '@lorekit/schemas/usage';
 import { HealthSummary } from './HealthSummary';
 import type { FailureRow } from '@/lib/usage-health';
 
 /**
  * Interaction tests for {@link HealthSummary} — asserts the verdict/percentage
- * math reads from `summary` (not a re-sum of `failures`), the top failure's
- * context renders when one exists, and a clean window omits it entirely.
+ * math sums ALL of `rows` (not just `failures`), the top failure's context
+ * renders when one exists, a clean window omits it entirely, and the trend
+ * chip appears only when there is a non-empty `previousRows` to compare against.
  */
 const meta: Meta<typeof HealthSummary> = {
   title: 'Dashboard/HealthSummary/Tests',
@@ -19,24 +20,24 @@ const meta: Meta<typeof HealthSummary> = {
 export default meta;
 type Story = StoryObj<typeof HealthSummary>;
 
-function summary(overrides: Partial<UsageSummary> = {}): UsageSummary {
+function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
   return {
-    total_events: 0,
-    reads: 0,
-    writes: 0,
-    other: 0,
-    records_read: 0,
-    archived: 0,
-    expired: 0,
-    by_outcome: {},
+    tool_name: 'memory.list',
+    outcome: 'ok',
+    scope_type: 'global',
+    event_count: 1,
+    record_count: 1,
+    total_duration_ms: 100,
     ...overrides,
   };
 }
 
 export const HealthyWindowShowsNoFailureLine: Story = {
   args: {
-    summary: summary({ total_events: 200, by_outcome: { ok: 200 } }),
+    rows: [row({ outcome: 'ok', event_count: 200 })],
+    previousRows: [],
     failures: [],
+    rangeCaption: 'the last 7 days',
   },
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
@@ -46,6 +47,9 @@ export const HealthyWindowShowsNoFailureLine: Story = {
     });
     await step('no failure line renders when nothing failed', async () => {
       await expect(canvas.queryByText(/Most common issue/)).not.toBeInTheDocument();
+    });
+    await step('no trend chip renders when there is no previous window', async () => {
+      await expect(canvas.queryByText(/pp\)/)).not.toBeInTheDocument();
     });
   },
 };
@@ -59,8 +63,10 @@ const TOP_FAILURE: FailureRow = {
 
 export const DegradedWindowNamesTheTopFailure: Story = {
   args: {
-    summary: summary({ total_events: 1_000, by_outcome: { ok: 960, error: 40 } }),
+    rows: [row({ outcome: 'ok', event_count: 960 }), row({ outcome: 'error', event_count: 40 })],
+    previousRows: [],
     failures: [TOP_FAILURE],
+    rangeCaption: 'the last 7 days',
   },
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
@@ -75,27 +81,48 @@ export const DegradedWindowNamesTheTopFailure: Story = {
   },
 };
 
-export const UnhealthyWindowReadsFromSummaryNotFailures: Story = {
+export const UnhealthyWindowSumsAllRowsNotJustFailures: Story = {
   args: {
-    // total_events/by_outcome deliberately imply a much lower success rate than
-    // failures alone would sum to, so a re-derivation bug (summing `failures`
-    // instead of reading `summary.by_outcome`) would read a different number.
-    summary: summary({ total_events: 500, by_outcome: { ok: 200, error: 300 } }),
+    // `failures` alone sums to 300 events — far short of `rows`' 500 total —
+    // so a regression that summed `failures` instead of `rows` would read a
+    // different (higher) percentage than the correct 40%.
+    rows: [row({ outcome: 'ok', event_count: 200 }), row({ outcome: 'error', event_count: 300 })],
+    previousRows: [],
     failures: [{ ...TOP_FAILURE, event_count: 300 }],
+    rangeCaption: 'the last 7 days',
   },
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await step('the percentage comes from summary.by_outcome, not a re-sum of failures', async () => {
+    await step('the percentage sums every row, not a re-sum of failures alone', async () => {
       await expect(canvas.getByText('Unhealthy')).toBeVisible();
       await expect(canvas.getByText('40% of calls succeeded')).toBeVisible();
     });
   },
 };
 
+export const TrendChipsCompareAgainstThePreviousWindow: Story = {
+  args: {
+    rows: [row({ outcome: 'ok', event_count: 190 }), row({ outcome: 'error', event_count: 10 })],
+    previousRows: [row({ outcome: 'ok', event_count: 90 }), row({ outcome: 'error', event_count: 10 })],
+    failures: [],
+    rangeCaption: 'the last 7 days',
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('call volume and success-rate trend chips render against the previous window', async () => {
+      await expect(canvas.getByText('95% of calls succeeded')).toBeVisible();
+      await expect(canvas.getByText(/\+5pp/)).toBeVisible();
+      await expect(canvas.getByText(/\+100%/)).toBeVisible();
+    });
+  },
+};
+
 export const NoCallsRendersTheEmptyMessage: Story = {
   args: {
-    summary: summary({ total_events: 0, by_outcome: {} }),
+    rows: [],
+    previousRows: [],
     failures: [],
+    rangeCaption: 'the last 7 days',
   },
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);

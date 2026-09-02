@@ -124,10 +124,11 @@ export const Empty: Story = {
       handlers: [
         // The shared `memoryHandlers()` default `/usage` fixture returns a
         // nonzero `summary.total_events` (128) alongside an empty `by_tool` —
-        // fine for stories that only read `by_tool`, but `HealthSummary`
-        // reads `summary` directly, so without this override it would render
-        // a fabricated "128 calls, healthy" verdict banner instead of its own
-        // empty state, contradicting this story's name.
+        // fine for stories that only read `by_tool`, but `HealthSummary` is
+        // driven by `by_tool` rows too (via `InsightsPage`'s `agentRows`), so
+        // without this override it would render a fabricated "128 calls,
+        // healthy" verdict banner instead of its own empty state,
+        // contradicting this story's name.
         http.get('*/functions/v1/memories/usage', ({ request }) => {
           const url = new URL(request.url);
           return HttpResponse.json({

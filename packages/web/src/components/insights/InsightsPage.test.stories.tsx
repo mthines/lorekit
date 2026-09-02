@@ -57,12 +57,13 @@ const meta: Meta<typeof InsightsPage> = {
 export default meta;
 type Story = StoryObj<typeof InsightsPage>;
 
-export const RendersAllFiveSections: Story = {
+export const RendersAllSixSections: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await step('the page title and all five section headings render', async () => {
+    await step('the page title and all six section headings render', async () => {
       await expect(canvas.getByRole('heading', { name: 'Insights', level: 1 })).toBeInTheDocument();
       for (const heading of [
+        'Agent activity',
         'Operational health',
         "Who's reading",
         'Scope consumption',
@@ -72,7 +73,7 @@ export const RendersAllFiveSections: Story = {
         await waitFor(() => expect(canvas.getByRole('heading', { name: heading })).toBeInTheDocument());
       }
     });
-    await step('the at-a-glance health verdict renders above the sections, from the same usage fetch', async () => {
+    await step('the at-a-glance health verdict renders in the first section, from the same usage fetch', async () => {
       // The fixture is 10 calls, all `ok` — a 100% healthy window.
       await waitFor(() => expect(canvas.getByText('Healthy')).toBeVisible());
       await expect(canvas.getByText('100% of calls succeeded')).toBeVisible();
@@ -83,9 +84,9 @@ export const RendersAllFiveSections: Story = {
 export const ScopeConsumptionHasItsOwnRangePicker: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await step('exactly one range picker exists, scoped to Scope consumption', async () => {
+    await step('exactly two range pickers exist — Agent activity’s shared one and Scope consumption’s own', async () => {
       await waitFor(() =>
-        expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(1),
+        expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(2),
       );
     });
   },

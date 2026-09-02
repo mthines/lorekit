@@ -7,11 +7,16 @@
  * Insights previously opened with three diagnostic panels and no headline: a
  * reader had to parse Friction, Latency, and Coverage gaps individually to
  * answer "should I be worried" — the most common question anyone opening an
- * operational page actually has. This reads the SAME `/usage` fetch
- * (`summary.total_events`/`by_outcome`, already summed server-side) plus the
- * already-computed top `FailureRow`, so the verdict costs no extra request
- * and cannot drift from the panels below it — see `summarizeHealth` in
- * `lib/usage-health.ts`.
+ * operational page actually has. This reads `rows` — the SAME `/usage` fetch
+ * `UsageHealth` renders below, already narrowed to agent traffic by the
+ * caller (`excludeDashboardReads`) — plus the already-computed top
+ * `FailureRow`, so the verdict cannot drift from the panels below it. See
+ * `summarizeHealth` in `lib/usage-health.ts`.
+ *
+ * `previousRows`/the `TrendChip` answer "is my agent doing better than last
+ * period" — see `healthTrend`. `null` from it (an empty previous window) just
+ * omits the chips; there is nothing dishonest a young account's first busy
+ * week could show instead.
  *
  * Deliberately not `AnimatedNumber` for the percentage: that component rounds
  * to whole numbers mid-tween (built for integer counts, and every existing
@@ -21,15 +26,20 @@
  */
 
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
-import type { UsageSummary } from '@lorekit/schemas/usage';
+import type { UsageStatRow } from '@lorekit/schemas/usage';
 import { Badge } from '@/components/ui/Badge';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
-import { summarizeHealth, type FailureRow } from '@/lib/usage-health';
-import { TREND_WINDOW_DAYS } from '@/lib/queries/dashboard';
+import { TrendChip } from '@/components/dashboard/StatCard';
+import { summarizeHealth, healthTrend, type FailureRow } from '@/lib/usage-health';
 
 interface HealthSummaryProps {
-  summary: UsageSummary;
+  /** Current window's rows — already dashboard-excluded by the caller. */
+  rows: readonly UsageStatRow[];
+  /** The immediately preceding equal-length window's rows, for the trend chip. */
+  previousRows: readonly UsageStatRow[];
   failures: readonly FailureRow[];
+  /** The selected window as a caption fragment, e.g. "the last 7 days" (see `lib/time-range.ts#rangeCaption`). */
+  rangeCaption: string;
 }
 
 /** At or above this success rate, the verdict reads as healthy (green). */
@@ -51,13 +61,14 @@ const VERDICT_META: Record<Verdict, { icon: typeof CheckCircle2; color: string; 
   unhealthy: { icon: XCircle, color: 'text-[#f87171]', badge: 'red', label: 'Unhealthy' },
 };
 
-export function HealthSummary({ summary, failures }: HealthSummaryProps) {
-  const { totalCalls, successRate, topFailure } = summarizeHealth(summary, failures);
+export function HealthSummary({ rows, previousRows, failures, rangeCaption }: HealthSummaryProps) {
+  const { totalCalls, successRate, topFailure } = summarizeHealth(rows, failures);
+  const trend = healthTrend(rows, previousRows);
 
   if (totalCalls === 0) {
     return (
       <p className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 text-sm text-[var(--color-content-secondary)]">
-        No calls recorded in the last {TREND_WINDOW_DAYS} days.
+        No calls recorded in {rangeCaption}.
       </p>
     );
   }
@@ -79,9 +90,27 @@ export function HealthSummary({ summary, failures }: HealthSummaryProps) {
           <p className="flex items-center gap-2 text-sm font-semibold text-[var(--color-content-primary)]">
             <Badge variant={badge}>{label}</Badge>
             {successPct}% of calls succeeded
+            {trend && (
+              <span
+                className={`text-xs font-medium tabular-nums ${
+                  trend.successRateDeltaPct > 0
+                    ? 'text-[var(--color-success)]'
+                    : trend.successRateDeltaPct < 0
+                      ? 'text-[var(--color-error)]'
+                      : 'text-[var(--color-content-tertiary)]'
+                }`}
+                title="Success rate vs. the immediately preceding period of equal length, in percentage points — not a percent-of-percent change."
+              >
+                ({trend.successRateDeltaPct > 0 ? '+' : ''}
+                {trend.successRateDeltaPct}pp)
+              </span>
+            )}
           </p>
-          <p className="text-xs text-[var(--color-content-tertiary)]">
-            <AnimatedNumber value={totalCalls} /> calls in the last {TREND_WINDOW_DAYS} days
+          <p className="flex items-center gap-1.5 text-xs text-[var(--color-content-tertiary)]">
+            <AnimatedNumber value={totalCalls} /> calls in {rangeCaption}
+            {trend && (
+              <TrendChip changePct={trend.totalCallsChangePct} title="Call volume vs. the immediately preceding period of equal length" />
+            )}
           </p>
         </div>
       </div>
