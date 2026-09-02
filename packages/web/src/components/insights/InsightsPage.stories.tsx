@@ -122,6 +122,22 @@ export const Empty: Story = {
   parameters: {
     msw: {
       handlers: [
+        // The shared `memoryHandlers()` default `/usage` fixture returns a
+        // nonzero `summary.total_events` (128) alongside an empty `by_tool` —
+        // fine for stories that only read `by_tool`, but `HealthSummary`
+        // reads `summary` directly, so without this override it would render
+        // a fabricated "128 calls, healthy" verdict banner instead of its own
+        // empty state, contradicting this story's name.
+        http.get('*/functions/v1/memories/usage', ({ request }) => {
+          const url = new URL(request.url);
+          return HttpResponse.json({
+            range: { since: url.searchParams.get('since'), until: url.searchParams.get('until') },
+            correlation_id: null,
+            summary: { total_events: 0, reads: 0, writes: 0, other: 0, records_read: 0, archived: 0, expired: 0, by_outcome: {} },
+            by_tool: [],
+            by_scope_type: [],
+          });
+        }),
         ...memoryHandlers([]),
         http.get('*/functions/v1/memories/read-ranking', ({ request }) =>
           HttpResponse.json({

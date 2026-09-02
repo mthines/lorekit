@@ -115,7 +115,7 @@ export function InsightsPage() {
         </p>
       </div>
 
-      {!isLoading && !isError && data && usageByTool.length > 0 && (
+      {!isLoading && !isError && data && (
         <HealthSummary summary={data.usageSummary} failures={failures} />
       )}
 
