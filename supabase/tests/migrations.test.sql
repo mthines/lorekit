@@ -8701,10 +8701,8 @@ $$;
 --       lorekit_groom_candidates (the two drifted apart once already).
 do $$
 declare
-  v_young   uuid;
-  v_old     uuid;
   v_reopened uuid;
-  v_count   int;
+  v_count    int;
 begin
   set local role service_role;
   perform set_config('request.jwt.claims',
@@ -8713,12 +8711,10 @@ begin
   -- Written 7 days ago, never opened — the case reported from the dashboard:
   -- it was being caught by an "unseen 90d" filter it cannot honestly satisfy.
   insert into memories (user_id, scope, key, value, created_at)
-    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-young-never-opened', 'v', now() - interval '7 days')
-    returning id into v_young;
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-young-never-opened', 'v', now() - interval '7 days');
   -- Written 200 days ago, never opened — genuinely stale.
   insert into memories (user_id, scope, key, value, created_at)
-    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-old-never-opened', 'v', now() - interval '200 days')
-    returning id into v_old;
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-old-never-opened', 'v', now() - interval '200 days');
   -- Written 200 days ago but opened just now.
   insert into memories (user_id, scope, key, value, created_at)
     values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-old-opened-today', 'v', now() - interval '200 days')
