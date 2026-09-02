@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { http, HttpResponse } from 'msw';
-import { expect, within, waitFor } from 'storybook/test';
+import { expect, within, waitFor, userEvent } from 'storybook/test';
 
 import { ScopeConsumption } from './ScopeConsumption';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
@@ -65,6 +65,50 @@ export const HeadlineSumsToTotalIncludingUnattributed: Story = {
     await step('the unattributed bucket renders as its own labelled row, not dropped', async () => {
       await expect(canvas.getByText('unattributed')).toBeVisible();
       await expect(canvas.getByText((145260).toLocaleString('en-US'))).toBeVisible();
+    });
+  },
+};
+
+/** More named scopes than the default limit (8) — the "+N more" truncation used to be a dead end. */
+const MANY_SCOPES_BUCKETS = Array.from({ length: 12 }, (_, i) => ({
+  bucket: '2026-07-05T00:00:00.000Z',
+  scope: `repo::mthines/scope-${i}`,
+  count: (12 - i) * 10,
+}));
+
+export const TruncatedScopesExpandOnClick: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get('*/functions/v1/memories/read-activity', () =>
+          HttpResponse.json({
+            bucket: 'day',
+            since: '2026-07-01T00:00:00.000Z',
+            until: FROZEN_NOW,
+            buckets: MANY_SCOPES_BUCKETS,
+          }),
+        ),
+        ...memoryHandlers(),
+      ],
+    },
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('only the first 8 scopes render, with a toggle for the rest', async () => {
+      await waitFor(() => expect(canvas.getByText('mthines/scope-0')).toBeVisible());
+      await expect(canvas.queryByText('mthines/scope-9')).not.toBeInTheDocument();
+      await expect(canvas.getByRole('button', { name: 'Show 4 more scopes' })).toBeVisible();
+    });
+    await step('clicking the toggle reveals the rest and flips its own label', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Show 4 more scopes' }));
+      await expect(canvas.getByText('mthines/scope-9')).toBeVisible();
+      await expect(canvas.getByText('mthines/scope-11')).toBeVisible();
+      await expect(canvas.getByRole('button', { name: 'Show fewer scopes' })).toBeVisible();
+    });
+    await step('clicking again collapses back to the first 8', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Show fewer scopes' }));
+      await expect(canvas.queryByText('mthines/scope-9')).not.toBeInTheDocument();
+      await expect(canvas.getByRole('button', { name: 'Show 4 more scopes' })).toBeVisible();
     });
   },
 };

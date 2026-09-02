@@ -31,10 +31,27 @@ export function bucketScopeType(scopeType: string | null): string {
 
 // ── Friction ─────────────────────────────────────────────────────────────────
 
+/** The (client, scope_type) pairing responsible for some share of a failure's events. */
+export interface FailureContext {
+  /** `null` means genuinely unattributed, same convention as `readsByClient`. */
+  client: string | null;
+  scope_type: string;
+  event_count: number;
+}
+
 export interface FailureRow {
   tool_name: string;
   outcome: string;
   event_count: number;
+  /**
+   * The single (client, scope_type) pairing contributing the most events to
+   * this failure — turns "187 memory.read errors" into "mostly cli, branch",
+   * a concrete place to go look (that surface's logs, that scope's hook
+   * config), without a second query. Ties break toward whichever context was
+   * encountered first in `rows` — the underlying data has no meaningful
+   * tiebreaker of its own.
+   */
+  topContext: FailureContext;
 }
 
 /**
@@ -45,15 +62,32 @@ export interface FailureRow {
  * repeated failure legible as a broken integration rather than a stat.
  */
 export function failuresByToolOutcome(rows: readonly UsageStatRow[]): FailureRow[] {
-  const totals = new Map<string, FailureRow>();
+  const totals = new Map<
+    string,
+    { tool_name: string; outcome: string; event_count: number; contexts: Map<string, FailureContext> }
+  >();
   for (const row of rows) {
     if (row.outcome === 'ok') continue;
     const key = `${row.tool_name}\u0000${row.outcome}`;
-    const existing = totals.get(key);
-    if (existing) existing.event_count += row.event_count;
-    else totals.set(key, { tool_name: row.tool_name, outcome: row.outcome, event_count: row.event_count });
+    let existing = totals.get(key);
+    if (!existing) {
+      existing = { tool_name: row.tool_name, outcome: row.outcome, event_count: 0, contexts: new Map() };
+      totals.set(key, existing);
+    }
+    existing.event_count += row.event_count;
+
+    const contextScopeType = bucketScopeType(row.scope_type);
+    const contextKey = `${row.client ?? '\u0000'}\u0001${contextScopeType}`;
+    const context = existing.contexts.get(contextKey);
+    if (context) context.event_count += row.event_count;
+    else existing.contexts.set(contextKey, { client: row.client ?? null, scope_type: contextScopeType, event_count: row.event_count });
   }
-  return [...totals.values()].sort((a, b) => b.event_count - a.event_count);
+  return [...totals.values()]
+    .map(({ contexts, ...rest }) => ({
+      ...rest,
+      topContext: [...contexts.values()].sort((a, b) => b.event_count - a.event_count)[0],
+    }))
+    .sort((a, b) => b.event_count - a.event_count);
 }
 
 // ── Latency ──────────────────────────────────────────────────────────────────

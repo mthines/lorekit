@@ -46,10 +46,17 @@ describe('failuresByToolOutcome', () => {
 
   it('sums identical repeated failures into one row rather than listing each attempt', () => {
     const rows = [
-      row({ tool_name: 'org.create', outcome: 'error', event_count: 100 }),
-      row({ tool_name: 'org.create', outcome: 'error', event_count: 55, scope_type: null }),
+      row({ tool_name: 'org.create', outcome: 'error', event_count: 100, client: 'cli', scope_type: null }),
+      row({ tool_name: 'org.create', outcome: 'error', event_count: 55, client: 'cli', scope_type: null }),
     ];
-    expect(failuresByToolOutcome(rows)).toEqual([{ tool_name: 'org.create', outcome: 'error', event_count: 155 }]);
+    expect(failuresByToolOutcome(rows)).toEqual([
+      {
+        tool_name: 'org.create',
+        outcome: 'error',
+        event_count: 155,
+        topContext: { client: 'cli', scope_type: 'other', event_count: 155 },
+      },
+    ]);
   });
 
   it('ranks the most frequent failure first', () => {
@@ -59,6 +66,23 @@ describe('failuresByToolOutcome', () => {
       row({ tool_name: 'memory.list', outcome: 'rate_limited', event_count: 20 }),
     ];
     expect(failuresByToolOutcome(rows).map((r) => r.tool_name)).toEqual(['org.create', 'memory.list', 'memory.write']);
+  });
+
+  it('picks the (client, scope_type) pairing with the most events as topContext', () => {
+    const rows = [
+      row({ tool_name: 'memory.read', outcome: 'error', event_count: 150, client: 'cli', scope_type: 'branch' }),
+      row({ tool_name: 'memory.read', outcome: 'error', event_count: 37, client: 'mcp', scope_type: 'repo' }),
+    ];
+    const [result] = failuresByToolOutcome(rows);
+    expect(result.event_count).toBe(187);
+    expect(result.topContext).toEqual({ client: 'cli', scope_type: 'branch', event_count: 150 });
+  });
+
+  it('buckets a null client as its own context, distinct from a named one', () => {
+    const rows = [
+      row({ tool_name: 'memory.list', outcome: 'error', event_count: 10, client: null, scope_type: 'global' }),
+    ];
+    expect(failuresByToolOutcome(rows)[0].topContext).toEqual({ client: null, scope_type: 'global', event_count: 10 });
   });
 });
 

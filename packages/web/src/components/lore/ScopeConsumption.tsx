@@ -23,6 +23,7 @@
  * impure shell (fetch + render).
  */
 
+import { useState } from 'react';
 import { Info } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -43,6 +44,9 @@ export function ScopeConsumption({ since, until, limit = DEFAULT_LIMIT }: ScopeC
   const { data, isLoading } = useScopeConsumption(since, until);
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
+  // "+N more" used to be inert label text with no way to actually see those
+  // scopes — this makes the label a toggle instead of a dead end.
+  const [expanded, setExpanded] = useState(false);
 
   if (isLoading) {
     return (
@@ -64,7 +68,7 @@ export function ScopeConsumption({ since, until, limit = DEFAULT_LIMIT }: ScopeC
 
   const named = rows.filter((r) => r.scope !== null);
   const unattributed = rows.find((r) => r.scope === null) ?? null;
-  const shown = named.slice(0, limit);
+  const shown = expanded ? named : named.slice(0, limit);
   const hiddenCount = named.length - shown.length;
   // Max against the FULL set (including unattributed), so every bar's width is
   // relative to the same scale — the unattributed bar is often the largest.
@@ -81,30 +85,38 @@ export function ScopeConsumption({ since, until, limit = DEFAULT_LIMIT }: ScopeC
         </span>
       </div>
 
-      <ul className="flex flex-col gap-2">
+      {/* Scrollable only once expanded — a leaderboard with 100+ scopes should
+          not turn "show more" into "triple the page's scroll length". */}
+      <ul className={expanded ? 'flex max-h-96 flex-col gap-2 overflow-y-auto pr-1' : 'flex flex-col gap-2'}>
         {shown.map((row) => (
           <ScopeConsumptionRow key={row.scope} scope={row.scope} count={row.count} max={max} />
         ))}
+      </ul>
 
-        {hiddenCount > 0 && (
-          <li className="text-xs text-[var(--color-content-tertiary)]">
-            +{hiddenCount} more scope{hiddenCount === 1 ? '' : 's'}
-          </li>
-        )}
+      {named.length > limit && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="self-start text-xs text-[var(--color-accent)] hover:underline"
+        >
+          {expanded ? 'Show fewer scopes' : `Show ${hiddenCount} more scope${hiddenCount === 1 ? '' : 's'}`}
+        </button>
+      )}
 
-        {/* Always last, regardless of rank, so the "everything you can name" set
-            reads before the "attribution gap" row — ranking it by count could
-            otherwise put it first and read as the headline finding rather than a
-            caveat on the ones above it. */}
-        {unattributed && (
+      {/* Always last, regardless of rank, so the "everything you can name" set
+          reads before the "attribution gap" row — ranking it by count could
+          otherwise put it first and read as the headline finding rather than a
+          caveat on the ones above it. */}
+      {unattributed && (
+        <ul className="flex flex-col gap-2">
           <ScopeConsumptionRow
             scope={null}
             count={unattributed.count}
             max={max}
             tooltip="Records read by a call that could not be attributed to one scope — mostly memory.search, which accepts a list of scopes rather than one. Included so these bars still sum to the total above."
           />
-        )}
-      </ul>
+        </ul>
+      )}
     </div>
   );
 }

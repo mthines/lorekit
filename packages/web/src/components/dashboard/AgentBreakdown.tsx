@@ -16,8 +16,9 @@
  * bars-sum-to-headline invariant, so it gets its own section too.
  */
 
-import { Users, Layers } from 'lucide-react';
+import { Users, Layers, Info } from 'lucide-react';
 import type { UsageStatRow } from '@lorekit/schemas/usage';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { readsByClient, readsByAgentFamily } from '@/lib/usage-health';
 
 interface AgentBreakdownProps {
@@ -45,7 +46,18 @@ export function AgentBreakdown({ rows }: AgentBreakdownProps) {
           <ul className="flex flex-col gap-1.5">
             {byClient.map((c) => (
               <li key={c.client ?? 'unattributed'} className="flex items-center justify-between gap-2 text-xs">
-                <span className="font-mono text-[var(--color-content-secondary)]">{c.client ?? 'unattributed'}</span>
+                <span className="flex items-center gap-1 font-mono text-[var(--color-content-secondary)]">
+                  {c.client ?? 'unattributed'}
+                  {c.client === null && (
+                    <Tooltip
+                      content="Calls made before both transports started defaulting an untagged call to their own surface name (cli/mcp/dashboard/api). Nothing to configure — this bucket only shrinks as older traffic ages out of the window."
+                      side="top"
+                      align="left"
+                    >
+                      <Info className="size-3 shrink-0 opacity-60" aria-hidden />
+                    </Tooltip>
+                  )}
+                </span>
                 <span className="font-mono text-[var(--color-content-tertiary)]">
                   {c.event_count.toLocaleString()} calls · {c.record_count.toLocaleString()} records
                 </span>
