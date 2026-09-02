@@ -582,6 +582,7 @@ function PolicyForm({
         title="Run this rule now?"
         description={`Archive ${matchCount ?? 0} lesson${matchCount === 1 ? '' : 's'}? They can be restored from Archived at any time.`}
         confirmLabel="Archive them"
+        confirmAnalyticsId="grooming.run.confirm"
         pending={run.isPending}
         onConfirm={() => void doRun()}
         onCancel={() => setRunConfirmOpen(false)}
@@ -818,6 +819,7 @@ export function GroomingRuleBuilder() {
         title="Delete policy?"
         description={`"${deleteTarget?.name ?? ''}" will be deleted. The lessons it matched are untouched.`}
         confirmLabel="Delete"
+        confirmAnalyticsId="grooming.policy-delete.confirm"
         destructive
         pending={deletePolicyMutation.isPending}
         onConfirm={() => { void confirmDelete(); }}

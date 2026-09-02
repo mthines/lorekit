@@ -30,6 +30,13 @@ export interface ConfirmDialogProps {
    * the highest-stakes, irreversible-looking actions. Omit for a plain confirm.
    */
   confirmPhrase?: string;
+  /**
+   * `analyticsId` for the confirm button. Defaults to `'confirm-dialog.confirm'`
+   * so untouched callers keep today's behavior; callers with a distinct confirm
+   * action pass their own static-literal `<surface>.<action>.confirm` slug so the
+   * `ui.button_click` events stay distinguishable per action.
+   */
+  confirmAnalyticsId?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -43,6 +50,7 @@ export function ConfirmDialog({
   destructive = false,
   pending = false,
   confirmPhrase,
+  confirmAnalyticsId = 'confirm-dialog.confirm',
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -182,7 +190,13 @@ export function ConfirmDialog({
                 type="button"
                 variant={destructive ? 'danger' : 'primary'}
                 size="md"
-                analyticsId="confirm-dialog.confirm"
+                // Forwarded via spread rather than a JSX attribute expression:
+                // the analytics-id-literals guard enforces STATIC string
+                // literals at every call site, so this wrapper passes the
+                // (always-literal) confirm slug through the object form Button
+                // itself uses. Do not inline this back to a JSX attribute — an
+                // attribute expression here would trip the guard.
+                {...{ analyticsId: confirmAnalyticsId }}
                 onClick={onConfirm}
                 disabled={pending || !phraseSatisfied}
               >

@@ -1159,6 +1159,11 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
         }
         destructive
         pending={pending}
+        // One discriminated dialog serves leave/delete/revoke/remove/unbind, so
+        // its confirm emits ONE static id (analyticsId must be a literal — a
+        // per-kind expression would trip the analytics-id-literals guard). This
+        // still distinguishes the org confirm from the other ConfirmDialog callers.
+        confirmAnalyticsId="org.action.confirm"
         confirmPhrase={confirm?.kind === 'delete' ? (selectedOrg?.name ?? undefined) : undefined}
         onConfirm={() => {
           if (confirm?.kind === 'leave') handleLeave();
