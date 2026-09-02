@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.64.2](https://github.com/mthines/lorekit/compare/cli-v1.64.1...cli-v1.64.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* **retention:** unseen_days counts a never-opened lesson from created_at ([c75cf63](https://github.com/mthines/lorekit/commit/c75cf63a7fef7df915d1f658ff895d5deceb2031))
+* **retention:** unseen_days counts a never-opened lesson from created_at ([0d62721](https://github.com/mthines/lorekit/commit/0d62721ce053e2b1de3e1c86d64ea70cb5e8b527))
+
 ## [1.64.1](https://github.com/mthines/lorekit/compare/cli-v1.64.0...cli-v1.64.1) (2026-09-02)
 
 

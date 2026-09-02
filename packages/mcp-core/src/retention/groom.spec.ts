@@ -247,10 +247,20 @@ describe('isGroomCandidate', () => {
     expect(isGroomCandidate(m, conditions({ scope: 'global', min_age_days: 30 }), NOW)).toBe(true);
   });
 
-  it('unseen_days: a never-opened memory (null last_opened_at) matches ANY threshold', () => {
-    const m = memory({ last_opened_at: null, created_at: NOW.toISOString() });
-    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 1 }), NOW)).toBe(true);
-    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 3650 }), NOW)).toBe(true);
+  // A never-opened memory measures `unseen_days` from `created_at` (migration
+  // 00100). Under 00099's `-infinity` these two cases were indistinguishable:
+  // BOTH matched every threshold, so a lesson written this morning satisfied
+  // "not opened in 90 days" — and since 00099 added `last_opened_at` without a
+  // backfill, that was true of the entire existing store.
+  it('unseen_days: a never-opened memory younger than the threshold does NOT match', () => {
+    const m = memory({ last_opened_at: null, created_at: '2026-08-19T00:00:00.000Z' }); // 7 days old
+    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 90 }), NOW)).toBe(false);
+    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 3650 }), NOW)).toBe(false);
+  });
+
+  it('unseen_days: a never-opened memory older than the threshold matches', () => {
+    const m = memory({ last_opened_at: null, created_at: '2026-01-01T00:00:00.000Z' });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 90 }), NOW)).toBe(true);
   });
 
   it('unseen_days: a recently-opened memory does NOT match', () => {

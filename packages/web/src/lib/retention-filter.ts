@@ -270,8 +270,14 @@ export function groomConditionsToFilters(source: DimensionFilterSource): Filter[
 /** One phrase describing the active conditions, for the control's trigger label and pill. */
 export function retentionConditionsPhrase(conditions: RetentionConditions): string {
   const parts: string[] = [];
-  if (conditions.minAgeDays !== undefined) parts.push(`older than ${conditions.minAgeDays}d`);
-  if (conditions.unseenDays !== undefined) parts.push(`unseen ${conditions.unseenDays}d`);
-  if (conditions.maxSeenCount !== undefined) parts.push(`seen ≤ ${conditions.maxSeenCount}`);
+  // Vocabulary matches the lesson detail sheet's metadata rows — "Created",
+  // "Last agent open", "Recurrence" — so a reader can open any row the filter
+  // returned and check the claim against the same three words. "unopened"
+  // rather than the older "unseen": nothing in the product calls a read
+  // "seeing", and the pill was the phrase people quoted back when the
+  // condition did not match what they saw on the lesson.
+  if (conditions.minAgeDays !== undefined) parts.push(`created >${conditions.minAgeDays}d ago`);
+  if (conditions.unseenDays !== undefined) parts.push(`unopened >${conditions.unseenDays}d`);
+  if (conditions.maxSeenCount !== undefined) parts.push(`seen ≤ ${conditions.maxSeenCount}×`);
   return parts.length > 0 ? parts.join(' · ') : 'Age & activity';
 }
