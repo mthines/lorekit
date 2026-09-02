@@ -124,7 +124,7 @@ jobs:
           # dependency-free like its siblings, so the string is duplicated and
           # held in place by scripts/ci/web-preview-filter.test.mjs — which fails
           # when any of the three drifts.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|nx\.json$|scripts/ci/web-preview-comment\.mjs$|\.github/actions/vercel-preview-deploy/|\.github/workflows/(web-preview|web-preview-deploy)\.yml$)'; then
             echo "web_preview=true" >> "$GITHUB_OUTPUT"
           else
             echo "web_preview=false" >> "$GITHUB_OUTPUT"
@@ -134,7 +134,11 @@ jobs:
           # three agree, so it must run when ANY of them moves.
           # `scripts/ci/web-preview-filter` (no extension) matches both the module
           # and its `.test.mjs`, same trick as the migration guards above.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/ci/web-preview-filter|\.github/workflows/(ci|web-preview-deploy)\.yml$)'; then
+          # `scripts/ci/web-preview-comment` rides along: it is the OTHER
+          # preview-machinery module unit-tested by this job, and its test reads
+          # web-preview-deploy.yml (already on this filter) to prove the workflow
+          # still renders the comment through it.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/ci/web-preview-(filter|comment)|\.github/workflows/(ci|web-preview-deploy)\.yml$)'; then
             echo "preview_filter=true" >> "$GITHUB_OUTPUT"
           else
             echo "preview_filter=false" >> "$GITHUB_OUTPUT"
@@ -528,6 +532,14 @@ jobs:
 
       - name: Unit-test the web-preview path filter
         run: node --test scripts/ci/web-preview-filter.test.mjs
+
+      # The sticky comment's BODY, for the same reason: it is a Vercel-shaped
+      # contract with tooling outside this repo (a `| Project | Deployment |
+      # Actions | Updated |` table whose Actions cell carries `[Preview](…)`),
+      # plus this repo's own `sha=` marker that the incremental redeploy check
+      # reads back. Both are held by assertion rather than by discipline.
+      - name: Unit-test the web-preview comment body
+        run: node --test scripts/ci/web-preview-comment.test.mjs
 
   # ── Edge typecheck — `deno check` over every Edge Function, ratcheted ────────
   #    Until this job existed, `supabase/functions/**` was typechecked by
