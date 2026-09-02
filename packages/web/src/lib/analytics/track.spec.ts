@@ -138,6 +138,39 @@ describe('normalizeCommandId', () => {
   });
 });
 
+describe('track — ui.button_click', () => {
+  it('maps buttonId + variant + size onto the lorekit.ui.* attributes', () => {
+    track({ name: 'ui.button_click', buttonId: 'invite.accept', variant: 'primary', size: 'sm' });
+
+    expect(calls.length).toBe(1);
+    expect(lastCall().name).toBe('ui.button_click');
+    expect(lastCall().attributes).toEqual({
+      'lorekit.ui.button_id': 'invite.accept',
+      'lorekit.ui.button_variant': 'primary',
+      'lorekit.ui.button_size': 'sm',
+    });
+  });
+
+  it('omits variant and size when they are not set', () => {
+    track({ name: 'ui.button_click', buttonId: 'duplicate-clusters.close' });
+
+    expect(lastCall().attributes).toEqual({
+      'lorekit.ui.button_id': 'duplicate-clusters.close',
+    });
+    expect(Object.keys(lastCall().attributes)).not.toContain('lorekit.ui.button_variant');
+    expect(Object.keys(lastCall().attributes)).not.toContain('lorekit.ui.button_size');
+  });
+
+  it('sends only bounded lorekit.ui.* attributes (the id is a static slug)', () => {
+    track({ name: 'ui.button_click', buttonId: 'org.delete', variant: 'danger-outline' });
+
+    const attributes = lastCall().attributes;
+    expect(Object.keys(attributes).every((key) => key.startsWith('lorekit.ui.'))).toBe(true);
+    expect(attributes['lorekit.ui.button_id']).toBe('org.delete');
+    expect(attributes['lorekit.ui.button_variant']).toBe('danger-outline');
+  });
+});
+
 describe('track — best effort', () => {
   it('swallows an SDK failure instead of breaking the caller', () => {
     state.throwNext = true;
