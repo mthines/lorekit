@@ -4,7 +4,7 @@ import { trendRowsFromActivity, type TrendRow } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import { activityRequest, listScopesRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
-import type { UsageStatRow } from '@lorekit/schemas/usage';
+import type { UsageStatRow, UsageSummary } from '@lorekit/schemas/usage';
 import type { ReadActivityBucket } from '@lorekit/schemas/memory';
 
 export interface DashboardData {
@@ -37,6 +37,14 @@ export interface DashboardData {
    * calls `usageRequest`; the Overview did not until now.
    */
   usageByTool: UsageStatRow[];
+  /**
+   * The SAME `/usage` response's pre-rolled `summary` — `total_events` and
+   * `by_outcome` already sum every row in `usageByTool`, so Insights' at-a-glance
+   * success rate reads it directly instead of re-deriving a total from
+   * `usageByTool` (which would double the aggregation and could drift from what
+   * the server calls the total).
+   */
+  usageSummary: UsageSummary;
 }
 
 /**
@@ -71,9 +79,20 @@ const DAY_MS = 86_400_000;
  * switching the shared range picker re-buckets in the browser instead of
  * refetching.
  */
+const EMPTY_USAGE_SUMMARY: UsageSummary = {
+  total_events: 0,
+  reads: 0,
+  writes: 0,
+  other: 0,
+  records_read: 0,
+  archived: 0,
+  expired: 0,
+  by_outcome: {},
+};
+
 async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> {
   const token = await browserAccessToken();
-  if (!token) return { scopes: [], rows: [], readBuckets: [], usageByTool: [] };
+  if (!token) return { scopes: [], rows: [], readBuckets: [], usageByTool: [], usageSummary: EMPTY_USAGE_SUMMARY };
 
   const since = new Date(Date.now() - TREND_WINDOW_DAYS * DAY_MS).toISOString();
   const [scopesRes, activity, readActivity, usage] = await Promise.all([
@@ -100,6 +119,7 @@ async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> 
     rows: trendRowsFromActivity(activity.buckets),
     readBuckets: readActivity.buckets,
     usageByTool: usage.by_tool,
+    usageSummary: usage.summary,
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { UsageStatRow } from '@lorekit/schemas/usage';
+import type { UsageStatRow, UsageSummary } from '@lorekit/schemas/usage';
 import {
   bucketScopeType,
   failuresByToolOutcome,
@@ -7,7 +7,22 @@ import {
   coverageGapsByScopeType,
   readsByClient,
   readsByAgentFamily,
+  summarizeHealth,
 } from './usage-health';
+
+function summary(overrides: Partial<UsageSummary> = {}): UsageSummary {
+  return {
+    total_events: 0,
+    reads: 0,
+    writes: 0,
+    other: 0,
+    records_read: 0,
+    archived: 0,
+    expired: 0,
+    by_outcome: {},
+    ...overrides,
+  };
+}
 
 function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
   return {
@@ -173,6 +188,34 @@ describe('coverageGapsByScopeType', () => {
     const result = coverageGapsByScopeType(rows);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ scope_type: 'other', event_count: 8, record_count: 2 });
+  });
+});
+
+describe('summarizeHealth', () => {
+  it('computes success rate from by_outcome, not by re-summing failures', () => {
+    const result = summarizeHealth(summary({ total_events: 200, by_outcome: { ok: 187, error: 13 } }), []);
+    expect(result.totalCalls).toBe(200);
+    expect(result.successRate).toBeCloseTo(0.935, 5);
+  });
+
+  it('reports a 100% success rate for an empty window, not NaN', () => {
+    const result = summarizeHealth(summary({ total_events: 0, by_outcome: {} }), []);
+    expect(result.successRate).toBe(1);
+  });
+
+  it('surfaces the most frequent failure as topFailure', () => {
+    const rows = [
+      row({ tool_name: 'org.create', outcome: 'error', event_count: 155 }),
+      row({ tool_name: 'memory.list', outcome: 'rate_limited', event_count: 20 }),
+    ];
+    const failures = failuresByToolOutcome(rows);
+    const result = summarizeHealth(summary({ total_events: 500, by_outcome: { ok: 325, error: 175 } }), failures);
+    expect(result.topFailure?.tool_name).toBe('org.create');
+  });
+
+  it('reports topFailure as null when nothing failed', () => {
+    const result = summarizeHealth(summary({ total_events: 40, by_outcome: { ok: 40 } }), []);
+    expect(result.topFailure).toBeNull();
   });
 });
 

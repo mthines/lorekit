@@ -18,7 +18,7 @@
  * Pure and dependency-free, so it is unit-testable without a network call.
  */
 
-import type { UsageStatRow } from '@lorekit/schemas/usage';
+import type { UsageStatRow, UsageSummary } from '@lorekit/schemas/usage';
 
 /** The closed `scope_type` vocabulary a row's value may legitimately carry. */
 const KNOWN_SCOPE_TYPES = new Set(['global', 'project', 'repo', 'branch', 'mixed', 'invalid']);
@@ -169,6 +169,37 @@ export function coverageGapsByScopeType(rows: readonly UsageStatRow[]): Coverage
       recordsPerCall: t.event_count > 0 ? t.record_count / t.event_count : 0,
     }))
     .sort((a, b) => a.recordsPerCall - b.recordsPerCall);
+}
+
+// ── At-a-glance summary ──────────────────────────────────────────────────────
+
+export interface HealthSummary {
+  totalCalls: number;
+  /** `ok` calls ÷ total, in [0, 1]. `1` (not `NaN`) when there were no calls — nothing failed because nothing happened. */
+  successRate: number;
+  /** The single most frequent failure in the window, or `null` when nothing failed. */
+  topFailure: FailureRow | null;
+}
+
+/**
+ * The headline a reader should see BEFORE the three diagnostic panels below —
+ * "is this basically fine" answered in one line, so the panels are for
+ * investigating a problem this already told you exists, not the first thing
+ * you have to parse to find out whether one does.
+ *
+ * `summary.total_events`/`by_outcome` are `/usage`'s own pre-rolled totals
+ * (the SAME window `usageByTool` covers) — reading them directly keeps this
+ * in agreement with the server's own count rather than re-summing
+ * `usageByTool` a second time and risking the two drifting.
+ */
+export function summarizeHealth(summary: UsageSummary, failures: readonly FailureRow[]): HealthSummary {
+  const totalCalls = summary.total_events;
+  const okCalls = summary.by_outcome['ok'] ?? 0;
+  return {
+    totalCalls,
+    successRate: totalCalls > 0 ? okCalls / totalCalls : 1,
+    topFailure: failures[0] ?? null,
+  };
 }
 
 // ── Who is reading (client) ─────────────────────────────────────────────────

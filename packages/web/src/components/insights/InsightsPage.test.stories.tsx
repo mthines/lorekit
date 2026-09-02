@@ -72,6 +72,11 @@ export const RendersAllFiveSections: Story = {
         await waitFor(() => expect(canvas.getByRole('heading', { name: heading })).toBeInTheDocument());
       }
     });
+    await step('the at-a-glance health verdict renders above the sections, from the same usage fetch', async () => {
+      // The fixture is 10 calls, all `ok` — a 100% healthy window.
+      await waitFor(() => expect(canvas.getByText('Healthy')).toBeVisible());
+      await expect(canvas.getByText('100% of calls succeeded')).toBeVisible();
+    });
   },
 };
 

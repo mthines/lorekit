@@ -37,6 +37,7 @@
 
 import { useMemo, useState } from 'react';
 import { Activity, Users, Layers, Flame, PlayCircle } from 'lucide-react';
+import { HealthSummary } from '@/components/dashboard/HealthSummary';
 import { UsageHealth } from '@/components/dashboard/UsageHealth';
 import { AgentBreakdown } from '@/components/dashboard/AgentBreakdown';
 import { ScopeConsumption } from '@/components/lore/ScopeConsumption';
@@ -44,6 +45,7 @@ import { HotColdLore } from '@/components/lore/HotColdLore';
 import { RunsList } from '@/components/settings/RunsList';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { useDashboardData } from '@/lib/queries/dashboard';
+import { failuresByToolOutcome } from '@/lib/usage-health';
 import { effectiveStatsRange, statsWindow } from '@/lib/queries/explorer-stats';
 import type { RangePreset, TimeRange } from '@/lib/time-range';
 
@@ -97,7 +99,12 @@ export function InsightsPage() {
   );
 
   const { data, isLoading, isError } = useDashboardData();
-  const usageByTool = data?.usageByTool ?? [];
+  const usageByTool = useMemo(() => data?.usageByTool ?? [], [data]);
+  // Shared with the Operational health section below, which computes its own
+  // failures/latency/coverage from the same rows — reused here rather than
+  // reading a second time so the headline can never disagree with the panel
+  // that backs it.
+  const failures = useMemo(() => failuresByToolOutcome(usageByTool), [usageByTool]);
 
   return (
     <div className="flex max-w-page flex-col gap-8">
@@ -107,6 +114,10 @@ export function InsightsPage() {
           Dig deeper into your memories and how your agents are actually using them.
         </p>
       </div>
+
+      {!isLoading && !isError && data && usageByTool.length > 0 && (
+        <HealthSummary summary={data.usageSummary} failures={failures} />
+      )}
 
       <Section
         icon={Activity}
@@ -174,7 +185,7 @@ export function InsightsPage() {
       <Section
         icon={PlayCircle}
         title="Runs"
-        description="Local sessions, CI jobs, and PR automations that have touched your lore — drill into any one to see exactly what it read and wrote."
+        description="An audit trail, not a health signal — every local session, CI job, and PR automation that has touched your lore, with its reads/writes/scopes at a glance. Drill into any one to see exactly what it did."
       >
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
           <RunsList />
