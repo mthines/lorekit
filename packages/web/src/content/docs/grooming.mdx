@@ -21,7 +21,7 @@ same eight dimension filters the Lore Explorer's filter bar offers:
 | Condition | Meaning |
 | --- | --- |
 | `min_age_days` | Only lessons at least this many days old |
-| `unseen_days` | Only lessons no agent has individually opened (over MCP or the `lorekit` CLI) in at least this many days — a lesson that has never been opened this way matches at ANY threshold. A bulk `memory.list`/`memory.search` appearance or a human viewing the dashboard does NOT count as "seen"; see the note below |
+| `unseen_days` | Only lessons no agent has individually opened (over MCP or the `lorekit` CLI) in at least this many days. A lesson never opened this way counts from its **creation date**, so it matches only once it is itself that old. A bulk `memory.list`/`memory.search` appearance or a human viewing the dashboard does NOT count as "opened"; see the note below |
 | `max_seen_count` | Only lessons that have recurred at most this many times |
 | `tags` / `tags_mode` | Labels a lesson must carry — `any` (default), `all`, or `none` |
 | `source_agent` / `source_agent_mode` | The writing agent — `in` (default) or `nin` |
@@ -46,6 +46,13 @@ moves when an agent deliberately retrieves this ONE lesson over MCP
 in a list page or from a person browsing the dashboard. That is what keeps
 "unseen for 90 days" honest: reloading the Explorer, or a `memory.list` call
 that happens to include the lesson, does not reset the clock.
+
+A lesson no agent has **ever** opened has no `last_opened_at` to measure from,
+so the clock starts at its creation date. A lesson written a week ago
+therefore does **not** match `unseen_days: 90` — it has not yet had 90 days in
+which to go unread. This matters most right after `last_opened_at` was
+introduced, when every pre-existing lesson has no recorded open: without the
+fallback, `unseen_days` would match the entire store regardless of threshold.
 
 Preview what a rule would catch before saving it as a policy, with the CLI:
 

@@ -171,12 +171,12 @@ describe('groomConditionsToFilters', () => {
 
 describe('retentionConditionsPhrase', () => {
   it('reads as a sentence, joining active conditions', () => {
-    expect(retentionConditionsPhrase({ minAgeDays: 90 })).toBe('older than 90d');
+    expect(retentionConditionsPhrase({ minAgeDays: 90 })).toBe('created >90d ago');
     expect(retentionConditionsPhrase({ minAgeDays: 90, unseenDays: 30 })).toBe(
-      'older than 90d · unseen 30d',
+      'created >90d ago · unopened >30d',
     );
     expect(retentionConditionsPhrase({ minAgeDays: 90, unseenDays: 30, maxSeenCount: 1 })).toBe(
-      'older than 90d · unseen 30d · seen ≤ 1',
+      'created >90d ago · unopened >30d · seen ≤ 1×',
     );
   });
 

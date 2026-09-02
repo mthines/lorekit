@@ -8222,12 +8222,21 @@ begin
   assert v_count = 6,
     format('95-CAND-1: min_age_days=30 over global should catch 6, got %s', v_count);
 
-  -- Never-opened (last_opened_at IS NULL) must match unseen_days regardless
-  -- of the threshold — the literal "never-seen lessons match" reading.
+  -- Never-opened (last_opened_at IS NULL) measures unseen_days from created_at
+  -- (00100), NOT from -infinity: this row is 60 days old, so it matches a
+  -- 30-day threshold and misses a 3650-day one. Before 00100 it matched both,
+  -- which is how a week-old lesson ended up in an "unseen 90d" filter.
+  select count(*) into v_count
+    from lorekit_groom_candidates(v_user, 'global', null, 30, null) c
+   where c.key = 'groom87-old-global';
+  assert v_count = 1,
+    '95-CAND-2: a never-opened row older than unseen_days must match';
+
   select count(*) into v_count
     from lorekit_groom_candidates(v_user, 'global', null, 3650, null) c
    where c.key = 'groom87-old-global';
-  assert v_count = 1, '95-CAND-2: a never-seen row must match unseen_days at ANY threshold';
+  assert v_count = 0,
+    '95-CAND-2b: a never-opened row younger than unseen_days must NOT match';
 
   -- unseen_days excludes a recently-seen row and includes a long-unseen one.
   select count(*) into v_count
@@ -8660,7 +8669,9 @@ begin
 
   -- AC-6: unseen_days on lorekit_groom_candidates reads last_opened_at, not
   -- last_read_at. v_m6 is read constantly (bulk) but never individually
-  -- opened by an agent, so it must still be caught as "unseen".
+  -- opened by an agent, so it must still be caught as "unseen". It is 60 days
+  -- old against a 1-day threshold, so it clears 00100's created_at fallback
+  -- on its own age rather than on the never-opened NULL.
   perform lorekit_record_memory_reads(array[v_m6], 'bulk', 'mcp');
   perform lorekit_record_memory_reads(array[v_m6], 'bulk', 'mcp');
   select count(*) into v_count
@@ -8668,6 +8679,87 @@ begin
    where c.key = '97-read-often-opened-never';
   assert v_count = 1,
     '98 AC-6: a row read constantly via bulk calls but never individually opened must match unseen_days';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 99. unseen_days on a never-opened lesson counts from created_at (00100) ──
+-- 00099 kept 00088's `coalesce(last_opened_at, '-infinity')`, which made
+-- unseen_days VACUOUSLY TRUE for every row that had never been opened — and
+-- since 00099 added the column without a backfill, that was every pre-existing
+-- row in the store. A lesson written a week ago satisfied "not opened in 90
+-- days". 00100 falls back to created_at so the sentence is literally true of
+-- everything returned.
+--
+-- AC-1: a never-opened lesson YOUNGER than unseen_days does NOT match.
+-- AC-2: a never-opened lesson OLDER than unseen_days does match.
+-- AC-3: an actually-opened lesson still measures from last_opened_at, not
+--       created_at — an old lesson opened today must NOT match.
+-- AC-4: lorekit_memory_list's inline copy of the predicate agrees with
+--       lorekit_groom_candidates (the two drifted apart once already).
+do $$
+declare
+  v_young   uuid;
+  v_old     uuid;
+  v_reopened uuid;
+  v_count   int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  -- Written 7 days ago, never opened — the case reported from the dashboard:
+  -- it was being caught by an "unseen 90d" filter it cannot honestly satisfy.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-young-never-opened', 'v', now() - interval '7 days')
+    returning id into v_young;
+  -- Written 200 days ago, never opened — genuinely stale.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-old-never-opened', 'v', now() - interval '200 days')
+    returning id into v_old;
+  -- Written 200 days ago but opened just now.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '99-old-opened-today', 'v', now() - interval '200 days')
+    returning id into v_reopened;
+
+  -- AC-1
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global', null, 90, null) c
+   where c.key = '99-young-never-opened';
+  assert v_count = 0,
+    '99 AC-1: a never-opened lesson younger than unseen_days must NOT match';
+
+  -- AC-2
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global', null, 90, null) c
+   where c.key = '99-old-never-opened';
+  assert v_count = 1,
+    '99 AC-2: a never-opened lesson older than unseen_days must match';
+
+  -- AC-3: opening it resets the clock to last_opened_at, so the 200-day
+  -- created_at no longer carries it into the candidate set.
+  perform lorekit_record_memory_reads(array[v_reopened], 'targeted', 'mcp');
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global', null, 90, null) c
+   where c.key = '99-old-opened-today';
+  assert v_count = 0,
+    '99 AC-3: an old lesson opened today must NOT match unseen_days';
+
+  -- AC-4: lorekit_memory_list carries its own inline copy of the predicate,
+  -- so assert it lands on the same single row rather than trusting the two to
+  -- stay in step.
+  select count(*) into v_count
+    from lorekit_memory_list(
+      p_user_id     => '00000000-0000-0000-0000-0000000000a2',
+      p_scope       => 'global',
+      p_unseen_days => 90,
+      p_limit       => 100
+    ) c
+   where c.key in ('99-young-never-opened', '99-old-never-opened', '99-old-opened-today');
+  assert v_count = 1,
+    '99 AC-4: memory_list unseen_days must agree with groom_candidates (only the old never-opened row)';
 
   reset role;
   perform set_config('request.jwt.claims', '', true);

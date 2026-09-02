@@ -84,7 +84,16 @@ export function RetentionConditionsTrigger({
  * INSIDE this popover rather than a separate banner above the results: the
  * action only makes sense in the context of the numbers that produced it, and
  * a banner spanning the full list width overstated an action that is really a
- * follow-up to what you just typed here.
+ * follow-up to what you just typed here. It sits beside "Done" in the action
+ * group, not in a bordered box of its own: the box read as a second panel
+ * competing with the inputs, when it is just the row's primary action.
+ *
+ * Each field is LABELLED WITH THE METADATA ROW IT TESTS — "Created", "Last
+ * agent open", "Recurrence" are the same three words the lesson detail sheet
+ * shows — so a reader can open any returned lesson and check the claim against
+ * identical vocabulary. The older labels ("Minimum age", "Not seen in", "Seen
+ * at most") named the CONDITION rather than the DATA, which left no way to
+ * tell whether a given lesson genuinely matched.
  */
 export function RetentionConditionsPanel({
   conditions,
@@ -135,11 +144,11 @@ export function RetentionConditionsPanel({
     <div
       role="group"
       aria-label="Age and activity conditions"
-      className="flex flex-col gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5"
+      className="flex flex-col gap-2 border-b border-[var(--color-border)] px-3 py-2.5"
     >
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor={minAgeId} className={LABEL_CLASS}>Minimum age (days)</label>
+          <label htmlFor={minAgeId} className={LABEL_CLASS}>Created</label>
           <input
             id={minAgeId}
             type="number"
@@ -149,10 +158,10 @@ export function RetentionConditionsPanel({
             value={conditions.minAgeDays ?? ''}
             onChange={(e) => setField('minAgeDays', e.target.value)}
           />
-          <p className={CAPTION_CLASS}>Created at least this long ago</p>
+          <p className={CAPTION_CLASS}>More than this many days ago</p>
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor={unseenId} className={LABEL_CLASS}>Not seen in (days)</label>
+          <label htmlFor={unseenId} className={LABEL_CLASS}>Last agent open</label>
           <input
             id={unseenId}
             type="number"
@@ -162,10 +171,14 @@ export function RetentionConditionsPanel({
             value={conditions.unseenDays ?? ''}
             onChange={(e) => setField('unseenDays', e.target.value)}
           />
-          <p className={CAPTION_CLASS}>Not opened in at least this many days</p>
+          {/* Spelling out the never-opened fallback here is the point: it is
+              the one rule a reader cannot infer from a lesson's metadata, and
+              getting it wrong is what made a week-old lesson look like it had
+              gone unread for 90 days. */}
+          <p className={CAPTION_CLASS}>More than this many days ago. Never opened counts from Created.</p>
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor={maxSeenId} className={LABEL_CLASS}>Seen at most (times)</label>
+          <label htmlFor={maxSeenId} className={LABEL_CLASS}>Recurrence</label>
           <input
             id={maxSeenId}
             type="number"
@@ -175,39 +188,41 @@ export function RetentionConditionsPanel({
             value={conditions.maxSeenCount ?? ''}
             onChange={(e) => setField('maxSeenCount', e.target.value)}
           />
-          <p className={CAPTION_CLASS}>Recurred this many times or fewer</p>
+          <p className={CAPTION_CLASS}>Written this many times or fewer</p>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="ml-auto flex min-h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-[var(--color-content-tertiary)] transition-colors duration-100 hover:bg-[var(--color-bg)] hover:text-[var(--color-content-primary)]"
-        >
-          <X className="size-3.5" aria-hidden />
-          Done
-        </button>
-      </div>
 
-      {/* The hand-off lives INSIDE the popover, beside the numbers that
-          produced it, only once there is something to hand off — never a
-          full-width banner competing with the list for attention. */}
-      {active && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-2.5 py-2">
-          <p className={CAPTION_CLASS}>
-            {conditionsActive && filterCount > 0
-              ? `Showing lessons these conditions and ${filterCount} filter${filterCount === 1 ? '' : 's'} would catch.`
-              : filterCount > 0
-                ? `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`
-                : 'Showing lessons a retention policy with these conditions would catch.'}
-          </p>
+        {/* Actions sit together at the trailing edge, with Done rightmost so
+            it never shifts as the hand-off appears and disappears. */}
+        <div className="ml-auto flex items-center gap-1">
+          {active && (
+            <button
+              type="button"
+              onClick={onCreatePolicy}
+              className="flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-2.5 text-[11px] font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90"
+            >
+              <Archive className="size-3.5" aria-hidden />
+              Create retention policy
+            </button>
+          )}
           <button
             type="button"
-            onClick={onCreatePolicy}
-            className="flex min-h-7 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-2.5 text-[11px] font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90"
+            onClick={onClose}
+            className="flex min-h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-[var(--color-content-tertiary)] transition-colors duration-100 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
           >
-            <Archive className="size-3.5" aria-hidden />
-            Create retention policy
+            <X className="size-3.5" aria-hidden />
+            Done
           </button>
         </div>
+      </div>
+
+      {active && (
+        <p className={CAPTION_CLASS}>
+          {conditionsActive && filterCount > 0
+            ? `Showing lessons these conditions and ${filterCount} filter${filterCount === 1 ? '' : 's'} would catch.`
+            : filterCount > 0
+              ? `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`
+              : 'Showing lessons a retention policy with these conditions would catch.'}
+        </p>
       )}
     </div>
   );
