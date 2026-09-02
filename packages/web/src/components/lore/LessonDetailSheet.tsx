@@ -823,7 +823,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                   <dt className="text-[var(--color-content-tertiary)]">Last agent open</dt>
                                   <dd className="ml-auto">
                                     <Tooltip
-                                      content="When an agent last retrieved THIS lesson individually over MCP (memory.read) or the lorekit CLI (read/show) — the signal unseen_days retention filtering uses. A bulk memory.list/.search result and a human viewing this sheet do not count."
+                                      content="When an agent last retrieved THIS lesson individually over MCP (memory.read) or the lorekit CLI (read/show) — the signal unseen_days retention filtering uses. A bulk memory.list/.search result and a human viewing this sheet do not count. Never opened: unseen_days counts from the created date instead, so a young lesson is not treated as long-unread."
                                       side="top"
                                       align="right"
                                     >
