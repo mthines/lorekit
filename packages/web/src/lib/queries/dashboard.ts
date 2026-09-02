@@ -51,8 +51,12 @@ export interface DashboardData {
  * How far back the stat cards can look: the widest range (30d) is charted
  * against the 30 days before it, so 60 days is the true requirement — plus two
  * days of slack so a bucket on the boundary is never half-populated.
+ *
+ * Exported so callers that describe this window in copy (e.g. `HealthSummary`'s
+ * "last N days" line) read the same value instead of hardcoding it and risking
+ * drift if this number ever changes.
  */
-const TREND_WINDOW_DAYS = 62;
+export const TREND_WINDOW_DAYS = 62;
 const DAY_MS = 86_400_000;
 
 /**

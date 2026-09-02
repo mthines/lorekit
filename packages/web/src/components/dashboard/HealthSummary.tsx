@@ -25,6 +25,7 @@ import type { UsageSummary } from '@lorekit/schemas/usage';
 import { Badge } from '@/components/ui/Badge';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { summarizeHealth, type FailureRow } from '@/lib/usage-health';
+import { TREND_WINDOW_DAYS } from '@/lib/queries/dashboard';
 
 interface HealthSummaryProps {
   summary: UsageSummary;
@@ -56,7 +57,7 @@ export function HealthSummary({ summary, failures }: HealthSummaryProps) {
   if (totalCalls === 0) {
     return (
       <p className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 text-sm text-[var(--color-content-secondary)]">
-        No calls recorded in the last 62 days.
+        No calls recorded in the last {TREND_WINDOW_DAYS} days.
       </p>
     );
   }
@@ -80,7 +81,7 @@ export function HealthSummary({ summary, failures }: HealthSummaryProps) {
             {successPct}% of calls succeeded
           </p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            <AnimatedNumber value={totalCalls} /> calls in the last 62 days
+            <AnimatedNumber value={totalCalls} /> calls in the last {TREND_WINDOW_DAYS} days
           </p>
         </div>
       </div>
