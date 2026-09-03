@@ -8877,6 +8877,160 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §102 — 00102: per-installation comment-relevance configuration
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- The lookup RPC is the security boundary for the whole server-side classifier:
+-- whatever it returns is what a comment on a pull request is allowed to write
+-- into, and whose account the record lands in. So the assertions are about the
+-- cases where it must return NOTHING, not only the happy path.
+--
+-- AC-1  A linked installation with an active config resolves for its repo.
+-- AC-2  A PENDING installation resolves to nothing — a null-owner write lands
+--       in the service-role partition no user token can read back.
+-- AC-3  A repo the installation does not cover resolves to nothing.
+-- AC-4  A deactivated config resolves to nothing.
+-- AC-5  The lookup is case-insensitive on the repo name (deliveries are not).
+-- AC-6  A non-owner cannot write a config, and cannot deactivate one.
+-- AC-7  The owner's upsert is idempotent per (installation, bucket).
+-- AC-8  RLS: the owner reads their own config row; a stranger reads none.
+do $$
+declare
+  v_count int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- A linked installation owned by user a1, covering one repo.
+  perform lorekit_installation_upsert(
+    9010001, 7010001, 'lk-mig-a', 'User',
+    '00000000-0000-0000-0000-0000000000a1', 'linked',
+    array['owner/covered']);
+  -- A pending installation covering a different repo.
+  perform lorekit_installation_upsert(
+    9010002, 7010002, 'lk-mig-pending', 'User', null, 'pending',
+    array['owner/pending-repo']);
+
+  insert into github_relevance_configs (
+    installation_id, marker_open, marker_close, bucket_tag, key_prefix,
+    agent_name, record_kind, record_host, ttl_days)
+  values
+    (9010001, '<!-- fp:v2:', '-->', 'loop::reviewer-comment-relevance',
+     'reviewer-comment-relevance::rule::', 'pr-reviewer', 'signal', 'reviewer', 60),
+    (9010002, '<!-- fp:v2:', '-->', 'loop::reviewer-comment-relevance',
+     'reviewer-comment-relevance::rule::', 'pr-reviewer', 'signal', 'reviewer', 60);
+
+  -- AC-1
+  select count(*) into v_count from lorekit_relevance_config_for_repo('owner/covered');
+  assert v_count = 1,
+    format('102 AC-1: a linked installation must resolve one config, got %s', v_count);
+  select count(*) into v_count
+    from lorekit_relevance_config_for_repo('owner/covered') c
+   where c.user_id = '00000000-0000-0000-0000-0000000000a1'
+     and c.agent_name = 'pr-reviewer'
+     and c.key_prefix = 'reviewer-comment-relevance::rule::';
+  assert v_count = 1, '102 AC-1b: the row must carry the owner and the declared vocabulary';
+
+  -- AC-2
+  select count(*) into v_count from lorekit_relevance_config_for_repo('owner/pending-repo');
+  assert v_count = 0,
+    format('102 AC-2: a PENDING installation must resolve nothing, got %s', v_count);
+
+  -- AC-3
+  select count(*) into v_count from lorekit_relevance_config_for_repo('owner/not-covered');
+  assert v_count = 0,
+    format('102 AC-3: an uncovered repo must resolve nothing, got %s', v_count);
+
+  -- AC-5 (before AC-4 deactivates the only active row)
+  select count(*) into v_count from lorekit_relevance_config_for_repo('Owner/Covered');
+  assert v_count = 1, '102 AC-5: the lookup must lower-case the repo it is given';
+
+  -- AC-4
+  update github_relevance_configs set active = false where installation_id = 9010001;
+  select count(*) into v_count from lorekit_relevance_config_for_repo('owner/covered');
+  assert v_count = 0,
+    format('102 AC-4: a deactivated config must resolve nothing, got %s', v_count);
+  update github_relevance_configs set active = true where installation_id = 9010001;
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-6/AC-7/AC-8 run as authenticated users, so the ownership check and the
+-- select policy are exercised as a caller rather than as the definer.
+do $$
+declare
+  v_count  int;
+  v_id     uuid;
+  v_again  uuid;
+  v_denied boolean;
+begin
+  -- A stranger (a2) must not be able to configure a1's installation.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"authenticated"}', true);
+
+  -- The denial is recorded in a FLAG and asserted outside the handler. An
+  -- `assert false` inside the try block would itself raise, `when others` would
+  -- catch it, and the check could never fail — a vacuous guard that reports a
+  -- wide-open RPC as locked down.
+  v_denied := false;
+  begin
+    perform lorekit_relevance_config_set(
+      9010001, '<!-- x:', '-->', 'loop::hijacked', 'hijacked::', 'attacker');
+  exception when others then
+    v_denied := true;
+  end;
+  assert v_denied, '102 AC-6a: a non-owner must not be able to set a config';
+
+  v_denied := false;
+  begin
+    perform lorekit_relevance_config_deactivate(9010001, 'loop::reviewer-comment-relevance');
+  exception when others then
+    v_denied := true;
+  end;
+  assert v_denied, '102 AC-6b: a non-owner must not be able to deactivate a config';
+
+  -- AC-8: and must not be able to READ it either.
+  select count(*) into v_count from github_relevance_configs where installation_id = 9010001;
+  assert v_count = 0,
+    format('102 AC-8a: a stranger must read no config rows, got %s', v_count);
+
+  -- The owner can, and the upsert is idempotent per (installation, bucket).
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select count(*) into v_count from github_relevance_configs where installation_id = 9010001;
+  assert v_count = 1,
+    format('102 AC-8b: the owner must read their own config row, got %s', v_count);
+
+  -- AC-7
+  select lorekit_relevance_config_set(
+    9010001, '<!-- fp:v2:', '-->', 'loop::reviewer-comment-relevance',
+    'reviewer-comment-relevance::rule::', 'pr-reviewer') into v_id;
+  select lorekit_relevance_config_set(
+    9010001, '<!-- fp:v3:', '-->', 'loop::reviewer-comment-relevance',
+    'reviewer-comment-relevance::rule::', 'pr-reviewer') into v_again;
+  assert v_id = v_again,
+    '102 AC-7a: a second set for the same bucket must update the same row, not insert';
+  select count(*) into v_count
+    from github_relevance_configs
+   where installation_id = 9010001 and active = true;
+  assert v_count = 1,
+    format('102 AC-7b: exactly one active config per bucket must remain, got %s', v_count);
+  select count(*) into v_count
+    from github_relevance_configs
+   where installation_id = 9010001 and active = true and marker_open = '<!-- fp:v3:';
+  assert v_count = 1, '102 AC-7c: the update must persist the new marker';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
