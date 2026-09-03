@@ -707,8 +707,8 @@ class RemoteStore {
   }
 
   // POST /policies → the created policy object.
-  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count } = {}) {
-    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count });
+  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
+    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
     const res = await this._rest('/memories/policies', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, policy: res.data };
@@ -735,8 +735,8 @@ class RemoteStore {
   // POST /groom/preview → { count, keys: [{ scope, key }] } — the SAME
   // candidates a groom() run would archive. Pass either `policy_id` or
   // `scope` (+ optional conditions), never both.
-  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count } = {}) {
-    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count });
+  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
     const res = await this._rest('/memories/groom/preview', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, count: res.data?.count ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
@@ -744,8 +744,8 @@ class RemoteStore {
 
   // POST /groom/run → archives every previewed candidate, in one transaction.
   // Soft-archive only (recoverable via restore); never hard-deletes.
-  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count } = {}) {
-    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count });
+  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
     const res = await this._rest('/memories/groom/run', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, archived: res.data?.archived ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };

@@ -103,7 +103,8 @@ ${c.bold('Commands')}
               purge: remote only, account-wide, irreversible, --yes required
               non-interactively. Takes no options.
   groom       Preview (default) or --run a retention sweep: --policy-id <id> or
-              --scope <s> [+ --min-age-days/--unseen-days/--max-seen-count/--max-read-count].
+              --scope <s> [+ --min-age-days/--unseen-days/--max-seen-count/
+              --max-read-count/--max-opened-count].
               Remote only. --run soft-archives matches (recoverable via
               restore); prompts for confirmation, --yes to skip. --json.
   policy      Manage saved retention rules: list / create / update / delete.
@@ -899,7 +900,8 @@ ${c.bold('Options')}
 
 ${c.bold('Usage')}
   lorekit groom --policy-id <id> [--run] [--yes] [--json]
-  lorekit groom --scope <s> [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>] [--max-read-count <n>] [--run] [--yes] [--json]
+  lorekit groom --scope <s> [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>]
+                            [--max-read-count <n>] [--max-opened-count <n>] [--run] [--yes] [--json]
 
 Resolves the SAME candidates a saved policy or an inline condition set would
 catch, via the retention-policy candidate query — a previewed count always
@@ -919,8 +921,11 @@ ${c.bold('Options')}
       --min-age-days <n>     Match only lessons at least n days old
       --unseen-days <n>      Match lessons unseen for at least n days (never-seen always matches)
       --max-seen-count <n>   Match only lessons that recurred at most n times (WRITES)
-      --max-read-count <n>   Match only lessons READ at most n times. Bulk list/search
-                             reads count here, unlike --unseen-days
+      --max-read-count <n>   Match only lessons DELIVERED at most n times. Bulk list/search
+                             reads count here, unlike --unseen-days, so this runs to
+                             the hundreds — a small value matches nothing
+      --max-opened-count <n> Match only lessons an agent DELIBERATELY fetched at most n
+                             times. Bulk reads do NOT count, so 0 means never chosen
       --run                  Archive the matches instead of previewing
   -y, --yes                  Confirm --run; required when non-interactive
       --json                 Machine-readable result
@@ -934,13 +939,14 @@ ${c.bold('Usage')}
   lorekit policy list [--json]
   lorekit policy create --scope <s> --name <n> [--mode review|auto] [--enabled]
                          [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>]
-                         [--max-read-count <n>]
+                         [--max-read-count <n>] [--max-opened-count <n>]
   lorekit policy update <id> [--name <n>] [--mode review|auto] [--enabled|--disabled]
                          [--min-age-days <n>|--clear-min-age-days] [...] [--json]
   lorekit policy delete <id> [--yes] [--json]
 
 A policy is a saved retention rule: a scope plus AND-ed conditions
-(min-age-days / unseen-days / max-seen-count / max-read-count). \`mode: review\` surfaces it for
+(min-age-days / unseen-days / max-seen-count / max-read-count / max-opened-count).
+\`mode: review\` surfaces it for
 you to run by hand with ${c.cyan('lorekit groom --policy-id')}; \`mode: auto\` gets swept
 nightly, but ONLY once you also pass --enabled — auto starts disabled on
 every new policy so a saved rule never archives anything unattended.
@@ -952,9 +958,11 @@ ${c.bold('Options')}
       --name <n>             Policy name (create) / new name (update)
       --mode <review|auto>   Match mode (create/update)
       --enabled / --disabled Turn auto-mode on/off (create/update)
-      --min-age-days <n>, --unseen-days <n>, --max-seen-count <n>, --max-read-count <n>
+      --min-age-days <n>, --unseen-days <n>, --max-seen-count <n>, --max-read-count <n>,
+      --max-opened-count <n>
                              Conditions (create/update)
-      --clear-min-age-days, --clear-unseen-days, --clear-max-seen-count, --clear-max-read-count
+      --clear-min-age-days, --clear-unseen-days, --clear-max-seen-count,
+      --clear-max-read-count, --clear-max-opened-count
                              Remove a condition (update only)
   -y, --yes                  Confirm delete; required when non-interactive
       --json                 Machine-readable result
@@ -1074,9 +1082,10 @@ const KNOWN_FLAGS = [
   // `invariants candidates`
   'min-seen-count',
   // groom / policy / protect / pin / unpin
-  'policy-id', 'min-age-days', 'unseen-days', 'max-seen-count', 'max-read-count', 'run',
+  'policy-id', 'min-age-days', 'unseen-days', 'max-seen-count', 'max-read-count', 'max-opened-count', 'run',
   'name', 'mode', 'enabled', 'disabled',
-  'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'off',
+  'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count',
+  'clear-max-opened-count', 'off',
   // `obligations`
   'files', 'strict', 'strict-all',
 ];
@@ -1091,7 +1100,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'strict', 'strict-all'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all'],
     known: KNOWN_FLAGS,
   });
 

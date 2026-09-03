@@ -31,6 +31,8 @@ export function parseGroomRequest(args) {
   if (maxSeen.error) return { error: maxSeen.error };
   const maxRead = parseIntFlag(args['max-read-count'], 'max-read-count');
   if (maxRead.error) return { error: maxRead.error };
+  const maxOpened = parseIntFlag(args['max-opened-count'], 'max-opened-count');
+  if (maxOpened.error) return { error: maxOpened.error };
 
   return {
     request: {
@@ -39,6 +41,7 @@ export function parseGroomRequest(args) {
       unseen_days: unseen.value,
       max_seen_count: maxSeen.value,
       max_read_count: maxRead.value,
+      max_opened_count: maxOpened.value,
     },
   };
 }

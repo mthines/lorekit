@@ -23,6 +23,7 @@ function memory(overrides: Partial<GroomCandidateMemory> = {}): GroomCandidateMe
     last_opened_at: null,
     seen_count: 1,
     read_count: 0,
+    opened_count: 0,
     protected: false,
     tags: null,
     source_agent: null,
@@ -43,6 +44,7 @@ function conditions(overrides: Partial<GroomConditions> & { scope: string }): Gr
     unseen_days: null,
     max_seen_count: null,
     max_read_count: null,
+    max_opened_count: null,
     tags: null,
     tags_mode: null,
     source_agent: null,
@@ -72,6 +74,7 @@ const basePolicy: RetentionPolicyRow = {
   unseen_days: null,
   max_seen_count: null,
   max_read_count: null,
+  max_opened_count: null,
   tags: null,
   tags_mode: null,
   source_agent: null,
@@ -284,6 +287,34 @@ describe('isGroomCandidate', () => {
     const writtenOftenNeverRead = memory({ seen_count: 9, read_count: 0 });
     expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_read_count: 0 }), NOW)).toBe(true);
     expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_seen_count: 1 }), NOW)).toBe(false);
+  });
+
+  // max_opened_count reads `opened_count` (00103) — the DELIBERATE fetches
+  // only. It exists because `max_read_count` cannot express "nothing ever
+  // chose this": every lesson a `memory.list` has paged over already carries
+  // a read count in the hundreds, so the condition that answers uptake has to
+  // count a different thing, not a smaller number of the same thing.
+  it('max_opened_count: a delivered-but-never-chosen memory matches at 0', () => {
+    const deliveredNeverChosen = memory({ read_count: 1_417, opened_count: 0 });
+    expect(isGroomCandidate(deliveredNeverChosen, conditions({ scope: 'global', max_opened_count: 0 }), NOW)).toBe(true);
+    // The same memory misses the delivered-count condition at the same
+    // threshold — if it matched both, the new condition would be redundant.
+    expect(isGroomCandidate(deliveredNeverChosen, conditions({ scope: 'global', max_read_count: 0 }), NOW)).toBe(false);
+  });
+
+  it('max_opened_count: a memory chosen more than the threshold does NOT match', () => {
+    const m = memory({ opened_count: 4 });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_opened_count: 3 }), NOW)).toBe(false);
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_opened_count: 4 }), NOW)).toBe(true);
+  });
+
+  it('max_opened_count: more bulk deliveries never push a memory out', () => {
+    // Scope breadth drives read_count and must not decide an uptake verdict.
+    const narrow = memory({ read_count: 12, opened_count: 0 });
+    const broad = memory({ read_count: 5_000, opened_count: 0 });
+    const c = conditions({ scope: 'global', max_opened_count: 0 });
+    expect(isGroomCandidate(narrow, c, NOW)).toBe(true);
+    expect(isGroomCandidate(broad, c, NOW)).toBe(true);
   });
 
   it('unseen_days: a recently-opened memory does NOT match', () => {

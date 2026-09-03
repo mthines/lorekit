@@ -40,6 +40,7 @@ interface RetentionPolicyDbRow {
   unseen_days: number | null;
   max_seen_count: number | null;
   max_read_count: number | null;
+  max_opened_count: number | null;
   tags: string[] | null;
   tags_mode: RetentionPolicyRow['tags_mode'];
   source_agent: string[] | null;
@@ -63,6 +64,7 @@ function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
     id: row.id, scope: row.scope, mode: row.mode, enabled: row.enabled,
     min_age_days: row.min_age_days, unseen_days: row.unseen_days, max_seen_count: row.max_seen_count,
     max_read_count: row.max_read_count,
+    max_opened_count: row.max_opened_count,
     tags: row.tags, tags_mode: row.tags_mode,
     source_agent: row.source_agent, source_agent_mode: row.source_agent_mode,
     trigger: row.trigger, trigger_mode: row.trigger_mode,
@@ -103,6 +105,7 @@ function groomConditionsRpcParams(userId: string, conditions: GroomConditions) {
     p_unseen_days: conditions.unseen_days,
     p_max_seen_count: conditions.max_seen_count,
     p_max_read_count: conditions.max_read_count,
+    p_max_opened_count: conditions.max_opened_count,
     p_tags: conditions.tags,
     p_tags_mode: conditions.tags_mode ?? 'any',
     p_source_agent: conditions.source_agent,

@@ -1162,6 +1162,7 @@ interface RetentionPolicyDbRow {
   unseen_days: number | null;
   max_seen_count: number | null;
   max_read_count: number | null;
+  max_opened_count: number | null;
   tags: string[] | null;
   tags_mode: string | null;
   source_agent: string[] | null;
@@ -1214,8 +1215,9 @@ export function assertGroomConditionsInBounds(conditions: {
   unseen_days?: number | null;
   max_seen_count?: number | null;
   max_read_count?: number | null;
+  max_opened_count?: number | null;
 }): void {
-  const { min_age_days, unseen_days, max_seen_count, max_read_count } = conditions;
+  const { min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = conditions;
   if (min_age_days != null && (min_age_days < 1 || min_age_days > 3650)) {
     throw new UserInputError('min_age_days must be between 1 and 3650');
   }
@@ -1227,6 +1229,9 @@ export function assertGroomConditionsInBounds(conditions: {
   }
   if (max_read_count != null && (max_read_count < 0 || max_read_count > 100_000)) {
     throw new UserInputError('max_read_count must be between 0 and 100000');
+  }
+  if (max_opened_count != null && (max_opened_count < 0 || max_opened_count > 100_000)) {
+    throw new UserInputError('max_opened_count must be between 0 and 100000');
   }
 }
 
@@ -1240,6 +1245,7 @@ function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
     unseen_days: row.unseen_days,
     max_seen_count: row.max_seen_count,
     max_read_count: row.max_read_count,
+    max_opened_count: row.max_opened_count,
     tags: row.tags,
     tags_mode: row.tags_mode as RetentionPolicyRow['tags_mode'],
     source_agent: row.source_agent,
@@ -1285,10 +1291,10 @@ export async function toolPolicyCreate(
 ) {
   assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.create requires a user_id');
-  const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null, max_read_count = null } = params;
+  const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null, max_read_count = null, max_opened_count = null } = params;
   if (!rawScope || !name) throw new UserInputError('scope and name are required');
   if (mode !== 'review' && mode !== 'auto') throw new UserInputError('mode must be "review" or "auto"');
-  assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count, max_read_count });
+  assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.policy.mode': mode });
@@ -1305,6 +1311,7 @@ export async function toolPolicyCreate(
       p_unseen_days: unseen_days,
       p_max_seen_count: max_seen_count,
       p_max_read_count: max_read_count,
+      p_max_opened_count: max_opened_count,
       // The eight dimension filters (00093) — same field names as
       // `POST /memories/list`'s body, absent means "not filtered".
       p_tags: params.tags ?? null,
@@ -1356,10 +1363,11 @@ export async function toolPolicyUpdate(
     unseen_days: params.unseen_days,
     max_seen_count: params.max_seen_count,
     max_read_count: params.max_read_count,
+    max_opened_count: params.max_opened_count,
   });
 
   const patch: Record<string, unknown> = {};
-  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count', 'max_read_count', ...GROOM_DIMENSION_FIELDS] as const) {
+  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count', 'max_read_count', 'max_opened_count', ...GROOM_DIMENSION_FIELDS] as const) {
     if (params[field] !== undefined) patch[field] = params[field];
   }
   if (Object.keys(patch).length === 0) throw new UserInputError('at least one field to update is required');
@@ -1432,6 +1440,7 @@ async function resolveGroomRequest(
         unseen_days: params.unseen_days,
         max_seen_count: params.max_seen_count,
         max_read_count: params.max_read_count,
+        max_opened_count: params.max_opened_count,
         // The eight dimension filters — an inline groom.preview/groom.run
         // call can carry the same filters a saved policy can (00093).
         ...Object.fromEntries(
@@ -1471,6 +1480,7 @@ function groomConditionsRpcParams(userId: string, conditions: GroomConditions) {
     p_unseen_days: conditions.unseen_days,
     p_max_seen_count: conditions.max_seen_count,
     p_max_read_count: conditions.max_read_count,
+    p_max_opened_count: conditions.max_opened_count,
     p_tags: conditions.tags,
     p_tags_mode: conditions.tags_mode ?? 'any',
     p_source_agent: conditions.source_agent,

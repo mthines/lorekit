@@ -63,8 +63,20 @@ describe('hasRetentionConditions / retentionConditionsCount', () => {
     expect(retentionConditionsCount({ minAgeDays: 90, unseenDays: 30 })).toBe(2);
     expect(retentionConditionsCount({ minAgeDays: 90, unseenDays: 30, maxSeenCount: 0 })).toBe(3);
     expect(retentionConditionsCount({ minAgeDays: 90, unseenDays: 30, maxSeenCount: 0, maxReadCount: 0 })).toBe(4);
+    expect(
+      retentionConditionsCount({
+        minAgeDays: 90,
+        unseenDays: 30,
+        maxSeenCount: 0,
+        maxReadCount: 0,
+        maxOpenedCount: 0,
+      }),
+    ).toBe(5);
     expect(hasRetentionConditions({ maxSeenCount: 0 })).toBe(true);
     expect(hasRetentionConditions({ maxReadCount: 0 })).toBe(true);
+    // 0 is the WHOLE POINT of this one — "nothing ever chose to open it" — so a
+    // falsy-check regression here would silently disable the condition.
+    expect(hasRetentionConditions({ maxOpenedCount: 0 })).toBe(true);
   });
 });
 
@@ -90,12 +102,23 @@ describe('retentionConditionsToListBody / retentionConditionsToGroomConditions',
     });
   });
 
+  it('carries maxOpenedCount as a THIRD counter, distinct from the other two', () => {
+    // The three count different things (writes / all reads / deliberate
+    // fetches). Collapsing any pair onto one wire field would make a "never
+    // chosen" filter silently mean "never delivered", which matches nothing.
+    expect(retentionConditionsToListBody({ maxOpenedCount: 0 })).toEqual({ max_opened_count: 0 });
+    expect(
+      retentionConditionsToListBody({ maxSeenCount: 1, maxReadCount: 300, maxOpenedCount: 0 }),
+    ).toEqual({ max_seen_count: 1, max_read_count: 300, max_opened_count: 0 });
+  });
+
   it('omits an unset field rather than sending it as undefined/null', () => {
     const body = retentionConditionsToListBody({ minAgeDays: 90 });
     expect(body).toEqual({ min_age_days: 90 });
     expect('unseen_days' in body).toBe(false);
     expect('max_seen_count' in body).toBe(false);
     expect('max_read_count' in body).toBe(false);
+    expect('max_opened_count' in body).toBe(false);
   });
 
   it('emits only fields ListMemoriesBodySchema accepts', () => {
@@ -192,12 +215,19 @@ describe('retentionConditionsPhrase', () => {
     );
   });
 
-  // The two counters run in OPPOSITE directions and sit next to each other in
-  // the phrase, so neither may be called "seen" — that word is what made a
-  // write-recurrence condition read as a usage one.
-  it('names the two counters apart — written for seen_count, read for read_count', () => {
-    expect(retentionConditionsPhrase({ maxSeenCount: 1, maxReadCount: 0 })).toBe('written ≤ 1× · read ≤ 0×');
+  // The three counters measure different things and sit next to each other in
+  // the phrase, so none may be called "seen" — that word is what made a
+  // write-recurrence condition read as a usage one — and "delivered" must not
+  // collapse into "chosen", which is the whole distinction 00104 adds.
+  it('names the three counters apart — written / delivered / chosen', () => {
+    expect(retentionConditionsPhrase({ maxSeenCount: 1, maxReadCount: 0 })).toBe(
+      'written ≤ 1× · delivered ≤ 0×',
+    );
+    expect(retentionConditionsPhrase({ maxReadCount: 300, maxOpenedCount: 0 })).toBe(
+      'delivered ≤ 300× · chosen ≤ 0×',
+    );
     expect(retentionConditionsPhrase({ maxReadCount: 5 })).not.toContain('seen');
+    expect(retentionConditionsPhrase({ maxReadCount: 5 })).not.toContain('chosen');
   });
 
   it('falls back to the control label when nothing is set', () => {
@@ -213,12 +243,27 @@ describe('retentionConditionPlaceholder', () => {
     expect(retentionConditionPlaceholder('minAgeDays')).toBe('e.g. 7');
     expect(retentionConditionPlaceholder('unseenDays')).toBe('e.g. 90');
     expect(retentionConditionPlaceholder('maxSeenCount')).toBe('e.g. 1');
-    expect(retentionConditionPlaceholder('maxReadCount')).toBe('e.g. 0');
+    expect(retentionConditionPlaceholder('maxOpenedCount')).toBe('e.g. 0');
   });
 
   it('is never a bare number for any condition', () => {
-    for (const field of ['minAgeDays', 'unseenDays', 'maxSeenCount', 'maxReadCount'] as const) {
+    for (const field of [
+      'minAgeDays',
+      'unseenDays',
+      'maxSeenCount',
+      'maxReadCount',
+      'maxOpenedCount',
+    ] as const) {
       expect(retentionConditionPlaceholder(field)).toMatch(/^e\.g\. \d+$/);
     }
+  });
+
+  // Measured against the live store: `max_read_count <= 5` matched nothing,
+  // the first non-empty result appeared at 26, and 400 matched everything. A
+  // suggestion below that floor hands the reader a filter that always returns
+  // nothing, which is indistinguishable from a broken one.
+  it('suggests a read-count example inside the range that can actually match', () => {
+    const example = Number(retentionConditionPlaceholder('maxReadCount').replace('e.g. ', ''));
+    expect(example).toBeGreaterThanOrEqual(26);
   });
 });

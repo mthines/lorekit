@@ -79,7 +79,7 @@ export function RetentionConditionsTrigger({
 }
 
 /**
- * The four numeric inputs, rendered in the disclosure row when the trigger is
+ * The five numeric inputs, rendered in the disclosure row when the trigger is
  * open. Also hosts the "Create retention policy" hand-off — deliberately
  * INSIDE this popover rather than a separate banner above the results: the
  * action only makes sense in the context of the numbers that produced it, and
@@ -89,24 +89,27 @@ export function RetentionConditionsTrigger({
  * competing with the inputs, when it is just the row's primary action.
  *
  * Each field is LABELLED WITH THE METADATA ROW IT TESTS — "Created", "Last
- * agent open", "Recurrence", "Consumption" are the same words the lesson detail
- * sheet shows — so a reader can open any returned lesson and check the claim
- * against identical vocabulary. The older labels ("Minimum age", "Not seen in",
- * "Seen at most") named the CONDITION rather than the DATA, which left no way
- * to tell whether a given lesson genuinely matched.
+ * agent open", "Recurrence", "Delivered", "Chosen" are the same words the
+ * lesson detail sheet shows — so a reader can open any returned lesson and
+ * check the claim against identical vocabulary. The older labels ("Minimum
+ * age", "Not seen in", "Seen at most") named the CONDITION rather than the
+ * DATA, which left no way to tell whether a given lesson genuinely matched.
  *
- * "Recurrence" and "Consumption" are deliberately BOTH here and deliberately
- * worded apart: the first counts WRITES, the second READS. Calling either one
- * "seen" is what made the older copy unreadable. "Consumption" is the detail
- * sheet's own word for `read_count`, not a nicer one invented here: a label
- * this panel alone uses cannot be checked against the lesson it returned,
- * which is the entire job these labels do.
+ * The three counters are deliberately all here and deliberately worded apart,
+ * because each answers a different question: "Recurrence" counts WRITES,
+ * "Delivered" counts EVERY read (the bulk list/search ride-alongs included),
+ * and "Chosen" counts only the deliberate `memory.read` fetches. Calling any
+ * of them "seen" is what made the older copy unreadable, and "Consumption" —
+ * the previous label for `read_count` — read as praise for a number that is
+ * really a cost: a lesson sitting under a broad scope is delivered constantly
+ * whether or not it was ever useful. "Chosen" is the one that answers uptake,
+ * and `0` is its meaningful value.
  *
  * A blank field is NOT a set one, and the panel has to make that obvious in
  * two places, because it previously did in neither: the placeholders are
  * `e.g. N` rather than a bare `N` (which reads as a value in a number input),
  * and the summary line names the conditions actually in force instead of
- * saying "these conditions". Fill one field of four and the sentence says so.
+ * saying "these conditions". Fill one field of five and the sentence says so.
  */
 export function RetentionConditionsPanel({
   conditions,
@@ -133,6 +136,7 @@ export function RetentionConditionsPanel({
   const unseenId = useId();
   const maxSeenId = useId();
   const maxReadId = useId();
+  const maxOpenedId = useId();
 
   /** Parse one field's raw input into the condition set — blank clears it. */
   function setField(field: keyof RetentionConditions, raw: string) {
@@ -205,7 +209,7 @@ export function RetentionConditionsPanel({
           <p className={CAPTION_CLASS}>Written this many times or fewer</p>
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor={maxReadId} className={LABEL_CLASS}>Consumption</label>
+          <label htmlFor={maxReadId} className={LABEL_CLASS}>Delivered</label>
           <input
             id={maxReadId}
             type="number"
@@ -217,8 +221,29 @@ export function RetentionConditionsPanel({
           />
           {/* "Bulk reads count" is the one thing that distinguishes this from
               Last agent open, and the two sit side by side — leaving it out is
-              how you get a condition whose label is not literally true. */}
-          <p className={CAPTION_CLASS}>Read this many times or fewer. Bulk list/search reads count.</p>
+              how you get a condition whose label is not literally true. The
+              "hundreds" note is the other half: without it the obvious value to
+              type is a small one, and every small value matches nothing. */}
+          <p className={CAPTION_CLASS}>
+            Handed to an agent this many times or fewer. Bulk list/search reads count, so this runs to
+            the hundreds.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={maxOpenedId} className={LABEL_CLASS}>Chosen</label>
+          <input
+            id={maxOpenedId}
+            type="number"
+            min={0}
+            placeholder={retentionConditionPlaceholder('maxOpenedCount')}
+            className={INPUT_CLASS}
+            value={conditions.maxOpenedCount ?? ''}
+            onChange={(e) => setField('maxOpenedCount', e.target.value)}
+          />
+          <p className={CAPTION_CLASS}>
+            Deliberately fetched this many times or fewer. Bulk reads do NOT count, so 0 means never
+            chosen.
+          </p>
         </div>
 
         {/* Actions sit together at the trailing edge, with Done rightmost so

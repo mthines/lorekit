@@ -9060,6 +9060,130 @@ begin
 end;
 $$;
 
+-- ── 103. max_opened_count — the condition whose 0 means something (00104) ──
+-- `max_read_count` (00101) reads `read_count`, which counts bulk ride-alongs,
+-- so on a live store its `0` matched nothing and its usable range was a narrow
+-- band in the middle. `max_opened_count` reads `opened_count` (00103), which
+-- only a deliberate agent fetch moves, so 0 means "nothing ever chose this" —
+-- and means the same thing for a `global` lesson as for a `branch` one.
+--
+-- AC-1: a delivered-but-never-chosen lesson matches max_opened_count => 0 and
+--       MISSES max_read_count => 0. This is the whole point: the two are not
+--       interchangeable, and only the new one reaches the noise-tax quadrant.
+-- AC-2: a chosen lesson stops matching.
+-- AC-3: bulk reads do NOT push a lesson out of max_opened_count => 0, where
+--       they DO push it out of max_read_count => 0.
+-- AC-4: lorekit_memory_list's inline copy of the predicate agrees with
+--       lorekit_groom_candidates — the pair 00101 records as having drifted
+--       apart once already.
+-- AC-5: a saved policy round-trips the column through create and update.
+do $$
+declare
+  v_ignored uuid;
+  v_chosen  uuid;
+  v_count   int;
+  v_policy  retention_policies%rowtype;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '103-ignored', 'v', now() - interval '200 days'),
+           ('00000000-0000-0000-0000-0000000000a2', 'global', '103-chosen',  'v', now() - interval '200 days');
+  select id into v_ignored from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '103-ignored';
+  select id into v_chosen from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '103-chosen';
+
+  -- Delivered in bulk pages, as a global lesson is on every session. Never
+  -- deliberately fetched.
+  perform lorekit_record_memory_reads(array[v_ignored, v_chosen], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored, v_chosen], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored, v_chosen], 'bulk', 'mcp');
+  -- One of them an agent actually reached for.
+  perform lorekit_record_memory_reads(array[v_chosen], 'targeted', 'mcp');
+
+  -- AC-1
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  null, 0) c
+   where c.key = '103-ignored';
+  assert v_count = 1,
+    '103 AC-1a: a delivered-but-never-chosen lesson must match max_opened_count => 0';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  0) c
+   where c.key = '103-ignored';
+  assert v_count = 0,
+    '103 AC-1b: ...and must MISS max_read_count => 0, which its bulk deliveries '
+    'already pushed it past. If both matched, the new condition would be redundant';
+
+  -- AC-2
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  null, 0) c
+   where c.key = '103-chosen';
+  assert v_count = 0, '103 AC-2: a lesson an agent fetched must NOT match max_opened_count => 0';
+
+  -- AC-3: three more bulk reads. read_count climbs; opened_count does not, so
+  -- the lesson stays in the prune set exactly as it should.
+  perform lorekit_record_memory_reads(array[v_ignored], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored], 'bulk', 'mcp');
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  null, 0) c
+   where c.key = '103-ignored';
+  assert v_count = 1,
+    '103 AC-3: more bulk deliveries must not push a lesson out of max_opened_count => 0';
+
+  -- AC-4
+  select count(*) into v_count
+    from lorekit_memory_list(
+      p_user_id          => '00000000-0000-0000-0000-0000000000a2',
+      p_scope            => 'global',
+      p_max_opened_count => 0,
+      p_limit            => 100
+    ) c
+   where c.key in ('103-ignored', '103-chosen');
+  assert v_count = 1,
+    '103 AC-4: memory_list max_opened_count must agree with groom_candidates '
+    '(only the never-chosen row)';
+
+  -- AC-5
+  select * into v_policy
+    from lorekit_policy_create(
+      p_user_id          => '00000000-0000-0000-0000-0000000000a2',
+      p_scope            => 'global',
+      p_name             => '103-policy',
+      p_max_opened_count => 0
+    );
+  assert v_policy.max_opened_count = 0,
+    format('103 AC-5a: policy_create must persist max_opened_count, got %s',
+           v_policy.max_opened_count);
+
+  select * into v_policy
+    from lorekit_policy_update('00000000-0000-0000-0000-0000000000a2', v_policy.id,
+                               '{"max_opened_count": null}'::jsonb);
+  assert v_policy.max_opened_count is null,
+    '103 AC-5b: an explicit null in the patch must CLEAR max_opened_count';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
