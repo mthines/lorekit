@@ -120,14 +120,34 @@ export async function fetchInstallation(installationId: number): Promise<Install
   };
 }
 
-/** Mint an installation access token, then enumerate its repositories (paginated). */
-async function fetchInstallationRepos(installationId: number, appJwt: string): Promise<string[]> {
+/**
+ * Mint a short-lived installation access token — the credential every read on
+ * an installation's own repositories uses.
+ *
+ * Exported because the comment-relevance classifier (webhook.ts →
+ * github-review-read.ts) needs the same credential for a different purpose, and
+ * a second minting path would mean two places reading the App's private key.
+ * Fails soft (null) like everything else in this module.
+ */
+export async function mintInstallationToken(installationId: number): Promise<string | null> {
+  const appJwt = await mintAppJwt();
+  if (!appJwt) return null;
+  return await installationTokenFrom(installationId, appJwt);
+}
+
+async function installationTokenFrom(installationId: number, appJwt: string): Promise<string | null> {
   const tokenRes = await fetch(`${GITHUB_API}/app/installations/${installationId}/access_tokens`, {
     method: 'POST',
     headers: githubHeaders(appJwt),
   });
-  if (!tokenRes.ok) return [];
+  if (!tokenRes.ok) return null;
   const { token } = await tokenRes.json().catch(() => ({ token: '' }));
+  return token || null;
+}
+
+/** Mint an installation access token, then enumerate its repositories (paginated). */
+async function fetchInstallationRepos(installationId: number, appJwt: string): Promise<string[]> {
+  const token = await installationTokenFrom(installationId, appJwt);
   if (!token) return [];
 
   const names: string[] = [];

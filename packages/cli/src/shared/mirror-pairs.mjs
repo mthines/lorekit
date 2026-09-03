@@ -52,6 +52,8 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/auth/org-permissions.ts', edge: 'supabase/functions/mcp/org-permissions.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/webhook/webhook-installation.ts', edge: 'supabase/functions/mcp/webhook-installation.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/webhook/github-app-jwt.ts', edge: 'supabase/functions/mcp/github-app-jwt.ts', driftChecked: true },
+  { core: 'packages/mcp-core/src/webhook/comment-relevance.ts', edge: 'supabase/functions/mcp/comment-relevance.ts', driftChecked: true },
+  { core: 'packages/mcp-core/src/webhook/github-review-parse.ts', edge: 'supabase/functions/mcp/github-review-parse.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/trace-context.ts', edge: 'supabase/functions/_shared/telemetry/trace-context.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/rest-tool-name.ts', edge: 'supabase/functions/_shared/rest/rest-tool-name.ts', driftChecked: true },
   // The `X-LoreKit-Session-Kind` validator (migration 00082). Also has a

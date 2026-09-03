@@ -64,6 +64,17 @@ import {
   mapInstallationEvent,
   reconcileInstallation,
 } from './webhook-installation.ts';
+import {
+  buildRelevanceKey,
+  buildRelevanceRecord,
+  classifyMergedThread,
+  classifyResolvedThread,
+  extractMarkerValue,
+  type RelevanceVerdict,
+  type ThreadFacts,
+} from './comment-relevance.ts';
+import { fetchReviewThreads, TouchProbe } from './github-review-read.ts';
+import { mintInstallationToken } from './github-app-client.ts';
 import { webhookSignalTier, webhookTtlDays } from './ttl-defaults.ts';
 import { nullableRpcArg, type DbClient } from '../_shared/db/db-client.ts';
 import type { Database } from '../_shared/db/database.types.ts';
@@ -89,6 +100,17 @@ const SUPPORTED_EVENTS = new Set([
   'pull_request_review_thread',
   'issue_comment',
 ]);
+
+/**
+ * Events the comment-relevance classifier needs that the candidate-write path
+ * above does not.
+ *
+ * `pull_request` is here and NOT in SUPPORTED_EVENTS on purpose: the merge
+ * sweep needs `closed`, but a pull_request delivery carries no comment body, so
+ * routing it into the candidate write would produce nothing. Kept as its own
+ * set so the two paths' event vocabularies stay independently readable.
+ */
+const RELEVANCE_ONLY_EVENTS = new Set(['pull_request']);
 
 // ── Signal-quality helpers (inlined — Deno edge functions are self-contained) ─
 
@@ -154,7 +176,7 @@ async function resolveSecrets(
   event: string,
 ): Promise<{ secrets: string[]; source: WebhookSecretSource | 'app'; matchedRepo: string | null; isAppEvent: boolean }> {
   const isAppEvent = GITHUB_APP_ENABLED && (
-    INSTALLATION_EVENTS.has(event) || SUPPORTED_EVENTS.has(event)
+    INSTALLATION_EVENTS.has(event) || SUPPORTED_EVENTS.has(event) || RELEVANCE_ONLY_EVENTS.has(event)
   );
 
   if (isAppEvent) {
@@ -310,6 +332,231 @@ async function reconcileAppInstallation(
   return true;
 }
 
+// ── Comment-relevance classification (GitHub App path) ───────────────────────
+
+/**
+ * One row of `lorekit_relevance_config_for_repo` — the four vocabulary fields
+ * an installation declares, plus who the resulting records belong to.
+ *
+ * `user_id` is non-null by construction: the RPC filters on
+ * `status = 'linked' and user_id is not null`, because a null-owner write lands
+ * in the service-role partition that no user token can read back.
+ */
+interface RelevanceConfig {
+  installation_id: number;
+  user_id: string;
+  marker_open: string;
+  marker_close: string;
+  bucket_tag: string;
+  key_prefix: string;
+  agent_name: string;
+  record_kind: string;
+  record_host: string | null;
+  ttl_days: number;
+}
+
+/**
+ * Records one delivery may write.  A merge sweep on a heavily-reviewed pull
+ * request is the only realistic way to approach it, and stopping is better than
+ * spending a user's whole memory cap in one webhook.
+ */
+const MAX_RELEVANCE_WRITES = 40;
+
+/**
+ * The two deliveries that carry a review outcome.
+ *
+ * A thread resolution is the direct signal.  A merge is the deadline: every
+ * thread still open at that moment got its answer by never being answered.
+ * Nothing else qualifies — a comment being POSTED says nothing about whether it
+ * was any good, which is why the candidate feed and this classifier are
+ * different mechanisms rather than two settings of one.
+ */
+function isRelevanceDelivery(
+  event: string,
+  action: string,
+  // deno-lint-ignore no-explicit-any
+  payload: Record<string, any>,
+): boolean {
+  if (event === 'pull_request_review_thread' && action === 'resolved') return true;
+  // `closed` fires for both merge and abandon. An abandoned pull request never
+  // shipped, so its open threads were not ignored — they were mooted, and a
+  // suppression record for a change that never landed is trained on nothing.
+  if (event === 'pull_request' && action === 'closed') return !!payload['pull_request']?.merged;
+  return false;
+}
+
+/**
+ * Classify the review outcomes one delivery reveals, and file each as a
+ * relevance record.
+ *
+ * Never throws: this runs after a verified HMAC on a path that must answer 200,
+ * and a classification failure is not a reason to make GitHub retry the
+ * delivery.  Every refusal is recorded as a span attribute instead.
+ */
+async function classifyCommentRelevance(
+  db: DbClient,
+  event: string,
+  // deno-lint-ignore no-explicit-any
+  payload: Record<string, any>,
+  span: Span,
+): Promise<void> {
+  const repo = String(payload['repository']?.full_name ?? '').toLowerCase();
+  const pr = Number(payload['pull_request']?.number);
+  if (!repo || !SAFE_FULL_NAME.test(repo) || !Number.isFinite(pr) || pr <= 0) {
+    span.setAttributes({ 'lorekit.relevance.skip_reason': 'no_repo_or_pr' });
+    return;
+  }
+
+  // The RPC is a 00102 addition, so it is absent from the generated Database
+  // types — the same reason `lorekit_find_user_by_github_id` is called through
+  // an untyped client above.
+  // deno-lint-ignore no-explicit-any
+  const { data: configRows, error: configError } = await (db as any).rpc(
+    'lorekit_relevance_config_for_repo',
+    { p_repo: repo },
+  );
+  if (configError) {
+    span.setAttributes({ 'lorekit.relevance.config_error': configError.message });
+    return;
+  }
+  const configs: RelevanceConfig[] = (configRows ?? []) as RelevanceConfig[];
+  span.setAttributes({ 'lorekit.relevance.configs': configs.length });
+  // Zero configs is the ordinary case, not a failure: the repository is not
+  // covered, the installation is still pending, or the account has declared no
+  // marker. All three mean there is nothing to classify for.
+  if (configs.length === 0) return;
+
+  const token = await mintInstallationToken(configs[0].installation_id);
+  if (!token) {
+    span.setAttributes({ 'lorekit.relevance.skip_reason': 'no_installation_token' });
+    return;
+  }
+
+  const [owner, name] = repo.split('/');
+  const read = await fetchReviewThreads({ token, owner, repo: name, pr });
+  span.setAttributes({
+    'lorekit.relevance.threads_read': read.threads.length,
+    'lorekit.relevance.threads_complete': read.complete,
+  });
+
+  const isMergeSweep = event === 'pull_request';
+  // A sweep asserts "this thread was open at merge" about every thread it does
+  // NOT see, so an incomplete read makes the whole sweep unsound. A single
+  // resolved thread asserts nothing about the others and is still classifiable.
+  if (isMergeSweep && !read.complete) {
+    span.setAttributes({ 'lorekit.relevance.skip_reason': 'thread_read_incomplete' });
+    return;
+  }
+
+  const candidates = isMergeSweep
+    ? read.threads
+    : read.threads.filter((t) => t.rootCommentId === resolvedRootCommentId(payload));
+  if (candidates.length === 0) {
+    span.setAttributes({ 'lorekit.relevance.skip_reason': 'no_matching_thread' });
+    return;
+  }
+
+  // Only the pull request's own author counts as a decline by reaction. A 👎
+  // from a passer-by is not the author declining a finding, and reading it as
+  // one lets anyone with a GitHub account suppress a finding class for a repo
+  // they do not work on.
+  const prAuthor: string | null = payload['pull_request']?.user?.login ?? null;
+  const headSha: string = payload['pull_request']?.head?.sha ?? '';
+  const probe = isMergeSweep ? new TouchProbe(token, repo, headSha) : null;
+  const now = new Date().toISOString();
+
+  let written = 0;
+  const skips: string[] = [];
+
+  for (const thread of candidates) {
+    if (written >= MAX_RELEVANCE_WRITES) {
+      skips.push('write-cap');
+      break;
+    }
+
+    const config = configs.find(
+      (c) => extractMarkerValue(thread.rootBody, c.marker_open, c.marker_close) !== null,
+    );
+    // No configured marker in the body: a human's comment, or another bot's.
+    // Both are outside what this account asked to be classified.
+    if (!config) continue;
+
+    const markerValue = extractMarkerValue(thread.rootBody, config.marker_open, config.marker_close);
+    const key = markerValue ? buildRelevanceKey(config.key_prefix, markerValue) : null;
+    if (!markerValue || !key) continue;
+
+    const facts: ThreadFacts = {
+      state: { isResolved: thread.isResolved, isOutdated: thread.isOutdated },
+      replies: thread.replies,
+      thumbsDownBy:
+        prAuthor && thread.thumbsDownLogins.includes(prAuthor) ? prAuthor : null,
+      path: thread.rootPath,
+      line: thread.rootLine,
+      touch: probe ? await probe.evidenceFor(thread) : null,
+    };
+
+    const verdict: RelevanceVerdict = isMergeSweep
+      ? classifyMergedThread(facts)
+      : classifyResolvedThread(facts);
+
+    if (!verdict.write) {
+      skips.push(verdict.skip);
+      continue;
+    }
+
+    const record = buildRelevanceRecord({
+      verdict,
+      markerValue,
+      agentName: config.agent_name,
+      commentAuthor: thread.rootAuthorLogin,
+      commentAuthorIsBot: thread.rootAuthorIsBot,
+      pr,
+      repo,
+      commentId: thread.rootCommentId,
+      now,
+      ttlDays: config.ttl_days,
+    });
+
+    try {
+      await toolWrite(db, {
+        scope: validateScope(`repo::${repo}`),
+        key,
+        value: JSON.stringify(record),
+        ttl_days: config.ttl_days,
+        tags: [config.bucket_tag, `source::${verdict.method}`],
+        // LoreKit infers kind/host only from a `loop::` tag, so a bucket tagged
+        // anything else must state them — which is why they are config fields.
+        kind: config.record_kind,
+        host: config.record_host ?? undefined,
+        source_agent: 'github-app/comment-relevance',
+        trigger: `${event}.${payload['action'] ?? 'unknown'}`,
+        origin_repo: repo,
+        origin_pr: pr,
+        origin_commit: headSha || undefined,
+      }, config.user_id, span);
+      written++;
+    } catch (err) {
+      // A per-record failure (a memory cap, a malformed key) must not abandon
+      // the rest of the sweep.
+      skips.push(`write-failed:${(err as Error).name}`);
+    }
+  }
+
+  span.setAttributes({
+    'lorekit.relevance.written': written,
+    'lorekit.relevance.mode': isMergeSweep ? 'merge-sweep' : 'thread-resolved',
+    'lorekit.relevance.touch_compares': probe?.callCount ?? 0,
+    ...(skips.length > 0 ? { 'lorekit.relevance.skips': skips.join(',') } : {}),
+  });
+}
+
+/** The REST id of the resolved thread's root comment, from the delivery. */
+// deno-lint-ignore no-explicit-any
+function resolvedRootCommentId(payload: Record<string, any>): number | null {
+  const id = payload['thread']?.comments?.[0]?.id;
+  return typeof id === 'number' ? id : null;
+}
+
 /**
  * Verify a GitHub webhook HMAC-SHA256 signature using the Web Crypto API.
  *
@@ -453,6 +700,31 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     return new Response('OK', { status: 200 });
   }
 
+  // Comment-relevance classification. Runs BEFORE the candidate write below so
+  // a resolved-thread delivery does both: the outcome is classified, and the
+  // finding's text still lands in the raw candidate feed.
+  //
+  // Gated on the App because it needs an installation token to read the thread
+  // state GitHub does not put in the delivery, and gated per-repository on a
+  // config row existing — no new env var, and a repository that has declared
+  // nothing is a no-op that costs one RPC.
+  if (GITHUB_APP_ENABLED && isRelevanceDelivery(event, earlyPayload['action'] ?? 'unknown', earlyPayload)) {
+    try {
+      await classifyCommentRelevance(db, event, earlyPayload, span);
+    } catch (err) {
+      // Belt to classifyCommentRelevance's braces. A classification failure is
+      // never a reason to 5xx a verified delivery and make GitHub retry it.
+      const e = err as Error;
+      span.setAttributes({ 'lorekit.relevance.error': `${e.name}: ${e.message}` });
+    }
+  }
+
+  // A pull_request delivery carries no comment body, so it has nothing to
+  // contribute to the candidate feed below and stops here.
+  if (RELEVANCE_ONLY_EVENTS.has(event)) {
+    return new Response('OK', { status: 200 });
+  }
+
   // Report unsupported event types so they are visible in Dash0 rather than
   // silently discarded. We still return 200 OK — GitHub retries on 4xx/5xx
   // which would flood the delivery log for every push, star, etc.
@@ -482,22 +754,31 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
     let commentBody: string | undefined;
     let commentUrl: string | undefined;
+    /**
+     * GitHub's own id for the thing that was said, and the stable half of this
+     * candidate's key. See the `key:` line below for why it is load-bearing.
+     */
+    let commentId: number | undefined;
     const extraTags: string[] = [];
 
     if (event === 'pull_request_review_comment') {
       commentBody = earlyPayload['comment']?.body;
       commentUrl = earlyPayload['comment']?.html_url;
+      commentId = earlyPayload['comment']?.id;
     } else if (event === 'pull_request_review') {
       commentBody = earlyPayload['review']?.body;
       commentUrl = earlyPayload['review']?.html_url;
+      commentId = earlyPayload['review']?.id;
     } else if (event === 'issue_comment') {
       commentBody = earlyPayload['comment']?.body;
       commentUrl = earlyPayload['comment']?.html_url;
+      commentId = earlyPayload['comment']?.id;
     } else if (event === 'pull_request_review_thread') {
       // Resolved thread: the first comment in the thread is the finding.
       // This is the highest-signal event — explicit author acknowledgement.
       commentBody = earlyPayload['thread']?.comments?.[0]?.body;
       commentUrl = earlyPayload['thread']?.comments?.[0]?.html_url;
+      commentId = earlyPayload['thread']?.comments?.[0]?.id;
       extraTags.push('signal::resolved-thread');
     }
 
@@ -541,7 +822,17 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
     await toolWrite(db, {
       scope,
-      key: `pr-webhook::${repo}::${Date.now()}`,
+      // Keyed by GitHub's own id for the comment, NOT by the arrival time.
+      // This file's own header says these candidates "should decay unless
+      // re-surfaced", and re-surfacing is a repeat write to the same key —
+      // which `memory_write` answers by bumping `seen_count` and refreshing the
+      // TTL. A `Date.now()` key made that unreachable by construction: every
+      // delivery minted a key nothing could ever write to twice, so the one
+      // signal separating a comment that mattered from one that did not was
+      // permanently zero, and a redelivered webhook became a duplicate row.
+      // Falls back to the timestamp only when the payload carries no id, which
+      // keeps a shape-surprising delivery ingesting rather than dropping it.
+      key: `pr-webhook::${repo}::${event}::${commentId ?? Date.now()}`,
       value: commentBody.trim(),
       ttl_days: ttlDays,
       tags: [

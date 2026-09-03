@@ -10,7 +10,7 @@
 | [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 10 MCP tools with request/response examples |
 | [scope-format.md](./scope-format.md) | Agents + developers | Canonical scope string spec and resolution strategy |
 | [org-sharing.md](./org-sharing.md) | Users + operators | Organizations & shared lore: roles, invites, ownership, deletion + recovery, invite emails |
-| [github-app.md](./github-app.md) | Developers + operators | GitHub App integration: architecture, data model, fail-safe pending identity, Setup-URL bounce, post-merge operational runbook |
+| [github-app.md](./github-app.md) | Developers + operators | GitHub App integration: architecture, data model, fail-safe pending identity, Setup-URL bounce, server-side comment-relevance classification, post-merge operational runbook |
 | [api-tokens.md](./api-tokens.md) | Developers | Token types, permissions, generation, CI usage |
 | [byod.md](./byod.md) | Operators | Bring Your Own Database — pointing LoreKit at a Supabase project you control |
 | [embeddings.md](./embeddings.md) | Developers + operators | Semantic-search embeddings: the dormant schema, the opt-in pipeline, the manual backfill, cost measurement, rollback |
