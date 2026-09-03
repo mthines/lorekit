@@ -529,6 +529,12 @@ export const MCP_TOOL_DEFS = [
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times."
         },
+        "max_read_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned."
+        },
         "tags": {
           "type": "array",
           "items": {
@@ -707,6 +713,12 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "max_read_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. Omit to leave unchanged; pass explicit null to clear."
         },
         "tags": {
           "type": "array",
@@ -888,6 +900,12 @@ export const MCP_TOOL_DEFS = [
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times."
         },
+        "max_read_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned."
+        },
         "tags": {
           "type": "array",
           "items": {
@@ -1051,6 +1069,12 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons that have recurred at most this many times."
+        },
+        "max_read_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned."
         },
         "tags": {
           "type": "array",

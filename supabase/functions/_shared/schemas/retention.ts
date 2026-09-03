@@ -81,11 +81,23 @@ export const GroomDimensionFiltersSchema = z.object({
 });
 export type GroomDimensionFilters = z.infer<typeof GroomDimensionFiltersSchema>;
 
-/** The AND-ed match conditions a policy (or an inline groom call) carries — the three age/activity thresholds plus the eight dimension filters above. */
+/** The AND-ed match conditions a policy (or an inline groom call) carries — the four age/activity thresholds plus the eight dimension filters above. */
 export const GroomConditionsSchema = z.object({
   min_age_days: z.number().int().min(1).max(3650).optional(),
   unseen_days: z.number().int().min(1).max(3650).optional(),
   max_seen_count: z.number().int().min(0).max(100_000).optional(),
+  /**
+   * Match only lessons READ at most this many times. Distinct from
+   * `max_seen_count`, which counts WRITES (recurrence): a lesson written
+   * once and never consumed is the classic dead-lore shape, and only this
+   * condition can express it.
+   *
+   * Counts EVERY read, a bulk `memory.list`/`memory.search` appearance
+   * included — the broad `memories.read_count` (00084), NOT the narrow
+   * targeted-open signal `unseen_days` uses. The two deliberately differ;
+   * surfaces must say so rather than calling both "seen".
+   */
+  max_read_count: z.number().int().min(0).max(100_000).optional(),
 }).merge(GroomDimensionFiltersSchema);
 export type GroomConditions = z.infer<typeof GroomConditionsSchema>;
 
@@ -118,6 +130,7 @@ export const RetentionPolicySchema = z.object({
   min_age_days: z.number().int().nullable(),
   unseen_days: z.number().int().nullable(),
   max_seen_count: z.number().int().nullable(),
+  max_read_count: z.number().int().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 }).merge(GroomDimensionFiltersColumnsSchema);
@@ -144,6 +157,7 @@ export const PolicyUpdateBodySchema = z.object({
   min_age_days: z.number().int().min(1).max(3650).nullable().optional(),
   unseen_days: z.number().int().min(1).max(3650).nullable().optional(),
   max_seen_count: z.number().int().min(0).max(100_000).nullable().optional(),
+  max_read_count: z.number().int().min(0).max(100_000).nullable().optional(),
   tags: GroomValueListSchema.nullable().optional(),
   tags_mode: TagsModeSchema.nullable().optional(),
   source_agent: GroomValueListSchema.nullable().optional(),

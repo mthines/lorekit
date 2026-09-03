@@ -4,7 +4,7 @@
  * RetentionConditionsControl
  *
  * The Explorer's "Age & activity" filter: the same min-age / unseen / seen-at-
- * most trio a saved retention policy matches on (`lib/retention-filter.ts`),
+ * most / read-at-most set a saved retention policy matches on (`lib/retention-filter.ts`),
  * exposed as a filter over the list rather than only as a preview count inside
  * the Settings → Retention Policies dialog. Setting one narrows the list to
  * the lessons a policy with these conditions would catch — verification before
@@ -14,7 +14,7 @@
  * the same slot `FilterPillRow` occupies — rather than a floating popover.
  * `FilterMenu`'s popover/`BottomSheet` split exists because a categorical
  * dimension's value list is unbounded and needs its own scrollable surface;
- * three numeric inputs do not, so the simpler, portal-free disclosure is the
+ * a handful of numeric inputs do not, so the simpler, portal-free disclosure is the
  * right amount of machinery for this control.
  *
  * Rendered only while the `retention-policies` flag is on (`LoreExplorer`
@@ -30,7 +30,7 @@ import {
   hasRetentionConditions,
   parseCondition,
   RETENTION_CONDITION_BOUNDS,
-  RETENTION_CONDITION_PLACEHOLDERS,
+  retentionConditionPlaceholder,
   retentionConditionsCount,
   retentionConditionsPhrase,
   type RetentionConditions,
@@ -79,7 +79,7 @@ export function RetentionConditionsTrigger({
 }
 
 /**
- * The three numeric inputs, rendered in the disclosure row when the trigger is
+ * The four numeric inputs, rendered in the disclosure row when the trigger is
  * open. Also hosts the "Create retention policy" hand-off — deliberately
  * INSIDE this popover rather than a separate banner above the results: the
  * action only makes sense in the context of the numbers that produced it, and
@@ -89,11 +89,24 @@ export function RetentionConditionsTrigger({
  * competing with the inputs, when it is just the row's primary action.
  *
  * Each field is LABELLED WITH THE METADATA ROW IT TESTS — "Created", "Last
- * agent open", "Recurrence" are the same three words the lesson detail sheet
- * shows — so a reader can open any returned lesson and check the claim against
- * identical vocabulary. The older labels ("Minimum age", "Not seen in", "Seen
- * at most") named the CONDITION rather than the DATA, which left no way to
- * tell whether a given lesson genuinely matched.
+ * agent open", "Recurrence", "Consumption" are the same words the lesson detail
+ * sheet shows — so a reader can open any returned lesson and check the claim
+ * against identical vocabulary. The older labels ("Minimum age", "Not seen in",
+ * "Seen at most") named the CONDITION rather than the DATA, which left no way
+ * to tell whether a given lesson genuinely matched.
+ *
+ * "Recurrence" and "Consumption" are deliberately BOTH here and deliberately
+ * worded apart: the first counts WRITES, the second READS. Calling either one
+ * "seen" is what made the older copy unreadable. "Consumption" is the detail
+ * sheet's own word for `read_count`, not a nicer one invented here: a label
+ * this panel alone uses cannot be checked against the lesson it returned,
+ * which is the entire job these labels do.
+ *
+ * A blank field is NOT a set one, and the panel has to make that obvious in
+ * two places, because it previously did in neither: the placeholders are
+ * `e.g. N` rather than a bare `N` (which reads as a value in a number input),
+ * and the summary line names the conditions actually in force instead of
+ * saying "these conditions". Fill one field of four and the sentence says so.
  */
 export function RetentionConditionsPanel({
   conditions,
@@ -111,7 +124,7 @@ export function RetentionConditionsPanel({
    * How many dimension filters (label/agent/trigger/kind/host/repo/branch/PR)
    * are ALSO active on the Explorer's own filter bar — a policy created from
    * here carries those too (`handleCreatePolicy`'s `prefillFilters`), so the
-   * hand-off is offered whenever EITHER carries something, not just the three
+   * hand-off is offered whenever EITHER carries something, not just the four
    * fields this popover owns.
    */
   filterCount?: number;
@@ -119,6 +132,7 @@ export function RetentionConditionsPanel({
   const minAgeId = useId();
   const unseenId = useId();
   const maxSeenId = useId();
+  const maxReadId = useId();
 
   /** Parse one field's raw input into the condition set — blank clears it. */
   function setField(field: keyof RetentionConditions, raw: string) {
@@ -153,7 +167,7 @@ export function RetentionConditionsPanel({
             id={minAgeId}
             type="number"
             min={1}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.minAgeDays)}
+            placeholder={retentionConditionPlaceholder('minAgeDays')}
             className={INPUT_CLASS}
             value={conditions.minAgeDays ?? ''}
             onChange={(e) => setField('minAgeDays', e.target.value)}
@@ -166,7 +180,7 @@ export function RetentionConditionsPanel({
             id={unseenId}
             type="number"
             min={1}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.unseenDays)}
+            placeholder={retentionConditionPlaceholder('unseenDays')}
             className={INPUT_CLASS}
             value={conditions.unseenDays ?? ''}
             onChange={(e) => setField('unseenDays', e.target.value)}
@@ -183,12 +197,28 @@ export function RetentionConditionsPanel({
             id={maxSeenId}
             type="number"
             min={0}
-            placeholder={String(RETENTION_CONDITION_PLACEHOLDERS.maxSeenCount)}
+            placeholder={retentionConditionPlaceholder('maxSeenCount')}
             className={INPUT_CLASS}
             value={conditions.maxSeenCount ?? ''}
             onChange={(e) => setField('maxSeenCount', e.target.value)}
           />
           <p className={CAPTION_CLASS}>Written this many times or fewer</p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={maxReadId} className={LABEL_CLASS}>Consumption</label>
+          <input
+            id={maxReadId}
+            type="number"
+            min={0}
+            placeholder={retentionConditionPlaceholder('maxReadCount')}
+            className={INPUT_CLASS}
+            value={conditions.maxReadCount ?? ''}
+            onChange={(e) => setField('maxReadCount', e.target.value)}
+          />
+          {/* "Bulk reads count" is the one thing that distinguishes this from
+              Last agent open, and the two sit side by side — leaving it out is
+              how you get a condition whose label is not literally true. */}
+          <p className={CAPTION_CLASS}>Read this many times or fewer. Bulk list/search reads count.</p>
         </div>
 
         {/* Actions sit together at the trailing edge, with Done rightmost so
@@ -215,13 +245,18 @@ export function RetentionConditionsPanel({
         </div>
       </div>
 
+      {/* Name the conditions actually in force rather than saying "these
+          conditions": a blank field looks filled-in (its placeholder is a
+          plausible number), so two of three left blank read as all three being
+          applied and the resulting list looked wrong. Reading the phrase back
+          is what makes the mismatch visible. */}
       {active && (
         <p className={CAPTION_CLASS}>
-          {conditionsActive && filterCount > 0
-            ? `Showing lessons these conditions and ${filterCount} filter${filterCount === 1 ? '' : 's'} would catch.`
-            : filterCount > 0
-              ? `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`
-              : 'Showing lessons a retention policy with these conditions would catch.'}
+          {conditionsActive
+            ? `Showing lessons a retention policy matching ${retentionConditionsPhrase(conditions)}${
+                filterCount > 0 ? ` and your ${filterCount} filter${filterCount === 1 ? '' : 's'}` : ''
+              } would catch.`
+            : `A policy created here also carries your ${filterCount} active filter${filterCount === 1 ? '' : 's'}.`}
         </p>
       )}
     </div>

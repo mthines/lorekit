@@ -40,6 +40,7 @@ interface RetentionPolicyDbRow {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  max_read_count: number | null;
   tags: string[] | null;
   tags_mode: string | null;
   source_agent: string[] | null;
@@ -111,6 +112,7 @@ export async function handlePolicyCreate(
       p_min_age_days: body.min_age_days ?? null,
       p_unseen_days: body.unseen_days ?? null,
       p_max_seen_count: body.max_seen_count ?? null,
+      p_max_read_count: body.max_read_count ?? null,
       // The eight dimension filters (migration 00093) — same field names as
       // the Explorer's own `POST /memories/list` body, so a `Filter[]` bar
       // translated by `filtersToGroomConditions` needs no re-mapping here.

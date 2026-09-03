@@ -29,6 +29,8 @@ export function parseGroomRequest(args) {
   if (unseen.error) return { error: unseen.error };
   const maxSeen = parseIntFlag(args['max-seen-count'], 'max-seen-count');
   if (maxSeen.error) return { error: maxSeen.error };
+  const maxRead = parseIntFlag(args['max-read-count'], 'max-read-count');
+  if (maxRead.error) return { error: maxRead.error };
 
   return {
     request: {
@@ -36,6 +38,7 @@ export function parseGroomRequest(args) {
       min_age_days: minAge.value,
       unseen_days: unseen.value,
       max_seen_count: maxSeen.value,
+      max_read_count: maxRead.value,
     },
   };
 }

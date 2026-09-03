@@ -8762,6 +8762,121 @@ begin
 end;
 $$;
 
+-- ── 100. max_read_count — a fourth condition, on the READ counter (00101) ──
+-- max_seen_count counts WRITES (seen_count, 00059): "written once" says
+-- nothing about whether anyone used the lesson. max_read_count counts READS
+-- (read_count, 00084), so "written once and never read" — the dead-lore shape
+-- — is finally expressible. The two must stay independent columns.
+--
+-- AC-1: an unread lesson matches max_read_count => 0.
+-- AC-2: reads accumulate, so the same lesson stops matching once read.
+-- AC-3: a BULK read counts (unlike unseen_days, which ignores bulk) — the
+--       semantic difference every surface has to spell out.
+-- AC-4: max_read_count and max_seen_count are independent: a much-written but
+--       unread lesson matches the former and misses the latter.
+-- AC-5: lorekit_memory_list's inline copy of the predicate agrees with
+--       lorekit_groom_candidates (the pair drifted apart once already).
+-- AC-6: a saved policy round-trips the column through create and update.
+do $$
+declare
+  v_unread uuid;
+  v_read   uuid;
+  v_policy retention_policies%rowtype;
+  v_count  int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  -- Written 200 days ago, never read. Old enough that min_age/unseen never
+  -- shield it, so every assertion below is about read_count alone.
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '100-unread', 'v', now() - interval '200 days')
+    returning id into v_unread;
+  -- Same age, but written 9 times — seen_count high, read_count still 0.
+  insert into memories (user_id, scope, key, value, created_at, seen_count)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '100-rewritten', 'v', now() - interval '200 days', 9)
+    returning id into v_read;
+
+  -- AC-1
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  0) c
+   where c.key = '100-unread';
+  assert v_count = 1, '100 AC-1: an unread lesson must match max_read_count => 0';
+
+  -- AC-2 / AC-3: two BULK reads. Bulk deliberately counts here even though it
+  -- does NOT reset unseen_days — read_count is the broad counter.
+  perform lorekit_record_memory_reads(array[v_unread], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_unread], 'bulk', 'mcp');
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  0) c
+   where c.key = '100-unread';
+  assert v_count = 0, '100 AC-2: a lesson read twice must NOT match max_read_count => 0';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  2) c
+   where c.key = '100-unread';
+  assert v_count = 1, '100 AC-3: a BULK read counts toward read_count (unlike unseen_days)';
+
+  -- AC-4: seen_count 9, read_count 0 — matches on reads, misses on writes.
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  0) c
+   where c.key = '100-rewritten';
+  assert v_count = 1, '100 AC-4a: a much-WRITTEN but unread lesson must match max_read_count';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, 1) c
+   where c.key = '100-rewritten';
+  assert v_count = 0, '100 AC-4b: ...and must still miss max_seen_count => 1';
+
+  -- AC-5
+  select count(*) into v_count
+    from lorekit_memory_list(
+      p_user_id        => '00000000-0000-0000-0000-0000000000a2',
+      p_scope          => 'global',
+      p_max_read_count => 0,
+      p_limit          => 100
+    ) c
+   where c.key in ('100-unread', '100-rewritten');
+  assert v_count = 1,
+    '100 AC-5: memory_list max_read_count must agree with groom_candidates (only the unread row)';
+
+  -- AC-6
+  select * into v_policy
+    from lorekit_policy_create(
+      p_user_id        => '00000000-0000-0000-0000-0000000000a2',
+      p_scope          => 'global',
+      p_name           => '100-policy',
+      p_max_read_count => 4
+    );
+  assert v_policy.max_read_count = 4,
+    format('100 AC-6a: policy_create must persist max_read_count, got %s', v_policy.max_read_count);
+
+  select * into v_policy
+    from lorekit_policy_update('00000000-0000-0000-0000-0000000000a2', v_policy.id,
+                               '{"max_read_count": null}'::jsonb);
+  assert v_policy.max_read_count is null,
+    '100 AC-6b: an explicit null in the patch must CLEAR max_read_count';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

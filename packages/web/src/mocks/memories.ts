@@ -602,6 +602,7 @@ export interface MockRetentionPolicy {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  max_read_count: number | null;
   // The eight dimension filters (migration 00093) — mirrors `RetentionPolicySchema`
   // exactly so this fixture stays a faithful stand-in for the real response shape.
   tags: string[] | null;
@@ -650,6 +651,7 @@ export const DEFAULT_GROOM_POLICIES: MockRetentionPolicy[] = [
     min_age_days: 90,
     unseen_days: null,
     max_seen_count: null,
+    max_read_count: null,
     ...NO_MOCK_DIMENSION_FILTERS,
     created_at: FROZEN_NOW,
     updated_at: FROZEN_NOW,
@@ -693,6 +695,7 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
         min_age_days: typeof body.min_age_days === 'number' ? body.min_age_days : null,
         unseen_days: typeof body.unseen_days === 'number' ? body.unseen_days : null,
         max_seen_count: typeof body.max_seen_count === 'number' ? body.max_seen_count : null,
+        max_read_count: typeof body.max_read_count === 'number' ? body.max_read_count : null,
         ...dimensionFilters,
         created_at: FROZEN_NOW,
         updated_at: FROZEN_NOW,
@@ -719,6 +722,7 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
         ...('min_age_days' in body ? { min_age_days: body.min_age_days as number | null } : {}),
         ...('unseen_days' in body ? { unseen_days: body.unseen_days as number | null } : {}),
         ...('max_seen_count' in body ? { max_seen_count: body.max_seen_count as number | null } : {}),
+        ...('max_read_count' in body ? { max_read_count: body.max_read_count as number | null } : {}),
         ...dimensionPatch,
         updated_at: FROZEN_NOW,
       };

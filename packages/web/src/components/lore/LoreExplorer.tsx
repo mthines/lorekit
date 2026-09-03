@@ -539,6 +539,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     if (retentionConditions.maxSeenCount !== undefined) {
       params.set('prefillMaxSeenCount', String(retentionConditions.maxSeenCount));
     }
+    if (retentionConditions.maxReadCount !== undefined) {
+      params.set('prefillMaxReadCount', String(retentionConditions.maxReadCount));
+    }
     if (filters.length > 0) {
       params.set('prefillFilters', JSON.stringify(filters));
     }
