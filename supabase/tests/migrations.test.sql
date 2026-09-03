@@ -9329,6 +9329,25 @@ begin
   assert v_cost.delivered_tokens > 0 and v_cost.chosen_tokens > 0,
     '104 AC-6c: the token estimate must scale with the reads, not come back 0';
 
+  -- The upper bound is EXCLUSIVE of the whole day it names, so a window ending
+  -- today sees none of today's reads and one ending tomorrow sees all of them.
+  -- Both halves are asserted: an inclusive `<=` would pass the second alone,
+  -- and that is precisely the bound that makes two adjacent windows each claim
+  -- the boundary day. It is also why the caller says "through now" by passing
+  -- NO until rather than now(), which the AC-6a call above relies on.
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3',
+                                      null, now(), 'global');
+  assert v_cost.delivered_reads = 0,
+    format('104 AC-6e: until=now() excludes today, so today''s 3 reads must not count; got %s',
+           v_cost.delivered_reads);
+
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3',
+                                      null, now() + interval '1 day', 'global');
+  assert v_cost.delivered_reads = 3,
+    format('104 AC-6f: until=tomorrow includes today in full; got %s', v_cost.delivered_reads);
+
   -- A window that excludes every recorded day reports ZEROES, never nulls: a
   -- client reading `null` as 0 is an accidental agreement that breaks the
   -- first time a caller is stricter.

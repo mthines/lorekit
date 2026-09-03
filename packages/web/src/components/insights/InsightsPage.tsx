@@ -43,18 +43,22 @@
  * one range to answer both would make a reader's "last 7 days" selection
  * silently narrow a leaderboard they were reading as "last 30 days".
  *
- * `HotColdLore` and `RunsList` are account-wide/self-paginated and take no
- * window at all — "what's gone stale" and "which runs exist" are library-wide
- * questions, not windowed ones.
+ * `LoreUtilityGrid` and `RunsList` are account-wide/self-paginated and take no
+ * window at all — "where does each lesson sit" and "which runs exist" are
+ * library-wide questions, not windowed ones. `LoreCostHeadline` is the one
+ * exception and carries its own fixed 30-day window in its own sentence, since
+ * only its source (`memory_read_daily`) can be windowed at all; see its
+ * docblock for why that is not a picker.
  */
 
 import { useMemo, useState } from 'react';
-import { Activity, Users, Layers, Flame, PlayCircle, TrendingUp } from 'lucide-react';
+import { Activity, Users, Layers, Grid2x2, PlayCircle, TrendingUp } from 'lucide-react';
 import { HealthSummary } from '@/components/dashboard/HealthSummary';
 import { UsageHealth } from '@/components/dashboard/UsageHealth';
 import { AgentBreakdown } from '@/components/dashboard/AgentBreakdown';
 import { ScopeConsumption } from '@/components/lore/ScopeConsumption';
-import { HotColdLore } from '@/components/lore/HotColdLore';
+import { LoreUtilityGrid } from '@/components/lore/LoreUtilityGrid';
+import { LoreCostHeadline } from '@/components/lore/LoreCostHeadline';
 import { RunsList } from '@/components/settings/RunsList';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { useInsightsUsage } from '@/lib/queries/insights-usage';
@@ -141,6 +145,11 @@ export function InsightsPage() {
         </p>
       </div>
 
+      {/* The bill leads. Every section below it is a volume, and a volume reads
+          as health; stating the cost first is what makes the grid's verdicts
+          feel worth acting on. See LoreCostHeadline for its own window. */}
+      <LoreCostHeadline />
+
       <Section
         icon={TrendingUp}
         title="Agent activity"
@@ -179,7 +188,7 @@ export function InsightsPage() {
         {isLoading ? (
           <SectionSkeleton />
         ) : isError ? (
-          // NEVER fold a failed request into the empty state — see HotColdLore.tsx's
+          // NEVER fold a failed request into the empty state — see LoreUtilityGrid.tsx's
           // comment on the same anti-pattern. A broken usage fetch must read as
           // broken, not as "no usage recorded".
           <EmptySection message="Failed to load usage data. Please refresh the page to try again." />
@@ -226,12 +235,12 @@ export function InsightsPage() {
       </Section>
 
       <Section
-        icon={Flame}
-        title="Hot & cold lore"
-        description="Memories ranked by how often they've actually been read back — the prune-list input the lorekit-groom skill consumes. Account-wide, all time. Pick a lesson to open it in the Explorer."
+        icon={Grid2x2}
+        title="Is this lore earning its place?"
+        description="Every lesson placed by how often it was DELIVERED against how often an agent deliberately CHOSE it — the ratio, not the raw read count, because 99.8% of reads are bulk ride-alongs and ranking by them ranks scope breadth. Pick a quadrant to see its lessons and hand them to lorekit-groom. Account-wide, all time."
       >
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
-          <HotColdLore />
+          <LoreUtilityGrid />
         </div>
       </Section>
 

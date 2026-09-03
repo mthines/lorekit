@@ -32,6 +32,8 @@ import type {
   ReadRankingResponse,
   ScopesResponse,
   UpdateMemoryBody,
+  UtilityQuery,
+  UtilityResponse,
 } from '@lorekit/schemas/memory';
 import type { UsageStatsQuery, UsageStatsResponse, UsageRunsQuery, UsageRunsResponse } from '@lorekit/schemas/usage';
 import { restFetch } from './rest';
@@ -245,6 +247,34 @@ export function readRankingRequest(
   signal?: AbortSignal,
 ): Promise<ReadRankingResponse> {
   return restFetch<ReadRankingResponse>('/memories/read-ranking', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/utility` — every lesson placed on the delivered × chosen grid
+ * (migration 00105), plus what the delivered half costs in context.
+ *
+ * The successor to `readRankingRequest` above: that route ranks by
+ * `read_count`, which 99.80% bulk ride-alongs make a proxy for SCOPE BREADTH
+ * rather than value, so its cold end nominates narrow scopes for pruning. This
+ * one divides by the deliveries, which cancels the breadth. `/read-ranking`
+ * stays a live, documented REST route answering "what is read most" — the
+ * dashboard simply no longer renders a prune list from it.
+ *
+ * Omit `quadrant` for the counts alone; pass one to additionally get that
+ * quadrant's rows. REST-only: no MCP tool, no CLI command
+ * (`telemetry-vocabulary.ts`) — `memory.list` with `max_opened_count => 0` is
+ * the agent-side answer, and it sees the whole scope.
+ */
+export function utilityRequest(
+  accessToken: string,
+  params: Partial<UtilityQuery>,
+  signal?: AbortSignal,
+): Promise<UtilityResponse> {
+  return restFetch<UtilityResponse>('/memories/utility', {
     accessToken,
     query: { ...params },
     ...(signal ? { signal } : {}),

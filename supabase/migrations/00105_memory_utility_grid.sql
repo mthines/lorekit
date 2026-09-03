@@ -289,8 +289,15 @@ begin
        -- something is pruned, which is exactly backwards as a feedback signal.
        and (p_scope is null or m.scope = p_scope)
        and lorekit_api_token_scope_allowed(p_key_scopes, m.scope)
+       -- HALF-OPEN `[since, until)`, the same asymmetry `/activity` and
+       -- `/read-activity` use, so two adjacent windows partition the reads
+       -- instead of both claiming the boundary day. The comparison is at DAY
+       -- grain because `memory_read_daily` is a daily rollup and no finer
+       -- answer exists — which makes `until` exclusive of the whole day it
+       -- names. A caller wanting "through right now" therefore passes NO
+       -- `until` (the default) rather than `now()`, which would drop today.
        and (p_since is null or d.day >= p_since::date)
-       and (p_until is null or d.day <= p_until::date);
+       and (p_until is null or d.day <  p_until::date);
 end;
 $$;
 
@@ -301,6 +308,8 @@ comment on function lorekit_memory_delivery_cost(uuid, timestamptz, timestamptz,
   'Reads and ESTIMATED tokens of lore delivered over a window, and how much of
    that was a deliberate (targeted) fetch. Windowed over memory_read_daily --
    a DIFFERENT source from lorekit_memory_utility_census, which reads the
-   lifetime counters; each caller must caption its own window. Tokens are
+   lifetime counters; each caller must caption its own window. The window is
+   half-open [since, until) at DAY grain, so p_until excludes the whole day it
+   names -- pass NULL, not now(), for "through right now". Tokens are
    length(value)/4, never tokenized: render them as estimates. Archived lore is
    included, because it cost context while it was live.';

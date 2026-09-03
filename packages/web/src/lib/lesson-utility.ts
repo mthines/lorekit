@@ -147,19 +147,25 @@ export function lessonUtility(
   // the denominator is at least one day: "delivered 4 times today" is 4/day.
   const deliveredPerDay = delivered / Math.max(1, days);
 
-  if (days < MIN_AGE_DAYS_TO_JUDGE || delivered < MIN_DELIVERIES_TO_JUDGE) {
-    return {
-      utility: 'unproven',
-      delivered,
-      chosen,
-      pullThrough,
-      deliveredPerDay,
-      action: 'Give it time',
-      detail:
-        days < MIN_AGE_DAYS_TO_JUDGE
-          ? `${formatCount(delivered)} delivered · created ${Math.floor(days)}d ago`
-          : `${formatCount(delivered)} delivered · too few to read a rate from`,
-    };
+  // The measured half of the verdict, identical in every branch. Only the
+  // quadrant and the one-line detail differ, and the ACTION is read from
+  // LESSON_UTILITY_META rather than repeated here — the grid needs the same
+  // verb for a quadrant it has no lesson from, so there can only be one copy.
+  const verdict = (utility: LessonUtility, detail: string): LessonUtilityVerdict => ({
+    utility,
+    delivered,
+    chosen,
+    pullThrough,
+    deliveredPerDay,
+    action: LESSON_UTILITY_META[utility].action,
+    detail,
+  });
+
+  if (days < MIN_AGE_DAYS_TO_JUDGE) {
+    return verdict('unproven', `${formatCount(delivered)} delivered · created ${Math.floor(days)}d ago`);
+  }
+  if (delivered < MIN_DELIVERIES_TO_JUDGE) {
+    return verdict('unproven', `${formatCount(delivered)} delivered · too few to read a rate from`);
   }
 
   const isChosen = pullThrough !== null && pullThrough >= CHOSEN_PULL_THROUGH;
@@ -167,19 +173,10 @@ export function lessonUtility(
   const rate = pullThrough === null ? '' : ` · ${formatPullThrough(pullThrough)} pull-through`;
   const counts = `${formatCount(delivered)} delivered · ${formatCount(chosen)} chosen`;
 
-  if (isChosen) {
-    return isBroad
-      ? { utility: 'load-bearing', delivered, chosen, pullThrough, deliveredPerDay,
-          action: 'Promote to a rule', detail: `${counts}${rate}` }
-      : { utility: 'specialist', delivered, chosen, pullThrough, deliveredPerDay,
-          action: 'Broaden its scope', detail: `${counts}${rate}` };
-  }
-
+  if (isChosen) return verdict(isBroad ? 'load-bearing' : 'specialist', `${counts}${rate}`);
   return isBroad
-    ? { utility: 'noise-tax', delivered, chosen, pullThrough, deliveredPerDay,
-        action: 'Prune first', detail: `${counts} · ${formatPerDay(deliveredPerDay)}` }
-    : { utility: 'dormant', delivered, chosen, pullThrough, deliveredPerDay,
-        action: 'Archive', detail: counts };
+    ? verdict('noise-tax', `${counts} · ${formatPerDay(deliveredPerDay)}`)
+    : verdict('dormant', counts);
 }
 
 /**
@@ -191,35 +188,51 @@ export function lessonUtility(
  */
 export type LessonUtilityTone = 'positive' | 'informative' | 'warning' | 'neutral';
 
-export const LESSON_UTILITY_META: Record<
-  LessonUtility,
-  { label: string; tone: LessonUtilityTone; description: string }
-> = {
+export interface LessonUtilityMeta {
+  label: string;
+  tone: LessonUtilityTone;
+  description: string;
+  /**
+   * The one thing to DO about a lesson in this quadrant, as an imperative.
+   *
+   * It lives here rather than beside each `return` in `lessonUtility` because
+   * the grid needs the verb for a quadrant nobody has a lesson from yet —
+   * a card's chip and an empty quadrant's heading must say the same word.
+   */
+  action: string;
+}
+
+export const LESSON_UTILITY_META: Record<LessonUtility, LessonUtilityMeta> = {
   'load-bearing': {
     label: 'Load-bearing',
     tone: 'positive',
     description: 'Delivered widely and chosen often. Worth hardening into a permanent rule.',
+    action: 'Promote to a rule',
   },
   specialist: {
     label: 'Specialist',
     tone: 'informative',
     description: 'Narrow reach, high uptake. Agents want it — a wider scope would reach more of them.',
+    action: 'Broaden its scope',
   },
   'noise-tax': {
     label: 'Noise tax',
     tone: 'warning',
     description:
       'Injected constantly and never deliberately fetched. This is context budget spent every session for nothing.',
+    action: 'Prune first',
   },
   dormant: {
     label: 'Dormant',
     tone: 'neutral',
     description: 'Rarely offered and never taken. Nothing is looking for it.',
+    action: 'Archive',
   },
   unproven: {
     label: 'Too new to judge',
     tone: 'neutral',
     description:
       'Not enough evidence yet. Shown so a lesson written this week is not mistaken for one that has been dead for a year.',
+    action: 'Give it time',
   },
 };
