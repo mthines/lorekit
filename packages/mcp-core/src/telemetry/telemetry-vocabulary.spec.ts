@@ -107,8 +107,10 @@ describe('the analytics reads stay REST-only (D17)', () => {
   // agent primitive" shape as the other five, and `memory.clusters` is the
   // same call again with an extra reason — the agent-side spelling
   // (`lorekit dedupe`) already exists and sees the WHOLE scope where the route
-  // sees one recent window. All added to the SAME guarded set rather than
-  // exempted from it. See docs/decisions.md → "Dashboard analytics reads stay
+  // sees one recent window. `memory.utility` is that same call a third time:
+  // `memory.list` with `max_opened_count => 0` already selects the quadrants
+  // an agent would act on, over the whole scope. All added to the SAME guarded
+  // set rather than exempted from it. See docs/decisions.md → "Dashboard analytics reads stay
   // REST-only".
   const RESTONLY_NAMES = [
     'memory.activity',
@@ -120,13 +122,14 @@ describe('the analytics reads stay REST-only (D17)', () => {
     'memory.tags',
     'memory.usage',
     'memory.usage-runs',
+    'memory.utility',
   ];
 
-  it('records exactly these nine as a decision, by name', () => {
+  it('records exactly these ten as a decision, by name', () => {
     expect([...REST_ONLY_OP_NAMES].sort()).toEqual(RESTONLY_NAMES);
   });
 
-  it('keeps memory.relevant OUT of the nine — it is already covered agent-side', () => {
+  it('keeps memory.relevant OUT of the ten — it is already covered agent-side', () => {
     // The near-miss, and the reason `restOnly` is a separate field rather than
     // "has no MCP tool". `GET /memories/relevant` has no tool of its own, but
     // the CAPABILITY is on the agent surface twice over (`memory.list
@@ -138,14 +141,14 @@ describe('the analytics reads stay REST-only (D17)', () => {
     expect(REST_ONLY_OP_NAMES).not.toContain('memory.relevant');
   });
 
-  it('gives none of the nine an MCP tool', () => {
+  it('gives none of the ten an MCP tool', () => {
     const catalogued = new Set(MCP_TOOLS.map((t) => t.name));
     for (const name of REST_ONLY_OP_NAMES) {
       expect(catalogued.has(name), `${name} is REST-only but the catalog now declares a tool`).toBe(false);
     }
   });
 
-  it('gives none of the nine a CLI command either', () => {
+  it('gives none of the ten a CLI command either', () => {
     // Scanned rather than reasoned about: the CLI is free to call any REST
     // endpoint directly (it has no catalog dependency), so "no MCP tool"
     // does not imply "no CLI command". `/relevant` is the proof the scan

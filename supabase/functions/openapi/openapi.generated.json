@@ -7567,6 +7567,359 @@
         }
       }
     },
+    "/memories/utility": {
+      "get": {
+        "summary": "Every lesson placed on the delivered × chosen grid, plus what delivery costs",
+        "tags": [
+          "Memories"
+        ],
+        "description": "Answers \"is this lore earning its place?\" by dividing rather than ranking. `read_count` counts every read including the bulk ride-alongs in a `memory.list` page (99.80% of them), so ranking by it — which `GET /memories/read-ranking` does — mostly ranks SCOPE BREADTH, and its cold end nominates narrow scopes for pruning instead of unused lore. Pull-through (`opened_count / read_count`, migration 00103) is a proper fraction, so the breadth appears in both halves and cancels.\n\nTwo axes give four quadrants plus a fifth state: **load-bearing** (delivered widely, chosen often — promote to a rule), **specialist** (narrow reach, high uptake — broaden its scope), **noise-tax** (injected constantly, never chosen — prune first), **dormant** (rarely offered, never taken — archive), and **unproven** (too young or too few deliveries to read a rate from). `unproven` is not a hedge: it is the state today's UI cannot express, where a fresh memory and a dead one look identical. The `thresholds` that draw the lines travel in every response so a client can caption them rather than restate them.\n\n**Two windows, and both are reported.** `census` counts the LIFETIME counters on `memories` — the same two columns a per-lesson chip reads, so a card and the grid cannot disagree — while `cost` sums `memory_read_daily` over `[since, until)`, the only source that can be windowed at all. Caption each; do not present one as the other.\n\n`cost.delivered_tokens` is ESTIMATED at four characters per token, not tokenized — the figure is an order of magnitude for a headline, and any surface rendering it must say so. `counting_since` is the date read counting started: a `0` means \"not delivered since that date\", never \"never delivered\". Passing `quadrant` additionally returns that quadrant's rows (`entries`); omitting it returns the counts alone. An invalid `scope` is a `400`.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "load-bearing",
+                "specialist",
+                "noise-tax",
+                "dormant",
+                "unproven"
+              ]
+            },
+            "required": false,
+            "name": "quadrant",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": false,
+            "name": "since",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": false,
+            "name": "until",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "name": "X-LoreKit-Client",
+            "in": "header",
+            "required": false,
+            "description": "Which surface is calling. One of `dashboard`, `cli`, `mcp`, `api`; anything else is recorded as unattributed. Purely for usage analytics — it never changes the response. Optional: an absent header records this transport's own default (`api`), so send it only to identify a MORE SPECIFIC calling surface (e.g. `cli`). Reads attributed to `dashboard` are excluded from `GET /memories/read-activity`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "dashboard",
+                "cli",
+                "mcp",
+                "api"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Quadrant census, delivery cost, and the requested quadrant's rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "thresholds": {
+                      "type": "object",
+                      "properties": {
+                        "min_deliveries": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "min_age_days": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "chosen_pull_through": {
+                          "type": "number"
+                        },
+                        "broad_reach_deliveries": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "min_deliveries",
+                        "min_age_days",
+                        "chosen_pull_through",
+                        "broad_reach_deliveries"
+                      ]
+                    },
+                    "counting_since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "census": {
+                      "type": "object",
+                      "properties": {
+                        "load-bearing": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "specialist": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "noise-tax": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "dormant": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "unproven": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "load-bearing",
+                        "specialist",
+                        "noise-tax",
+                        "dormant",
+                        "unproven"
+                      ]
+                    },
+                    "cost": {
+                      "type": "object",
+                      "properties": {
+                        "delivered_reads": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "chosen_reads": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "delivered_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "chosen_tokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "delivered_reads",
+                        "chosen_reads",
+                        "delivered_tokens",
+                        "chosen_tokens"
+                      ]
+                    },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "date-time"
+                        },
+                        "until": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "since",
+                        "until"
+                      ]
+                    },
+                    "quadrant": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "load-bearing",
+                        "specialist",
+                        "noise-tax",
+                        "dormant",
+                        "unproven"
+                      ]
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "scope": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "read_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "opened_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "last_opened_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "scope",
+                          "key",
+                          "read_count",
+                          "opened_count",
+                          "last_opened_at",
+                          "created_at"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "thresholds",
+                    "counting_since",
+                    "census",
+                    "cost",
+                    "window",
+                    "quadrant",
+                    "entries"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/memories/clusters": {
       "get": {
         "summary": "Groups of near-duplicate memories, ranked as merge candidates (read-only)",

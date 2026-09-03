@@ -28,6 +28,10 @@ insert into auth.users (instance_id, id, aud, role, email, created_at, updated_a
 values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a1', 'authenticated', 'authenticated', 'lk-mig-a@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a2', 'authenticated', 'authenticated', 'lk-mig-a2@test.local', now(), now()),
+  -- §104's own account. The utility census and the delivery-cost sum are
+  -- ACCOUNT-WIDE, so they would otherwise pick up every memory and every
+  -- recorded read the earlier sections left behind for a2.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a3', 'authenticated', 'authenticated', 'lk-mig-a3@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -9178,6 +9182,162 @@ begin
                                '{"max_opened_count": null}'::jsonb);
   assert v_policy.max_opened_count is null,
     '103 AC-5b: an explicit null in the patch must CLEAR max_opened_count';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 104. the delivered x chosen grid (00105) ─────────────────────────────
+-- `lorekit_lesson_utility` is the ONE quadrant rule, shared by the census and
+-- the row query so a lesson cannot be counted in one quadrant and listed in
+-- another. Its thresholds are PARAMETERS — `LESSON_UTILITY_THRESHOLDS` in
+-- `@lorekit/schemas` is the authority — so these assertions pass them
+-- explicitly rather than leaning on the SQL defaults, which are a fallback
+-- for a hand-run query.
+--
+-- AC-1: each of the four measured quadrants is reachable, and the two that a
+--       `read_count` ranking confuses (specialist vs noise-tax) come out on
+--       OPPOSITE sides. A rule that read `read_count` alone would put the
+--       most-delivered lesson at the top of both.
+-- AC-2: the evidence floor withholds a verdict on BOTH counts — too young,
+--       and too few deliveries — rather than handing out a confident one.
+-- AC-3: the census returns all five names even where four of the quadrants
+--       are EMPTY. An absent key reads to a client as "not measured", which is
+--       a different answer from "you have none of these". Asserted over a
+--       scope holding exactly one lesson, so four counts are genuinely 0 —
+--       a census over the main fixture populates every quadrant and could
+--       never tell a LEFT JOIN from an inner one.
+-- AC-4: census and rows agree — the count for a quadrant equals the number of
+--       rows the row query returns for it.
+-- AC-5: an unknown quadrant name RAISES rather than returning nothing.
+-- AC-6: the cost sum is windowed, counts targeted reads as a subset of all
+--       reads, and reports zeroes (not nulls) for an account with no reads.
+do $$
+declare
+  v_load    uuid;
+  v_spec    uuid;
+  v_noise   uuid;
+  v_dormant uuid;
+  v_young   uuid;
+  v_count   bigint;
+  v_rows    int;
+  v_cost    record;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a3","role":"service_role"}', true);
+
+  -- Five lessons, one per quadrant. All old enough to judge except `104-young`.
+  -- The counters are set directly: lorekit_record_memory_reads would need
+  -- thousands of calls to reach a broad-reach delivery count, and what is
+  -- under test here is the CLASSIFICATION, not the recording (§102 covers that).
+  insert into memories (user_id, scope, key, value, created_at, read_count, opened_count) values
+    -- broad reach (>= 100), chosen (>= 2%)
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '104-load',    'v', now() - interval '200 days', 1000, 50),
+    -- narrow reach (< 100), chosen — the row a read_count ranking calls cold
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '104-spec',    'v', now() - interval '200 days',   20, 10),
+    -- broad reach, never chosen — the row a read_count ranking calls hot
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '104-noise',   'v', now() - interval '200 days', 5000,  0),
+    -- narrow reach, never chosen
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '104-dormant', 'v', now() - interval '200 days',   20,  0),
+    -- delivered heavily, but created yesterday
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '104-young',   'v', now() - interval '1 day',    5000,  0),
+    -- Alone in its own scope, so a census narrowed to that scope has exactly
+    -- one populated quadrant and four empty ones (see AC-3).
+    ('00000000-0000-0000-0000-0000000000a3', 'project::104-solo', '104-solo', 'v', now() - interval '200 days', 20, 0);
+  select id into v_load    from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '104-load';
+  select id into v_spec    from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '104-spec';
+  select id into v_noise   from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '104-noise';
+  select id into v_dormant from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '104-dormant';
+  select id into v_young   from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '104-young';
+
+  -- AC-1
+  assert lorekit_lesson_utility(1000, 50, now() - interval '200 days', 10, 7, 0.02, 100) = 'load-bearing',
+    '104 AC-1a: broad reach + high uptake must be load-bearing';
+  assert lorekit_lesson_utility(20, 10, now() - interval '200 days', 10, 7, 0.02, 100) = 'specialist',
+    '104 AC-1b: narrow reach + high uptake must be specialist, not dormant — '
+    'this is the row a read_count ranking mistakes for cold lore';
+  assert lorekit_lesson_utility(5000, 0, now() - interval '200 days', 10, 7, 0.02, 100) = 'noise-tax',
+    '104 AC-1c: broad reach + no uptake must be noise-tax — the row a '
+    'read_count ranking mistakes for the most valuable lesson in the store';
+  assert lorekit_lesson_utility(20, 0, now() - interval '200 days', 10, 7, 0.02, 100) = 'dormant',
+    '104 AC-1d: narrow reach + no uptake must be dormant';
+
+  -- AC-2 — both halves of the evidence floor, independently.
+  assert lorekit_lesson_utility(5000, 0, now() - interval '1 day', 10, 7, 0.02, 100) = 'unproven',
+    '104 AC-2a: a lesson younger than min_age_days must be unproven however '
+    'heavily it was delivered';
+  assert lorekit_lesson_utility(3, 2, now() - interval '200 days', 10, 7, 0.02, 100) = 'unproven',
+    '104 AC-2b: 2-of-3 is 67% pull-through and still not enough evidence — '
+    'below min_deliveries the rate is noise, not a verdict';
+
+  -- AC-3 — narrowed to the single-lesson scope, so four of the five counts
+  -- are really 0 and an inner join would drop them.
+  select count(*) into v_count
+    from lorekit_memory_utility_census('00000000-0000-0000-0000-0000000000a3', 'project::104-solo',
+                                       '{}', 10, 7, 0.02, 100);
+  assert v_count = 5,
+    format('104 AC-3a: the census must return all five quadrant names even where '
+           'four of them are empty, got %s', v_count);
+
+  select coalesce(sum(c.n), -1) into v_count
+    from lorekit_memory_utility_census('00000000-0000-0000-0000-0000000000a3', 'project::104-solo',
+                                       '{}', 10, 7, 0.02, 100) c
+   where c.utility <> 'dormant';
+  assert v_count = 0,
+    format('104 AC-3b: the four empty quadrants must report 0, not be omitted '
+           'and not be miscounted, got a total of %s', v_count);
+
+  -- AC-4 — the census count and the row query must agree, quadrant by
+  -- quadrant. They are two separate queries over the same helper, which is
+  -- exactly the pair that can drift.
+  for v_count, v_rows in
+    select c.n,
+           (select count(*)
+              from lorekit_memory_utility_rows('00000000-0000-0000-0000-0000000000a3', c.utility,
+                                               'global', 100, '{}', 10, 7, 0.02, 100))
+      from lorekit_memory_utility_census('00000000-0000-0000-0000-0000000000a3', 'global',
+                                         '{}', 10, 7, 0.02, 100) c
+  loop
+    assert v_count = v_rows,
+      format('104 AC-4: census says %s but the row query returned %s', v_count, v_rows);
+  end loop;
+
+  -- AC-5
+  begin
+    perform lorekit_memory_utility_rows('00000000-0000-0000-0000-0000000000a3', 'bogus-quadrant');
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised,
+    '104 AC-5: an unknown quadrant name must raise, not return an empty set — '
+    'a typo that silently answers "nothing here" is unfindable';
+
+  -- AC-6 — the cost sum.
+  perform lorekit_record_memory_reads(array[v_load, v_noise], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_load], 'targeted', 'mcp');
+
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3', null, null, 'global');
+  assert v_cost.delivered_reads = 3,
+    format('104 AC-6a: three recorded reads, got %s', v_cost.delivered_reads);
+  assert v_cost.chosen_reads = 1,
+    format('104 AC-6b: targeted reads are a SUBSET of all reads, got %s of %s',
+           v_cost.chosen_reads, v_cost.delivered_reads);
+  assert v_cost.delivered_tokens > 0 and v_cost.chosen_tokens > 0,
+    '104 AC-6c: the token estimate must scale with the reads, not come back 0';
+
+  -- A window that excludes every recorded day reports ZEROES, never nulls: a
+  -- client reading `null` as 0 is an accidental agreement that breaks the
+  -- first time a caller is stricter.
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3',
+                                      now() - interval '400 days', now() - interval '390 days', 'global');
+  assert v_cost.delivered_reads = 0 and v_cost.delivered_tokens = 0,
+    format('104 AC-6d: an empty window must report 0, got reads=%s tokens=%s',
+           v_cost.delivered_reads, v_cost.delivered_tokens);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);

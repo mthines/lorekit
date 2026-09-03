@@ -21,6 +21,7 @@ import { handleActivity, handleActivityPost } from './handlers/activity.ts';
 import { handlePivot, handlePivotPost } from './handlers/pivot.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
 import { handleReadRanking } from './handlers/read-ranking.ts';
+import { handleUtility } from './handlers/utility.ts';
 import { handleRelevant } from './handlers/relevant.ts';
 import { handleClusters } from './handlers/clusters.ts';
 import { handlePolicyList, handlePolicyCreate, handlePolicyUpdate, handlePolicyDelete } from './handlers/policies.ts';
@@ -72,6 +73,7 @@ const router = createRouter([
   { method: 'GET',    path: '/pivot',          handler: handlePivot,        requires: 'read'  },
   { method: 'GET',    path: '/read-activity',  handler: handleReadActivity, requires: 'read'  },
   { method: 'GET',    path: '/read-ranking',   handler: handleReadRanking,  requires: 'read'  },
+  { method: 'GET',    path: '/utility',        handler: handleUtility,      requires: 'read'  },
   { method: 'GET',    path: '/relevant',       handler: handleRelevant,     requires: 'read'  },
   // Near-duplicate clusters. `requires: 'read'` and GET-only by contract, not by
   // omission — see handlers/clusters.ts on why there is no merge counterpart.

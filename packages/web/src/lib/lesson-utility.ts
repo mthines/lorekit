@@ -35,58 +35,44 @@
  * without freezing time, and keeps the module usable from a server render.
  */
 
+import { LESSON_UTILITY_THRESHOLDS, type LessonUtilityName } from '@lorekit/schemas/memory';
+
 /**
  * Where a lesson sits on the delivered × chosen grid.
  *
  * The diagonal is the boring part; the off-diagonal is where the decisions are.
  * "Delivered a lot, never chosen" is a bill paid every session, and "chosen a
  * lot, barely delivered" is a lesson whose scope is too narrow.
- */
-export type LessonUtility =
-  /** Delivered widely and chosen often. Worth hardening into a permanent rule. */
-  | 'load-bearing'
-  /** Narrow reach, high uptake. The scope is probably too tight. */
-  | 'specialist'
-  /** Injected constantly, never chosen. This is the context budget being spent for nothing. */
-  | 'noise-tax'
-  /** Rarely offered and never taken. Nothing is looking for it. */
-  | 'dormant'
-  /** Not enough evidence yet — too young, or too few deliveries to read a rate from. */
-  | 'unproven';
-
-/**
- * Deliveries below which a rate is noise. Two opens out of three deliveries is
- * 67% and means nothing; the same 67% over three hundred deliveries is a fact.
- */
-export const MIN_DELIVERIES_TO_JUDGE = 10;
-
-/**
- * A lesson younger than this has not had a fair chance to be chosen, however
- * many times it has been delivered. Matches the shortest retention window the
- * grooming UI offers, so "too new to judge" here and "too new to prune" there
- * do not disagree.
- */
-export const MIN_AGE_DAYS_TO_JUDGE = 7;
-
-/**
- * The pull-through at or above which a lesson counts as CHOSEN.
  *
- * Calibrated against the measured store-wide rate of 0.20% — this is an order
- * of magnitude above the baseline, so clearing it means the lesson is being
- * picked out deliberately rather than riding the average. It is a starting
- * calibration, deliberately in ONE place so it can be tuned against real
- * stores rather than rediscovered in four components.
+ * Aliased from `@lorekit/schemas` rather than re-spelled: the same five names
+ * are the keys of `GET /memories/utility`'s census and the argument its row
+ * query takes, so a sixth quadrant invented here alone would render a card the
+ * grid has no column for.
  */
-export const CHOSEN_PULL_THROUGH = 0.02;
+export type LessonUtility = LessonUtilityName;
 
 /**
- * Deliveries at or above which a lesson counts as BROAD REACH.
+ * The four numbers that draw the grid lines, RE-EXPORTED — not declared here.
  *
- * A hundred deliveries is a lesson riding along in essentially every session
- * for a month — the point at which what it costs in context stops being
- * rounding error and starts being a budget line.
+ * They live in `@lorekit/schemas` because two implementations read them: this
+ * module, for the chip on a single card, and `lorekit_lesson_utility` (00105),
+ * for the census over the whole store. The SQL takes them as parameters rather
+ * than hardcoding its own, so both consumers are downstream of one definition
+ * and a card can never disagree with the quadrant it was counted into. Tuning
+ * the calibration is one edit in the schemas package.
  */
-export const BROAD_REACH_DELIVERIES = 100;
+
+/** Deliveries below which a rate is noise. Two opens out of three is 67% and means nothing. */
+export const MIN_DELIVERIES_TO_JUDGE = LESSON_UTILITY_THRESHOLDS.minDeliveries;
+
+/** Below this age a lesson has not had a fair chance, however often it was delivered. */
+export const MIN_AGE_DAYS_TO_JUDGE = LESSON_UTILITY_THRESHOLDS.minAgeDays;
+
+/** The pull-through at or above which a lesson counts as CHOSEN. */
+export const CHOSEN_PULL_THROUGH = LESSON_UTILITY_THRESHOLDS.chosenPullThrough;
+
+/** Deliveries at or above which a lesson counts as BROAD REACH. */
+export const BROAD_REACH_DELIVERIES = LESSON_UTILITY_THRESHOLDS.broadReachDeliveries;
 
 export interface LessonUtilityInput {
   /** `read_count` — every read, bulk ride-alongs included. The DENOMINATOR. */

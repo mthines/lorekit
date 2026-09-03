@@ -201,6 +201,12 @@ const SCOPE_FILTERING_HANDLERS: ReadonlyArray<readonly [string, string, string]>
   // only on case, and this route filters the column the REST write path stores
   // VERBATIM, so lowercasing would report a mixed-case scope as duplicate-free.
   ['clusters.ts', 'handleClusters', 'parseScopeFilter'],
+  // Filters `memories.scope` inside `lorekit_memory_utility_*`, so it takes
+  // clusters.ts's reject-only validator and NOT read-ranking's normalising one,
+  // for the reason spelled out above: a lowercased filter would place a
+  // mixed-case scope's lore in no quadrant at all, which reads as "nothing to
+  // groom here" rather than "that scope is spelled differently".
+  ['utility.ts', 'handleUtility', 'parseScopeFilter'],
 ];
 
 describe('REST scope filters are validated before they reach a query', () => {

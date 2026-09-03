@@ -1220,3 +1220,170 @@ export const ClustersResponseSchema = z.object({
   clusters: z.array(DuplicateClusterSchema),
 });
 export type ClustersResponse = z.infer<typeof ClustersResponseSchema>;
+
+/**
+ * `GET /memories/utility` — every active lesson placed on the delivered ×
+ * chosen grid, plus what the delivered half is costing in context.
+ *
+ * WHY THIS ROUTE EXISTS. Its predecessor (`/read-ranking`, the Insights page's
+ * "Hot & cold lore") ranks by `read_count` alone, and 99.80% of recorded reads
+ * are bulk ride-alongs in a `memory.list`/`memory.search` page. So the ranking
+ * is really SCOPE BREADTH: a `global` lesson is delivered on every session and
+ * a `branch` lesson almost never, whatever either is worth, and the "cold" end
+ * of that list — the prune list — is populated by narrow scopes rather than by
+ * unused lore. Dividing by the deliveries cancels the confound, which is what
+ * this route reports instead.
+ *
+ * REST-only (`telemetry-vocabulary.ts`'s `NON_CATALOG_OPS`), the tenth such
+ * read, for the same two reasons as its nine siblings: the response names
+ * individual scopes and keys (a scope-leak surface), and it is a chart, not an
+ * agent primitive. An agent that wants the same prune list already has one —
+ * `memory.list` with `max_opened_count => 0` (migration 00104) selects the
+ * noise-tax and dormant quadrants directly, over the WHOLE scope rather than
+ * this route's ranked page.
+ */
+export const LessonUtilitySchema = z.enum([
+  'load-bearing',
+  'specialist',
+  'noise-tax',
+  'dormant',
+  'unproven',
+]);
+export type LessonUtilityName = z.infer<typeof LessonUtilitySchema>;
+
+/**
+ * The four numbers that place a lesson on the grid — the SINGLE origin, shared
+ * by the SQL that counts the quadrants and the TypeScript that renders one
+ * lesson's chip.
+ *
+ * They live here, not in either consumer, because the two must agree: a chip
+ * saying "Noise tax" on a row the grid counted as "Dormant" is worse than
+ * either verdict alone. The edge handler reads these and PASSES them to
+ * `lorekit_memory_utility_*` as parameters, so no threshold is hardcoded in
+ * SQL — the same reasoning as `lorekit_get_limit` for the abuse guardrails.
+ * `packages/web/src/lib/lesson-utility.ts` re-exports them for the client.
+ *
+ * Every value is a starting calibration measured against a real store, not a
+ * derived constant. Tuning one is an edit here and nowhere else.
+ */
+export const LESSON_UTILITY_THRESHOLDS = {
+  /**
+   * Deliveries below which a rate is noise. Two opens out of three deliveries
+   * is 67% and means nothing; the same 67% over three hundred is a fact.
+   */
+  minDeliveries: 10,
+  /**
+   * A lesson younger than this has not had a fair chance to be chosen, however
+   * many times it has been delivered. Matches the shortest retention window the
+   * grooming UI offers, so "too new to judge" here and "too new to prune" there
+   * cannot disagree.
+   */
+  minAgeDays: 7,
+  /**
+   * The pull-through (`opened_count / read_count`) at or above which a lesson
+   * counts as CHOSEN. An order of magnitude above the measured store-wide
+   * baseline of 0.20%, so clearing it means the lesson is being picked out
+   * deliberately rather than riding the average.
+   */
+  chosenPullThrough: 0.02,
+  /**
+   * Deliveries at or above which a lesson counts as BROAD REACH — roughly a
+   * lesson riding along in every session for a month, the point at which what
+   * it costs in context stops being rounding error.
+   */
+  broadReachDeliveries: 100,
+} as const;
+
+/**
+ * Characters per token, for the delivered-context estimate.
+ *
+ * A deliberate ROUGH constant, not a tokenizer: the point of the cost line is
+ * an order of magnitude ("600M tokens delivered this month"), and shipping a
+ * real BPE tokenizer into an edge function to sharpen a headline nobody acts
+ * on to the digit would be the wrong trade. Every surface that renders a token
+ * figure derived from it must say "estimated".
+ */
+export const CHARS_PER_TOKEN_ESTIMATE = 4;
+
+export const UtilityQuerySchema = z.object({
+  /** Which quadrant's rows to return. Omit for the census and cost alone. */
+  quadrant: LessonUtilitySchema.optional(),
+  scope: RawScopeSchema.optional(),
+  /** The window for the COST figures only — the census is all-time. ISO 8601. */
+  since: z.string().datetime().optional(),
+  until: z.string().datetime().optional(),
+  // `z.coerce` for the `ReadRankingQuerySchema` reason — `validateQuery` feeds
+  // this `Object.fromEntries(searchParams)`, where every value is a string.
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+});
+export type UtilityQuery = z.infer<typeof UtilityQuerySchema>;
+
+/** One lesson on the grid, carrying the counters its verdict was derived from. */
+export const UtilityEntrySchema = z.object({
+  id: z.string().uuid(),
+  scope: z.string(),
+  key: z.string(),
+  /** `read_count` — every read, bulk ride-alongs included. The denominator. */
+  read_count: z.number().int().nonnegative(),
+  /** `opened_count` — deliberate agent fetches only (00103). The numerator. */
+  opened_count: z.number().int().nonnegative(),
+  last_opened_at: z.string().datetime().nullable(),
+  created_at: z.string().datetime(),
+});
+export type UtilityEntry = z.infer<typeof UtilityEntrySchema>;
+
+/** How many active lessons sit in each quadrant, account-wide and all-time. */
+export const UtilityCensusSchema = z.object({
+  'load-bearing': z.number().int().nonnegative(),
+  specialist: z.number().int().nonnegative(),
+  'noise-tax': z.number().int().nonnegative(),
+  dormant: z.number().int().nonnegative(),
+  unproven: z.number().int().nonnegative(),
+});
+export type UtilityCensus = z.infer<typeof UtilityCensusSchema>;
+
+/**
+ * What lore delivery cost over the requested window, and how much of it was
+ * ever deliberately fetched.
+ *
+ * Windowed over `memory_read_daily` — deliberately a DIFFERENT source from the
+ * census above, which reads the lifetime counters on `memories`. The two
+ * answer different questions ("what is it costing me right now" vs "where does
+ * each lesson sit"), and each surface that renders one must caption its own
+ * window rather than implying a shared one.
+ */
+export const UtilityCostSchema = z.object({
+  delivered_reads: z.number().int().nonnegative(),
+  chosen_reads: z.number().int().nonnegative(),
+  /** ESTIMATED from `CHARS_PER_TOKEN_ESTIMATE`, never tokenized. Say so when rendering. */
+  delivered_tokens: z.number().int().nonnegative(),
+  chosen_tokens: z.number().int().nonnegative(),
+});
+export type UtilityCost = z.infer<typeof UtilityCostSchema>;
+
+export const UtilityResponseSchema = z.object({
+  /** Echoed so a client renders the grid the server actually counted with. */
+  thresholds: z.object({
+    min_deliveries: z.number().int().nonnegative(),
+    min_age_days: z.number().int().nonnegative(),
+    chosen_pull_through: z.number(),
+    broad_reach_deliveries: z.number().int().nonnegative(),
+  }),
+  /**
+   * The date read counting started. A `0` here means "not delivered since this
+   * date", never "never delivered" — the same qualifier
+   * `ReadRankingResponse.counting_since` carries, for the same reason.
+   */
+  counting_since: z.string().datetime(),
+  census: UtilityCensusSchema,
+  cost: UtilityCostSchema,
+  /** The window the COST covers. Null `since` means all recorded history. */
+  window: z.object({
+    since: z.string().datetime().nullable(),
+    until: z.string().datetime().nullable(),
+  }),
+  /** The requested quadrant, and its rows. Empty when no quadrant was asked for. */
+  quadrant: LessonUtilitySchema.nullable(),
+  entries: z.array(UtilityEntrySchema),
+});
+export type UtilityResponse = z.infer<typeof UtilityResponseSchema>;
