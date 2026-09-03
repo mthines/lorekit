@@ -15,7 +15,7 @@
  *
  * LIST-FIRST: the page opens on the saved policies (or an empty state that
  * teaches) plus a single **Add policy** button. The rule form — scope, the
- * three conditions, the Auto (nightly) toggle, the LIVE match count, and the
+ * four conditions, the Auto (nightly) toggle, the LIVE match count, and the
  * Save / Run-now actions — lives in a dialog (a centred modal at `md`+, a
  * `BottomSheet` on the phone) opened by Add or by editing a row. The scope is a
  * real single-select scope picker over the account's scope catalog, not a
@@ -50,7 +50,7 @@ import {
   useUpdatePolicy,
 } from '@/lib/queries/groom';
 // Shared with the Explorer's retention-preview control (`lib/retention-filter.ts`)
-// so the same example numbers appear wherever these three fields do.
+// so the same example numbers appear wherever these four fields do.
 import { retentionConditionPlaceholder, filtersToGroomDimensionFilters, groomConditionsToFilters } from '@/lib/retention-filter';
 import {
   filtersPhrase,
@@ -98,7 +98,8 @@ const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: ''
 
 /**
  * `?prefillScope=` / `?prefillMinAgeDays=` / `?prefillUnseenDays=` /
- * `?prefillMaxSeenCount=` / `?prefillFilters=` — how the Lore Explorer's
+ * `?prefillMaxSeenCount=` / `?prefillMaxReadCount=` / `?prefillFilters=` — how
+ * the Lore Explorer's
  * "Create retention policy" action hands off its current scope, retention
  * conditions (`lib/retention-filter.ts`) and filter bar to this page. Read
  * ONCE (see the mount effect in {@link GroomingRuleBuilder}) so a reload of
@@ -465,7 +466,7 @@ function PolicyForm({
 
       {/* The SAME filter bar the Lore Explorer uses (`FilterMenu`/`FilterPill`,
           `lib/filters.ts`'s `Filter[]`) — label/agent/trigger/kind/host/repo/
-          branch/PR, ANDed with the three conditions below. Reusing the
+          branch/PR, ANDed with the four conditions below. Reusing the
           identical control, rather than a lookalike, is the point: a policy
           created from a filtered Explorer view shows the SAME pills here that
           produced it. */}
@@ -529,7 +530,7 @@ function PolicyForm({
           <p className="text-[10px] text-[var(--color-content-tertiary)]">Written this many times or fewer</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={maxReadId} className={LABEL_CLASS}>Times read</label>
+          <label htmlFor={maxReadId} className={LABEL_CLASS}>Consumption</label>
           <input
             id={maxReadId}
             type="number"

@@ -89,15 +89,18 @@ export function RetentionConditionsTrigger({
  * competing with the inputs, when it is just the row's primary action.
  *
  * Each field is LABELLED WITH THE METADATA ROW IT TESTS — "Created", "Last
- * agent open", "Recurrence", "Times read" are the same words the lesson detail
+ * agent open", "Recurrence", "Consumption" are the same words the lesson detail
  * sheet shows — so a reader can open any returned lesson and check the claim
  * against identical vocabulary. The older labels ("Minimum age", "Not seen in",
  * "Seen at most") named the CONDITION rather than the DATA, which left no way
  * to tell whether a given lesson genuinely matched.
  *
- * "Recurrence" and "Times read" are deliberately BOTH here and deliberately
+ * "Recurrence" and "Consumption" are deliberately BOTH here and deliberately
  * worded apart: the first counts WRITES, the second READS. Calling either one
- * "seen" is what made the older copy unreadable.
+ * "seen" is what made the older copy unreadable. "Consumption" is the detail
+ * sheet's own word for `read_count`, not a nicer one invented here: a label
+ * this panel alone uses cannot be checked against the lesson it returned,
+ * which is the entire job these labels do.
  *
  * A blank field is NOT a set one, and the panel has to make that obvious in
  * two places, because it previously did in neither: the placeholders are
@@ -202,7 +205,7 @@ export function RetentionConditionsPanel({
           <p className={CAPTION_CLASS}>Written this many times or fewer</p>
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor={maxReadId} className={LABEL_CLASS}>Times read</label>
+          <label htmlFor={maxReadId} className={LABEL_CLASS}>Consumption</label>
           <input
             id={maxReadId}
             type="number"
