@@ -201,9 +201,12 @@ export class TouchProbe {
     if (!thread.rootPath) return null;
     if (!thread.rootCommitSha || !this.headSha) return null;
 
-    // Nothing landed after the comment: the anchor commit IS the head.
+    // Nothing landed after the comment: the anchor commit IS the head. An empty
+    // file list says exactly that — a walk that completed and did not contain
+    // this file — so the answer still comes from the pure module rather than
+    // from a second copy of its granularity rule here.
     if (thread.rootCommitSha === this.headSha) {
-      return { touched: false, granularity: thread.rootLine ? 'line' : 'file' };
+      return touchEvidenceFromFiles([], thread.rootPath, thread.rootLine);
     }
 
     // The decision itself lives in the pure, spec'd, drift-guarded module. This
