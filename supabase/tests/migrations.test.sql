@@ -9028,6 +9028,39 @@ begin
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
+
+  -- AC-9 — EXECUTE privilege, asserted directly rather than inferred.
+  --
+  -- Every AC above calls the lookup RPC as `service_role`, which is exactly the
+  -- role that is SUPPOSED to reach it — so those calls passing says nothing
+  -- about who ELSE can. `lorekit_relevance_config_for_repo` is `security
+  -- definer` and takes an arbitrary `p_repo`, so the table's select-RLS does not
+  -- constrain it: reachable by `anon`/`authenticated` means every account's
+  -- installation owner and declared vocabulary is enumerable. A missing revoke
+  -- is invisible to a behavioural test and visible here.
+  assert not has_function_privilege('anon', 'lorekit_relevance_config_for_repo(text)', 'EXECUTE'),
+    '102 AC-9a: anon must NOT have EXECUTE on lorekit_relevance_config_for_repo';
+  assert not has_function_privilege('authenticated', 'lorekit_relevance_config_for_repo(text)', 'EXECUTE'),
+    '102 AC-9b: authenticated must NOT have EXECUTE on lorekit_relevance_config_for_repo';
+  assert has_function_privilege('service_role', 'lorekit_relevance_config_for_repo(text)', 'EXECUTE'),
+    '102 AC-9c: service_role MUST have EXECUTE on lorekit_relevance_config_for_repo';
+
+  -- The two owner-gated writers are authenticated-facing by design, so the
+  -- assertion is the opposite pair: `authenticated` keeps EXECUTE, `anon` is off
+  -- PostgREST's anonymous surface entirely (00077's subject — the
+  -- default-privilege grant to `anon` survives a bare revoke from public).
+  assert not has_function_privilege('anon',
+      'lorekit_relevance_config_set(bigint, text, text, text, text, text, text, text, int)', 'EXECUTE'),
+    '102 AC-9d: anon must NOT have EXECUTE on lorekit_relevance_config_set';
+  assert has_function_privilege('authenticated',
+      'lorekit_relevance_config_set(bigint, text, text, text, text, text, text, text, int)', 'EXECUTE'),
+    '102 AC-9e: authenticated MUST have EXECUTE on lorekit_relevance_config_set';
+  assert not has_function_privilege('anon',
+      'lorekit_relevance_config_deactivate(bigint, text)', 'EXECUTE'),
+    '102 AC-9f: anon must NOT have EXECUTE on lorekit_relevance_config_deactivate';
+  assert has_function_privilege('authenticated',
+      'lorekit_relevance_config_deactivate(bigint, text)', 'EXECUTE'),
+    '102 AC-9g: authenticated MUST have EXECUTE on lorekit_relevance_config_deactivate';
 end;
 $$;
 

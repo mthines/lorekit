@@ -180,6 +180,19 @@ as $$
      and c.active = true;
 $$;
 
+-- Service-role only, and the revoke is not optional. This function takes an
+-- ARBITRARY `p_repo` and returns another account's installation owner plus its
+-- whole declared vocabulary, with no `auth.uid()` gate in the body — the
+-- table's select-RLS does not apply inside a `security definer` function. A
+-- newly CREATEd function in `public` carries PostgreSQL's default PUBLIC
+-- EXECUTE, and on this project's Supabase image ALSO a direct default-privilege
+-- grant to `anon` that `revoke ... from public` does not touch (00077's whole
+-- subject). Granting to `service_role` without revoking first therefore leaves
+-- the function callable by every `anon`/`authenticated` caller through
+-- PostgREST. Same three statements as `lorekit_db_query_stats` (00074) and
+-- `lorekit_groom_sweep_and_record` (00095).
+revoke all on function lorekit_relevance_config_for_repo(text) from public;
+revoke all on function lorekit_relevance_config_for_repo(text) from anon, authenticated;
 grant execute on function lorekit_relevance_config_for_repo(text) to service_role;
 
 -- 3. Owner-only upsert. The caller proves ownership by owning the installation;
@@ -238,6 +251,13 @@ begin
 end;
 $$;
 
+-- `anon` is named explicitly for the reason 00077 exists: the default-privilege
+-- grant to `anon` survives a bare `revoke ... from public`. The body's
+-- `auth.uid()` gate already denies an anonymous caller, so this is defence in
+-- depth — but leaving the function on PostgREST's anonymous surface is the
+-- exposure this schema closes by policy, not case by case.
+revoke execute on function lorekit_relevance_config_set(bigint, text, text, text, text, text, text, text, int)
+  from public, anon;
 grant execute on function lorekit_relevance_config_set(bigint, text, text, text, text, text, text, text, int)
   to authenticated;
 
@@ -271,5 +291,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_relevance_config_deactivate(bigint, text)
+  from public, anon;
 grant execute on function lorekit_relevance_config_deactivate(bigint, text)
   to authenticated;
