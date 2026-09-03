@@ -8877,6 +8877,99 @@ begin
 end;
 $$;
 
+-- ── 101. a READ must not restamp updated_at (00102) ────────────────────────
+-- `lorekit_record_memory_reads` bumps read_count/last_read_at/last_opened_at,
+-- and that UPDATE used to fire the BEFORE-row trigger and restamp
+-- `updated_at = now()`. One bulk `memory.list` page therefore rewrote the
+-- recency of every row on it, which is the DEFAULT SORT for both the Explorer
+-- and `memory.list order=recency`. 00102 extends 00062's derived-column
+-- exemption to the three read counters.
+--
+-- Every assertion here compares against an updated_at written 30 days in the
+-- past on INSERT, never against a clock reading: this file is one transaction,
+-- so `now()` is frozen and a "preserved" timestamp would be indistinguishable
+-- from a fresh one if the row had been created here at now().
+--
+-- This section pins ONLY what the counter exemption adds. The three invariants
+-- it shares with the embedding exemption — a real edit bumps (§62b AC-2), a
+-- no-op re-write still bumps (§62b AC-6), an embedding-only write preserves
+-- (§62b AC-1) — are already asserted there, and §62b runs FIRST, so a copy
+-- here could never be the assertion that fails. §62b AC-5's generated-column
+-- guard likewise still holds: 00102 adds no generated column and still masks
+-- exactly `fts`.
+--
+-- AC-1: a counter-only update preserves updated_at — and actually moved the
+--       counter (`record_memory_reads` swallows its own exceptions, so a
+--       silently-failed write would make AC-1 pass vacuously).
+-- AC-2: a TARGETED read moves last_opened_at in the same statement, and still
+--       preserves — the third column 00102 has to mask.
+-- AC-3: one statement changing BOTH a counter and content bumps. The exemption
+--       is for derived-ONLY writes, not for any write that happens to touch a
+--       counter (§62b AC-3 is the embedding half of this).
+do $$
+declare
+  v_stamp  timestamptz;
+  v_read   uuid;
+  v_mixed  uuid;
+  v_after  timestamptz;
+  v_reads  int;
+  v_opened timestamptz;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  v_stamp := now() - interval '30 days';
+
+  -- The preserve cases and the bump case need SEPARATE rows. The obvious
+  -- alternative — one row, reset `updated_at` between cases — cannot work:
+  -- that reset is itself an UPDATE, so it fires the trigger under test and is
+  -- overwritten with now() before it lands. Only the INSERT (memories has no
+  -- BEFORE INSERT trigger) can place a timestamp in the past.
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '101-read',  'v', v_stamp, v_stamp),
+           ('00000000-0000-0000-0000-0000000000a2', 'global', '101-mixed', 'v', v_stamp, v_stamp);
+
+  select id into v_read from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '101-read';
+  select id into v_mixed from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '101-mixed';
+
+  -- AC-1: a bulk read.
+  perform lorekit_record_memory_reads(array[v_read], 'bulk', 'mcp');
+
+  select updated_at, read_count into v_after, v_reads
+    from memories where id = v_read;
+  assert v_reads = 1,
+    format('101 AC-1a: the read counter must have moved, got read_count=%s', v_reads);
+  assert v_after = v_stamp,
+    format('101 AC-1b: a counter-only update must PRESERVE updated_at, got %s want %s',
+           v_after, v_stamp);
+
+  -- AC-2: a targeted read additionally moves last_opened_at, in the same
+  -- statement — the column 00102 must mask alongside read_count/last_read_at.
+  perform lorekit_record_memory_reads(array[v_read], 'targeted', 'mcp');
+
+  select updated_at, last_opened_at into v_after, v_opened
+    from memories where id = v_read;
+  assert v_opened is not null,
+    '101 AC-2a: a targeted mcp read must set last_opened_at';
+  assert v_after = v_stamp,
+    format('101 AC-2b: a targeted read must PRESERVE updated_at, got %s want %s',
+           v_after, v_stamp);
+
+  -- AC-3: derived-ONLY is the rule, not derived-ALSO.
+  update memories set read_count = read_count + 1, value = 'edited' where id = v_mixed;
+  select updated_at into v_after from memories where id = v_mixed;
+  assert v_after > v_stamp,
+    format('101 AC-3: a counter change alongside a content change must bump updated_at, got %s',
+           v_after);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

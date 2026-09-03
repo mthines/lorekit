@@ -60,6 +60,15 @@ in a list page or from a person browsing the dashboard. That is what keeps
 "unseen for 90 days" honest: reloading the Explorer, or a `memory.list` call
 that happens to include the lesson, does not reset the clock.
 
+**"Last updated" is a fourth signal, and reading never moves it.** It is the
+last time the lesson's *content* was written. A read bumps the three counters
+above and nothing else, so a lesson can show a recent Consumption and a
+months-old Last updated at the same time — that combination means "still in
+use, unchanged", not stale data. (Before this was fixed, a single
+`memory.list` restamped every lesson on the page, which is why an older store
+may show a cluster of lessons all "updated" within minutes of each other. The
+counters are unaffected; only those `updated_at` values are lost.)
+
 A lesson no agent has **ever** opened has no `last_opened_at` to measure from,
 so the clock starts at its creation date. A lesson written a week ago
 therefore does **not** match `unseen_days: 90` — it has not yet had 90 days in

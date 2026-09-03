@@ -182,14 +182,24 @@ including that an org viewer is refused and that the old direct update still
 does not land); the edge module is held to the RPC by
 `packages/mcp-core/src/mcp-guards/embed-write-authz.spec.ts`.
 
-### Embedding a row does not touch `updated_at`
+### A derived column does not touch `updated_at`
 
 `memories_updated_at` (`00001`) is a `BEFORE UPDATE` trigger that stamps
 `updated_at = now()`. A vector is a **derived artefact, not an edit**, so
 `00062` retargets that trigger at `lorekit_memories_set_updated_at`.
 
-The rule is deliberately narrow: `updated_at` is preserved only when the
-embedding columns **actually moved** *and* nothing else changed. Everything else
+**The exemption is now shared.** `00102` extends the same function to the read
+counters — `read_count`, `last_read_at`, `last_opened_at` — because
+`lorekit_record_memory_reads` bumps them on every read, so a single bulk
+`memory.list` page was restamping every row it returned. That made `updated_at`
+report a last-READ time under a last-WRITTEN name, and left the recency
+ordering below driven by whichever rows happened to be read most recently. The
+two exemptions live in ONE function so `memories` keeps exactly one
+`BEFORE UPDATE` trigger and the rule is stated in one place; the counter half is
+asserted by `migrations.test.sql` §101.
+
+The rule is deliberately narrow: `updated_at` is preserved only when a derived
+column **actually moved** *and* nothing else changed. Everything else
 keeps the behaviour `set_updated_at` always had — including a plain **no-op
 re-write**, which matters because `memory_write` upserts, so an agent re-saving
 an identical lesson lands on this trigger with every column unchanged. Treating
@@ -207,9 +217,9 @@ for the backfill: `updated_at` is what `POST /memories/search` and
 order and collapse the real ordering into the order the backfill happened to
 run in, with the original values unrecoverable.
 
-The shared `set_updated_at` is untouched; the five other tables using it
-(`user_limits`, `orgs`, `org_limits`, `plans`, `user_plans`) have no embedding
-column and keep the plain behaviour. Asserted in `migrations.test.sql`
+The shared `set_updated_at` is untouched; the other tables using it
+(`user_limits`, `orgs`, `org_limits`, `plans`, `user_plans`, `retention_policies`)
+have neither an embedding column nor counters, and keep the plain behaviour. Asserted in `migrations.test.sql`
 section 62b, including that a real edit still bumps and that `orgs` still uses
 the shared function.
 
