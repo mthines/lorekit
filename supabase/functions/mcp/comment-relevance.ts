@@ -279,16 +279,18 @@ export function touchEvidenceFromFiles(
 ): TouchEvidence | null {
   if (!files || !path) return null;
 
-  const granularity: TouchEvidence['granularity'] =
-    typeof line === 'number' && line > 0 ? 'line' : 'file';
+  // Narrowed once, so the line-granularity branch below reads a `number` rather
+  // than re-asserting one the ternary already established.
+  const anchoredLine = typeof line === 'number' && line > 0 ? line : null;
+  const granularity: TouchEvidence['granularity'] = anchoredLine === null ? 'file' : 'line';
 
   // A rename is a touch, and it changes the name the file is listed under — so
   // matching only `filename` reports a renamed file as never edited.
   const entry = files.find((f) => f.filename === path || f.previous_filename === path);
   if (!entry) return { touched: false, granularity };
-  if (granularity === 'file') return { touched: true, granularity };
+  if (anchoredLine === null) return { touched: true, granularity };
   if (!entry.patch) return null;
-  return { touched: patchTouchesLine(entry.patch, line as number), granularity };
+  return { touched: patchTouchesLine(entry.patch, anchoredLine), granularity };
 }
 
 // ── Decision tables ─────────────────────────────────────────────────────────
