@@ -8970,6 +8970,96 @@ begin
 end;
 $$;
 
+-- ── 102. opened_count — the pull-through numerator (00103) ─────────────────
+-- `read_count` (00084) counts EVERY read, and 99.8% of recorded reads are bulk
+-- ride-alongs, so it ranks scope breadth rather than usefulness. `opened_count`
+-- counts only the narrow event `last_opened_at` timestamps — an agent
+-- deliberately fetching THIS lesson over MCP or the CLI — so
+-- `opened_count / read_count` is a ratio in which scope breadth cancels.
+--
+-- AC-1: a BULK read moves read_count and NOT opened_count. This is the whole
+--       distinction; if it fails, the new column is just a second read_count.
+-- AC-2: a TARGETED agent read moves both, and opened_count stays in lockstep
+--       with last_opened_at (they share one gate by construction — this pins
+--       that they cannot be split apart later).
+-- AC-3: a targeted read from a NON-agent client (the dashboard) moves
+--       read_count only — the same client gate `last_opened_at` uses.
+-- AC-4: lorekit_memory_list returns the four counters. It returned none of
+--       them before 00103, which is why the lesson CARD could show none.
+--
+-- The backfill is not asserted here: it reads rows that exist only in a
+-- production database, and a fixture written in this transaction would merely
+-- re-run the same SELECT the migration ran. What IS worth pinning is that the
+-- backfill cannot restamp `updated_at` — §101 AC-1/AC-2 cover the mask that
+-- guarantees it, and 00103 masks `opened_count` before the backfill runs.
+do $$
+declare
+  v_id       uuid;
+  v_reads    int;
+  v_opens    int;
+  v_opened   timestamptz;
+  v_row      record;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '102-pull', 'v')
+    returning id into v_id;
+
+  -- AC-1
+  perform lorekit_record_memory_reads(array[v_id], 'bulk', 'mcp');
+  select read_count, opened_count, last_opened_at into v_reads, v_opens, v_opened
+    from memories where id = v_id;
+  assert v_reads = 1,
+    format('102 AC-1a: a bulk read must move read_count, got %s', v_reads);
+  assert v_opens = 0,
+    format('102 AC-1b: a bulk read must NOT move opened_count, got %s', v_opens);
+  assert v_opened is null,
+    '102 AC-1c: a bulk read must not set last_opened_at (00099, restated here '
+    'because opened_count now shares its gate)';
+
+  -- AC-2
+  perform lorekit_record_memory_reads(array[v_id], 'targeted', 'cli');
+  select read_count, opened_count, last_opened_at into v_reads, v_opens, v_opened
+    from memories where id = v_id;
+  assert v_reads = 2,
+    format('102 AC-2a: a targeted read must also move read_count, got %s', v_reads);
+  assert v_opens = 1,
+    format('102 AC-2b: a targeted agent read must move opened_count, got %s', v_opens);
+  assert v_opened is not null,
+    '102 AC-2c: opened_count and last_opened_at share one gate — a count with '
+    'no timestamp means they have drifted apart';
+
+  -- AC-3: `web` is a real client value, and a human opening the detail sheet
+  -- must not look like an agent choosing the lesson.
+  perform lorekit_record_memory_reads(array[v_id], 'targeted', 'web');
+  select read_count, opened_count into v_reads, v_opens from memories where id = v_id;
+  assert v_reads = 3,
+    format('102 AC-3a: a dashboard read still counts as a read, got %s', v_reads);
+  assert v_opens = 1,
+    format('102 AC-3b: a dashboard read must NOT move opened_count, got %s', v_opens);
+
+  -- AC-4
+  select * into v_row
+    from lorekit_memory_list(
+      p_user_id => '00000000-0000-0000-0000-0000000000a2',
+      p_scope   => 'global',
+      p_key     => '102-pull',
+      p_limit   => 1
+    );
+  assert v_row.read_count = 3 and v_row.opened_count = 1,
+    format('102 AC-4a: memory_list must return the counters, got read=%s opened=%s',
+           v_row.read_count, v_row.opened_count);
+  assert v_row.last_read_at is not null and v_row.last_opened_at is not null,
+    '102 AC-4b: memory_list must return last_read_at and last_opened_at too';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

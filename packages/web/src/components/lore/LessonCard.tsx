@@ -71,6 +71,15 @@ export interface LessonEntry extends MemoryOriginFields {
    * pre-00099 backend; null means never opened this way.
    */
   last_opened_at?: string | null;
+  /**
+   * The COUNT behind {@link last_opened_at} (migration 00103), moved by the
+   * same gate in the same write. `opened_count / read_count` is PULL-THROUGH —
+   * of all the times this lesson was delivered, how often an agent deliberately
+   * reached for it — and that ratio is what makes two lessons in different
+   * scopes comparable, since scope breadth appears in both halves and cancels.
+   * See `lib/lesson-utility.ts`, which turns the pair into a verdict.
+   */
+  opened_count?: number;
 }
 
 interface LessonCardProps {

@@ -807,6 +807,15 @@ export const MemoryEntrySchema = z.object({
   // backward-compat reason as `last_read_at`: a memory nobody has
   // individually opened since this shipped (or a pre-00099 backend) has none.
   last_opened_at: z.string().datetime().nullable().optional(),
+  // The COUNT behind `last_opened_at` (migration 00103), moved by the same gate
+  // in the same statement so the two can never disagree. Divided by
+  // `read_count` it gives PULL-THROUGH — of all the times this lesson was
+  // surfaced, how often was it a deliberate fetch. That ratio is what makes two
+  // lessons in different scopes comparable: a `global` lesson is delivered on
+  // every session and a `branch` lesson almost never, so the raw counts rank
+  // scope breadth, while the ratio cancels it. NOT NULL DEFAULT 0 in the DB;
+  // optional here for the same backward-compat reason as `read_count`.
+  opened_count: z.number().int().nonnegative().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
@@ -828,7 +837,7 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
   + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
-  + 'read_count,last_read_at,last_opened_at,'
+  + 'read_count,opened_count,last_read_at,last_opened_at,'
   + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 
 /**

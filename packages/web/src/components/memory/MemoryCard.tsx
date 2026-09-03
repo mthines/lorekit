@@ -24,6 +24,12 @@ import { OwnershipBadge } from './OwnershipBadge';
 import type { ScopePrefix } from './scope-meta';
 import type { MemoryOwner } from '@/lib/ownership';
 import { originPullRequestUrl } from '@/lib/origin';
+import {
+  LESSON_UTILITY_META,
+  lessonUtility,
+  type LessonUtilityTone,
+  type LessonUtilityVerdict,
+} from '@/lib/lesson-utility';
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +57,12 @@ export interface MemoryCardModel {
    * both are present, so you can jump to the PR without opening the memory.
    */
   pr?: { url: string; label: string } | null;
+  /**
+   * Is this lesson earning its place? Null when the backend supplied no read
+   * counters (pre-00103) — the card then shows nothing rather than a verdict it
+   * cannot support. See `lib/lesson-utility.ts`.
+   */
+  utility?: LessonUtilityVerdict | null;
 }
 
 /** Adapt a Lore Explorer lesson (LessonEntry-shaped) into the card model. */
@@ -69,6 +81,8 @@ export function memoryFromLesson(lesson: {
   expires_at?: string | null;
   origin_repo?: string | null;
   origin_pr?: number | null;
+  read_count?: number;
+  opened_count?: number;
 }): MemoryCardModel {
   // A PR chip needs both a valid repo and PR number; `originPullRequestUrl`
   // returns null unless both are present and well-formed.
@@ -88,6 +102,7 @@ export function memoryFromLesson(lesson: {
     org: lesson.org,
     expiresAt: lesson.expires_at ?? null,
     pr: prUrl ? { url: prUrl, label: `#${lesson.origin_pr}` } : null,
+    utility: lessonUtility(lesson),
   };
 }
 
@@ -181,6 +196,50 @@ function ExpiryBadge({ expiresAt, onClick }: { expiresAt?: string | null; onClic
   );
 }
 
+// ── UtilityChip ──────────────────────────────────────────────────────────────
+// One derived verdict per card, so 2,772 rows are scannable without opening
+// 2,772 detail sheets. It deliberately replaces showing the raw counters here:
+// three absolute numbers on a card is exactly the state that made this
+// illegible — none of them is comparable between a `global` lesson and a
+// `branch` one. The numbers are still one hover (and one click) away.
+//
+// `pointer-events-auto` for the same reason ExpiryBadge needs it: the card body
+// is `pointer-events-none` so clicks fall through to the stretched open-button,
+// which would also suppress the native `title`. The chip forwards its click
+// back so the whole-card open action still works.
+
+const UTILITY_TONE: Record<LessonUtilityTone, string> = {
+  positive: 'border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]',
+  informative: 'border-[var(--color-info)]/30 bg-[var(--color-info)]/10 text-[var(--color-info)]',
+  warning: 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 text-[var(--color-warning)]',
+  neutral:
+    'border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
+};
+
+export function UtilityChip({
+  utility,
+  onClick,
+}: {
+  utility?: LessonUtilityVerdict | null;
+  onClick?: () => void;
+}) {
+  if (!utility) return null;
+  const meta = LESSON_UTILITY_META[utility.utility];
+  return (
+    <span
+      onClick={onClick}
+      title={`${meta.label} — ${utility.detail}. ${meta.description} ${utility.action}.`}
+      className={[
+        'pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs',
+        UTILITY_TONE[meta.tone],
+      ].join(' ')}
+    >
+      {meta.label}
+      <span className="sr-only"> — {utility.detail}</span>
+    </span>
+  );
+}
+
 // ── Props ───────────────────────────────────────────────────────────────────
 
 export interface MemoryCardProps {
@@ -246,6 +305,7 @@ export const MemoryCard = memo(function MemoryCard({
     org,
     expiresAt,
     pr,
+    utility,
   } = memory;
 
   const keyCode = (
@@ -429,6 +489,7 @@ export const MemoryCard = memo(function MemoryCard({
           {showScope && <ScopeBadge scope={scope} type={type} label />}
           <OwnershipBadge org={org} />
           {keyCode}
+          <UtilityChip utility={utility} onClick={onClick} />
           <ExpiryBadge expiresAt={expiresAt} onClick={onClick} />
           {(prChip || timeEl) && (
             <span className="ml-auto flex items-center gap-1.5">
