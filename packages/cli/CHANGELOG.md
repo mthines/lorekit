@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.65.0](https://github.com/mthines/lorekit/compare/cli-v1.64.2...cli-v1.65.0) (2026-09-03)
+
+
+### Features
+
+* **retention:** add a max_read_count retention condition ([9b114f8](https://github.com/mthines/lorekit/commit/9b114f8063f922f2967a662c1f703dd0a59287e2))
+* **retention:** add a max_read_count retention condition ([05dc573](https://github.com/mthines/lorekit/commit/05dc5739b71da83579643821b788646668753b5b))
+
 ## [1.64.2](https://github.com/mthines/lorekit/compare/cli-v1.64.1...cli-v1.64.2) (2026-09-02)
 
 
