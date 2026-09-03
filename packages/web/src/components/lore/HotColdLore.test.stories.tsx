@@ -40,6 +40,7 @@ const meta: Meta<typeof HotColdLore> = {
     chromatic: { disableSnapshot: true },
     layout: 'padded',
     msw: { handlers: [...memoryHandlers(), handler()] },
+    nextjs: { appDirectory: true },
   },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
 };
@@ -61,6 +62,22 @@ export const ColdIsTheDefaultAndNeverSaysNever: Story = {
       await expect(canvas.getByText(/not read since tracking began on/i)).toBeVisible();
       // ...and must NEVER render the bare, unqualified word "never".
       await expect(canvas.queryByText(/^never$/i)).not.toBeInTheDocument();
+    });
+  },
+};
+
+export const EachRowDeepLinksIntoTheExplorer: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvas.getByText('never-used-fallback-branch')).toBeVisible());
+    await step('the row is a link to the Explorer narrowed to that scope and key', async () => {
+      // A prune list is only actionable if you can go read the lesson; the row
+      // used to be inert, making that a manual re-search on another page.
+      const link = canvas.getByRole('link', { name: /never-used-fallback-branch/ });
+      await expect(link).toHaveAttribute(
+        'href',
+        '/lore?scope=repo%3A%3Amthines%2Florekit&q=never-used-fallback-branch',
+      );
     });
   },
 };

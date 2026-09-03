@@ -2,11 +2,16 @@ import { describe, it, expect } from 'vitest';
 import type { UsageStatRow } from '@lorekit/schemas/usage';
 import {
   bucketScopeType,
+  excludeDashboardReads,
   failuresByToolOutcome,
   meanLatencyByToolScope,
   coverageGapsByScopeType,
   readsByClient,
   readsByAgentFamily,
+  summarizeHealth,
+  healthTrend,
+  readCoverage,
+  healthVerdict,
 } from './usage-health';
 
 function row(overrides: Partial<UsageStatRow> = {}): UsageStatRow {
@@ -46,10 +51,17 @@ describe('failuresByToolOutcome', () => {
 
   it('sums identical repeated failures into one row rather than listing each attempt', () => {
     const rows = [
-      row({ tool_name: 'org.create', outcome: 'error', event_count: 100 }),
-      row({ tool_name: 'org.create', outcome: 'error', event_count: 55, scope_type: null }),
+      row({ tool_name: 'org.create', outcome: 'error', event_count: 100, client: 'cli', scope_type: null }),
+      row({ tool_name: 'org.create', outcome: 'error', event_count: 55, client: 'cli', scope_type: null }),
     ];
-    expect(failuresByToolOutcome(rows)).toEqual([{ tool_name: 'org.create', outcome: 'error', event_count: 155 }]);
+    expect(failuresByToolOutcome(rows)).toEqual([
+      {
+        tool_name: 'org.create',
+        outcome: 'error',
+        event_count: 155,
+        topContext: { client: 'cli', scope_type: 'other', event_count: 155 },
+      },
+    ]);
   });
 
   it('ranks the most frequent failure first', () => {
@@ -59,6 +71,23 @@ describe('failuresByToolOutcome', () => {
       row({ tool_name: 'memory.list', outcome: 'rate_limited', event_count: 20 }),
     ];
     expect(failuresByToolOutcome(rows).map((r) => r.tool_name)).toEqual(['org.create', 'memory.list', 'memory.write']);
+  });
+
+  it('picks the (client, scope_type) pairing with the most events as topContext', () => {
+    const rows = [
+      row({ tool_name: 'memory.read', outcome: 'error', event_count: 150, client: 'cli', scope_type: 'branch' }),
+      row({ tool_name: 'memory.read', outcome: 'error', event_count: 37, client: 'mcp', scope_type: 'repo' }),
+    ];
+    const [result] = failuresByToolOutcome(rows);
+    expect(result.event_count).toBe(187);
+    expect(result.topContext).toEqual({ client: 'cli', scope_type: 'branch', event_count: 150 });
+  });
+
+  it('buckets a null client as its own context, distinct from a named one', () => {
+    const rows = [
+      row({ tool_name: 'memory.list', outcome: 'error', event_count: 10, client: null, scope_type: 'global' }),
+    ];
+    expect(failuresByToolOutcome(rows)[0].topContext).toEqual({ client: null, scope_type: 'global', event_count: 10 });
   });
 });
 
@@ -149,6 +178,147 @@ describe('coverageGapsByScopeType', () => {
     const result = coverageGapsByScopeType(rows);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ scope_type: 'other', event_count: 8, record_count: 2 });
+  });
+});
+
+describe('summarizeHealth', () => {
+  it('computes success rate by summing rows, not a pre-rolled summary', () => {
+    const rows = [row({ outcome: 'ok', event_count: 187 }), row({ outcome: 'error', event_count: 13 })];
+    const result = summarizeHealth(rows, []);
+    expect(result.totalCalls).toBe(200);
+    expect(result.successRate).toBeCloseTo(0.935, 5);
+  });
+
+  it('reports a 100% success rate for an empty window, not NaN', () => {
+    const result = summarizeHealth([], []);
+    expect(result.successRate).toBe(1);
+  });
+
+  it('surfaces the most frequent failure as topFailure', () => {
+    const rows = [
+      row({ tool_name: 'org.create', outcome: 'error', event_count: 155 }),
+      row({ tool_name: 'memory.list', outcome: 'rate_limited', event_count: 20 }),
+    ];
+    const failures = failuresByToolOutcome(rows);
+    const result = summarizeHealth(rows, failures);
+    expect(result.topFailure?.tool_name).toBe('org.create');
+  });
+
+  it('reports topFailure as null when nothing failed', () => {
+    const result = summarizeHealth([row({ outcome: 'ok', event_count: 40 })], []);
+    expect(result.topFailure).toBeNull();
+  });
+
+  it('carries the read coverage alongside the reliability figures', () => {
+    const rows = [row({ tool_name: 'memory.search', event_count: 10, record_count: 5 })];
+    expect(summarizeHealth(rows, []).coverage).toEqual({
+      readCalls: 10,
+      recordsFound: 5,
+      recordsPerCall: 0.5,
+    });
+  });
+});
+
+describe('readCoverage', () => {
+  it('divides records found by the reads that asked for them', () => {
+    const rows = [
+      row({ tool_name: 'memory.list', event_count: 100, record_count: 40 }),
+      row({ tool_name: 'memory.search', event_count: 100, record_count: 60 }),
+    ];
+    expect(readCoverage(rows)).toEqual({ readCalls: 200, recordsFound: 100, recordsPerCall: 0.5 });
+  });
+
+  it('ignores tools that carry no records by construction', () => {
+    // A write-heavy window must not read as a coverage failure: `memory.write`
+    // and `org.*` always report `record_count: 0`.
+    const rows = [
+      row({ tool_name: 'memory.write', event_count: 500, record_count: 0 }),
+      row({ tool_name: 'org.create', event_count: 5, record_count: 0 }),
+      row({ tool_name: 'memory.read', event_count: 10, record_count: 20 }),
+    ];
+    expect(readCoverage(rows)).toEqual({ readCalls: 10, recordsFound: 20, recordsPerCall: 2 });
+  });
+
+  it('returns null rather than 0/0 when the window has no reads at all', () => {
+    expect(readCoverage([row({ tool_name: 'memory.write', event_count: 500, record_count: 0 })])).toBeNull();
+    expect(readCoverage([])).toBeNull();
+  });
+});
+
+describe('healthVerdict', () => {
+  it('reports reliability when it is the worse of the two dimensions', () => {
+    expect(healthVerdict({ successRate: 0.8, coverage: { readCalls: 10, recordsFound: 30, recordsPerCall: 3 } })).toEqual({
+      verdict: 'unhealthy',
+      driver: 'reliability',
+    });
+  });
+
+  it('reports coverage when perfectly reliable calls are finding nothing', () => {
+    // The whole reason the verdict is two-dimensional: no `outcome` value means
+    // "found nothing", so this window is 100% `ok` and still the thing a reader
+    // came to the page to discover.
+    expect(healthVerdict({ successRate: 1, coverage: { readCalls: 1176, recordsFound: 15, recordsPerCall: 15 / 1176 } })).toEqual({
+      verdict: 'unhealthy',
+      driver: 'coverage',
+    });
+  });
+
+  it('grades thin-but-present coverage as degraded, not unhealthy', () => {
+    expect(healthVerdict({ successRate: 1, coverage: { readCalls: 100, recordsFound: 60, recordsPerCall: 0.6 } })).toEqual({
+      verdict: 'degraded',
+      driver: 'coverage',
+    });
+  });
+
+  it('falls back to reliability alone when there is no coverage to weigh', () => {
+    expect(healthVerdict({ successRate: 1, coverage: null })).toEqual({
+      verdict: 'healthy',
+      driver: 'reliability',
+    });
+  });
+
+  it('breaks a tie toward reliability', () => {
+    expect(healthVerdict({ successRate: 1, coverage: { readCalls: 10, recordsFound: 10, recordsPerCall: 1 } })).toEqual({
+      verdict: 'healthy',
+      driver: 'reliability',
+    });
+  });
+});
+
+describe('excludeDashboardReads', () => {
+  it('drops rows whose client is dashboard', () => {
+    const rows = [row({ client: 'dashboard', event_count: 10 }), row({ client: 'cli', event_count: 5 })];
+    expect(excludeDashboardReads(rows)).toEqual([row({ client: 'cli', event_count: 5 })]);
+  });
+
+  it('keeps rows with a non-dashboard or null client', () => {
+    const rows = [row({ client: 'mcp' }), row({ client: null })];
+    expect(excludeDashboardReads(rows)).toEqual(rows);
+  });
+});
+
+describe('healthTrend', () => {
+  it('returns null when the previous window had no calls', () => {
+    const current = [row({ outcome: 'ok', event_count: 50 })];
+    expect(healthTrend(current, [])).toBeNull();
+  });
+
+  it('returns null when the previous window is too small to compare against', () => {
+    // One prior call vs. a thousand renders "+99,900%" — arithmetically correct
+    // and pure noise. MIN_TREND_CALLS is 20.
+    const current = [row({ outcome: 'ok', event_count: 1000 })];
+    expect(healthTrend(current, [row({ outcome: 'ok', event_count: 1 })])).toBeNull();
+    expect(healthTrend(current, [row({ outcome: 'ok', event_count: 19 })])).toBeNull();
+    expect(healthTrend(current, [row({ outcome: 'ok', event_count: 20 })])).not.toBeNull();
+  });
+
+  it('computes call-volume % change and a percentage-point success-rate delta', () => {
+    const previous = [row({ outcome: 'ok', event_count: 90 }), row({ outcome: 'error', event_count: 10 })];
+    const current = [row({ outcome: 'ok', event_count: 190 }), row({ outcome: 'error', event_count: 10 })];
+    const result = healthTrend(current, previous);
+    expect(result?.totalCallsChangePct).toBeCloseTo(100, 5);
+    // previous success rate 0.9, current 0.95 -> +5.0pp
+    expect(result?.successRateDeltaPct).toBeCloseTo(5, 5);
   });
 });
 

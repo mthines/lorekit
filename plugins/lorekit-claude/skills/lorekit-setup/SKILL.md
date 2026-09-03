@@ -4,8 +4,10 @@ description: >
   Sets up a self-improvement loop for a skill, workflow, or agent using LoreKit,
   so a host gets better across runs by reading its own accumulated lessons at
   the start of every run and hardening the proven ones into permanent rules.
-  Designs the two tiers (a fast episodic tier of LoreKit lessons, advisory-only;
-  a slow procedural tier that promotes a recurring lesson into a host rule),
+  Designs the lessons loop (a fast episodic tier of LoreKit lessons, advisory-only;
+  a slow procedural tier that promotes a recurring lesson into a host rule; and,
+  for the rarer judgement-free, independently-checkable case, a third rung that
+  compiles a recurring lesson into a mechanically-enforced CI invariant instead),
   chooses the lesson bucket (tag + key namespace) and scopes, and installs the
   entrenchment guards that stop a learning loop from reinforcing its own
   mistakes. Also covers the non-LLM case: giving a deterministic job (a GitHub
@@ -51,16 +53,23 @@ memory that calls those primitives on a host's behalf. Both run on the same
 LoreKit store — over the `memory.*` MCP tools for agents, over the `lorekit` CLI
 or REST for jobs.
 
-## The two tiers of a lessons loop (in one screen)
+## The rungs of a lessons loop (in one screen)
 
-| Tier | Mechanism | Changes behavior? |
-| ---- | --------- | ----------------- |
-| **Fast (episodic)** | LoreKit lessons in a per-host bucket, read at the start of a run, written on failure | **No** — advisory input only |
-| **Slow (procedural)** | A human-reviewed edit that hardens a recurring lesson into a host rule | **Yes** |
+The runtime loop below is two tiers, fast and slow; a third, rarer rung sits past
+promotion, for the minority of recurring lessons that can be turned into a
+mechanically-checked rule instead of text a reader has to notice.
 
-A recurrence gate connects them: a lesson that recurs (`seen_count >= 3`) or is
-marked `status=structural` becomes promotion-eligible. Entrenchment guards keep
-the fast tier from reinforcing its own wrong conclusions.
+| Rung | Mechanism | Changes behavior? | Advisory or enforced? |
+| ---- | --------- | ----------------- | ---------------------- |
+| **Fast (episodic)** | LoreKit lessons in a per-host bucket, read at the start of a run, written on failure | **No** — advisory input only | Advisory |
+| **Slow (procedural)** | A human-reviewed edit that hardens a recurring lesson into a host rule | **Yes** | Advisory (works only if the next reader notices it) |
+| **Compiled invariant** | A declarative `obligations-map.mjs` entry a CI gate checks against a changed-file set — see [rules/compiled-invariants.md](./rules/compiled-invariants.md) | **Yes** | Enforced once `gating`; most lessons never qualify |
+
+A recurrence gate connects the first two: a lesson that recurs (`seen_count >= 3`)
+or is marked `status=structural` becomes promotion-eligible. Entrenchment guards
+keep the fast tier from reinforcing its own wrong conclusions. The third rung has
+its own, stricter gate — the compilability test — and most promotion-eligible
+lessons stop at the second rung because they fail it.
 
 ## Pick the shape first
 
@@ -71,6 +80,7 @@ before reading further:
 | ------------ | ----- | ---- |
 | A **model-driven** skill, agent, or workflow that fails in recurring, classifiable ways | Prose **lessons** — advisory, recurrence-gated, promotable into rules | [rules/self-improvement-loops.md](./rules/self-improvement-loops.md) |
 | A **deterministic job** — a GitHub Actions workflow, a cron script, a release pipeline — that needs last-run state | JSON **state records** — authoritative, parsed, one key per fact | [rules/ci-state-records.md](./rules/ci-state-records.md) |
+| A recurring lesson whose failure mode is judgement-free and checkable against an independent source of truth | A **compiled invariant** — a declarative entry a CI gate enforces mechanically, never advisory once `gating` | [rules/compiled-invariants.md](./rules/compiled-invariants.md) |
 
 A host can want both, in separate buckets: the state record carries *what is true
 right now*, the lesson carries *what we learned about it*.

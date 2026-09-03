@@ -42,6 +42,11 @@
  * - the composite action + the two `web-preview*` workflows — the preview
  *   machinery itself, so a change to how previews are built gets verified by
  *   actually building one.
+ * - `scripts/ci/web-preview-comment.mjs` — the sticky comment's renderer, for
+ *   the same reason: its output is a contract with outside tooling that scrapes
+ *   the PR for the preview URL, and the only way to see the real rendered
+ *   comment is to deploy. Its `.test.mjs` is deliberately NOT matched (the
+ *   `\.mjs$` anchor excludes it) — a test-only edit changes no output.
  *
  * Deliberately ABSENT:
  * - `.github/workflows/ci.yml` — every other gate in that file includes itself
@@ -57,7 +62,7 @@
  *   another package) cannot change what the dashboard renders.
  */
 export const WEB_PREVIEW_PATH_FILTER =
-  '^(packages/web/|packages/schemas/|package\\.json$|nx\\.json$|\\.github/actions/vercel-preview-deploy/|\\.github/workflows/(web-preview|web-preview-deploy)\\.yml$)';
+  '^(packages/web/|packages/schemas/|package\\.json$|nx\\.json$|scripts/ci/web-preview-comment\\.mjs$|\\.github/actions/vercel-preview-deploy/|\\.github/workflows/(web-preview|web-preview-deploy)\\.yml$)';
 
 /** Does this repo-relative path require a new preview deployment? */
 export function matchesWebPreviewPath(filename) {

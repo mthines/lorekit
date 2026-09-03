@@ -642,6 +642,7 @@ export type Database = {
           created_at: string
           enabled: boolean
           id: string
+          max_read_count: number | null
           max_seen_count: number | null
           min_age_days: number | null
           mode: string
@@ -655,6 +656,7 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           id?: string
+          max_read_count?: number | null
           max_seen_count?: number | null
           min_age_days?: number | null
           mode?: string
@@ -668,6 +670,7 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           id?: string
+          max_read_count?: number | null
           max_seen_count?: number | null
           min_age_days?: number | null
           mode?: string
@@ -676,6 +679,33 @@ export type Database = {
           unseen_days?: number | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      groom_sweep_stats: {
+        Row: {
+          archived_total: number
+          id: boolean
+          last_run_at: string | null
+          policies_evaluated: number
+          runs_total: number
+          started_at: string
+        }
+        Insert: {
+          archived_total?: number
+          id?: boolean
+          last_run_at?: string | null
+          policies_evaluated?: number
+          runs_total?: number
+          started_at?: string
+        }
+        Update: {
+          archived_total?: number
+          id?: boolean
+          last_run_at?: string | null
+          policies_evaluated?: number
+          runs_total?: number
+          started_at?: string
         }
         Relationships: []
       }

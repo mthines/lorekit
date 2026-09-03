@@ -1,0 +1,43 @@
+-- Covering index for the one memories read that has NO scope predicate:
+-- `GET /memories/clusters` run without `?scope=` (`handlers/clusters.ts`).
+--
+-- Every other hot read on this table filters `scope = ?` first and is served
+-- by `memories_scope_key_active_idx` / `memories_scope_updated_at_id_idx`
+-- (00033, 00061). The unscoped clusters query has no such leading column:
+--
+--   SELECT scope,key,value,seen_count,updated_at FROM memories
+--   WHERE archived_at IS NULL
+--     AND (expires_at IS NULL OR expires_at > now())
+--   ORDER BY updated_at DESC, id DESC
+--   LIMIT 150
+--
+-- For a JWT caller this reaches Postgres under RLS's `rls_read` predicate
+-- (`user_id = auth.uid() OR org_id = jwt org_id`, 00001); for an api_key
+-- caller with no org membership, `applyRestTenantScope` adds an explicit
+-- `.eq('user_id', userId)` (`_shared/api/tenant.ts`). Either way the query is
+-- effectively scoped to ONE user's rows, but the only index covering
+-- `user_id` is the bare `memories_user_idx (user_id)` from 00001 — it has no
+-- `archived_at` predicate and no `updated_at`/`id` ordering, so the planner
+-- has to choose between an index scan on `user_id` followed by a heap
+-- recheck + filesort, or a sequential scan filtered on `archived_at IS
+-- NULL`. Neither is stable: which one the planner picks (and how many rows
+-- of the OTHER tenants' data it has to skip past to find this user's 150
+-- newest) depends on live statistics, so the SAME query with the SAME
+-- 150-row result swings from ~150ms to several seconds run to run — the
+-- p95 latency alert on the `api` service (`lorekit` namespace) fired on
+-- exactly this variance, not on a change in traffic or row count.
+--
+-- The fix mirrors 00061's `(scope, updated_at desc, id desc)` index one
+-- column over: replace the leading `scope` with `user_id`, so the ONE
+-- unscoped query gets the same shape of covering, order-satisfying index
+-- every scoped query already has. `IF NOT EXISTS` so it applies safely to a
+-- running production database; not `CONCURRENTLY` because migrations run
+-- inside a transaction (matches every prior index migration on this table).
+--
+-- The expiry filter (`expires_at IS NULL OR expires_at > now()`) is
+-- deliberately NOT in the predicate, for the same reason 00061 left it out
+-- of its own index: `now()` is volatile and PostgreSQL rejects a volatile
+-- expression in an index predicate.
+create index if not exists memories_user_updated_at_id_idx
+  on memories (user_id, updated_at desc, id desc)
+  where archived_at is null;

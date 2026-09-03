@@ -141,6 +141,35 @@ test('malformed-scope fires via scopeIssue', () => {
   assert.equal(LINT_RULES['malformed-scope']({ scope: 'global' }), null);
 });
 
+test('unkinded-state-record fires on a JSON object/array value with no kind', () => {
+  assert.ok(LINT_RULES['unkinded-state-record']({ value: '{"flaky":["a","b"]}' }));
+  assert.ok(LINT_RULES['unkinded-state-record']({ value: '["a","b"]' }));
+  // Any explicit kind — including the ordinary 'lesson' — clears the finding.
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: '{"flaky":["a","b"]}', kind: 'bus' }), null);
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: '{"flaky":["a","b"]}', kind: 'lesson' }), null);
+});
+
+test("unkinded-state-record excludes bare scalars and non-JSON values (short-value's/empty-value's job)", () => {
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: 'a perfectly fine lesson body' }), null);
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: '"just a quoted string"' }), null);
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: '42' }), null);
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: 'null' }), null);
+  assert.equal(LINT_RULES['unkinded-state-record']({ value: '' }), null);
+});
+
+test('lintEntry surfaces unkinded-state-record alongside the other rules', () => {
+  const findings = lintEntry({
+    scope: 'repo::mthines/lorekit',
+    key: 'ci-state::flaky-tests',
+    value: '{"flaky":["a"]}',
+  });
+  assert.deepEqual(findings.map((f) => f.rule), ['unkinded-state-record']);
+  assert.deepEqual(
+    lintEntry({ scope: 'repo::mthines/lorekit', key: 'ci-state::flaky-tests', value: '{"flaky":["a"]}', kind: 'bus' }),
+    [],
+  );
+});
+
 test('lintEntry aggregates every triggered rule; a clean lesson yields none', () => {
   const bad = lintEntry({ scope: 'repo:acme/widget', key: '', value: '  ' });
   const rules = bad.map((f) => f.rule).sort();

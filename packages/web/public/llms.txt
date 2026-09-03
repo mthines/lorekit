@@ -446,7 +446,7 @@ No arguments.
 
 Requires **read** permission.
 
-Returns: `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "created_at", "updated_at" }] }`
+Returns: `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "created_at", "updated_at" }] }`
 
 ---
 
@@ -461,8 +461,9 @@ Create a scoped retention policy that auto-archives (never hard-deletes) matchin
 | `mode` |  | string | `review` — surfaced for a human to run manually. `auto` — swept nightly, if enabled. _(default `review`)_ |
 | `enabled` |  | boolean | Whether `auto` mode is active. Always starts false, even when mode is `auto`. _(default `false`)_ |
 | `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
-| `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+| `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
@@ -499,8 +500,9 @@ Update a retention policy. Every field but id is optional.
 | `mode` |  | string | `review` — surfaced for a human to run manually. `auto` — swept nightly, if enabled. |
 | `enabled` |  | boolean | Whether `auto` mode is active. |
 | `min_age_days` |  | integer | Match only lessons at least this many days old. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
-| `unseen_days` |  | integer | Match lessons unseen for at least this many days. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count); a never-opened lesson is measured from its creation date. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
+| `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). Omit to leave unchanged; pass explicit null to clear. _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
@@ -549,8 +551,9 @@ Preview the lessons a saved policy or an inline condition set would archive, wit
 | `policy_id` |  | string | Preview an existing saved policy. Mutually exclusive with `scope`/conditions. |
 | `scope` |  | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
 | `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
-| `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+| `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
@@ -585,8 +588,9 @@ Archive every lesson a saved policy or an inline condition set matches. Soft-arc
 | `policy_id` |  | string | Run an existing saved policy. Mutually exclusive with `scope`/conditions. |
 | `scope` |  | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
 | `min_age_days` |  | integer | Match only lessons at least this many days old. _(1–3650)_ |
-| `unseen_days` |  | integer | Match lessons unseen for at least this many days. A never-seen lesson always matches. _(1–3650)_ |
+| `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
+| `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |

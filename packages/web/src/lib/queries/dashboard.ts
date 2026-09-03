@@ -3,8 +3,7 @@ import { scopeType } from '@/lib/scope';
 import { trendRowsFromActivity, type TrendRow } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listScopesRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
-import type { UsageStatRow } from '@lorekit/schemas/usage';
+import { activityRequest, listScopesRequest, readActivityRequest } from '@/lib/api/memories';
 import type { ReadActivityBucket } from '@lorekit/schemas/memory';
 
 export interface DashboardData {
@@ -21,8 +20,7 @@ export interface DashboardData {
    *
    * Kept as buckets rather than expanded into rows: read counts run to tens of
    * thousands of records, and the card only ever sums them (`computeCountTrend`).
-   */
-  /**
+   *
    * Widened past `CountBucketRow` to carry `read_kind` (migration 00080) —
    * `targeted` (memory.read) vs `bulk` (list/search/list_archived) — so the
    * card can split retrieved from opened without a second fetch. Still
@@ -30,13 +28,6 @@ export interface DashboardData {
    * superset), so `computeCountTrend` needs no change.
    */
   readBuckets: ReadActivityBucket[];
-  /**
-   * `GET /memories/usage`'s grouped rows, over the SAME trend window as
-   * everything above — feeds `UsageHealth`'s friction/latency/coverage-gap
-   * diagnostics (pure functions in `lib/usage-health.ts`). The Explorer already
-   * calls `usageRequest`; the Overview did not until now.
-   */
-  usageByTool: UsageStatRow[];
 }
 
 /**
@@ -44,7 +35,7 @@ export interface DashboardData {
  * against the 30 days before it, so 60 days is the true requirement — plus two
  * days of slack so a bucket on the boundary is never half-populated.
  */
-const TREND_WINDOW_DAYS = 62;
+export const TREND_WINDOW_DAYS = 62;
 const DAY_MS = 86_400_000;
 
 /**
@@ -67,20 +58,26 @@ const DAY_MS = 86_400_000;
  *   read per UTC HOUR over the same window, aggregated over `usage_events` in
  *   Postgres for the same reason and with the same sparseness.
  *
- * All three are fetched once, over the widest window any range needs, so
- * switching the shared range picker re-buckets in the browser instead of
- * refetching.
+ * Both are fetched once, over the widest window any range needs, so switching
+ * the shared range picker re-buckets in the browser instead of refetching.
+ *
+ * `GET /memories/usage` (the friction/latency/coverage + who's-reading data)
+ * used to be fetched here too, for Insights. It moved to its own hook
+ * (`lib/queries/insights-usage.ts`) when Insights grew a range picker of its
+ * own: that data needs the EXACT selected window plus its immediately
+ * preceding one for a period-over-period trend, which this fixed-62-day,
+ * fetch-once-and-rebucket shape cannot answer. Fetching it here too would
+ * cost the Overview a request nothing on that page reads.
  */
 async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> {
   const token = await browserAccessToken();
-  if (!token) return { scopes: [], rows: [], readBuckets: [], usageByTool: [] };
+  if (!token) return { scopes: [], rows: [], readBuckets: [] };
 
   const since = new Date(Date.now() - TREND_WINDOW_DAYS * DAY_MS).toISOString();
-  const [scopesRes, activity, readActivity, usage] = await Promise.all([
+  const [scopesRes, activity, readActivity] = await Promise.all([
     listScopesRequest(token, signal),
     activityRequest(token, { bucket: 'hour', since }, signal),
     readActivityRequest(token, { bucket: 'hour', since }, signal),
-    usageRequest(token, { since }, signal),
   ]);
 
   const scopes: ScopeHealth[] = scopesRes.scopes
@@ -99,7 +96,6 @@ async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> 
     scopes,
     rows: trendRowsFromActivity(activity.buckets),
     readBuckets: readActivity.buckets,
-    usageByTool: usage.by_tool,
   };
 }
 

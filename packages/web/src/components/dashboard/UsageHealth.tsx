@@ -5,7 +5,11 @@
  * /memories/usage`'s `by_tool` rows, none of which any surface renders today:
  *
  * 1. **Friction** — failed calls by outcome, with identical repeated failures
- *    summed into one legible row rather than left as an invisible stat.
+ *    summed into one legible row rather than left as an invisible stat. Each
+ *    row also names its `topContext` (dominant client + scope_type) so "187
+ *    memory.read errors" reads as "mostly cli · branch" — a place to go look —
+ *    rather than a number with nowhere to click. `usage_events` carries no
+ *    error message, so this is the finest-grained "why" the data can offer.
  * 2. **Latency** — mean duration per tool + scope. A MEAN, not a percentile —
  *    `usage_events` carries no histogram, so this is labelled as such rather
  *    than implied to be a p50/p95.
@@ -73,15 +77,24 @@ export function UsageHealth({ rows }: UsageHealthProps) {
         {failures.length === 0 ? (
           <p className="text-xs text-[var(--color-content-tertiary)]">No failed calls in this window.</p>
         ) : (
-          <ul className="flex flex-col gap-1.5">
+          <ul className="flex flex-col gap-2">
             {failures.slice(0, 5).map((f) => (
-              <li key={`${f.tool_name}\u0000${f.outcome}`} className="flex items-center justify-between gap-2 text-xs">
-                <span className="min-w-0 truncate font-mono text-[var(--color-content-secondary)]" title={f.tool_name}>
-                  {f.tool_name}
-                </span>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  <Badge variant="red">{f.outcome}</Badge>
-                  <span className="font-mono text-[var(--color-content-tertiary)]">×{f.event_count}</span>
+              <li key={`${f.tool_name}\u0000${f.outcome}`} className="flex flex-col gap-0.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate font-mono text-[var(--color-content-secondary)]" title={f.tool_name}>
+                    {f.tool_name}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <Badge variant="red">{f.outcome}</Badge>
+                    <span className="font-mono text-[var(--color-content-tertiary)]">×{f.event_count}</span>
+                  </span>
+                </div>
+                {/* Where to go look, not just what happened — the share tells the
+                    reader whether this context explains most of the count or just
+                    a sliver of it. */}
+                <span className="truncate font-mono text-[10px] text-[var(--color-content-tertiary)]">
+                  mostly {f.topContext.client ?? 'unattributed'} · {f.topContext.scope_type}
+                  {f.event_count > 0 && ` (${Math.round((f.topContext.event_count / f.event_count) * 100)}%)`}
                 </span>
               </li>
             ))}

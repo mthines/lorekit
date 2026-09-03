@@ -267,6 +267,16 @@ Promotion is a normal, human-reviewed edit — LoreKit does not apply it. After 
 successful promotion, write an UPDATE setting `status=promoted` so the lesson
 stops re-suggesting and stands as an audit trail of why the rule exists.
 
+A recurring lesson can be promoted a second time, past the prose rule above,
+into a **compiled invariant** — a declarative, mechanically-checked assertion
+instead of text a reader has to notice and act on. Most lessons never qualify
+(the failure mode has to be judgement-free and checkable against an
+independent source of truth); when one does, see
+[compiled-invariants.md](./compiled-invariants.md) for the compilability test,
+the `candidate → advisory → gating → retired` ladder, and
+`lorekit invariants candidates`, the scan that surfaces compile candidates from
+the store.
+
 ---
 
 ## Entrenchment guards (do not skip these)

@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.65.0](https://github.com/mthines/lorekit/compare/cli-v1.64.2...cli-v1.65.0) (2026-09-03)
+
+
+### Features
+
+* **retention:** add a max_read_count retention condition ([9b114f8](https://github.com/mthines/lorekit/commit/9b114f8063f922f2967a662c1f703dd0a59287e2))
+* **retention:** add a max_read_count retention condition ([05dc573](https://github.com/mthines/lorekit/commit/05dc5739b71da83579643821b788646668753b5b))
+
+## [1.64.2](https://github.com/mthines/lorekit/compare/cli-v1.64.1...cli-v1.64.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* **retention:** unseen_days counts a never-opened lesson from created_at ([c75cf63](https://github.com/mthines/lorekit/commit/c75cf63a7fef7df915d1f658ff895d5deceb2031))
+* **retention:** unseen_days counts a never-opened lesson from created_at ([0d62721](https://github.com/mthines/lorekit/commit/0d62721ce053e2b1de3e1c86d64ea70cb5e8b527))
+
+## [1.64.1](https://github.com/mthines/lorekit/compare/cli-v1.64.0...cli-v1.64.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* **retention:** key unseen_days on genuine agent opens, not any read ([5d44ac8](https://github.com/mthines/lorekit/commit/5d44ac8e490831ac30effc37be7d54521b182c9f))
+* **retention:** key unseen_days on genuine agent opens, not any read ([e70095c](https://github.com/mthines/lorekit/commit/e70095cec69156b1db4d5ef9a6f264a5c4aef85b))
+
+## [1.64.0](https://github.com/mthines/lorekit/compare/cli-v1.63.2...cli-v1.64.0) (2026-09-01)
+
+
+### Features
+
+* **cli:** add unkinded-state-record lint rule ([79d309f](https://github.com/mthines/lorekit/commit/79d309fc5843a2af2e93eb67a10fc6175044cf25))
+
+
+### Documentation
+
+* **cli:** sync the local-store frontmatter field list with FIELDS ([8fb1f97](https://github.com/mthines/lorekit/commit/8fb1f97090000ca39b771a92122334f77cc089bb))
+
+## [1.63.2](https://github.com/mthines/lorekit/compare/cli-v1.63.1...cli-v1.63.2) (2026-09-01)
+
+
+### Documentation
+
+* **cli:** fix stale two-tier frontmatter in lorekit-setup SKILL.md ([b89a801](https://github.com/mthines/lorekit/commit/b89a8015b3634f0533b9daacfc6663b0b6d6d85b))
+* **cli:** fix stale two-tier frontmatter in lorekit-setup SKILL.md ([cf7904c](https://github.com/mthines/lorekit/commit/cf7904c27f84df6d4bd5517bd6bd51d53b0ae14c))
+
+## [1.63.1](https://github.com/mthines/lorekit/compare/cli-v1.63.0...cli-v1.63.1) (2026-09-01)
+
+
+### Documentation
+
+* **cli:** advisory does gate under --strict-all ([1b76eb2](https://github.com/mthines/lorekit/commit/1b76eb2e2af30f35cc4f7dd9742a7d397372d0e8))
+* **cli:** bring lorekit-setup skill current with the compile pipeline ([06a6149](https://github.com/mthines/lorekit/commit/06a6149cc346a6518225de5f869e28e57d2dcd79))
+* **cli:** bring lorekit-setup skill current with the compile pipeline ([a8a843b](https://github.com/mthines/lorekit/commit/a8a843b8f268aa4650d9c7e4aad9772c6cabd12f))
+* **cli:** demotion on false positives is a manual policy, not automation ([b25ab6e](https://github.com/mthines/lorekit/commit/b25ab6e8edbcb2e4100accce9c5099733ccdab28))
+
+## [1.63.0](https://github.com/mthines/lorekit/compare/cli-v1.62.0...cli-v1.63.0) (2026-09-01)
+
+
+### Features
+
+* **cli:** add digest-contract-doc obligations-map entry ([e514da4](https://github.com/mthines/lorekit/commit/e514da4f5f33862b8357ee6a9ab361b5d4097522))
+* **cli:** add digest-contract-doc obligations-map entry ([3e74be8](https://github.com/mthines/lorekit/commit/3e74be808c64400d3be67804cd853f1f353850ca))
+
 ## [1.62.0](https://github.com/mthines/lorekit/compare/cli-v1.61.0...cli-v1.62.0) (2026-09-01)
 
 

@@ -28,6 +28,10 @@
 //                                 Claude Web — NEVER commit this value)
 //   AUTH_TIMEOUT_MS             — optional; max wait for the post-login URL
 //                                 (default: 30000)
+//   AUTH_PROXY_SERVER / HTTPS_PROXY — optional; proxy for headless Chromium.
+//                                 Needed in a sandbox (e.g. Claude Web) whose
+//                                 egress is proxied — Chromium ignores the env
+//                                 proxy unless it is passed explicitly.
 //
 // Example (the aw-target refresh.command sources .env.local first):
 //   AUTH_LOGIN_URL=http://localhost:3000/login \
@@ -37,7 +41,53 @@
 
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
+import { execSync } from 'node:child_process';
 import path from 'node:path';
+
+// A sandbox (e.g. the Claude Web environment) routes egress through a proxy.
+// Chromium does NOT read HTTPS_PROXY on its own, so without this it can't reach
+// the login host and the run fails with an opaque net error. Pass the env proxy
+// explicitly. Unset locally → returns undefined → identical to the old behaviour.
+function proxyFromEnv() {
+  const url =
+    process.env.AUTH_PROXY_SERVER ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.ALL_PROXY;
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    const proxy = { server: `${u.protocol}//${u.host}` };
+    if (u.username) proxy.username = decodeURIComponent(u.username);
+    if (u.password) proxy.password = decodeURIComponent(u.password);
+    return proxy;
+  } catch {
+    return { server: url };
+  }
+}
+
+// Launch headless Chromium, wiring the env proxy when present. A fresh sandbox
+// often has no browser binary yet, so on that specific failure do a best-effort
+// `playwright install chromium` and retry once (the download may itself be
+// egress-blocked — if so we rethrow the original launch error).
+async function launchBrowser() {
+  const proxy = proxyFromEnv();
+  const opts = { headless: true, ...(proxy ? { proxy } : {}) };
+  try {
+    return await chromium.launch(opts);
+  } catch (err) {
+    if (/Executable doesn.?t exist|playwright install/i.test(err.message)) {
+      console.error('Chromium binary missing; running `playwright install chromium`...');
+      try {
+        execSync('pnpm exec playwright install chromium', { stdio: 'inherit' });
+      } catch {
+        /* egress may block cdn.playwright.dev — fall through to retry, which rethrows */
+      }
+      return await chromium.launch(opts);
+    }
+    throw err;
+  }
+}
 
 const LOGIN_URL = process.env.AUTH_LOGIN_URL;
 const OUTPUT = process.env.AUTH_STORAGE_STATE;
@@ -61,7 +111,7 @@ if (missing.length) {
 
 await mkdir(path.dirname(OUTPUT), { recursive: true });
 
-const browser = await chromium.launch({ headless: true });
+const browser = await launchBrowser();
 const context = await browser.newContext();
 const page = await context.newPage();
 

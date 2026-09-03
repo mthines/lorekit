@@ -20,8 +20,9 @@ function memory(overrides: Partial<GroomCandidateMemory> = {}): GroomCandidateMe
     scope: 'global',
     key: 'k1',
     created_at: '2026-01-01T00:00:00.000Z',
-    last_seen_at: null,
+    last_opened_at: null,
     seen_count: 1,
+    read_count: 0,
     protected: false,
     tags: null,
     source_agent: null,
@@ -41,6 +42,7 @@ function conditions(overrides: Partial<GroomConditions> & { scope: string }): Gr
     min_age_days: null,
     unseen_days: null,
     max_seen_count: null,
+    max_read_count: null,
     tags: null,
     tags_mode: null,
     source_agent: null,
@@ -69,6 +71,7 @@ const basePolicy: RetentionPolicyRow = {
   min_age_days: null,
   unseen_days: null,
   max_seen_count: null,
+  max_read_count: null,
   tags: null,
   tags_mode: null,
   source_agent: null,
@@ -247,19 +250,49 @@ describe('isGroomCandidate', () => {
     expect(isGroomCandidate(m, conditions({ scope: 'global', min_age_days: 30 }), NOW)).toBe(true);
   });
 
-  it('unseen_days: a never-seen memory (null last_seen_at) matches ANY threshold', () => {
-    const m = memory({ last_seen_at: null, created_at: NOW.toISOString() });
-    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 1 }), NOW)).toBe(true);
-    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 3650 }), NOW)).toBe(true);
+  // A never-opened memory measures `unseen_days` from `created_at` (migration
+  // 00100). Under 00099's `-infinity` these two cases were indistinguishable:
+  // BOTH matched every threshold, so a lesson written this morning satisfied
+  // "not opened in 90 days" — and since 00099 added `last_opened_at` without a
+  // backfill, that was true of the entire existing store.
+  it('unseen_days: a never-opened memory younger than the threshold does NOT match', () => {
+    const m = memory({ last_opened_at: null, created_at: '2026-08-19T00:00:00.000Z' }); // 7 days old
+    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 90 }), NOW)).toBe(false);
+    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 3650 }), NOW)).toBe(false);
   });
 
-  it('unseen_days: a recently-seen memory does NOT match', () => {
-    const m = memory({ last_seen_at: '2026-08-25T00:00:00.000Z' }); // seen yesterday
+  it('unseen_days: a never-opened memory older than the threshold matches', () => {
+    const m = memory({ last_opened_at: null, created_at: '2026-01-01T00:00:00.000Z' });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 90 }), NOW)).toBe(true);
+  });
+
+  // max_read_count reads `read_count` (00084), NOT `seen_count`. The two
+  // count opposite things — reads vs writes — so a lesson can match one and
+  // miss the other, which is the whole reason the condition exists.
+  it('max_read_count: an unread memory matches', () => {
+    const m = memory({ read_count: 0 });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_read_count: 0 }), NOW)).toBe(true);
+  });
+
+  it('max_read_count: a memory read more than the threshold does NOT match', () => {
+    const m = memory({ read_count: 4 });
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_read_count: 3 }), NOW)).toBe(false);
+    expect(isGroomCandidate(m, conditions({ scope: 'global', max_read_count: 4 }), NOW)).toBe(true);
+  });
+
+  it('max_read_count is independent of max_seen_count', () => {
+    const writtenOftenNeverRead = memory({ seen_count: 9, read_count: 0 });
+    expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_read_count: 0 }), NOW)).toBe(true);
+    expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_seen_count: 1 }), NOW)).toBe(false);
+  });
+
+  it('unseen_days: a recently-opened memory does NOT match', () => {
+    const m = memory({ last_opened_at: '2026-08-25T00:00:00.000Z' }); // opened yesterday
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 14 }), NOW)).toBe(false);
   });
 
-  it('unseen_days: a memory unseen long enough matches', () => {
-    const m = memory({ last_seen_at: '2026-01-01T00:00:00.000Z' });
+  it('unseen_days: a memory unopened long enough matches', () => {
+    const m = memory({ last_opened_at: '2026-01-01T00:00:00.000Z' });
     expect(isGroomCandidate(m, conditions({ scope: 'global', unseen_days: 14 }), NOW)).toBe(true);
   });
 
@@ -293,7 +326,7 @@ describe('isGroomCandidate', () => {
   });
 
   it('ANDs every supplied condition, including dimension filters', () => {
-    const m = memory({ created_at: '2026-01-01T00:00:00.000Z', last_seen_at: null, seen_count: 1, kind: 'lesson' });
+    const m = memory({ created_at: '2026-01-01T00:00:00.000Z', last_opened_at: null, seen_count: 1, kind: 'lesson' });
     const c = conditions({ scope: 'global', min_age_days: 30, unseen_days: 30, max_seen_count: 5, kind: ['lesson'] });
     expect(isGroomCandidate(m, c, NOW)).toBe(true);
     // Fails just the kind leg.

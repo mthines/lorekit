@@ -107,4 +107,12 @@ describe('lessonFromMemoryEntry', () => {
     expect(lesson.read_count).toBeUndefined();
     expect(lesson.last_read_at).toBeNull();
   });
+
+  it('carries last_opened_at through, normalising an absent value to null', () => {
+    const opened = lessonFromMemoryEntry({ ...base, last_opened_at: '2026-08-05T00:00:00.000Z' });
+    expect(opened.last_opened_at).toBe('2026-08-05T00:00:00.000Z');
+
+    const neverOpened = lessonFromMemoryEntry(base);
+    expect(neverOpened.last_opened_at).toBeNull();
+  });
 });

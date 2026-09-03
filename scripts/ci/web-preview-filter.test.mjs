@@ -41,6 +41,10 @@ const CASES = [
   ['.github/actions/vercel-preview-deploy/action.yml', true],
   ['.github/workflows/web-preview.yml', true],
   ['.github/workflows/web-preview-deploy.yml', true],
+  // The sticky comment's renderer — its output is what outside tooling scrapes,
+  // and only a real deploy renders it. Its test file is not machinery.
+  ['scripts/ci/web-preview-comment.mjs', true],
+  ['scripts/ci/web-preview-comment.test.mjs', false],
 
   // ── Deliberately excluded: quota, not correctness ──────────────────────────
   // ci.yml is the regression this filter exists to fix — see the "unrelated CI

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
@@ -707,7 +707,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                             possible, so this section never re-parses tags
                             itself. First row present starts a new cluster
                             only when Ownership rendered above it. */}
-                        {(lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null) && (
+                        {(lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null || lesson.last_opened_at !== undefined) && (
                           <>
                             {lesson.kind && (
                               <div className={`flex items-center gap-2 text-xs ${lesson.org ? clusterStart : ''}`}>
@@ -803,6 +803,39 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 </div>
                               );
                             })()}
+                            {(() => {
+                              const lastOpenedAt = lesson.last_opened_at;
+                              if (lastOpenedAt === undefined) return null;
+                              return (
+                                <div
+                                  className={`flex items-center gap-2 text-xs ${
+                                    lesson.org &&
+                                    !lesson.kind &&
+                                    !lesson.host &&
+                                    !lesson.source_agent &&
+                                    !lesson.trigger &&
+                                    lesson.seen_count == null &&
+                                    lesson.read_count == null
+                                      ? clusterStart
+                                      : ''
+                                  }`}
+                                >
+                                  <MousePointerClick className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Last agent open</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="When an agent last retrieved THIS lesson individually over MCP (memory.read) or the lorekit CLI (read/show) — the signal unseen_days retention filtering uses. A bulk memory.list/.search result and a human viewing this sheet do not count. Never opened: unseen_days counts from the created date instead, so a young lesson is not treated as long-unread."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {lastOpenedAt ? `opened ${new Date(lastOpenedAt).toLocaleDateString()}` : 'never opened by an agent'}
+                                      </span>
+                                    </Tooltip>
+                                  </dd>
+                                </div>
+                              );
+                            })()}
                            </>
                          )}
 
@@ -811,7 +844,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                             always starts a new cluster. */}
                         <div
                           className={`flex items-center gap-2 text-xs ${
-                            lesson.org || lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null
+                            lesson.org || lesson.kind || lesson.host || lesson.source_agent || lesson.trigger || lesson.seen_count != null || lesson.read_count != null || lesson.last_opened_at !== undefined
                               ? clusterStart
                               : ''
                           }`}

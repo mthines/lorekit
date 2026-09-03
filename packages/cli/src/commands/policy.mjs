@@ -30,6 +30,7 @@ function formatPolicy(p) {
   if (p.min_age_days != null) conditions.push(`min_age_days=${p.min_age_days}`);
   if (p.unseen_days != null) conditions.push(`unseen_days=${p.unseen_days}`);
   if (p.max_seen_count != null) conditions.push(`max_seen_count=${p.max_seen_count}`);
+  if (p.max_read_count != null) conditions.push(`max_read_count=${p.max_read_count}`);
   const mode = p.mode === 'auto' ? (p.enabled ? c.green('auto (enabled)') : c.dim('auto (disabled)')) : c.dim('review');
   return `${c.cyan(p.id)}  ${c.bold(p.name)}  ${c.dim(p.scope)}  ${mode}${conditions.length ? `  ${c.dim(conditions.join(', '))}` : ''}`;
 }
@@ -50,7 +51,7 @@ async function list(args, store) {
 
 async function create(args, store) {
   if (!args.scope || !args.name) {
-    err(`${c.red('Usage:')} lorekit policy create --scope <scope> --name <name> [--mode review|auto] [--enabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N]`);
+    err(`${c.red('Usage:')} lorekit policy create --scope <scope> --name <name> [--mode review|auto] [--enabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N] [--max-read-count N]`);
     return 1;
   }
   const minAge = parseIntFlag(args['min-age-days'], 'min-age-days');
@@ -59,6 +60,8 @@ async function create(args, store) {
   if (unseen.error) { err(`${c.red('Error:')} ${unseen.error}`); return 1; }
   const maxSeen = parseIntFlag(args['max-seen-count'], 'max-seen-count');
   if (maxSeen.error) { err(`${c.red('Error:')} ${maxSeen.error}`); return 1; }
+  const maxRead = parseIntFlag(args['max-read-count'], 'max-read-count');
+  if (maxRead.error) { err(`${c.red('Error:')} ${maxRead.error}`); return 1; }
   if (args.mode !== undefined && args.mode !== 'review' && args.mode !== 'auto') {
     err(`${c.red('Error:')} --mode must be "review" or "auto"`);
     return 1;
@@ -72,6 +75,7 @@ async function create(args, store) {
     min_age_days: minAge.value,
     unseen_days: unseen.value,
     max_seen_count: maxSeen.value,
+    max_read_count: maxRead.value,
   });
   if (!res.ok) {
     const msg = res.error?.message ?? res.error ?? res.networkError ?? 'the server rejected the request';
@@ -87,7 +91,7 @@ async function create(args, store) {
 async function update(args, store) {
   const id = args._[2];
   if (!id) {
-    err(`${c.red('Usage:')} lorekit policy update <id> [--name N] [--mode review|auto] [--enabled|--disabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N]`);
+    err(`${c.red('Usage:')} lorekit policy update <id> [--name N] [--mode review|auto] [--enabled|--disabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N] [--max-read-count N]`);
     return 1;
   }
   if (args.mode !== undefined && args.mode !== 'review' && args.mode !== 'auto') {
@@ -104,6 +108,7 @@ async function update(args, store) {
     ['min-age-days', 'clear-min-age-days', 'min_age_days'],
     ['unseen-days', 'clear-unseen-days', 'unseen_days'],
     ['max-seen-count', 'clear-max-seen-count', 'max_seen_count'],
+    ['max-read-count', 'clear-max-read-count', 'max_read_count'],
   ]) {
     if (args[clearFlag]) { patch[field] = null; continue; }
     if (args[flag] === undefined) continue;

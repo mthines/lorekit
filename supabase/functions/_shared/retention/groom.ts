@@ -45,6 +45,7 @@ export interface RetentionPolicyRow {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  max_read_count: number | null;
   tags: string[] | null;
   tags_mode: TagsMode | null;
   source_agent: string[] | null;
@@ -69,6 +70,7 @@ export interface GroomConditions {
   min_age_days: number | null;
   unseen_days: number | null;
   max_seen_count: number | null;
+  max_read_count: number | null;
   tags: string[] | null;
   tags_mode: TagsMode | null;
   source_agent: string[] | null;
@@ -115,6 +117,7 @@ export type GroomRequestInput =
       min_age_days?: number;
       unseen_days?: number;
       max_seen_count?: number;
+      max_read_count?: number;
     } & GroomDimensionFilterInput);
 
 /**
@@ -127,6 +130,7 @@ export function resolvePolicyConditions(policy: RetentionPolicyRow): GroomCondit
     min_age_days: policy.min_age_days,
     unseen_days: policy.unseen_days,
     max_seen_count: policy.max_seen_count,
+    max_read_count: policy.max_read_count,
     tags: policy.tags,
     tags_mode: policy.tags_mode,
     source_agent: policy.source_agent,
@@ -172,6 +176,7 @@ export function resolveGroomConditions(
     min_age_days: request.min_age_days ?? null,
     unseen_days: request.unseen_days ?? null,
     max_seen_count: request.max_seen_count ?? null,
+    max_read_count: request.max_read_count ?? null,
     tags: dimensionOrNull(request.tags),
     tags_mode: request.tags_mode ?? null,
     source_agent: dimensionOrNull(request.source_agent),
@@ -259,9 +264,23 @@ export interface GroomCandidateMemory {
   scope: string;
   key: string;
   created_at: string;
-  /** `null` means never seen — see the "unseen_days" header note in 00088. */
-  last_seen_at: string | null;
+  /**
+   * `null` means never individually opened by an agent — see migration
+   * 00099. Distinct from `last_read_at` (00084/00098), which also moves on a
+   * bulk list/search appearance or a dashboard view; `unseen_days` wants the
+   * narrower signal. When null, `unseen_days` measures from `created_at`
+   * instead (00100), never from `-infinity`.
+   */
+  last_opened_at: string | null;
   seen_count: number;
+  /**
+   * How many times this lesson has been READ (migration 00084) — every
+   * read, a bulk `memory.list`/`memory.search` appearance included.
+   * Deliberately the BROAD counter, unlike `last_opened_at`: `seen_count`
+   * above counts writes, so this is the only field that can express
+   * "written once and never actually used".
+   */
+  read_count: number;
   protected: boolean;
   tags: string[] | null;
   source_agent: string | null;
@@ -278,9 +297,15 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /**
  * Does one memory match a condition set? ANDs every supplied condition,
  * excludes protected rows unconditionally, and — the case this module exists
- * to make testable — a NULL `last_seen_at` (never seen) matches ANY
- * `unseen_days` threshold, mirroring the SQL's
- * `coalesce(last_seen_at, '-infinity')` clamp.
+ * to make testable — measures `unseen_days` from `created_at` when
+ * `last_opened_at` is NULL, mirroring the SQL's
+ * `coalesce(last_opened_at, created_at)` (migration 00100).
+ *
+ * That fallback is the whole point: 00099 used `-infinity`, which made the
+ * condition vacuously true for every never-opened row — and since 00099 added
+ * the column without a backfill, that was the entire store. Anchoring to
+ * `created_at` instead keeps "not opened in N days" literally true of every
+ * row returned, and degrades safely on rows that predate the column.
  */
 export function isGroomCandidate(
   memory: GroomCandidateMemory,
@@ -296,12 +321,16 @@ export function isGroomCandidate(
   }
 
   if (conditions.unseen_days != null) {
-    const lastSeenMs = memory.last_seen_at == null ? -Infinity : new Date(memory.last_seen_at).getTime();
-    const unseenDays = (now.getTime() - lastSeenMs) / MS_PER_DAY;
+    const unseenSince = memory.last_opened_at ?? memory.created_at;
+    const unseenDays = (now.getTime() - new Date(unseenSince).getTime()) / MS_PER_DAY;
     if (unseenDays < conditions.unseen_days) return false;
   }
 
   if (conditions.max_seen_count != null && memory.seen_count > conditions.max_seen_count) {
+    return false;
+  }
+
+  if (conditions.max_read_count != null && memory.read_count > conditions.max_read_count) {
     return false;
   }
 

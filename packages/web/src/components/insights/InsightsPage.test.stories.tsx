@@ -57,12 +57,13 @@ const meta: Meta<typeof InsightsPage> = {
 export default meta;
 type Story = StoryObj<typeof InsightsPage>;
 
-export const RendersAllFiveSections: Story = {
+export const RendersAllSixSections: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await step('the page title and all five section headings render', async () => {
+    await step('the page title and all six section headings render', async () => {
       await expect(canvas.getByRole('heading', { name: 'Insights', level: 1 })).toBeInTheDocument();
       for (const heading of [
+        'Agent activity',
         'Operational health',
         "Who's reading",
         'Scope consumption',
@@ -72,16 +73,30 @@ export const RendersAllFiveSections: Story = {
         await waitFor(() => expect(canvas.getByRole('heading', { name: heading })).toBeInTheDocument());
       }
     });
+    await step('the at-a-glance health verdict renders in the first section, from the same usage fetch', async () => {
+      // The fixture is 8 `ok` calls that found 40 records — reliable AND
+      // well-covered, so reliability drives a healthy verdict.
+      await waitFor(() => expect(canvas.getByText('Healthy')).toBeVisible());
+      await expect(canvas.getByText('Agent calls are succeeding')).toBeVisible();
+      await expect(canvas.getByText('100%')).toBeVisible();
+      await expect(canvas.getByText('5.0')).toBeVisible();
+    });
   },
 };
 
 export const ScopeConsumptionHasItsOwnRangePicker: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await step('exactly one range picker exists, scoped to Scope consumption', async () => {
+    await step('the two range pickers are DISTINGUISHABLE, not two controls both named "Time range"', async () => {
+      // Two independent windows on one page, so a generic shared name left a
+      // screen-reader user unable to tell which range they were changing.
       await waitFor(() =>
-        expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(1),
+        expect(canvas.getByRole('radiogroup', { name: 'Agent activity time range' })).toBeInTheDocument(),
       );
+      await expect(
+        canvas.getByRole('radiogroup', { name: 'Scope consumption time range' }),
+      ).toBeInTheDocument();
+      await expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(2);
     });
   },
 };
