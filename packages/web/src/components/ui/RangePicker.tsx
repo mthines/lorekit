@@ -58,6 +58,14 @@ interface RangePickerProps {
   presets: readonly RangePreset[];
   /** Injected so a custom window's label describes the same instant the page does. */
   nowIso: string;
+  /**
+   * The control's accessible name. Defaults to the generic `'Time range'`,
+   * which is right for a page with ONE picker — but Insights has two
+   * independent windows (agent activity, scope consumption), and two
+   * radiogroups both named "Time range" leave a screen-reader user with no way
+   * to tell which range they are about to change. Name them there.
+   */
+  label?: string;
   className?: string;
 }
 
@@ -66,6 +74,7 @@ export function RangePicker({
   onChange,
   presets,
   nowIso,
+  label = 'Time range',
   className = '',
 }: RangePickerProps) {
   // `null` for the ABSOLUTE arm — a window drilled in from the heatmap or
@@ -87,7 +96,7 @@ export function RangePicker({
 
   return (
     <SegmentedControl
-      label="Time range"
+      label={label}
       items={items}
       value={selected}
       // `all` emits `{preset:'all'}`, NOT `null`. Both resolve to an unbounded

@@ -37,11 +37,14 @@ export default async function RootPage({
   const user = await getVerifiedUser();
   if (user) {
     // While `insights-page` is on, Insights takes Overview's "home" slot —
-    // Overview stays reachable by direct URL (it still mints a brand-new
-    // user's first API token) but is no longer where the root path lands.
+    // including its onboarding duties, which is why the landing route is
+    // `/insights` and not `/lore`: `buildOnboardingSteps({ autoGenerateToken:
+    // true })` mints a brand-new user's first API token, and landing anywhere
+    // that does not call it leaves a fresh signup with no token and no setup
+    // instructions. Overview stays reachable by direct URL, just unreferenced.
     // See Sidebar.tsx's matching nav filter and insights/page.tsx's gate.
     const insightsEnabled = await getServerFlag('insights-page', user.id);
-    redirect(insightsEnabled ? '/lore' : '/overview');
+    redirect(insightsEnabled ? '/insights' : '/overview');
   }
   redirect('/login');
 }

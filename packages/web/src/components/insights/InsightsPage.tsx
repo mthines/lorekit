@@ -17,18 +17,31 @@
  *
  * ## Two different windows, captioned rather than blurred
  *
- * `UsageHealth`/`AgentBreakdown` are fed by `useDashboardData()`'s
- * `usageByTool`, which is the SAME 62-day fetch the Overview already makes
- * (`lib/queries/dashboard.ts`) — it has no range picker of its own today, so
- * this page does not invent one for it; the section caption says the window
- * outright instead of implying a control that would do nothing.
+ * `HealthSummary`/`UsageHealth`/`AgentBreakdown` share ONE range control (the
+ * "Agent activity" section's `RangePicker`) and ONE fetch
+ * (`lib/queries/insights-usage.ts`) — switching it moves the verdict banner,
+ * the friction/latency/coverage diagnostics, and the client breakdown
+ * together, so they can never describe three different periods. This is
+ * distinct from the Overview's `useDashboardData()`, which fetches one FIXED
+ * 62-day window once and re-buckets client-side; here the window itself is
+ * the query (same reasoning as `useExplorerStats`), because a period-over-period
+ * trend needs the ACTUAL preceding window, not a slice of a wider one. Presets
+ * are bounded only (`24h`/`7d`/`30d`/`90d`, no `all`) for the same reason the
+ * Overview's picker omits it: a trend chip needs a preceding window of equal
+ * length, and "all time" has none.
  *
- * `ScopeConsumption` DOES have a real per-scope window (it drives a
- * leaderboard, not a fixed diagnostic), so it gets its own local range
- * picker — deliberately not shared with the page as a whole, because nothing
- * else on this page would react to it, and a shared control that only moves
- * one section is the misleading-UI failure mode this codebase avoids
- * elsewhere (see the Explorer's per-card scope-follows-filters table).
+ * `HealthSummary`/`UsageHealth` additionally exclude dashboard-originated
+ * calls (`excludeDashboardReads`) — this page's own tagline is "how your
+ * agents are actually using them", and browsing the Explorer yourself is not
+ * that, same principle as the Explorer's own "Memories retrieved" cards
+ * (migration 00054). `AgentBreakdown`'s "who is reading" deliberately keeps
+ * the full row set — dashboard included — since showing that split IS its job.
+ *
+ * `ScopeConsumption` has its OWN separate window (it drives a leaderboard, not
+ * a diagnostic) — deliberately not merged into the shared control above:
+ * scope consumption and agent activity are different questions, and forcing
+ * one range to answer both would make a reader's "last 7 days" selection
+ * silently narrow a leaderboard they were reading as "last 30 days".
  *
  * `HotColdLore` and `RunsList` are account-wide/self-paginated and take no
  * window at all — "what's gone stale" and "which runs exist" are library-wide
@@ -36,19 +49,25 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Activity, Users, Layers, Flame, PlayCircle } from 'lucide-react';
+import { Activity, Users, Layers, Flame, PlayCircle, TrendingUp } from 'lucide-react';
+import { HealthSummary } from '@/components/dashboard/HealthSummary';
 import { UsageHealth } from '@/components/dashboard/UsageHealth';
 import { AgentBreakdown } from '@/components/dashboard/AgentBreakdown';
 import { ScopeConsumption } from '@/components/lore/ScopeConsumption';
 import { HotColdLore } from '@/components/lore/HotColdLore';
 import { RunsList } from '@/components/settings/RunsList';
 import { RangePicker } from '@/components/ui/RangePicker';
-import { useDashboardData } from '@/lib/queries/dashboard';
+import { useInsightsUsage } from '@/lib/queries/insights-usage';
+import { failuresByToolOutcome, excludeDashboardReads } from '@/lib/usage-health';
 import { effectiveStatsRange, statsWindow } from '@/lib/queries/explorer-stats';
-import type { RangePreset, TimeRange } from '@/lib/time-range';
+import { rangeCaption, type RangePreset, type TimeRange } from '@/lib/time-range';
 
 const SCOPE_CONSUMPTION_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d', 'all'];
 const DEFAULT_SCOPE_CONSUMPTION_RANGE: TimeRange = { preset: '30d' };
+
+/** Bounded-only — a trend chip needs a preceding window of equal length, so "all time" is not offered here. */
+const AGENT_ACTIVITY_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d', '90d'];
+const DEFAULT_AGENT_ACTIVITY_RANGE: TimeRange = { preset: '7d' };
 
 /** One section: an icon-labelled heading, optional trailing control, and a body. */
 function Section({
@@ -96,8 +115,22 @@ export function InsightsPage() {
     [scopeRange, nowIso],
   );
 
-  const { data, isLoading, isError } = useDashboardData();
-  const usageByTool = data?.usageByTool ?? [];
+  // The shared window for HealthSummary/UsageHealth/AgentBreakdown — see the
+  // module docblock for why this is a separate control from ScopeConsumption's.
+  const [usageRange, setUsageRange] = useState<TimeRange>(DEFAULT_AGENT_ACTIVITY_RANGE);
+  const usageRangeCaption = useMemo(() => rangeCaption(usageRange, nowIso), [usageRange, nowIso]);
+  const { data: usageData, isLoading, isError } = useInsightsUsage(usageRange, nowIso);
+  const currentRows = useMemo(() => usageData?.current.rows ?? [], [usageData]);
+  const previousRows = useMemo(() => usageData?.previous.rows ?? [], [usageData]);
+  // Agent-only view for the verdict banner and operational-health diagnostics
+  // — "who is reading" below keeps the full (dashboard-included) set.
+  const agentRows = useMemo(() => excludeDashboardReads(currentRows), [currentRows]);
+  const agentPreviousRows = useMemo(() => excludeDashboardReads(previousRows), [previousRows]);
+  // Shared with the Operational health section below, which computes its own
+  // failures/latency/coverage from the same rows — reused here rather than
+  // reading a second time so the headline can never disagree with the panel
+  // that backs it.
+  const failures = useMemo(() => failuresByToolOutcome(agentRows), [agentRows]);
 
   return (
     <div className="flex max-w-page flex-col gap-8">
@@ -109,50 +142,81 @@ export function InsightsPage() {
       </div>
 
       <Section
+        icon={TrendingUp}
+        title="Agent activity"
+        description="The verdict below, operational health, and who's reading all follow this window — switch it to compare periods. Your own dashboard browsing is excluded from the verdict and from operational health."
+        trailing={
+          <RangePicker
+            value={usageRange}
+            onChange={setUsageRange}
+            presets={AGENT_ACTIVITY_PRESETS}
+            nowIso={nowIso}
+            // Two independent windows on one page, so neither picker may keep
+            // the generic default name — see RangePicker's `label` prop.
+            label="Agent activity time range"
+          />
+        }
+      >
+        {isLoading ? (
+          <SectionSkeleton />
+        ) : isError ? (
+          <EmptySection message="Failed to load usage data. Please refresh the page to try again." />
+        ) : usageData ? (
+          <HealthSummary
+            rows={agentRows}
+            previousRows={agentPreviousRows}
+            failures={failures}
+            rangeCaption={usageRangeCaption}
+          />
+        ) : null}
+      </Section>
+
+      <Section
         icon={Activity}
         title="Operational health"
-        description="Failures by outcome, mean latency per tool, and scopes that get asked for but come back empty — over the last 62 days."
+        description={`Failures by outcome, mean latency per tool, and scopes that get asked for but come back empty — in ${usageRangeCaption}, excluding dashboard browsing.`}
       >
         {isLoading ? (
           <SectionSkeleton />
         ) : isError ? (
           // NEVER fold a failed request into the empty state — see HotColdLore.tsx's
-          // comment on the same anti-pattern. A broken `usageByTool` fetch must read
-          // as broken, not as "no usage recorded".
+          // comment on the same anti-pattern. A broken usage fetch must read as
+          // broken, not as "no usage recorded".
           <EmptySection message="Failed to load usage data. Please refresh the page to try again." />
-        ) : usageByTool.length === 0 ? (
-          <EmptySection message="No usage recorded in the last 62 days." />
+        ) : agentRows.length === 0 ? (
+          <EmptySection message={`No agent usage recorded in ${usageRangeCaption}.`} />
         ) : (
-          <UsageHealth rows={usageByTool} />
+          <UsageHealth rows={agentRows} />
         )}
       </Section>
 
       <Section
         icon={Users}
         title="Who's reading"
-        description="Reads broken down by calling surface (dashboard/CLI/MCP/API) and by agent family (kind × host) — over the last 62 days."
+        description={`Reads broken down by calling surface (dashboard/CLI/MCP/API) and by agent family (kind × host) — in ${usageRangeCaption}.`}
       >
         {isLoading ? (
           <SectionSkeleton />
         ) : isError ? (
           <EmptySection message="Failed to load usage data. Please refresh the page to try again." />
-        ) : usageByTool.length === 0 ? (
-          <EmptySection message="No usage recorded in the last 62 days." />
+        ) : currentRows.length === 0 ? (
+          <EmptySection message={`No usage recorded in ${usageRangeCaption}.`} />
         ) : (
-          <AgentBreakdown rows={usageByTool} />
+          <AgentBreakdown rows={currentRows} />
         )}
       </Section>
 
       <Section
         icon={Layers}
         title="Scope consumption"
-        description="Scopes ranked by memory records read — including the unattributed bucket, honestly labelled rather than dropped."
+        description="Scopes ranked by memory records read — including the unattributed bucket, honestly labelled rather than dropped. Pick a scope to open it in the Explorer."
         trailing={
           <RangePicker
             value={scopeRange}
             onChange={setScopeRange}
             presets={SCOPE_CONSUMPTION_PRESETS}
             nowIso={nowIso}
+            label="Scope consumption time range"
           />
         }
       >
@@ -164,7 +228,7 @@ export function InsightsPage() {
       <Section
         icon={Flame}
         title="Hot & cold lore"
-        description="Memories ranked by how often they've actually been read back — the prune-list input the lorekit-groom skill consumes. Account-wide, all time."
+        description="Memories ranked by how often they've actually been read back — the prune-list input the lorekit-groom skill consumes. Account-wide, all time. Pick a lesson to open it in the Explorer."
       >
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
           <HotColdLore />
@@ -174,7 +238,7 @@ export function InsightsPage() {
       <Section
         icon={PlayCircle}
         title="Runs"
-        description="Local sessions, CI jobs, and PR automations that have touched your lore — drill into any one to see exactly what it read and wrote."
+        description="An audit trail, not a health signal — every local session, CI job, and PR automation that has touched your lore, with its reads/writes/scopes at a glance. Drill into any one to see exactly what it did."
       >
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
           <RunsList />

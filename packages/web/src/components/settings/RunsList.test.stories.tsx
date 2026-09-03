@@ -62,6 +62,21 @@ export const ShowsSessionKindAndCorrelationId: Story = {
   },
 };
 
+export const CollapsedRowShowsStatsWithoutExpanding: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await step('read/record/write/scope counts are visible before the row is expanded', async () => {
+      await waitFor(() => expect(canvas.getByText('pr:mthines/lorekit#482')).toBeVisible());
+      await expect(canvas.getByText('12 reads')).toBeVisible();
+      await expect(canvas.getByText('340 records')).toBeVisible();
+      await expect(canvas.getByText('2 writes')).toBeVisible();
+      await expect(canvas.getByText('3 scopes')).toBeVisible();
+      // Not expanded — the drill-down-only fields are absent.
+      await expect(canvas.queryByText('Read events')).not.toBeInTheDocument();
+    });
+  },
+};
+
 export const ExpandingARowDrillsIntoUsageForThatCorrelationId: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
