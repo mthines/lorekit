@@ -12,6 +12,9 @@ import { parseCreatedAt, CreatedAtError } from '../../_shared/limits/created-at.
 import { parseOrigin, OriginError } from '../../_shared/provenance/origin.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAuditDeferred } from '../../_shared/audit/audit.ts';
+import { recordCitations } from '../../_shared/telemetry/citations.ts';
+import { CORRELATION_HEADER } from '../../_shared/api/router.ts';
+import { parseCorrelationId } from '../../_shared/telemetry/usage-stats.ts';
 import { embedOnWrite } from '../../_shared/embedding/embed-on-write.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/db/database.types.ts';
@@ -190,6 +193,24 @@ export async function handleCreate(
   // NULL, so the RPC's capability check would deny every call without an
   // explicit actor. The value is never taken from the request.
   embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV, actorUserId(auth));
+
+  // Record which lessons this write CREDITS (migration 00106). Awaited, unlike
+  // the embedding, because it is one cheap RPC and it returns the only number
+  // that says how many citations resolved. `actorUserId(auth)` for the reason
+  // above: the api_key tier reaches Postgres over a service-role connection
+  // where `auth.uid()` is NULL, and the RPC's tenancy predicate is the only
+  // thing keeping a citation inside its own account.
+  //
+  // The correlation id is read from the REQUEST HEADER, never from the body:
+  // it is the same key `usage_events` records for this call, which is what lets
+  // a citation join to the run `/usage/runs` already enumerates. Taking it from
+  // the body would let a caller attribute its citations to somebody else's run.
+  await recordCitations(db, span, {
+    userId: actorUserId(auth),
+    citingMemoryId: row.id,
+    cited: body.cited,
+    correlationId: parseCorrelationId(req.headers.get(CORRELATION_HEADER)),
+  });
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.

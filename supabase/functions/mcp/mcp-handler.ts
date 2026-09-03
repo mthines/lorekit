@@ -350,10 +350,17 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // connection.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolUserId, toolSpan);
       } else {
-        // memory.* tools: (db, args, toolUserId, span)
+        // memory.* tools: (db, args, toolUserId, span, keyScoping, correlationId)
         // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
+        //
+        // The trailing `correlationId` is read by `memory.write` alone, for its
+        // `cited` array (00106): a citation joins to the run `usage_events`
+        // groups by, and that key lives on the REQUEST. It is passed here
+        // rather than pulled out of `toolArgs` deliberately — an agent that
+        // could name its own correlation id could attribute its citations to
+        // somebody else's run. Every other tool ignores the extra argument.
         result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
-          db, toolArgs, toolUserId, toolSpan, keyRestriction(auth),
+          db, toolArgs, toolUserId, toolSpan, keyRestriction(auth), correlationId,
         );
       }
 

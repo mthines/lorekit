@@ -80,6 +80,18 @@ export interface LessonEntry extends MemoryOriginFields {
    * See `lib/lesson-utility.ts`, which turns the pair into a verdict.
    */
   opened_count?: number;
+  /**
+   * How many times an agent explicitly CREDITED this lesson on a write, and
+   * when it last did (migration 00106). The one counter no read telemetry can
+   * produce: `opened_count` moves only on a deliberate fetch, and a lesson
+   * injected at session start is already in context and gets applied without
+   * ever being fetched.
+   *
+   * Evidence, never a denominator. Citing is voluntary, so a `0` means "nothing
+   * said so" — not "never used". Undefined for a pre-00106 backend.
+   */
+  cited_count?: number;
+  last_cited_at?: string | null;
 }
 
 interface LessonCardProps {

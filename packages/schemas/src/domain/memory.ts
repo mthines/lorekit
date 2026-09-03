@@ -42,6 +42,26 @@ export const MemoryWriteSchema = z.object({
   // `parseOrigin` validator (mcp-core / _shared/provenance/origin.ts) owns the shape rules.
   origin_repo: z.string().optional(), origin_branch: z.string().optional(),
   origin_commit: z.string().optional(), origin_pr: z.union([z.number(), z.string()]).optional(),
+  // Which lessons this write CREDITS for shaping the run (migration 00106).
+  //
+  // The influence signal `opened_count / read_count` cannot give: a lesson
+  // injected at session start is already in context and is applied without
+  // ever being fetched, so its pull-through can be 0% while it is the most
+  // load-bearing lesson in the store. This is where the only party that knows
+  // — the agent — says so.
+  //
+  // `scope::key` strings, because that is the label the agent was already
+  // handed (the SessionStart hook injects lessons under exactly that spelling),
+  // and a citation that needed a different shape would put a translation step
+  // between "I applied this" and saying so. The split is grammar-decided, not
+  // `indexOf`/`lastIndexOf` — see `parseMemoryRef`.
+  //
+  // Every failure mode here is SILENT by design: an unparseable entry, one
+  // naming a lesson this account cannot see, a self-citation, and anything past
+  // the cap are all dropped, and the write succeeds regardless. A citation is
+  // telemetry attached to a write and must never fail the write it measures —
+  // the same posture `usage_events` and the read counters take.
+  cited: z.array(z.string().max(1024)).optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
@@ -737,10 +757,17 @@ export type ReadActivityResponse = z.infer<typeof ReadActivityResponseSchema>;
  * copied straight into the column patch, naming a column that does not exist;
  * every such request failed. `ttl_days` / `clear_ttl` stay, and the handler now
  * translates them into `expires_at` instead of passing them through.
+ *
+ * `cited` is omitted for the origin fields' reason, sharpened: a citation is a
+ * fact about a RUN — "these lessons shaped the work that produced this write" —
+ * and a PATCH is an edit to a row that already exists, with no run behind it.
+ * It is also not a column, so admitting it here would reproduce the `org` bug
+ * exactly: copied into the column patch, naming something that does not exist,
+ * failing every request that used it.
  */
 export const UpdateMemoryBodySchema = MemoryWriteSchema
   .omit({
-    scope: true, key: true, created_at: true, org: true,
+    scope: true, key: true, created_at: true, org: true, cited: true,
     origin_repo: true, origin_branch: true, origin_commit: true, origin_pr: true,
   }).partial()
   .refine((d) => Object.keys(d).some((k) => d[k as keyof typeof d] !== undefined), { message: 'PATCH body must contain at least one field' });
@@ -812,6 +839,21 @@ export const MemoryEntrySchema = z.object({
   // scope breadth, while the ratio cancels it. NOT NULL DEFAULT 0 in the DB;
   // optional here for the same backward-compat reason as `read_count`.
   opened_count: z.number().int().nonnegative().optional(),
+  // How many times an agent explicitly CREDITED this lesson on a write
+  // (migration 00106), and when it last did. This is the one counter no read
+  // telemetry can produce: `opened_count` moves only on a deliberate fetch, and
+  // a lesson injected at SessionStart is already in context and gets applied
+  // without ever being fetched — so pull-through under-counts the dominant
+  // delivery path by construction and only the agent knows the difference.
+  //
+  // Read it as evidence, never as a denominator. Citing is voluntary and always
+  // will be, so a `0` means "nothing said so", not "never used" — the opposite
+  // reading of `opened_count`'s zero, which at least covers every targeted read
+  // since the counter shipped. Optional here for the same backward-compat
+  // reason as `read_count`: NOT NULL DEFAULT 0 in the DB, absent from a client
+  // talking to a pre-00106 backend.
+  cited_count: z.number().int().nonnegative().optional(),
+  last_cited_at: z.string().datetime().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
@@ -833,7 +875,7 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
   + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
-  + 'read_count,opened_count,last_read_at,last_opened_at,'
+  + 'read_count,opened_count,last_read_at,last_opened_at,cited_count,last_cited_at,'
   + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 
 /**

@@ -386,6 +386,7 @@ ${c.bold('Options')}
       --ttl-days <n>       Days until auto-expiry 1–365 (local or remote)
       --clear-ttl          Remove any existing expiry (make it permanent)
       --org <slug>         Write to this org's scope (remote only)
+      --cited <a,b>        \`scope::key\` refs this lesson applied (remote only)
       --origin-repo <o/n>  Override the derived provenance repository
       --origin-branch <b>  Override the derived provenance branch
       --origin-commit <s>  Override the derived provenance commit SHA
@@ -1067,7 +1068,8 @@ const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'completions', 'complete', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
-  'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
+  'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'cited',
+  'remote', 'local',
   // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the
   // scope/time tab so the flag is a no-op, but `link` is a HUMAN_COMMAND that
   // rejects UNKNOWN options — so keeping `view` listed for a release stops an

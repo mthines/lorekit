@@ -32,6 +32,11 @@ values
   -- ACCOUNT-WIDE, so they would otherwise pick up every memory and every
   -- recorded read the earlier sections left behind for a2.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a3', 'authenticated', 'authenticated', 'lk-mig-a3@test.local', now(), now()),
+  -- §105's own account, and the second one its tenancy assertion needs: a
+  -- citation resolver that dropped its `user_id` predicate must FAIL, and it
+  -- can only fail against lore that belongs to somebody else.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a4', 'authenticated', 'authenticated', 'lk-mig-a4@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a5', 'authenticated', 'authenticated', 'lk-mig-a5@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -9357,6 +9362,161 @@ begin
   assert v_cost.delivered_reads = 0 and v_cost.delivered_tokens = 0,
     format('104 AC-6d: an empty window must report 0, got reads=%s tokens=%s',
            v_cost.delivered_reads, v_cost.delivered_tokens);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 105. citations — the influence signal pull-through cannot give (00106) ─
+-- `opened_count / read_count` measures SELECTION, and a lesson injected at
+-- session start is applied without ever being fetched. 00106 lets the agent say
+-- outright which lessons shaped a run, via `memory.write`'s `cited` array.
+--
+-- AC-1: a citation bumps cited_count and last_cited_at on the CITED lesson, and
+--       writes one ledger row carrying the citing lesson and the run.
+-- AC-2: it does NOT restamp the cited lesson's updated_at. This is the whole
+--       reason 00106 extends the 00102/00103 trigger mask — a citation is
+--       recorded ABOUT a lesson by a write to a DIFFERENT one, so without the
+--       mask it would say "this lesson was edited" when nobody touched it.
+-- AC-3: idempotent WITHIN a run, counting AGAIN across runs. A retry must not
+--       inflate the number the product reads as influence.
+-- AC-4: a ref naming another account's lore resolves to nothing — the `user_id`
+--       predicate is the only tenancy gate this SECURITY DEFINER function has,
+--       because the api_key tier reaches it over a service-role connection.
+-- AC-5: a self-citation is dropped, and an unresolvable ref is skipped without
+--       failing the rest of the batch.
+-- AC-6: mismatched array lengths and a null actor return 0 rather than raising —
+--       a citation must never break the write carrying it.
+do $$
+declare
+  v_a        uuid;
+  v_b        uuid;
+  v_retro    uuid;
+  v_foreign  uuid;
+  v_stamp    timestamptz;
+  v_n        integer;
+  v_count    integer;
+  v_after    timestamptz;
+  v_cited_at timestamptz;
+  v_rows     integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a4","role":"service_role"}', true);
+
+  -- Backdated on INSERT for §101's reason: this file is one transaction, so
+  -- `now()` is frozen and a preserved stamp would be indistinguishable from a
+  -- fresh one on a row created here at now().
+  v_stamp := now() - interval '30 days';
+
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a4', 'global', '105-cited-a', 'v', v_stamp, v_stamp)
+    returning id into v_a;
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a4', 'repo::acme/app', '105-cited-b', 'v', v_stamp, v_stamp)
+    returning id into v_b;
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a4', 'global', '105-retro', 'v', v_stamp, v_stamp)
+    returning id into v_retro;
+  -- A DIFFERENT account's lesson, under a key this account also uses, so AC-4
+  -- fails if the resolver matches on (scope, key) without the tenant predicate.
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a5', 'global', '105-foreign', 'v')
+    returning id into v_foreign;
+
+  -- ── AC-1 ────────────────────────────────────────────────────────────────
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global', 'repo::acme/app'], array['105-cited-a', '105-cited-b'], 'run-1');
+  assert v_n = 2,
+    format('105 AC-1a: two refs must record two citations, got %s', v_n);
+
+  select cited_count, last_cited_at into v_count, v_cited_at from memories where id = v_a;
+  assert v_count = 1 and v_cited_at is not null,
+    format('105 AC-1b: the cited lesson must carry the count AND the timestamp, '
+           'got count=%s at=%s', v_count, v_cited_at);
+
+  select count(*) into v_rows from memory_citations
+   where cited_memory_id = v_b and citing_memory_id = v_retro and correlation_id = 'run-1';
+  assert v_rows = 1,
+    format('105 AC-1c: the ledger row must carry the citing lesson and the run, got %s', v_rows);
+
+  -- ── AC-2 ────────────────────────────────────────────────────────────────
+  select updated_at into v_after from memories where id = v_a;
+  assert v_after = v_stamp,
+    format('105 AC-2: a citation must PRESERVE the cited lesson''s updated_at, '
+           'got %s want %s', v_after, v_stamp);
+
+  -- ── AC-3 ────────────────────────────────────────────────────────────────
+  -- Same run, same pair: the retry records nothing and the counter does not move.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global'], array['105-cited-a'], 'run-1');
+  select cited_count into v_count from memories where id = v_a;
+  assert v_n = 0 and v_count = 1,
+    format('105 AC-3a: a retry inside one run must record nothing, got n=%s count=%s',
+           v_n, v_count);
+
+  -- A DIFFERENT run: the same lesson applied again is applied again.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global'], array['105-cited-a'], 'run-2');
+  select cited_count into v_count from memories where id = v_a;
+  assert v_n = 1 and v_count = 2,
+    format('105 AC-3b: a second run must count again, got n=%s count=%s', v_n, v_count);
+
+  -- ── AC-4 ────────────────────────────────────────────────────────────────
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global'], array['105-foreign'], 'run-3');
+  select cited_count into v_count from memories where id = v_foreign;
+  assert v_n = 0 and v_count = 0,
+    format('105 AC-4: another account''s lore must not be citable, got n=%s count=%s',
+           v_n, v_count);
+
+  -- ── AC-5 ────────────────────────────────────────────────────────────────
+  -- One self-citation, one ref that names nothing, one good ref. Only the good
+  -- one may land: a bad entry must not take the batch down with it.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global', 'global', 'repo::acme/app'],
+    array['105-retro', '105-does-not-exist', '105-cited-b'],
+    'run-4');
+  assert v_n = 1,
+    format('105 AC-5a: a self-citation and an unresolvable ref must be skipped '
+           'while the good ref lands, got %s', v_n);
+  select count(*) into v_rows from memory_citations where cited_memory_id = v_retro;
+  assert v_rows = 0,
+    format('105 AC-5b: a lesson must never cite itself, got %s rows', v_rows);
+
+  -- ── AC-6 ────────────────────────────────────────────────────────────────
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global', 'global'], array['105-cited-a'], 'run-5');
+  assert v_n = 0,
+    format('105 AC-6a: mismatched array lengths must return 0, not raise, got %s', v_n);
+
+  v_n := lorekit_record_memory_citations(null, v_retro, array['global'], array['105-cited-a'], 'run-6');
+  assert v_n = 0,
+    format('105 AC-6b: a null actor must return 0, not cite for nobody, got %s', v_n);
+
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro, null, null, 'run-7');
+  assert v_n = 0,
+    format('105 AC-6c: null refs must return 0, got %s', v_n);
+
+  -- An UNCORRELATED citation still lands, and collapses on retry — the
+  -- deliberate under-count the migration header argues for.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro, array['global'], array['105-cited-a'], null);
+  assert v_n = 1,
+    format('105 AC-6d: a citation with no correlation id must still land, got %s', v_n);
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro, array['global'], array['105-cited-a'], null);
+  assert v_n = 0,
+    format('105 AC-6e: an uncorrelated retry must collapse (coalesce in the unique '
+           'index), got %s', v_n);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);

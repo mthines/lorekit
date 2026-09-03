@@ -265,12 +265,19 @@ export const MCP_TOOLS = [
           description:
             'Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR.',
         },
+        cited: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds.',
+        },
       },
     },
     returns:
       '`{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).',
     notes: [
       '**Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.',
+      '**Citations (`cited`):** the one signal read counts cannot produce. A lesson injected at session start is already in your context and is applied without ever being fetched, so LoreKit can measure whether lore was *looked up* but not whether it *worked* — `cited` is where you say so. Each entry is a `scope::key` you were shown; they raise the cited lesson\u2019s `cited_count` and are grouped by the run\u2019s correlation id. Recorded once per run, so a retried write does not inflate anything, and every failure mode is silent: an unknown reference, a self-citation, and anything past 32 entries are dropped and the write still succeeds.',
       '**Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member\u2019s write falls back to personal (never rejected) with a `notice`.',
     ],
   },

@@ -383,6 +383,52 @@ rather than wrong.
 Nothing filters or orders on it yet, so it carries no index — the same call 00048 made for
 the `origin_*` columns.
 
+## `cited` on `POST /` — the write credits the lore it applied
+
+`POST /` (and the MCP `memory.write` tool) take an optional `cited: string[]` of
+`scope::key` references naming the lore this write APPLIED. Migration 00106 stores
+each credit in `memory_citations` and bumps `memories.cited_count` /
+`last_cited_at` on the cited row.
+
+**It exists because pull-through cannot see the dominant delivery path.**
+`opened_count / read_count` (00103) measures whether a lesson was deliberately
+FETCHED; a lesson injected at SessionStart is already in the agent's context and is
+applied without ever being fetched. No amount of read telemetry closes that gap —
+only the agent knows, and this is where it says so. Read the counter as EVIDENCE,
+never as a denominator: citing is voluntary, so a `0` means "nothing said so", the
+opposite of `opened_count`'s zero.
+
+- **Recorded after the write commits, and every failure is silent.**
+  `_shared/telemetry/citations.ts` is the one edge writer for BOTH surfaces, placed
+  beside `usage.ts` for the same reason: the operation the caller asked for has
+  already succeeded, so a telemetry failure must never turn it into a 4xx/5xx. An
+  unparseable ref is dropped by `parseMemoryRefs`, an unresolvable or
+  self-referential one by the RPC, and a thrown error by the wrapper.
+- **The correlation id comes from `X-LoreKit-Correlation-Id`, never from the body
+  or the tool args.** Otherwise a caller could attribute its citations to somebody
+  else's run, and `/usage/runs` — the thing the join exists to reach — would be
+  reporting fiction.
+- **`scope::key` splits at the FIRST `::` whose left half is a legal scope**, so
+  `branch::acme/app::feat/x::use-pnpm` splits after `feat/x` and `global::my::key`
+  splits at the first. The decision is a self-contained `isReferenceScope` in
+  `scope.ts` and deliberately NOT `validateScope`: the two runtimes' copies of that
+  function are different strengths on purpose (the edge mirror is "intentionally
+  lighter"), so a split decided by them would file the same citation under two
+  different lessons depending on which surface received it.
+  `memory-ref.spec.ts` holds the two copies and the CLI's `resolveScopeArg` to one
+  grammar.
+- **Idempotent per run.** A unique index on
+  `(cited_memory_id, citing_memory_id, coalesce(correlation_id, ''))` collapses a
+  retried write to one credit. The `coalesce` also collapses every UNCORRELATED
+  citation of the same pair into one — a deliberate under-count: a caller that
+  sends no correlation id has given nothing to tell two runs apart, and inflating
+  a counter on a retry is the worse error.
+- **A list is TRUNCATED at `MEMORY_CITED_MAX` (32), not rejected.** A write that
+  succeeded must not fail over how many lessons it credited.
+- **`cited` is absent from `PATCH /:id`** (`UpdateMemoryBodySchema` omits it): a
+  citation is a fact about a RUN, not a column, so admitting it on the update path
+  would reproduce the `org` bug — a field that looks settable and silently is not.
+
 ## `created_at` on `POST /`
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating

@@ -37,6 +37,7 @@ import type { RankableLesson } from '../_shared/ranking/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
 import type { DbClient } from '../_shared/db/db-client.ts';
 import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
+import { recordCitations } from '../_shared/telemetry/citations.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../_shared/retention/groom.ts';
 import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
@@ -146,8 +147,16 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
   keyScoping?: KeyRestriction,
+  // The run this write belongs to, from `X-LoreKit-Correlation-Id`. Supplied by
+  // the DISPATCHER, never read from `params`: it is the same key `usage_events`
+  // records for this call, which is what lets a citation (00106) join to the
+  // run `/usage/runs` enumerates — and taking it from the tool args would let a
+  // caller attribute its citations to somebody else's run. `memory.write` is
+  // the only tool with any use for it, which is why it is a trailing optional
+  // argument rather than a parameter threaded through all twelve.
+  correlationId?: string | null,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited } = params;
   if (!rawScope || !key || !value) throw new UserInputError('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new UserInputError(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -246,6 +255,17 @@ export async function toolWrite(
     userId,
     span,
   );
+  // Record which lessons this write CREDITS (migration 00106). After the audit,
+  // before the response is shaped, and awaited: it is one cheap RPC and every
+  // failure inside it is already silent, so there is nothing here that can turn
+  // a committed write into a failed call.
+  await recordCitations(db, span, {
+    userId,
+    citingMemoryId: row.id,
+    cited,
+    correlationId: correlationId ?? null,
+  });
+
   // `inserted` is an internal audit-classification signal (D4), not part of
   // the memory.write response contract — keep the same {id, created_at}
   // shape the Node (mcp-core) path returns so both production surfaces agree.

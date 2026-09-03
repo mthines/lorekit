@@ -24,6 +24,8 @@ import {
   PROMPT_LOCAL_SEARCH_LIMIT,
   branchQueryTerms,
   sessionRankOpts,
+  citationHint,
+  CITED_HINT_MAX,
 } from '../src/core/lessons.mjs';
 import {
   DEFAULT_SESSION_START_LOOP_CAP,
@@ -810,6 +812,49 @@ test('retrospectiveNudge includes tags hint when tagsDefault is set', () => {
   assert.match(text, /Include tags/);
   assert.match(text, /"team"/);
   assert.match(text, /"loop::aw-lessons"/);
+});
+
+// ── the citation ask (migration 00106's `cited`) ─────────────────────────────
+
+test('citationHint names the injected refs so the agent picks rather than recalls', () => {
+  const text = citationHint(['global::pnpm-first', 'repo::acme/app::migration-order']);
+  assert.match(text, /cited:/);
+  assert.match(text, /"global::pnpm-first"/);
+  assert.match(text, /"repo::acme\/app::migration-order"/);
+  // The ask must say the refs are a menu, not a checklist — an agent that cites
+  // everything it was shown produces a counter that measures delivery again.
+  assert.match(text, /drop the ones you did not use/);
+});
+
+test('citationHint is empty when nothing was injected', () => {
+  // With no candidates the ask is an instruction to invent references, which is
+  // strictly worse than no ask: the counter it feeds is only worth reading if a
+  // credit means the agent actually applied that lesson.
+  assert.equal(citationHint([]), '');
+  assert.equal(citationHint(undefined), '');
+});
+
+test('citationHint caps the named refs and says how many it left out', () => {
+  const ids = Array.from({ length: CITED_HINT_MAX + 3 }, (_, i) => `global::k${i}`);
+  const text = citationHint(ids);
+  assert.match(text, /"global::k0"/);
+  assert.match(text, new RegExp(`"global::k${CITED_HINT_MAX - 1}"`));
+  // The cap is taken from the FRONT — injection order, so the SessionStart set
+  // (in context for the whole turn) leads rather than the newest per-prompt hit.
+  assert.doesNotMatch(text, new RegExp(`"global::k${CITED_HINT_MAX}"`));
+  assert.match(text, /\(\+3 more\)/);
+});
+
+test('citationHint accepts a Set, which is what the shown-set actually is', () => {
+  // core/state.mjs's `shownLessons` returns a Set; the hook spreads it, but the
+  // pure function must not depend on that or the two drift on the next caller.
+  assert.match(citationHint(new Set(['global::a'])), /"global::a"/);
+});
+
+test('retrospectiveNudge carries the citation ask only when lessons were shown', () => {
+  const scope = fakeScope();
+  assert.match(retrospectiveNudge(scope, null, { shown: ['global::a'] }), /cited:/);
+  assert.doesNotMatch(retrospectiveNudge(scope, null), /cited:/);
 });
 
 test('retrospectiveNudge includes no tags hint when tagsDefault is empty', () => {

@@ -417,3 +417,65 @@ The damage was not cosmetic, which is why this is a decision and not a changelog
 **`HotColdLore` is replaced, `/read-ranking` is not.** The grid took the panel's slot because ranking by `read_count` nominates NARROW SCOPES for pruning, not unused lore — the defect the ratio exists to fix. But `GET /memories/read-ranking` (00084/00085) still answers "what is read most", a real and different question, and stays a live documented route; the dashboard simply no longer paints a prune list from it. `max_read_count` is kept for the same reason and is not deprecated: it answers "what is this lesson COSTING me in context". `00104` adds `max_opened_count` beside it, whose `0` means exactly what a reader expects — "no agent has ever reached for this" — and means the same thing for a `global` lesson as for a `branch` one. That is the condition the grooming UI's `max_read_count` placeholder of `0` was reaching for and could never express: on a live store `max_read_count <= 5` matched nothing at all and the first non-empty result came at 26.
 
 **Each quadrant hands its rows to the groomer.** A verdict a reader cannot act on is a statistic. Selecting a quadrant swaps in exactly its members — through the same `LessonCard` every other lesson renders with, so there is one place to look at a lesson, not two — each row deep-links into the Explorer narrowed to that `scope`+`key`, and "Copy for groom" copies that quadrant's `scope::key` lines and nothing else. Rows are fetched only once a quadrant is picked, the posture the Explorer's clusters sidebar takes: a drill-down nobody opened costs nothing.
+
+## A citation is the agent's word, and it is a fact about a RUN
+
+`memory.write` and `POST /memories` take an optional `cited: string[]` of `scope::key`
+references naming the lore the write APPLIED. Migration 00106 stores each credit in
+`memory_citations` and bumps `memories.cited_count` / `last_cited_at` on the cited row.
+
+**Read telemetry cannot answer this question, and never will.** `opened_count / read_count`
+(00103) measures whether a lesson was deliberately FETCHED. A lesson injected at SessionStart
+is already in the agent's context and gets applied without ever being fetched, so pull-through
+under-counts the dominant delivery path by construction — not by an implementation gap that a
+better read counter would close. The only party that knows the difference is the agent. So the
+signal is asked for, and the surfaces that show it say plainly that it is voluntary: a `0` on
+`cited_count` means "nothing said so", which is the OPPOSITE reading of a `0` on `opened_count`
+(that one at least covers every targeted read since the counter shipped). `cited_count` is
+evidence; it is never a denominator, never a rate, and never a share of deliveries — the
+denominator would be fiction.
+
+**A field on `memory.write`, not a `memory.cite` verb.** Every entry in `tools/list` is context
+paid for in every session by every agent, whether or not it is ever called. The retrospective
+write already happens at exactly the moment the agent knows what it applied, so a second verb
+would buy a separate round trip and a permanent line in every agent's tool list to carry one
+array. The same reasoning is why it rides the existing REST write rather than a `/memories/cite`
+route.
+
+**The run comes from the header, never from the caller's payload.** The correlation id is read
+from `X-LoreKit-Correlation-Id` — the same value the router already stamps on `usage_events` —
+and never from the body or the tool args. That is what makes the join to `/usage/runs` mean
+something: a caller that could name its own run could attribute its citations to somebody else's.
+
+**The reference grammar is self-contained, and deliberately does NOT call `validateScope`.**
+`scope::key` splits at the FIRST `::` whose left half is a legal scope, so
+`branch::acme/app::feat/x::use-pnpm` splits after `feat/x` while `global::my::key` splits at the
+first. The predicate deciding that is `isReferenceScope`, mirrored byte-identically into both
+runtimes. Delegating to `validateScope` looks obviously right and is wrong: the two copies of
+that function are documented as deliberately different strengths (the edge mirror is
+"intentionally lighter" and omits the per-prefix shape rules), so the same citation string would
+split one way over MCP and another over REST, filing one credit under two different lessons.
+`memory-ref.spec.ts` runs one case table against both copies and the CLI's `resolveScopeArg`;
+it caught exactly that divergence on its first run.
+
+**Every failure is silent, and that is the contract.** The write has already committed by the
+time the citation is recorded, so a failure here must never turn a successful write into a failed
+one. Unparseable refs are dropped, unresolvable and self-referential ones are dropped by the RPC,
+an over-long list is TRUNCATED at 32 rather than rejected, and a thrown error is swallowed. The
+span carries both `lorekit.cited.count` (claimed) and `lorekit.cited.recorded` (landed), because
+a persistent gap between them means the agent is naming lessons that do not exist — a prompt
+problem, invisible from the counter alone.
+
+**Idempotent per run, biased to under-count.** The unique index is
+`(cited_memory_id, citing_memory_id, coalesce(correlation_id, ''))`. The `coalesce` is what makes
+a retry idempotent when no correlation id was sent — at the cost of collapsing every uncorrelated
+citation of the same pair into one, forever. That direction is deliberate: a caller that sends no
+correlation id has given nothing to tell two runs apart, and a counter inflated by retries is
+worse than one that is conservative.
+
+**The hook asks, rather than leaving the field to be remembered.** The Stop-hook retrospective
+nudge reads the session's already-recorded shown-set (`core/state.mjs`) and names those
+`scope::key` refs in the ask, capped at `CITED_HINT_MAX` with a `(+N more)` tail. An agent picking
+from a list is a different task from an agent recalling a convention, and the shown-set is the
+only place that list already exists. The refs are taken in injection order so the SessionStart set
+leads — it is both the largest and the one in context for the whole turn.

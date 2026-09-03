@@ -147,6 +147,13 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "description": "Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR."
+        },
+        "cited": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds."
         }
       }
     }

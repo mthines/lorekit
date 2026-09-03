@@ -333,7 +333,11 @@ async function run(args, meter) {
     }
     if (!shouldRetrospect(stopMode, friction)) return 0;
     if (!firstTimeThisSession(parsed.sessionId, 'retro')) return 0;
-    emit(retrospectiveNudge(scope, control, { reasons }));
+    // The shown set is what BOTH injection paths recorded this session, so the
+    // citation ask names the actual candidates rather than a convention. Read
+    // here and not earlier: every return above this line emits nothing, and the
+    // read is a file the throttled path should not pay for.
+    emit(retrospectiveNudge(scope, control, { reasons, shown: [...shownLessons(parsed.sessionId)] }));
     return 0;
   }
 

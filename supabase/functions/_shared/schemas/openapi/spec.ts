@@ -46,6 +46,8 @@ import {
   ReadRankingResponseSchema,
   ClustersQuerySchema,
   ClustersResponseSchema,
+  UtilityQuerySchema,
+  UtilityResponseSchema,
 } from '../memory.ts';
 import {
   OrgResponseSchema,
@@ -398,6 +400,39 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { query: ReadRankingQuerySchema },
     responses: {
       200: { description: 'Ranked memories', content: { 'application/json': { schema: ReadRankingResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/utility',
+    summary: 'Every lesson placed on the delivered × chosen grid, plus what delivery costs',
+    tags: ['Memories'],
+    description:
+      'Answers "is this lore earning its place?" by dividing rather than ranking. `read_count` ' +
+      'counts every read including the bulk ride-alongs in a `memory.list` page (99.80% of them), ' +
+      'so ranking by it — which `GET /memories/read-ranking` does — mostly ranks SCOPE BREADTH, ' +
+      'and its cold end nominates narrow scopes for pruning instead of unused lore. Pull-through ' +
+      '(`opened_count / read_count`, migration 00103) is a proper fraction, so the breadth ' +
+      'appears in both halves and cancels.\n\n' +
+      'Two axes give four quadrants plus a fifth state: **load-bearing** (delivered widely, chosen ' +
+      'often — promote to a rule), **specialist** (narrow reach, high uptake — broaden its scope), ' +
+      '**noise-tax** (injected constantly, never chosen — prune first), **dormant** (rarely ' +
+      'offered, never taken — archive), and **unproven** (too young or too few deliveries to read ' +
+      'a rate from). `unproven` is not a hedge: it is the state today\'s UI cannot express, where ' +
+      'a fresh memory and a dead one look identical. The `thresholds` that draw the lines travel ' +
+      'in every response so a client can caption them rather than restate them.\n\n' +
+      '**Two windows, and both are reported.** `census` counts the LIFETIME counters on ' +
+      '`memories` — the same two columns a per-lesson chip reads, so a card and the grid cannot ' +
+      'disagree — while `cost` sums `memory_read_daily` over `[since, until)`, the only source ' +
+      'that can be windowed at all. Caption each; do not present one as the other.\n\n' +
+      '`cost.delivered_tokens` is ESTIMATED at four characters per token, not tokenized — the ' +
+      'figure is an order of magnitude for a headline, and any surface rendering it must say so. ' +
+      '`counting_since` is the date read counting started: a `0` means "not delivered since that ' +
+      'date", never "never delivered". Passing `quadrant` additionally returns that quadrant\'s ' +
+      'rows (`entries`); omitting it returns the counts alone. An invalid `scope` is a `400`.',
+    security, request: { query: UtilityQuerySchema },
+    responses: {
+      200: { description: 'Quadrant census, delivery cost, and the requested quadrant\'s rows', content: { 'application/json': { schema: UtilityResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });

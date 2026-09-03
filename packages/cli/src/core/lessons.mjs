@@ -828,6 +828,43 @@ function ttlHint(writeScope, control) {
   return ` Set ttl_days: ${days} (this scope's configured default) unless the lesson is durable enough to keep forever.`;
 }
 
+// How many injected lesson refs the citation hint names before it summarises the
+// rest. The nudge competes for the same context the lessons themselves occupy, so
+// the list is a prompt for recall, not an inventory — an agent that applied a
+// lesson beyond the cap can still name it, because `cited` takes any ref.
+export const CITED_HINT_MAX = 8;
+
+// Build the citation clause appended to the retrospective nudge, from the
+// `scope::key` ids this session has already injected (core/state.mjs's shown
+// set). Empty string when nothing was injected — with no candidates the ask
+// would be an instruction to invent references.
+//
+// WHY THE ASK EXISTS. `opened_count / read_count` measures whether a lesson was
+// deliberately FETCHED, and a lesson injected at SessionStart is already in
+// context and gets applied without ever being fetched. So the ratio under-counts
+// the dominant delivery path by construction, and only the agent knows the
+// difference. `cited` (migration 00106) is where it says so.
+//
+// The ids are taken in the store's own order, which is injection order, so the
+// SessionStart set leads — it is both the largest and the one in context for the
+// whole turn. Taking the newest instead would favour a per-prompt injection that
+// arrived seconds before the nudge.
+export function citationHint(shown) {
+  const ids = (Array.isArray(shown) ? shown : [...(shown || [])]).filter(
+    (id) => typeof id === 'string' && id.length > 0,
+  );
+  if (ids.length === 0) return '';
+  const named = ids.slice(0, CITED_HINT_MAX);
+  const rest = ids.length - named.length;
+  const more = rest > 0 ? ` (+${rest} more)` : '';
+  return (
+    ` If any injected lesson shaped this turn, name it on the write as` +
+    ` cited: [${named.map((id) => JSON.stringify(id)).join(', ')}]${more} —` +
+    ` drop the ones you did not use. LoreKit can see which lessons were delivered,` +
+    ` never which were applied; this is the only signal that says so.`
+  );
+}
+
 // One-line phrases for the detected friction reason codes (see core/friction.mjs),
 // so the nudge names what happened instead of a generic prompt.
 const REASON_PHRASES = {
@@ -851,11 +888,14 @@ function describeReasons(reasons) {
 // scopeDefaults when the repo/user config defines them. `opts.reasons` is the
 // detected friction reason codes (from core/friction.mjs) when `hooks.stop` is
 // `friction`; when present the nudge names them so the reflection is grounded.
-// Kept to a single line — the lore deep-link lives on the write CONFIRMATION,
-// which is where a link is actually actionable.
-export function retrospectiveNudge(scope, control, { reasons = [] } = {}) {
+// `opts.shown` is the session's injected `scope::key` set (core/state.mjs), which
+// turns the citation ask into a list the agent can pick from rather than a
+// convention it has to remember; omitting it drops the clause entirely.
+// The lore deep-link lives on the write CONFIRMATION, which is where a link is
+// actually actionable.
+export function retrospectiveNudge(scope, control, { reasons = [], shown = [] } = {}) {
   const writeScope = scope.repoScope || 'global';
-  const hint = `${tagsHint(writeScope, control)}${ttlHint(writeScope, control)}`;
+  const hint = `${tagsHint(writeScope, control)}${ttlHint(writeScope, control)}${citationHint(shown)}`;
   const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
     ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
   const detected = describeReasons(reasons);

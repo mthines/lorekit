@@ -255,6 +255,48 @@ export type Database = {
           },
         ]
       }
+      memory_citations: {
+        Row: {
+          cited_memory_id: string
+          citing_memory_id: string | null
+          correlation_id: string | null
+          created_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          cited_memory_id: string
+          citing_memory_id?: string | null
+          correlation_id?: string | null
+          created_at?: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          cited_memory_id?: string
+          citing_memory_id?: string | null
+          correlation_id?: string | null
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_citations_cited_memory_id_fkey"
+            columns: ["cited_memory_id"]
+            isOneToOne: false
+            referencedRelation: "memories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "memory_citations_citing_memory_id_fkey"
+            columns: ["citing_memory_id"]
+            isOneToOne: false
+            referencedRelation: "memories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memory_read_daily: {
         Row: {
           count: number

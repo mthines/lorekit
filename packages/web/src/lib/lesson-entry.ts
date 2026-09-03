@@ -55,6 +55,8 @@ export function lessonFromMemoryEntry(entry: MemoryEntry): LessonEntry & { id: s
     opened_count: entry.opened_count,
     last_read_at: entry.last_read_at ?? null,
     last_opened_at: entry.last_opened_at ?? null,
+    cited_count: entry.cited_count,
+    last_cited_at: entry.last_cited_at ?? null,
     org_id: orgId,
     created_by: entry.created_by ?? null,
     updated_by: entry.updated_by ?? null,

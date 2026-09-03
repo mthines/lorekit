@@ -136,4 +136,115 @@ export function safeValidateScope(raw: unknown): string | null {
   }
 }
 
+/**
+ * The `scope::key` REFERENCE grammar — one lesson named as one string.
+ *
+ * WHY A STRING AND NOT `{ scope, key }`. This exists for `memory.write`'s
+ * `cited` array, and a citation is the agent ECHOING BACK an identifier it was
+ * already handed: the SessionStart hook injects lessons labelled `scope::key`,
+ * `lorekit list` prints them that way, and `lorekit show`/`protect` already
+ * take one as a positional. Making the citation a different shape from the
+ * label the agent read would put a translation step between "I applied this"
+ * and saying so, which is the step that does not survive contact with a model.
+ *
+ * WHY THE SPLIT IS NOT `lastIndexOf('::')` — nor `indexOf`. A scope may itself
+ * contain `::` (`branch::owner/repo::feat/x`) and a key may contain it too
+ * (`global::my::key`), so neither end is a safe anchor. The split is decided by
+ * the GRAMMAR instead: walk the `::` positions left to right and take the FIRST
+ * one whose left half is a legal scope. `branch::owner/repo::feat/x::my-key`
+ * splits after `feat/x` because `branch::owner/repo` is not a legal scope
+ * (a branch scope needs three segments), while `global::my::key` splits at the
+ * first `::` because `global` is. Ambiguity is therefore resolved toward the
+ * SHORTEST valid scope, which is the same rule the CLI's `resolveScopeArg`
+ * applies — the three copies are paired by `memory-ref.spec.ts`.
+ *
+ * WHY IT DOES NOT CALL `validateScope`. The two runtimes' copies of that
+ * function are deliberately DIFFERENT strengths — the edge mirror is documented
+ * as "intentionally lighter" and omits the per-prefix shape rules, so
+ * `branch::owner/repo` is legal there and not here. A split decided by a
+ * predicate that answers differently on the two runtimes would put the SAME
+ * citation under two different lessons depending on which surface received it.
+ * `isReferenceScope` below is therefore self-contained and byte-identical in
+ * both copies, and it is used ONLY to decide where the string divides — never
+ * to authorize, normalise, or stand in for `validateScope` at a boundary.
+ */
+const REF_OWNER_REPO = /^[\w.-]+\/[\w.-]+$/;
 
+function isReferenceScope(raw: string): boolean {
+  const s = raw.toLowerCase();
+  if (s === 'global') return true;
+  const sep = s.indexOf('::');
+  if (sep === -1) return false;
+  const prefix = s.slice(0, sep);
+  const rest = s.slice(sep + 2);
+  if (!rest) return false;
+  if (prefix === 'project') return /^[\w.-]+$/.test(rest);
+  if (prefix === 'repo') return REF_OWNER_REPO.test(rest);
+  if (prefix === 'branch') {
+    const parts = rest.split('::');
+    return parts.length === 2 && REF_OWNER_REPO.test(parts[0]) && /^[\w./-]+$/.test(parts[1]);
+  }
+  return false;
+}
+
+/**
+ * Split a `scope::key` reference.
+ *
+ * THE SCOPE IS RETURNED VERBATIM, not lowercased. `memories.scope` is stored as
+ * written on the REST path, so a reference is resolved against the stored text;
+ * the grammar above is consulted for its VERDICT only. Same posture, same
+ * reason, as `parseScopeFilter` — see `clusters.ts`/`utility.ts`.
+ *
+ * Total: returns `null` for anything that is not a reference, never throws.
+ */
+export interface MemoryRef {
+  scope: string;
+  key: string;
+}
+
+export function parseMemoryRef(raw: unknown): MemoryRef | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s) return null;
+  for (let idx = s.indexOf('::'); idx !== -1; idx = s.indexOf('::', idx + 2)) {
+    const scope = s.slice(0, idx).trim();
+    const key = s.slice(idx + 2).trim();
+    if (key && isReferenceScope(scope)) return { scope, key };
+  }
+  return null;
+}
+
+/**
+ * The ceiling on how many lessons ONE write may cite.
+ *
+ * A retrospective names the handful of lessons that actually shaped the run;
+ * a list longer than this is a model dumping its whole injected set, which is
+ * the opposite of the evidence this field exists to collect. Over-long lists
+ * are TRUNCATED rather than rejected, for the reason every telemetry dimension
+ * in this codebase is: a citation must never fail the write it accompanies.
+ */
+export const MEMORY_CITED_MAX = 32;
+
+/**
+ * Parse, validate, de-duplicate and cap a `cited` array.
+ *
+ * De-duplication is by the resolved `(scope, key)` pair rather than by the raw
+ * string, so `Global::x` and `global::x` do not both count — the same lesson
+ * named twice is one citation. Unparseable entries are DROPPED, not rejected:
+ * see `MEMORY_CITED_MAX`.
+ */
+export function parseMemoryRefs(raw: unknown): MemoryRef[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: MemoryRef[] = [];
+  for (const entry of raw) {
+    const ref = parseMemoryRef(entry);
+    if (!ref) continue;
+    const id = `${ref.scope.toLowerCase()}\u0000${ref.key}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(ref);
+    if (out.length >= MEMORY_CITED_MAX) break;
+  }
+  return out;
+}

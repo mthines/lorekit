@@ -1,8 +1,8 @@
 ---
 title: "Retention policies"
-description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the Insights grid that shows which lessons are earning their place, and the read-only Duplicate Clusters sidebar for spotting the same lesson written twice."
+description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the Insights grid that shows which lessons are earning their place, citations so an agent can say which lessons it actually applied, and the read-only Duplicate Clusters sidebar for spotting the same lesson written twice."
 order: 11
-keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli", "duplicates", "dedupe", "clusters", "near-duplicate", "insights", "pull-through", "delivered", "chosen", "noise tax", "dormant", "load-bearing"]
+keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli", "duplicates", "dedupe", "clusters", "near-duplicate", "insights", "pull-through", "delivered", "chosen", "noise tax", "dormant", "load-bearing", "cited", "citations"]
 ---
 
 Retention policies automate the manual archiving you would otherwise do by
@@ -245,6 +245,56 @@ line reads a **30-day** window, so the two describe different periods on
 purpose — each states its own. And a `0` is always captioned with the date the
 counting began, never called "never": opens have only been recorded since the
 counter shipped, so a lesson older than the counter cannot support that claim.
+
+## Letting your agent say which lessons it used
+
+Everything above is measured from the outside: LoreKit can see which lessons
+were delivered and which were deliberately fetched, but not which ones actually
+changed what the agent did. It cannot — a lesson injected at session start is
+already in your agent's context and gets applied without ever being fetched
+again. Only the agent knows.
+
+So `memory.write` takes an optional `cited` array, and the agent fills it in when
+it writes up what it learned:
+
+```json
+{
+  "scope": "repo::acme/app",
+  "key": "backfill-before-index",
+  "value": "Run the backfill before adding the unique index …",
+  "cited": ["global::pnpm-first", "repo::acme/app::migration-order"]
+}
+```
+
+Each entry is a `scope::key` reference to a lesson the write **applied**. The
+lesson detail sheet then shows a **Cited** line beside Delivered and Chosen, and
+that line is the only evidence on the page that says a lesson was used rather
+than merely shown.
+
+The same field is on the CLI, remote store only — the offline store keeps no
+citation ledger, so a local write with `--cited` is refused rather than quietly
+recording nothing:
+
+```bash
+lorekit write repo::acme/app::backfill-before-index "Run the backfill first" \
+  --cited "global::pnpm-first,repo::acme/app::migration-order"
+```
+
+Three things to know before you read the number:
+
+- **It is voluntary, so a `0` means nothing said so** — not "never used". That is
+  the opposite reading of a zero in the Chosen column, which at least covers
+  every targeted read since the counter shipped. Never treat Cited as a
+  denominator.
+- **Wrong guesses cost nothing.** A reference that does not resolve to lore you
+  own is dropped, and a lesson cannot cite itself. Naming a lesson you are unsure
+  about is cheaper than omitting one you relied on.
+- **Once per run.** Citations are de-duplicated per `(lesson, retrospective, run)`,
+  so a retried write credits a lesson once rather than inflating it.
+
+If you use the Claude Code plugin, the end-of-turn hook already does this for
+you: the retrospective nudge lists the `scope::key` refs that were injected this
+session and asks the agent to keep the ones it actually applied.
 
 ## Spotting the same lesson written twice
 

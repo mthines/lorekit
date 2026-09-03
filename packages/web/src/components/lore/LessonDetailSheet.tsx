@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick, Quote } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
@@ -847,6 +847,47 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                        disagree — and there is one tone map, not
                                        two. */}
                                     <UtilityChip utility={verdict} />
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                            {/* Cited sits under Chosen because it answers the
+                               question Chosen cannot. Pull-through measures
+                               SELECTION — it moves only on a deliberate fetch —
+                               and a lesson injected at session start is already
+                               in context and is applied without one. So the
+                               ratio above under-counts the dominant delivery
+                               path by construction, and this row is the only
+                               place an agent gets to say "I used this."
+
+                               Deliberately NOT shown as a rate or a share of
+                               deliveries: citing is voluntary, so the
+                               denominator would be fiction. A zero is captioned
+                               as silence rather than as "never used", which is
+                               the opposite reading of the two zeros above. */}
+                            {(() => {
+                              const citedCount = lesson.cited_count;
+                              if (citedCount == null) return null;
+                              return (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <Quote className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Cited</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="How many times an agent explicitly credited this lesson when writing up what it learned — the only signal that distinguishes a lesson that was applied from one that was merely delivered. Citing is voluntary, so a 0 means nothing said so, not that the lesson went unused."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {citedCount === 0
+                                          ? 'no agent has said so'
+                                          : `credited ${citedCount.toLocaleString()}×${
+                                              lesson.last_cited_at
+                                                ? ` · last ${new Date(lesson.last_cited_at).toLocaleDateString()}`
+                                                : ''
+                                            }`}
+                                      </span>
+                                    </Tooltip>
                                   </dd>
                                 </div>
                               );
