@@ -751,6 +751,62 @@ export type Database = {
         }
         Relationships: []
       }
+      github_relevance_configs: {
+        Row: {
+          active: boolean
+          agent_name: string
+          bucket_tag: string
+          created_at: string
+          id: string
+          installation_id: number
+          key_prefix: string
+          marker_close: string
+          marker_open: string
+          record_host: string | null
+          record_kind: string
+          ttl_days: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          agent_name: string
+          bucket_tag: string
+          created_at?: string
+          id?: string
+          installation_id: number
+          key_prefix: string
+          marker_close: string
+          marker_open: string
+          record_host?: string | null
+          record_kind?: string
+          ttl_days?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          agent_name?: string
+          bucket_tag?: string
+          created_at?: string
+          id?: string
+          installation_id?: number
+          key_prefix?: string
+          marker_close?: string
+          marker_open?: string
+          record_host?: string | null
+          record_kind?: string
+          ttl_days?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "github_relevance_configs_installation_id_fkey"
+            columns: ["installation_id"]
+            isOneToOne: false
+            referencedRelation: "github_installations"
+            referencedColumns: ["installation_id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1077,6 +1133,39 @@ export type Database = {
           p_scope_type?: string
           p_tool_name?: string
           p_user_id?: string
+        }
+        Returns: string
+      }
+      lorekit_relevance_config_deactivate: {
+        Args: { p_bucket_tag: string; p_installation_id: number }
+        Returns: undefined
+      }
+      lorekit_relevance_config_for_repo: {
+        Args: { p_repo: string }
+        Returns: {
+          agent_name: string
+          bucket_tag: string
+          installation_id: number
+          key_prefix: string
+          marker_close: string
+          marker_open: string
+          record_host: string
+          record_kind: string
+          ttl_days: number
+          user_id: string
+        }[]
+      }
+      lorekit_relevance_config_set: {
+        Args: {
+          p_agent_name: string
+          p_bucket_tag: string
+          p_installation_id: number
+          p_key_prefix: string
+          p_marker_close: string
+          p_marker_open: string
+          p_record_host?: string
+          p_record_kind?: string
+          p_ttl_days?: number
         }
         Returns: string
       }

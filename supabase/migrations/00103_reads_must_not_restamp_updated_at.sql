@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- 00102 — a READ must not rewrite `updated_at`.
+-- 00103 — a READ must not rewrite `updated_at`.
 --
 -- THE BUG, observed in production on 2026-09-03:
 --
@@ -115,7 +115,7 @@ create or replace trigger memories_updated_at
 comment on function lorekit_memories_set_updated_at() is
   'BEFORE UPDATE on memories: bumps updated_at like set_updated_at, EXCEPT when the only change is '
   'a DERIVED column — the embedding pair (00062) or the read counters read_count/last_read_at/'
-  'last_opened_at (00102). Neither may rewrite the recency signal that search, relevant, the keyset '
+  'last_opened_at (00103). Neither may rewrite the recency signal that search, relevant, the keyset '
   'index, lesson-rank and BOTH default sorts (Explorer, memory.list order=recency) all read. Before '
-  '00102 a single bulk memory.list restamped every row on the page, so updated_at reported '
+  '00103 a single bulk memory.list restamped every row on the page, so updated_at reported '
   'last-READ under a last-WRITTEN name and recency ordering was effectively arbitrary.';

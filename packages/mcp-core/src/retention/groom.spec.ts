@@ -289,7 +289,7 @@ describe('isGroomCandidate', () => {
     expect(isGroomCandidate(writtenOftenNeverRead, conditions({ scope: 'global', max_seen_count: 1 }), NOW)).toBe(false);
   });
 
-  // max_opened_count reads `opened_count` (00103) — the DELIBERATE fetches
+  // max_opened_count reads `opened_count` (00104) — the DELIBERATE fetches
   // only. It exists because `max_read_count` cannot express "nothing ever
   // chose this": every lesson a `memory.list` has paged over already carries
   // a read count in the hundreds, so the condition that answers uptake has to

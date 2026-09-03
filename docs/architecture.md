@@ -142,7 +142,7 @@ Authorization: Bearer <token>
 | `embedding` | vector(1536) | **Dormant** (00060). Semantic-search vector; null until the embedding pipeline lands. 1536 because pgvector's HNSW index refuses more than 2000 dimensions, so a 3072-wide model could not be ANN-indexed at all. |
 | `embedding_model` | text | Which model produced `embedding`. Vectors from two models are not comparable, so a silent provider swap would leave one column holding two incompatible spaces. A CHECK enforces both-or-neither with `embedding`. |
 | `created_at` | timestamptz | |
-| `updated_at` | timestamptz | Auto-updated by trigger — **except** on a write that only moves a DERIVED column: the embedding pair (00062) or the read counters `read_count`/`last_read_at`/`last_opened_at` (00102). Neither is an edit, and both would otherwise restamp the recency signal that search, `relevant`, the keyset index and both default sorts read. See [embeddings.md](./embeddings.md#a-derived-column-does-not-touch-updated_at) |
+| `updated_at` | timestamptz | Auto-updated by trigger — **except** on a write that only moves a DERIVED column: the embedding pair (00062) or the read counters `read_count`/`last_read_at`/`last_opened_at` (00103). Neither is an edit, and both would otherwise restamp the recency signal that search, `relevant`, the keyset index and both default sorts read. See [embeddings.md](./embeddings.md#a-derived-column-does-not-touch-updated_at) |
 
 Uniqueness is partitioned across three mutually-exclusive partial indexes so the
 three ownership kinds never collide: org-owned (`org_id, scope, key`), personal

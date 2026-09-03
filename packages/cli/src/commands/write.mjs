@@ -318,7 +318,7 @@ export async function write(args) {
     return 1;
   }
 
-  // The offline store has no citation ledger — migration 00106's table lives in
+  // The offline store has no citation ledger — migration 00107's table lives in
   // Postgres — so a local write would accept the flag and record nothing. Named
   // rather than dropped: a credit that silently went nowhere is invisible in
   // exactly the place the whole signal exists to be visible.

@@ -255,7 +255,7 @@ export function readRankingRequest(
 
 /**
  * `GET /memories/utility` — every lesson placed on the delivered × chosen grid
- * (migration 00105), plus what the delivered half costs in context.
+ * (migration 00106), plus what the delivered half costs in context.
  *
  * The successor to `readRankingRequest` above: that route ranks by
  * `read_count`, which 99.80% bulk ride-alongs make a proxy for SCOPE BREADTH

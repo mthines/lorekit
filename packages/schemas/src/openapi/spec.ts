@@ -407,7 +407,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       'counts every read including the bulk ride-alongs in a `memory.list` page (99.80% of them), ' +
       'so ranking by it — which `GET /memories/read-ranking` does — mostly ranks SCOPE BREADTH, ' +
       'and its cold end nominates narrow scopes for pruning instead of unused lore. Pull-through ' +
-      '(`opened_count / read_count`, migration 00103) is a proper fraction, so the breadth ' +
+      '(`opened_count / read_count`, migration 00104) is a proper fraction, so the breadth ' +
       'appears in both halves and cancels.\n\n' +
       'Two axes give four quadrants plus a fifth state: **load-bearing** (delivered widely, chosen ' +
       'often — promote to a rule), **specialist** (narrow reach, high uptake — broaden its scope), ' +

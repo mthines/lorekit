@@ -17,7 +17,7 @@
  * Value lives on the DEMAND side: given that a lesson was offered, did anything
  * take it up? That is a RATIO, and the ratio cancels the confound — scope
  * breadth appears in both halves and divides away. PULL-THROUGH is
- * `opened_count / read_count` (migration 00103). A `global` lesson delivered
+ * `opened_count / read_count` (migration 00104). A `global` lesson delivered
  * 1,300 times and opened twice scores 0.15%; a `branch` lesson delivered 3
  * times and opened twice scores 67%. Those two numbers are comparable, and the
  * second lesson — the one a `read_count` ranking puts on the prune list — is
@@ -55,7 +55,7 @@ export type LessonUtility = LessonUtilityName;
  * The four numbers that draw the grid lines, RE-EXPORTED — not declared here.
  *
  * They live in `@lorekit/schemas` because two implementations read them: this
- * module, for the chip on a single card, and `lorekit_lesson_utility` (00105),
+ * module, for the chip on a single card, and `lorekit_lesson_utility` (00106),
  * for the census over the whole store. The SQL takes them as parameters rather
  * than hardcoding its own, so both consumers are downstream of one definition
  * and a card can never disagree with the quadrant it was counted into. Tuning
@@ -77,7 +77,7 @@ export const BROAD_REACH_DELIVERIES = LESSON_UTILITY_THRESHOLDS.broadReachDelive
 export interface LessonUtilityInput {
   /** `read_count` — every read, bulk ride-alongs included. The DENOMINATOR. */
   read_count?: number;
-  /** `opened_count` — targeted agent fetches only (00103). The NUMERATOR. */
+  /** `opened_count` — targeted agent fetches only (00104). The NUMERATOR. */
   opened_count?: number;
   created_at: string;
 }
@@ -128,7 +128,7 @@ export function formatPerDay(rate: number): string {
  * counters.
  *
  * `null` and `'unproven'` are deliberately different answers. `null` means
- * UNMEASURABLE — a pre-00103 backend, so no verdict can honestly be shown and
+ * UNMEASURABLE — a pre-00104 backend, so no verdict can honestly be shown and
  * the caller renders nothing. `'unproven'` means measurable but INCONCLUSIVE,
  * which is itself worth showing: today a lesson created yesterday and a lesson
  * dead for a year look identical in the UI.

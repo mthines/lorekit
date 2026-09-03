@@ -386,12 +386,12 @@ the `origin_*` columns.
 ## `cited` on `POST /` — the write credits the lore it applied
 
 `POST /` (and the MCP `memory.write` tool) take an optional `cited: string[]` of
-`scope::key` references naming the lore this write APPLIED. Migration 00106 stores
+`scope::key` references naming the lore this write APPLIED. Migration 00107 stores
 each credit in `memory_citations` and bumps `memories.cited_count` /
 `last_cited_at` on the cited row.
 
 **It exists because pull-through cannot see the dominant delivery path.**
-`opened_count / read_count` (00103) measures whether a lesson was deliberately
+`opened_count / read_count` (00104) measures whether a lesson was deliberately
 FETCHED; a lesson injected at SessionStart is already in the agent's context and is
 applied without ever being fetched. No amount of read telemetry closes that gap —
 only the agent knows, and this is where it says so. Read the counter as EVIDENCE,
@@ -614,7 +614,7 @@ and unreferenced is safe to serve unconditionally.
 ## `GET /utility`
 
 Where every active lesson sits on **delivered × chosen**, plus what the deliveries cost.
-Backs the Insights page's `LoreUtilityGrid` and the cost line above it (migration 00105).
+Backs the Insights page's `LoreUtilityGrid` and the cost line above it (migration 00106).
 
 ```json
 {
@@ -668,7 +668,7 @@ supports measures SELECTION, not influence: a lesson injected at SessionStart is
 context and needs no second fetch to be acted on. Both qualifiers are rendered by the caller
 rather than buried, because the number is only honest with them.
 
-**`counting_since` is why a `0` is never called "never".** `opened_count` started at 00103, so a
+**`counting_since` is why a `0` is never called "never".** `opened_count` started at 00104, so a
 lesson older than the counter cannot support that claim; the response carries the date the
 counting began and the UI captions every zero with it.
 
@@ -681,7 +681,7 @@ lowercased filter would place a mixed-case scope's lore in NO quadrant at all �
 There is **no MCP tool and no CLI command**, recorded as a guarded `restOnly` entry in
 `telemetry-vocabulary.ts` (`usage_events.tool_name` is `memory.utility`). Its reason is
 `/clusters`' reason: the agent-side spelling already exists and is BETTER —
-`memory.list max_opened_count => 0` (migration 00104) SELECTS the never-chosen lore over the
+`memory.list max_opened_count => 0` (migration 00105) SELECTS the never-chosen lore over the
 WHOLE scope, ordered and paginated like any other listing, where this route ranks a page of it
 and returns counts to paint. A groomer wants the rows.
 

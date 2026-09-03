@@ -194,7 +194,7 @@ export async function handleCreate(
   // explicit actor. The value is never taken from the request.
   embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV, actorUserId(auth));
 
-  // Record which lessons this write CREDITS (migration 00106). Awaited, unlike
+  // Record which lessons this write CREDITS (migration 00107). Awaited, unlike
   // the embedding, because it is one cheap RPC and it returns the only number
   // that says how many citations resolved. `actorUserId(auth)` for the reason
   // above: the api_key tier reaches Postgres over a service-role connection

@@ -149,7 +149,7 @@ export async function toolWrite(
   keyScoping?: KeyRestriction,
   // The run this write belongs to, from `X-LoreKit-Correlation-Id`. Supplied by
   // the DISPATCHER, never read from `params`: it is the same key `usage_events`
-  // records for this call, which is what lets a citation (00106) join to the
+  // records for this call, which is what lets a citation (00107) join to the
   // run `/usage/runs` enumerates — and taking it from the tool args would let a
   // caller attribute its citations to somebody else's run. `memory.write` is
   // the only tool with any use for it, which is why it is a trailing optional
@@ -255,7 +255,7 @@ export async function toolWrite(
     userId,
     span,
   );
-  // Record which lessons this write CREDITS (migration 00106). After the audit,
+  // Record which lessons this write CREDITS (migration 00107). After the audit,
   // before the response is shaped, and awaited: it is one cheap RPC and every
   // failure inside it is already silent, so there is nothing here that can turn
   // a committed write into a failed call.

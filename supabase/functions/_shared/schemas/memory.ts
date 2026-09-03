@@ -47,7 +47,7 @@ export const MemoryWriteSchema = z.object({
   // `parseOrigin` validator (mcp-core / _shared/provenance/origin.ts) owns the shape rules.
   origin_repo: z.string().optional(), origin_branch: z.string().optional(),
   origin_commit: z.string().optional(), origin_pr: z.union([z.number(), z.string()]).optional(),
-  // Which lessons this write CREDITS for shaping the run (migration 00106).
+  // Which lessons this write CREDITS for shaping the run (migration 00107).
   //
   // The influence signal `opened_count / read_count` cannot give: a lesson
   // injected at session start is already in context and is applied without
@@ -835,7 +835,7 @@ export const MemoryEntrySchema = z.object({
   // backward-compat reason as `last_read_at`: a memory nobody has
   // individually opened since this shipped (or a pre-00099 backend) has none.
   last_opened_at: z.string().datetime().nullable().optional(),
-  // The COUNT behind `last_opened_at` (migration 00103), moved by the same gate
+  // The COUNT behind `last_opened_at` (migration 00104), moved by the same gate
   // in the same statement so the two can never disagree. Divided by
   // `read_count` it gives PULL-THROUGH — of all the times this lesson was
   // surfaced, how often was it a deliberate fetch. That ratio is what makes two
@@ -845,7 +845,7 @@ export const MemoryEntrySchema = z.object({
   // optional here for the same backward-compat reason as `read_count`.
   opened_count: z.number().int().nonnegative().optional(),
   // How many times an agent explicitly CREDITED this lesson on a write
-  // (migration 00106), and when it last did. This is the one counter no read
+  // (migration 00107), and when it last did. This is the one counter no read
   // telemetry can produce: `opened_count` moves only on a deliberate fetch, and
   // a lesson injected at SessionStart is already in context and gets applied
   // without ever being fetched — so pull-through under-counts the dominant
@@ -856,7 +856,7 @@ export const MemoryEntrySchema = z.object({
   // reading of `opened_count`'s zero, which at least covers every targeted read
   // since the counter shipped. Optional here for the same backward-compat
   // reason as `read_count`: NOT NULL DEFAULT 0 in the DB, absent from a client
-  // talking to a pre-00106 backend.
+  // talking to a pre-00107 backend.
   cited_count: z.number().int().nonnegative().optional(),
   last_cited_at: z.string().datetime().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
@@ -1280,7 +1280,7 @@ export type ClustersResponse = z.infer<typeof ClustersResponseSchema>;
  * read, for the same two reasons as its nine siblings: the response names
  * individual scopes and keys (a scope-leak surface), and it is a chart, not an
  * agent primitive. An agent that wants the same prune list already has one —
- * `memory.list` with `max_opened_count => 0` (migration 00104) selects the
+ * `memory.list` with `max_opened_count => 0` (migration 00105) selects the
  * noise-tax and dormant quadrants directly, over the WHOLE scope rather than
  * this route's ranked page.
  */
@@ -1367,7 +1367,7 @@ export const UtilityEntrySchema = z.object({
   key: z.string(),
   /** `read_count` — every read, bulk ride-alongs included. The denominator. */
   read_count: z.number().int().nonnegative(),
-  /** `opened_count` — deliberate agent fetches only (00103). The numerator. */
+  /** `opened_count` — deliberate agent fetches only (00104). The numerator. */
   opened_count: z.number().int().nonnegative(),
   last_opened_at: z.string().datetime().nullable(),
   created_at: z.string().datetime(),

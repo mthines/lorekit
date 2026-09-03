@@ -100,7 +100,7 @@ export const GroomConditionsSchema = z.object({
   max_read_count: z.number().int().min(0).max(100_000).optional(),
   /**
    * Match only lessons an agent DELIBERATELY fetched at most this many times —
-   * `memories.opened_count` (00103), the count behind `last_opened_at`.
+   * `memories.opened_count` (00104), the count behind `last_opened_at`.
    *
    * This is the one whose `0` means what a reader expects. `max_read_count`
    * counts bulk ride-alongs, so on a live store `max_read_count: 0` matched

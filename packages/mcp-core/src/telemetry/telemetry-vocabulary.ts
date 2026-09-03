@@ -112,7 +112,7 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
       'Same name-bearing scope-leak surface as memory.tags (it returns scope + key per row), and '
       + 'the same absent demand: a grid is a chart. Unlike its siblings the agent-side spelling '
       + 'already exists and is BETTER — `memory.list` with `max_opened_count => 0` (migration '
-      + '00104) selects the noise-tax and dormant quadrants over the WHOLE scope, where this '
+      + '00105) selects the noise-tax and dormant quadrants over the WHOLE scope, where this '
       + 'route only ranks a page of them. So an MCP twin would be a weaker answer to a question '
       + 'the existing tool answers, exactly the memory.clusters call.',
   },

@@ -814,7 +814,7 @@ test('retrospectiveNudge includes tags hint when tagsDefault is set', () => {
   assert.match(text, /"loop::aw-lessons"/);
 });
 
-// ── the citation ask (migration 00106's `cited`) ─────────────────────────────
+// ── the citation ask (migration 00107's `cited`) ─────────────────────────────
 
 test('citationHint names the injected refs so the agent picks rather than recalls', () => {
   const text = citationHint(['global::pnpm-first', 'repo::acme/app::migration-order']);

@@ -188,7 +188,7 @@ does not land); the edge module is held to the RPC by
 `updated_at = now()`. A vector is a **derived artefact, not an edit**, so
 `00062` retargets that trigger at `lorekit_memories_set_updated_at`.
 
-**The exemption is now shared.** `00102` extends the same function to the read
+**The exemption is now shared.** `00103` extends the same function to the read
 counters — `read_count`, `last_read_at`, `last_opened_at` — because
 `lorekit_record_memory_reads` bumps them on every read, so a single bulk
 `memory.list` page was restamping every row it returned. That made `updated_at`

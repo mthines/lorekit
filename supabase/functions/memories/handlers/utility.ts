@@ -70,7 +70,7 @@ const EMPTY_COST: RawCostRow = {
  * alone, and 99.80% of recorded reads are bulk ride-alongs in a
  * `memory.list`/`memory.search` page — so its ordering mostly encodes SCOPE
  * BREADTH, and its "cold" end nominates narrow scopes for pruning rather than
- * unused lore. Pull-through (`opened_count / read_count`, migration 00103) is
+ * unused lore. Pull-through (`opened_count / read_count`, migration 00104) is
  * a proper fraction, so the breadth appears in both halves and cancels.
  *
  * TWO WINDOWS, DELIBERATELY, and both are reported so a client can caption
@@ -82,7 +82,7 @@ const EMPTY_COST: RawCostRow = {
  * REST-only by decision (`telemetry-vocabulary.ts`'s `NON_CATALOG_OPS`), the
  * tenth such read: the response names scopes and keys, and the agent-side
  * spelling already exists and is stronger — `memory.list` with
- * `max_opened_count => 0` (migration 00104) selects the actionable quadrants
+ * `max_opened_count => 0` (migration 00105) selects the actionable quadrants
  * over the WHOLE scope, where this only ranks a page.
  */
 export async function handleUtility(

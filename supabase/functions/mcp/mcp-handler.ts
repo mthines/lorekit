@@ -354,7 +354,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
         //
         // The trailing `correlationId` is read by `memory.write` alone, for its
-        // `cited` array (00106): a citation joins to the run `usage_events`
+        // `cited` array (00107): a citation joins to the run `usage_events`
         // groups by, and that key lives on the REQUEST. It is passed here
         // rather than pulled out of `toolArgs` deliberately — an agent that
         // could name its own correlation id could attribute its citations to

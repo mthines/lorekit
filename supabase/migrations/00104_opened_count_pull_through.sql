@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- 00103 — `opened_count`: the numerator that makes lore value comparable.
+-- 00104 — `opened_count`: the numerator that makes lore value comparable.
 --
 -- THE PROBLEM. All three counters a memory carries are ABSOLUTE COUNTS ON THE
 -- SUPPLY SIDE — how often the system produced this lesson:
@@ -32,7 +32,7 @@
 -- WHY A COLUMN, when `memory_read_daily(memory_id, day, read_kind, count)`
 -- (00084) has stored the split since the counters shipped:
 --
---   1. It has to be FILTERABLE at scale. `max_opened_count` (00104) is a
+--   1. It has to be FILTERABLE at scale. `max_opened_count` (00105) is a
 --      retention condition, and `lorekit_groom_candidates` runs it over a whole
 --      scope. A per-memory aggregate over the rollup cannot be indexed; a
 --      column can, and gets `memories_user_opened_count_idx` below, mirroring
@@ -50,7 +50,7 @@
 -- ORDER IS LOAD-BEARING IN THIS FILE. The trigger is taught to mask
 -- `opened_count` BEFORE the backfill runs. Reversed, the backfill's UPDATE
 -- would restamp `updated_at` on every memory that has ever been opened — the
--- exact whole-store recency wipe 00102 was written to stop, and unrecoverable
+-- exact whole-store recency wipe 00103 was written to stop, and unrecoverable
 -- once done.
 -- ═════════════════════════════════════════════════════════════════════════
 
@@ -66,12 +66,12 @@ comment on column memories.opened_count is
    times this lesson was surfaced, how often was it a deliberate fetch. That
    ratio is comparable across scopes where the raw counts are not, because scope
    breadth cancels. Not null, defaults to 0; backfilled from memory_read_daily
-   by 00103.';
+   by 00104.';
 
 -- ── 2. teach the trigger to mask it — BEFORE the backfill ─────────────────
--- 00102 exempted read_count/last_read_at/last_opened_at from restamping
+-- 00103 exempted read_count/last_read_at/last_opened_at from restamping
 -- `updated_at`; opened_count is the fourth column of that same derived set and
--- moves in the same statement, so omitting it here would defeat 00102 for every
+-- moves in the same statement, so omitting it here would defeat 00103 for every
 -- TARGETED read. Asserted by migrations.test.sql §101 AC-2b, which does exactly
 -- that read and checks the stamp did not move.
 create or replace function lorekit_memories_set_updated_at()
@@ -90,7 +90,7 @@ begin
        new.embedding is distinct from old.embedding
     or new.embedding_model is distinct from old.embedding_model;
 
-  -- 00102's exemption, extended by 00103 with opened_count: a read-counter
+  -- 00103's exemption, extended by 00104 with opened_count: a read-counter
   -- write from `lorekit_record_memory_reads`.
   v_counters_changed :=
        new.read_count     is distinct from old.read_count
@@ -133,9 +133,9 @@ $$;
 comment on function lorekit_memories_set_updated_at() is
   'BEFORE UPDATE on memories: bumps updated_at like set_updated_at, EXCEPT when the only change is '
   'a DERIVED column — the embedding pair (00062) or the read counters read_count/last_read_at/'
-  'last_opened_at (00102) and opened_count (00103). None may rewrite the recency signal that '
+  'last_opened_at (00103) and opened_count (00104). None may rewrite the recency signal that '
   'search, relevant, the keyset index, lesson-rank and BOTH default sorts (Explorer, memory.list '
-  'order=recency) all read. Before 00102 a single bulk memory.list restamped every row on the page, '
+  'order=recency) all read. Before 00103 a single bulk memory.list restamped every row on the page, '
   'so updated_at reported last-READ under a last-WRITTEN name and recency ordering was arbitrary.';
 
 -- ── 3. backfill from the rollup ───────────────────────────────────────────
@@ -155,7 +155,7 @@ update memories m
    and m.opened_count is distinct from t.n;
 
 -- ── 4. the index the retention condition and the ranking need ─────────────
--- Mirrors `memories_user_read_count_idx` (00085) so `max_opened_count` (00104)
+-- Mirrors `memories_user_read_count_idx` (00085) so `max_opened_count` (00105)
 -- and any "never chosen" query are served the same way `max_read_count` is.
 create index if not exists memories_user_opened_count_idx
   on memories (user_id, opened_count)
@@ -223,7 +223,7 @@ comment on function lorekit_record_memory_reads(uuid[], text, text) is
   'Increments memories.read_count/.last_read_at and today''s memory_read_daily
    row (UTC day, keyed by read_kind) for every memory id a read call actually
    returned, in ONE statement regardless of array size. Also sets
-   memories.last_opened_at (00099) and increments memories.opened_count (00103)
+   memories.last_opened_at (00099) and increments memories.opened_count (00104)
    when read_kind = targeted AND client in (mcp, cli) -- an agent deliberately
    reaching for this one lesson, as opposed to it riding along in a page. Those
    two move together off one shared gate so a count and its timestamp can never

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.66.0](https://github.com/mthines/lorekit/compare/cli-v1.65.0...cli-v1.66.0) (2026-09-03)
+
+
+### Features
+
+* **webhook:** classify review-comment relevance server-side ([c76f7b7](https://github.com/mthines/lorekit/commit/c76f7b71de76cd18481300cd80b598952b0f021f))
+* **webhook:** classify review-comment relevance server-side ([0e229a2](https://github.com/mthines/lorekit/commit/0e229a2921c3565de86441e606c129235df0f1d3))
+
 ## [1.65.0](https://github.com/mthines/lorekit/compare/cli-v1.64.2...cli-v1.65.0) (2026-09-03)
 
 

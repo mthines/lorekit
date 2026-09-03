@@ -296,7 +296,7 @@ class RemoteStore {
     if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;
     if (created_at !== undefined) body.created_at = created_at;
     // Citations are a fact about the RUN this write belongs to, not a column on
-    // the row (migration 00106) — the server resolves each ref, records the
+    // the row (migration 00107) — the server resolves each ref, records the
     // credit, and drops what it cannot resolve. Sent verbatim: which refs are
     // legal is the server's grammar to decide, not this transport's.
     if (cited !== undefined) body.cited = cited;

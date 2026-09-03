@@ -1,13 +1,13 @@
 /**
  * `recordCitations` — the one edge writer for `memory.write`'s `cited` array
- * (migration 00106), called by BOTH the MCP tool and the REST route.
+ * (migration 00107), called by BOTH the MCP tool and the REST route.
  *
  * It sits beside `usage.ts` because it is the same kind of thing: a fail-safe
  * writer invoked after an operation has already succeeded, whose failure must
  * never reach the caller. The difference is only what it measures — `usage.ts`
  * records that a call happened, this records what the call CREDITED.
  *
- * WHY THE SIGNAL EXISTS. `opened_count / read_count` (00103) measures whether a
+ * WHY THE SIGNAL EXISTS. `opened_count / read_count` (00104) measures whether a
  * lesson was deliberately fetched, and a lesson injected at SessionStart is
  * already in the agent's context and is applied without ever being fetched. So
  * pull-through under-counts the dominant delivery path by construction, and no

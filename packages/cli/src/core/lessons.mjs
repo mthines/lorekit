@@ -843,7 +843,7 @@ export const CITED_HINT_MAX = 8;
 // deliberately FETCHED, and a lesson injected at SessionStart is already in
 // context and gets applied without ever being fetched. So the ratio under-counts
 // the dominant delivery path by construction, and only the agent knows the
-// difference. `cited` (migration 00106) is where it says so.
+// difference. `cited` (migration 00107) is where it says so.
 //
 // The ids are taken in the store's own order, which is injection order, so the
 // SessionStart set leads — it is both the largest and the one in context for the

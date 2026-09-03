@@ -72,7 +72,7 @@ export interface LessonEntry extends MemoryOriginFields {
    */
   last_opened_at?: string | null;
   /**
-   * The COUNT behind {@link last_opened_at} (migration 00103), moved by the
+   * The COUNT behind {@link last_opened_at} (migration 00104), moved by the
    * same gate in the same write. `opened_count / read_count` is PULL-THROUGH —
    * of all the times this lesson was delivered, how often an agent deliberately
    * reached for it — and that ratio is what makes two lessons in different
@@ -82,13 +82,13 @@ export interface LessonEntry extends MemoryOriginFields {
   opened_count?: number;
   /**
    * How many times an agent explicitly CREDITED this lesson on a write, and
-   * when it last did (migration 00106). The one counter no read telemetry can
+   * when it last did (migration 00107). The one counter no read telemetry can
    * produce: `opened_count` moves only on a deliberate fetch, and a lesson
    * injected at session start is already in context and gets applied without
    * ever being fetched.
    *
    * Evidence, never a denominator. Citing is voluntary, so a `0` means "nothing
-   * said so" — not "never used". Undefined for a pre-00106 backend.
+   * said so" — not "never used". Undefined for a pre-00107 backend.
    */
   cited_count?: number;
   last_cited_at?: string | null;

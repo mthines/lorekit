@@ -38,7 +38,7 @@ export interface RetentionConditions {
    */
   maxReadCount?: number;
   /**
-   * Deliberate fetches only — `max_opened_count` (00104). A targeted
+   * Deliberate fetches only — `max_opened_count` (00105). A targeted
    * `memory.read` from an agent (`mcp`/`cli`), never a list/search ride-along,
    * so this is an UPTAKE threshold: `0` means "nothing ever chose to open it".
    * That is the condition `max_read_count` could never express — see the

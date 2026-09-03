@@ -1,7 +1,7 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- 00106 — citations: the signal pull-through cannot give.
+-- 00107 — citations: the signal pull-through cannot give.
 --
--- WHAT IS STILL MISSING AFTER 00103. `opened_count / read_count` measures
+-- WHAT IS STILL MISSING AFTER 00104. `opened_count / read_count` measures
 -- SELECTION — of all the times a lesson was surfaced, how often did something
 -- deliberately reach for it. That is a real signal and it is the best one
 -- available from read telemetry alone, but it systematically under-counts the
@@ -43,11 +43,11 @@
 -- an inflated influence number is worse than a conservative one on a surface
 -- whose entire argument is that the existing numbers overstate.
 --
--- THE `updated_at` EXEMPTION IS LOAD-BEARING (00102/00103). `cited_count` and
+-- THE `updated_at` EXEMPTION IS LOAD-BEARING (00103/00104). `cited_count` and
 -- `last_cited_at` are the fifth and sixth columns of the derived set a READ-ish
 -- path writes. Without adding them to the trigger's mask, recording a citation
 -- would restamp the cited lesson's `updated_at` — reintroducing exactly the
--- bug 00102 fixed, on a new path, and making the freshness column lie again.
+-- bug 00103 fixed, on a new path, and making the freshness column lie again.
 -- migrations.test.sql §105 AC-2 is that assertion.
 -- ═════════════════════════════════════════════════════════════════════════
 
@@ -61,19 +61,19 @@ alter table memories add constraint memories_cited_count_non_negative
 
 comment on column memories.cited_count is
   'How many times an agent has explicitly CREDITED this lesson for shaping a run,
-   via memory.write''s `cited` array (00106). Distinct from opened_count (00103),
+   via memory.write''s `cited` array (00107). Distinct from opened_count (00104),
    which counts deliberate FETCHES: a lesson injected at session start is already
    in context and can be applied without ever being fetched, so a lesson can have
    opened_count = 0 and a high cited_count. Never moved by any read. Not null,
    defaults to 0.';
 
 comment on column memories.last_cited_at is
-  'When this lesson was last explicitly credited by an agent (00106). Null until
+  'When this lesson was last explicitly credited by an agent (00107). Null until
    the first citation. Moved in the same statement as cited_count, off the same
    gate, so a count and its timestamp cannot disagree.';
 
 -- ── 2. teach the trigger to mask them — BEFORE anything writes them ───────
--- 00102 exempted read_count/last_read_at/last_opened_at; 00103 added
+-- 00103 exempted read_count/last_read_at/last_opened_at; 00104 added
 -- opened_count. These are the fifth and sixth columns of the same derived set:
 -- a citation is recorded ABOUT a lesson by a write to a DIFFERENT lesson, so
 -- letting it restamp the cited row's `updated_at` would say "this lesson was
@@ -94,7 +94,7 @@ begin
        new.embedding is distinct from old.embedding
     or new.embedding_model is distinct from old.embedding_model;
 
-  -- 00102's exemption, extended by 00103 (opened_count) and 00106
+  -- 00103's exemption, extended by 00104 (opened_count) and 00107
   -- (cited_count/last_cited_at): a derived-counter write that is not an edit.
   v_counters_changed :=
        new.read_count     is distinct from old.read_count
@@ -139,8 +139,8 @@ $$;
 comment on function lorekit_memories_set_updated_at() is
   'BEFORE UPDATE trigger on memories. Stamps updated_at = now() for a real
    content edit, and LEAVES IT ALONE for a write that only moves derived
-   columns: the embedding pair (00062), the four read counters (00099/00102/
-   00103) and the two citation counters (00106). Compares NEW to OLD with every
+   columns: the embedding pair (00062), the four read counters (00099/00103/
+   00104) and the two citation counters (00107). Compares NEW to OLD with every
    derived column plus the generated `fts` masked out, so the exemption is a
    property of the whole row rather than a list of allowed callers.';
 
@@ -191,7 +191,7 @@ grant select, insert on memory_citations to service_role;
 comment on table memory_citations is
   'One row per (cited lesson, citing lesson, run): an agent explicitly crediting
    a lesson for shaping the run it just finished, recorded from memory.write''s
-   `cited` array (00106). The influence signal pull-through (00103) cannot give,
+   `cited` array (00107). The influence signal pull-through (00104) cannot give,
    because a lesson injected at session start is applied without ever being
    fetched. Unique on (cited_memory_id, citing_memory_id, coalesce(correlation_id,
    '''')) so a retry inside one run counts once. Never read through PostgREST.';

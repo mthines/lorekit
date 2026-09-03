@@ -218,7 +218,7 @@ describe('retentionConditionsPhrase', () => {
   // The three counters measure different things and sit next to each other in
   // the phrase, so none may be called "seen" — that word is what made a
   // write-recurrence condition read as a usage one — and "delivered" must not
-  // collapse into "chosen", which is the whole distinction 00104 adds.
+  // collapse into "chosen", which is the whole distinction 00105 adds.
   it('names the three counters apart — written / delivered / chosen', () => {
     expect(retentionConditionsPhrase({ maxSeenCount: 1, maxReadCount: 0 })).toBe(
       'written ≤ 1× · delivered ≤ 0×',

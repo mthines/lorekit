@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- 00104 — `max_opened_count`: the retention condition whose 0 means something.
+-- 00105 — `max_opened_count`: the retention condition whose 0 means something.
 --
 -- WHY max_read_count IS NOT ENOUGH. 00101 added `max_read_count` over
 -- `read_count`, which counts EVERY read including bulk list/search
@@ -18,7 +18,7 @@
 -- `branch` lesson almost never, so "read at most N times" selects narrow scopes
 -- and calls them unused.
 --
--- `opened_count` (00103) counts ONLY a deliberate agent fetch of this exact
+-- `opened_count` (00104) counts ONLY a deliberate agent fetch of this exact
 -- lesson. `max_opened_count => 0` therefore means exactly what a reader
 -- expects — "no agent has ever reached for this" — and it means the same thing
 -- for a `global` lesson as for a `branch` one. It is the condition
@@ -40,7 +40,7 @@
 -- NO CUTOVER CAVEAT, unlike 00101. `max_read_count` had to warn that a
 -- long-lived lesson can show a low count it never earned, because `read_count`
 -- started at 0 when 00084 shipped. `opened_count` was BACKFILLED from
--- `memory_read_daily` in 00103, so it is exact over the whole history the
+-- `memory_read_daily` in 00104, so it is exact over the whole history the
 -- rollup holds and no lesson looks falsely unopened.
 --
 -- SIGNATURES follow 00101 exactly: `p_max_opened_count` is APPENDED last so
@@ -49,7 +49,7 @@
 -- and make every call ambiguous. `lorekit_policy_update` takes a jsonb patch,
 -- so it needs no drop; `lorekit_groom_sweep` takes no arguments.
 --
--- The index it needs already exists: `memories_user_opened_count_idx` (00103).
+-- The index it needs already exists: `memories_user_opened_count_idx` (00104).
 -- ═════════════════════════════════════════════════════════════════════════
 
 -- ── the policy column ─────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ alter table retention_policies add constraint retention_policies_max_opened_coun
 
 comment on column retention_policies.max_opened_count is
   'Match only lessons an agent has DELIBERATELY fetched at most this many times
-   (memories.opened_count, 00103). Unlike max_read_count (00101) a bulk
+   (memories.opened_count, 00104). Unlike max_read_count (00101) a bulk
    list/search ride-along does not count, so 0 means "nothing ever chose this"
    rather than "this lesson happens to live in a narrow scope". NULL =
    unconstrained.';
@@ -363,7 +363,7 @@ grant execute on function lorekit_policy_update(uuid, uuid, jsonb) to authentica
 -- ── 6. lorekit_memory_list ────────────────────────────────────────────────
 -- The Explorer's retention filter bar reads through this, so the condition has
 -- to exist on both surfaces or the preview and the policy disagree. Parameter
--- change, so the 00103 definition is dropped by its exact argument list first.
+-- change, so the 00104 definition is dropped by its exact argument list first.
 drop function if exists lorekit_memory_list(
   uuid, boolean, text, text, text, text, timestamptz, timestamptz, timestamptz,
   timestamptz, text[], text, text[], text, text[], text, text[], text, text[],

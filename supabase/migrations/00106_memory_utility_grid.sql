@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- 00105 — the delivered × chosen grid, and what delivery costs.
+-- 00106 — the delivered × chosen grid, and what delivery costs.
 --
 -- WHAT THIS REPLACES. `lorekit_memory_read_ranking` (00085) ranks by
 -- `read_count` alone, and 99.80% of recorded reads are bulk ride-alongs in a
@@ -49,7 +49,7 @@
 -- `lorekit_api_token_scope_allowed` narrowing for a scoped key (00068/00069).
 --
 -- INDEXES: `memories_user_read_count_idx` (00085) and
--- `memories_user_opened_count_idx` (00103) already cover the census scan;
+-- `memories_user_opened_count_idx` (00104) already cover the census scan;
 -- `memory_read_daily`'s primary key covers the cost sum's join.
 -- ═════════════════════════════════════════════════════════════════════════
 

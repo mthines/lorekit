@@ -171,6 +171,10 @@ To have LoreKit automatically learn from PR review comments, go to [Settings →
 - **Learns from:** resolved pull request review comments and reviews
 - **Tags each memory:** `source::pr-webhook`
 
+If you run a **review agent** that posts its findings as PR review comments, the App can also record whether each finding turned out to be worth posting — a thread that was fixed counts for that finding class, one declined in a reply or thumbed down by the PR author counts against it — so the agent's next review can suppress the noise and keep the signal.
+
+That part is **opt-in per installation** and has no settings page yet: it needs one configuration row telling LoreKit how your agent marks its own comments. Ask your LoreKit maintainer to set it up, or follow [the GitHub App integration guide](https://github.com/mthines/lorekit/blob/main/docs/github-app.md#comment-relevance-classification).
+
 </TutorialStep>
 
 <TutorialCallout>

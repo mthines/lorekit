@@ -11,7 +11,7 @@
  * however useless, a `branch` lesson almost never however good. Its "cold" end
  * — presented as a prune list — was therefore a list of NARROW SCOPES, and
  * following it would have pruned the most specific lore in the account. Pull-through
- * (`opened_count / read_count`, migration 00103) is a proper fraction, so the
+ * (`opened_count / read_count`, migration 00104) is a proper fraction, so the
  * breadth appears in both halves and cancels.
  *
  * FIVE STATES, NOT FOUR. The fifth — "Too new to judge" — is the one this

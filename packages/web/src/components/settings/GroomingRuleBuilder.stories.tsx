@@ -81,7 +81,7 @@ export const ListPopulated: Story = {
           unseen_days: null,
           max_seen_count: 2,
           max_read_count: null,
-          // The counterpart baseline: the "never chosen" condition 00104 adds,
+          // The counterpart baseline: the "never chosen" condition 00105 adds,
           // whose meaningful value is 0 — so a falsy-check regression that
           // dropped it from the sentence would show up here.
           max_opened_count: 0,

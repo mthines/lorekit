@@ -288,7 +288,7 @@ export interface GroomCandidateMemory {
   read_count: number;
   /**
    * How many times an agent DELIBERATELY fetched this exact lesson (migration
-   * 00103) — the count behind `last_opened_at`, moved by the same gate. The
+   * 00104) — the count behind `last_opened_at`, moved by the same gate. The
    * NARROW counter, and the one `max_opened_count` reads: `read_count` above
    * counts bulk ride-alongs, so its `0` is unreachable for any lesson in an
    * active scope and it ranks scope breadth. This one's `0` means "nothing

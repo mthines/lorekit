@@ -35,7 +35,7 @@ function verdictFor(input: Parameters<typeof lessonUtility>[0]) {
 
 describe('lessonUtility', () => {
   it('returns null when the backend supplied no counters', () => {
-    // Not the same answer as "unproven": a pre-00103 backend cannot be judged
+    // Not the same answer as "unproven": a pre-00104 backend cannot be judged
     // at all, and a fabricated 0/0 verdict would read as "dormant".
     expect(lessonUtility({ created_at: NOW.toISOString() }, NOW)).toBeNull();
     expect(lessonUtility({ created_at: NOW.toISOString(), read_count: 5 }, NOW)).toBeNull();

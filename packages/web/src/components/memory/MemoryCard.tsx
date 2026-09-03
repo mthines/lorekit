@@ -59,7 +59,7 @@ export interface MemoryCardModel {
   pr?: { url: string; label: string } | null;
   /**
    * Is this lesson earning its place? Null when the backend supplied no read
-   * counters (pre-00103) — the card then shows nothing rather than a verdict it
+   * counters (pre-00104) — the card then shows nothing rather than a verdict it
    * cannot support. See `lib/lesson-utility.ts`.
    */
   utility?: LessonUtilityVerdict | null;
