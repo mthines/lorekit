@@ -1,6 +1,9 @@
 /**
  * GitHub reads for the comment-relevance classifier — the impure shell around
- * the pure decision tables in ./comment-relevance.ts.
+ * two pure, spec'd modules: ./github-review-parse.ts turns a GraphQL node into
+ * flat facts, and ./comment-relevance.ts decides what those facts mean.  This
+ * file owns only the HTTP calls, their pagination, and their budget; every
+ * judgement it would otherwise make inline lives in one of those two.
  *
  * Everything here runs on an INSTALLATION access token, so it can only ever see
  * repositories the account actually installed the App on.  Every function fails
@@ -30,6 +33,7 @@ import {
   touchEvidenceFromFiles,
   type TouchEvidence,
 } from './comment-relevance.ts';
+import { parseThreadNode, type ReviewThreadFacts } from './github-review-parse.ts';
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -56,25 +60,6 @@ const MAX_TOUCH_COMPARES = 12;
  * diff that happens not to contain the file.
  */
 const COMPARE_FILES_CEILING = 300;
-
-export interface ReviewThreadFacts {
-  isResolved: boolean;
-  isOutdated: boolean;
-  /** REST id of the root comment — what a marker-bearing comment is keyed by. */
-  rootCommentId: number | null;
-  rootBody: string;
-  rootPath: string | null;
-  /** Null for a file-level comment, and for a comment whose anchor moved away. */
-  rootLine: number | null;
-  rootAuthorLogin: string | null;
-  rootAuthorIsBot: boolean;
-  /** The commit the root comment was written against — the `compare` base. */
-  rootCommitSha: string | null;
-  /** Reply bodies after the root comment. */
-  replies: string[];
-  /** Logins that reacted 👎 to the ROOT comment. */
-  thumbsDownLogins: string[];
-}
 
 export interface ReviewThreadRead {
   /**
@@ -185,43 +170,6 @@ export async function fetchReviewThreads(args: {
 
   // Ran out of pages with more to fetch.
   return { complete: false, threads };
-}
-
-function parseThreadNode(node: Json): ReviewThreadFacts | null {
-  const comments: Json[] = node?.comments?.nodes ?? [];
-  const root = comments[0];
-  if (!root) return null;
-
-  return {
-    isResolved: !!node.isResolved,
-    isOutdated: !!node.isOutdated,
-    rootCommentId: typeof root.databaseId === 'number' ? root.databaseId : null,
-    rootBody: typeof root.body === 'string' ? root.body : '',
-    rootPath: typeof root.path === 'string' && root.path.length > 0 ? root.path : null,
-    // GraphQL reports `line` as null once the anchor has moved off the diff,
-    // which is the same shape as a file-level comment. Both are "no line", and
-    // the decision tables handle them identically.
-    rootLine: typeof root.line === 'number' && root.line > 0 ? root.line : null,
-    rootAuthorLogin: typeof root.author?.login === 'string' ? root.author.login : null,
-    rootAuthorIsBot: root.author?.__typename === 'Bot',
-    // `commit` is the comment's current commit; `originalCommit` is where it was
-    // first written. Prefer the original: "did anything land AFTER the comment"
-    // is anchored at the comment's own point in history, and `commit` advances
-    // when GitHub re-anchors a thread onto a later commit.
-    rootCommitSha:
-      typeof root.originalCommit?.oid === 'string'
-        ? root.originalCommit.oid
-        : typeof root.commit?.oid === 'string'
-          ? root.commit.oid
-          : null,
-    replies: comments
-      .slice(1)
-      .map((c) => (typeof c?.body === 'string' ? c.body : ''))
-      .filter(Boolean),
-    thumbsDownLogins: (root.reactions?.nodes ?? [])
-      .map((r: Json) => r?.user?.login)
-      .filter((login: unknown): login is string => typeof login === 'string'),
-  };
 }
 
 /**
