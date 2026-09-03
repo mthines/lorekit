@@ -123,11 +123,18 @@ export function RunsList() {
           variant="outline"
           size="sm"
           disabled={cursorHistory.length === 0}
+          analyticsId="runs.prev-page"
           onClick={handlePrevPage}
         >
           Previous
         </Button>
-        <Button variant="outline" size="sm" disabled={!data?.next_cursor} onClick={handleNextPage}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!data?.next_cursor}
+          analyticsId="runs.next-page"
+          onClick={handleNextPage}
+        >
           Next
         </Button>
       </div>

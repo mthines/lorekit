@@ -162,6 +162,7 @@ export function FormDialog({ open, title, description, onClose, children, classN
                 variant="ghost"
                 icon={<X className="size-4" />}
                 label="Close"
+                analyticsId="form-dialog.close"
                 onClick={onClose}
               />
             </div>

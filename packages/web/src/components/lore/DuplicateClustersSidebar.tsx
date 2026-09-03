@@ -23,6 +23,7 @@
 
 import { CopyCheck, X } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { IconButton } from '@/components/ui/Button';
 import { useDuplicateClusters } from '@/lib/queries/duplicate-clusters';
 import {
   clusterId,
@@ -74,14 +75,19 @@ export function DuplicateClustersSidebar({
         <h2 className="text-xs font-medium text-[var(--color-content-secondary)]">
           Duplicate clusters
         </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Hide duplicate clusters"
-          className="ml-auto flex min-h-7 min-w-7 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)]"
-        >
-          <X className="size-3.5" aria-hidden />
-        </button>
+        {/* ml-auto lives on the wrapper, not the IconButton: a positioning
+            class passed to IconButton lands on the inner <button>, while the
+            Tooltip wrapper span is the actual flex child that must be pushed. */}
+        <div className="ml-auto">
+          <IconButton
+            variant="ghost"
+            size="sm"
+            analyticsId="duplicate-clusters.close"
+            onClick={onClose}
+            label="Hide duplicate clusters"
+            icon={<X className="size-3.5" aria-hidden />}
+          />
+        </div>
       </div>
 
       {isLoading ? (

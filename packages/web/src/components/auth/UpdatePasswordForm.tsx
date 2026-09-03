@@ -82,7 +82,13 @@ export function UpdatePasswordForm() {
         <p role="alert" className="text-sm text-red-400">
           This reset link is invalid, expired, or was already used.
         </p>
-        <Button href="/forgot-password" variant="secondary" size="lg" fullWidth>
+        <Button
+          href="/forgot-password"
+          variant="secondary"
+          size="lg"
+          fullWidth
+          analyticsId="update-password.request-new-link"
+        >
           Request a new link
         </Button>
       </div>
@@ -137,6 +143,7 @@ export function UpdatePasswordForm() {
         fullWidth
         disabled={busy || done}
         aria-busy={busy}
+        analyticsId="update-password.submit"
       >
         {done ? 'Password updated' : busy ? 'Updating...' : 'Update password'}
       </Button>

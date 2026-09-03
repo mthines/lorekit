@@ -106,19 +106,34 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
                 <span className="font-medium">{invite.org?.name ?? 'an organization'}</span>.
               </p>
               <div className="mt-2.5 flex flex-wrap gap-2">
-                <Button variant="primary" onClick={() => handleAccept(invite)} disabled={pending}>
+                <Button
+                  variant="primary"
+                  analyticsId="invite.accept"
+                  onClick={() => handleAccept(invite)}
+                  disabled={pending}
+                >
                   Accept
                 </Button>
-                <Button variant="outline" onClick={() => handleDecline(invite)} disabled={pending}>
+                <Button
+                  variant="outline"
+                  analyticsId="invite.decline"
+                  onClick={() => handleDecline(invite)}
+                  disabled={pending}
+                >
                   Decline
                 </Button>
-                <Button variant="ghost" onClick={() => setViewingInvite(invite)}>
+                <Button
+                  variant="ghost"
+                  analyticsId="invite.view-details"
+                  onClick={() => setViewingInvite(invite)}
+                >
                   View details
                 </Button>
               </div>
             </div>
             <IconButton
               variant="ghost"
+              analyticsId="invite.dismiss-banner"
               onClick={() => dismiss(invite.id)}
               label="Dismiss invitation banner"
               icon={<X className="size-4" aria-hidden />}

@@ -29,6 +29,7 @@ import type {
 } from 'react';
 import { Loader2 } from 'lucide-react';
 
+import { withButtonClickTracking } from '@/lib/button-analytics';
 import { buttonClasses, type ButtonSize, type ButtonVariant } from '@/lib/button-styles';
 import { cn } from '@/lib/cn';
 
@@ -48,6 +49,14 @@ interface StyleProps {
   /** Stretch to the container width. */
   fullWidth?: boolean;
   className?: string;
+  /**
+   * Opt in to `ui.button_click` analytics with a STATIC `<surface>.<action>`
+   * slug (e.g. `invite.accept`). When set, a click fires the event before the
+   * original `onClick` (best-effort — see `lib/button-analytics.ts`). Must be a
+   * string literal, never user content — enforced by
+   * `analytics-id-literals.spec.ts`.
+   */
+  analyticsId?: string;
 }
 
 /** Spinner size tracks the button size so it never dwarfs small buttons. */
@@ -162,16 +171,33 @@ export type ButtonProps = ButtonAsButton | ButtonAsLink;
 
 export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
   function Button(
-    { variant, size, isLoading, fullWidth, className, leftIcon, rightIcon, children, ...rest },
+    {
+      variant,
+      size,
+      isLoading,
+      fullWidth,
+      className,
+      analyticsId,
+      leftIcon,
+      rightIcon,
+      children,
+      ...rest
+    },
     ref,
   ) {
     const classes = cn(buttonClasses({ variant, size, fullWidth }), className);
+    const { onClick, ...nativeRest } = rest as ForwardedNativeProps;
+    const trackedOnClick = withButtonClickTracking(
+      onClick as MouseEventHandler<HTMLButtonElement | HTMLAnchorElement> | undefined,
+      { analyticsId, variant, size },
+    );
     return (
       <BaseButton
         ref={ref}
         isLoading={isLoading}
         className={classes}
-        {...(rest as ForwardedNativeProps)}
+        onClick={trackedOnClick}
+        {...(nativeRest as Omit<ForwardedNativeProps, 'onClick'>)}
       >
         {/* The spinner replaces the leading icon while loading. */}
         {isLoading ? <Loader2 aria-hidden className={spinnerClass(size)} /> : leftIcon}
@@ -212,6 +238,7 @@ export const IconButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Icon
       isLoading,
       fullWidth,
       className,
+      analyticsId,
       icon,
       label,
       tooltip,
@@ -222,6 +249,11 @@ export const IconButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Icon
     ref,
   ) {
     const classes = cn(buttonClasses({ variant, size, iconOnly: true, fullWidth }), className);
+    const { onClick, ...nativeRest } = rest as ForwardedNativeProps;
+    const trackedOnClick = withButtonClickTracking(
+      onClick as MouseEventHandler<HTMLButtonElement | HTMLAnchorElement> | undefined,
+      { analyticsId, variant, size },
+    );
     return (
       <Tooltip content={tooltip ?? label} side={tooltipSide} align={tooltipAlign}>
         <BaseButton
@@ -229,7 +261,8 @@ export const IconButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Icon
           isLoading={isLoading}
           aria-label={label}
           className={classes}
-          {...(rest as ForwardedNativeProps)}
+          onClick={trackedOnClick}
+          {...(nativeRest as Omit<ForwardedNativeProps, 'onClick'>)}
         >
           {isLoading ? (
             <Loader2 aria-hidden className={spinnerClass(size)} />

@@ -87,6 +87,7 @@ export function SessionTokenPanel() {
           <Button
             variant="secondary"
             size="lg"
+            analyticsId="session-token.reveal"
             onClick={handleReveal}
             isLoading={pending}
             leftIcon={<Eye className="size-4" aria-hidden />}

@@ -129,6 +129,7 @@ function SuggestionBanner({
         variant="primary"
         size="sm"
         className="shrink-0"
+        analyticsId="github-app.share-all"
         onClick={() => onBind(suggestion.org.id, suggestion.repos)}
         isLoading={busy}
         leftIcon={<LinkIcon className="size-3.5" aria-hidden />}
@@ -262,6 +263,7 @@ function BindActionBar({
       </div>
       <Button
         variant="primary"
+        analyticsId="github-app.bind"
         onClick={onBind}
         disabled={busy || selectedCount === 0 || !targetOrgId}
         isLoading={busy}
@@ -510,6 +512,7 @@ function InstallationCard({
                   variant="secondary"
                   size="sm"
                   className="self-start"
+                  analyticsId="github-app.share-open"
                   onClick={() => setSharing(true)}
                   leftIcon={<LinkIcon className="size-3.5 shrink-0" aria-hidden />}
                 >
@@ -532,7 +535,13 @@ function InstallationCard({
                 />
                 {/* Exit only — bindings apply on Share, so leaving keeps any
                     in-progress selection rather than silently discarding it. */}
-                <Button variant="ghost" size="sm" className="self-start" onClick={() => setSharing(false)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="self-start"
+                  analyticsId="github-app.share-done"
+                  onClick={() => setSharing(false)}
+                >
                   Done
                 </Button>
               </div>

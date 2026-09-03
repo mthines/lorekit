@@ -14,7 +14,16 @@ interface EmptyStateProps {
    * into a recovery, which is the difference between a page that looks broken
    * and one that looks narrowed.
    */
-  action?: { label: string; onClick: () => void };
+  action?: {
+    label: string;
+    onClick: () => void;
+    /**
+     * `analyticsId` for the action button. Defaults to `'empty-state.action'`;
+     * callers pass a distinct static-literal `<surface>.empty-state.<action>`
+     * slug so each empty-state recovery is a distinguishable `ui.button_click`.
+     */
+    analyticsId?: string;
+  };
 }
 
 export function EmptyState({ icon: Icon, title, description, action }: EmptyStateProps) {
@@ -28,7 +37,12 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
         <p className="text-xs text-[var(--color-content-tertiary)]">{description}</p>
       </div>
       {action && (
-        <Button variant="secondary" size="sm" onClick={action.onClick}>
+        <Button
+          variant="secondary"
+          size="sm"
+          analyticsId={action.analyticsId ?? 'empty-state.action'}
+          onClick={action.onClick}
+        >
           {action.label}
         </Button>
       )}

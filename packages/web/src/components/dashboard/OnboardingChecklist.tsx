@@ -172,7 +172,12 @@ function AllSetPanel({ onReview }: { onReview: () => void }) {
         Every setup step is complete. Your agents can read and write lore, and PR
         review comments flow in automatically. You can revisit this page any time.
       </p>
-      <Button variant="secondary" onClick={onReview} leftIcon={<ListChecks className="size-4" aria-hidden />}>
+      <Button
+        variant="secondary"
+        analyticsId="onboarding.review"
+        onClick={onReview}
+        leftIcon={<ListChecks className="size-4" aria-hidden />}
+      >
         Review the steps
       </Button>
     </motion.div>
@@ -264,6 +269,7 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
           <IconButton
             variant="ghost"
             size="sm"
+            analyticsId="onboarding.dismiss"
             onClick={dismiss}
             label="Hide onboarding checklist"
             tooltip="Hide — reopen from Getting started in the sidebar"

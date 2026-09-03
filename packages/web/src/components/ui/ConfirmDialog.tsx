@@ -30,6 +30,13 @@ export interface ConfirmDialogProps {
    * the highest-stakes, irreversible-looking actions. Omit for a plain confirm.
    */
   confirmPhrase?: string;
+  /**
+   * `analyticsId` for the confirm button. Defaults to `'confirm-dialog.confirm'`
+   * so untouched callers keep today's behavior; callers with a distinct confirm
+   * action pass their own static-literal `<surface>.<action>.confirm` slug so the
+   * `ui.button_click` events stay distinguishable per action.
+   */
+  confirmAnalyticsId?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -43,6 +50,7 @@ export function ConfirmDialog({
   destructive = false,
   pending = false,
   confirmPhrase,
+  confirmAnalyticsId = 'confirm-dialog.confirm',
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -168,13 +176,21 @@ export function ConfirmDialog({
               </div>
             )}
             <div className="flex justify-end gap-2">
-              <Button ref={cancelRef} type="button" variant="outline" size="md" onClick={onCancel}>
+              <Button
+                ref={cancelRef}
+                type="button"
+                variant="outline"
+                size="md"
+                analyticsId="confirm-dialog.cancel"
+                onClick={onCancel}
+              >
                 {cancelLabel}
               </Button>
               <Button
                 type="button"
                 variant={destructive ? 'danger' : 'primary'}
                 size="md"
+                analyticsId={confirmAnalyticsId}
                 onClick={onConfirm}
                 disabled={pending || !phraseSatisfied}
               >

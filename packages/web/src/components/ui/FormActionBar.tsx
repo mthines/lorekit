@@ -108,6 +108,7 @@ export function FormActionBar({
               type="button"
               variant="secondary"
               className="flex-1"
+              analyticsId="form-action-bar.discard"
               onClick={onDiscard}
               disabled={isSaving}
               aria-label="Discard changes"
@@ -121,6 +122,7 @@ export function FormActionBar({
               type="submit"
               variant="primary"
               className="flex-1"
+              analyticsId="form-action-bar.save"
               onClick={(e) => void onSave(e)}
               isLoading={isSaving}
               aria-label={isSaving ? 'Saving…' : 'Save changes'}

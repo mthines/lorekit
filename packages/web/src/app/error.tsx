@@ -55,7 +55,13 @@ export default function RootError({ error, reset }: ErrorProps) {
 
         {/* Actions */}
         <div className="flex w-full flex-col gap-2">
-          <Button variant="primary" fullWidth leftIcon={<RotateCcw className="size-4" />} onClick={reset}>
+          <Button
+            variant="primary"
+            fullWidth
+            leftIcon={<RotateCcw className="size-4" />}
+            analyticsId="error.try-again"
+            onClick={reset}
+          >
             Try again
           </Button>
           <Button
@@ -63,6 +69,7 @@ export default function RootError({ error, reset }: ErrorProps) {
             fullWidth
             href="/overview"
             leftIcon={<Home className="size-4" />}
+            analyticsId="error.go-home"
           >
             Go to dashboard
           </Button>
