@@ -251,6 +251,38 @@ export interface ComparedFile {
 }
 
 /**
+ * `compare` truncates its `files` array at 300 entries and gives no flag saying
+ * so, so a diff sitting exactly at the ceiling is unreadable rather than a diff
+ * that happens not to contain the file.
+ */
+export const COMPARE_FILES_CEILING = 300;
+
+/**
+ * A `compare` response body → the file list `touchEvidenceFromFiles` consumes,
+ * or `null` when the body cannot answer the question.
+ *
+ * This exists because the shell's own stated contract — `null` on any condition
+ * that makes the answer unknowable — was being broken by its own default.
+ * Reading an absent or non-array `files` key as `[]` turns "GitHub did not tell
+ * us" into the one value the decision below reads as a COMPLETED walk that did
+ * not contain the file: `touched: false`, and a suppression filed for a file
+ * nothing ever looked at.  That is the same inversion the ceiling guard exists
+ * to prevent, arriving through a `??` rather than through truncation — so both
+ * now sit on one side of one seam instead of one being guarded and the other
+ * left to a default nobody read.
+ *
+ * A `files: []` that GitHub actually sent is NOT that case and passes through.
+ * A compare of two commits with identical trees really does list no files, and
+ * "the walk completed and found nothing" is evidence.
+ */
+export function filesFromCompareBody(body: unknown): ComparedFile[] | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const files = (body as { files?: unknown }).files;
+  if (!Array.isArray(files)) return null;
+  return files.length >= COMPARE_FILES_CEILING ? null : (files as ComparedFile[]);
+}
+
+/**
  * A completed `compare` plus one thread's anchor → touch evidence, or `null`
  * when the pair cannot decide.
  *
