@@ -27,7 +27,13 @@
 import { http, HttpResponse } from 'msw';
 import { resolveKindHost } from '@lorekit/schemas/tags';
 import { CHARS_PER_TOKEN_ESTIMATE, LESSON_UTILITY_THRESHOLDS } from '@lorekit/schemas/memory';
-import { lessonUtility } from '@/lib/lesson-utility';
+// Relative + explicit `.ts`, NOT the `@/` alias every other web module uses:
+// `packages/evals` imports this file through plain Node ESM (see
+// `test/relevance/relevance-integration.test.mjs`), and Node resolves package
+// specifiers and relative paths but knows nothing of Next's `paths` mapping.
+// An `@/` import here is invisible to `nx typecheck` and Storybook — both
+// resolve it — and only fails in the evals suite.
+import { lessonUtility } from '../lib/lesson-utility.ts';
 
 /**
  * The instant the story clock is frozen to. Fixtures below are dated relative to
