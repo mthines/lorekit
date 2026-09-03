@@ -11,6 +11,8 @@ import {
   extractMarkerValue,
   hasDeclineReply,
   isSafeMarkerValue,
+  touchEvidenceFromFiles,
+  type ComparedFile,
   type RelevanceRecordVerdict,
   type ThreadFacts,
 } from './comment-relevance.js';
@@ -232,6 +234,112 @@ describe('patchTouchesLine', () => {
   it('LINE_TOUCH_RADIUS is the documented default', () => {
     expect(LINE_TOUCH_RADIUS).toBe(10);
     expect(patchTouchesLine(patch, 11)).toBe(patchTouchesLine(patch, 11, LINE_TOUCH_RADIUS));
+  });
+});
+
+describe('touchEvidenceFromFiles', () => {
+  const PATCH = '@@ -10,3 +10,5 @@\n-old\n+new';
+  const files = (over: Partial<ComparedFile> = {}): ComparedFile[] => [
+    { filename: 'src/a.ts', patch: PATCH, ...over },
+  ];
+
+  it('is undecidable when the walk did not complete', () => {
+    expect(touchEvidenceFromFiles(null, 'src/a.ts', 11)).toBeNull();
+    expect(touchEvidenceFromFiles(undefined, 'src/a.ts', 11)).toBeNull();
+  });
+
+  it('is undecidable with no path to corroborate against', () => {
+    expect(touchEvidenceFromFiles(files(), null, 11)).toBeNull();
+    expect(touchEvidenceFromFiles(files(), '', 11)).toBeNull();
+  });
+
+  it('reports untouched when a COMPLETED walk does not list the file', () => {
+    // Different from an unreadable walk: every changed file was seen and this
+    // was not one of them, which is real evidence that no fix landed.
+    expect(touchEvidenceFromFiles(files(), 'src/other.ts', 11)).toEqual({
+      touched: false,
+      granularity: 'line',
+    });
+  });
+
+  it('reports touched at line granularity when a hunk covers the line', () => {
+    expect(touchEvidenceFromFiles(files(), 'src/a.ts', 11)).toEqual({
+      touched: true,
+      granularity: 'line',
+    });
+  });
+
+  it('reports untouched when the hunks are outside the radius', () => {
+    expect(touchEvidenceFromFiles(files(), 'src/a.ts', 500)).toEqual({
+      touched: false,
+      granularity: 'line',
+    });
+  });
+
+  it('treats a rename as a touch, matching previous_filename', () => {
+    const renamed = [{ filename: 'src/b.ts', previous_filename: 'src/a.ts', patch: PATCH }];
+    expect(touchEvidenceFromFiles(renamed, 'src/a.ts', 11)).toEqual({
+      touched: true,
+      granularity: 'line',
+    });
+  });
+
+  describe('an absent patch is UNDECIDABLE, never untouched', () => {
+    // The regression this function exists to prevent: `compare` omits `patch`
+    // for a binary file, an over-limit diff, and a pure rename. Reading that as
+    // `touched: false` files an `ignored-at-merge` suppression for a file the
+    // pull request demonstrably changed.
+    it('returns null when the listed entry carries no patch', () => {
+      expect(touchEvidenceFromFiles([{ filename: 'src/a.ts' }], 'src/a.ts', 11)).toBeNull();
+    });
+
+    it('returns null for an explicitly null or empty patch', () => {
+      expect(touchEvidenceFromFiles([{ filename: 'src/a.ts', patch: null }], 'src/a.ts', 11)).toBeNull();
+      expect(touchEvidenceFromFiles([{ filename: 'src/a.ts', patch: '' }], 'src/a.ts', 11)).toBeNull();
+    });
+
+    it('returns null for a pure rename with no patch, at line granularity', () => {
+      const renamed = [{ filename: 'src/b.ts', previous_filename: 'src/a.ts' }];
+      expect(touchEvidenceFromFiles(renamed, 'src/a.ts', 11)).toBeNull();
+    });
+
+    it('and the merged classifier turns that null into no record at all', () => {
+      const verdict = classifyMergedThread(
+        facts({ path: 'src/a.ts', line: 11, touch: null }),
+      );
+      expect(verdict.write).toBe(false);
+      expect(verdict).toMatchObject({ skip: 'touch-undecidable' });
+    });
+  });
+
+  describe('file granularity — no line anchor', () => {
+    it('a listed file is touched, patch or not', () => {
+      // The file-level question is the honest weaker one and needs no hunks, so
+      // a missing patch is not undecidable here.
+      expect(touchEvidenceFromFiles([{ filename: 'src/a.ts' }], 'src/a.ts', null)).toEqual({
+        touched: true,
+        granularity: 'file',
+      });
+      expect(touchEvidenceFromFiles(files(), 'src/a.ts', 0)).toEqual({
+        touched: true,
+        granularity: 'file',
+      });
+    });
+
+    it('an unlisted file is untouched', () => {
+      expect(touchEvidenceFromFiles(files(), 'src/other.ts', null)).toEqual({
+        touched: false,
+        granularity: 'file',
+      });
+    });
+  });
+
+  it('an empty completed walk is untouched, not undecidable', () => {
+    // `[]` is a real answer — the compare ran and nothing changed.
+    expect(touchEvidenceFromFiles([], 'src/a.ts', 11)).toEqual({
+      touched: false,
+      granularity: 'line',
+    });
   });
 });
 

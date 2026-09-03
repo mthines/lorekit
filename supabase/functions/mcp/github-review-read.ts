@@ -27,7 +27,7 @@
  */
 
 import {
-  patchTouchesLine,
+  touchEvidenceFromFiles,
   type TouchEvidence,
 } from './comment-relevance.ts';
 
@@ -258,18 +258,13 @@ export class TouchProbe {
       return { touched: false, granularity: thread.rootLine ? 'line' : 'file' };
     }
 
+    // The decision itself lives in the pure, spec'd, drift-guarded module. This
+    // class owns the HTTP call and its memo and nothing else, so the branch that
+    // decides between "untouched" and "cannot tell" is testable — `filesSince`
+    // already collapses every unreadable condition to `null`, which
+    // `touchEvidenceFromFiles` reads as undecidable.
     const files = await this.filesSince(thread.rootCommitSha);
-    if (!files) return null;
-
-    const granularity: TouchEvidence['granularity'] = thread.rootLine ? 'line' : 'file';
-    // A rename is a touch, and it changes the name the file is listed under —
-    // so matching only `filename` reports a renamed file as never edited.
-    const entry = files.find(
-      (f) => f.filename === thread.rootPath || f.previous_filename === thread.rootPath,
-    );
-    if (!entry) return { touched: false, granularity };
-    if (granularity === 'file') return { touched: true, granularity };
-    return { touched: patchTouchesLine(entry.patch, thread.rootLine ?? 0), granularity };
+    return touchEvidenceFromFiles(files, thread.rootPath, thread.rootLine);
   }
 
   /** `null` on any condition that makes the answer unknowable. */

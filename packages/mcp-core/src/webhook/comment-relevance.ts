@@ -238,6 +238,57 @@ export function patchTouchesLine(
   return false;
 }
 
+/**
+ * One entry of GitHub's `compare` files array, narrowed to what the decision
+ * below reads.  `patch` is OPTIONAL in the API, not merely sometimes empty.
+ */
+export interface ComparedFile {
+  filename?: string;
+  previous_filename?: string;
+  patch?: string | null;
+}
+
+/**
+ * A completed `compare` plus one thread's anchor → touch evidence, or `null`
+ * when the pair cannot decide.
+ *
+ * This is the decision half of the `compare` probe, kept here rather than in
+ * the edge fetch shell so it is testable and covered by the mirror's drift
+ * guard.  The shell supplies `files` (`null` when the read failed or the array
+ * was truncated) and owns nothing but the HTTP call and its memo.
+ *
+ * The `null` on an absent `patch` is the load-bearing line.  `compare` omits
+ * `patch` for a binary file, for an entry past the per-file diff limit, and for
+ * a pure rename — and this function is only reached at LINE granularity, where
+ * "no hunks to look at" cannot distinguish "the line was not touched" from
+ * "the hunks were not sent".  Answering `touched: false` there would hand the
+ * merge sweep a fabricated negative and file an `ignored-at-merge` suppression
+ * for a file the pull request demonstrably changed, which is the one inversion
+ * `classifyMergedThread`'s `touch-undecidable` branch exists to prevent.
+ *
+ * An entry that is genuinely ABSENT from a completed walk is different, and
+ * stays `touched: false`: the walk saw every changed file and this was not one
+ * of them, which is real evidence that no fix landed.
+ */
+export function touchEvidenceFromFiles(
+  files: readonly ComparedFile[] | null | undefined,
+  path: string | null | undefined,
+  line: number | null | undefined,
+): TouchEvidence | null {
+  if (!files || !path) return null;
+
+  const granularity: TouchEvidence['granularity'] =
+    typeof line === 'number' && line > 0 ? 'line' : 'file';
+
+  // A rename is a touch, and it changes the name the file is listed under — so
+  // matching only `filename` reports a renamed file as never edited.
+  const entry = files.find((f) => f.filename === path || f.previous_filename === path);
+  if (!entry) return { touched: false, granularity };
+  if (granularity === 'file') return { touched: true, granularity };
+  if (!entry.patch) return null;
+  return { touched: patchTouchesLine(entry.patch, line as number), granularity };
+}
+
 // ── Decision tables ─────────────────────────────────────────────────────────
 
 /**
