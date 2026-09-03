@@ -831,7 +831,7 @@ id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 - [Claude Code on the web](https://lorekit.io/docs/claude-code-web) — Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so either commit a project .mcp.json (auth via the LOREKIT_TOKEN environment variable) or install LoreKit globally from a setup script — the token always lives in LOREKIT_TOKEN, never in the repo.
 - [Use cases](https://lorekit.io/docs/use-cases) — End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows.
 - [Deep links](https://lorekit.io/docs/deep-links) — Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag.
-- [Retention policies](https://lorekit.io/docs/grooming) — Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the read-only Duplicate Clusters sidebar for spotting the same lesson written twice.
+- [Retention policies](https://lorekit.io/docs/grooming) — Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the Insights grid that shows which lessons are earning their place, and the read-only Duplicate Clusters sidebar for spotting the same lesson written twice.
 
 ## Key documentation
 

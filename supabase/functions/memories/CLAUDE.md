@@ -24,6 +24,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | /pivot | pivot.ts | read |
 | GET | /read-activity | read-activity.ts | read |
 | GET | /clusters | clusters.ts | read |
+| GET | /utility | utility.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
@@ -564,6 +565,80 @@ routes needed a second gate only because they have agent-side callers this one d
 (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret). A `GET` that is read-only, additive
 and unreferenced is safe to serve unconditionally.
 
+## `GET /utility`
+
+Where every active lesson sits on **delivered × chosen**, plus what the deliveries cost.
+Backs the Insights page's `LoreUtilityGrid` and the cost line above it (migration 00105).
+
+```json
+{
+  "census": [
+    { "utility": "load-bearing", "count": 12 },
+    { "utility": "specialist", "count": 40 },
+    { "utility": "noise-tax", "count": 7 },
+    { "utility": "dormant", "count": 311 },
+    { "utility": "unproven", "count": 58 }
+  ],
+  "cost": {
+    "delivered_reads": 150420,
+    "chosen_reads": 291,
+    "delivered_tokens": 602103264,
+    "chosen_tokens": 1180422
+  },
+  "rows": [],
+  "counting_since": "2026-06-12",
+  "thresholds": { "chosenPullThrough": 0.02, "broadReachDeliveries": 100, "minDeliveries": 10, "minAgeDays": 7 }
+}
+```
+
+| Param | Default | Notes |
+|-------|---------|-------|
+| `scope` | — | Reject-only filter. Not normalised — see below. |
+| `since` / `until` | — | The COST window only, half-open `[since, until)`. |
+| `quadrant` | — | Ask for a page of ONE state's rows. Omitted → `rows` is empty. |
+| `limit` | `20` | Rows per quadrant page. |
+
+**Five states, and the fifth is the point.** Two booleans decide the 2×2 — chosen
+(`opened_count / read_count` ≥ `chosenPullThrough`) and broad (`read_count` ≥
+`broadReachDeliveries`) — giving `load-bearing`, `specialist`, `noise-tax` and `dormant`. All
+four sit behind an evidence floor (`minAgeDays` AND `minDeliveries`); anything under it is
+`unproven`. Without that state a lesson written yesterday and one dead for a year are counted
+identically, which is the confusion this endpoint exists to remove. The thresholds are ECHOED
+in the response and passed INTO the SQL as parameters from `LESSON_UTILITY_THRESHOLDS`
+(`@lorekit/schemas`), the same object the dashboard's per-lesson chip reads — the SQL defaults
+are a fallback, never the authority, so a chip and a quadrant count cannot disagree.
+
+**Two windows, and they are not the same window.** `census` and `rows` read the LIFETIME
+counters on `memories`, because they must agree with that chip. `cost` sums `memory_read_daily`,
+the only source that can be windowed at all. Each caller captions its own; mixing them would
+give a page whose headline and grid silently describe different periods. The cost window is
+**half-open `[since, until)`**, the same asymmetry `/activity` and `/read-activity` use, so two
+adjacent windows partition the reads instead of both claiming the boundary day — at day grain
+that means `until` excludes the whole day it names, and "through right now" is spelled by
+OMITTING it, never by passing `now`.
+
+**`delivered_tokens` is an ESTIMATE** — body characters ÷ 4, never tokenized — and the share it
+supports measures SELECTION, not influence: a lesson injected at SessionStart is already in
+context and needs no second fetch to be acted on. Both qualifiers are rendered by the caller
+rather than buried, because the number is only honest with them.
+
+**`counting_since` is why a `0` is never called "never".** `opened_count` started at 00103, so a
+lesson older than the counter cannot support that claim; the response carries the date the
+counting began and the UI captions every zero with it.
+
+This route takes the **reject-only** `parseScopeFilter` (`clusters.ts`'s validator), not
+`read-ranking`'s normalising one: `memories.scope` is stored verbatim by the write path, so a
+lowercased filter would place a mixed-case scope's lore in NO quadrant at all — which reads as
+"nothing to groom here" rather than "that scope is spelled differently". Pinned per handler by
+`scope-filter-validation.spec.ts`.
+
+There is **no MCP tool and no CLI command**, recorded as a guarded `restOnly` entry in
+`telemetry-vocabulary.ts` (`usage_events.tool_name` is `memory.utility`). Its reason is
+`/clusters`' reason: the agent-side spelling already exists and is BETTER —
+`memory.list max_opened_count => 0` (migration 00104) SELECTS the never-chosen lore over the
+WHOLE scope, ordered and paginated like any other listing, where this route ranks a page of it
+and returns counts to paint. A groomer wants the rows.
+
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,
@@ -693,7 +768,7 @@ would answer "reads everywhere" under the label the caller asked for. Same call 
 second grammar.
 
 **That rule now holds on every scope-filtering route, not just this one.**
-`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `GET /clusters`,
+`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `GET /clusters`, `GET /utility`,
 `DELETE /?scope=…&key=…`
 and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. **So do the body
 transports** `POST /list`, `POST /activity` and `POST /facets`: each decodes into the same
