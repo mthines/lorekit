@@ -326,6 +326,11 @@ export async function toolList(
   if (!rawScope) throw new UserInputError('scope is required');
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
+  // Recorded BEFORE the clamp so a future cap decision has the caller's actual
+  // ask, not just the truncated `result.count` — without this, every call
+  // that wanted more than the cap is indistinguishable from one that got
+  // exactly what it asked for.
+  span.setAttributes({ 'lorekit.requested_limit': limit, 'lorekit.limit_capped': limit > pageLimit });
 
   // Validate `kind` against the same closed 3-value vocabulary the catalog
   // `enum` and `MemoryKindSchema` accept, for the same reason `order` is
@@ -573,7 +578,13 @@ export async function toolSearch(
   if (!q) throw new UserInputError('q is required');
   const pageLimit = Math.min(limit, 100);
 
-  span.setAttributes({ 'lorekit.search.query': q });
+  // See toolList's identical comment: recorded pre-clamp so a capped call is
+  // distinguishable from one that got everything it asked for.
+  span.setAttributes({
+    'lorekit.search.query': q,
+    'lorekit.requested_limit': limit,
+    'lorekit.limit_capped': limit > pageLimit,
+  });
 
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb
@@ -693,8 +704,15 @@ export async function toolListArchived(
   const { scope: rawScope, limit = 50 } = params;
   if (!rawScope) throw new UserInputError('scope is required');
   const scope = validateScope(rawScope);
+  const pageLimit = Math.min(limit, 100);
 
-  span.setAttributes({ 'lorekit.scope': scope });
+  // See toolList's identical comment: recorded pre-clamp so a capped call is
+  // distinguishable from one that got everything it asked for.
+  span.setAttributes({
+    'lorekit.scope': scope,
+    'lorekit.requested_limit': limit,
+    'lorekit.limit_capped': limit > pageLimit,
+  });
 
   const tracedDb = createTracedClient(db, span);
   // `id` is selected purely to drive the per-memory read counter below — it is
@@ -706,7 +724,7 @@ export async function toolListArchived(
     .eq('scope', scope)
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
-    .limit(Math.min(limit, 100));
+    .limit(pageLimit);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
