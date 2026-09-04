@@ -1,8 +1,7 @@
 /**
  * Generate `packages/web/public/llms.txt`.
  *
- * The I/O shell around the pure `render.ts` — the same split, and the same
- * write-outside-the-package precedent, as `openapi/generate.ts`.
+ * The I/O shell around the pure `render.ts`, writing outside the package.
  *
  * Usage:
  *   node --experimental-transform-types packages/schemas/src/llms/generate.ts

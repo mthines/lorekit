@@ -16,7 +16,8 @@ Single source of truth for all lorekit data shapes — Zod schemas for both MCP 
 2. Export from `src/index.ts` if shared
 3. Register it in `openapi/spec.ts` if a REST route uses it
 4. Run `pnpm nx test schemas` — `openapi/spec.spec.ts` executes the real generator, so an un-introspectable schema fails there instead of 500ing the deployed `/openapi` function
-5. Regenerate OpenAPI: `pnpm nx run schemas:generate:openapi`
+
+There is no spec artifact to regenerate: the `openapi` Edge Function calls `generateSpec()` at runtime and caches the result per isolate, so a registered schema is live the moment the function redeploys.
 
 ## Schema map
 
