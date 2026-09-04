@@ -75,7 +75,12 @@ Read at the moments where prior lessons change what you do:
 
 Follow [rules/intake.md](./rules/intake.md).
 The short version: resolve the current scope, list lessons narrow-to-broad,
-and treat matches as *considerations*, not commands.
+and treat matches as *considerations*, not commands. When a run is about to
+change code, intake step 6 reads the standard shared **`codebase-knowledge`**
+bucket — the cross-loop `hotspot::<path>` / `knowledge::<symbol>@<path>` record
+for the files this run will touch, matched by `symbol@path`. A run that verifies
+a structural fact contributes it back, so the layer compounds across every
+LoreKit loop in the repo (contract in the `lorekit-setup` skill).
 
 ## When to write (retrospective)
 
