@@ -138,7 +138,10 @@ jobs:
           # preview-machinery module unit-tested by this job, and its test reads
           # web-preview-deploy.yml (already on this filter) to prove the workflow
           # still renders the comment through it.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/ci/web-preview-(filter|comment)|\.github/workflows/(ci|web-preview-deploy)\.yml$)'; then
+          # `scripts/ci/vercel-deploy-shell` likewise, plus the composite action
+          # it reads: that guard asserts the deploy step's `shell:` still opts
+          # out of `-e`, so it must run when EITHER half moves.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/ci/(web-preview-(filter|comment)|vercel-deploy-shell)|\.github/(actions/vercel-preview-deploy/|workflows/(ci|web-preview-deploy)\.yml$))'; then
             echo "preview_filter=true" >> "$GITHUB_OUTPUT"
           else
             echo "preview_filter=false" >> "$GITHUB_OUTPUT"
@@ -540,6 +543,18 @@ jobs:
       # reads back. Both are held by assertion rather than by discipline.
       - name: Unit-test the web-preview comment body
         run: node --test scripts/ci/web-preview-comment.test.mjs
+
+      # The deploy step's `shell:`, for a third variant of the same reason: it
+      # is spelled out (`bash --noprofile --norc {0}`) precisely to opt OUT of
+      # the `-e` that `shell: bash` implies, and the difference is invisible on
+      # a green run. Under `-e` the step's `code=$?` and every fail() branch
+      # below it are unreachable, so a BLOCKED deploy reports no reason and
+      # writes no vercel-deploy-error.txt for the caller to quote — which is how
+      # a quota block read as an unexplained timeout on #643. The guard proves
+      # the bash semantics rather than asserting them, then holds the YAML to
+      # them.
+      - name: Unit-test the Vercel deploy step's shell semantics
+        run: node --test scripts/ci/vercel-deploy-shell.test.mjs
 
   # ── Edge typecheck — `deno check` over every Edge Function, ratcheted ────────
   #    Until this job existed, `supabase/functions/**` was typechecked by
