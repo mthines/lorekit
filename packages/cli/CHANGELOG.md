@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.67.0](https://github.com/mthines/lorekit/compare/cli-v1.66.0...cli-v1.67.0) (2026-09-04)
+
+
+### Features
+
+* **citations:** capture which lessons an agent actually applied ([41299d2](https://github.com/mthines/lorekit/commit/41299d27ec4202131fe06020990484826fa7b96b))
+* **insights:** make lore value legible — split the counters, grade every lesson, capture the citation ([283aedf](https://github.com/mthines/lorekit/commit/283aedf54291dcc77427dabcdf2878cf5f17a187))
+* **retention:** max_opened_count — the condition whose 0 means something ([17a1caa](https://github.com/mthines/lorekit/commit/17a1caa9ca4c96a94a9e66d69e83d75aa623db1b))
+
 ## [1.66.0](https://github.com/mthines/lorekit/compare/cli-v1.65.0...cli-v1.66.0) (2026-09-03)
 
 
