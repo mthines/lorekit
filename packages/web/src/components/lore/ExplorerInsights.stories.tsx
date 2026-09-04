@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { ExplorerInsights } from './ExplorerInsights';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
+import { NO_RETENTION_CONDITIONS } from '@/lib/retention-filter';
 
 /**
  * Visual-regression stories for the Explorer's stats header.
@@ -50,6 +51,13 @@ const meta: Meta<typeof ExplorerInsights> = {
     highlightRange: null,
     onSelectDate: () => undefined,
     nowIso: FROZEN_NOW,
+    // Required by the component (00108), and required HERE rather than left to
+    // TypeScript: Storybook lets `meta.args` and a story's `args` each supply
+    // part of the prop set, so a missing required prop is not a type error in a
+    // story file — it is an `undefined` read at render time. The empty set is
+    // the right default: these baselines depict the Explorer with no threshold
+    // chosen. A story that wants one overrides it.
+    retention: NO_RETENTION_CONDITIONS,
   },
 };
 
