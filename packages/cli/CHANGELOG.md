@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.68.0](https://github.com/mthines/lorekit/compare/cli-v1.67.0...cli-v1.68.0) (2026-09-04)
+
+
+### Features
+
+* **skills:** bake shared codebase-knowledge into the LoreKit skills ([#648](https://github.com/mthines/lorekit/issues/648)) ([c8a58de](https://github.com/mthines/lorekit/commit/c8a58dec4250a246eea35ccc1531daa83ad947dd))
+
 ## [1.67.0](https://github.com/mthines/lorekit/compare/cli-v1.66.0...cli-v1.67.0) (2026-09-04)
 
 
