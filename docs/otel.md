@@ -52,6 +52,8 @@ Attributes on `lorekit.memory.*` spans:
 | `lorekit.value.bytes` | `312` | Write path only: byte length of the value |
 | `lorekit.tags.count` | `2` | Write path only: number of tags supplied |
 | `lorekit.result.count` | `17` | List / search results: row count returned |
+| `lorekit.requested_limit` | `500` | `memory.list` / `memory.search` / `memory.list_archived`: the caller's `limit` argument BEFORE the server clamps it to the route's cap. Compare against `lorekit.result.count` to tell "got everything asked for" apart from "got the cap" |
+| `lorekit.limit_capped` | `true` | Same three tools: whether `requested_limit` exceeded the cap and was clamped down |
 
 Rate-limit attributes on the root `lorekit.mcp` span:
 
