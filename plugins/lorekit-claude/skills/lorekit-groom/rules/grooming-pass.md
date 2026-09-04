@@ -175,3 +175,13 @@ new count. Then either move to the next scope or close out the pass.
 - **Someone else's lesson deserves more caution.** A lesson tagged from another
   agent or a teammate is not automatically yours to delete — when in doubt,
   archive rather than hard-delete, and flag it in the plan.
+- **`codebase-knowledge` is durable structure, not an audit log.** The shared
+  `codebase-knowledge` bucket (tag `codebase-knowledge`, `knowledge::<symbol>@<path>`
+  and `hotspot::<path>` keys — see the `lorekit-setup` skill) is a live,
+  multi-loop signal store: every LoreKit loop in the repo both reads and feeds it.
+  Groom it like a signal store, never like the audit-log prose it superficially
+  resembles. Lint its structure and dedupe genuine key collisions, but do **not**
+  mass-archive by age or volume, and do **not** re-key a `knowledge::<symbol>@<path>`
+  entry off its structural key — that key is the join a reader matches against.
+  A stale fact carries `verified_at_sha`; prefer letting its TTL expire or the
+  owning loop overwrite it over hand-removing it.

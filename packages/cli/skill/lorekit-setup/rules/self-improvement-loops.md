@@ -21,6 +21,8 @@ The design has two tiers connected by a recurrence gate. Both run on LoreKit.
 - [Read step (start of every run)](#read-step-start-of-every-run)
 - [Write step (on failure / at the end of a run)](#write-step-on-failure--at-the-end-of-a-run)
 - [The reconcile-on-re-run flow (resolve + record)](#the-reconcile-on-re-run-flow-resolve--record)
+- [Cross-bucket reads (targeted, read-only)](#cross-bucket-reads-targeted-read-only)
+- [Shared codebase-knowledge (the standard cross-loop layer)](#shared-codebase-knowledge-the-standard-cross-loop-layer)
 - [Promotion (fast → slow)](#promotion-fast--slow)
 - [Entrenchment guards (do not skip these)](#entrenchment-guards-do-not-skip-these)
 - [Wiring checklist](#wiring-checklist)
@@ -247,6 +249,134 @@ record shape are specified in `agents/shared/rules/comment-relevance-memory.md`.
 
 ---
 
+## Cross-bucket reads (targeted, read-only)
+
+The default is strict: a loop reads **only its own bucket**, filtered by
+`loop::<host>-lessons`. That isolation is deliberate — it keeps one loop's
+lessons from drowning another's, and lets each read fire at its own cadence
+against its own decision point. Wholesale "read every lesson this repo knows"
+is an **anti-pattern**: it reintroduces exactly the noise the tag split exists
+to prevent, and buries the matches that would have fired.
+
+There is **one** shape of cross-bucket read that is safe and worth wiring: a host
+reading **another host's Signal or Knowledge bucket, matched by a structural key,
+strictly read-only**. Wire it only when all four hold:
+
+1. **The other bucket is keyed by something structural** — a `symbol@path`, a
+   file path, a stable fingerprint — never by prose. A structural key is what
+   makes a cross-host read meaningful: it matches the reader's own concrete work
+   (the files or symbols it is about to touch), not a vague topic.
+2. **The read is bounded to the reader's current work.** Match the other bucket's
+   keys against the paths / symbols this run will actually touch and ignore the
+   rest — never load the whole bucket as advice.
+3. **The reader treats it as advisory and re-verifies.** A cross-host fact can be
+   stale — it carries the *writer's* `verified_at_sha`, not the reader's. It
+   **raises care** (more coverage on a hotspot, design around a known invariant)
+   but never lowers a bar, skips a step, or suppresses a finding. An absent
+   record is never evidence of safety.
+4. **The reader never writes the other bucket.** Write ownership stays with the
+   one owning host; a second writer corrupts its provenance. Cross-host is a
+   **read** relationship only.
+
+Do **not** cross-read another host's `loop::<host>-lessons`. Lessons are prose
+"how to do better" advice tuned to that host's own decisions; they re-key on
+rephrasing and carry no structural anchor to match against, so a cross-read of
+them is the wholesale anti-pattern above. Only Signal / Knowledge buckets with
+structural keys qualify.
+
+LoreKit ships **one** standard instance of this pattern — the shared
+`codebase-knowledge` bucket that every code-touching loop reads and writes. It is
+the mechanism behind the automatic synergy below, and it is what makes a
+structural key worth insisting on: a fixed name plus a `symbol@path` key is what
+lets a loop wired by one person be consumed by a loop wired by another. It is
+specified in full next.
+
+---
+
+## Shared codebase-knowledge (the standard cross-loop layer)
+
+The cross-bucket read above becomes **automatic** through one bucket every LoreKit
+loop shares by name: `codebase-knowledge`. This is the reason two skills wired
+independently — by different people, in different sessions, in the same repo —
+still compound: they read and write the *same* repo-scoped, structurally-keyed
+record of what the codebase has taught every loop that touched it. A code-changing
+loop plans and edits with that history in hand instead of blind; and because the
+loops that consume it also feed it, the synergy appears for a user who wired a
+single skill and nothing else.
+
+### The bucket
+
+| Field | Value |
+| --- | --- |
+| **Tag** | `codebase-knowledge` |
+| **Kind** | `signal` (a durable per-repo filter, read on every run that touches code) |
+| **Scope** | `repo::{owner}/{repo}` — a codebase fact is repo-bound |
+| **TTL** | ~90 days, refreshed on re-verification |
+| **Keys** | `knowledge::<symbol>@<path>` — verified facts about one symbol (an invariant it holds, its consumer/dependent count, a defect it produced before); `hotspot::<path>` — per-file counters (`confirmed`, `regressed`, `missed`) |
+
+The keys are **structural** (`symbol@path`, `path`) on purpose: a key survives a
+rename of the *finding* but not a rename of the *code*, which is exactly the
+sensitivity that lets a different loop match it against the files it is about to
+touch. Set `kind: signal` and `host` explicitly on every write — LoreKit infers
+them only from a `loop::` tag, and this bucket is not tagged that way.
+
+### Read side — automatic for any code-touching host
+
+Wire it at the host's **plan/apply seam** — the moment it has the concrete
+file/symbol list it will change (a plan's File Changes list, an apply pack, a
+fix's target file):
+
+```text
+memory.list { scope: "repo::{owner}/{repo}", tags: ["codebase-knowledge"], limit: 100 }
+# keep only hotspot::<path> / knowledge::<symbol>@<path> whose <path> (and <symbol>)
+# this run will actually touch. Apply as PLANNING INPUTS: raise coverage on a
+# hotspot, design around a known invariant / consumer count. Advisory and
+# re-verified against the code — never a reason to skip a step or suppress a finding.
+```
+
+This is the read-side contract from [Cross-bucket reads](#cross-bucket-reads-targeted-read-only)
+made concrete: structural match, bounded to this run, advisory, an absent record
+never evidence of safety.
+
+### Write side — how the layer fills, and why many writers stay safe
+
+A host that **verifies** a structural fact contributes it back, so the next loop
+reads it. This is what makes the synergy automatic even for a user with one skill
+and no dedicated reviewer: the loops that consume the layer also feed it.
+Multi-writer is safe **only** behind this write contract — bake in every bullet,
+or do not wire the write:
+
+- **Structural key from a real symbol/path list**, never composed from prose. A
+  prose key accumulates nothing and no reader can match it.
+- **`verified_at_sha` on every fact** — the HEAD this run verified it at. It is the
+  whole mechanism the next reader uses to decide "fact stands" vs "re-verify"; an
+  absent or stale SHA makes the fact permanently unverifiable, and it is dropped.
+- **`source_agent` stamped** — which host verified it. Together with
+  `verified_at_sha` this is what makes many writers safe: a reader sees who
+  verified what, and when, so no writer silently overwrites another's provenance.
+- **Only what THIS run actually verified**, grounded in the code — never a guess,
+  and never a value about a person or a telemetry reading. A fact about code,
+  keyed to code.
+- **Merge, never clobber.** Read the existing record first; append to `history[]`
+  or increment counters (each capped) and carry the rest through unchanged. A
+  clobbered counter is indistinguishable from a first write.
+- **Raise care, never suppress.** These records only raise priority/coverage on a
+  file or symbol. They never lower a bar or silence a finding, and an absent record
+  is never evidence of safety. Suppression, if a host needs it, is a different
+  bucket behind verification (the Signal in the reconcile flow above).
+- **Explicit `kind: signal` + `host`, a TTL, and the privacy pre-flight** — as
+  every write in this skill.
+
+Because the name is fixed, the read is the same call in every host, and the write
+follows one contract, **any two LoreKit-wired loops in the same repo compound
+automatically** — which is the whole reason to standardize the name instead of
+letting each host invent its own. The reference ecosystem is `agent-skills`: the
+`pr-reviewer` agent is the primary writer (it verifies symbol facts and file
+hotspots during review), and every code-changing host — `aw`, `implement-suggestion`,
+`fix-bug`, `ci-auto-fix` — reads the layer at its plan/apply seam.
+
+---
+
 ## Promotion (fast → slow)
 
 After a read or write, a lesson is **promotion-eligible** when either:
@@ -316,6 +446,10 @@ To add a loop to a host called `<host>`:
 - [ ] State the **entrenchment guards** so a future maintainer does not "optimize
       them away".
 - [ ] Confirm the loop **degrades silently** when `memory.*` is not connected.
+- [ ] If the host **touches code**, wire the **[codebase-knowledge](#shared-codebase-knowledge-the-standard-cross-loop-layer)
+      read** at its plan/apply seam (match `hotspot::<path>` /
+      `knowledge::<symbol>@<path>` to the files it will change). If it **verifies**
+      a structural fact, wire the **write** behind that section's contract.
 
 ---
 

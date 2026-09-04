@@ -93,6 +93,23 @@ It covers: when to add a loop (and when not to), the bucket convention (tag
 read/write steps, the promotion gate, the entrenchment guards, a wiring
 checklist, and an interactive setup flow.
 
+## The shared codebase-knowledge layer (automatic cross-loop synergy)
+
+A per-host lessons bucket is private to one host. There is also **one shared
+bucket every code-touching host reads and, under a contract, writes**:
+`codebase-knowledge` — a repo-scoped, structurally-keyed record
+(`knowledge::<symbol>@<path>` facts, `hotspot::<path>` counters) of what the
+codebase has taught every LoreKit loop that touched it. Because the name is fixed
+and the key is structural, a loop wired by one person compounds with a loop wired
+by another: a host about to change code reads the history for exactly the files it
+will touch, and a host that verifies a structural fact contributes it back. That
+is the synergy that appears for a user who wired a single skill and nothing else.
+
+Wire it whenever a host changes code (read at its plan/apply seam) or verifies a
+durable structural fact (write under the contract). The full specification — the
+bucket table, the automatic read side, and the seven-bullet multi-writer write
+contract — is [rules/self-improvement-loops.md § Shared codebase-knowledge](./rules/self-improvement-loops.md#shared-codebase-knowledge-the-standard-cross-loop-layer).
+
 ## Set up CI state (deterministic hosts)
 
 Follow [rules/ci-state-records.md](./rules/ci-state-records.md). It covers: when

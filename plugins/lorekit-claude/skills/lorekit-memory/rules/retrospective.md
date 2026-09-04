@@ -14,6 +14,13 @@ Ask the 30-second question:
 If no, stop — write nothing. Empty retrospectives are skipped.
 If yes, continue.
 
+> A retrospective records **prose advice** ("last time X went wrong when Y"). A
+> *structural fact* this run verified about a symbol or file — a consumer count
+> you swept, an invariant you confirmed, a defect you fixed at a SHA — is a
+> different thing: it belongs in the shared **`codebase-knowledge`** bucket under
+> a `knowledge::<symbol>@<path>` key, not here. See the intake step 6 write-back
+> note and the `lorekit-setup` skill, `§ Shared codebase-knowledge`.
+
 ## 2. Phrase it as an observation
 
 Write what happened and what worked, not a commandment.
