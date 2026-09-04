@@ -1,6 +1,6 @@
 # _shared/api — REST utility modules
 
-Ten modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
+Eleven modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
 
 ## Import paths (from a function like `memories/`)
 
@@ -174,6 +174,27 @@ Rules:
 ### errors.ts
 - `RestError` — extends Error, carries `status`, `code`, `details`. Call `.toResponse(cors)`.
 - `translateDbError(err)` — maps Postgres SQLSTATE codes to `RestError` instances.
+
+### retention.ts
+
+- `retentionFrom(input)` — pick the five retention thresholds (`min_age_days`, `unseen_days`,
+  `max_seen_count`, `max_read_count`, `max_opened_count`) off a validated query or body.
+- `retentionRpcParams(r)` — the `p_*` arguments for `lorekit_memory_list` / `_facets` /
+  `_activity` / `_pivot`. All four RPCs take the same five parameter names, which is what lets
+  one function serve them.
+- **Why it exists.** Before migration 00108 only the list applied these, so setting
+  `max_opened_count` narrowed the Explorer's rows and left its facet counts, stat cards and
+  matrix counting the un-narrowed population. 00108 fixed the SQL side with ONE shared predicate
+  (`lorekit_match_retention`) instead of a fourth inline copy; this module is the same fix one
+  layer up, so a route cannot be given the parameter and then forget to forward it. Add a
+  threshold here and in that SQL helper, not per handler.
+- **`?? null`, never a truthiness check.** `max_opened_count => 0` ("nothing ever chose this
+  lesson") is the whole point of migration 00105, and `max_seen_count`/`max_read_count` admit 0
+  too — a falsy test anywhere on this path silently turns the most useful threshold in the set
+  into no filter at all.
+- These are deliberately NOT part of `MemoryDimensions` (see `_shared/schemas/dimensions.ts`'s
+  header): a dimension is a set of enumerable values, a threshold is a comparison against a
+  number with no value catalog. It can narrow a facet count; it can never BE one.
 
 ### filter.ts
 - `applyFilter(query, filter)` — applies a `FilterGroup` (the OR+AND tree accepted by

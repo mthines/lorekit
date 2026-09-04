@@ -37,6 +37,11 @@ values
   -- can only fail against lore that belongs to somebody else.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a4', 'authenticated', 'authenticated', 'lk-mig-a4@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a5', 'authenticated', 'authenticated', 'lk-mig-a5@test.local', now(), now()),
+  -- §108's own account. Its assertions are exact COUNTS out of facets/activity/
+  -- pivot, which aggregate over the whole (user, scope) population — so on a
+  -- shared account every row an earlier section left behind would be counted
+  -- too, and the numbers would drift as sections are added.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a6', 'authenticated', 'authenticated', 'lk-mig-a6@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -4180,14 +4185,30 @@ $$;
 -- ── 70. lorekit_memory_facets grant surface — PII-adjacent, so no anon ──────
 -- Branch names, repo names and agent names are at least as sensitive as the
 -- scope names 00039 withholds, so the grant set is that function's verbatim.
+-- The signature was hardcoded here and rewritten at every widening — 00057 took
+-- it to 19 args (drill-down filters), 00064 to 21 (the owner dimension), 00069
+-- to 24 (the key restriction), 00108 to 31 (the created_at window and the five
+-- retention thresholds). It is DERIVED from the catalog now, for a reason
+-- stronger than saving that edit: a hardcoded old signature keeps PASSING if a
+-- migration leaves BOTH overloads behind, because the stale one it names still
+-- exists and still carries the grants. That is exactly the ambiguity 00092's
+-- header warns about — two overloads make every PostgREST named-arg call fail —
+-- so the arity is asserted to be UNIQUE first, and the grants are then checked
+-- against whatever that one signature is.
 do $$
 declare
-  -- 00057 widened the signature with the drill-down filter params (19 args);
-  -- 00064 appended the owner dimension (p_owner, p_owner_mode → 21 args).
-  -- 00069 appended the key restriction (p_key_scopes, p_key_org_access,
-  -- p_key_org_ids → 24 args).
-  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, uuid[])';
+  v_sig text;
+  v_n   int;
 begin
+  select count(*), min(p.oid::regprocedure::text) into v_n, v_sig
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_facets';
+
+  assert v_n = 1,
+    format('memory facets: expected EXACTLY ONE signature, found %s. Two overloads '
+           'make every PostgREST named-arg call ambiguous — a migration that '
+           'widened the signature is missing its explicit drop (00092)', v_n);
+
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';
   assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
@@ -9707,6 +9728,254 @@ begin
   assert has_function_privilege('authenticated',
       'lorekit_relevance_config_deactivate(bigint, text)', 'EXECUTE'),
     '102 AC-9g: authenticated MUST have EXECUTE on lorekit_relevance_config_deactivate';
+end;
+$$;
+
+-- ── 108. a count must agree with the list it describes (00108) ─────────────
+-- The retention thresholds moved `lorekit_memory_list` from 00092 onward, and
+-- moved NOTHING else. So setting `max_opened_count => 0` narrowed the Explorer's
+-- rows while its facet counts, its stat cards and its matrix all kept counting
+-- the un-narrowed population — every number on the page describing a different
+-- set from the one below it. 00108 gives facets, activity and pivot the same
+-- five thresholds plus the `created_at` window, through ONE shared predicate
+-- (`lorekit_match_retention`) rather than a fourth inline copy.
+--
+-- AC-1: each threshold narrows a FACET COUNT, and a facet value whose every row
+--       is excluded disappears from the catalog rather than reporting 0.
+-- AC-2: the same thresholds narrow ACTIVITY and PIVOT.
+-- AC-3: THE SELF-EXCLUSION INTERACTION. When `host` is filtered, the `host`
+--       facet is deliberately computed WITHOUT that filter (00057's drill-down:
+--       "switch to h2 and you'd get N"). Retention must narrow it ANYWAY —
+--       which holds only because retention sits in the `base` CTE's WHERE and
+--       not behind an `ok_host`-style flag. Get this wrong and the one panel
+--       that exists to answer "where else could I go" answers it against a
+--       population the user is no longer looking at.
+-- AC-4: 00100's never-opened rule survives the move: a lesson nothing ever
+--       opened ages from `created_at`, so `unseen_days` can still find it.
+-- AC-5: all-null thresholds are IDENTICAL to not passing them — the appended
+--       params must not perturb any existing caller.
+-- AC-6: the four readers agree. `lorekit_memory_list` and the three aggregates
+--       must select the same set, which is the drift 00101 records as having
+--       happened once already between two copies of this predicate.
+-- AC-7: exactly one signature per function — the 00092 overload footgun.
+do $$
+declare
+  v_user   uuid := '00000000-0000-0000-0000-0000000000a6';
+  v_chosen uuid;
+  v_n      bigint;
+  v_h1     bigint;
+  v_h2     bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_user), true);
+
+  -- Three lessons: two old on host h1, one fresh on host h2. One of the old
+  -- pair is the only one an agent ever deliberately fetched.
+  insert into memories (user_id, scope, key, value, kind, host, created_at) values
+    (v_user, 'global', '108-old-ignored', 'v', 'lesson', 'h1', now() - interval '200 days'),
+    (v_user, 'global', '108-old-chosen',  'v', 'lesson', 'h1', now() - interval '200 days'),
+    (v_user, 'global', '108-fresh',       'v', 'lesson', 'h2', now() - interval '1 day');
+  select id into v_chosen from memories where user_id = v_user and key = '108-old-chosen';
+  perform lorekit_record_memory_reads(array[v_chosen], 'targeted', 'mcp');
+
+  -- ── AC-1 ────────────────────────────────────────────────────────────────
+  select count(*) into v_n
+    from lorekit_memory_facets(p_user_id => v_user, p_scope => 'global') where facet = 'host';
+  assert v_n = 2, format('108 AC-1a: baseline host facet must list both hosts, got %s', v_n);
+
+  select count into v_h1 from lorekit_memory_facets(p_user_id => v_user, p_scope => 'global')
+   where facet = 'host' and value = 'h1';
+  assert v_h1 = 2, format('108 AC-1b: baseline h1 count must be 2, got %s', v_h1);
+
+  -- max_opened_count => 0 drops the one lesson an agent chose. h1 goes 2 → 1;
+  -- h2 (never chosen) is untouched. Before 00108 both stayed at their baseline.
+  select count into v_h1 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_max_opened_count => 0)
+   where facet = 'host' and value = 'h1';
+  assert v_h1 = 1,
+    format('108 AC-1c: max_opened_count => 0 must narrow the h1 facet count to 1, got %s. '
+           'The count is describing rows the list no longer returns', v_h1);
+
+  -- min_age_days => 30 excludes every row on h2, so the VALUE goes away. A
+  -- facet row reading `h2 · 0` would offer a filter that returns nothing.
+  select count(*) into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_min_age_days => 30)
+   where facet = 'host' and value = 'h2';
+  assert v_n = 0,
+    '108 AC-1d: a facet value whose every row is excluded must DISAPPEAR, not report 0';
+
+  select count into v_h1 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_min_age_days => 30)
+   where facet = 'host' and value = 'h1';
+  assert v_h1 = 2, format('108 AC-1e: both h1 rows are 200 days old and must survive, got %s', v_h1);
+
+  -- The created_at window is the `All time` range picker, and it had the
+  -- identical gap.
+  select count(*) into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_created_since => now() - interval '7 days')
+   where facet = 'host';
+  assert v_n = 1,
+    format('108 AC-1f: created_since must leave only the fresh host, got %s values', v_n);
+
+  select count into v_h1 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_max_seen_count => 0)
+   where facet = 'host' and value = 'h1';
+  assert v_h1 is null or v_h1 = 0,
+    format('108 AC-1g: seen_count is 1 on a fresh write, so max_seen_count => 0 must '
+           'exclude these rows, got %s', v_h1);
+
+  -- ── AC-2 ────────────────────────────────────────────────────────────────
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global');
+  assert v_n = 3, format('108 AC-2a: baseline activity must total 3, got %s', v_n);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global', p_min_age_days => 30);
+  assert v_n = 2, format('108 AC-2b: min_age_days must narrow activity to the 2 old rows, got %s', v_n);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global', p_max_opened_count => 0);
+  assert v_n = 2, format('108 AC-2c: max_opened_count => 0 must narrow activity to 2, got %s', v_n);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_pivot('host', 'kind', p_user_id => v_user, p_scope => 'global');
+  assert v_n = 3, format('108 AC-2d: baseline pivot must total 3, got %s', v_n);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_pivot('host', 'kind', p_user_id => v_user, p_scope => 'global',
+                              p_max_opened_count => 0);
+  assert v_n = 2, format('108 AC-2e: max_opened_count => 0 must narrow the pivot to 2, got %s', v_n);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_pivot('host', 'kind', p_user_id => v_user, p_scope => 'global',
+                              p_created_since => now() - interval '7 days');
+  assert v_n = 1, format('108 AC-2f: created_since must narrow the pivot to the fresh row, got %s', v_n);
+
+  -- ── AC-3: the self-exclusion interaction ────────────────────────────────
+  -- With `host` filtered to h1, the host facet still lists h2 — that is the
+  -- drill-down, and it must not regress.
+  select count(*) into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_host => array['h1'])
+   where facet = 'host';
+  assert v_n = 2,
+    format('108 AC-3a: the FILTERED dimension stays self-excluded so the drill-down '
+           'still offers h2 (00057), got %s values', v_n);
+
+  -- ...and retention narrows both sides of that drill-down.
+  select count into v_h1 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_host => array['h1'], p_max_opened_count => 0)
+   where facet = 'host' and value = 'h1';
+  select count into v_h2 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_host => array['h1'], p_max_opened_count => 0)
+   where facet = 'host' and value = 'h2';
+  assert v_h1 = 1 and v_h2 = 1,
+    format('108 AC-3b: retention must narrow the SELF-EXCLUDED facet too — it belongs in '
+           'the base CTE WHERE, not behind an ok_host flag. got h1=%s h2=%s', v_h1, v_h2);
+
+  -- A non-self-excluded facet obeys the dimension AND the threshold together.
+  select count into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_host => array['h1'], p_max_opened_count => 0)
+   where facet = 'kind' and value = 'lesson';
+  assert v_n = 1,
+    format('108 AC-3c: a facet other than the filtered one must apply host AND retention, got %s', v_n);
+
+  -- ── AC-4: 00100's never-opened rule ─────────────────────────────────────
+  -- `108-old-ignored` has a null last_opened_at, so it ages from created_at
+  -- (200 days) and matches. `108-old-chosen` was opened a moment ago and must
+  -- not. Without the coalesce the never-opened lesson would be the ONE lesson an
+  -- "unopened for N days" filter could never find.
+  select count(*) into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_unseen_days => 100)
+   where facet = 'host';
+  assert v_n = 1,
+    format('108 AC-4a: unseen_days must match exactly the never-opened old lesson, got %s host values', v_n);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global', p_unseen_days => 100);
+  assert v_n = 1,
+    format('108 AC-4b: activity must apply the same never-opened rule, got %s', v_n);
+
+  -- ── AC-5: all-null is a no-op ───────────────────────────────────────────
+  select count into v_h1 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global',
+      p_created_since => null, p_created_until => null, p_min_age_days => null,
+      p_unseen_days => null, p_max_seen_count => null, p_max_read_count => null,
+      p_max_opened_count => null)
+   where facet = 'host' and value = 'h1';
+  assert v_h1 = 2,
+    format('108 AC-5a: all-null retention params must be identical to omitting them, got %s', v_h1);
+
+  select coalesce(sum(count), 0) into v_n
+    from lorekit_memory_pivot('host', 'kind', p_user_id => v_user, p_scope => 'global',
+                              p_min_age_days => null, p_max_opened_count => null);
+  assert v_n = 3, format('108 AC-5b: all-null must not perturb the pivot, got %s', v_n);
+
+  -- ── AC-6: the four readers agree ────────────────────────────────────────
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_max_opened_count => 0, p_limit => 100);
+  assert v_n = 2,
+    format('108 AC-6a: memory_list must return the same 2 rows the aggregates count, got %s', v_n);
+
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_min_age_days => 30, p_limit => 100);
+  assert v_n = 2, format('108 AC-6b: min_age_days must agree across list and aggregates, got %s', v_n);
+
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_unseen_days => 100, p_limit => 100);
+  assert v_n = 1,
+    format('108 AC-6c: the shared predicate means list and facets cannot disagree on '
+           'the never-opened rule, got %s', v_n);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-7: no function gained an overload. `create or replace` cannot change a
+-- signature, so widening one means an explicit drop at the OLD argument list —
+-- miss it and the old function survives alongside the new one, at which point
+-- every PostgREST named-arg call to that RPC fails as ambiguous (00092's
+-- header records this happening). Asserted for all four readers at once.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.proname, count(*) as n
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('lorekit_memory_list', 'lorekit_memory_facets',
+                         'lorekit_memory_activity', 'lorekit_memory_pivot',
+                         'lorekit_match_retention')
+     group by p.proname
+  loop
+    assert r.n = 1,
+      format('108 AC-7: %s must have EXACTLY ONE signature, found %s — a widening '
+             'migration is missing its explicit drop, and every named-arg call to '
+             'it is now ambiguous', r.proname, r.n);
+  end loop;
+
+  -- The shared helper carries its family's grants. A `create or replace` of a
+  -- NEW function starts from EXECUTE-to-public, so this is the line that keeps
+  -- it from being the one `lorekit_match_*` reachable by anon.
+  assert not has_function_privilege('anon',
+      'lorekit_match_retention(timestamptz, timestamptz, integer, integer, integer, '
+      'timestamptz, timestamptz, integer, integer, integer)', 'EXECUTE'),
+    '108 AC-7b: anon must NOT have EXECUTE on lorekit_match_retention';
+  assert has_function_privilege('authenticated',
+      'lorekit_match_retention(timestamptz, timestamptz, integer, integer, integer, '
+      'timestamptz, timestamptz, integer, integer, integer)', 'EXECUTE'),
+    '108 AC-7c: authenticated MUST have EXECUTE on lorekit_match_retention';
+
+  -- It must stay IMMUTABLE: that is what lets the planner fold it into an
+  -- index-usable expression instead of treating it as an opaque per-row filter.
+  -- It reads no clock precisely so this can hold — the caller resolves the two
+  -- now()-relative day counts to instants once per query.
+  assert (select provolatile from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname = 'lorekit_match_retention') = 'i',
+    '108 AC-7d: lorekit_match_retention must stay IMMUTABLE — a stable/volatile '
+    'helper cannot be inlined, which is the whole reason it takes cutoffs not days';
 end;
 $$;
 

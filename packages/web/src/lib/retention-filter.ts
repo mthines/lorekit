@@ -22,7 +22,12 @@
  */
 
 import type { GroomConditions, GroomDimensionFilters } from '@lorekit/schemas/retention';
-import type { ListMemoriesBody, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
+import type {
+  ListFacetsBody,
+  ListMemoriesBody,
+  ScalarFilterMode,
+  TagsMode,
+} from '@lorekit/schemas/memory';
 import { filtersToBody, normalizeFilters, type Filter, type FilterField, type FilterOperator } from './filters';
 
 /** The five conditions, camelCased for the UI's own state — see `GroomConditions` for the wire shape. */
@@ -196,6 +201,31 @@ export function retentionConditionsToListBody(
     ...(conditions.maxReadCount !== undefined ? { max_read_count: conditions.maxReadCount } : {}),
     ...(conditions.maxOpenedCount !== undefined ? { max_opened_count: conditions.maxOpenedCount } : {}),
   };
+}
+
+/**
+ * The same five fields, for the three AGGREGATE routes — `/facets`,
+ * `/activity`, `/pivot` (migration 00108).
+ *
+ * Delegates to {@link retentionConditionsToListBody} because the field names
+ * are identical on all four bodies by construction: the schemas share one
+ * `retentionConditionBodyFields` spread. It exists as its own export anyway,
+ * typed against `ListFacetsBody`, so that a schema which stops carrying one of
+ * the five becomes a TYPE ERROR here rather than a threshold the aggregate
+ * silently ignores — which is precisely the bug 00108 fixed, where the list
+ * narrowed and every number describing it did not.
+ *
+ * Callers spread this alongside `filtersToFacetBody` / `filtersToActivityBody`
+ * / `filtersToPivotBody`; the dimensions and the thresholds are independent
+ * halves of one request and neither is derivable from the other.
+ */
+export function retentionConditionsToAggregateBody(
+  conditions: RetentionConditions,
+): Pick<
+  ListFacetsBody,
+  'min_age_days' | 'unseen_days' | 'max_seen_count' | 'max_read_count' | 'max_opened_count'
+> {
+  return retentionConditionsToListBody(conditions);
 }
 
 /**

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { ListMemoriesBodySchema } from '@lorekit/schemas/memory';
+import {
+  ActivityBodySchema,
+  ListFacetsBodySchema,
+  ListMemoriesBodySchema,
+  PivotBodySchema,
+} from '@lorekit/schemas/memory';
 import { GroomConditionsSchema } from '@lorekit/schemas/retention';
 import { normalizeFilters } from './filters';
 import {
@@ -13,6 +18,7 @@ import {
   retentionConditionsParamValue,
   retentionConditionsPhrase,
   retentionConditionsToGroomConditions,
+  retentionConditionsToAggregateBody,
   retentionConditionsToListBody,
 } from './retention-filter';
 
@@ -265,5 +271,98 @@ describe('retentionConditionPlaceholder', () => {
   it('suggests a read-count example inside the range that can actually match', () => {
     const example = Number(retentionConditionPlaceholder('maxReadCount').replace('e.g. ', ''));
     expect(example).toBeGreaterThanOrEqual(26);
+  });
+});
+
+/**
+ * Migration 00108: the three AGGREGATE routes must accept the same thresholds
+ * the list does. Before it, `/facets`, `/activity` and `/pivot` had no such
+ * parameters at all, so setting one narrowed the Explorer's rows and left every
+ * number describing them — facet counts, stat cards, matrix cells — counting
+ * the un-narrowed population.
+ *
+ * The assertions below deliberately parse against the REAL aggregate schemas
+ * rather than comparing to `retentionConditionsToListBody`'s output: proving the
+ * two functions agree with each other is worthless if both emit a field the
+ * aggregate route rejects.
+ */
+describe('retentionConditionsToAggregateBody', () => {
+  it('maps the same camelCase fields to the same wire fields the list uses', () => {
+    // Not asserted by delegation: the point is that a route which stopped
+    // taking one of the five would fail HERE, at the schema.
+    expect(
+      retentionConditionsToAggregateBody({
+        minAgeDays: 90,
+        unseenDays: 30,
+        maxSeenCount: 1,
+        maxReadCount: 300,
+        maxOpenedCount: 0,
+      }),
+    ).toEqual({
+      min_age_days: 90,
+      unseen_days: 30,
+      max_seen_count: 1,
+      max_read_count: 300,
+      max_opened_count: 0,
+    });
+  });
+
+  it('emits fields ALL THREE aggregate schemas actually CARRY', () => {
+    const body = retentionConditionsToAggregateBody({
+      minAgeDays: 7,
+      unseenDays: 90,
+      maxOpenedCount: 0,
+    });
+
+    // Asserting `safeParse(...).success` alone would be VACUOUS here, and that
+    // is worth spelling out: these schemas are not `.strict()`, so zod STRIPS
+    // an unrecognised key and still reports success. A route with no retention
+    // parameters at all — the pre-00108 state, the exact bug — would pass a
+    // success-only check while silently discarding every threshold. So each
+    // field is read back off the PARSED output, which is the only thing that
+    // proves the schema carries it.
+    const carried = (parsed: unknown) => {
+      const data = parsed as Record<string, unknown>;
+      return {
+        min_age_days: data.min_age_days,
+        unseen_days: data.unseen_days,
+        max_opened_count: data.max_opened_count,
+      };
+    };
+    const expected = { min_age_days: 7, unseen_days: 90, max_opened_count: 0 };
+
+    expect(carried(ListFacetsBodySchema.parse(body))).toEqual(expected);
+    expect(carried(ActivityBodySchema.parse(body))).toEqual(expected);
+    // Pivot requires its two axes; the thresholds must not interfere with them.
+    expect(carried(PivotBodySchema.parse({ row: 'host', col: 'kind', ...body }))).toEqual(expected);
+  });
+
+  it('omits an unset field, so a blank input never sends a threshold', () => {
+    // The whole set being absent is what "not narrowed" means on the wire — an
+    // explicit null would be read by the RPC as a filter of null, and a `0`
+    // would be a real and very aggressive filter.
+    const body = retentionConditionsToAggregateBody({});
+    expect(body).toEqual({});
+    for (const field of [
+      'min_age_days',
+      'unseen_days',
+      'max_seen_count',
+      'max_read_count',
+      'max_opened_count',
+    ]) {
+      expect(field in body).toBe(false);
+    }
+  });
+
+  it('carries maxOpenedCount: 0 rather than dropping it as falsy', () => {
+    // `max_opened_count => 0` ("nothing ever chose this lesson") is the most
+    // useful threshold in the set — migration 00105 exists for it. A truthiness
+    // check anywhere on this path turns it into no filter at all, which reads
+    // as the feature being broken rather than as a bug.
+    const body = retentionConditionsToAggregateBody({ maxOpenedCount: 0 });
+    expect(body).toEqual({ max_opened_count: 0 });
+    // Read back off the parsed output, not `.success` — see the note above on
+    // why a non-strict schema makes a success-only assertion vacuous.
+    expect(ListFacetsBodySchema.parse(body).max_opened_count).toBe(0);
   });
 });

@@ -608,7 +608,18 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // or switch within it. `selectedScope` scopes the counts to match the list —
   // without it a scoped view would show global counts and overstate the yield.
   // Archived-aware — the archived view is a different population with its own counts.
-  const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
+  //
+  // The retention thresholds go too (00108). They are the COMMITTED (debounced)
+  // set, the same value the list reads, so the counts and the rows they describe
+  // move on one beat rather than the menu refetching on every keystroke in an
+  // age field. Unlike a dimension, a threshold narrows even the self-excluded
+  // facet: switching `host` does not stop you looking at lore older than 30 days.
+  const { data: facets } = useFacetCatalog(
+    showArchived,
+    filters,
+    selectedScope,
+    committedRetentionConditions,
+  );
 
   // ── Instruments ─────────────────────────────────────────────────────────
   // The matrix and the timeline are filter INPUTS, not views: each writes to the
@@ -637,6 +648,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     showArchived,
     filters,
     scope: selectedScope,
+    // 00108, and the committed set for `useFacetCatalog`'s reason: a cell must
+    // count the rows that clicking it would list.
+    retention: committedRetentionConditions,
   });
 
   // A cell is two ordinary pills. Going through `toggleFilterValue` — the same
@@ -1141,6 +1155,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         range={range}
         onRangeChange={setRange}
         filters={filters}
+        retention={committedRetentionConditions}
         heatmapData={heatmapData}
         highlightRange={highlightRange}
         onSelectDate={handleHeatmapDayClick}

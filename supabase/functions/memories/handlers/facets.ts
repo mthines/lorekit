@@ -15,6 +15,8 @@ import {
 } from '../../_shared/schemas/memory.ts';
 import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
+import { retentionFrom, retentionRpcParams } from '../../_shared/api/retention.ts';
+import type { RetentionConditions } from '../../_shared/api/retention.ts';
 import { parseTagsParam } from '../../_shared/schemas/tags.ts';
 
 type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Returns'][number];
@@ -33,15 +35,23 @@ interface FacetsInput {
   narrowed: boolean;
   scope?: string | undefined;
   dimensions: MemoryDimensions;
+  /**
+   * The `created_at` window and the five retention thresholds (00108). Both
+   * used to be absent here while `GET /memories` applied them, which is what
+   * made a facet count describe a different population from the list beside it.
+   */
+  created_since?: string | undefined;
+  created_until?: string | undefined;
+  retention: RetentionConditions;
 }
 
 /**
  * GET /memories/facets — every value the caller can filter by, per dimension,
  * with how many memories carry it.
  *
- * This is `GET /memories/tags` generalised to the eight dimensions the Explorer's
+ * This is `GET /memories/tags` generalised to the nine dimensions the Explorer's
  * filter menu grew: labels, agent, trigger, kind, host, repo, branch, pull
- * request. Each
+ * request, owner. Each
  * one is another unbounded free-text column, so each would otherwise repeat the
  * row-cap bug 00039 and 00050 exist to fix — one grouped row per distinct value
  * is exact at any volume, a `select … limit N` plus a browser-side tally is not.
@@ -60,11 +70,20 @@ interface FacetsInput {
  * a second predicate would be a place for the two to drift.
  *
  * Counts are DRILL-DOWN (00057): the caller's active filters are forwarded and
- * each dimension is counted with every OTHER one applied but not its own. Two
- * limits worth knowing — a value counting zero under the other filters emits no
- * row (as a null column value does), and `q` / `key` / `created_since` /
- * `created_until` are not mirrored, so under a search or date window a count is
- * an upper bound rather than the exact yield.
+ * each dimension is counted with every OTHER one applied but not its own. A
+ * value counting zero under the other filters emits no row, as a null column
+ * value does.
+ *
+ * `created_since` / `created_until` and the five retention thresholds ARE
+ * mirrored as of 00108 — they are applied in the RPC's `base` CTE, so unlike a
+ * dimension they narrow every facet including the self-excluded one. That is
+ * the correct asymmetry: self-exclusion exists so the dimension you are
+ * standing in still lists what you could switch to, and switching `host` does
+ * not stop you looking at lore older than 30 days. `q` and `key` remain
+ * unmirrored, so under a search a count is an upper bound rather than the exact
+ * yield — mirroring `q` would put a second implementation of `likeNeedle`'s
+ * LIKE escaping in plpgsql, which the repo-wide "a filter value is encoded ONE
+ * way" rule forbids.
  */
 async function runFacets(
   input: FacetsInput,
@@ -155,6 +174,14 @@ async function runFacets(
     p_key_scopes: keyRestriction(auth)?.scopes ?? [],
     p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
     p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+    // The `created_at` window and the retention thresholds (00108). These are
+    // what make a count describe the same rows the list returns; the RPC
+    // applies them in its `base` CTE, so they narrow even the SELF-EXCLUDED
+    // dimension — the drill-down still offers every value you could switch to,
+    // but counted over the population you are actually looking at.
+    p_created_since: input.created_since ?? null,
+    p_created_until: input.created_until ?? null,
+    ...retentionRpcParams(input.retention),
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
@@ -194,6 +221,9 @@ export async function handleFacets(
     narrowed: named.length > 0,
     scope: q.scope,
     dimensions: dimensionsFromQuery(q),
+    created_since: q.created_since,
+    created_until: q.created_until,
+    retention: retentionFrom(q),
   }, auth, db, span, cors);
 }
 
@@ -225,5 +255,8 @@ export async function handleFacetsPost(
     narrowed: named.length > 0,
     scope: b.scope,
     dimensions: dimensionsFromBody(b),
+    created_since: b.created_since,
+    created_until: b.created_until,
+    retention: retentionFrom(b),
   }, auth, db, span, cors);
 }

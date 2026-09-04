@@ -158,6 +158,50 @@ export type ScalarFilterMode = z.infer<typeof ScalarFilterModeSchema>;
  */
 const ValueListSchema = z.string().min(1).max(2048);
 
+/**
+ * Retention-policy preview conditions — the SAME five thresholds
+ * `GroomConditionsSchema` (`@lorekit/schemas/retention`) matches a saved policy
+ * on, exposed on a read route so a caller can see exactly what a policy would
+ * catch before one is ever saved ("verify before you run it").
+ *
+ * Shared across every route that counts or lists memories, in the arrangement
+ * `dimensionBodyFields` already uses below and for the identical reason: these
+ * are not five independent parameters per route, they are ONE predicate that
+ * several routes must agree on. When the list applied them and `/facets`,
+ * `/activity` and `/pivot` did not, the Explorer's facet counts, its five stat
+ * cards and its matrix all disagreed with the list they sat above — the bug
+ * migration 00108 and this spread exist to close.
+ *
+ * NOT a tenth entry in `MemoryFacetSchema`: a threshold has no value catalog to
+ * enumerate, so it can narrow a facet count but can never BE one. See
+ * `shared/dimensions.ts`.
+ *
+ * The bounds are copied rather than imported from `retention.ts`: that file is
+ * its own domain file for the reason its header states, and `memory.spec.ts`
+ * pins the two in step.
+ */
+const retentionConditionBodyFields = {
+  min_age_days: z.number().int().min(1).max(3650).optional(),
+  unseen_days: z.number().int().min(1).max(3650).optional(),
+  max_seen_count: z.number().int().min(0).max(100_000).optional(),
+  max_read_count: z.number().int().min(0).max(100_000).optional(),
+  max_opened_count: z.number().int().min(0).max(100_000).optional(),
+} as const;
+
+/**
+ * {@link retentionConditionBodyFields} over a query string, where every value
+ * arrives as text — `z.coerce` for `expiring_within_days`' reason, with
+ * `.int()` running after coercion so `7.5` and `abc` are a 400 rather than a
+ * silent floor.
+ */
+const retentionConditionQueryFields = {
+  min_age_days: z.coerce.number().int().min(1).max(3650).optional(),
+  unseen_days: z.coerce.number().int().min(1).max(3650).optional(),
+  max_seen_count: z.coerce.number().int().min(0).max(100_000).optional(),
+  max_read_count: z.coerce.number().int().min(0).max(100_000).optional(),
+  max_opened_count: z.coerce.number().int().min(0).max(100_000).optional(),
+} as const;
+
 export const ListMemoriesQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   key: z.string().min(1).max(512).optional(),
@@ -262,22 +306,8 @@ export const ListMemoriesQuerySchema = z.object({
    * after coercion, so `7.5` and `abc` are a 400 rather than a silent floor.
    */
   expiring_within_days: z.coerce.number().int().min(1).max(365).optional(),
-  /**
-   * Retention-policy preview conditions — the SAME three thresholds
-   * `GroomConditionsSchema` (`@lorekit/schemas/retention`) matches a saved
-   * policy on, exposed here so the Explorer's filter bar can show the actual
-   * lesson ROWS a policy would catch (not just a count) before one is ever
-   * saved — "verify before you run it" without leaving the list view. The
-   * bounds are copied rather than imported: `retention.ts` is its own domain
-   * file for the reason its header states, and `memory.spec.ts` pins the two
-   * in step. `z.coerce` for `expiring_within_days`'s reason — every query
-   * param arrives as a string.
-   */
-  min_age_days: z.coerce.number().int().min(1).max(3650).optional(),
-  unseen_days: z.coerce.number().int().min(1).max(3650).optional(),
-  max_seen_count: z.coerce.number().int().min(0).max(100_000).optional(),
-  max_read_count: z.coerce.number().int().min(0).max(100_000).optional(),
-  max_opened_count: z.coerce.number().int().min(0).max(100_000).optional(),
+  /** See {@link retentionConditionQueryFields} — the shared five thresholds. */
+  ...retentionConditionQueryFields,
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -443,19 +473,28 @@ export const ListFacetsQuerySchema = z.object({
    * The dashboard's Explorer passes its active filter bar AND the selected
    * `scope` here (`listFacetsRequest` ← `filtersToFacetParams` plus
    * `useFacetCatalog`'s `scope`), so its filter-menu counts drill down and match
-   * the scoped list. All eight dimensions — `kind` and `host` included — now
-   * have a filter pill, so every facet this route can emit is one the menu can
-   * act on.
+   * the scoped list. All nine dimensions — `kind`, `host` and `owner` included
+   * — now have a filter pill, so every facet this route can emit is one the
+   * menu can act on.
    *
-   * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
-   * `created_since`, `created_until` and `expiring_within_days` — are
-   * deliberately NOT mirrored, so with a search, a date window or an
-   * expiring-soon horizon active a count is an upper bound on the yield rather
-   * than the exact figure. Mirroring `q` would mean a second implementation of
-   * `likeNeedle`'s LIKE escaping inside plpgsql, and mirroring
-   * `expiring_within_days` a second implementation of `expiringWindow`'s
-   * `now`-relative boundary — a filter value is encoded exactly one way in this
-   * repo.
+   * The five retention thresholds and the `created_since`/`created_until`
+   * window ARE mirrored (migration 00108). They are not dimensions and emit no
+   * facet rows of their own; they narrow the population every dimension is
+   * counted over, which is what makes a count agree with the list above it.
+   * Before 00108 they were absent here, so setting any of them moved the list
+   * and left every facet count, stat card and matrix cell unchanged.
+   *
+   * `ListMemoriesQuerySchema`'s remaining non-dimension filters — `q`, `key`
+   * and `expiring_within_days` — are still deliberately NOT mirrored, so with a
+   * search or an expiring-soon horizon active a count is an upper bound on the
+   * yield rather than the exact figure. Mirroring `q` would mean a second
+   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and
+   * mirroring `expiring_within_days` a second implementation of
+   * `expiringWindow`'s `now`-relative boundary — a filter value is encoded
+   * exactly one way in this repo. The retention thresholds carry no such cost:
+   * `lorekit_match_retention` is one `immutable` SQL helper taking already-
+   * computed cutoff timestamps, so the `now`-relative boundary is still
+   * resolved exactly once, by the caller.
    *
    * A value whose count falls to zero under the other dimensions' filters emits
    * no row at all — the same omission a null column value has — so it leaves
@@ -480,6 +519,11 @@ export const ListFacetsQuerySchema = z.object({
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
   owner: ValueListSchema.optional(),
   owner_mode: ScalarFilterModeSchema.optional().default('in'),
+  /** Inclusive lower bound on `created_at` — mirrors `GET /memories`. */
+  created_since: TimestampFilterSchema.optional(),
+  /** EXCLUSIVE upper bound on `created_at` — the window is `[since, until)`. */
+  created_until: TimestampFilterSchema.optional(),
+  ...retentionConditionQueryFields,
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
@@ -566,6 +610,11 @@ export const PivotQuerySchema = z.object({
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
   owner: ValueListSchema.optional(),
   owner_mode: ScalarFilterModeSchema.optional().default('in'),
+  /** Inclusive lower bound on `created_at` — mirrors `GET /memories`. */
+  created_since: TimestampFilterSchema.optional(),
+  /** EXCLUSIVE upper bound on `created_at` — the window is `[since, until)`. */
+  created_until: TimestampFilterSchema.optional(),
+  ...retentionConditionQueryFields,
 });
 export type PivotQuery = z.infer<typeof PivotQuerySchema>;
 
@@ -645,6 +694,9 @@ export const ActivityQuerySchema = z.object({
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
   owner: ValueListSchema.optional(),
   owner_mode: ScalarFilterModeSchema.optional().default('in'),
+  // `since`/`until` above already bound `created_at`, so this route needs no
+  // separate `created_since`/`created_until` pair — only the thresholds.
+  ...retentionConditionQueryFields,
 });
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 
@@ -1016,12 +1068,8 @@ export const ListMemoriesBodySchema = z.object({
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.boolean().optional().default(false),
   expiring_within_days: z.number().int().min(1).max(365).optional(),
-  /** See `ListMemoriesQuerySchema.min_age_days` — same fields, real JSON types. */
-  min_age_days: z.number().int().min(1).max(3650).optional(),
-  unseen_days: z.number().int().min(1).max(3650).optional(),
-  max_seen_count: z.number().int().min(0).max(100_000).optional(),
-  max_read_count: z.number().int().min(0).max(100_000).optional(),
-  max_opened_count: z.number().int().min(0).max(100_000).optional(),
+  /** See {@link retentionConditionBodyFields} — same fields, real JSON types. */
+  ...retentionConditionBodyFields,
   limit: z.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -1040,7 +1088,10 @@ export const ListFacetsBodySchema = z.object({
   archived: z.boolean().optional().default(false),
   facets: z.array(MemoryFacetSchema).optional(),
   scope: RawScopeSchema.optional(),
+  created_since: TimestampFilterSchema.optional(),
+  created_until: TimestampFilterSchema.optional(),
   ...dimensionBodyFields,
+  ...retentionConditionBodyFields,
 });
 export type ListFacetsBody = z.infer<typeof ListFacetsBodySchema>;
 
@@ -1058,7 +1109,10 @@ export const PivotBodySchema = z.object({
   archived: z.boolean().optional().default(false),
   limit: z.number().int().min(1).max(PIVOT_LIMIT_MAX).optional(),
   scope: RawScopeSchema.optional(),
+  created_since: TimestampFilterSchema.optional(),
+  created_until: TimestampFilterSchema.optional(),
   ...dimensionBodyFields,
+  ...retentionConditionBodyFields,
 });
 export type PivotBody = z.infer<typeof PivotBodySchema>;
 
@@ -1069,6 +1123,7 @@ export const ActivityBodySchema = z.object({
   until: TimestampFilterSchema.optional(),
   scope: RawScopeSchema.optional(),
   ...dimensionBodyFields,
+  ...retentionConditionBodyFields,
 });
 export type ActivityBody = z.infer<typeof ActivityBodySchema>;
 
