@@ -84,6 +84,7 @@ export interface Conditions {
   unseenDays: string;
   maxSeenCount: string;
   maxReadCount: string;
+  maxOpenedCount: string;
   /**
    * The SAME eight dimension filters (label/agent/trigger/kind/host/repo/
    * branch/PR) the Lore Explorer's filter bar offers — `lib/filters.ts`'s
@@ -94,11 +95,20 @@ export interface Conditions {
   filters: Filter[];
 }
 
-const EMPTY_CONDITIONS: Conditions = { scope: '', minAgeDays: '', unseenDays: '', maxSeenCount: '', maxReadCount: '', filters: [] };
+const EMPTY_CONDITIONS: Conditions = {
+  scope: '',
+  minAgeDays: '',
+  unseenDays: '',
+  maxSeenCount: '',
+  maxReadCount: '',
+  maxOpenedCount: '',
+  filters: [],
+};
 
 /**
  * `?prefillScope=` / `?prefillMinAgeDays=` / `?prefillUnseenDays=` /
- * `?prefillMaxSeenCount=` / `?prefillMaxReadCount=` / `?prefillFilters=` — how
+ * `?prefillMaxSeenCount=` / `?prefillMaxReadCount=` / `?prefillMaxOpenedCount=` /
+ * `?prefillFilters=` — how
  * the Lore Explorer's
  * "Create retention policy" action hands off its current scope, retention
  * conditions (`lib/retention-filter.ts`) and filter bar to this page. Read
@@ -127,6 +137,7 @@ function conditionsFromPrefillParams(params: URLSearchParams): Conditions | null
     unseenDays: params.get('prefillUnseenDays') ?? '',
     maxSeenCount: params.get('prefillMaxSeenCount') ?? '',
     maxReadCount: params.get('prefillMaxReadCount') ?? '',
+    maxOpenedCount: params.get('prefillMaxOpenedCount') ?? '',
     filters,
   };
 }
@@ -145,12 +156,14 @@ function toGroomRequest(c: Conditions): GroomRequest | null {
   const unseenDays = parseIntField(c.unseenDays);
   const maxSeenCount = parseIntField(c.maxSeenCount);
   const maxReadCount = parseIntField(c.maxReadCount);
+  const maxOpenedCount = parseIntField(c.maxOpenedCount);
   return {
     scope: c.scope.trim(),
     ...(minAgeDays !== undefined ? { min_age_days: minAgeDays } : {}),
     ...(unseenDays !== undefined ? { unseen_days: unseenDays } : {}),
     ...(maxSeenCount !== undefined ? { max_seen_count: maxSeenCount } : {}),
     ...(maxReadCount !== undefined ? { max_read_count: maxReadCount } : {}),
+    ...(maxOpenedCount !== undefined ? { max_opened_count: maxOpenedCount } : {}),
     ...filtersToGroomDimensionFilters(c.filters),
   };
 }
@@ -171,6 +184,7 @@ function policyToRequest(p: RetentionPolicy): GroomRequest {
     ...(p.unseen_days !== null ? { unseen_days: p.unseen_days } : {}),
     ...(p.max_seen_count !== null ? { max_seen_count: p.max_seen_count } : {}),
     ...(p.max_read_count !== null ? { max_read_count: p.max_read_count } : {}),
+    ...(p.max_opened_count !== null ? { max_opened_count: p.max_opened_count } : {}),
     ...filtersToGroomDimensionFilters(groomConditionsToFilters(p)),
   };
 }
@@ -183,6 +197,7 @@ function conditionsFromPolicy(p: RetentionPolicy): Conditions {
     unseenDays: p.unseen_days !== null ? String(p.unseen_days) : '',
     maxSeenCount: p.max_seen_count !== null ? String(p.max_seen_count) : '',
     maxReadCount: p.max_read_count !== null ? String(p.max_read_count) : '',
+    maxOpenedCount: p.max_opened_count !== null ? String(p.max_opened_count) : '',
     filters: groomConditionsToFilters(p),
   };
 }
@@ -192,10 +207,12 @@ function ruleSentence(p: RetentionPolicy): string {
   const parts: string[] = [];
   if (p.min_age_days !== null) parts.push(`Older than ${p.min_age_days}d`);
   if (p.unseen_days !== null) parts.push(`unseen ${p.unseen_days}d`);
-  // "written"/"read", never "seen" for either — the two counters run in
-  // opposite directions and appear side by side. See `retentionConditionsPhrase`.
+  // "written"/"delivered"/"chosen", never "seen" for any of them — the three
+  // counters measure different things and appear side by side. See
+  // `retentionConditionsPhrase`, which words the Explorer's pill identically.
   if (p.max_seen_count !== null) parts.push(`written ≤ ${p.max_seen_count}`);
-  if (p.max_read_count !== null) parts.push(`read ≤ ${p.max_read_count}`);
+  if (p.max_read_count !== null) parts.push(`delivered ≤ ${p.max_read_count}`);
+  if (p.max_opened_count !== null) parts.push(`chosen ≤ ${p.max_opened_count}`);
   const filters = groomConditionsToFilters(p);
   if (filters.length > 0) parts.push(filtersPhrase(filters));
   return parts.length > 0 ? parts.join(' · ') : 'Every unprotected lesson in scope';
@@ -299,6 +316,7 @@ function PolicyForm({
   const unseenId = useId();
   const maxSeenId = useId();
   const maxReadId = useId();
+  const maxOpenedId = useId();
 
   const preview = useGroomPreview();
   const run = useGroomRun();
@@ -336,6 +354,7 @@ function PolicyForm({
     conditions.unseenDays.trim() === '' &&
     conditions.maxSeenCount.trim() === '' &&
     conditions.maxReadCount.trim() === '' &&
+    conditions.maxOpenedCount.trim() === '' &&
     conditions.filters.length === 0;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -357,6 +376,7 @@ function PolicyForm({
     conditions.unseenDays,
     conditions.maxSeenCount,
     conditions.maxReadCount,
+    conditions.maxOpenedCount,
     conditions.filters,
   ]);
 
@@ -403,6 +423,7 @@ function PolicyForm({
             unseen_days: parseIntField(conditions.unseenDays) ?? null,
             max_seen_count: parseIntField(conditions.maxSeenCount) ?? null,
             max_read_count: parseIntField(conditions.maxReadCount) ?? null,
+            max_opened_count: parseIntField(conditions.maxOpenedCount) ?? null,
             tags: dimensionFilters.tags ?? null,
             tags_mode: dimensionFilters.tags_mode ?? null,
             source_agent: dimensionFilters.source_agent ?? null,
@@ -432,6 +453,7 @@ function PolicyForm({
           ...('unseen_days' in request ? { unseen_days: request.unseen_days } : {}),
           ...('max_seen_count' in request ? { max_seen_count: request.max_seen_count } : {}),
           ...('max_read_count' in request ? { max_read_count: request.max_read_count } : {}),
+          ...('max_opened_count' in request ? { max_opened_count: request.max_opened_count } : {}),
           ...dimensionFilters,
         });
         showToast('Policy saved.', 'success');
@@ -489,7 +511,7 @@ function PolicyForm({
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="flex flex-col gap-1.5">
           <label htmlFor={minAgeId} className={LABEL_CLASS}>Created</label>
           <input
@@ -530,7 +552,7 @@ function PolicyForm({
           <p className="text-[10px] text-[var(--color-content-tertiary)]">Written this many times or fewer</p>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={maxReadId} className={LABEL_CLASS}>Consumption</label>
+          <label htmlFor={maxReadId} className={LABEL_CLASS}>Delivered</label>
           <input
             id={maxReadId}
             type="number"
@@ -540,7 +562,26 @@ function PolicyForm({
             value={conditions.maxReadCount}
             onChange={(e) => setConditions((c) => ({ ...c, maxReadCount: e.target.value }))}
           />
-          <p className="text-[10px] text-[var(--color-content-tertiary)]">Read this many times or fewer. Bulk list/search reads count.</p>
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">
+            Handed to an agent this many times or fewer. Bulk list/search reads count, so this runs to
+            the hundreds.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={maxOpenedId} className={LABEL_CLASS}>Chosen</label>
+          <input
+            id={maxOpenedId}
+            type="number"
+            min={0}
+            placeholder={retentionConditionPlaceholder('maxOpenedCount')}
+            className={INPUT_CLASS}
+            value={conditions.maxOpenedCount}
+            onChange={(e) => setConditions((c) => ({ ...c, maxOpenedCount: e.target.value }))}
+          />
+          <p className="text-[10px] text-[var(--color-content-tertiary)]">
+            Deliberately fetched this many times or fewer. Bulk reads do NOT count, so 0 means never
+            chosen.
+          </p>
         </div>
       </div>
 
@@ -652,6 +693,7 @@ function PolicyRow({
     policy.unseen_days,
     policy.max_seen_count,
     policy.max_read_count,
+    policy.max_opened_count,
     policy.scope,
   ]);
 

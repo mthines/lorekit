@@ -98,6 +98,24 @@ export const GroomConditionsSchema = z.object({
    * surfaces must say so rather than calling both "seen".
    */
   max_read_count: z.number().int().min(0).max(100_000).optional(),
+  /**
+   * Match only lessons an agent DELIBERATELY fetched at most this many times —
+   * `memories.opened_count` (00104), the count behind `last_opened_at`.
+   *
+   * This is the one whose `0` means what a reader expects. `max_read_count`
+   * counts bulk ride-alongs, so on a live store `max_read_count: 0` matched
+   * NOTHING (every lesson in an active scope has been paged over) and its
+   * usable range was a narrow band in the middle; worse, it ranks SCOPE
+   * BREADTH, since a `global` lesson is delivered on every session and a
+   * `branch` lesson almost never. `max_opened_count: 0` means "nothing ever
+   * chose this", and means the same thing in either scope.
+   *
+   * Both are kept: `max_read_count` answers what a lesson COSTS in context,
+   * this one answers whether anything took it up. Setting only this one — no
+   * `max_read_count` — is what reaches the heavily-delivered, never-chosen
+   * lessons the other condition structurally cannot.
+   */
+  max_opened_count: z.number().int().min(0).max(100_000).optional(),
 }).merge(GroomDimensionFiltersSchema);
 export type GroomConditions = z.infer<typeof GroomConditionsSchema>;
 
@@ -131,6 +149,7 @@ export const RetentionPolicySchema = z.object({
   unseen_days: z.number().int().nullable(),
   max_seen_count: z.number().int().nullable(),
   max_read_count: z.number().int().nullable(),
+  max_opened_count: z.number().int().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 }).merge(GroomDimensionFiltersColumnsSchema);
@@ -158,6 +177,7 @@ export const PolicyUpdateBodySchema = z.object({
   unseen_days: z.number().int().min(1).max(3650).nullable().optional(),
   max_seen_count: z.number().int().min(0).max(100_000).nullable().optional(),
   max_read_count: z.number().int().min(0).max(100_000).nullable().optional(),
+  max_opened_count: z.number().int().min(0).max(100_000).nullable().optional(),
   tags: GroomValueListSchema.nullable().optional(),
   tags_mode: TagsModeSchema.nullable().optional(),
   source_agent: GroomValueListSchema.nullable().optional(),

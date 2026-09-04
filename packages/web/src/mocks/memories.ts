@@ -26,6 +26,14 @@
  */
 import { http, HttpResponse } from 'msw';
 import { resolveKindHost } from '@lorekit/schemas/tags';
+import { CHARS_PER_TOKEN_ESTIMATE, LESSON_UTILITY_THRESHOLDS } from '@lorekit/schemas/memory';
+// Relative + explicit `.ts`, NOT the `@/` alias every other web module uses:
+// `packages/evals` imports this file through plain Node ESM (see
+// `test/relevance/relevance-integration.test.mjs`), and Node resolves package
+// specifiers and relative paths but knows nothing of Next's `paths` mapping.
+// An `@/` import here is invisible to `nx typecheck` and Storybook — both
+// resolve it — and only fails in the evals suite.
+import { lessonUtility } from '../lib/lesson-utility.ts';
 
 /**
  * The instant the story clock is frozen to. Fixtures below are dated relative to
@@ -586,6 +594,96 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// The delivered × chosen grid — Insights' `LoreUtilityGrid` + `LoreCostHeadline`.
+// Separate from `memoryHandlers()` because `MemoryRow` carries no read
+// counters, but the SAME derive-don't-hardcode rule: the census and the cost
+// are COMPUTED from the rows below by the real classifier, so a fixture can
+// never render a lesson in one quadrant while the count above it says another.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** A row on the grid, with the two counters its quadrant is derived from. */
+export interface MockUtilityRow {
+  id: string;
+  scope: string;
+  key: string;
+  read_count: number;
+  opened_count: number;
+  last_opened_at: string | null;
+  created_at: string;
+  /** Body length, for the token estimate. Only the LENGTH matters to the cost. */
+  value_chars: number;
+}
+
+/**
+ * One lesson per state, calibrated against `LESSON_UTILITY_THRESHOLDS` so each
+ * genuinely lands where its name says.
+ *
+ * The two `unproven` rows cover BOTH halves of the evidence floor — one too
+ * young, one too thin — because a fixture that only exercises the age half
+ * would let a regression in the delivery half render as an empty state.
+ */
+export const UTILITY_ROWS: MockUtilityRow[] = [
+  { id: 'u1', scope: 'global', key: 'never-run-nx-fanouts-in-a-sandbox', read_count: 1_340, opened_count: 61, last_opened_at: hoursAgo(6), created_at: hoursAgo(24 * 120), value_chars: 1_800 },
+  { id: 'u2', scope: 'repo::acme/app', key: 'migration-order-column-then-backfill', read_count: 42, opened_count: 9, last_opened_at: hoursAgo(30), created_at: hoursAgo(24 * 90), value_chars: 900 },
+  { id: 'u3', scope: 'global', key: 'legacy-formatting-rule', read_count: 1_180, opened_count: 1, last_opened_at: hoursAgo(24 * 200), created_at: hoursAgo(24 * 210), value_chars: 2_400 },
+  { id: 'u4', scope: 'branch::acme/app::feat/old', key: 'never-used-fallback-branch', read_count: 14, opened_count: 0, last_opened_at: null, created_at: hoursAgo(24 * 150), value_chars: 600 },
+  { id: 'u5', scope: 'repo::acme/app', key: 'written-yesterday', read_count: 22, opened_count: 3, last_opened_at: hoursAgo(2), created_at: hoursAgo(24), value_chars: 500 },
+  { id: 'u6', scope: 'project::docs', key: 'barely-delivered-yet', read_count: 4, opened_count: 1, last_opened_at: hoursAgo(48), created_at: hoursAgo(24 * 60), value_chars: 700 },
+];
+
+/**
+ * Handlers for `GET /memories/utility`.
+ *
+ * Both consumers read the same route, so ONE handler serves the census, the
+ * cost and the per-quadrant rows — mirroring the real endpoint, which computes
+ * all three in one request and returns the rows only when a quadrant is named.
+ */
+export function utilityHandlers(rows: MockUtilityRow[] = UTILITY_ROWS) {
+  const now = new Date(FROZEN_NOW);
+  // The REAL classifier, not a fixture-side copy of the rule: this is what
+  // stops a story showing a "Noise tax" chip on a row the grid counted as
+  // "Dormant", which is the disagreement the shared thresholds exist to
+  // prevent and which a hand-written census would reintroduce here.
+  const quadrantOf = (r: MockUtilityRow) =>
+    lessonUtility({ read_count: r.read_count, opened_count: r.opened_count, created_at: r.created_at }, now)
+      ?.utility ?? 'unproven';
+
+  const census = { 'load-bearing': 0, specialist: 0, 'noise-tax': 0, dormant: 0, unproven: 0 };
+  for (const r of rows) census[quadrantOf(r)] += 1;
+
+  const tokens = (r: MockUtilityRow) => Math.ceil(r.value_chars / CHARS_PER_TOKEN_ESTIMATE);
+  const cost = {
+    delivered_reads: rows.reduce((n, r) => n + r.read_count, 0),
+    chosen_reads: rows.reduce((n, r) => n + r.opened_count, 0),
+    delivered_tokens: rows.reduce((n, r) => n + r.read_count * tokens(r), 0),
+    chosen_tokens: rows.reduce((n, r) => n + r.opened_count * tokens(r), 0),
+  };
+
+  return [
+    http.get('*/functions/v1/memories/utility', ({ request }) => {
+      const url = new URL(request.url);
+      const quadrant = url.searchParams.get('quadrant');
+      return HttpResponse.json({
+        thresholds: {
+          min_deliveries: LESSON_UTILITY_THRESHOLDS.minDeliveries,
+          min_age_days: LESSON_UTILITY_THRESHOLDS.minAgeDays,
+          chosen_pull_through: LESSON_UTILITY_THRESHOLDS.chosenPullThrough,
+          broad_reach_deliveries: LESSON_UTILITY_THRESHOLDS.broadReachDeliveries,
+        },
+        counting_since: '2026-02-28T00:00:00.000Z',
+        census,
+        cost,
+        window: { since: url.searchParams.get('since'), until: url.searchParams.get('until') },
+        quadrant,
+        entries: quadrant
+          ? rows.filter((r) => quadrantOf(r) === quadrant).map(({ value_chars: _chars, ...e }) => e)
+          : [],
+      });
+    }),
+  ];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Retention policies ("grooming") — Settings → Grooming's rule builder.
 // Separate from `memoryHandlers()` (a different page's concern), but the SAME
 // pattern: derive every response from an in-memory fixture the caller can
@@ -603,6 +701,7 @@ export interface MockRetentionPolicy {
   unseen_days: number | null;
   max_seen_count: number | null;
   max_read_count: number | null;
+  max_opened_count: number | null;
   // The eight dimension filters (migration 00093) — mirrors `RetentionPolicySchema`
   // exactly so this fixture stays a faithful stand-in for the real response shape.
   tags: string[] | null;
@@ -652,6 +751,7 @@ export const DEFAULT_GROOM_POLICIES: MockRetentionPolicy[] = [
     unseen_days: null,
     max_seen_count: null,
     max_read_count: null,
+    max_opened_count: null,
     ...NO_MOCK_DIMENSION_FILTERS,
     created_at: FROZEN_NOW,
     updated_at: FROZEN_NOW,
@@ -696,6 +796,7 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
         unseen_days: typeof body.unseen_days === 'number' ? body.unseen_days : null,
         max_seen_count: typeof body.max_seen_count === 'number' ? body.max_seen_count : null,
         max_read_count: typeof body.max_read_count === 'number' ? body.max_read_count : null,
+        max_opened_count: typeof body.max_opened_count === 'number' ? body.max_opened_count : null,
         ...dimensionFilters,
         created_at: FROZEN_NOW,
         updated_at: FROZEN_NOW,
@@ -723,6 +824,7 @@ export function groomHandlers(initialPolicies: MockRetentionPolicy[] = DEFAULT_G
         ...('unseen_days' in body ? { unseen_days: body.unseen_days as number | null } : {}),
         ...('max_seen_count' in body ? { max_seen_count: body.max_seen_count as number | null } : {}),
         ...('max_read_count' in body ? { max_read_count: body.max_read_count as number | null } : {}),
+        ...('max_opened_count' in body ? { max_opened_count: body.max_opened_count as number | null } : {}),
         ...dimensionPatch,
         updated_at: FROZEN_NOW,
       };

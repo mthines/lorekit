@@ -222,11 +222,73 @@ const RPC_BACKED_SCOPE_READS = ['scopes', 'tags', 'activity', 'read-activity', '
  * same pin — but the two are not one list, because a future aggregate and a
  * future row read are added for different reasons.
  */
-const RPC_BACKED_ROW_READS = ['list'] as const;
+const RPC_BACKED_ROW_READS = ['list', 'utility'] as const;
+
+/**
+ * The allowlist expression, spelled either inline at the call site or bound
+ * once to a local the file passes instead.
+ *
+ * The inline form is the only one the guard used to accept, and matching the
+ * literal expression is the whole point: `p_key_scopes: someIdentifier` is
+ * satisfied just as well by `p_key_scopes: []`, which is the fail-open value
+ * this suite exists to catch. But a handler issuing THREE RPCs cannot inline it
+ * three times without inviting the copy that quietly omits it, so the binding
+ * form has to be reachable — and it is admitted only when the file binds that
+ * identifier to exactly the expression the inline form would have written.
+ * That is a stronger guard than the original, not an exemption: `list` still
+ * passes under the inline arm, and a handler passing a differently-derived
+ * local still fails.
+ */
+const KEY_SCOPES_EXPR = String.raw`keyRestriction\(auth\)\?\.scopes\s*\?\?\s*\[\]`;
+
+function passesKeyScopes(src: string): boolean {
+  if (new RegExp(String.raw`p_key_scopes:\s*${KEY_SCOPES_EXPR}`).test(src)) return true;
+  const bound = src.match(new RegExp(String.raw`const\s+(\w+)\s*=\s*${KEY_SCOPES_EXPR}`));
+  if (!bound) return false;
+  return new RegExp(String.raw`p_key_scopes:\s*${bound[1]}\b`).test(src);
+}
+
+/**
+ * The RPCs that read or write `memories` rows, and therefore take the
+ * allowlist. Matched by NAME PREFIX rather than read out of
+ * `database.types.ts`: that file is generated from the deployed schema and so
+ * lags a migration by exactly the window in which a new handler ships, which
+ * would make this check vacuous on the only call sites it is here to cover.
+ *
+ * The exclusion this earns is the point — `lorekit_check_rate_limit` (called
+ * beside `memory_write` in `create.ts`) is per-user and has no scope to narrow,
+ * so a count-based rule would either fail on it or be widened until it stopped
+ * meaning anything.
+ */
+const SCOPED_RPC_NAME = /^(memory_|restore_memory$|lorekit_memory_|lorekit_read_activity$)/;
+
+/** Every `.rpc('name'…)` / `.rpc<T>('name'…)` the file issues, in source order. */
+function rpcCallNames(src: string): string[] {
+  return [...src.matchAll(/\.rpc(?:<[^>]*>)?\(\s*'([^']+)'/g)].map((m) => m[1]);
+}
 
 describe('key-scope usage guard (RPC-backed row reads)', () => {
   it.each(RPC_BACKED_ROW_READS)('%s passes p_key_scopes to its RPC', (name) => {
-    expect(readHandlerSource(name)).toMatch(/p_key_scopes:\s*keyRestriction\(auth\)\?\.scopes\s*\?\?\s*\[\]/);
+    expect(
+      passesKeyScopes(readHandlerSource(name)),
+      `${name} must pass the key's allowlist to its RPC, inline or via a local bound to it`,
+    ).toBe(true);
+  });
+
+  it.each(RPC_BACKED_ROW_READS)('%s passes it to EVERY scoped RPC, not just one', (name) => {
+    // `passesKeyScopes` above is satisfied by a single call site, which was
+    // enough while every pinned handler issued exactly one RPC. `utility` issues
+    // three, and the one that hands back ROWS naming scope and key is the one a
+    // hurried edit would drop the parameter from — leaving the census correctly
+    // narrowed and the rows not, which is the fail-open shape wearing a green
+    // test. So count instead: as many `p_key_scopes:` as there are scoped calls.
+    const src = readHandlerSource(name);
+    const scoped = rpcCallNames(src).filter((rpc) => SCOPED_RPC_NAME.test(rpc));
+    expect(scoped.length, `${name} issues no scoped RPC — has it been rewritten?`).toBeGreaterThan(0);
+    expect(
+      (src.match(/p_key_scopes:/g) ?? []).length,
+      `${name} calls ${scoped.join(', ')} — every one must send the allowlist`,
+    ).toBe(scoped.length);
   });
 
   it.each(RPC_BACKED_ROW_READS)('%s still refuses a NAMED out-of-allowlist scope', (name) => {

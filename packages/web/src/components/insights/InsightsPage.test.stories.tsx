@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { expect, waitFor, within } from 'storybook/test';
 import { http, HttpResponse } from 'msw';
 import { InsightsPage } from './InsightsPage';
-import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
+import { memoryHandlers, utilityHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 
 /**
@@ -27,13 +27,7 @@ function handlers() {
         by_scope_type: [],
       });
     }),
-    http.get('*/functions/v1/memories/read-ranking', ({ request }) =>
-      HttpResponse.json({
-        direction: new URL(request.url).searchParams.get('direction') ?? 'cold',
-        counting_since: '2026-08-23T00:00:00.000Z',
-        entries: [],
-      }),
-    ),
+    ...utilityHandlers(),
     http.get('*/functions/v1/memories/usage/runs', () =>
       HttpResponse.json({ range: { since: null, until: FROZEN_NOW }, runs: [], next_cursor: null }),
     ),
@@ -67,7 +61,7 @@ export const RendersAllSixSections: Story = {
         'Operational health',
         "Who's reading",
         'Scope consumption',
-        'Hot & cold lore',
+        'Is this lore earning its place?',
         'Runs',
       ]) {
         await waitFor(() => expect(canvas.getByRole('heading', { name: heading })).toBeInTheDocument());

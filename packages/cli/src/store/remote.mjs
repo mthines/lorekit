@@ -283,7 +283,7 @@ class RemoteStore {
   async write(args = {}) {
     const {
       scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
-      origin_repo, origin_branch, origin_commit, origin_pr,
+      cited, origin_repo, origin_branch, origin_commit, origin_pr,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
@@ -295,6 +295,11 @@ class RemoteStore {
     if (ttl_days !== undefined) body.ttl_days = ttl_days;
     if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;
     if (created_at !== undefined) body.created_at = created_at;
+    // Citations are a fact about the RUN this write belongs to, not a column on
+    // the row (migration 00107) — the server resolves each ref, records the
+    // credit, and drops what it cannot resolve. Sent verbatim: which refs are
+    // legal is the server's grammar to decide, not this transport's.
+    if (cited !== undefined) body.cited = cited;
     // Provenance — only sent when known. Omitting a field leaves whatever the
     // row already recorded intact (the RPC coalesces), which is what makes a
     // write from a machine with no git context non-destructive.
@@ -707,8 +712,8 @@ class RemoteStore {
   }
 
   // POST /policies → the created policy object.
-  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count } = {}) {
-    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count });
+  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
+    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
     const res = await this._rest('/memories/policies', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, policy: res.data };
@@ -735,8 +740,8 @@ class RemoteStore {
   // POST /groom/preview → { count, keys: [{ scope, key }] } — the SAME
   // candidates a groom() run would archive. Pass either `policy_id` or
   // `scope` (+ optional conditions), never both.
-  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count } = {}) {
-    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count });
+  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
     const res = await this._rest('/memories/groom/preview', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, count: res.data?.count ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
@@ -744,8 +749,8 @@ class RemoteStore {
 
   // POST /groom/run → archives every previewed candidate, in one transaction.
   // Soft-archive only (recoverable via restore); never hard-deletes.
-  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count } = {}) {
-    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count });
+  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
+    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
     const res = await this._rest('/memories/groom/run', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, archived: res.data?.archived ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };

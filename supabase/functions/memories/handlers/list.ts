@@ -56,6 +56,7 @@ interface ListParams {
   unseen_days?: number | undefined;
   max_seen_count?: number | undefined;
   max_read_count?: number | undefined;
+  max_opened_count?: number | undefined;
   limit: number;
   cursor?: string | undefined;
   dimensions: MemoryDimensions;
@@ -241,6 +242,7 @@ async function respondWithPage(
     p_unseen_days: params.unseen_days ?? null,
     p_max_seen_count: params.max_seen_count ?? null,
     p_max_read_count: params.max_read_count ?? null,
+    p_max_opened_count: params.max_opened_count ?? null,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
@@ -306,6 +308,7 @@ export async function handleList(
     unseen_days: p.unseen_days,
     max_seen_count: p.max_seen_count,
     max_read_count: p.max_read_count,
+    max_opened_count: p.max_opened_count,
     limit: p.limit,
     cursor: p.cursor,
     dimensions: dimensionsFromQuery(p),
@@ -349,6 +352,7 @@ export async function handleListPost(
     unseen_days: b.unseen_days,
     max_seen_count: b.max_seen_count,
     max_read_count: b.max_read_count,
+    max_opened_count: b.max_opened_count,
     limit: b.limit,
     cursor: b.cursor,
     dimensions: dimensionsFromBody(b),

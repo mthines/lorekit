@@ -217,12 +217,15 @@ Store or update a lesson.
 | `origin_branch` |  | string | Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves. |
 | `origin_commit` |  | string | Provenance: the commit SHA (7-40 hex characters) checked out when this memory was recorded. |
 | `origin_pr` |  | integer | Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR. _(min 1)_ |
+| `cited` |  | array | The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds. _(array of string)_ |
 
 Requires **write** permission.
 
 Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).
 
 **Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.
+
+**Citations (`cited`):** the one signal read counts cannot produce. A lesson injected at session start is already in your context and is applied without ever being fetched, so LoreKit can measure whether lore was *looked up* but not whether it *worked* — `cited` is where you say so. Each entry is a `scope::key` you were shown; they raise the cited lesson’s `cited_count` and are grouped by the run’s correlation id. Recorded once per run, so a retried write does not inflate anything, and every failure mode is silent: an unknown reference, a self-citation, and anything past 32 entries are dropped and the write still succeeds.
 
 **Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member’s write falls back to personal (never rejected) with a `notice`.
 
@@ -446,7 +449,7 @@ No arguments.
 
 Requires **read** permission.
 
-Returns: `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "created_at", "updated_at" }] }`
+Returns: `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "max_opened_count", "created_at", "updated_at" }] }`
 
 ---
 
@@ -464,6 +467,7 @@ Create a scoped retention policy that auto-archives (never hard-deletes) matchin
 | `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
 | `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. _(0–100000)_ |
+| `max_opened_count` |  | integer | Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
@@ -503,6 +507,7 @@ Update a retention policy. Every field but id is optional.
 | `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count); a never-opened lesson is measured from its creation date. Omit to leave unchanged; pass explicit null to clear. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
 | `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
+| `max_opened_count` |  | integer | Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat. Omit to leave unchanged; pass explicit null to clear. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). Omit to leave unchanged; pass explicit null to clear. _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". Omit to leave unchanged; pass explicit null to clear. _(array of string)_ |
@@ -554,6 +559,7 @@ Preview the lessons a saved policy or an inline condition set would archive, wit
 | `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
 | `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. _(0–100000)_ |
+| `max_opened_count` |  | integer | Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
@@ -591,6 +597,7 @@ Archive every lesson a saved policy or an inline condition set matches. Soft-arc
 | `unseen_days` |  | integer | Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old. _(1–3650)_ |
 | `max_seen_count` |  | integer | Match only lessons that have recurred at most this many times. _(0–100000)_ |
 | `max_read_count` |  | integer | Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. _(0–100000)_ |
+| `max_opened_count` |  | integer | Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat. _(0–100000)_ |
 | `tags` |  | array | Match lessons carrying these labels — combined by `tags_mode`. _(array of string)_ |
 | `tags_mode` |  | string | "any" (carries at least one), "all" (carries every one), or "none" (carries none). _(default `any`)_ |
 | `source_agent` |  | array | Match lessons whose writing agent is one of these (or, with mode "nin", none of these) — e.g. "claude", "aw". _(array of string)_ |
@@ -827,7 +834,7 @@ id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 - [Claude Code on the web](https://lorekit.io/docs/claude-code-web) — Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so either commit a project .mcp.json (auth via the LOREKIT_TOKEN environment variable) or install LoreKit globally from a setup script — the token always lives in LOREKIT_TOKEN, never in the repo.
 - [Use cases](https://lorekit.io/docs/use-cases) — End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows.
 - [Deep links](https://lorekit.io/docs/deep-links) — Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag.
-- [Retention policies](https://lorekit.io/docs/grooming) — Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the read-only Duplicate Clusters sidebar for spotting the same lesson written twice.
+- [Retention policies](https://lorekit.io/docs/grooming) — Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the Insights grid that shows which lessons are earning their place, citations so an agent can say which lessons it actually applied, and the read-only Duplicate Clusters sidebar for spotting the same lesson written twice.
 
 ## Key documentation
 

@@ -260,12 +260,19 @@ export const MCP_TOOLS = [
           description:
             'Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR.',
         },
+        cited: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds.',
+        },
       },
     },
     returns:
       '`{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).',
     notes: [
       '**Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.',
+      '**Citations (`cited`):** the one signal read counts cannot produce. A lesson injected at session start is already in your context and is applied without ever being fetched, so LoreKit can measure whether lore was *looked up* but not whether it *worked* — `cited` is where you say so. Each entry is a `scope::key` you were shown; they raise the cited lesson\u2019s `cited_count` and are grouped by the run\u2019s correlation id. Recorded once per run, so a retried write does not inflate anything, and every failure mode is silent: an unknown reference, a self-citation, and anything past 32 entries are dropped and the write still succeeds.',
       '**Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member\u2019s write falls back to personal (never rejected) with a `notice`.',
     ],
   },
@@ -506,7 +513,7 @@ export const MCP_TOOLS = [
       localMcpExempt: 'server-side retention_policies table; the offline store has no equivalent',
     },
     inputSchema: { type: 'object', properties: {} },
-    returns: '`{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "created_at", "updated_at" }] }`',
+    returns: '`{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "max_opened_count", "created_at", "updated_at" }] }`',
   },
   {
     name: 'policy.create',
@@ -533,6 +540,7 @@ export const MCP_TOOLS = [
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times.' },
         max_read_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned.' },
+        max_opened_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat.' },
         ...groomDimensionFilterProperties(false),
       },
     },
@@ -564,6 +572,7 @@ export const MCP_TOOLS = [
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count); a never-opened lesson is measured from its creation date. Omit to leave unchanged; pass explicit null to clear.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times. Omit to leave unchanged; pass explicit null to clear.' },
         max_read_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. Omit to leave unchanged; pass explicit null to clear.' },
+        max_opened_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat. Omit to leave unchanged; pass explicit null to clear.' },
         ...groomDimensionFilterProperties(true),
       },
     },
@@ -607,6 +616,7 @@ export const MCP_TOOLS = [
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times.' },
         max_read_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned.' },
+        max_opened_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat.' },
         ...groomDimensionFilterProperties(false),
       },
     },
@@ -635,6 +645,7 @@ export const MCP_TOOLS = [
         unseen_days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Match lessons not individually opened via MCP or the CLI for at least this many days (a bulk list/search result or a dashboard view does not count). A never-opened lesson is measured from its creation date, so it matches only once it is itself this old.' },
         max_seen_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons that have recurred at most this many times.' },
         max_read_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned.' },
+        max_opened_count: { type: 'integer', minimum: 0, maximum: 100000, description: 'Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means "nothing ever chose this" rather than "this lesson happens to live in a narrow scope". Backfilled over the whole recorded history, so it carries no cutover caveat.' },
         ...groomDimensionFilterProperties(false),
       },
     },

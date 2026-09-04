@@ -1,15 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { http, HttpResponse } from 'msw';
-import type { ReadRankingEntry } from '@lorekit/schemas/memory';
 import type { UsageStatRow } from '@lorekit/schemas/usage';
 import { InsightsPage } from './InsightsPage';
-import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
+import { memoryHandlers, utilityHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 
 /**
  * Full-page visual-regression stories for `/insights` — the consolidated
  * consumption/usage view. Composes five already-storied components
- * (`UsageHealth`, `AgentBreakdown`, `ScopeConsumption`, `HotColdLore`,
+ * (`UsageHealth`, `AgentBreakdown`, `ScopeConsumption`, `LoreUtilityGrid`,
  * `RunsList`), each of which fetches over TanStack Query → a REST endpoint
  * MSW mocks here, so this stories the real page against a realistic dataset.
  *
@@ -38,11 +37,6 @@ const BY_TOOL: UsageStatRow[] = [
   row({ tool_name: 'memory.search', scope_type: 'global', event_count: 100, total_duration_ms: 38_600, record_count: 3_100 }),
   row({ tool_name: 'memory.list', scope_type: 'branch', event_count: 1_176, total_duration_ms: 229_000, record_count: 15, client: 'cli', host: 'aw' }),
   row({ tool_name: 'memory.read', scope_type: 'repo', event_count: 200, total_duration_ms: 23_200, record_count: 200, client: 'dashboard', host: 'dashboard' }),
-];
-
-const COLD_ENTRIES: ReadRankingEntry[] = [
-  { id: '1', scope: 'repo::mthines/lorekit', key: 'never-used-fallback-branch', read_count: 0, last_read_at: null, seen_count: 1, created_at: '2026-01-05T00:00:00.000Z' },
-  { id: '2', scope: 'global', key: 'legacy-formatting-rule', read_count: 0, last_read_at: null, seen_count: 3, created_at: '2026-02-10T00:00:00.000Z' },
 ];
 
 const RUNS = [
@@ -78,14 +72,7 @@ function handlers() {
         by_scope_type: [],
       });
     }),
-    http.get('*/functions/v1/memories/read-ranking', ({ request }) => {
-      const direction = new URL(request.url).searchParams.get('direction') ?? 'cold';
-      return HttpResponse.json({
-        direction,
-        counting_since: '2026-08-23T00:00:00.000Z',
-        entries: direction === 'cold' ? COLD_ENTRIES : [],
-      });
-    }),
+    ...utilityHandlers(),
     http.get('*/functions/v1/memories/usage/runs', () =>
       HttpResponse.json({ range: { since: '2026-05-20T00:00:00.000Z', until: FROZEN_NOW }, runs: RUNS, next_cursor: null }),
     ),
@@ -140,13 +127,9 @@ export const Empty: Story = {
           });
         }),
         ...memoryHandlers([]),
-        http.get('*/functions/v1/memories/read-ranking', ({ request }) =>
-          HttpResponse.json({
-            direction: new URL(request.url).searchParams.get('direction') ?? 'cold',
-            counting_since: '2026-08-23T00:00:00.000Z',
-            entries: [],
-          }),
-        ),
+        // An account with no lore at all, so every quadrant is 0 and the cost
+        // line renders "nothing delivered" rather than a fabricated bill.
+        ...utilityHandlers([]),
         http.get('*/functions/v1/memories/usage/runs', () =>
           HttpResponse.json({ range: { since: null, until: FROZEN_NOW }, runs: [], next_cursor: null }),
         ),

@@ -29,6 +29,14 @@
 //                          omitted, a configured default may apply — see below.
 //   --clear-ttl            Remove any existing expiry (make the memory permanent)
 //   --org <slug>           Write to this org (remote only)
+//   --cited <ref,ref>      `scope::key` refs this lesson APPLIED (remote only)
+//
+// `--cited` credits the lore that shaped the work being written up. It is the
+// only signal that distinguishes a lesson that was read from one that was used:
+// a lesson injected at SessionStart is already in context and is applied without
+// ever being fetched, so the delivered/chosen ratio cannot see it. Unresolvable
+// refs cost nothing — the server drops them — so naming a lesson you are unsure
+// of is cheaper than omitting one you relied on.
 //
 // Provenance — where the lesson is being recorded FROM. Derived automatically
 // from git + the CI environment (repo, branch, commit, and the pull request
@@ -222,6 +230,16 @@ export async function write(args) {
 
   const orgSlug = typeof args.org === 'string' ? args.org : undefined;
 
+  // Split on commas like `--tags`, so there is one list-flag convention. The
+  // refs themselves are NOT parsed here: `scope::key` splits on the first `::`
+  // whose left half is a legal scope, a rule that lives once in
+  // `parseMemoryRef` (mcp-core + its edge mirror) and would become a second,
+  // weaker implementation if this seam guessed at it. A ref this command cannot
+  // resolve is dropped server-side, silently and by design.
+  const cited = args.cited
+    ? String(args.cited).split(',').map((r) => r.trim()).filter(Boolean)
+    : [];
+
   // ── Provenance ────────────────────────────────────────────────────────────
   // Derived from git + CI unless --no-origin; explicit --origin-* flags win.
   // A field that is neither supplied nor derivable is omitted, never sent as
@@ -300,6 +318,16 @@ export async function write(args) {
     return 1;
   }
 
+  // The offline store has no citation ledger — migration 00107's table lives in
+  // Postgres — so a local write would accept the flag and record nothing. Named
+  // rather than dropped: a credit that silently went nowhere is invisible in
+  // exactly the place the whole signal exists to be visible.
+  if (cited.length && storeName === 'local') {
+    err(`${c.red('Error:')} --cited is remote-only (the offline store records no citations)`);
+    err(`Re-run with ${c.cyan('--remote')}, or drop --cited to write the lesson locally.`);
+    return 1;
+  }
+
   // ── Write ──────────────────────────────────────────────────────────────────
   const writeArgs = {
     scope,
@@ -313,6 +341,7 @@ export async function write(args) {
     ...(ttlDays ? { ttl_days: ttlDays } : {}),
     ...(clearTtl ? { clear_ttl: true } : {}),
     ...(orgSlug ? { org: orgSlug } : {}),
+    ...(cited.length ? { cited } : {}),
     ...origin,
   };
 
@@ -346,6 +375,7 @@ export async function write(args) {
       trigger: trigger || null,
       ttl_days: reportedTtlDays,
       ttl_source: reportedTtlSource,
+      cited,
       origin,
     }, null, 2));
   } else {

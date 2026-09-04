@@ -1,8 +1,8 @@
 ---
 title: "Retention policies"
-description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the read-only Duplicate Clusters sidebar for spotting the same lesson written twice."
+description: "Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the Insights grid that shows which lessons are earning their place, citations so an agent can say which lessons it actually applied, and the read-only Duplicate Clusters sidebar for spotting the same lesson written twice."
 order: 11
-keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli", "duplicates", "dedupe", "clusters", "near-duplicate"]
+keywords: ["grooming", "retention", "policy", "policy.create", "groom.preview", "groom.run", "memory.protect", "archive", "auto", "cleanup", "cli", "duplicates", "dedupe", "clusters", "near-duplicate", "insights", "pull-through", "delivered", "chosen", "noise tax", "dormant", "load-bearing", "cited", "citations"]
 ---
 
 Retention policies automate the manual archiving you would otherwise do by
@@ -15,7 +15,7 @@ hard-delete; that stays a separate, manual, confirm-or-`--yes` step
 
 <TutorialStep number={1} title="Preview before you save anything">
 
-Every rule is the AND of four age/activity conditions, all optional, plus the
+Every rule is the AND of five age/activity conditions, all optional, plus the
 same eight dimension filters the Lore Explorer's filter bar offers:
 
 | Condition | Meaning |
@@ -23,7 +23,8 @@ same eight dimension filters the Lore Explorer's filter bar offers:
 | `min_age_days` | Only lessons at least this many days old |
 | `unseen_days` | Only lessons no agent has individually opened (over MCP or the `lorekit` CLI) in at least this many days. A lesson never opened this way counts from its **creation date**, so it matches only once it is itself that old. A bulk `memory.list`/`memory.search` appearance or a human viewing the dashboard does NOT count as "opened"; see the note below |
 | `max_seen_count` | Only lessons that have recurred at most this many times. Counts **writes**, not reads |
-| `max_read_count` | Only lessons **read back** at most this many times. Counts every read — a bulk `memory.list`/`memory.search` result page and a human opening the dashboard's detail sheet both count, unlike `unseen_days`. Use it to find lore nothing has ever actually used |
+| `max_read_count` | Only lessons **delivered** at most this many times. Counts every read — a bulk `memory.list`/`memory.search` result page and a human opening the dashboard's detail sheet both count, unlike `unseen_days`. This is a COST threshold, and it runs to the hundreds; see the note below before typing a small number |
+| `max_opened_count` | Only lessons an agent **deliberately fetched** at most this many times. A bulk list/search ride-along does NOT count, so `0` means "nothing has ever chosen this". This is the UPTAKE threshold — the one that answers "was this lesson ever worth going and getting?" |
 | `tags` / `tags_mode` | Labels a lesson must carry — `any` (default), `all`, or `none` |
 | `source_agent` / `source_agent_mode` | The writing agent — `in` (default) or `nin` |
 | `trigger` / `trigger_mode` | The write trigger — `in` (default) or `nin` |
@@ -33,32 +34,54 @@ same eight dimension filters the Lore Explorer's filter bar offers:
 | `origin_branch` / `origin_branch_mode` | The branch name — `in` (default) or `nin` |
 | `origin_pr` / `origin_pr_mode` | Pull-request numbers, as digit strings — `in` (default) or `nin` |
 
-`max_read_count` counts a DIFFERENT direction from `max_seen_count`: the first
-counts how many times a lesson was read back, the second how many times it was
-written. A lesson written once and read fifty times matches
-`max_seen_count: 1` but not `max_read_count: 1`. Neither is called "seen" in
-the dashboard for that reason — the Explorer labels them "Recurrence" and
-"Consumption", the same two words the lesson detail sheet uses.
+**The three counters measure three different things, and none of them is
+called "seen".** `max_seen_count` counts WRITES. `max_read_count` counts every
+read, deliberate or not. `max_opened_count` counts only the deliberate ones. A
+lesson written once and delivered fifty times matches `max_seen_count: 1` but
+not `max_read_count: 1`; a lesson delivered 1,400 times that no agent ever
+opened matches `max_opened_count: 0` but no `max_read_count` value you would
+ever think to type. The dashboard labels them "Recurrence", "Delivered" and
+"Chosen" — the same three words the lesson detail sheet uses.
+
+**`max_read_count: 0` matches nothing, and that is not a bug.** A lesson picks
+up a read every time it rides along in a `memory.list` or `memory.search` page,
+so anything that has been in your store for a while carries a count in the
+hundreds. Measured against a real store: `max_read_count <= 5` matched no
+lessons at all, the first non-empty result appeared around 26, and 400 matched
+essentially everything. Treat it as a "delivered at most this often" cost
+filter and start in the hundreds. If what you actually want is "nothing has
+ever used this", that is `max_opened_count: 0`.
 
 One caveat on `max_read_count`: reads have only been counted since the
 `read_count` column shipped, so a long-lived lesson can show a low count it
 never earned. Pair it with `min_age_days` only once your store has been
-counting for a while.
+counting for a while. `max_opened_count` has no such caveat — it was
+backfilled over the whole recorded read history when it shipped.
 
 `unseen_days` is deliberately the NARROWEST of the three "has this been
 touched" signals a lesson carries, and the Lore Explorer's detail sheet shows
 all three side by side so they're never confused for one another:
 "Recurrence" (`seen_count` — how many times the lesson has been **written**,
-unrelated to reading), "Consumption" (`read_count` / `last_read_at` — how
-many times it has been **read back**, by ANY surface: a bulk
+unrelated to reading), "Delivered" (`read_count` / `last_read_at` — how
+many times it has been **handed to a reader**, by ANY surface: a bulk
 `memory.list`/`.search` result page, `GET /memories/:id`, or a human opening
-the dashboard's own detail sheet all bump it), and "Last agent open"
+the dashboard's own detail sheet all bump it), "Chosen" (`opened_count` — the
+subset of those that were deliberate agent fetches) and "Last agent open"
 (`last_opened_at`). `unseen_days` reads only the last of those — it only
 moves when an agent deliberately retrieves this ONE lesson over MCP
 (`memory.read`) or the CLI (`lorekit read`/`show`), never from riding along
 in a list page or from a person browsing the dashboard. That is what keeps
 "unseen for 90 days" honest: reloading the Explorer, or a `memory.list` call
 that happens to include the lesson, does not reset the clock.
+
+**"Last updated" is a fourth signal, and reading never moves it.** It is the
+last time the lesson's *content* was written. A read bumps the three counters
+above and nothing else, so a lesson can show a recent Delivered count and a
+months-old Last updated at the same time — that combination means "still in
+use, unchanged", not stale data. (Before this was fixed, a single
+`memory.list` restamped every lesson on the page, which is why an older store
+may show a cluster of lessons all "updated" within minutes of each other. The
+counters are unaffected; only those `updated_at` values are lost.)
 
 A lesson no agent has **ever** opened has no `last_opened_at` to measure from,
 so the clock starts at its creation date. A lesson written a week ago
@@ -87,7 +110,7 @@ IDENTICAL candidate query. Nothing is changed by a preview.
 
 The [Lore Explorer](/lore) previews the same conditions a different way: its
 "Age & activity" filter (`min_age_days` / `unseen_days` / `max_seen_count` /
-`max_read_count`)
+`max_read_count` / `max_opened_count`)
 combines with its own filter bar (the same eight dimension filters above) to
 narrow the list to the actual lesson ROWS a policy with those conditions
 would catch, not just a count — so you can scroll through them before saving
@@ -106,15 +129,16 @@ lorekit policy create --scope repo::acme/app --name "stale repo lore" \
 ```
 
 Each condition has its own flag — `--min-age-days`, `--unseen-days`,
-`--max-seen-count`, `--max-read-count` — and `lorekit policy update` pairs each
-with a `--clear-*` form for removing one from a saved policy:
+`--max-seen-count`, `--max-read-count`, `--max-opened-count` — and
+`lorekit policy update` pairs each with a `--clear-*` form for removing one
+from a saved policy:
 
 ```bash
-# never actually read back, and old
+# old, and no agent has ever deliberately fetched it — the "noise tax" rule
 lorekit policy create --scope repo::acme/app --name "unused lore" \
-  --min-age-days 90 --max-read-count 0 --mode review
+  --min-age-days 90 --max-opened-count 0 --mode review
 
-lorekit policy update <id> --clear-max-read-count
+lorekit policy update <id> --clear-max-opened-count
 ```
 
 `mode: review` is the default — the policy is saved and shows up in the
@@ -177,6 +201,100 @@ flip `--enabled` on.
 **All server-side, no local-store equivalent.** `groom`, `policy`, `protect`
 and `pin`/`unpin` are remote-only commands — retention policies are
 account-wide state, the same posture as `lorekit purge`.
+
+## Which lessons are earning their place?
+
+Retention rules answer "is this old?". The [Insights](/insights) page answers
+the harder question — "was this ever *used*?" — and hands you the rows.
+
+It leads with the bill: how many tokens of lore were delivered to your agents
+over the last 30 days, and how little of it anything ever deliberately fetched.
+Both halves come with a qualifier printed next to them, because the number is
+only honest with them. Tokens are **estimated** at four characters each, never
+tokenized. And the share measures **selection, not influence** — a lesson
+injected at session start is already in your agent's context and never needs a
+second fetch to be acted on, so a low share means "rarely looked up on purpose",
+not "wasted".
+
+Below it, every lesson is placed on a grid of **delivered × chosen**:
+
+| | Chosen often | Rarely chosen |
+| --- | --- | --- |
+| **Delivered widely** | **Load-bearing** — promote it to a rule | **Noise tax** — prune this first |
+| **Delivered narrowly** | **Specialist** — broaden its scope | **Dormant** — archive it |
+
+Plus a fifth state the other four depend on: **Too new to judge**. A lesson only
+gets a verdict once it is at least a week old *and* has been delivered at least
+ten times. Without that floor a lesson you wrote yesterday and one that has been
+dead for a year would look identical, which is exactly the confusion the grid
+exists to remove.
+
+Pick a quadrant and its lessons replace the list underneath — each row links
+into the Explorer, and **Copy for groom** copies that quadrant's `scope::key`
+lines so you can hand them straight to your grooming agent. The agent-side
+spelling of the same selection is `max_opened_count: 0`, which selects the
+**Noise tax** and **Dormant** lessons over your whole store rather than a page
+of them:
+
+```bash
+lorekit groom --scope repo::acme/app --max-opened-count 0
+```
+
+Two limits worth knowing. The grid reads **lifetime** counters while the cost
+line reads a **30-day** window, so the two describe different periods on
+purpose — each states its own. And a `0` is always captioned with the date the
+counting began, never called "never": opens have only been recorded since the
+counter shipped, so a lesson older than the counter cannot support that claim.
+
+## Letting your agent say which lessons it used
+
+Everything above is measured from the outside: LoreKit can see which lessons
+were delivered and which were deliberately fetched, but not which ones actually
+changed what the agent did. It cannot — a lesson injected at session start is
+already in your agent's context and gets applied without ever being fetched
+again. Only the agent knows.
+
+So `memory.write` takes an optional `cited` array, and the agent fills it in when
+it writes up what it learned:
+
+```json
+{
+  "scope": "repo::acme/app",
+  "key": "backfill-before-index",
+  "value": "Run the backfill before adding the unique index …",
+  "cited": ["global::pnpm-first", "repo::acme/app::migration-order"]
+}
+```
+
+Each entry is a `scope::key` reference to a lesson the write **applied**. The
+lesson detail sheet then shows a **Cited** line beside Delivered and Chosen, and
+that line is the only evidence on the page that says a lesson was used rather
+than merely shown.
+
+The same field is on the CLI, remote store only — the offline store keeps no
+citation ledger, so a local write with `--cited` is refused rather than quietly
+recording nothing:
+
+```bash
+lorekit write repo::acme/app::backfill-before-index "Run the backfill first" \
+  --cited "global::pnpm-first,repo::acme/app::migration-order"
+```
+
+Three things to know before you read the number:
+
+- **It is voluntary, so a `0` means nothing said so** — not "never used". That is
+  the opposite reading of a zero in the Chosen column, which at least covers
+  every targeted read since the counter shipped. Never treat Cited as a
+  denominator.
+- **Wrong guesses cost nothing.** A reference that does not resolve to lore you
+  own is dropped, and a lesson cannot cite itself. Naming a lesson you are unsure
+  about is cheaper than omitting one you relied on.
+- **Once per run.** Citations are de-duplicated per `(lesson, retrospective, run)`,
+  so a retried write credits a lesson once rather than inflating it.
+
+If you use the Claude Code plugin, the end-of-turn hook already does this for
+you: the retrospective nudge lists the `scope::key` refs that were injected this
+session and asks the agent to keep the ones it actually applied.
 
 ## Spotting the same lesson written twice
 

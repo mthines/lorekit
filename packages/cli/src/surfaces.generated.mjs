@@ -147,6 +147,13 @@ export const MCP_TOOL_DEFS = [
           "type": "integer",
           "minimum": 1,
           "description": "Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR."
+        },
+        "cited": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds."
         }
       }
     }
@@ -535,6 +542,12 @@ export const MCP_TOOL_DEFS = [
           "maximum": 100000,
           "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned."
         },
+        "max_opened_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means \"nothing ever chose this\" rather than \"this lesson happens to live in a narrow scope\". Backfilled over the whole recorded history, so it carries no cutover caveat."
+        },
         "tags": {
           "type": "array",
           "items": {
@@ -719,6 +732,12 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned. Omit to leave unchanged; pass explicit null to clear."
+        },
+        "max_opened_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means \"nothing ever chose this\" rather than \"this lesson happens to live in a narrow scope\". Backfilled over the whole recorded history, so it carries no cutover caveat. Omit to leave unchanged; pass explicit null to clear."
         },
         "tags": {
           "type": "array",
@@ -906,6 +925,12 @@ export const MCP_TOOL_DEFS = [
           "maximum": 100000,
           "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned."
         },
+        "max_opened_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means \"nothing ever chose this\" rather than \"this lesson happens to live in a narrow scope\". Backfilled over the whole recorded history, so it carries no cutover caveat."
+        },
         "tags": {
           "type": "array",
           "items": {
@@ -1075,6 +1100,12 @@ export const MCP_TOOL_DEFS = [
           "minimum": 0,
           "maximum": 100000,
           "description": "Match only lessons READ at most this many times — the counter that says whether a lesson was ever actually used, unlike `max_seen_count` which counts WRITES. Counts EVERY read, a bulk `memory.list`/`memory.search` appearance included (unlike `unseen_days`, which only counts targeted opens). Reads have only been counted since the counter shipped, so a long-lived lesson can show a low count it never earned."
+        },
+        "max_opened_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "Match only lessons an agent DELIBERATELY fetched at most this many times — the count behind `last_opened_at`. Unlike `max_read_count` a bulk `memory.list`/`memory.search` ride-along does NOT count, so `0` means \"nothing ever chose this\" rather than \"this lesson happens to live in a narrow scope\". Backfilled over the whole recorded history, so it carries no cutover caveat."
         },
         "tags": {
           "type": "array",

@@ -47,8 +47,7 @@ const mirrorDir = join(repoRoot, 'supabase/functions/_shared/schemas');
  * pairs.
  *
  * Deliberately NOT the whole package: `index.ts` is a barrel no function
- * imports, and `openapi/generate.ts` is a build script that imports `node:fs`.
- * Mirroring only what is reachable keeps the copied surface minimal.
+ * imports. Mirroring only what is reachable keeps the copied surface minimal.
  *
  * The mirror stays FLAT even though `packages/schemas/src/` is organised into
  * `domain/`/`shared/` subdirectories — the mirror is a generated artifact

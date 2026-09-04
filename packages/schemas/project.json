@@ -12,25 +12,6 @@
         "cwd": "{workspaceRoot}"
       }
     },
-    "generate:openapi": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "inputs": [
-        {
-          "input": "default",
-          "projects": [
-            "schemas"
-          ]
-        }
-      ],
-      "outputs": [
-        "{workspaceRoot}/supabase/functions/openapi/openapi.generated.json"
-      ],
-      "options": {
-        "command": "npx tsx packages/schemas/src/openapi/generate.ts",
-        "cwd": "{workspaceRoot}"
-      }
-    },
     "generate:llms": {
       "executor": "nx:run-commands",
       "cache": true,

@@ -69,13 +69,33 @@ memory.write {
   value:        "<observation in markdown>",
   tags:         ["skill::lorekit-memory", "source::stuck-loop"],
   source_agent: "<your agent name, if known>",
-  trigger:      "stuck-loop"
+  trigger:      "stuck-loop",
+  cited:        ["global::pnpm-first"]
 }
 ```
 
 Pick `trigger` / `source::*` from what actually happened:
 `stuck-loop`, `command-failure`, `gotcha`, `near-miss`, `assumption-wrong`,
 `paid-off`, or `manual`.
+
+## 6b. Credit the lessons you actually applied
+
+`cited` is a list of `scope::key` references to lessons that **shaped this
+turn** — ones you were shown at session start or looked up, and then acted on.
+Omit it when nothing applied.
+
+This is the only signal that distinguishes a lesson that was *used* from one
+that was merely *shown*. LoreKit can count deliveries and deliberate fetches on
+its own, but a lesson injected at session start is already in your context and
+gets applied without ever being fetched again — so nothing but you can report it.
+
+- **Name only what you used.** Citing everything you were shown makes the
+  counter measure delivery again, which it already does.
+- **A wrong guess costs nothing.** A reference that does not resolve is dropped
+  silently, and a lesson cannot cite itself. Naming a lesson you are unsure of
+  is cheaper than omitting one you relied on.
+- **Copy the ref exactly as it was shown to you** (`global::pnpm-first`,
+  `repo::acme/app::migration-order`). Do not reconstruct it from memory.
 
 ## 7. Confirm
 

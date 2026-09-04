@@ -24,6 +24,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | /pivot | pivot.ts | read |
 | GET | /read-activity | read-activity.ts | read |
 | GET | /clusters | clusters.ts | read |
+| GET | /utility | utility.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
@@ -382,6 +383,52 @@ rather than wrong.
 Nothing filters or orders on it yet, so it carries no index — the same call 00048 made for
 the `origin_*` columns.
 
+## `cited` on `POST /` — the write credits the lore it applied
+
+`POST /` (and the MCP `memory.write` tool) take an optional `cited: string[]` of
+`scope::key` references naming the lore this write APPLIED. Migration 00107 stores
+each credit in `memory_citations` and bumps `memories.cited_count` /
+`last_cited_at` on the cited row.
+
+**It exists because pull-through cannot see the dominant delivery path.**
+`opened_count / read_count` (00104) measures whether a lesson was deliberately
+FETCHED; a lesson injected at SessionStart is already in the agent's context and is
+applied without ever being fetched. No amount of read telemetry closes that gap —
+only the agent knows, and this is where it says so. Read the counter as EVIDENCE,
+never as a denominator: citing is voluntary, so a `0` means "nothing said so", the
+opposite of `opened_count`'s zero.
+
+- **Recorded after the write commits, and every failure is silent.**
+  `_shared/telemetry/citations.ts` is the one edge writer for BOTH surfaces, placed
+  beside `usage.ts` for the same reason: the operation the caller asked for has
+  already succeeded, so a telemetry failure must never turn it into a 4xx/5xx. An
+  unparseable ref is dropped by `parseMemoryRefs`, an unresolvable or
+  self-referential one by the RPC, and a thrown error by the wrapper.
+- **The correlation id comes from `X-LoreKit-Correlation-Id`, never from the body
+  or the tool args.** Otherwise a caller could attribute its citations to somebody
+  else's run, and `/usage/runs` — the thing the join exists to reach — would be
+  reporting fiction.
+- **`scope::key` splits at the FIRST `::` whose left half is a legal scope**, so
+  `branch::acme/app::feat/x::use-pnpm` splits after `feat/x` and `global::my::key`
+  splits at the first. The decision is a self-contained `isReferenceScope` in
+  `scope.ts` and deliberately NOT `validateScope`: the two runtimes' copies of that
+  function are different strengths on purpose (the edge mirror is "intentionally
+  lighter"), so a split decided by them would file the same citation under two
+  different lessons depending on which surface received it.
+  `memory-ref.spec.ts` holds the two copies and the CLI's `resolveScopeArg` to one
+  grammar.
+- **Idempotent per run.** A unique index on
+  `(cited_memory_id, citing_memory_id, coalesce(correlation_id, ''))` collapses a
+  retried write to one credit. The `coalesce` also collapses every UNCORRELATED
+  citation of the same pair into one — a deliberate under-count: a caller that
+  sends no correlation id has given nothing to tell two runs apart, and inflating
+  a counter on a retry is the worse error.
+- **A list is TRUNCATED at `MEMORY_CITED_MAX` (32), not rejected.** A write that
+  succeeded must not fail over how many lessons it credited.
+- **`cited` is absent from `PATCH /:id`** (`UpdateMemoryBodySchema` omits it): a
+  citation is a fact about a RUN, not a column, so admitting it on the update path
+  would reproduce the `org` bug — a field that looks settable and silently is not.
+
 ## `created_at` on `POST /`
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating
@@ -564,6 +611,80 @@ routes needed a second gate only because they have agent-side callers this one d
 (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret). A `GET` that is read-only, additive
 and unreferenced is safe to serve unconditionally.
 
+## `GET /utility`
+
+Where every active lesson sits on **delivered × chosen**, plus what the deliveries cost.
+Backs the Insights page's `LoreUtilityGrid` and the cost line above it (migration 00106).
+
+```json
+{
+  "census": [
+    { "utility": "load-bearing", "count": 12 },
+    { "utility": "specialist", "count": 40 },
+    { "utility": "noise-tax", "count": 7 },
+    { "utility": "dormant", "count": 311 },
+    { "utility": "unproven", "count": 58 }
+  ],
+  "cost": {
+    "delivered_reads": 150420,
+    "chosen_reads": 291,
+    "delivered_tokens": 602103264,
+    "chosen_tokens": 1180422
+  },
+  "rows": [],
+  "counting_since": "2026-06-12",
+  "thresholds": { "chosenPullThrough": 0.02, "broadReachDeliveries": 100, "minDeliveries": 10, "minAgeDays": 7 }
+}
+```
+
+| Param | Default | Notes |
+|-------|---------|-------|
+| `scope` | — | Reject-only filter. Not normalised — see below. |
+| `since` / `until` | — | The COST window only, half-open `[since, until)`. |
+| `quadrant` | — | Ask for a page of ONE state's rows. Omitted → `rows` is empty. |
+| `limit` | `20` | Rows per quadrant page. |
+
+**Five states, and the fifth is the point.** Two booleans decide the 2×2 — chosen
+(`opened_count / read_count` ≥ `chosenPullThrough`) and broad (`read_count` ≥
+`broadReachDeliveries`) — giving `load-bearing`, `specialist`, `noise-tax` and `dormant`. All
+four sit behind an evidence floor (`minAgeDays` AND `minDeliveries`); anything under it is
+`unproven`. Without that state a lesson written yesterday and one dead for a year are counted
+identically, which is the confusion this endpoint exists to remove. The thresholds are ECHOED
+in the response and passed INTO the SQL as parameters from `LESSON_UTILITY_THRESHOLDS`
+(`@lorekit/schemas`), the same object the dashboard's per-lesson chip reads — the SQL defaults
+are a fallback, never the authority, so a chip and a quadrant count cannot disagree.
+
+**Two windows, and they are not the same window.** `census` and `rows` read the LIFETIME
+counters on `memories`, because they must agree with that chip. `cost` sums `memory_read_daily`,
+the only source that can be windowed at all. Each caller captions its own; mixing them would
+give a page whose headline and grid silently describe different periods. The cost window is
+**half-open `[since, until)`**, the same asymmetry `/activity` and `/read-activity` use, so two
+adjacent windows partition the reads instead of both claiming the boundary day — at day grain
+that means `until` excludes the whole day it names, and "through right now" is spelled by
+OMITTING it, never by passing `now`.
+
+**`delivered_tokens` is an ESTIMATE** — body characters ÷ 4, never tokenized — and the share it
+supports measures SELECTION, not influence: a lesson injected at SessionStart is already in
+context and needs no second fetch to be acted on. Both qualifiers are rendered by the caller
+rather than buried, because the number is only honest with them.
+
+**`counting_since` is why a `0` is never called "never".** `opened_count` started at 00104, so a
+lesson older than the counter cannot support that claim; the response carries the date the
+counting began and the UI captions every zero with it.
+
+This route takes the **reject-only** `parseScopeFilter` (`clusters.ts`'s validator), not
+`read-ranking`'s normalising one: `memories.scope` is stored verbatim by the write path, so a
+lowercased filter would place a mixed-case scope's lore in NO quadrant at all — which reads as
+"nothing to groom here" rather than "that scope is spelled differently". Pinned per handler by
+`scope-filter-validation.spec.ts`.
+
+There is **no MCP tool and no CLI command**, recorded as a guarded `restOnly` entry in
+`telemetry-vocabulary.ts` (`usage_events.tool_name` is `memory.utility`). Its reason is
+`/clusters`' reason: the agent-side spelling already exists and is BETTER —
+`memory.list max_opened_count => 0` (migration 00105) SELECTS the never-chosen lore over the
+WHOLE scope, ordered and paginated like any other listing, where this route ranks a page of it
+and returns counts to paint. A groomer wants the rows.
+
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,
@@ -693,7 +814,7 @@ would answer "reads everywhere" under the label the caller asked for. Same call 
 second grammar.
 
 **That rule now holds on every scope-filtering route, not just this one.**
-`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `GET /clusters`,
+`GET /`, `GET /activity`, `GET /facets`, `GET /read-activity`, `GET /clusters`, `GET /utility`,
 `DELETE /?scope=…&key=…`
 and `POST /restore` all reject an ungrammatical `?scope=` with a `400`. **So do the body
 transports** `POST /list`, `POST /activity` and `POST /facets`: each decodes into the same

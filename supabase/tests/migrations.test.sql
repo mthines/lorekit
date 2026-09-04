@@ -28,6 +28,15 @@ insert into auth.users (instance_id, id, aud, role, email, created_at, updated_a
 values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a1', 'authenticated', 'authenticated', 'lk-mig-a@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a2', 'authenticated', 'authenticated', 'lk-mig-a2@test.local', now(), now()),
+  -- §104's own account. The utility census and the delivery-cost sum are
+  -- ACCOUNT-WIDE, so they would otherwise pick up every memory and every
+  -- recorded read the earlier sections left behind for a2.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a3', 'authenticated', 'authenticated', 'lk-mig-a3@test.local', now(), now()),
+  -- §105's own account, and the second one its tenancy assertion needs: a
+  -- citation resolver that dropped its `user_id` predicate must FAIL, and it
+  -- can only fail against lore that belongs to somebody else.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a4', 'authenticated', 'authenticated', 'lk-mig-a4@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a5', 'authenticated', 'authenticated', 'lk-mig-a5@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -8877,6 +8886,189 @@ begin
 end;
 $$;
 
+-- ── 103. a READ must not restamp updated_at (00103) ────────────────────────
+-- `lorekit_record_memory_reads` bumps read_count/last_read_at/last_opened_at,
+-- and that UPDATE used to fire the BEFORE-row trigger and restamp
+-- `updated_at = now()`. One bulk `memory.list` page therefore rewrote the
+-- recency of every row on it, which is the DEFAULT SORT for both the Explorer
+-- and `memory.list order=recency`. 00103 extends 00062's derived-column
+-- exemption to the three read counters.
+--
+-- Every assertion here compares against an updated_at written 30 days in the
+-- past on INSERT, never against a clock reading: this file is one transaction,
+-- so `now()` is frozen and a "preserved" timestamp would be indistinguishable
+-- from a fresh one if the row had been created here at now().
+--
+-- This section pins ONLY what the counter exemption adds. The three invariants
+-- it shares with the embedding exemption — a real edit bumps (§62b AC-2), a
+-- no-op re-write still bumps (§62b AC-6), an embedding-only write preserves
+-- (§62b AC-1) — are already asserted there, and §62b runs FIRST, so a copy
+-- here could never be the assertion that fails. §62b AC-5's generated-column
+-- guard likewise still holds: 00103 adds no generated column and still masks
+-- exactly `fts`.
+--
+-- AC-1: a counter-only update preserves updated_at — and actually moved the
+--       counter (`record_memory_reads` swallows its own exceptions, so a
+--       silently-failed write would make AC-1 pass vacuously).
+-- AC-2: a TARGETED read moves last_opened_at in the same statement, and still
+--       preserves — the third column 00103 has to mask.
+-- AC-3: one statement changing BOTH a counter and content bumps. The exemption
+--       is for derived-ONLY writes, not for any write that happens to touch a
+--       counter (§62b AC-3 is the embedding half of this).
+do $$
+declare
+  v_stamp  timestamptz;
+  v_read   uuid;
+  v_mixed  uuid;
+  v_after  timestamptz;
+  v_reads  int;
+  v_opened timestamptz;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  v_stamp := now() - interval '30 days';
+
+  -- The preserve cases and the bump case need SEPARATE rows. The obvious
+  -- alternative — one row, reset `updated_at` between cases — cannot work:
+  -- that reset is itself an UPDATE, so it fires the trigger under test and is
+  -- overwritten with now() before it lands. Only the INSERT (memories has no
+  -- BEFORE INSERT trigger) can place a timestamp in the past.
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '103-read',  'v', v_stamp, v_stamp),
+           ('00000000-0000-0000-0000-0000000000a2', 'global', '103-mixed', 'v', v_stamp, v_stamp);
+
+  select id into v_read from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '103-read';
+  select id into v_mixed from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '103-mixed';
+
+  -- AC-1: a bulk read.
+  perform lorekit_record_memory_reads(array[v_read], 'bulk', 'mcp');
+
+  select updated_at, read_count into v_after, v_reads
+    from memories where id = v_read;
+  assert v_reads = 1,
+    format('103 AC-1a: the read counter must have moved, got read_count=%s', v_reads);
+  assert v_after = v_stamp,
+    format('103 AC-1b: a counter-only update must PRESERVE updated_at, got %s want %s',
+           v_after, v_stamp);
+
+  -- AC-2: a targeted read additionally moves last_opened_at, in the same
+  -- statement — the column 00103 must mask alongside read_count/last_read_at.
+  perform lorekit_record_memory_reads(array[v_read], 'targeted', 'mcp');
+
+  select updated_at, last_opened_at into v_after, v_opened
+    from memories where id = v_read;
+  assert v_opened is not null,
+    '103 AC-2a: a targeted mcp read must set last_opened_at';
+  assert v_after = v_stamp,
+    format('103 AC-2b: a targeted read must PRESERVE updated_at, got %s want %s',
+           v_after, v_stamp);
+
+  -- AC-3: derived-ONLY is the rule, not derived-ALSO.
+  update memories set read_count = read_count + 1, value = 'edited' where id = v_mixed;
+  select updated_at into v_after from memories where id = v_mixed;
+  assert v_after > v_stamp,
+    format('103 AC-3: a counter change alongside a content change must bump updated_at, got %s',
+           v_after);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 104. opened_count — the pull-through numerator (00104) ─────────────────
+-- `read_count` (00084) counts EVERY read, and 99.8% of recorded reads are bulk
+-- ride-alongs, so it ranks scope breadth rather than usefulness. `opened_count`
+-- counts only the narrow event `last_opened_at` timestamps — an agent
+-- deliberately fetching THIS lesson over MCP or the CLI — so
+-- `opened_count / read_count` is a ratio in which scope breadth cancels.
+--
+-- AC-1: a BULK read moves read_count and NOT opened_count. This is the whole
+--       distinction; if it fails, the new column is just a second read_count.
+-- AC-2: a TARGETED agent read moves both, and opened_count stays in lockstep
+--       with last_opened_at (they share one gate by construction — this pins
+--       that they cannot be split apart later).
+-- AC-3: a targeted read from a NON-agent client (the dashboard) moves
+--       read_count only — the same client gate `last_opened_at` uses.
+-- AC-4: lorekit_memory_list returns the four counters. It returned none of
+--       them before 00104, which is why the lesson CARD could show none.
+--
+-- The backfill is not asserted here: it reads rows that exist only in a
+-- production database, and a fixture written in this transaction would merely
+-- re-run the same SELECT the migration ran. What IS worth pinning is that the
+-- backfill cannot restamp `updated_at` — §101 AC-1/AC-2 cover the mask that
+-- guarantees it, and 00104 masks `opened_count` before the backfill runs.
+do $$
+declare
+  v_id       uuid;
+  v_reads    int;
+  v_opens    int;
+  v_opened   timestamptz;
+  v_row      record;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '104-pull', 'v')
+    returning id into v_id;
+
+  -- AC-1
+  perform lorekit_record_memory_reads(array[v_id], 'bulk', 'mcp');
+  select read_count, opened_count, last_opened_at into v_reads, v_opens, v_opened
+    from memories where id = v_id;
+  assert v_reads = 1,
+    format('104 AC-1a: a bulk read must move read_count, got %s', v_reads);
+  assert v_opens = 0,
+    format('104 AC-1b: a bulk read must NOT move opened_count, got %s', v_opens);
+  assert v_opened is null,
+    '104 AC-1c: a bulk read must not set last_opened_at (00099, restated here '
+    'because opened_count now shares its gate)';
+
+  -- AC-2
+  perform lorekit_record_memory_reads(array[v_id], 'targeted', 'cli');
+  select read_count, opened_count, last_opened_at into v_reads, v_opens, v_opened
+    from memories where id = v_id;
+  assert v_reads = 2,
+    format('104 AC-2a: a targeted read must also move read_count, got %s', v_reads);
+  assert v_opens = 1,
+    format('104 AC-2b: a targeted agent read must move opened_count, got %s', v_opens);
+  assert v_opened is not null,
+    '104 AC-2c: opened_count and last_opened_at share one gate — a count with '
+    'no timestamp means they have drifted apart';
+
+  -- AC-3: `web` is a real client value, and a human opening the detail sheet
+  -- must not look like an agent choosing the lesson.
+  perform lorekit_record_memory_reads(array[v_id], 'targeted', 'web');
+  select read_count, opened_count into v_reads, v_opens from memories where id = v_id;
+  assert v_reads = 3,
+    format('104 AC-3a: a dashboard read still counts as a read, got %s', v_reads);
+  assert v_opens = 1,
+    format('104 AC-3b: a dashboard read must NOT move opened_count, got %s', v_opens);
+
+  -- AC-4
+  select * into v_row
+    from lorekit_memory_list(
+      p_user_id => '00000000-0000-0000-0000-0000000000a2',
+      p_scope   => 'global',
+      p_key     => '104-pull',
+      p_limit   => 1
+    );
+  assert v_row.read_count = 3 and v_row.opened_count = 1,
+    format('104 AC-4a: memory_list must return the counters, got read=%s opened=%s',
+           v_row.read_count, v_row.opened_count);
+  assert v_row.last_read_at is not null and v_row.last_opened_at is not null,
+    '104 AC-4b: memory_list must return last_read_at and last_opened_at too';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- §102 — 00102: per-installation comment-relevance configuration
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -8953,6 +9145,460 @@ begin
   assert v_count = 0,
     format('102 AC-4: a deactivated config must resolve nothing, got %s', v_count);
   update github_relevance_configs set active = true where installation_id = 9010001;
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 105. max_opened_count — the condition whose 0 means something (00105) ──
+-- `max_read_count` (00101) reads `read_count`, which counts bulk ride-alongs,
+-- so on a live store its `0` matched nothing and its usable range was a narrow
+-- band in the middle. `max_opened_count` reads `opened_count` (00104), which
+-- only a deliberate agent fetch moves, so 0 means "nothing ever chose this" —
+-- and means the same thing for a `global` lesson as for a `branch` one.
+--
+-- AC-1: a delivered-but-never-chosen lesson matches max_opened_count => 0 and
+--       MISSES max_read_count => 0. This is the whole point: the two are not
+--       interchangeable, and only the new one reaches the noise-tax quadrant.
+-- AC-2: a chosen lesson stops matching.
+-- AC-3: bulk reads do NOT push a lesson out of max_opened_count => 0, where
+--       they DO push it out of max_read_count => 0.
+-- AC-4: lorekit_memory_list's inline copy of the predicate agrees with
+--       lorekit_groom_candidates — the pair 00101 records as having drifted
+--       apart once already.
+-- AC-5: a saved policy round-trips the column through create and update.
+do $$
+declare
+  v_ignored uuid;
+  v_chosen  uuid;
+  v_count   int;
+  v_policy  retention_policies%rowtype;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"service_role"}', true);
+
+  insert into memories (user_id, scope, key, value, created_at)
+    values ('00000000-0000-0000-0000-0000000000a2', 'global', '105-ignored', 'v', now() - interval '200 days'),
+           ('00000000-0000-0000-0000-0000000000a2', 'global', '105-chosen',  'v', now() - interval '200 days');
+  select id into v_ignored from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '105-ignored';
+  select id into v_chosen from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a2' and key = '105-chosen';
+
+  -- Delivered in bulk pages, as a global lesson is on every session. Never
+  -- deliberately fetched.
+  perform lorekit_record_memory_reads(array[v_ignored, v_chosen], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored, v_chosen], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored, v_chosen], 'bulk', 'mcp');
+  -- One of them an agent actually reached for.
+  perform lorekit_record_memory_reads(array[v_chosen], 'targeted', 'mcp');
+
+  -- AC-1
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  null, 0) c
+   where c.key = '105-ignored';
+  assert v_count = 1,
+    '105 AC-1a: a delivered-but-never-chosen lesson must match max_opened_count => 0';
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  0) c
+   where c.key = '105-ignored';
+  assert v_count = 0,
+    '105 AC-1b: ...and must MISS max_read_count => 0, which its bulk deliveries '
+    'already pushed it past. If both matched, the new condition would be redundant';
+
+  -- AC-2
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  null, 0) c
+   where c.key = '105-chosen';
+  assert v_count = 0, '105 AC-2: a lesson an agent fetched must NOT match max_opened_count => 0';
+
+  -- AC-3: three more bulk reads. read_count climbs; opened_count does not, so
+  -- the lesson stays in the prune set exactly as it should.
+  perform lorekit_record_memory_reads(array[v_ignored], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_ignored], 'bulk', 'mcp');
+
+  select count(*) into v_count
+    from lorekit_groom_candidates('00000000-0000-0000-0000-0000000000a2', 'global',
+                                  null, null, null, null, 'any', null, 'in', null, 'in',
+                                  null, 'in', null, 'in', null, 'in', null, 'in', null, 'in',
+                                  null, 0) c
+   where c.key = '105-ignored';
+  assert v_count = 1,
+    '105 AC-3: more bulk deliveries must not push a lesson out of max_opened_count => 0';
+
+  -- AC-4
+  select count(*) into v_count
+    from lorekit_memory_list(
+      p_user_id          => '00000000-0000-0000-0000-0000000000a2',
+      p_scope            => 'global',
+      p_max_opened_count => 0,
+      p_limit            => 100
+    ) c
+   where c.key in ('105-ignored', '105-chosen');
+  assert v_count = 1,
+    '105 AC-4: memory_list max_opened_count must agree with groom_candidates '
+    '(only the never-chosen row)';
+
+  -- AC-5
+  select * into v_policy
+    from lorekit_policy_create(
+      p_user_id          => '00000000-0000-0000-0000-0000000000a2',
+      p_scope            => 'global',
+      p_name             => '105-policy',
+      p_max_opened_count => 0
+    );
+  assert v_policy.max_opened_count = 0,
+    format('105 AC-5a: policy_create must persist max_opened_count, got %s',
+           v_policy.max_opened_count);
+
+  select * into v_policy
+    from lorekit_policy_update('00000000-0000-0000-0000-0000000000a2', v_policy.id,
+                               '{"max_opened_count": null}'::jsonb);
+  assert v_policy.max_opened_count is null,
+    '105 AC-5b: an explicit null in the patch must CLEAR max_opened_count';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 106. the delivered x chosen grid (00106) ─────────────────────────────
+-- `lorekit_lesson_utility` is the ONE quadrant rule, shared by the census and
+-- the row query so a lesson cannot be counted in one quadrant and listed in
+-- another. Its thresholds are PARAMETERS — `LESSON_UTILITY_THRESHOLDS` in
+-- `@lorekit/schemas` is the authority — so these assertions pass them
+-- explicitly rather than leaning on the SQL defaults, which are a fallback
+-- for a hand-run query.
+--
+-- AC-1: each of the four measured quadrants is reachable, and the two that a
+--       `read_count` ranking confuses (specialist vs noise-tax) come out on
+--       OPPOSITE sides. A rule that read `read_count` alone would put the
+--       most-delivered lesson at the top of both.
+-- AC-2: the evidence floor withholds a verdict on BOTH counts — too young,
+--       and too few deliveries — rather than handing out a confident one.
+-- AC-3: the census returns all five names even where four of the quadrants
+--       are EMPTY. An absent key reads to a client as "not measured", which is
+--       a different answer from "you have none of these". Asserted over a
+--       scope holding exactly one lesson, so four counts are genuinely 0 —
+--       a census over the main fixture populates every quadrant and could
+--       never tell a LEFT JOIN from an inner one.
+-- AC-4: census and rows agree — the count for a quadrant equals the number of
+--       rows the row query returns for it.
+-- AC-5: an unknown quadrant name RAISES rather than returning nothing.
+-- AC-6: the cost sum is windowed, counts targeted reads as a subset of all
+--       reads, and reports zeroes (not nulls) for an account with no reads.
+do $$
+declare
+  v_load    uuid;
+  v_spec    uuid;
+  v_noise   uuid;
+  v_dormant uuid;
+  v_young   uuid;
+  v_count   bigint;
+  v_rows    int;
+  v_cost    record;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a3","role":"service_role"}', true);
+
+  -- Five lessons, one per quadrant. All old enough to judge except `104-young`.
+  -- The counters are set directly: lorekit_record_memory_reads would need
+  -- thousands of calls to reach a broad-reach delivery count, and what is
+  -- under test here is the CLASSIFICATION, not the recording (§102 covers that).
+  insert into memories (user_id, scope, key, value, created_at, read_count, opened_count) values
+    -- broad reach (>= 100), chosen (>= 2%)
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '106-load',    'v', now() - interval '200 days', 1000, 50),
+    -- narrow reach (< 100), chosen — the row a read_count ranking calls cold
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '106-spec',    'v', now() - interval '200 days',   20, 10),
+    -- broad reach, never chosen — the row a read_count ranking calls hot
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '106-noise',   'v', now() - interval '200 days', 5000,  0),
+    -- narrow reach, never chosen
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '106-dormant', 'v', now() - interval '200 days',   20,  0),
+    -- delivered heavily, but created yesterday
+    ('00000000-0000-0000-0000-0000000000a3', 'global', '106-young',   'v', now() - interval '1 day',    5000,  0),
+    -- Alone in its own scope, so a census narrowed to that scope has exactly
+    -- one populated quadrant and four empty ones (see AC-3).
+    ('00000000-0000-0000-0000-0000000000a3', 'project::104-solo', '106-solo', 'v', now() - interval '200 days', 20, 0);
+  select id into v_load    from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '106-load';
+  select id into v_spec    from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '106-spec';
+  select id into v_noise   from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '106-noise';
+  select id into v_dormant from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '106-dormant';
+  select id into v_young   from memories where user_id = '00000000-0000-0000-0000-0000000000a3' and key = '106-young';
+
+  -- AC-1
+  assert lorekit_lesson_utility(1000, 50, now() - interval '200 days', 10, 7, 0.02, 100) = 'load-bearing',
+    '106 AC-1a: broad reach + high uptake must be load-bearing';
+  assert lorekit_lesson_utility(20, 10, now() - interval '200 days', 10, 7, 0.02, 100) = 'specialist',
+    '106 AC-1b: narrow reach + high uptake must be specialist, not dormant — '
+    'this is the row a read_count ranking mistakes for cold lore';
+  assert lorekit_lesson_utility(5000, 0, now() - interval '200 days', 10, 7, 0.02, 100) = 'noise-tax',
+    '106 AC-1c: broad reach + no uptake must be noise-tax — the row a '
+    'read_count ranking mistakes for the most valuable lesson in the store';
+  assert lorekit_lesson_utility(20, 0, now() - interval '200 days', 10, 7, 0.02, 100) = 'dormant',
+    '106 AC-1d: narrow reach + no uptake must be dormant';
+
+  -- AC-2 — both halves of the evidence floor, independently.
+  assert lorekit_lesson_utility(5000, 0, now() - interval '1 day', 10, 7, 0.02, 100) = 'unproven',
+    '106 AC-2a: a lesson younger than min_age_days must be unproven however '
+    'heavily it was delivered';
+  assert lorekit_lesson_utility(3, 2, now() - interval '200 days', 10, 7, 0.02, 100) = 'unproven',
+    '106 AC-2b: 2-of-3 is 67% pull-through and still not enough evidence — '
+    'below min_deliveries the rate is noise, not a verdict';
+
+  -- AC-3 — narrowed to the single-lesson scope, so four of the five counts
+  -- are really 0 and an inner join would drop them.
+  select count(*) into v_count
+    from lorekit_memory_utility_census('00000000-0000-0000-0000-0000000000a3', 'project::104-solo',
+                                       '{}', 10, 7, 0.02, 100);
+  assert v_count = 5,
+    format('106 AC-3a: the census must return all five quadrant names even where '
+           'four of them are empty, got %s', v_count);
+
+  select coalesce(sum(c.n), -1) into v_count
+    from lorekit_memory_utility_census('00000000-0000-0000-0000-0000000000a3', 'project::104-solo',
+                                       '{}', 10, 7, 0.02, 100) c
+   where c.utility <> 'dormant';
+  assert v_count = 0,
+    format('106 AC-3b: the four empty quadrants must report 0, not be omitted '
+           'and not be miscounted, got a total of %s', v_count);
+
+  -- AC-4 — the census count and the row query must agree, quadrant by
+  -- quadrant. They are two separate queries over the same helper, which is
+  -- exactly the pair that can drift.
+  for v_count, v_rows in
+    select c.n,
+           (select count(*)
+              from lorekit_memory_utility_rows('00000000-0000-0000-0000-0000000000a3', c.utility,
+                                               'global', 100, '{}', 10, 7, 0.02, 100))
+      from lorekit_memory_utility_census('00000000-0000-0000-0000-0000000000a3', 'global',
+                                         '{}', 10, 7, 0.02, 100) c
+  loop
+    assert v_count = v_rows,
+      format('106 AC-4: census says %s but the row query returned %s', v_count, v_rows);
+  end loop;
+
+  -- AC-5
+  begin
+    perform lorekit_memory_utility_rows('00000000-0000-0000-0000-0000000000a3', 'bogus-quadrant');
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised,
+    '106 AC-5: an unknown quadrant name must raise, not return an empty set — '
+    'a typo that silently answers "nothing here" is unfindable';
+
+  -- AC-6 — the cost sum.
+  perform lorekit_record_memory_reads(array[v_load, v_noise], 'bulk', 'mcp');
+  perform lorekit_record_memory_reads(array[v_load], 'targeted', 'mcp');
+
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3', null, null, 'global');
+  assert v_cost.delivered_reads = 3,
+    format('106 AC-6a: three recorded reads, got %s', v_cost.delivered_reads);
+  assert v_cost.chosen_reads = 1,
+    format('106 AC-6b: targeted reads are a SUBSET of all reads, got %s of %s',
+           v_cost.chosen_reads, v_cost.delivered_reads);
+  assert v_cost.delivered_tokens > 0 and v_cost.chosen_tokens > 0,
+    '106 AC-6c: the token estimate must scale with the reads, not come back 0';
+
+  -- The upper bound is EXCLUSIVE of the whole day it names, so a window ending
+  -- today sees none of today's reads and one ending tomorrow sees all of them.
+  -- Both halves are asserted: an inclusive `<=` would pass the second alone,
+  -- and that is precisely the bound that makes two adjacent windows each claim
+  -- the boundary day. It is also why the caller says "through now" by passing
+  -- NO until rather than now(), which the AC-6a call above relies on.
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3',
+                                      null, now(), 'global');
+  assert v_cost.delivered_reads = 0,
+    format('106 AC-6e: until=now() excludes today, so today''s 3 reads must not count; got %s',
+           v_cost.delivered_reads);
+
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3',
+                                      null, now() + interval '1 day', 'global');
+  assert v_cost.delivered_reads = 3,
+    format('106 AC-6f: until=tomorrow includes today in full; got %s', v_cost.delivered_reads);
+
+  -- A window that excludes every recorded day reports ZEROES, never nulls: a
+  -- client reading `null` as 0 is an accidental agreement that breaks the
+  -- first time a caller is stricter.
+  select * into v_cost
+    from lorekit_memory_delivery_cost('00000000-0000-0000-0000-0000000000a3',
+                                      now() - interval '400 days', now() - interval '390 days', 'global');
+  assert v_cost.delivered_reads = 0 and v_cost.delivered_tokens = 0,
+    format('106 AC-6d: an empty window must report 0, got reads=%s tokens=%s',
+           v_cost.delivered_reads, v_cost.delivered_tokens);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 107. citations — the influence signal pull-through cannot give (00107) ─
+-- `opened_count / read_count` measures SELECTION, and a lesson injected at
+-- session start is applied without ever being fetched. 00107 lets the agent say
+-- outright which lessons shaped a run, via `memory.write`'s `cited` array.
+--
+-- AC-1: a citation bumps cited_count and last_cited_at on the CITED lesson, and
+--       writes one ledger row carrying the citing lesson and the run.
+-- AC-2: it does NOT restamp the cited lesson's updated_at. This is the whole
+--       reason 00107 extends the 00103/00104 trigger mask — a citation is
+--       recorded ABOUT a lesson by a write to a DIFFERENT one, so without the
+--       mask it would say "this lesson was edited" when nobody touched it.
+-- AC-3: idempotent WITHIN a run, counting AGAIN across runs. A retry must not
+--       inflate the number the product reads as influence.
+-- AC-4: a ref naming another account's lore resolves to nothing — the `user_id`
+--       predicate is the only tenancy gate this SECURITY DEFINER function has,
+--       because the api_key tier reaches it over a service-role connection.
+-- AC-5: a self-citation is dropped, and an unresolvable ref is skipped without
+--       failing the rest of the batch.
+-- AC-6: mismatched array lengths and a null actor return 0 rather than raising —
+--       a citation must never break the write carrying it.
+do $$
+declare
+  v_a        uuid;
+  v_b        uuid;
+  v_retro    uuid;
+  v_foreign  uuid;
+  v_stamp    timestamptz;
+  v_n        integer;
+  v_count    integer;
+  v_after    timestamptz;
+  v_cited_at timestamptz;
+  v_rows     integer;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a4","role":"service_role"}', true);
+
+  -- Backdated on INSERT for §101's reason: this file is one transaction, so
+  -- `now()` is frozen and a preserved stamp would be indistinguishable from a
+  -- fresh one on a row created here at now().
+  v_stamp := now() - interval '30 days';
+
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a4', 'global', '107-cited-a', 'v', v_stamp, v_stamp)
+    returning id into v_a;
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a4', 'repo::acme/app', '107-cited-b', 'v', v_stamp, v_stamp)
+    returning id into v_b;
+  insert into memories (user_id, scope, key, value, created_at, updated_at)
+    values ('00000000-0000-0000-0000-0000000000a4', 'global', '107-retro', 'v', v_stamp, v_stamp)
+    returning id into v_retro;
+  -- A DIFFERENT account's lesson, under a key this account also uses, so AC-4
+  -- fails if the resolver matches on (scope, key) without the tenant predicate.
+  insert into memories (user_id, scope, key, value)
+    values ('00000000-0000-0000-0000-0000000000a5', 'global', '107-foreign', 'v')
+    returning id into v_foreign;
+
+  -- ── AC-1 ────────────────────────────────────────────────────────────────
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global', 'repo::acme/app'], array['107-cited-a', '107-cited-b'], 'run-1');
+  assert v_n = 2,
+    format('107 AC-1a: two refs must record two citations, got %s', v_n);
+
+  select cited_count, last_cited_at into v_count, v_cited_at from memories where id = v_a;
+  assert v_count = 1 and v_cited_at is not null,
+    format('107 AC-1b: the cited lesson must carry the count AND the timestamp, '
+           'got count=%s at=%s', v_count, v_cited_at);
+
+  select count(*) into v_rows from memory_citations
+   where cited_memory_id = v_b and citing_memory_id = v_retro and correlation_id = 'run-1';
+  assert v_rows = 1,
+    format('107 AC-1c: the ledger row must carry the citing lesson and the run, got %s', v_rows);
+
+  -- ── AC-2 ────────────────────────────────────────────────────────────────
+  select updated_at into v_after from memories where id = v_a;
+  assert v_after = v_stamp,
+    format('107 AC-2: a citation must PRESERVE the cited lesson''s updated_at, '
+           'got %s want %s', v_after, v_stamp);
+
+  -- ── AC-3 ────────────────────────────────────────────────────────────────
+  -- Same run, same pair: the retry records nothing and the counter does not move.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global'], array['107-cited-a'], 'run-1');
+  select cited_count into v_count from memories where id = v_a;
+  assert v_n = 0 and v_count = 1,
+    format('107 AC-3a: a retry inside one run must record nothing, got n=%s count=%s',
+           v_n, v_count);
+
+  -- A DIFFERENT run: the same lesson applied again is applied again.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global'], array['107-cited-a'], 'run-2');
+  select cited_count into v_count from memories where id = v_a;
+  assert v_n = 1 and v_count = 2,
+    format('107 AC-3b: a second run must count again, got n=%s count=%s', v_n, v_count);
+
+  -- ── AC-4 ────────────────────────────────────────────────────────────────
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global'], array['107-foreign'], 'run-3');
+  select cited_count into v_count from memories where id = v_foreign;
+  assert v_n = 0 and v_count = 0,
+    format('107 AC-4: another account''s lore must not be citable, got n=%s count=%s',
+           v_n, v_count);
+
+  -- ── AC-5 ────────────────────────────────────────────────────────────────
+  -- One self-citation, one ref that names nothing, one good ref. Only the good
+  -- one may land: a bad entry must not take the batch down with it.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global', 'global', 'repo::acme/app'],
+    array['107-retro', '107-does-not-exist', '107-cited-b'],
+    'run-4');
+  assert v_n = 1,
+    format('107 AC-5a: a self-citation and an unresolvable ref must be skipped '
+           'while the good ref lands, got %s', v_n);
+  select count(*) into v_rows from memory_citations where cited_memory_id = v_retro;
+  assert v_rows = 0,
+    format('107 AC-5b: a lesson must never cite itself, got %s rows', v_rows);
+
+  -- ── AC-6 ────────────────────────────────────────────────────────────────
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro,
+    array['global', 'global'], array['107-cited-a'], 'run-5');
+  assert v_n = 0,
+    format('107 AC-6a: mismatched array lengths must return 0, not raise, got %s', v_n);
+
+  v_n := lorekit_record_memory_citations(null, v_retro, array['global'], array['107-cited-a'], 'run-6');
+  assert v_n = 0,
+    format('107 AC-6b: a null actor must return 0, not cite for nobody, got %s', v_n);
+
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro, null, null, 'run-7');
+  assert v_n = 0,
+    format('107 AC-6c: null refs must return 0, got %s', v_n);
+
+  -- An UNCORRELATED citation still lands, and collapses on retry — the
+  -- deliberate under-count the migration header argues for.
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro, array['global'], array['107-cited-a'], null);
+  assert v_n = 1,
+    format('107 AC-6d: a citation with no correlation id must still land, got %s', v_n);
+  v_n := lorekit_record_memory_citations(
+    '00000000-0000-0000-0000-0000000000a4', v_retro, array['global'], array['107-cited-a'], null);
+  assert v_n = 0,
+    format('107 AC-6e: an uncorrelated retry must collapse (coalesce in the unique '
+           'index), got %s', v_n);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);

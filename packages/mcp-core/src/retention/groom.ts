@@ -46,6 +46,7 @@ export interface RetentionPolicyRow {
   unseen_days: number | null;
   max_seen_count: number | null;
   max_read_count: number | null;
+  max_opened_count: number | null;
   tags: string[] | null;
   tags_mode: TagsMode | null;
   source_agent: string[] | null;
@@ -71,6 +72,7 @@ export interface GroomConditions {
   unseen_days: number | null;
   max_seen_count: number | null;
   max_read_count: number | null;
+  max_opened_count: number | null;
   tags: string[] | null;
   tags_mode: TagsMode | null;
   source_agent: string[] | null;
@@ -118,6 +120,7 @@ export type GroomRequestInput =
       unseen_days?: number;
       max_seen_count?: number;
       max_read_count?: number;
+      max_opened_count?: number;
     } & GroomDimensionFilterInput);
 
 /**
@@ -131,6 +134,7 @@ export function resolvePolicyConditions(policy: RetentionPolicyRow): GroomCondit
     unseen_days: policy.unseen_days,
     max_seen_count: policy.max_seen_count,
     max_read_count: policy.max_read_count,
+    max_opened_count: policy.max_opened_count,
     tags: policy.tags,
     tags_mode: policy.tags_mode,
     source_agent: policy.source_agent,
@@ -177,6 +181,7 @@ export function resolveGroomConditions(
     unseen_days: request.unseen_days ?? null,
     max_seen_count: request.max_seen_count ?? null,
     max_read_count: request.max_read_count ?? null,
+    max_opened_count: request.max_opened_count ?? null,
     tags: dimensionOrNull(request.tags),
     tags_mode: request.tags_mode ?? null,
     source_agent: dimensionOrNull(request.source_agent),
@@ -281,6 +286,15 @@ export interface GroomCandidateMemory {
    * "written once and never actually used".
    */
   read_count: number;
+  /**
+   * How many times an agent DELIBERATELY fetched this exact lesson (migration
+   * 00104) — the count behind `last_opened_at`, moved by the same gate. The
+   * NARROW counter, and the one `max_opened_count` reads: `read_count` above
+   * counts bulk ride-alongs, so its `0` is unreachable for any lesson in an
+   * active scope and it ranks scope breadth. This one's `0` means "nothing
+   * ever chose it", in a `global` scope and a `branch` scope alike.
+   */
+  opened_count: number;
   protected: boolean;
   tags: string[] | null;
   source_agent: string | null;
@@ -331,6 +345,10 @@ export function isGroomCandidate(
   }
 
   if (conditions.max_read_count != null && memory.read_count > conditions.max_read_count) {
+    return false;
+  }
+
+  if (conditions.max_opened_count != null && memory.opened_count > conditions.max_opened_count) {
     return false;
   }
 

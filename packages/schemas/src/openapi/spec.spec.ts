@@ -39,6 +39,7 @@ describe('generateSpec', () => {
       '/memories/tags',
       '/memories/usage',
       '/memories/usage/runs',
+      '/memories/utility',
       '/memories/{id}',
       '/memories/{id}/restore',
       '/orgs',

@@ -104,6 +104,18 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
     reason: 'Hot/cold lore ranked by memories.read_count (migration 00077) for the dashboard.',
     restOnly: 'Same name-bearing scope-leak surface as memory.tags, for the same absent demand.',
   },
+  'memory.utility': {
+    reason:
+      'The delivered x chosen grid for the Insights page — where every active lesson sits, plus '
+      + 'the estimated context its deliveries cost over a window.',
+    restOnly:
+      'Same name-bearing scope-leak surface as memory.tags (it returns scope + key per row), and '
+      + 'the same absent demand: a grid is a chart. Unlike its siblings the agent-side spelling '
+      + 'already exists and is BETTER — `memory.list` with `max_opened_count => 0` (migration '
+      + '00105) selects the noise-tax and dormant quadrants over the WHOLE scope, where this '
+      + 'route only ranks a page of them. So an MCP twin would be a weaker answer to a question '
+      + 'the existing tool answers, exactly the memory.clusters call.',
+  },
   'memory.clusters': {
     reason:
       'Near-duplicate clusters for the Explorer’s Duplicate Clusters panel — a redundancy '

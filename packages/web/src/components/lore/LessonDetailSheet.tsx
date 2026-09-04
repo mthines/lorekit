@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick, Quote } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
+import { UtilityChip } from '@/components/memory/MemoryCard';
+import { formatPerDay, formatPullThrough, lessonUtility } from '@/lib/lesson-utility';
 import { Badge } from '@/components/ui/Badge';
 import { Button, IconButton } from '@/components/ui/Button';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -774,9 +776,22 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 </div>
                               );
                             })()}
+                            {/* Delivered and Chosen are two rows, not one
+                               "Consumption" number, because they answer
+                               different questions and only their RATIO is
+                               comparable between scopes. Delivered is a COST
+                               (context spent every time the lesson rides along
+                               in a list page); Chosen is UPTAKE. A `global`
+                               lesson is delivered on every session and a
+                               `branch` lesson almost never, so the raw
+                               Delivered figure ranks scope breadth — which is
+                               exactly why it is shown as a RATE here: nobody
+                               can calibrate "1,417", everybody can calibrate
+                               "4.2/day". */}
                             {(() => {
                               const readCount = lesson.read_count;
                               if (readCount == null) return null;
+                              const verdict = lessonUtility(lesson);
                               return (
                                 <div
                                   className={`flex items-center gap-2 text-xs ${
@@ -786,17 +801,91 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                   }`}
                                 >
                                   <BookOpenCheck className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                                  <dt className="text-[var(--color-content-tertiary)]">Consumption</dt>
+                                  <dt className="text-[var(--color-content-tertiary)]">Delivered</dt>
                                   <dd className="ml-auto">
                                     <Tooltip
-                                      content="How many times this memory has actually been READ back by a memory.read/list/search/list_archived call, not just written. Counts only SINCE per-memory tracking began — a 0 here means not read since then, not necessarily never."
+                                      content="How many times this lesson was put in front of an agent — every read, including riding along in a bulk memory.list/.search page. It is a COST, not a compliment: each delivery spends context. Counts only SINCE per-memory tracking began, so a 0 means not read since then, not necessarily never."
                                       side="top"
                                       align="right"
                                     >
                                       <span className="text-[var(--color-content-secondary)]">
                                         {readCount === 0
-                                          ? 'no reads recorded'
-                                          : `read ${readCount}×${lesson.last_read_at ? ` · last ${new Date(lesson.last_read_at).toLocaleDateString()}` : ''}`}
+                                          ? 'never delivered'
+                                          : `${readCount.toLocaleString()}×${verdict ? ` · ${formatPerDay(verdict.deliveredPerDay)}` : ''}`}
+                                      </span>
+                                    </Tooltip>
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                            {(() => {
+                              const verdict = lessonUtility(lesson);
+                              if (!verdict) return null;
+                              return (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <MousePointerClick className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Chosen</dt>
+                                  <dd className="ml-auto flex items-center gap-1.5">
+                                    <Tooltip
+                                      content="How many times an agent DELIBERATELY fetched this exact lesson, and what share of its deliveries that is (pull-through). The ratio is the only figure here comparable between a global lesson and a branch one, because scope breadth appears in both halves and cancels. It measures SELECTION, not influence: a lesson injected at session start is already in context and never needs a second fetch."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {verdict.chosen === 0
+                                          ? 'never chosen'
+                                          : `${verdict.chosen.toLocaleString()}×${
+                                              verdict.pullThrough === null
+                                                ? ''
+                                                : ` · ${formatPullThrough(verdict.pullThrough)} pull-through`
+                                            }`}
+                                      </span>
+                                    </Tooltip>
+                                    {/* The SAME chip the lesson card shows, so
+                                       the verdict a reader scanned the list by
+                                       and the verdict in the sheet cannot
+                                       disagree — and there is one tone map, not
+                                       two. */}
+                                    <UtilityChip utility={verdict} />
+                                  </dd>
+                                </div>
+                              );
+                            })()}
+                            {/* Cited sits under Chosen because it answers the
+                               question Chosen cannot. Pull-through measures
+                               SELECTION — it moves only on a deliberate fetch —
+                               and a lesson injected at session start is already
+                               in context and is applied without one. So the
+                               ratio above under-counts the dominant delivery
+                               path by construction, and this row is the only
+                               place an agent gets to say "I used this."
+
+                               Deliberately NOT shown as a rate or a share of
+                               deliveries: citing is voluntary, so the
+                               denominator would be fiction. A zero is captioned
+                               as silence rather than as "never used", which is
+                               the opposite reading of the two zeros above. */}
+                            {(() => {
+                              const citedCount = lesson.cited_count;
+                              if (citedCount == null) return null;
+                              return (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <Quote className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                  <dt className="text-[var(--color-content-tertiary)]">Cited</dt>
+                                  <dd className="ml-auto">
+                                    <Tooltip
+                                      content="How many times an agent explicitly credited this lesson when writing up what it learned — the only signal that distinguishes a lesson that was applied from one that was merely delivered. Citing is voluntary, so a 0 means nothing said so, not that the lesson went unused."
+                                      side="top"
+                                      align="right"
+                                    >
+                                      <span className="text-[var(--color-content-secondary)]">
+                                        {citedCount === 0
+                                          ? 'no agent has said so'
+                                          : `credited ${citedCount.toLocaleString()}×${
+                                              lesson.last_cited_at
+                                                ? ` · last ${new Date(lesson.last_cited_at).toLocaleDateString()}`
+                                                : ''
+                                            }`}
                                       </span>
                                     </Tooltip>
                                   </dd>

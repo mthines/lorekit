@@ -37,6 +37,7 @@ import type { RankableLesson } from '../_shared/ranking/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/ranking/outcome-signal.ts';
 import type { DbClient } from '../_shared/db/db-client.ts';
 import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
+import { recordCitations } from '../_shared/telemetry/citations.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../_shared/retention/groom.ts';
 import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
@@ -146,8 +147,16 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
   keyScoping?: KeyRestriction,
+  // The run this write belongs to, from `X-LoreKit-Correlation-Id`. Supplied by
+  // the DISPATCHER, never read from `params`: it is the same key `usage_events`
+  // records for this call, which is what lets a citation (00107) join to the
+  // run `/usage/runs` enumerates — and taking it from the tool args would let a
+  // caller attribute its citations to somebody else's run. `memory.write` is
+  // the only tool with any use for it, which is why it is a trailing optional
+  // argument rather than a parameter threaded through all twelve.
+  correlationId?: string | null,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited } = params;
   if (!rawScope || !key || !value) throw new UserInputError('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new UserInputError(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -246,6 +255,17 @@ export async function toolWrite(
     userId,
     span,
   );
+  // Record which lessons this write CREDITS (migration 00107). After the audit,
+  // before the response is shaped, and awaited: it is one cheap RPC and every
+  // failure inside it is already silent, so there is nothing here that can turn
+  // a committed write into a failed call.
+  await recordCitations(db, span, {
+    userId,
+    citingMemoryId: row.id,
+    cited,
+    correlationId: correlationId ?? null,
+  });
+
   // `inserted` is an internal audit-classification signal (D4), not part of
   // the memory.write response contract — keep the same {id, created_at}
   // shape the Node (mcp-core) path returns so both production surfaces agree.
@@ -1162,6 +1182,7 @@ interface RetentionPolicyDbRow {
   unseen_days: number | null;
   max_seen_count: number | null;
   max_read_count: number | null;
+  max_opened_count: number | null;
   tags: string[] | null;
   tags_mode: string | null;
   source_agent: string[] | null;
@@ -1214,8 +1235,9 @@ export function assertGroomConditionsInBounds(conditions: {
   unseen_days?: number | null;
   max_seen_count?: number | null;
   max_read_count?: number | null;
+  max_opened_count?: number | null;
 }): void {
-  const { min_age_days, unseen_days, max_seen_count, max_read_count } = conditions;
+  const { min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = conditions;
   if (min_age_days != null && (min_age_days < 1 || min_age_days > 3650)) {
     throw new UserInputError('min_age_days must be between 1 and 3650');
   }
@@ -1227,6 +1249,9 @@ export function assertGroomConditionsInBounds(conditions: {
   }
   if (max_read_count != null && (max_read_count < 0 || max_read_count > 100_000)) {
     throw new UserInputError('max_read_count must be between 0 and 100000');
+  }
+  if (max_opened_count != null && (max_opened_count < 0 || max_opened_count > 100_000)) {
+    throw new UserInputError('max_opened_count must be between 0 and 100000');
   }
 }
 
@@ -1240,6 +1265,7 @@ function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
     unseen_days: row.unseen_days,
     max_seen_count: row.max_seen_count,
     max_read_count: row.max_read_count,
+    max_opened_count: row.max_opened_count,
     tags: row.tags,
     tags_mode: row.tags_mode as RetentionPolicyRow['tags_mode'],
     source_agent: row.source_agent,
@@ -1285,10 +1311,10 @@ export async function toolPolicyCreate(
 ) {
   assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.create requires a user_id');
-  const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null, max_read_count = null } = params;
+  const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null, max_read_count = null, max_opened_count = null } = params;
   if (!rawScope || !name) throw new UserInputError('scope and name are required');
   if (mode !== 'review' && mode !== 'auto') throw new UserInputError('mode must be "review" or "auto"');
-  assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count, max_read_count });
+  assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
   const scope = validateScope(rawScope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.policy.mode': mode });
@@ -1305,6 +1331,7 @@ export async function toolPolicyCreate(
       p_unseen_days: unseen_days,
       p_max_seen_count: max_seen_count,
       p_max_read_count: max_read_count,
+      p_max_opened_count: max_opened_count,
       // The eight dimension filters (00093) — same field names as
       // `POST /memories/list`'s body, absent means "not filtered".
       p_tags: params.tags ?? null,
@@ -1356,10 +1383,11 @@ export async function toolPolicyUpdate(
     unseen_days: params.unseen_days,
     max_seen_count: params.max_seen_count,
     max_read_count: params.max_read_count,
+    max_opened_count: params.max_opened_count,
   });
 
   const patch: Record<string, unknown> = {};
-  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count', 'max_read_count', ...GROOM_DIMENSION_FIELDS] as const) {
+  for (const field of ['name', 'mode', 'enabled', 'min_age_days', 'unseen_days', 'max_seen_count', 'max_read_count', 'max_opened_count', ...GROOM_DIMENSION_FIELDS] as const) {
     if (params[field] !== undefined) patch[field] = params[field];
   }
   if (Object.keys(patch).length === 0) throw new UserInputError('at least one field to update is required');
@@ -1432,6 +1460,7 @@ async function resolveGroomRequest(
         unseen_days: params.unseen_days,
         max_seen_count: params.max_seen_count,
         max_read_count: params.max_read_count,
+        max_opened_count: params.max_opened_count,
         // The eight dimension filters — an inline groom.preview/groom.run
         // call can carry the same filters a saved policy can (00093).
         ...Object.fromEntries(
@@ -1471,6 +1500,7 @@ function groomConditionsRpcParams(userId: string, conditions: GroomConditions) {
     p_unseen_days: conditions.unseen_days,
     p_max_seen_count: conditions.max_seen_count,
     p_max_read_count: conditions.max_read_count,
+    p_max_opened_count: conditions.max_opened_count,
     p_tags: conditions.tags,
     p_tags_mode: conditions.tags_mode ?? 'any',
     p_source_agent: conditions.source_agent,
