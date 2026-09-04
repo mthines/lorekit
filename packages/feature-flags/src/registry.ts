@@ -61,7 +61,7 @@ const REGISTRY_INPUT = [
   {
     key: 'retention-policies',
     description:
-      'Settings → Grooming — retention policies that auto-archive stale lore, plus its sidebar nav entry. Gates only the dashboard UI: the MCP/REST surface (policy.*, groom.*, memory.protect) has its own independent backend gate (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret) because the edge functions are self-contained Deno and cannot depend on this Node-only OpenFeature package — see `docs/decisions.md#edge-function-is-self-contained-deno-no-import-map`. Flip this on only after the backend secret is set, same ordering as the GitHub App slug/flag pair.',
+      'Settings → Grooming — retention policies that auto-archive stale lore, plus its sidebar nav entry, and the Lore Explorer’s retention-preview conditions. Gates the dashboard UI ONLY, and it is now the single gate: the MCP/REST surface (policy.*, groom.*, memory.protect) is enabled unconditionally. It used to carry a second, independent backend gate (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret) — removed, because it never gated visibility (`tools/list` advertised the tools either way) and was unset in every environment, so its only effect was an advertised tool that always failed. Flipping this flag on is therefore a UI decision with no backend prerequisite.',
     type: 'boolean',
     variants: { off: false, on: true },
     defaultVariant: 'off',
