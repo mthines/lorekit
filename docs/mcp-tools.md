@@ -181,7 +181,7 @@ List all lessons for a scope — newest first by default, or best-first with `or
 |----------|---------|-------------|
 | `scope` | required | Scope to list |
 | `tags` | `[]` | Filter — only return lessons with at least one of these tags |
-| `limit` | `50` | Max results (cap: 100) |
+| `limit` | `50` | Max results (cap: 250) |
 | `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
 | `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — scores recency, salience, and outcome over a bounded candidate window, returned as a single top-N page. (The scorer's fourth factor, relevance, needs a query string; `memory.list` supplies none, so relevance is a constant 0 here and only contributes on the search/`q` path.) |
 | `kind` | | Filter to one bucket family — `lesson`, `bus`, or `signal`. Rows written before migration 00056 have a `NULL` kind and are excluded when this is set |
@@ -192,7 +192,7 @@ List all lessons for a scope — newest first by default, or best-first with `or
 
 - `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
 - `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
-  Raise `limit` (cap 100) rather than paginating.
+  Raise `limit` (cap 250) rather than paginating.
   Ranking scores at most the **200 most recently updated** rows in the scope (a bounded candidate
   window); in a scope with more than 200 active lessons the ranking is over that recency window,
   not the whole scope, and `hasMore: false` reflects the page — not that the scope is exhausted.
@@ -420,7 +420,7 @@ List soft-archived lessons for a scope, newest archived first. Requires a token 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `scope` | required | Scope to list archived entries for |
-| `limit` | `50` | Max results (cap: 100) |
+| `limit` | `50` | Max results (cap: 250) |
 
 **Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`
 
