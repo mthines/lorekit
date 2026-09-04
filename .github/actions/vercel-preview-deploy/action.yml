@@ -216,7 +216,15 @@ runs:
     - name: Deploy (prebuilt)
       id: deploy
       if: ${{ inputs.deploy == 'true' }}
-      shell: bash
+      # Spelled out rather than `shell: bash`, which GitHub expands to
+      # `bash --noprofile --norc -e -o pipefail {0}` — and `set -uo pipefail`
+      # below does NOT clear an inherited `-e`. With it, the `out="$(timeout …)"`
+      # assignment is a simple command, so a non-zero `vercel` exit aborted the
+      # step THERE: `code=$?` and every fail() branch under it were unreachable,
+      # and a blocked deployment surfaced as a bare exit 124 with no ::error::
+      # and no vercel-deploy-error.txt for the caller to quote. The script does
+      # its own exit-code handling, so it opts out of `-e` and keeps `-uo pipefail`.
+      shell: bash --noprofile --norc {0}
       env:
         VERCEL_TOKEN: ${{ inputs.vercel-token }}
         VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
