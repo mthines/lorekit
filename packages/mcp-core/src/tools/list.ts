@@ -10,7 +10,7 @@ export const LIST_PREVIEW_CHARS = 200;
 export const ListInputSchema = z.object({
   scope: ScopeSchema,
   tags: z.array(z.string()).optional(),
-  limit: z.number().int().min(1).max(100).optional().default(50),
+  limit: z.number().int().min(1).max(250).optional().default(50),
   // Taxonomy filters — the `kind`/`host` columns added in migration 00056.
   // Without these an MCP client can only filter by tag and must discard the
   // rest client-side, which is exactly the over-fetch `view: "summary"` below

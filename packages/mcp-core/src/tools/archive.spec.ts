@@ -166,7 +166,7 @@ describe('listArchived', () => {
     expect(result.entries).toEqual([]);
   });
 
-  it('applies default limit of 50 (does not exceed 100)', async () => {
+  it('applies default limit of 50 (does not exceed 250)', async () => {
     // The DB mock records whatever .limit() was called with; we just check it
     // doesn't throw and returns the data shape.
     const db = listDb([fakeRow]);
@@ -174,8 +174,8 @@ describe('listArchived', () => {
     expect(result.entries).toHaveLength(1);
   });
 
-  it('throws ZodError when limit exceeds 100', async () => {
+  it('throws ZodError when limit exceeds 250', async () => {
     const db = listDb([]);
-    await expect(listArchived(db, { scope: 'global', limit: 101 })).rejects.toThrow();
+    await expect(listArchived(db, { scope: 'global', limit: 251 })).rejects.toThrow();
   });
 });

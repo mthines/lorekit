@@ -56,6 +56,18 @@ export const PURGE_RETENTION_DAYS_DEFAULT = 30;
  */
 const LIST_PREVIEW_CHARS = 200;
 
+/**
+ * Page-size ceiling for `memory.list` / `memory.list_archived`. The
+ * authoritative cap is `MemoryListSchema`/`MemoryListArchivedSchema`'s
+ * `limit.max()` in `packages/schemas/src/domain/memory.ts` (mirrored into the
+ * `tool-catalog.ts` JSON-schema `limit` constant the two tools share) —
+ * declared again here, same value, following the `LIST_PREVIEW_CHARS`
+ * precedent directly above: this file is self-contained Deno and cannot
+ * import across the package boundary. `memory.search` has its own, separate,
+ * unchanged cap (its own inline `Math.min(limit, 100)` below).
+ */
+const LIST_PAGE_LIMIT_MAX = 250;
+
 /** A list row as selected from Postgres, before the `view` projection. */
 interface ListRow {
   id?: string;
@@ -325,7 +337,7 @@ export async function toolList(
   const tags = toTagList(rawTags);
   if (!rawScope) throw new UserInputError('scope is required');
   const scope = validateScope(rawScope);
-  const pageLimit = Math.min(limit, 100);
+  const pageLimit = Math.min(limit, LIST_PAGE_LIMIT_MAX);
   // Recorded BEFORE the clamp so a future cap decision has the caller's actual
   // ask, not just the truncated `result.count` — without this, every call
   // that wanted more than the cap is indistinguishable from one that got
@@ -704,7 +716,7 @@ export async function toolListArchived(
   const { scope: rawScope, limit = 50 } = params;
   if (!rawScope) throw new UserInputError('scope is required');
   const scope = validateScope(rawScope);
-  const pageLimit = Math.min(limit, 100);
+  const pageLimit = Math.min(limit, LIST_PAGE_LIMIT_MAX);
 
   // See toolList's identical comment: recorded pre-clamp so a capped call is
   // distinguishable from one that got everything it asked for.

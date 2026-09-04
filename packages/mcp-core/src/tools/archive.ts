@@ -17,7 +17,7 @@ export const RestoreInputSchema = z.object({
 
 export const ListArchivedInputSchema = z.object({
   scope: ScopeSchema,
-  limit: z.number().int().min(1).max(100).optional().default(50),
+  limit: z.number().int().min(1).max(250).optional().default(50),
 });
 
 export interface ArchivedEntry {

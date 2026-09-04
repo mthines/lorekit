@@ -80,9 +80,9 @@ describe('list', () => {
     expect(result.entries).toHaveLength(1);
   });
 
-  it('throws ZodError when limit exceeds 100', async () => {
+  it('throws ZodError when limit exceeds 250', async () => {
     const db = makeDb([]);
-    await expect(list(db, { scope: 'global', limit: 101 })).rejects.toThrow();
+    await expect(list(db, { scope: 'global', limit: 251 })).rejects.toThrow();
   });
 
   it('throws ZodError when limit is less than 1', async () => {

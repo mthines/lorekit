@@ -131,7 +131,7 @@ export interface McpToolDoc {
 
 const scope: JsonSchemaProperty = { type: 'string', description: 'Canonical scope string, e.g. `repo::mthines/lorekit`.' };
 const key: JsonSchemaProperty = { type: 'string', description: 'Lesson identifier, unique within the scope. Max 512 characters.' };
-const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum entries to return.' };
+const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 250, default: 50, description: 'Maximum entries to return.' };
 
 /**
  * The EIGHT dimension filters a retention policy (or an inline groom call)
