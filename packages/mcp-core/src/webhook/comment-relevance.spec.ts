@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  COMPARE_FILES_CEILING,
   DECLINE_PATTERN,
   LINE_TOUCH_RADIUS,
   SAFE_MARKER_VALUE,
+  filesFromCompareBody,
   patchTouchesLine,
   buildRelevanceKey,
   buildRelevanceRecord,
@@ -234,6 +236,50 @@ describe('patchTouchesLine', () => {
   it('LINE_TOUCH_RADIUS is the documented default', () => {
     expect(LINE_TOUCH_RADIUS).toBe(10);
     expect(patchTouchesLine(patch, 11)).toBe(patchTouchesLine(patch, 11, LINE_TOUCH_RADIUS));
+  });
+});
+
+describe('filesFromCompareBody', () => {
+  const entry = (filename: string): ComparedFile => ({ filename, patch: '@@ -1 +1 @@' });
+
+  it('passes a real files array through', () => {
+    expect(filesFromCompareBody({ files: [entry('src/a.ts')] })).toEqual([entry('src/a.ts')]);
+  });
+
+  it('treats a files array GitHub actually sent as empty as a completed walk', () => {
+    // Two commits with identical trees really do list no files, and "the walk
+    // completed and found nothing" is evidence — distinct from every case below.
+    expect(filesFromCompareBody({ files: [] })).toEqual([]);
+  });
+
+  // Each of these is a body that cannot answer "did anything land on this
+  // file". Reading any of them as `[]` would hand touchEvidenceFromFiles a
+  // completed walk, which yields `touched: false` and files a suppression for a
+  // file nothing looked at.
+  it('is undecidable when the files key is absent or not an array', () => {
+    expect(filesFromCompareBody({})).toBeNull();
+    expect(filesFromCompareBody({ files: null })).toBeNull();
+    expect(filesFromCompareBody({ files: 'src/a.ts' })).toBeNull();
+    expect(filesFromCompareBody({ files: { 0: entry('src/a.ts') } })).toBeNull();
+  });
+
+  it('is undecidable for a body that is not an object at all', () => {
+    expect(filesFromCompareBody(null)).toBeNull();
+    expect(filesFromCompareBody(undefined)).toBeNull();
+    expect(filesFromCompareBody('not json')).toBeNull();
+    expect(filesFromCompareBody([])).toBeNull();
+  });
+
+  it('is undecidable at the truncation ceiling, where an absent file proves nothing', () => {
+    const atCeiling = Array.from({ length: COMPARE_FILES_CEILING }, (_, i) => entry(`f${i}.ts`));
+    expect(filesFromCompareBody({ files: atCeiling })).toBeNull();
+    expect(filesFromCompareBody({ files: atCeiling.slice(0, -1) })).toHaveLength(
+      COMPARE_FILES_CEILING - 1,
+    );
+  });
+
+  it('COMPARE_FILES_CEILING is the documented compare limit', () => {
+    expect(COMPARE_FILES_CEILING).toBe(300);
   });
 });
 

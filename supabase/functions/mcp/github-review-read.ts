@@ -30,7 +30,9 @@
  */
 
 import {
+  filesFromCompareBody,
   touchEvidenceFromFiles,
+  type ComparedFile,
   type TouchEvidence,
 } from './comment-relevance.ts';
 import { parseThreadNode, type ReviewThreadFacts } from './github-review-parse.ts';
@@ -53,13 +55,6 @@ const THREAD_COMMENT_PAGE_SIZE = 50;
  * beyond it get `null` touch evidence, i.e. undecidable, i.e. no record.
  */
 const MAX_TOUCH_COMPARES = 12;
-
-/**
- * `compare` truncates its `files` array at 300 entries with no flag saying so,
- * so a diff at exactly the ceiling is treated as unreadable rather than as a
- * diff that happens not to contain the file.
- */
-const COMPARE_FILES_CEILING = 300;
 
 export interface ReviewThreadRead {
   /**
@@ -97,8 +92,12 @@ const REVIEW_THREADS_QUERY = `
                 author{ login __typename }
                 commit{ oid }
                 originalCommit{ oid }
+                # content is selected even though the argument already narrows
+                # to 👎: parseThreadNode re-checks it, so losing this filter
+                # drops the reactions instead of silently reading a 👍 as a 👎
+                # on a suppression input.
                 reactions(content: THUMBS_DOWN, first: 20){
-                  nodes{ user{ login } }
+                  nodes{ content user{ login } }
                 }
               }
             }
@@ -183,7 +182,7 @@ export async function fetchReviewThreads(args: {
  * against one commit, so the common case is one HTTP call for the whole sweep.
  */
 export class TouchProbe {
-  private readonly cache = new Map<string, Json | null>();
+  private readonly cache = new Map<string, ComparedFile[] | null>();
   private compares = 0;
 
   constructor(
@@ -218,25 +217,26 @@ export class TouchProbe {
     return touchEvidenceFromFiles(files, thread.rootPath, thread.rootLine);
   }
 
-  /** `null` on any condition that makes the answer unknowable. */
-  private async filesSince(baseSha: string): Promise<Json[] | null> {
-    if (this.cache.has(baseSha)) return this.cache.get(baseSha) as Json[] | null;
+  /**
+   * `null` on any condition that makes the answer unknowable.
+   *
+   * Which conditions those are is `filesFromCompareBody`'s call, not this
+   * method's: it owns both the truncation ceiling and the absent-key case, and
+   * it is spec'd. All this method decides is whether an HTTP response arrived
+   * at all.
+   */
+  private async filesSince(baseSha: string): Promise<ComparedFile[] | null> {
+    if (this.cache.has(baseSha)) return this.cache.get(baseSha) ?? null;
     if (this.compares >= MAX_TOUCH_COMPARES) return null;
 
     this.compares++;
-    let result: Json[] | null = null;
+    let result: ComparedFile[] | null = null;
     try {
       const res = await fetch(
         `${GITHUB_API}/repos/${this.repo}/compare/${baseSha}...${this.headSha}`,
         { headers: githubHeaders(this.token) },
       );
-      if (res.ok) {
-        const body: Json = await res.json();
-        const files: Json[] = body['files'] ?? [];
-        // At the ceiling the array is silently truncated, so an absent file
-        // proves nothing.
-        result = files.length >= COMPARE_FILES_CEILING ? null : files;
-      }
+      if (res.ok) result = filesFromCompareBody(await res.json());
     } catch {
       result = null;
     }

@@ -55,8 +55,25 @@ interface RawComment {
   author?: { login?: unknown; __typename?: unknown } | null;
   commit?: RawCommit | null;
   originalCommit?: RawCommit | null;
-  reactions?: { nodes?: readonly ({ user?: { login?: unknown } | null } | null)[] | null } | null;
+  reactions?: {
+    nodes?:
+      | readonly ({ content?: unknown; user?: { login?: unknown } | null } | null)[]
+      | null;
+  } | null;
 }
+
+/**
+ * The one reaction that means "this finding was wrong".
+ *
+ * The GraphQL query already narrows to `content: THUMBS_DOWN`, so in a correct
+ * response every node is one — and that is exactly why this module re-checks it.
+ * `thumbsDownLogins` feeds SUPPRESSION, so the cost of the query losing its
+ * filter is that an author's 👍 on a good finding starts recording that the
+ * finding was unwanted. That contract was declared here, in a spec'd module, and
+ * enforced only by an argument in a query string in an unspec'd fetch shell,
+ * where no test could hold it.
+ */
+const THUMBS_DOWN = 'THUMBS_DOWN';
 
 interface RawThreadNode {
   isResolved?: unknown;
@@ -117,7 +134,11 @@ export function parseThreadNode(node: unknown): ReviewThreadFacts | null {
       .slice(1)
       .map((c) => (typeof c.body === 'string' ? c.body : ''))
       .filter(Boolean),
+    // Fails CLOSED on an unrecognised or absent `content`: dropping a reaction
+    // this module cannot attest is 👎 costs one suppression signal, while
+    // keeping it records that a finding was unwanted on evidence nobody has.
     thumbsDownLogins: (root.reactions?.nodes ?? [])
+      .filter((r) => r?.content === THUMBS_DOWN)
       .map((r) => r?.user?.login)
       .filter((login): login is string => typeof login === 'string'),
   };

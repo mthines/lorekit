@@ -142,22 +142,65 @@ describe('parseThreadNode', () => {
   });
 
   describe('thumbs-down logins', () => {
-    it('collects every reacting login', () => {
-      const parsed = parseThreadNode(
-        node({ reactions: { nodes: [{ user: { login: 'alice' } }, { user: { login: 'bob' } }] } }),
-      );
+    /** One 👎 reaction node, in the shape the query returns. */
+    const down = (login: string) => ({ content: 'THUMBS_DOWN', user: { login } });
+
+    it('collects every 👎 login', () => {
+      const parsed = parseThreadNode(node({ reactions: { nodes: [down('alice'), down('bob')] } }));
       expect(parsed?.thumbsDownLogins).toEqual(['alice', 'bob']);
     });
 
     it('drops a reaction from a deleted user rather than yielding undefined', () => {
       const parsed = parseThreadNode(
-        node({ reactions: { nodes: [{ user: null }, {}, { user: { login: 'alice' } }] } }),
+        node({
+          reactions: {
+            nodes: [{ content: 'THUMBS_DOWN', user: null }, { content: 'THUMBS_DOWN' }, down('alice')],
+          },
+        }),
       );
       expect(parsed?.thumbsDownLogins).toEqual(['alice']);
     });
 
     it('is empty when the reactions connection is absent', () => {
       expect(parseThreadNode(node({ reactions: undefined }))?.thumbsDownLogins).toEqual([]);
+    });
+
+    // The query narrows to `content: THUMBS_DOWN`, so in a correct response
+    // every node already is one. These two cases exist because this list feeds
+    // SUPPRESSION: if that argument is ever dropped from the query, a 👍 on a
+    // good finding must not start recording that the finding was unwanted. The
+    // filter is what makes the `thumbsDownLogins` doc comment enforceable in the
+    // module that declares it, instead of in an unspec'd query string.
+    it('drops any reaction that is not a 👎', () => {
+      const parsed = parseThreadNode(
+        node({
+          reactions: {
+            nodes: [
+              { content: 'THUMBS_UP', user: { login: 'approver' } },
+              { content: 'HEART', user: { login: 'fan' } },
+              down('objector'),
+            ],
+          },
+        }),
+      );
+      expect(parsed?.thumbsDownLogins).toEqual(['objector']);
+    });
+
+    it('fails closed on a reaction whose content is absent or unrecognised', () => {
+      // Dropping a reaction this module cannot attest is 👎 costs one signal.
+      // Keeping it records that a finding was unwanted on evidence nobody has.
+      const parsed = parseThreadNode(
+        node({
+          reactions: {
+            nodes: [
+              { user: { login: 'unknown-intent' } },
+              { content: null, user: { login: 'null-content' } },
+              { content: 'thumbs_down', user: { login: 'wrong-case' } },
+            ],
+          },
+        }),
+      );
+      expect(parsed?.thumbsDownLogins).toEqual([]);
     });
   });
 
