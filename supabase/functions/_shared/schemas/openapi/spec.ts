@@ -343,7 +343,13 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'get', path: '/memories/activity',
     summary: 'Memories created per UTC hour/day per scope over a window', tags: ['Memories'],
-    description: 'An invalid `scope` is a `400`, not a silently ignored filter — the same rule the read counterpart `GET /memories/read-activity` follows.',
+    description:
+      'An invalid `scope` is a `400`, not a silently ignored filter — the same rule the read ' +
+      'counterpart `GET /memories/read-activity` follows. The five retention thresholds ' +
+      '(`min_age_days`, `unseen_days`, `max_seen_count`, `max_read_count`, `max_opened_count`) ' +
+      'narrow the counted population exactly as they do on `GET /memories`, so a series matches ' +
+      'the list under the same parameters. There is no `created_since`/`created_until` pair here, ' +
+      'unlike `/facets` and `/pivot`: this route’s own `since`/`until` already bound `created_at`.',
     security, request: { query: ActivityQuerySchema },
     responses: {
       200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },
