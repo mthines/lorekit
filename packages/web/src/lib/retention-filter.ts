@@ -32,7 +32,14 @@ import type {
   ScalarFilterMode,
   TagsMode,
 } from '@lorekit/schemas/memory';
-import { filtersToBody, normalizeFilters, type Filter, type FilterField, type FilterOperator } from './filters';
+import {
+  filtersPhrase,
+  filtersToBody,
+  normalizeFilters,
+  type Filter,
+  type FilterField,
+  type FilterOperator,
+} from './filters';
 
 /** The five conditions, camelCased for the UI's own state — see `GroomConditions` for the wire shape. */
 export interface RetentionConditions {
@@ -625,4 +632,82 @@ export function retentionConditionsPhrase(conditions: RetentionConditions): stri
     return value === undefined ? [] : [phrase(value)];
   });
   return parts.length > 0 ? parts.join(' · ') : 'Age & activity';
+}
+
+// ── A policy's scope, and the name it gets when nobody types one ─────────────
+
+/**
+ * The scope a retention policy uses to mean "every scope".
+ *
+ * This is NOT a UI invention — it is the groom RPC's own contract, stated in
+ * `00088_retention_policies.sql`: `p_scope = 'global'` matches every memory,
+ * an exact scope matches itself, and a `repo::owner/repo` policy additionally
+ * matches that repo's `branch::` children.
+ *
+ * The collision is real and worth knowing about: `global` is also a genuine
+ * scope lessons are written to, so a policy targeting ONLY the `global` scope's
+ * own lore cannot be expressed today — `global` always widens to everything.
+ * Surfacing it honestly as "All scopes" is the fix available without changing
+ * the RPC; inventing a second spelling here would just hide the widening.
+ */
+export const ALL_SCOPES = 'global';
+
+/** True when a policy scope means "every scope", not one named scope. */
+export function isAllScopes(scope: string): boolean {
+  return scope.trim() === ALL_SCOPES;
+}
+
+/** The scope as a sentence reads it: "all scopes", or the canonical string. */
+export function policyScopeLabel(scope: string): string {
+  return isAllScopes(scope) ? 'all scopes' : scope.trim();
+}
+
+/**
+ * The rule's narrowing as a phrase — "Older than 90d · chosen ≤ 0" — or an
+ * empty string when the rule narrows by nothing at all.
+ *
+ * Deliberately NOT `retentionConditionsPhrase`: that one is the Explorer's
+ * pill-bar summary and falls back to the LABEL "Age & activity" for an empty
+ * set, which would be nonsense in a policy name. The wording of each fragment
+ * is the same, because a condition must read identically wherever it appears.
+ */
+export function policyRulePhrase(
+  conditions: RetentionConditions,
+  filters: readonly Filter[] = [],
+): string {
+  const parts = RETENTION_FIELDS.flatMap(({ field, phrase }) => {
+    const value = conditions[field];
+    return value === undefined ? [] : [phrase(value)];
+  });
+  // `filtersPhrase` answers 'Add filter' for an empty bar — a button label, not
+  // a description — so an empty bar contributes nothing rather than that.
+  const normalized = normalizeFilters(filters as unknown[]);
+  if (normalized.length > 0) parts.push(filtersPhrase(normalized));
+  return parts.join(' · ');
+}
+
+/** `PolicyCreateBodySchema`'s `name` bound — a generated name must fit it. */
+export const POLICY_NAME_MAX = 200;
+
+/**
+ * The name a policy gets when the user saves without typing one.
+ *
+ * A required name is a tax on the common case: by the time you have picked a
+ * scope and some conditions you have already SAID what the rule is, and typing
+ * "stale repo lore" adds nothing a machine could not have written. So the field
+ * is optional and this fills it, from the same fragments the saved row will
+ * display — which is what stops the name and the rule beneath it disagreeing.
+ *
+ * Truncated to fit `POLICY_NAME_MAX`, since a filter bar with many values can
+ * outrun it and a 201-character name is a 400 from the API, not a long name.
+ */
+export function policyNameFromRule(
+  scope: string,
+  conditions: RetentionConditions,
+  filters: readonly Filter[] = [],
+): string {
+  const rule = policyRulePhrase(conditions, filters);
+  const name = `${rule || 'Every unprotected lesson'} in ${policyScopeLabel(scope)}`;
+  if (name.length <= POLICY_NAME_MAX) return name;
+  return `${name.slice(0, POLICY_NAME_MAX - 1).trimEnd()}…`;
 }

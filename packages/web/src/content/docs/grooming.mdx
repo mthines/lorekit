@@ -192,6 +192,20 @@ reachable today through the dashboard, `POST /policies`/`PATCH /policies/:id`,
 and the MCP `policy.create`/`policy.update`/`groom.preview`/`groom.run` tools
 — `lorekit policy`/`lorekit groom` have no CLI flags for them yet.
 
+**A policy does not have to name one scope.** `--scope global` matches *every*
+lesson in the account, in every scope — that is what the dashboard's dialog
+offers as the **All scopes** row pinned to the top of the scope picker. A named
+scope always matches itself, and a `repo::owner/repo` policy additionally covers
+every `branch::owner/repo::…` under it, so a repo rule does not need a branch
+rule beside it.
+
+**The name is optional in the dashboard.** Leave the field blank and the policy
+is named after what it does — `chosen ≤ 0× in all scopes`,
+`created >90d ago · unopened >90d in repo::acme/app` — which is exactly the text
+the field shows as its placeholder while you build the rule, so you can see the
+name before you save it. Typing anything overrides it. The API and the CLI still
+require `name` explicitly.
+
 </TutorialStep>
 
 <TutorialStep number={3} title="Protect a lesson from every policy">

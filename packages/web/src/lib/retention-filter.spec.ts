@@ -25,6 +25,11 @@ import {
   retentionConditionsToAggregateBody,
   retentionConditionsToListBody,
   retentionFieldMatches,
+  isAllScopes,
+  policyNameFromRule,
+  policyRulePhrase,
+  policyScopeLabel,
+  POLICY_NAME_MAX,
   retentionValueRows,
   setRetentionCondition,
   type RetentionConditions,
@@ -547,5 +552,70 @@ describe('setRetentionCondition', () => {
     // in the set (00105).
     expect(setRetentionCondition({}, 'maxOpenedCount', 0)).toEqual({ maxOpenedCount: 0 });
     expect(hasRetentionConditions(setRetentionCondition({}, 'maxOpenedCount', 0))).toBe(true);
+  });
+});
+
+describe('policyScopeLabel / isAllScopes', () => {
+  it('reads `global` as every scope, because that is what the groom RPC does', () => {
+    expect(isAllScopes('global')).toBe(true);
+    expect(policyScopeLabel('global')).toBe('all scopes');
+  });
+
+  it('leaves a named scope as itself', () => {
+    expect(isAllScopes('repo::mthines/lorekit')).toBe(false);
+    expect(policyScopeLabel('repo::mthines/lorekit')).toBe('repo::mthines/lorekit');
+  });
+
+  it('is not fooled by surrounding whitespace', () => {
+    expect(isAllScopes('  global  ')).toBe(true);
+    expect(policyScopeLabel('  repo::a/b  ')).toBe('repo::a/b');
+  });
+});
+
+describe('policyRulePhrase', () => {
+  it('joins the conditions in the menu order', () => {
+    expect(policyRulePhrase({ minAgeDays: 90, maxOpenedCount: 0 })).toBe(
+      'created >90d ago · chosen ≤ 0×',
+    );
+  });
+
+  it('is EMPTY for a rule that narrows by nothing', () => {
+    // Not `retentionConditionsPhrase`'s 'Age & activity' fallback — that is a
+    // menu label, and it would read as a condition inside a policy name.
+    expect(policyRulePhrase({})).toBe('');
+    expect(retentionConditionsPhrase({})).toBe('Age & activity');
+  });
+
+  it('appends the filter bar, and contributes nothing for an empty one', () => {
+    // `filtersPhrase([])` answers 'Add filter' — a button label. It must never
+    // reach a name.
+    expect(policyRulePhrase({}, [])).toBe('');
+    expect(policyRulePhrase({ minAgeDays: 7 }, [])).toBe('created >7d ago');
+    expect(
+      policyRulePhrase({}, [{ field: 'host', operator: 'in', values: ['reviewer'] }]),
+    ).toContain('reviewer');
+  });
+});
+
+describe('policyNameFromRule', () => {
+  it('names the rule and the scope it runs over', () => {
+    expect(policyNameFromRule('repo::mthines/lorekit', { minAgeDays: 90, maxOpenedCount: 0 })).toBe(
+      'created >90d ago · chosen ≤ 0× in repo::mthines/lorekit',
+    );
+  });
+
+  it('says what an unnarrowed all-scopes rule actually does', () => {
+    expect(policyNameFromRule('global', {})).toBe('Every unprotected lesson in all scopes');
+  });
+
+  it('fits the schema bound, which a wide filter bar can outrun', () => {
+    const values = Array.from({ length: 200 }, (_, i) => `label-number-${i}`);
+    const name = policyNameFromRule('repo::mthines/lorekit', { minAgeDays: 90 }, [
+      { field: 'label', operator: 'in', values },
+    ]);
+    expect(name.length).toBeLessThanOrEqual(POLICY_NAME_MAX);
+    expect(name.endsWith('…')).toBe(true);
+    // Still a legal name — `min(1)` at the other end of the same schema field.
+    expect(name.length).toBeGreaterThan(0);
   });
 });

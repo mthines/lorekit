@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Archive, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Archive, Globe, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { GroomRequest, RetentionPolicy } from '@lorekit/schemas/retention';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Button, IconButton } from '@/components/ui/Button';
@@ -51,9 +51,17 @@ import {
 } from '@/lib/queries/groom';
 // Shared with the Explorer's retention-preview control (`lib/retention-filter.ts`)
 // so the same example numbers appear wherever these four fields do.
-import { retentionConditionPlaceholder, filtersToGroomDimensionFilters, groomConditionsToFilters } from '@/lib/retention-filter';
 import {
-  filtersPhrase,
+  ALL_SCOPES,
+  filtersToGroomDimensionFilters,
+  groomConditionsToFilters,
+  isAllScopes,
+  policyNameFromRule,
+  policyRulePhrase,
+  retentionConditionPlaceholder,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
+import {
   normalizeFilters,
   removeFilter,
   setFilterOperator,
@@ -150,6 +158,27 @@ function parseIntField(raw: string): number | undefined {
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
+/**
+ * The form's five string fields as the shared `RetentionConditions` shape, so
+ * the generated policy name is worded by the SAME code that words the
+ * Explorer's pills — a blank or unparseable field is simply absent, exactly as
+ * it is in `toGroomRequest`.
+ */
+function toRetentionConditions(c: Conditions): RetentionConditions {
+  const out: RetentionConditions = {};
+  const minAgeDays = parseIntField(c.minAgeDays);
+  if (minAgeDays !== undefined) out.minAgeDays = minAgeDays;
+  const unseenDays = parseIntField(c.unseenDays);
+  if (unseenDays !== undefined) out.unseenDays = unseenDays;
+  const maxSeenCount = parseIntField(c.maxSeenCount);
+  if (maxSeenCount !== undefined) out.maxSeenCount = maxSeenCount;
+  const maxReadCount = parseIntField(c.maxReadCount);
+  if (maxReadCount !== undefined) out.maxReadCount = maxReadCount;
+  const maxOpenedCount = parseIntField(c.maxOpenedCount);
+  if (maxOpenedCount !== undefined) out.maxOpenedCount = maxOpenedCount;
+  return out;
+}
+
 function toGroomRequest(c: Conditions): GroomRequest | null {
   if (!c.scope.trim()) return null;
   const minAgeDays = parseIntField(c.minAgeDays);
@@ -202,20 +231,33 @@ function conditionsFromPolicy(p: RetentionPolicy): Conditions {
   };
 }
 
-/** The rule as a human sentence: "Older than 90d · unseen 90d · written ≤ 1 · Host is reviewer". */
+/** A saved policy's five nullable thresholds as the shared `RetentionConditions` shape. */
+function retentionConditionsFromPolicy(p: RetentionPolicy): RetentionConditions {
+  const out: RetentionConditions = {};
+  if (p.min_age_days !== null) out.minAgeDays = p.min_age_days;
+  if (p.unseen_days !== null) out.unseenDays = p.unseen_days;
+  if (p.max_seen_count !== null) out.maxSeenCount = p.max_seen_count;
+  if (p.max_read_count !== null) out.maxReadCount = p.max_read_count;
+  if (p.max_opened_count !== null) out.maxOpenedCount = p.max_opened_count;
+  return out;
+}
+
+/**
+ * The rule as a human sentence: "created >90d ago · chosen ≤ 0× · Host is reviewer".
+ *
+ * Worded by `policyRulePhrase`, the same function that names an unnamed policy
+ * and that the Explorer's pill summary shares its fragments with. This used to
+ * be a hand-written second copy of those five fragments, worded slightly
+ * differently ("Older than 90d", "written ≤ 1") — so the row describing a policy
+ * and the policy's own generated name disagreed about the rule they both
+ * described. Only the empty fallback is local: a policy row wants a sentence,
+ * where a name wants nothing to append.
+ */
 function ruleSentence(p: RetentionPolicy): string {
-  const parts: string[] = [];
-  if (p.min_age_days !== null) parts.push(`Older than ${p.min_age_days}d`);
-  if (p.unseen_days !== null) parts.push(`unseen ${p.unseen_days}d`);
-  // "written"/"delivered"/"chosen", never "seen" for any of them — the three
-  // counters measure different things and appear side by side. See
-  // `retentionConditionsPhrase`, which words the Explorer's pill identically.
-  if (p.max_seen_count !== null) parts.push(`written ≤ ${p.max_seen_count}`);
-  if (p.max_read_count !== null) parts.push(`delivered ≤ ${p.max_read_count}`);
-  if (p.max_opened_count !== null) parts.push(`chosen ≤ ${p.max_opened_count}`);
-  const filters = groomConditionsToFilters(p);
-  if (filters.length > 0) parts.push(filtersPhrase(filters));
-  return parts.length > 0 ? parts.join(' · ') : 'Every unprotected lesson in scope';
+  return (
+    policyRulePhrase(retentionConditionsFromPolicy(p), groomConditionsToFilters(p)) ||
+    'Every unprotected lesson in scope'
+  );
 }
 
 /** A saved policy's mode/enabled collapsed to one switch: ON = auto + enabled. */
@@ -227,19 +269,43 @@ function isAutoEnabled(policy: Pick<RetentionPolicy, 'mode' | 'enabled'>): boole
  * The scope field: a single-select searchable `Combobox` over the account's
  * scope catalog, `creatable` so a scope with no memories yet stays selectable,
  * emitting the canonical scope string and echoing the choice as a `ScopeBadge`.
+ *
+ * ## "All scopes" leads the list
+ * A policy that runs over everything is a normal thing to want, and it was
+ * unreachable: the catalog offers named scopes, and once one was picked there
+ * was no way back out of it. The groom RPC has always had the answer —
+ * `p_scope = 'global'` matches every memory (`00088_retention_policies.sql`) —
+ * it just had no spelling in the UI, so the option is pinned to the top of the
+ * list rather than left to be discovered.
+ *
+ * It is deliberately NOT presented as clearing the field. An empty scope is not
+ * "everything", it is "unsaveable", and a control where blank silently meant
+ * account-wide archival would be the wrong default to leave one click away.
  */
 function ScopeField({ value, onChange }: { value: string; onChange: (scope: string) => void }) {
   const labelId = useId();
   const { data: scopeNodes = [] } = useScopeTree();
 
   const options: ComboboxItem[] = useMemo(
-    () =>
-      flattenScopeTree(scopeNodes).map((n) => ({
-        value: n.scope,
-        label: n.label,
-        hint: n.scope,
-        icon: scopeIcon(n.type),
-      })),
+    () => [
+      {
+        value: ALL_SCOPES,
+        label: 'All scopes',
+        hint: 'every lesson in the account',
+        icon: Globe,
+      },
+      ...flattenScopeTree(scopeNodes)
+        // `global` is already the row above, under its real meaning. Listing it
+        // twice would offer the same value as both "all scopes" and a named
+        // scope, which is exactly the confusion the pinned row resolves.
+        .filter((n) => n.scope !== ALL_SCOPES)
+        .map((n) => ({
+          value: n.scope,
+          label: n.label,
+          hint: n.scope,
+          icon: scopeIcon(n.type),
+        })),
+    ],
     [scopeNodes],
   );
 
@@ -254,6 +320,7 @@ function ScopeField({ value, onChange }: { value: string; onChange: (scope: stri
   }, []);
 
   const selectedLabel = options.find((o) => o.value === value)?.label;
+  const allScopes = isAllScopes(value);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -271,12 +338,20 @@ function ScopeField({ value, onChange }: { value: string; onChange: (scope: stri
         creatable={createOption}
         className="w-full justify-between"
       />
-      {value && (
-        <ScopeBadge scope={value} label showPath className="mt-0.5 text-xs" />
+      {/* A `ScopeBadge` would render `global` as the NAMED global scope, which
+          is the one reading of this value that is wrong here. Say what it does
+          instead. */}
+      {allScopes ? (
+        <p className="mt-0.5 text-xs text-[var(--color-content-secondary)]">
+          Every lesson in your account, in every scope — including the{' '}
+          <code className="text-[11px]">global</code> scope&rsquo;s own.
+        </p>
+      ) : (
+        value && <ScopeBadge scope={value} label showPath className="mt-0.5 text-xs" />
       )}
       <p className="text-[10px] text-[var(--color-content-tertiary)]">
         A scope with no memories yet isn&rsquo;t listed — type it and pick the{' '}
-        <em>use this scope</em> row.
+        <em>use this scope</em> row. Picking a repo also covers that repo&rsquo;s branches.
       </p>
     </div>
   );
@@ -326,10 +401,11 @@ function PolicyForm({
   // The filter bar's facet catalog, scoped to this rule's scope — the same
   // `useFacetCatalog` the Explorer uses, so the value lists offered here
   // (which hosts exist, which labels are in use) match what browsing that
-  // scope would show. `global` (the policy schema's "everything" scope) is
+  // scope would show. `ALL_SCOPES` (the policy schema's "everything" scope) is
   // not a real scope to filter the catalog BY, so it degrades to the
   // unscoped (all-scopes) catalog, same as no scope chosen yet.
-  const facetScope = conditions.scope && conditions.scope !== 'global' ? conditions.scope : null;
+  const facetScope =
+    conditions.scope && !isAllScopes(conditions.scope) ? conditions.scope : null;
   const { data: facets = [] } = useFacetCatalog(false, conditions.filters, facetScope);
   const [editingField, setEditingField] = useState<FilterField | null>(null);
 
@@ -347,6 +423,14 @@ function PolicyForm({
   }
 
   const request = useMemo(() => toGroomRequest(conditions), [conditions]);
+
+  // The name the policy gets if the field is left blank. Shown live as the
+  // field's placeholder, so "what will this be called?" is answered before the
+  // save rather than discovered in the list afterwards.
+  const generatedName = useMemo(
+    () => policyNameFromRule(conditions.scope, toRetentionConditions(conditions), conditions.filters),
+    [conditions],
+  );
   const autoScopeOnly =
     autoEnabled &&
     conditions.scope.trim() !== '' &&
@@ -405,7 +489,12 @@ function PolicyForm({
   }
 
   async function handleSave() {
-    if (!request || !('scope' in request) || !name.trim()) return;
+    if (!request || !('scope' in request)) return;
+    // Name is optional: by the time a scope and some conditions are set, the
+    // rule has already been described, and `generatedName` is what the field's
+    // placeholder has been showing all along — so saving blank gives the user
+    // the name they were already looking at.
+    const finalName = name.trim() || generatedName;
     // The eight dimension filters, in the same nullable-clearable shape every
     // condition in this form uses: an update always sends them (an empty bar
     // CLEARS a previously-saved filter, matching the age fields' `?? null`
@@ -416,7 +505,7 @@ function PolicyForm({
         await updatePolicy.mutateAsync({
           id: initialPolicy.id,
           body: {
-            name: name.trim(),
+            name: finalName,
             mode: autoEnabled ? 'auto' : 'review',
             enabled: autoEnabled,
             min_age_days: parseIntField(conditions.minAgeDays) ?? null,
@@ -446,7 +535,7 @@ function PolicyForm({
       } else {
         await createPolicy.mutateAsync({
           scope: request.scope,
-          name: name.trim(),
+          name: finalName,
           mode: autoEnabled ? 'auto' : 'review',
           enabled: autoEnabled,
           ...('min_age_days' in request ? { min_age_days: request.min_age_days } : {}),
@@ -621,11 +710,17 @@ function PolicyForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={nameId} className={LABEL_CLASS}>Policy name</label>
+        <label htmlFor={nameId} className={LABEL_CLASS}>
+          Policy name{' '}
+          <span className="font-normal text-[var(--color-content-tertiary)]">(optional)</span>
+        </label>
         <input
           id={nameId}
           className={INPUT_CLASS}
-          placeholder="Stale repo lore"
+          // The placeholder is the name the policy actually gets when this is
+          // left blank — not an example of one. Typing over it is an override,
+          // so the field can stay empty without the save being blocked.
+          placeholder={generatedName}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -644,7 +739,7 @@ function PolicyForm({
         <Button
           variant="primary"
           size="lg"
-          disabled={!request || !name.trim() || savePending}
+          disabled={!request || savePending}
           analyticsId="grooming.save"
           onClick={() => void handleSave()}
         >
