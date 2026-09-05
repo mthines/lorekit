@@ -85,9 +85,12 @@ describe('parseMemoryRef — the reference grammar', () => {
   });
 
   it('returns the scope VERBATIM, never lowercased', () => {
-    // `memories.scope` is stored as written on the REST path, so normalising a
-    // reference would resolve a mixed-case scope's lesson to nothing — the same
-    // trap `parseScopeFilter` exists to avoid on the read side.
+    // `memory_write` does no case-folding on insert, but the transports differ
+    // in what they hand it — MCP lowercases via `validateScope`, REST's
+    // shape-only `RawScopeSchema` does not — so no reader can infer how a row
+    // was cased. Normalising a reference would make it look more correct than
+    // the data it reads, and would resolve a mixed-case scope's lesson to
+    // nothing — the same trap `parseScopeFilter` exists to avoid on the read side.
     expect(parseMemoryRef('Repo::Acme/App::My-Key')).toEqual({ scope: 'Repo::Acme/App', key: 'My-Key' });
   });
 
