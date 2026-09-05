@@ -140,6 +140,16 @@ describe('wire projection', () => {
       for (const required of tool.inputSchema.required ?? []) {
         expect(tool.inputSchema.properties?.[required], `${tool.name}.${required}`).toBeDefined();
       }
+      // A `oneOf` branch's `required` reaches the wire exactly as the top-level
+      // one does, so it gets the same check — otherwise the alternatives are
+      // the one part of the schema where a typo names a property that does not
+      // exist and nothing notices.
+      for (const branch of tool.inputSchema.oneOf ?? []) {
+        expect(branch.required.length, `${tool.name} oneOf branch`).toBeGreaterThan(0);
+        for (const required of branch.required) {
+          expect(tool.inputSchema.properties?.[required], `${tool.name} oneOf ${required}`).toBeDefined();
+        }
+      }
     }
   });
 
