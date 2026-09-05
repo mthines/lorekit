@@ -795,52 +795,74 @@ function PolicyRow({
   const catches = preview.data?.count;
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="truncate text-sm font-medium text-[var(--color-content-primary)]">{policy.name}</p>
-          <span
-            className={[
-              'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
-              auto
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                : 'bg-[var(--color-bg)] text-[var(--color-content-tertiary)]',
-            ].join(' ')}
-          >
-            {auto ? 'Auto nightly' : 'Review'}
-          </span>
+    // `@container`, not a `sm:` viewport breakpoint: this row lives in a settings
+    // panel whose width is not the window's, and the story that guards the narrow
+    // layout renders it in a phone-width wrapper on a desktop browser. The
+    // container has to be the OUTER element — a container query resolves against
+    // the nearest ANCESTOR container, so an element declaring `@container` cannot
+    // query itself.
+    <div className="@container rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+      <div className="flex flex-col gap-3 @md:flex-row @md:items-center">
+        {/* `min-w-0` on every truncating box AND on its flex parent. Without it a
+            flex item keeps its `min-width: auto` (its widest word), so `truncate`
+            cannot shrink it and the row overflows sideways UNDER the controls
+            instead — which is what put "catches ~N now" on top of the badges. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="min-w-0 truncate text-sm font-medium text-[var(--color-content-primary)]">
+              {policy.name}
+            </p>
+            <span
+              className={[
+                'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                auto
+                  ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+                  : 'bg-[var(--color-bg)] text-[var(--color-content-tertiary)]',
+              ].join(' ')}
+            >
+              {auto ? 'Auto nightly' : 'Review'}
+            </span>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <ScopeBadge scope={policy.scope} label className="shrink-0 text-xs" />
+            <span className="min-w-0 truncate text-xs text-[var(--color-content-tertiary)]">
+              {ruleSentence(policy)}
+            </span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ScopeBadge scope={policy.scope} label className="text-xs" />
-          <span className="truncate text-xs text-[var(--color-content-tertiary)]">{ruleSentence(policy)}</span>
+
+        {/* The controls travel together. Narrow, they are their own full-width
+            line under the identity block, with the count pushed to the far left
+            by `mr-auto` — so the count never competes with the name for the same
+            line, which is the other half of what was breaking. */}
+        <div className="flex shrink-0 items-center gap-2 @md:gap-3">
+          {catches !== undefined && (
+            <span className="mr-auto shrink-0 text-[11px] tabular-nums text-[var(--color-content-tertiary)] @md:mr-0">
+              catches ~{catches} now
+            </span>
+          )}
+
+          <Switch
+            checked={auto}
+            label={`Auto (nightly) for ${policy.name}`}
+            onChange={onToggle}
+          />
+          <IconButton
+            variant="ghost"
+            icon={<Pencil className="size-4" />}
+            label={`Edit ${policy.name}`}
+            analyticsId="grooming.policy-edit"
+            onClick={onEdit}
+          />
+          <IconButton
+            variant="ghost"
+            icon={<Trash2 className="size-4" />}
+            label={`Delete ${policy.name}`}
+            analyticsId="grooming.policy-delete"
+            onClick={onDelete}
+          />
         </div>
       </div>
-
-      {catches !== undefined && (
-        <span className="shrink-0 text-[11px] tabular-nums text-[var(--color-content-tertiary)]">
-          catches ~{catches} now
-        </span>
-      )}
-
-      <Switch
-        checked={auto}
-        label={`Auto (nightly) for ${policy.name}`}
-        onChange={onToggle}
-      />
-      <IconButton
-        variant="ghost"
-        icon={<Pencil className="size-4" />}
-        label={`Edit ${policy.name}`}
-        analyticsId="grooming.policy-edit"
-        onClick={onEdit}
-      />
-      <IconButton
-        variant="ghost"
-        icon={<Trash2 className="size-4" />}
-        label={`Delete ${policy.name}`}
-        analyticsId="grooming.policy-delete"
-        onClick={onDelete}
-      />
     </div>
   );
 }
