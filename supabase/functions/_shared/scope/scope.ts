@@ -215,22 +215,28 @@ export function parseMemoryRef(raw: unknown): MemoryRef | null {
 }
 
 /**
- * The ceiling on how many lessons ONE write may cite.
+ * The ceiling on how many `scope::key` references ONE call may name — shared
+ * by `memory.write`'s `cited` field and `memory.read`'s batch `refs` field.
  *
- * A retrospective names the handful of lessons that actually shaped the run;
- * a list longer than this is a model dumping its whole injected set, which is
- * the opposite of the evidence this field exists to collect. Over-long lists
- * are TRUNCATED rather than rejected, for the reason every telemetry dimension
- * in this codebase is: a citation must never fail the write it accompanies.
+ * For `cited`: a retrospective names the handful of lessons that actually
+ * shaped the run; a list longer than this is a model dumping its whole
+ * injected set, which is the opposite of the evidence this field exists to
+ * collect. For `refs`: a batch read names the handful of lessons a run needs
+ * next, not an unbounded fetch-everything. Both are TRUNCATED rather than
+ * rejected past this cap, for the reason every telemetry dimension in this
+ * codebase is: naming too many references must never fail the call it
+ * accompanies.
  */
 export const MEMORY_CITED_MAX = 32;
 
 /**
- * Parse, validate, de-duplicate and cap a `cited` array.
+ * Parse, validate, de-duplicate and cap a `scope::key` reference array —
+ * `memory.write`'s `cited` field and `memory.read`'s batch `refs` field both
+ * resolve through this one function (R3: no second reference parser).
  *
  * De-duplication is by the resolved `(scope, key)` pair rather than by the raw
  * string, so `Global::x` and `global::x` do not both count — the same lesson
- * named twice is one citation. Unparseable entries are DROPPED, not rejected:
+ * named twice is one reference. Unparseable entries are DROPPED, not rejected:
  * see `MEMORY_CITED_MAX`.
  */
 export function parseMemoryRefs(raw: unknown): MemoryRef[] {

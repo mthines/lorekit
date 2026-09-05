@@ -91,6 +91,10 @@ export const mirrorPairs = [
   // `lessons-view.mjs` clustering, which is what `lorekit dedupe` runs — guarded
   // behaviourally by `duplicate-clusters-parity.spec.ts` instead.
   { core: 'packages/mcp-core/src/clusters/duplicate-clusters.ts', edge: 'supabase/functions/_shared/clusters/duplicate-clusters.ts', driftChecked: true },
+  // Batch `memory.read` (`refs`) core — grouping-by-scope, the key charset
+  // guard, and the found/missing set difference shared by MCP's `toolRead`
+  // and REST's `handleRead`. Import-free, so the byte comparison applies.
+  { core: 'packages/mcp-core/src/memory/read-refs.ts', edge: 'supabase/functions/_shared/memory/read-refs.ts', driftChecked: true },
   // Excluded from the byte-comparison drift check: the edge copy types the
   // client as `ReturnType<typeof createClient>` off an `npm:` specifier where
   // mcp-core imports a typed `SupabaseClient`, and additionally carries

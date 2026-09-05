@@ -364,6 +364,18 @@ describe('REST scope filters are validated before they reach a query', () => {
     listed.add('policies.ts');
     listed.add('groom.ts');
     listed.add('protect.ts');
+    // `read.ts` (`POST /memories/read`, batch read by `scope::key` reference):
+    // every `.eq('scope', scope)` here comes from `groupRefsByScope`'s grouping
+    // of already-PARSED refs (`parseMemoryRefs`), not from a caller-supplied
+    // scope FILTER — the caller is naming an ADDRESS to fetch, not narrowing a
+    // search. There is no single captured validator binding to require reuse
+    // of: each group's `scope` is a distinct string keyed off a DIFFERENT ref,
+    // so the "every predicate uses the one bound name" assertion the guarded
+    // rows require cannot hold in a per-group loop. `parseMemoryRefs` already
+    // rejects a structurally dangerous key (`isQueryableKey`, `read-refs.ts`)
+    // before any group reaches a query — the injection-avoidance concern this
+    // guard exists for is covered there, just not by this validator.
+    listed.add('read.ts');
     // `.in('scope', …)` is the array-valued family, excluded by decision above.
     const singleScopePredicate = /\.eq\(\s*'scope'\s*,|p_scope:/;
     const missed: string[] = [];

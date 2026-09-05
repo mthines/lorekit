@@ -287,8 +287,19 @@ export const MCP_TOOLS = [
     permission: 'read',
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'show', rest: 'GET /:id', handler: 'toolRead' },
-    inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
-    returns: '`{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.',
+    inputSchema: {
+      type: 'object',
+      required: ['scope', 'key'],
+      properties: {
+        scope,
+        key,
+        refs: { type: 'array', items: { type: 'string' }, description: 'Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`\'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries.' },
+      },
+    },
+    returns: '`{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every requested reference that did not resolve.',
+    notes: [
+      '**Batch reads (`refs`):** name only the `scope::key` references you actually need for this run — fewer round trips than one `memory.read` per lesson, at the cost of one call reaching into more than one scope. Each ref resolves independently: an unknown or malformed one lands in `missing` rather than failing the whole call.',
+    ],
   },
   {
     name: 'memory.list',

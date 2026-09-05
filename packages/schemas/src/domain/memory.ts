@@ -1076,6 +1076,33 @@ export const ListMemoriesBodySchema = z.object({
 export type ListMemoriesBody = z.infer<typeof ListMemoriesBodySchema>;
 
 /**
+ * `POST /memories/read` — batch read by `scope::key` reference (R1, R4, R6).
+ *
+ * Each entry in `refs` is a `scope::key` string in the SAME grammar
+ * `parseMemoryRefs` (`packages/mcp-core/src/scope/scope.ts`) already parses for
+ * `memory.write`'s `cited` field — there is no second reference parser. No
+ * `.max()` here deliberately (D8): truncation past `MEMORY_CITED_MAX` (32) is
+ * silent and enforced only by `parseMemoryRefs`, matching how an over-long
+ * `cited` list already behaves, rather than a schema-level 400.
+ */
+export const ReadMemoriesBodySchema = z.object({
+  refs: z.array(z.string()).min(1),
+});
+export type ReadMemoriesBody = z.infer<typeof ReadMemoriesBodySchema>;
+
+/**
+ * `POST /memories/read` response — full `MemoryEntrySchema` rows (D7: the REST
+ * batch response shape is byte-identical to `GET /:id`'s, unlike MCP's leaner
+ * `{scope,key,value,updated_at}` shape). `missing` names every requested
+ * `scope::key` reference that did not resolve.
+ */
+export const ReadMemoriesResponseSchema = z.object({
+  entries: z.array(MemoryEntrySchema),
+  missing: z.array(z.string()),
+});
+export type ReadMemoriesResponse = z.infer<typeof ReadMemoriesResponseSchema>;
+
+/**
  * `POST /memories/facets` — the drill-down catalog, over a body.
  *
  * Mirrors `ListFacetsQuerySchema` field for field, with `facets` as an array of

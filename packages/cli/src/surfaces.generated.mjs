@@ -175,6 +175,13 @@ export const MCP_TOOL_DEFS = [
         "key": {
           "type": "string",
           "description": "Lesson identifier, unique within the scope. Max 512 characters."
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries."
         }
       }
     }

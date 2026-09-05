@@ -21,7 +21,8 @@
  * decides what a member may do.
  */
 
-import { validateScope, UserInputError } from '../_shared/scope/scope.ts';
+import { validateScope, UserInputError, parseMemoryRefs } from '../_shared/scope/scope.ts';
+import { groupRefsByScope, missingRefs } from '../_shared/memory/read-refs.ts';
 import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
@@ -287,7 +288,13 @@ export async function toolRead(
   span: Span,
   keyScoping?: KeyRestriction,
 ) {
-  const { scope: rawScope, key } = params;
+  const { scope: rawScope, key, refs } = params;
+  if (refs !== undefined) {
+    if (rawScope !== undefined || key !== undefined) {
+      throw new UserInputError('refs cannot be combined with scope and key');
+    }
+    return toolReadRefs(db, refs, userId, span, keyScoping);
+  }
   if (!rawScope || !key) throw new UserInputError('scope and key are required');
   const scope = validateScope(rawScope);
 
@@ -310,6 +317,55 @@ export async function toolRead(
   recordMemoryReads(db, [data.id], 'targeted', 'mcp');
   const { id: _id, ...rest } = data;
   return rest;
+}
+
+/**
+ * Batch mode behind `memory.read`'s `refs` field (R1, R4, R6, R7).
+ *
+ * One `.eq('scope', s).in('key', keys)` query per DISTINCT scope (plan D5),
+ * all awaited CONCURRENTLY via `Promise.all` — never one query per ref, never
+ * a single logic-tree `.or()` query. `memberOrgIds` is resolved ONCE, ahead of
+ * the fan-out, and reused by every group's tenant predicate.
+ *
+ * D6: however many refs resolve, they are recorded as ONE `'targeted'` batch
+ * (never `'bulk'`) — a batch read is still an agent naming exact lessons it
+ * wants, the same intent `memory.read`'s singular path already counts as
+ * targeted; `'bulk'` describes an unscoped `memory.list` page, not this.
+ */
+async function toolReadRefs(
+  db: DbClient,
+  raw: unknown,
+  userId: string | null,
+  span: Span,
+  keyScoping?: KeyRestriction,
+) {
+  const parsed = parseMemoryRefs(raw);
+  span.setAttributes({ 'lorekit.operation': 'memory.read_refs', 'lorekit.refs.count': parsed.length });
+
+  const groups = groupRefsByScope(parsed);
+  const tracedDb = createTracedClient(db, span);
+  const orgIds = userId ? await memberOrgIds(db, userId) : [];
+
+  const rows = (
+    await Promise.all(
+      groups.map(async ({ scope, keys }) => {
+        // `id` is selected purely to drive the read counter below — it is
+        // stripped before the tool's result is returned, matching the
+        // singular path's own leanness (D7).
+        let query = tracedDb.from('memories').select('id,scope,key,value,updated_at').eq('scope', scope).in('key', keys)
+          .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
+        if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+        return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string }[];
+      }),
+    )
+  ).flat();
+
+  if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
+  const entries = rows.map(({ id: _id, ...rest }) => rest);
+  const missing = missingRefs(parsed, rows);
+  return { entries, missing };
 }
 
 export async function toolList(
