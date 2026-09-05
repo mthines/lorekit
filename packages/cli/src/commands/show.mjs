@@ -192,7 +192,8 @@ async function showRefs(refs, args, root, env) {
     const found = foundOffline || foundRemote;
     // Which stores actually looked decides what a "not found" may claim.
     const unresolved = found ? null : unresolvedReason(`${scope}::${key}`, [offline, remote_]);
-    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found, unresolved };
+    const dropped = [offline, remote_].some((s) => s.available && Boolean(s.error));
+    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found, unresolved, dropped };
   });
 
   if (args.json) {
@@ -223,6 +224,11 @@ async function showRefs(refs, args, root, env) {
     'lorekit.cli.show.ref_count': results.length,
     'lorekit.cli.show.found_count': foundCount,
     'lorekit.cli.show.diverged_count': results.filter((r) => r.diverged).length,
+    // Refs at least one readable store never looked up — the batch hit the
+    // 32-ref cap, met a scope that store's grammar rejects, or the store
+    // errored. Without it a truncated batch is indistinguishable from a
+    // genuinely empty one: both report `found_count` below `ref_count`.
+    'lorekit.cli.show.dropped_count': results.filter((r) => r.dropped).length,
   };
 }
 
