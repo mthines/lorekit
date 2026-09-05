@@ -77,6 +77,43 @@ export const WithUnattributedReads: Story = {
   },
 };
 
+/**
+ * The same data in a phone-width card — 326px, which is a 390px viewport less
+ * the dashboard shell's `p-4` and the card's own `p-4`. Below the `@md`
+ * container breakpoint each row stacks (name + count on one line, bar on its
+ * own) so the scope name gets the full width rather than a clipped fraction of
+ * it. The CONTAINER is narrowed rather than the viewport because that is what
+ * the component actually queries — see {@link ScopeConsumption}'s `@container`.
+ */
+export const NarrowCard: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get('*/functions/v1/memories/read-activity', () =>
+          HttpResponse.json({
+            bucket: 'day',
+            since: '2026-07-01T00:00:00.000Z',
+            until: FROZEN_NOW,
+            buckets: [
+              { bucket: '2026-07-05T00:00:00.000Z', scope: 'repo::mthines/lorekit', count: 58631 },
+              { bucket: '2026-07-05T00:00:00.000Z', scope: 'project::lorekit-web-daily-report', count: 854 },
+              { bucket: '2026-07-05T00:00:00.000Z', scope: null, count: 145260 },
+            ],
+          }),
+        ),
+        ...memoryHandlers(),
+      ],
+    },
+  },
+  decorators: [
+    (Story) => (
+      <div style={{ width: 326 }}>
+        <Story />
+      </div>
+    ),
+  ],
+};
+
 /** No reads in the window — the empty state, not a zero-filled leaderboard. */
 export const Empty: Story = {
   parameters: {

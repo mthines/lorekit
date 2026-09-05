@@ -77,6 +77,22 @@ html {
   text-rendering: optimizeLegibility;
 }
 
+/* ── App shell ───────────────────────────────────────────────────────────── */
+/* The dashboard is a fixed-height shell (`h-screen overflow-hidden`) whose
+   `main` is the only scroller, so the document behind it must neither scroll
+   nor bounce: an overscroll at the end of `main` chained to the viewport and
+   dragged the entire shell — sidebar and all — up off the html background,
+   which looks like the layout has come apart.
+
+   `overscroll-contain` on `main` stops the chaining; this stops anything else
+   moving the document at all. Scoped by `:has()` to the shell itself so the
+   marketing, docs and blog pages — where the DOCUMENT is the scroller and its
+   bounce is correct — are untouched. */
+body:has([data-app-shell]) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

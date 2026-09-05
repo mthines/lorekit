@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
+import type { ReactElement } from 'react';
 import { http, HttpResponse } from 'msw';
 import { expect, within, waitFor, userEvent } from 'storybook/test';
 
@@ -121,6 +122,121 @@ export const TruncatedScopesExpandOnClick: Story = {
       await userEvent.click(canvas.getByRole('button', { name: 'Show fewer scopes' }));
       await expect(canvas.queryByText('mthines/scope-9')).not.toBeInTheDocument();
       await expect(canvas.getByRole('button', { name: 'Show 4 more scopes' })).toBeVisible();
+    });
+  },
+};
+
+// ── Responsive layout ────────────────────────────────────────────────────────
+//
+// The rows switch between three columns and a stacked shape at the `@md`
+// CONTAINER breakpoint, so both stories below narrow the container, never the
+// viewport — narrowing the viewport would test a query the component does not
+// make. `lorekit-web-daily-report` is the fixture name that used to clip
+// mid-word at the old flat 176px column, so it is the one to measure.
+
+const LONG_NAME_HANDLERS = [
+  http.get('*/functions/v1/memories/read-activity', () =>
+    HttpResponse.json({ bucket: 'day', since: '2026-07-01T00:00:00.000Z', until: FROZEN_NOW, buckets: FIXTURE_BUCKETS }),
+  ),
+  ...memoryHandlers(),
+];
+
+/** Widths in CSS px: a roomy card, and a phone's card (390px viewport less two `p-4`s). */
+const WIDE_CARD = 640;
+const PHONE_CARD = 326;
+
+function widthDecorator(width: number) {
+  return function WidthDecorator(Story: () => ReactElement) {
+    return (
+      <div data-testid="card" style={{ width }}>
+        <Story />
+      </div>
+    );
+  };
+}
+
+/** The row's bar track. It is decorative, so `data-slot` is the only handle. */
+function barOf(row: Element): Element {
+  const bar = row.querySelector('[data-slot="bar"]');
+  if (!bar) throw new Error('row has no bar track');
+  return bar;
+}
+
+/**
+ * The row carrying a given scope name. Rows are ranked by count, so picking one
+ * by position would silently follow the fixture's numbers around.
+ */
+function rowFor(canvasElement: HTMLElement, name: string): HTMLElement {
+  const row = [...canvasElement.querySelectorAll('li')].find((li) => li.textContent?.includes(name));
+  if (!row) throw new Error(`no row for ${name}`);
+  return row;
+}
+
+export const AWideCardKeepsThreeColumnsOnASharedBaseline: Story = {
+  parameters: { msw: { handlers: LONG_NAME_HANDLERS } },
+  decorators: [widthDecorator(WIDE_CARD)],
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvas.getByText('lorekit-web-daily-report')).toBeVisible());
+
+    await step('the longest scope name renders in full, not clipped mid-word', async () => {
+      const name = canvas.getByText('lorekit-web-daily-report');
+      // `truncate` clips with an ellipsis and leaves scrollWidth > clientWidth;
+      // a name that fits reports them equal. Sub-pixel text metrics make this a
+      // ±1px comparison, not an equality.
+      await expect(name.scrollWidth).toBeLessThanOrEqual(name.clientWidth + 1);
+    });
+
+    await step('every bar starts at the same x, so the lengths stay comparable', async () => {
+      const rows = canvasElement.querySelectorAll('li');
+      const lefts = [...rows].map((row) => Math.round(barOf(row).getBoundingClientRect().left));
+      // A name column that sized to its content would give each row a different
+      // origin and the chart would stop being readable at a glance.
+      await expect(new Set(lefts).size).toBe(1);
+    });
+
+    await step('the bar sits BETWEEN the name and the count on one line', async () => {
+      const row = rowFor(canvasElement, 'lorekit-web-daily-report');
+      const bar = barOf(row).getBoundingClientRect();
+      const count = within(row).getByText((854).toLocaleString('en-US')).getBoundingClientRect();
+      await expect(bar.top).toBeLessThan(count.bottom);
+      await expect(bar.right).toBeLessThanOrEqual(count.left + 1);
+    });
+  },
+};
+
+export const APhoneWidthCardStacksTheBarOntoItsOwnLine: Story = {
+  parameters: { msw: { handlers: LONG_NAME_HANDLERS } },
+  decorators: [widthDecorator(PHONE_CARD)],
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvas.getByText('lorekit-web-daily-report')).toBeVisible());
+    const card = canvas.getByTestId('card').getBoundingClientRect();
+
+    await step('the bar drops below the name rather than competing with it for width', async () => {
+      const row = rowFor(canvasElement, 'lorekit-web-daily-report');
+      const name = within(row).getByText('lorekit-web-daily-report').getBoundingClientRect();
+      const bar = barOf(row).getBoundingClientRect();
+      await expect(bar.top).toBeGreaterThanOrEqual(name.bottom);
+    });
+
+    await step('the count stays on the name’s line, at the right edge', async () => {
+      const row = rowFor(canvasElement, 'lorekit-web-daily-report');
+      const name = within(row).getByText('lorekit-web-daily-report').getBoundingClientRect();
+      const count = within(row).getByText((854).toLocaleString('en-US')).getBoundingClientRect();
+      // Same line as the name (they overlap vertically), and to its right.
+      await expect(count.top).toBeLessThan(name.bottom);
+      await expect(count.left).toBeGreaterThanOrEqual(name.right);
+    });
+
+    await step('nothing overflows the card horizontally', async () => {
+      // The regression this whole layout exists for: a rigid three-column row
+      // in a 326px card pushed the name column past the left edge.
+      for (const row of canvasElement.querySelectorAll('li')) {
+        const box = row.getBoundingClientRect();
+        await expect(box.left).toBeGreaterThanOrEqual(card.left - 1);
+        await expect(box.right).toBeLessThanOrEqual(card.right + 1);
+      }
     });
   },
 };

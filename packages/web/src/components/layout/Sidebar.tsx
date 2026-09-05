@@ -17,19 +17,21 @@ import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 // single place to dig into consumption and usage — it used to be four panels
 // scattered across Overview and the Explorer (scope leaderboard, hot/cold
 // lore, operational health, who's-reading), which made "how is my lore
-// actually being used" a scavenger hunt across two pages. While the flag is
-// on, Insights takes Overview's spot as the first ("home") destination.
+// actually being used" a scavenger hunt across two pages.
 // `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
 // copy the tab bar's column does not: the bar carries up to FOUR tabs plus the
 // docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
 // phone) and "Getting started" would wrap or clip there.
 const NAV = [
-  // Overview and Insights are adjacent on purpose: exactly one of them renders,
-  // and the survivor holds the FIRST slot — which is what makes "Insights takes
-  // Overview's home slot" true of the rail and not just of the root redirect.
+  // Order is the reader's journey, NOT the flag's bookkeeping: find your lore,
+  // then ask how it is being used, then set more of it up. So Insights sits
+  // AFTER the Explorer rather than taking the first slot — the rail's opening
+  // destination stays the one you use every day. Overview leads only while the
+  // flag is off, where it is the sole at-a-glance surface; the two are still
+  // mutually exclusive, they just no longer share a position.
   { href: '/overview', label: 'Overview', icon: LayoutDashboard },
-  { href: '/insights', label: 'Insights', icon: Telescope },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
+  { href: '/insights', label: 'Insights', icon: Telescope },
   { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
 ] as const;
 
@@ -58,9 +60,9 @@ export function Sidebar({ user }: SidebarProps) {
   const isUserActive = pathname === '/settings/user';
 
   // Overview and Insights are mutually exclusive destinations while
-  // `insights-page` rolls out — Insights absorbs Overview's "home" slot
-  // (first nav item) rather than the two coexisting, so filtering drops
-  // whichever one the flag currently disables. `/insights`'s own page
+  // `insights-page` rolls out — never both, so filtering drops whichever one
+  // the flag currently disables (they hold different slots; see NAV's own
+  // comment for why Insights follows the Explorer). `/insights`'s own page
   // enforces the REAL access-control boundary (`notFound()` in
   // insights/page.tsx); this filter — like the matching one in
   // NavigationCommands.tsx — is only a visibility nicety, matching the

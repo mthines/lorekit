@@ -13,8 +13,8 @@
  * Top-level destinations with "g → X" chained shortcuts (Gmail / Linear style):
  *   g o → Overview (Home) — only while `insights-page` is OFF
  *   g e → Lore Explorer
- *   g i → Insights — only while `insights-page` is ON, and takes Overview's
- *         "home" slot (see Sidebar.tsx's matching nav filter)
+ *   g i → Insights — only while `insights-page` is ON (see Sidebar.tsx's
+ *         matching nav filter; the two are mutually exclusive)
  *   g s → Settings
  *   g g → Docs
  *
@@ -197,9 +197,9 @@ export function NavigationCommands() {
   // ── Navigate ─────────────────────────────────────────────────────────────
 
   // Overview and Insights are mutually exclusive destinations while
-  // `insights-page` rolls out — Insights absorbs Overview's "home" slot, so
-  // exactly one of the two is ever registered (see Sidebar.tsx's matching
-  // `nav`/`mobileTabs` filter and insights/page.tsx's `notFound()` gate).
+  // `insights-page` rolls out, so exactly one of the two is ever registered
+  // (see Sidebar.tsx's matching `nav`/`mobileTabs` filter and
+  // insights/page.tsx's `notFound()` gate).
   const insightsEnabled = useFeatureFlag('insights-page');
 
   useConditionalCommand(!insightsEnabled, {

@@ -77,7 +77,12 @@ export function ScopeConsumption({ since, until, limit = DEFAULT_LIMIT }: ScopeC
   const max = Math.max(...rows.map((r) => r.count), 1);
 
   return (
-    <div className="flex flex-col gap-3">
+    // `@container`, so each row's three-column ⇄ stacked switch keys off the
+    // CARD's width rather than the viewport's (see {@link ScopeConsumptionRow}).
+    // The card is one column of a page grid, so a wide screen does not imply a
+    // wide card — a viewport query would keep the rigid three columns in a
+    // narrow card and re-clip the very names this layout exists to show.
+    <div className="@container flex flex-col gap-3">
       <div className="flex items-baseline justify-between">
         <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
           Scope consumption
@@ -135,29 +140,53 @@ function ScopeConsumptionRow({
   tooltip?: string;
 }) {
   const widthPct = Math.max((count / max) * 100, 2);
+  // Name / bar / count, but WRAPPED rather than three rigid columns.
+  //
+  // The name column has to be the SAME fixed width on every row or the bars
+  // stop sharing a baseline and the chart stops being readable — which is why
+  // the name cannot simply size to its content. So the layout buys the name
+  // room two different ways depending on how much the card has:
+  //
+  //  - wide card (`@md` and up): more of that fixed width than the flat 176px
+  //    that clipped `lorekit-web-daily-report` mid-word — 224px, and 288px once
+  //    the card clears `@2xl`.
+  //  - narrow card (below `@md`, i.e. a phone): stop competing for it at all.
+  //    `basis-full` drops the bar onto its own line, so the name gets the whole
+  //    width instead of a fraction of it, and the `order-*` pairs keep the
+  //    count beside the NAME once the bar has moved out from between them.
+  //
+  // The breakpoints are CONTAINER queries, not `sm:`/`lg:` viewport ones: this
+  // card is one column of a page grid, so "wide screen" never implied "wide
+  // card", and a viewport query would hold the rigid three columns in a card
+  // too narrow for them.
   const body = (
     <>
-      <div className="flex w-32 shrink-0 items-center gap-1.5 sm:w-44">
+      <div className="order-1 flex min-w-0 flex-1 items-center gap-1.5 @md:flex-none @md:basis-56 @2xl:basis-72">
         {scope !== null ? (
           <ScopeBadge scope={scope} type={scopeType(scope)} showIcon showType={false} label className="max-w-full truncate" />
         ) : (
-          <span className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 font-mono text-[var(--color-content-tertiary)]">
-            unattributed
+          <span className="flex min-w-0 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 font-mono text-[var(--color-content-tertiary)]">
+            <span className="truncate">unattributed</span>
             {tooltip && (
               <Tooltip content={tooltip} side="top" align="left">
-                <Info className="size-3" aria-hidden />
+                <Info className="size-3 shrink-0" aria-hidden />
               </Tooltip>
             )}
           </span>
         )}
       </div>
-      <div className="relative h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--color-bg-elevated)]">
+      {/* `data-slot` so the layout tests can find the track: it is decorative,
+          so it carries no role or label of its own to query by. */}
+      <div
+        data-slot="bar"
+        className="relative order-3 h-2 w-full min-w-0 basis-full overflow-hidden rounded-full bg-[var(--color-bg-elevated)] @md:order-2 @md:w-auto @md:flex-1 @md:basis-auto"
+      >
         <div
           className="h-full rounded-full bg-[var(--color-accent)]"
           style={{ width: `${widthPct}%` }}
         />
       </div>
-      <span className="w-14 shrink-0 text-right font-mono text-[var(--color-content-secondary)]">
+      <span className="order-2 w-16 shrink-0 text-right font-mono tabular-nums text-[var(--color-content-secondary)] @md:order-3">
         {count.toLocaleString()}
       </span>
     </>
@@ -167,7 +196,7 @@ function ScopeConsumptionRow({
   // than linking somewhere that would silently show a DIFFERENT set of lore
   // than the bar measures.
   if (scope === null) {
-    return <li className="flex items-center gap-2 text-xs">{body}</li>;
+    return <li className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">{body}</li>;
   }
 
   // A named scope links into the Explorer narrowed to it: the leaderboard's
@@ -182,7 +211,7 @@ function ScopeConsumptionRow({
     <li className="text-xs">
       <Link
         href={`/lore?scope=${encodeURIComponent(scope)}`}
-        className="-mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5 transition-colors duration-150 hover:bg-[var(--color-accent-subtle)]"
+        className="-mx-1.5 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-1.5 py-1 transition-colors duration-150 hover:bg-[var(--color-accent-subtle)]"
         title={`Open ${scope} in the Lore Explorer`}
       >
         {body}

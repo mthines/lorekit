@@ -2,7 +2,8 @@
 
 /**
  * LoreUtilityGrid — every lesson placed on the delivered × chosen grid, and
- * each quadrant handing its rows straight to `lorekit-groom`.
+ * each quadrant handing its rows to a grooming agent as a ready-to-paste
+ * prompt (`lib/lore-utility-prompt.ts`), not as a bare list of keys.
  *
  * WHAT IT REPLACES, AND WHY THAT PANEL WAS MISLEADING. The removed
  * `HotColdLore` panel ranked by `read_count`, and 99.80% of recorded reads are
@@ -38,9 +39,10 @@ import { Copy, Check, ArrowUpRight } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { useLoreUtility, useLoreUtilityRows } from '@/lib/queries/lore-utility';
 import { LESSON_UTILITY_META, formatPullThrough, type LessonUtility } from '@/lib/lesson-utility';
+import { groomPrompt } from '@/lib/lore-utility-prompt';
 import { scopeType } from '@/lib/scope';
 import type { LessonUtilityTone } from '@/lib/lesson-utility';
-import type { UtilityEntry } from '@lorekit/schemas/memory';
+import type { UtilityEntry, UtilityResponse } from '@lorekit/schemas/memory';
 
 /**
  * The 2×2, in reading order: chosen on top, ignored below; broad on the left,
@@ -59,11 +61,6 @@ const TONE_CLASS: Record<LessonUtilityTone, { border: string; text: string }> = 
   warning: { border: 'border-[var(--color-warning)]/40', text: 'text-[var(--color-warning)]' },
   neutral: { border: 'border-[var(--color-border)]', text: 'text-[var(--color-content-tertiary)]' },
 };
-
-/** `scope::key` lines for the groom handoff — the shape `lorekit groom` reads. */
-function groomList(entries: readonly UtilityEntry[]): string {
-  return entries.map((e) => `${e.scope}::${e.key}`).join('\n');
-}
 
 function formatCountingSince(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
@@ -134,7 +131,14 @@ export function LoreUtilityGrid() {
         never &ldquo;never&rdquo;.
       </p>
 
-      {selected && <QuadrantRows quadrant={selected} query={rows} />}
+      {selected && (
+        <QuadrantRows
+          quadrant={selected}
+          query={rows}
+          thresholds={thresholds}
+          countingSince={countingSince}
+        />
+      )}
     </div>
   );
 }
@@ -183,17 +187,25 @@ function QuadrantCell({
 function QuadrantRows({
   quadrant,
   query,
+  thresholds,
+  countingSince,
 }: {
   quadrant: LessonUtility;
   query: ReturnType<typeof useLoreUtilityRows>;
+  thresholds: UtilityResponse['thresholds'];
+  countingSince: string;
 }) {
   const [copied, setCopied] = useState(false);
   const entries = query.data?.entries ?? [];
   const meta = LESSON_UTILITY_META[quadrant];
 
-  async function handleCopyForGroom() {
+  // The clipboard carries the whole instruction, not just the rows — see
+  // `lib/lore-utility-prompt.ts` for why bare `scope::key` lines were not enough.
+  async function handleCopyPrompt() {
     try {
-      await navigator.clipboard.writeText(groomList(entries));
+      await navigator.clipboard.writeText(
+        groomPrompt({ quadrant, entries, thresholds, countingSince }),
+      );
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -210,11 +222,12 @@ function QuadrantRows({
         {entries.length > 0 && (
           <button
             type="button"
-            onClick={handleCopyForGroom}
+            onClick={handleCopyPrompt}
+            title={`Copy a ready-to-paste grooming prompt for ${entries.length === 1 ? 'this lesson' : `these ${entries.length} lessons`} (${meta.action.toLowerCase()})`}
             className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-2.5 py-1.5 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
           >
             {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
-            {copied ? 'Copied' : 'Copy for groom'}
+            {copied ? 'Copied' : 'Copy prompt'}
           </button>
         )}
       </div>
