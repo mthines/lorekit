@@ -161,6 +161,20 @@ rather than inferred. They cost time every time they are rediscovered:
    recent denials with their reason. `/root/.ccr/README.md` documents this and
    the other per-tool proxy accommodations. Never "fix" it by unsetting
    `HTTPS_PROXY` or disabling TLS verification.
+7. **The `Integration smoke` job is a FALSE GREEN for the `lk_*` tiers — it
+   proves the service-role path and nothing else.**
+   `.github/workflows/ci.yml` sets `LOREKIT_SMOKE_TOKEN` to the
+   **service-role key** (two jobs, currently lines 788 and 796), so
+   `packages/smoke-tests/src/orgs-api.integration.spec.ts:58-59` computes
+   `tokenCanRead`/`tokenCanWrite` as `false` — `isLkToken` is false for a
+   non-`lk_` token — and every `api_key`-tier assertion early-returns
+   (`if (!tokenCanWrite) return;`, a dozen sites from :216 onward). A green run
+   therefore says NOTHING about `lk_rw_`/`lk_ro_`/`lk_wo_` gating, which is the
+   behaviour those specs are named for. Do not cite this job as evidence that a
+   permission change is safe; exercise the tier locally against a real `lk_*`
+   token instead. Fixing it means minting an `lk_*` token in CI — a
+   `.github/workflows/` edit needing the `workflows` permission the GitHub App
+   push credential does not have, so it needs a human with that scope.
 
 ```bash
 # CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the
@@ -423,6 +437,21 @@ on read tools — both with the standard `-32001` permission-denied error. The g
 (`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) is a shared pure module,
 `packages/mcp-core/src/auth/permissions.ts`, mirrored self-contained into
 `supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern).
+
+**Critical (the second half of the same rule): an RLS predicate is COMPOUND, so
+restore every conjunct — restoring one silently widens the `api_key` tier.**
+`rls_orgs_select` (`00025_safe_org_deletion.sql:54-59`) is
+`deleted_at is null AND membership`, but
+`applyOwnMembershipFilter` (`supabase/functions/_shared/api/tenant.ts`) restores
+the **membership half only**. Every service-role-backed orgs read must therefore
+ALSO carry an explicit `.is('deleted_at', null)`. `get.ts`, `remove.ts` and
+`rename.ts` do; **`orgs/handlers/orgs/list.ts` does not** — and its own comment
+claims "RLS on orgs restricts to non-deleted orgs the user belongs to" while
+running on a client that has no RLS, so `GET /orgs` on the `api_key` tier lists
+soft-deleted orgs the JWT tier hides. **Still open**: the remedy is an
+embedded-resource filter (`.is('orgs.deleted_at', null)` plus an `!inner` on the
+`orgs` embed) whose PostgREST semantics need a live stack to verify. When you
+hand-restore an RLS predicate anywhere, restore all of it.
 
 ---
 
