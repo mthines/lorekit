@@ -22,6 +22,16 @@
  * `filter.ts`'s reasoning, applied to the decode step: pure, part of the wire
  * contract, needed by more than one runtime (the edge tree has no test
  * harness), so it lives beside the schemas that validate its input.
+ *
+ * **The five retention thresholds are deliberately NOT a tenth dimension here.**
+ * They travel alongside these on the same routes (`retentionConditionBodyFields`
+ * in `domain/memory.ts`, migration 00108) and they narrow the same population,
+ * but a dimension is a SET of enumerable values — that is what lets
+ * `MemoryFacetSchema` emit per-value counts and the filter menu offer
+ * drill-down. A threshold is a comparison against a number, with no value
+ * catalog to enumerate, so it can narrow a facet count but can never BE one.
+ * Modelling it as a `Dimension<Mode>` would give it a meaningless `mode` and an
+ * unfillable facet row. Add a threshold to that spread, not to this interface.
  */
 
 import { normalizeTagList, parseTagsParam } from './tags.ts';

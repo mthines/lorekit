@@ -7,7 +7,6 @@ import { validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { Span } from '../../_shared/telemetry/otel.ts';
 import { ProtectBodySchema } from '../../_shared/schemas/retention.ts';
-import { RETENTION_POLICIES_ENABLED } from '../../_shared/retention/feature-flag.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 
 /**
@@ -20,9 +19,6 @@ export async function handleProtect(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
   _params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
-  if (!RETENTION_POLICIES_ENABLED) {
-    return forbidden('retention policies are not enabled for this instance', cors);
-  }
   if (!auth.userId) {
     return forbidden('memory.protect requires a user-scoped credential (service-role tokens have no owner)', cors);
   }

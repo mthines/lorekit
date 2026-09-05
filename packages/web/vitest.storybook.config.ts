@@ -79,6 +79,17 @@ export default defineConfig({
       // package — the same mid-run re-optimize trigger as the two above, and the
       // only one this PR adds.
       '@lorekit/schemas/api-key',
+      // `mocks/decorators.tsx` value-imports `@lorekit/feature-flags/registry`
+      // to DERIVE the story flag seed from the registry instead of transcribing
+      // it. That is a runtime entry into a SECOND linked workspace package —
+      // same trigger as the `@lorekit/schemas` subpaths above, and it reproduced
+      // the same way: green locally on a warm cache, then 23 failures across the
+      // two `ExplorerInsights` story files on the cold CI runner, all of them
+      // `Failed to fetch dynamically imported module: …/deps/react-18-….js`.
+      // The `/schema` import beside it is TYPE-only and erased, so it needs no
+      // entry — but a future value-import of it would, exactly as `memory` is
+      // pre-listed above.
+      '@lorekit/feature-flags/registry',
       'react-markdown',
       'remark-gfm',
       'rehype-sanitize',

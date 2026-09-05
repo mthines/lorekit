@@ -94,6 +94,51 @@ export const ListPopulated: Story = {
   },
 };
 
+/**
+ * The populated list at phone width — the baseline that guards `PolicyRow`'s
+ * narrow layout.
+ *
+ * The wrapper is a fixed 360px, and the row responds with a CONTAINER query, so
+ * this reproduces the phone layout faithfully in a desktop browser; a `sm:`
+ * viewport breakpoint would evaluate as "wide" here and the baseline would
+ * depict the desktop row while the phone was broken — which is how the
+ * overlapping count and the name truncated to `create…` reached a preview.
+ *
+ * A long generated name (the kind an unnamed policy now gets) is deliberately
+ * the first row: it is the case that overflowed.
+ */
+export const ListPopulatedNarrow: Story = {
+  parameters: {
+    msw: {
+      handlers: handlers([
+        {
+          id: 'policy-narrow',
+          scope: 'global',
+          name: 'created >30d ago · chosen ≤ 0× in all scopes',
+          mode: 'auto',
+          enabled: true,
+          min_age_days: 30,
+          unseen_days: null,
+          max_seen_count: null,
+          max_read_count: null,
+          max_opened_count: 0,
+          ...NO_MOCK_DIMENSION_FILTERS,
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:00:00.000Z',
+        },
+        ...DEFAULT_GROOM_POLICIES,
+      ]),
+    },
+  },
+  decorators: [
+    (Story) => (
+      <div style={{ width: 360 }}>
+        <Story />
+      </div>
+    ),
+  ],
+};
+
 /** The create form open in its dialog — the state Add drops you into. */
 export const DialogOpen: Story = {
   play: async ({ canvasElement }) => {

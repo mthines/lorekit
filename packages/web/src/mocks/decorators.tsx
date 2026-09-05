@@ -13,6 +13,11 @@ import type { Decorator } from '@storybook/nextjs-vite';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import type { FlagKey, FlagValueMap } from '@lorekit/feature-flags';
+import type { JsonValue } from '@lorekit/feature-flags/schema';
+// The `/registry` subpath, NOT the package index: the index re-exports
+// `client.ts`, which pulls in the Node-only `@openfeature/server-sdk` and
+// cannot be evaluated in the browser these stories run in.
+import { FLAG_REGISTRY } from '@lorekit/feature-flags/registry';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
 import { ExplorerResultsProvider } from '@/components/providers/ExplorerResultsProvider';
 import { FeatureFlagsProvider } from '@/components/providers/FeatureFlagsProvider';
@@ -122,26 +127,35 @@ export const withExplorerResults: Decorator = (Story) => (
 );
 
 /**
- * Every flag's REGISTRY default (`defaultVariant`'s value) — see
- * `packages/feature-flags/src/registry.ts`. Stories render outside the
+ * Every flag's REGISTRY default (`defaultVariant`'s value), DERIVED from the
+ * registry rather than transcribed from it. Stories render outside the
  * dashboard layout, so nothing evaluates a flag server-side for them; this is
  * a plain, deterministic seed rather than a live `evaluateFlag` call, which
  * can't run in the browser anyway (`@openfeature/server-sdk` is Node-only —
- * see `FeatureFlagsProvider.tsx`'s file header).
+ * see `FeatureFlagsProvider.tsx`'s file header). The registry itself is safe
+ * to import here: it is plain zod-validated data, and the Node-only SDK lives
+ * in `client.ts`/`provider.ts`, which this does not reach.
+ *
+ * These were two hand-written maps until flipping one flag's `defaultVariant`
+ * left them silently describing the old default — a story then depicts a
+ * default no environment has. Deriving removes that class of drift outright,
+ * which is better than a spec asserting the two copies still agree.
  */
-const DEFAULT_FLAG_VALUES: FlagValueMap = {
-  'insights-page': false,
-  'retention-policies': false,
-  'lore-explorer-instruments': false,
-  'lore-explorer-duplicate-clusters': false,
-};
+const DEFAULT_FLAG_VALUES = FLAG_REGISTRY.reduce(
+  (acc, flag) => {
+    // `defaultVariant` is guaranteed to be a key of `variants` by the registry's
+    // own zod `superRefine`, so this lookup cannot be `undefined`. The cast is
+    // the same one `withFlagVariants` needs below: `FlagValueMap` is a per-key
+    // mapped type and `flag.key` is only known to be some member of the union.
+    acc[flag.key as FlagKey] = flag.variants[flag.defaultVariant] as JsonValue;
+    return acc;
+  },
+  {} as Record<FlagKey, JsonValue>,
+) as FlagValueMap;
 
-const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = {
-  'insights-page': 'off',
-  'retention-policies': 'off',
-  'lore-explorer-instruments': 'off',
-  'lore-explorer-duplicate-clusters': 'off',
-};
+const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = Object.fromEntries(
+  FLAG_REGISTRY.map((flag) => [flag.key, flag.defaultVariant]),
+);
 
 /**
  * Seed `FeatureFlagsProvider` with the registry's defaults so components

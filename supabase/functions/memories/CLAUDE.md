@@ -273,9 +273,9 @@ off-by-one here does not throw, it shows a row that already expired.
 
 ## `GET /facets`
 
-`lorekit_memory_facets` (00052, widened by 00057) returns `{ facets: [{ facet, value, count }] }`
-for all eight dimensions — `tag`, `source_agent`, `trigger`, `kind`, `host`, `origin_repo`,
-`origin_branch`, `origin_pr` —
+`lorekit_memory_facets` (00052, widened by 00057 and 00108) returns
+`{ facets: [{ facet, value, count }] }` for all nine dimensions — `tag`, `source_agent`,
+`trigger`, `kind`, `host`, `origin_repo`, `origin_branch`, `origin_pr`, `owner` —
 ordered facet asc, count desc, value asc. `?archived=` partitions exactly as it does on
 `GET /` and on `/tags`: a catalog must describe the population it will be used to filter.
 `?facets=` narrows the response to named dimensions; an unknown name narrows to nothing
@@ -302,12 +302,32 @@ consequences to know before reading a number:
   same omission a null column value has — so it drops out of the menu until the filter is
   cleared, rather than showing as a selectable `0`. Emitting the zeroes would mean returning the
   tenant's entire distinct value set for `tag` / `origin_branch` on every call.
-- `q`, `key`, `created_since` and `created_until` are **NOT** mirrored, so with a search or date
-  window active a count is an upper bound on what selecting the value would return, not the
-  exact yield. Mirroring `q` would put a second implementation of `likeNeedle`'s LIKE escaping
-  in plpgsql, which the repo-wide "a filter value is encoded ONE way" rule forbids.
+- `q` and `key` are **NOT** mirrored, so with a search active a count is an upper bound on what
+  selecting the value would return, not the exact yield. Mirroring `q` would put a second
+  implementation of `likeNeedle`'s LIKE escaping in plpgsql, which the repo-wide "a filter value
+  is encoded ONE way" rule forbids.
 
-The eight text/tags/int dimension predicates are the shared inlinable SQL helpers
+**`created_since` / `created_until` and the five retention thresholds ARE mirrored, as of
+00108** — `min_age_days`, `unseen_days`, `max_seen_count`, `max_read_count`,
+`max_opened_count`, the same names `GroomConditionsSchema` uses, on `/facets`, `/pivot` and
+`/activity` alike (`/activity` takes the thresholds only: its own `since`/`until` already bound
+`created_at`). Until then only `GET /` and `POST /list` applied them, so setting
+`max_opened_count` narrowed the rows and left every number describing those rows — the
+Explorer's facet counts, its stat cards and its matrix — counting the un-narrowed population.
+
+They differ from a dimension in one way that matters when reading a count: a threshold is
+applied in the RPC's `base` CTE rather than as a per-dimension `ok_*` flag, so it narrows
+**every** facet including the SELF-EXCLUDED one. That is the correct asymmetry, not an
+inconsistency — self-exclusion exists so the dimension you are standing in still lists what you
+could switch to, and switching `host` does not stop you looking at lore older than 30 days.
+The predicate is the shared `lorekit_match_retention`, one inlinable row test composed by all
+FOUR readers (`lorekit_memory_list`, `_facets`, `_activity`, `_pivot`) so a count cannot
+disagree with the list it describes; it takes CUTOFF INSTANTS rather than day counts, which is
+what keeps it `immutable` and inlinable — each caller resolves its `now()`-relative bounds once
+per query. `migrations.test.sql` §108 pins the narrowing, the self-exclusion interaction, and
+that all-null parameters are identical to omitting them.
+
+The nine text/tags/int dimension predicates are the shared inlinable SQL helpers
 `lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066), so the
 catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **all three
 of `lorekit_memory_facets`, `lorekit_memory_activity` and `lorekit_memory_list` compose the
@@ -606,10 +626,15 @@ dedupe` sees the whole scope where this route sees one window.
 Duplicate Clusters panel — is gated by `lore-explorer-duplicate-clusters` (default `off`), so
 flag-off already means no traffic here. Gating the route as well would put a Node-only
 OpenFeature dependency inside a self-contained Deno function, which
-`docs/decisions.md#edge-function-is-self-contained-deno-no-import-map` forbids; the retention
-routes needed a second gate only because they have agent-side callers this one does not
-(`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret). A `GET` that is read-only, additive
-and unreferenced is safe to serve unconditionally.
+`docs/decisions.md#edge-function-is-self-contained-deno-no-import-map` forbids. A `GET` that is
+read-only, additive and unreferenced is safe to serve unconditionally.
+
+The retention routes (`/policies`, `/groom/*`, `/protect`) once carried a second gate for having
+agent-side callers this one does not — a `LOREKIT_RETENTION_POLICIES_ENABLED` Supabase secret. It
+is **gone**: it never gated visibility (the MCP `tools/list` advertised the seven tools either
+way) and was unset in every environment, so its only effect was an advertised tool that always
+returned "not enabled for this instance". Those routes are now unconditional too, and the
+dashboard-side `retention-policies` OpenFeature flag is the single remaining gate.
 
 ## `GET /utility`
 
@@ -762,8 +787,10 @@ The series also takes `scope` + the same dimension filters `GET /` and `GET /fac
 with the list beneath it. The eight text/tags/int predicates are the shared helpers
 `lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066) — the same
 predicates `lorekit_memory_facets` composes, so the chart and the facet menu narrow
-identically; `owner` stays inline. With no filters supplied the response is byte-for-byte the
-pre-00063 aggregate.
+identically; `owner` stays inline. It also takes the five retention thresholds as of 00108 (see
+`GET /facets`), but NOT a `created_since`/`created_until` pair — its own `since`/`until` already
+bound `created_at`. With no filters supplied the response is byte-for-byte the pre-00063
+aggregate.
 
 ## `GET /read-activity`
 

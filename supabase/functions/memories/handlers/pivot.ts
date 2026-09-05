@@ -14,6 +14,8 @@ import {
 import type { MemoryFacet } from '../../_shared/schemas/memory.ts';
 import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
+import { retentionFrom, retentionRpcParams } from '../../_shared/api/retention.ts';
+import type { RetentionConditions } from '../../_shared/api/retention.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 
 /** One row as `lorekit_memory_pivot` returns it. */
@@ -31,6 +33,14 @@ interface PivotInput {
   limit: number;
   scope?: string | undefined;
   dimensions: MemoryDimensions;
+  /**
+   * The `created_at` window and the five retention thresholds (00108) — the
+   * same pair `/facets` takes, for the same reason: the matrix and the facet
+   * menu are two views of one population and must narrow together.
+   */
+  created_since?: string | undefined;
+  created_until?: string | undefined;
+  retention: RetentionConditions;
 }
 
 /**
@@ -146,6 +156,11 @@ async function runPivot(
     p_key_scopes: keyRestriction(auth)?.scopes ?? [],
     p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
     p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+    // The `created_at` window and the retention thresholds (00108), so a cell
+    // counts the same rows the list returns.
+    p_created_since: input.created_since ?? null,
+    p_created_until: input.created_until ?? null,
+    ...retentionRpcParams(input.retention),
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
@@ -177,6 +192,9 @@ export async function handlePivot(
     limit: q.limit ?? PIVOT_LIMIT_DEFAULT,
     scope: q.scope,
     dimensions: dimensionsFromQuery(q),
+    created_since: q.created_since,
+    created_until: q.created_until,
+    retention: retentionFrom(q),
   }, auth, db, span, cors);
 }
 
@@ -205,5 +223,8 @@ export async function handlePivotPost(
     limit: body.limit ?? PIVOT_LIMIT_DEFAULT,
     scope: body.scope,
     dimensions: dimensionsFromBody(body),
+    created_since: body.created_since,
+    created_until: body.created_until,
+    retention: retentionFrom(body),
   }, auth, db, span, cors);
 }

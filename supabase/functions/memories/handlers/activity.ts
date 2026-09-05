@@ -11,6 +11,8 @@ import type { Database } from '../../_shared/db/database.types.ts';
 import { ActivityBodySchema, ActivityQuerySchema } from '../../_shared/schemas/memory.ts';
 import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
+import { retentionFrom, retentionRpcParams } from '../../_shared/api/retention.ts';
+import type { RetentionConditions } from '../../_shared/api/retention.ts';
 
 type ActivityRow = Database['public']['Functions']['lorekit_memory_activity']['Returns'][number];
 
@@ -21,6 +23,12 @@ interface ActivityInput {
   until?: string | undefined;
   scope?: string | undefined;
   dimensions: MemoryDimensions;
+  /**
+   * The five retention thresholds (00108). No `created_since`/`created_until`
+   * pair here: this route's own `since`/`until` already bound `created_at`, and
+   * a second window would be two ways to say one thing.
+   */
+  retention: RetentionConditions;
 }
 
 /**
@@ -159,6 +167,10 @@ async function runActivity(
     p_key_scopes: keyRestriction(auth)?.scopes ?? [],
     p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
     p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+    // The retention thresholds (00108). Without these the Explorer's stat cards
+    // counted the un-narrowed population while the list beneath them did not —
+    // the header reporting a total for rows it was not describing.
+    ...retentionRpcParams(input.retention),
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
@@ -186,6 +198,7 @@ export async function handleActivity(
     until: p.until,
     scope: p.scope,
     dimensions: dimensionsFromQuery(p),
+    retention: retentionFrom(p),
   }, auth, db, span, cors);
 }
 
@@ -210,5 +223,6 @@ export async function handleActivityPost(
     until: b.until,
     scope: b.scope,
     dimensions: dimensionsFromBody(b),
+    retention: retentionFrom(b),
   }, auth, db, span, cors);
 }

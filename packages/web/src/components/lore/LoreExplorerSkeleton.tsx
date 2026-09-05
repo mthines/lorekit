@@ -16,23 +16,40 @@
 //      the real collapsed default — it is not skeletoned here.
 //   3. Results          — the ONLY breakpoint-split region, matching the real
 //      component's `hidden md:flex` desktop container vs `flex md:hidden` mobile
-//      stack. Both show the same control row + card list; scope no longer has a
-//      left rail, so the desktop results are a single full-width column.
+//      stack. Both show the same control row + card list (the row differing only
+//      in the filter trigger's width, as the real one does); scope no longer has
+//      a left rail, so the desktop results are a single full-width column.
 //
 // `SEGMENT` widths are fixed px so the pulse blocks are stable between renders.
 const CHIP_WIDTHS = [64, 88, 56, 76, 60, 92];
 const CARDS = [0, 1, 2, 3, 4];
 const STRIP = [0, 1, 2, 3]; // the four collapsed stat cards
 
-/** The filter control row — identical on both breakpoints, as the real one is:
- *  search (grows) + filter trigger + date pill + status pill. */
-function ControlRowSkeleton() {
+/**
+ * The filter control row: search (grows) + the filter trigger + the date pill.
+ *
+ * TWO controls after the search box, not three. The retention conditions used to
+ * have a trigger of their own here; they are now rows inside the filter menu, so
+ * a third block would promise a control the loaded page does not have — the
+ * placeholder would resolve to a narrower row and shift the date pill sideways.
+ *
+ * The trigger is the one part that is not the same on both breakpoints: it reads
+ * "Filter" on desktop and collapses to an icon (plus a count badge) on mobile,
+ * so the skeleton splits the same way the real control row does.
+ */
+function ControlRowSkeleton({ variant }: { variant: 'desktop' | 'mobile' }) {
   return (
-    <div className="flex items-center gap-2">
+    // `data-testid` because the whole skeleton is `aria-hidden` (it is decorative
+    // until the data lands), so its own test has no role to query it by.
+    <div data-testid="control-row" className="flex items-center gap-2">
       <div className="h-9 flex-1 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
-      <div className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
-      <div className="h-9 w-20 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
-      <div className="h-9 w-14 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+      <div
+        className={[
+          'h-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
+          variant === 'desktop' ? 'w-20' : 'w-9',
+        ].join(' ')}
+      />
+      <div className="h-9 w-24 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
     </div>
   );
 }
@@ -119,7 +136,7 @@ export function LoreExplorerSkeleton() {
         className="hidden overflow-hidden rounded-xl border border-[var(--color-border)] md:flex md:flex-col"
       >
         <div className="border-b border-[var(--color-border)] p-3">
-          <ControlRowSkeleton />
+          <ControlRowSkeleton variant="desktop" />
         </div>
         <div className="p-3">
           <CardsSkeleton />
@@ -129,7 +146,7 @@ export function LoreExplorerSkeleton() {
       {/* Mobile: looser stack — control row, then the card list (pb-6 so the last
           card clears the bottom edge, matching the real layout). */}
       <div aria-hidden className="flex flex-col gap-3 pb-6 md:hidden">
-        <ControlRowSkeleton />
+        <ControlRowSkeleton variant="mobile" />
         <CardsSkeleton />
       </div>
     </div>

@@ -15,6 +15,7 @@ import {
 } from '../../_shared/schemas/memory.ts';
 import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
+import { retentionRpcParams } from '../../_shared/api/retention.ts';
 import { likeNeedle } from '../../_shared/schemas/filter.ts';
 import { expiringWindow } from '../../_shared/limits/expiring-window.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
@@ -237,12 +238,14 @@ async function respondWithPage(
     p_cursor_id: usableCursor?.id ?? null,
     // limit + 1: the overflow row is what `buildPage` reads `hasMore` from.
     p_limit: params.limit + 1,
-    // The retention-policy preview trio (00092) — see `ListParams`.
-    p_min_age_days: params.min_age_days ?? null,
-    p_unseen_days: params.unseen_days ?? null,
-    p_max_seen_count: params.max_seen_count ?? null,
-    p_max_read_count: params.max_read_count ?? null,
-    p_max_opened_count: params.max_opened_count ?? null,
+    // The retention thresholds (00092, extended to the aggregates by 00108).
+    // Mapped by the shared `retentionRpcParams` rather than inline, because
+    // this route is now one of FOUR that take the same five parameters — the
+    // list and the three aggregates describing it — and an inline copy per
+    // route is how a count came to disagree with its own list in the first
+    // place. `?? null` is applied there; see that module on why a truthiness
+    // check would break `max_opened_count => 0`.
+    ...retentionRpcParams(params),
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

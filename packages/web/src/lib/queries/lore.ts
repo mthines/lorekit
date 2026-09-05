@@ -16,7 +16,11 @@ import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
-import { NO_RETENTION_CONDITIONS, type RetentionConditions } from '@/lib/retention-filter';
+import {
+  NO_RETENTION_CONDITIONS,
+  retentionConditionsToAggregateBody,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
 import type { AbsoluteRange } from '@/lib/time-range';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
@@ -202,13 +206,23 @@ export function usePivot(
     showArchived?: boolean;
     filters?: readonly Filter[];
     scope?: string | null;
+    retention?: RetentionConditions;
   } = {},
 ) {
-  const { enabled = true, showArchived = false, filters = [], scope = null } = options;
+  const {
+    enabled = true,
+    showArchived = false,
+    filters = [],
+    scope = null,
+    retention = NO_RETENTION_CONDITIONS,
+  } = options;
   // Normalised for the stable-query-key reason `useFacetCatalog` documents.
   const bar = normalizeFilters(filters as Filter[]);
+  const retentionBody = retentionConditionsToAggregateBody(retention);
   return useQuery<PivotResponse>({
-    queryKey: ['lore-pivot', row, col, showArchived, scope, bar],
+    // `retentionBody` in the key for `useFacetCatalog`'s reason: omit it and a
+    // threshold change is served the previous matrix from cache.
+    queryKey: ['lore-pivot', row, col, showArchived, scope, bar, retentionBody],
     queryFn: ({ signal }) =>
       fetchPivot(
         {
@@ -217,6 +231,9 @@ export function usePivot(
           archived: showArchived,
           ...(scope ? { scope } : {}),
           ...filtersToPivotBody(bar),
+          // The retention thresholds (00108), so a cell counts the same rows
+          // clicking it would list.
+          ...retentionBody,
         },
         signal,
       ),
@@ -245,13 +262,23 @@ export function useFacetCatalog(
   showArchived = false,
   filters: readonly Filter[] = [],
   scope: string | null = null,
+  retention: RetentionConditions = NO_RETENTION_CONDITIONS,
 ) {
   // Normalise so the query key is stable across the equivalent-but-differently-
   // shaped filter arrays a render can produce, exactly as `useMemories` does.
   const bar = normalizeFilters(filters as Filter[]);
   const facetBody = filtersToFacetBody(bar);
+  const retentionBody = retentionConditionsToAggregateBody(retention);
   return useQuery<FacetValue[]>({
-    queryKey: ['lore-facets', showArchived, scope, bar],
+    // `retentionBody`, not the raw `retention`, is part of the key — and it has
+    // to be IN the key at all, or React Query serves the previous scope's
+    // counts from cache and the menu silently stops responding to a threshold.
+    // The normalised body is the right thing to key on for `bar`'s reason: it
+    // is the value actually sent, so two condition objects that differ only in
+    // an out-of-bounds field a user is mid-typing (dropped by
+    // `normalizeRetentionConditions`) do not each get their own cache entry and
+    // their own request.
+    queryKey: ['lore-facets', showArchived, scope, bar, retentionBody],
     queryFn: ({ signal }) =>
       fetchFacets(
         {
@@ -262,6 +289,12 @@ export function useFacetCatalog(
           // a null scope omits the param, so the all-scopes view is unchanged.
           ...(scope ? { scope } : {}),
           ...facetBody,
+          // The retention thresholds (00108). The route applies them in the
+          // RPC's `base` CTE, so they narrow every facet INCLUDING the
+          // self-excluded one the user is standing in — the drill-down keeps
+          // offering every value you could switch to, counted over the
+          // population you are actually looking at.
+          ...retentionBody,
         },
         signal,
       ),

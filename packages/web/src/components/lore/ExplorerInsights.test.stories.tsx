@@ -13,6 +13,7 @@ const HEATMAP = [
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 import { PREFERENCE_KEYS } from '@/lib/persisted-preference';
 import type { TimeRange } from '@/lib/time-range';
+import { NO_RETENTION_CONDITIONS } from '@/lib/retention-filter';
 
 /**
  * Interaction tests for the Explorer's Activity panel.
@@ -77,6 +78,7 @@ function Harness({
           onRangeChange?.(next);
         }}
         filters={[]}
+        retention={NO_RETENTION_CONDITIONS}
         heatmapData={HEATMAP}
         highlightRange={null}
         onSelectDate={() => undefined}
@@ -757,6 +759,7 @@ export const HeaderFitsOnOneRowAtPhoneWidth: Story = {
         range={{ preset: '30d' }}
         onRangeChange={() => undefined}
         filters={[]}
+        retention={NO_RETENTION_CONDITIONS}
         heatmapData={HEATMAP}
         highlightRange={null}
         onSelectDate={() => undefined}

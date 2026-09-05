@@ -10,20 +10,36 @@
  * This module is the same set, modelled as an Explorer filter: set on the
  * list alongside the filter bar's dimensions, so the list you are already
  * looking at narrows to exactly what a policy with these conditions would
- * archive — "verify before you run it" without leaving the page. It composes
- * with `lib/filters.ts`'s `Filter[]` bar rather than becoming a tenth entry in
- * it, because it is not a categorical dimension: there is no facet catalog of
- * "ages", so the value space is a raw number a user types, not a value picked
- * from a list.
+ * archive — "verify before you run it" without leaving the page.
+ *
+ * It is a SIBLING of `lib/filters.ts`'s `Filter[]` bar rather than a tenth
+ * entry in it, and stays one even though the two now share a menu and a pill
+ * row: a threshold holds ONE number with no facet catalog behind it, where a
+ * dimension holds a SET picked from an enumerated one, and collapsing the two
+ * would mean teaching `Filter` a value space it has no operators for. What they
+ * share is the surface, which is the part users see — see the "filter menu's
+ * age & activity entries" section at the foot of this file.
  *
  * Kept dependency-free and pure, in `lib/filters.ts`'s tradition — every
- * decision here is unit-tested without a browser, and the impure shell is
- * `components/lore/RetentionConditionsControl.tsx`.
+ * decision here is unit-tested without a browser, and the impure shells are
+ * `components/lore/FilterMenu.tsx` and `components/lore/RetentionPill.tsx`.
  */
 
 import type { GroomConditions, GroomDimensionFilters } from '@lorekit/schemas/retention';
-import type { ListMemoriesBody, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
-import { filtersToBody, normalizeFilters, type Filter, type FilterField, type FilterOperator } from './filters';
+import type {
+  ListFacetsBody,
+  ListMemoriesBody,
+  ScalarFilterMode,
+  TagsMode,
+} from '@lorekit/schemas/memory';
+import {
+  filtersPhrase,
+  filtersToBody,
+  normalizeFilters,
+  type Filter,
+  type FilterField,
+  type FilterOperator,
+} from './filters';
 
 /** The five conditions, camelCased for the UI's own state — see `GroomConditions` for the wire shape. */
 export interface RetentionConditions {
@@ -49,9 +65,10 @@ export interface RetentionConditions {
 
 /**
  * The bounds each condition accepts — mirrors `GroomConditionsSchema` exactly.
- * Exported so the impure shell (`RetentionConditionsControl`) can enforce the
- * SAME per-field range while the user is typing, rather than re-deriving it
- * and drifting from what `normalizeRetentionConditions` accepts.
+ * Exported so the impure shells (the filter menu's typed custom value, the
+ * policy builder's number inputs) enforce the SAME per-field range while the
+ * user is typing, rather than re-deriving it and drifting from what
+ * `normalizeRetentionConditions` accepts.
  */
 export const RETENTION_CONDITION_BOUNDS = {
   minAgeDays: { min: 1, max: 3650 },
@@ -199,6 +216,31 @@ export function retentionConditionsToListBody(
 }
 
 /**
+ * The same five fields, for the three AGGREGATE routes — `/facets`,
+ * `/activity`, `/pivot` (migration 00108).
+ *
+ * Delegates to {@link retentionConditionsToListBody} because the field names
+ * are identical on all four bodies by construction: the schemas share one
+ * `retentionConditionBodyFields` spread. It exists as its own export anyway,
+ * typed against `ListFacetsBody`, so that a schema which stops carrying one of
+ * the five becomes a TYPE ERROR here rather than a threshold the aggregate
+ * silently ignores — which is precisely the bug 00108 fixed, where the list
+ * narrowed and every number describing it did not.
+ *
+ * Callers spread this alongside `filtersToFacetBody` / `filtersToActivityBody`
+ * / `filtersToPivotBody`; the dimensions and the thresholds are independent
+ * halves of one request and neither is derivable from the other.
+ */
+export function retentionConditionsToAggregateBody(
+  conditions: RetentionConditions,
+): Pick<
+  ListFacetsBody,
+  'min_age_days' | 'unseen_days' | 'max_seen_count' | 'max_read_count' | 'max_opened_count'
+> {
+  return retentionConditionsToListBody(conditions);
+}
+
+/**
  * Translate into the `GroomConditions` a policy carries — the seam this whole
  * feature exists for: "create a retention policy from these filters" is
  * exactly handing this struct (plus a scope) to `policy.create`.
@@ -330,30 +372,342 @@ export function groomConditionsToFilters(source: DimensionFilterSource): Filter[
   return normalizeFilters(raw);
 }
 
-/** One phrase describing the active conditions, for the control's trigger label and pill. */
+// ── The filter menu's age & activity entries ─────────────────────────────────
+//
+// The five conditions are entries in the SAME two-level filter menu as the nine
+// categorical dimensions, not a control of their own. They were a separate
+// trigger and an inline panel of five number inputs, which put a second filter
+// surface on a toolbar that already had one and left a reader with two places
+// to ask "what is narrowing this list?".
+//
+// Flat, and deliberately not Linear's nested "Dates → Created → …": the extra
+// level buys grouping for a set of five, and costs a click on every use. Each
+// condition is a sibling of Label / Kind / Host at level 1, and its level 2 is
+// the preset list below.
+//
+// The value space is a raw number, so there is no facet catalog to enumerate —
+// which is exactly why the menu's own SEARCH BOX doubles as the custom-value
+// input (see `retentionValueRows`). Typing `45` offers 45; there is no "Custom…"
+// row, no third level, and no second text field.
+
+/** Which of the five conditions a menu entry addresses. */
+export type RetentionField = keyof RetentionConditions;
+
+/** One age/activity entry: its row at level 1, and how its values read at level 2. */
+export interface RetentionFieldDescriptor {
+  field: RetentionField;
+  /**
+   * Named for the METADATA ROW it tests — the same words the lesson detail
+   * sheet shows — so a reader can open any lesson the filter returned and check
+   * the claim against identical vocabulary. Naming the CONDITION instead
+   * ("Minimum age", "Seen at most") left no way to verify a match.
+   */
+  label: string;
+  /** What the threshold tests, shown once under the value list. */
+  hint: string;
+  /** The offered values, in menu order. Not a limit — any in-bounds number can be typed. */
+  presets: readonly number[];
+  /**
+   * Extra words a level-1 search should match, so the entry is reachable by the
+   * question rather than only by its label — "never" and "unused" find Chosen,
+   * "stale" finds Last agent open.
+   */
+  keywords: readonly string[];
+  /** One value as its own row, e.g. `More than 30 days ago`. */
+  formatValue: (value: number) => string;
+  /** One value as a phrase fragment, for the pill and the summary line. */
+  phrase: (value: number) => string;
+}
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/**
+ * The five entries, in the order the menu lists them: the two dates first, then
+ * the three counters weakest-signal-first, so `Chosen` — the one whose `0`
+ * answers "nothing ever used this" — sits closest to the reader's eye at the
+ * end rather than buried between two counters it is easily confused with.
+ *
+ * The three counters are worded APART on purpose, because each answers a
+ * different question: `Recurrence` counts WRITES, `Delivered` counts EVERY read
+ * (bulk list/search ride-alongs included), and `Chosen` counts only deliberate
+ * `memory.read` fetches. Calling any of them "seen" is what made the older copy
+ * unreadable.
+ */
+export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
+  {
+    field: 'minAgeDays',
+    label: 'Created',
+    hint: 'Written more than this many days ago.',
+    presets: [7, 30, 90, 180, 365],
+    keywords: ['age', 'old', 'older', 'date', 'when'],
+    formatValue: (n) => `More than ${plural(n, 'day')} ago`,
+    phrase: (n) => `created >${n}d ago`,
+  },
+  {
+    field: 'unseenDays',
+    label: 'Last agent open',
+    // Spelling out the never-opened fallback is the point: it is the one rule a
+    // reader cannot infer from a lesson's metadata, and getting it wrong is
+    // what made a week-old lesson look like it had gone unread for 90 days.
+    hint: 'Last deliberately fetched more than this many days ago. Never opened counts from Created.',
+    presets: [7, 30, 90, 180, 365],
+    keywords: ['unseen', 'unopened', 'stale', 'idle', 'dormant', 'last'],
+    formatValue: (n) => `More than ${plural(n, 'day')} ago`,
+    phrase: (n) => `unopened >${n}d`,
+  },
+  {
+    field: 'maxSeenCount',
+    label: 'Recurrence',
+    hint: 'Written this many times or fewer.',
+    // From 1, not 0: a memory exists because it was written, so `0` matches
+    // nothing and offering it hands the reader an empty list.
+    presets: [1, 2, 3, 5],
+    keywords: ['written', 'writes', 'seen', 'repeat', 'recur'],
+    formatValue: (n) => `${plural(n, 'time')} or fewer`,
+    phrase: (n) => `written ≤ ${n}×`,
+  },
+  {
+    field: 'maxReadCount',
+    label: 'Delivered',
+    hint: 'Handed to an agent this many times or fewer. Bulk list/search reads count, so this runs to the hundreds.',
+    // Measured against the live store: `max_read_count <= 5` matched nothing at
+    // all, the first non-empty result appeared at 26, and 400 matched
+    // essentially everything. Small presets here are a filter that silently
+    // returns nothing and reads as a broken feature.
+    presets: [50, 100, 200, 500],
+    keywords: ['delivered', 'read', 'reads', 'cost', 'context'],
+    formatValue: (n) => `${plural(n, 'time')} or fewer`,
+    phrase: (n) => `delivered ≤ ${n}×`,
+  },
+  {
+    field: 'maxOpenedCount',
+    label: 'Chosen',
+    hint: 'Deliberately fetched this many times or fewer. Bulk reads do NOT count, so 0 means never chosen.',
+    // 0 leads, and is the only preset in the set for which zero is meaningful:
+    // it is migration 00105's whole point, "nothing ever chose this lesson".
+    presets: [0, 1, 2, 5],
+    keywords: ['chosen', 'opened', 'never', 'unused', 'uptake', 'dead'],
+    formatValue: (n) => (n === 0 ? 'Never chosen' : `${plural(n, 'time')} or fewer`),
+    phrase: (n) => `chosen ≤ ${n}×`,
+  },
+];
+
+const RETENTION_FIELD_BY_NAME = new Map(RETENTION_FIELDS.map((d) => [d.field, d]));
+
+/**
+ * The descriptor for one condition. Throws on an unknown field rather than
+ * returning `undefined`, matching `lib/filters.ts`'s `requireField`: every
+ * caller here holds a `RetentionField`, so a miss is a programming error and
+ * an optional return would only push a `?.` into the render path.
+ */
+export function requireRetentionField(field: RetentionField): RetentionFieldDescriptor {
+  const descriptor = RETENTION_FIELD_BY_NAME.get(field);
+  if (!descriptor) throw new Error(`Unknown retention field: ${field}`);
+  return descriptor;
+}
+
+/**
+ * Which entries a level-1 query surfaces, best match first — the age/activity
+ * half of `rootSuggestions`' ranking, using the same label-first order so the
+ * two halves of one list cannot rank by different rules.
+ *
+ * Keyword hits rank BELOW every label hit, so typing `c` still leads with
+ * `Created` and `Chosen` rather than with whatever keyword happens to start
+ * with the same letter.
+ */
+export function retentionFieldMatches(query: string): RetentionField[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return RETENTION_FIELDS.map((d) => d.field);
+
+  const rank = (d: RetentionFieldDescriptor): number => {
+    const label = d.label.toLowerCase();
+    if (label === needle) return 0;
+    if (label.startsWith(needle)) return 1;
+    if (label.includes(needle)) return 2;
+    if (d.keywords.some((k) => k.startsWith(needle))) return 3;
+    return Number.POSITIVE_INFINITY;
+  };
+
+  return RETENTION_FIELDS.map((d) => ({ d, rank: rank(d) }))
+    .filter(({ rank: r }) => Number.isFinite(r))
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ d }) => d.field);
+}
+
+/** One row in a condition's value list. */
+export interface RetentionValueRow {
+  value: number;
+  /**
+   * True when the row came from what the user TYPED rather than from the preset
+   * list — the menu labels it so a custom threshold is visibly a custom
+   * threshold and not a preset the reader misremembered.
+   */
+  custom: boolean;
+}
+
+/**
+ * A condition's value list for the current query — presets, plus the typed
+ * value when it is a legal one.
+ *
+ * This is what makes the search box the custom-value input, and it is the
+ * reason there is no third menu level: a threshold's value space is every
+ * integer in range, so a "Custom…" row could only ever open a text field the
+ * menu already has.
+ *
+ * Matching is a NUMERIC PREFIX test, not a substring test on the rendered row
+ * text: `3` must surface 30 and 365 (a reader typing toward a value), while
+ * `days` must surface nothing rather than every row whose label happens to
+ * contain the word.
+ *
+ * An out-of-bounds or non-numeric query yields no custom row, so the reader
+ * gets the menu's empty state instead of a value that would be silently dropped
+ * by `normalizeRetentionConditions` on the next read of the URL.
+ *
+ * `applied` is the condition's CURRENT value, and it earns a row of its own when
+ * it is not one of the presets. Without it, reopening a condition set to a typed
+ * value (`Created: More than 5 days ago`) showed five preset rows with none
+ * selected — the list denying a value the pill beside it was displaying. The row
+ * leads for the same reason the typed value does: it is the state the reader
+ * came to change.
+ */
+export function retentionValueRows(
+  field: RetentionField,
+  query: string,
+  applied?: number,
+): RetentionValueRow[] {
+  const { presets } = requireRetentionField(field);
+  const needle = query.trim();
+  if (!needle) {
+    const presetRows = presets.map((value) => ({ value, custom: false }));
+    // Only when it is not already a preset — otherwise the applied value would
+    // appear twice, once labelled "custom", above its own preset row.
+    return applied === undefined || presets.includes(applied)
+      ? presetRows
+      : [{ value: applied, custom: true }, ...presetRows];
+  }
+
+  const matching = presets.filter((preset) => String(preset).startsWith(needle));
+  const typed = parseCondition(needle, RETENTION_CONDITION_BOUNDS[field]);
+  if (typed === undefined) return matching.map((value) => ({ value, custom: false }));
+
+  // The typed value leads, because it is the thing the reader asked for. When
+  // it IS a preset it stays one row rather than becoming a duplicate labelled
+  // "custom" above its own preset.
+  return [
+    { value: typed, custom: !presets.includes(typed) },
+    ...matching.filter((preset) => preset !== typed).map((value) => ({ value, custom: false })),
+  ];
+}
+
+/**
+ * Set or clear one condition — `undefined` removes it, which is how a menu row
+ * toggled off and a pill's × reach the same state.
+ *
+ * Returns a new object rather than mutating: the result goes straight into
+ * `?retention=`, and React Query keys the aggregate requests on it.
+ */
+export function setRetentionCondition(
+  conditions: RetentionConditions,
+  field: RetentionField,
+  value: number | undefined,
+): RetentionConditions {
+  const next = { ...conditions };
+  if (value === undefined) delete next[field];
+  else next[field] = value;
+  return next;
+}
+
+/**
+ * One phrase describing the active conditions, for the summary line and for a
+ * screen reader's announcement of the pill set.
+ *
+ * Built by walking {@link RETENTION_FIELDS}, so the phrase, the menu's row
+ * order and the pill order are one list rather than three that can disagree —
+ * they previously did, and the fragment wording is the part users quote back
+ * when a condition does not match what they see on a lesson.
+ */
 export function retentionConditionsPhrase(conditions: RetentionConditions): string {
-  const parts: string[] = [];
-  // Vocabulary matches the lesson detail sheet's metadata rows — "Created",
-  // "Last agent open", "Recurrence" — so a reader can open any row the filter
-  // returned and check the claim against the same words. "unopened" rather
-  // than the older "unseen": nothing in the product calls a read "seeing", and
-  // the pill was the phrase people quoted back when the condition did not
-  // match what they saw on the lesson.
-  //
-  // One word per counter, and never "seen" for any of them: `written` counts
-  // writes, `delivered` counts every read (including the bulk ride-alongs),
-  // and `chosen` counts only the deliberate fetches. They sit next to each
-  // other in the phrase, so the words have to say which direction each one
-  // measures — the older `seen ≤ N×` gave the WRITE counter the one word a
-  // reader would naturally attach to a read, and the older `read ≤ N×` did not
-  // distinguish "was handed to an agent" from "an agent went and got it".
-  if (conditions.minAgeDays !== undefined) parts.push(`created >${conditions.minAgeDays}d ago`);
-  if (conditions.unseenDays !== undefined) parts.push(`unopened >${conditions.unseenDays}d`);
-  if (conditions.maxSeenCount !== undefined) parts.push(`written ≤ ${conditions.maxSeenCount}×`);
-  if (conditions.maxReadCount !== undefined) parts.push(`delivered ≤ ${conditions.maxReadCount}×`);
-  // "chosen", the same word the lesson card's utility chip and the detail
-  // sheet's Chosen row use for `opened_count`, so the filter and the row it
-  // returns describe the counter identically.
-  if (conditions.maxOpenedCount !== undefined) parts.push(`chosen ≤ ${conditions.maxOpenedCount}×`);
+  const parts = RETENTION_FIELDS.flatMap(({ field, phrase }) => {
+    const value = conditions[field];
+    return value === undefined ? [] : [phrase(value)];
+  });
   return parts.length > 0 ? parts.join(' · ') : 'Age & activity';
+}
+
+// ── A policy's scope, and the name it gets when nobody types one ─────────────
+
+/**
+ * The scope a retention policy uses to mean "every scope".
+ *
+ * This is NOT a UI invention — it is the groom RPC's own contract, stated in
+ * `00088_retention_policies.sql`: `p_scope = 'global'` matches every memory,
+ * an exact scope matches itself, and a `repo::owner/repo` policy additionally
+ * matches that repo's `branch::` children.
+ *
+ * The collision is real and worth knowing about: `global` is also a genuine
+ * scope lessons are written to, so a policy targeting ONLY the `global` scope's
+ * own lore cannot be expressed today — `global` always widens to everything.
+ * Surfacing it honestly as "All scopes" is the fix available without changing
+ * the RPC; inventing a second spelling here would just hide the widening.
+ */
+export const ALL_SCOPES = 'global';
+
+/** True when a policy scope means "every scope", not one named scope. */
+export function isAllScopes(scope: string): boolean {
+  return scope.trim() === ALL_SCOPES;
+}
+
+/** The scope as a sentence reads it: "all scopes", or the canonical string. */
+export function policyScopeLabel(scope: string): string {
+  return isAllScopes(scope) ? 'all scopes' : scope.trim();
+}
+
+/**
+ * The rule's narrowing as a phrase — "Older than 90d · chosen ≤ 0" — or an
+ * empty string when the rule narrows by nothing at all.
+ *
+ * Deliberately NOT `retentionConditionsPhrase`: that one is the Explorer's
+ * pill-bar summary and falls back to the LABEL "Age & activity" for an empty
+ * set, which would be nonsense in a policy name. The wording of each fragment
+ * is the same, because a condition must read identically wherever it appears.
+ */
+export function policyRulePhrase(
+  conditions: RetentionConditions,
+  filters: readonly Filter[] = [],
+): string {
+  const parts = RETENTION_FIELDS.flatMap(({ field, phrase }) => {
+    const value = conditions[field];
+    return value === undefined ? [] : [phrase(value)];
+  });
+  // `filtersPhrase` answers 'Add filter' for an empty bar — a button label, not
+  // a description — so an empty bar contributes nothing rather than that.
+  const normalized = normalizeFilters(filters as unknown[]);
+  if (normalized.length > 0) parts.push(filtersPhrase(normalized));
+  return parts.join(' · ');
+}
+
+/** `PolicyCreateBodySchema`'s `name` bound — a generated name must fit it. */
+export const POLICY_NAME_MAX = 200;
+
+/**
+ * The name a policy gets when the user saves without typing one.
+ *
+ * A required name is a tax on the common case: by the time you have picked a
+ * scope and some conditions you have already SAID what the rule is, and typing
+ * "stale repo lore" adds nothing a machine could not have written. So the field
+ * is optional and this fills it, from the same fragments the saved row will
+ * display — which is what stops the name and the rule beneath it disagreeing.
+ *
+ * Truncated to fit `POLICY_NAME_MAX`, since a filter bar with many values can
+ * outrun it and a 201-character name is a 400 from the API, not a long name.
+ */
+export function policyNameFromRule(
+  scope: string,
+  conditions: RetentionConditions,
+  filters: readonly Filter[] = [],
+): string {
+  const rule = policyRulePhrase(conditions, filters);
+  const name = `${rule || 'Every unprotected lesson'} in ${policyScopeLabel(scope)}`;
+  if (name.length <= POLICY_NAME_MAX) return name;
+  return `${name.slice(0, POLICY_NAME_MAX - 1).trimEnd()}…`;
 }

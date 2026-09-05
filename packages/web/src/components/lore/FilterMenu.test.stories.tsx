@@ -15,6 +15,11 @@ import {
   type Filter,
   type FilterField,
 } from '@/lib/filters';
+import {
+  RETENTION_FIELDS,
+  type RetentionConditions,
+  type RetentionField,
+} from '@/lib/retention-filter';
 
 /**
  * Interaction tests for the Lore Explorer's filter surface.
@@ -683,5 +688,348 @@ export const MobileSheetKeepsItsHeightAcrossLevels: StoryObj<typeof MobileHarnes
       const rootAgain = await screen.findByRole('listbox', { name: /filter by/i });
       await expect(rootAgain.clientHeight).toBe(rootHeight);
     });
+  },
+};
+
+// ── Age & activity ───────────────────────────────────────────────────────────
+
+/**
+ * The same harness with the retention half wired up.
+ *
+ * Both `retention` and `onRetentionChange` are passed, which is what makes the
+ * five threshold rows appear at all — `LoreExplorer` withholds the pair to keep
+ * the whole thing behind its flag, and the stories above exercise exactly that
+ * withheld state.
+ */
+function RetentionHarness({
+  initialFilters = [] as Filter[],
+  initialRetention = {} as RetentionConditions,
+}) {
+  const [filters, setFilters] = useState<Filter[]>(initialFilters);
+  const [retention, setRetention] = useState<RetentionConditions>(initialRetention);
+  const [editingField, setEditingField] = useState<FilterField | null>(null);
+  const [editingRetentionField, setEditingRetentionField] = useState<RetentionField | null>(null);
+
+  return (
+    <div style={{ width: 560, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <FilterMenu
+        facets={FACETS}
+        filters={filters}
+        onToggleValue={(field, value) => setFilters((f) => toggleFilterValue(f, field, value))}
+        retention={retention}
+        onRetentionChange={setRetention}
+        variant="desktop"
+        openAtField={editingField}
+        onOpenAtFieldHandled={() => setEditingField(null)}
+        openAtRetentionField={editingRetentionField}
+        onOpenAtRetentionFieldHandled={() => setEditingRetentionField(null)}
+      />
+      <FilterPillRow
+        filters={filters}
+        onOperatorChange={(field, op) => setFilters((f) => setFilterOperator(f, field, op))}
+        onRemove={(field) => setFilters((f) => removeFilter(f, field))}
+        onClearAll={() => setFilters([])}
+        onEditField={setEditingField}
+        retention={retention}
+        onRetentionChange={setRetention}
+        onEditRetentionField={setEditingRetentionField}
+      />
+    </div>
+  );
+}
+
+/**
+ * The thresholds are siblings of the dimensions, not a second surface.
+ *
+ * The whole point of folding the old `RetentionConditionsControl` in here: one
+ * list, one trigger, one answer to "what is narrowing this?". This pins the
+ * arrangement — dimensions first, five thresholds after, under a group heading
+ * — and that a threshold's rows are the presets rather than a facet catalog.
+ */
+export const AgeAndActivityRowsSitBelowTheDimensions: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = await openMenu(canvasElement);
+
+    await step('the five thresholds follow the nine dimensions, in order', async () => {
+      const rows = canvas.getAllByRole('option');
+      await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_FIELDS.length);
+      const retentionRows = rows.slice(FILTER_FIELDS.length);
+      await expect(retentionRows.map((r) => r.textContent?.trim())).toEqual(
+        RETENTION_FIELDS.map((d) => d.label),
+      );
+    });
+
+    await step('a heading names the group without becoming a row', async () => {
+      // It must NOT be an option: `activeIndex` and the option ids are
+      // positional, so a non-selectable entry in the array would shift every id
+      // past it and give the arrows a row they cannot land on.
+      await expect(canvas.getByText(/age & activity/i)).toBeInTheDocument();
+      await expect(
+        canvas.queryByRole('option', { name: /^age & activity$/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    await step('drilling into one shows its presets and the rule it tests', async () => {
+      await userEvent.click(canvas.getByRole('option', { name: /^chosen$/i }));
+      const list = within(await canvas.findByRole('listbox', { name: /chosen values/i }));
+      await expect(list.getByRole('option', { name: /never chosen/i })).toBeInTheDocument();
+      // The hint is the one thing a bare number cannot carry, and `Delivered`
+      // vs `Chosen` is exactly what readers got wrong without it.
+      await expect(canvas.getByText(/bulk reads do NOT count/i)).toBeInTheDocument();
+    });
+
+    await step('a threshold list is single-select, unlike a dimension', async () => {
+      await expect(canvas.getByRole('listbox', { name: /chosen values/i })).not.toHaveAttribute(
+        'aria-multiselectable',
+      );
+    });
+  },
+};
+
+/**
+ * Picking a value applies it and returns to the row list, so conditions chain.
+ *
+ * The behaviour that separates a threshold from a dimension: a dimension stays
+ * on its value list because the next pick is another value of the SAME field; a
+ * threshold has no second value, and the next thing a reader wants is a
+ * different threshold. Two picks without touching the trigger is the test.
+ */
+export const PickingAThresholdReturnsToTheRowListSoConditionsChain: StoryObj<
+  typeof RetentionHarness
+> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = await openMenu(canvasElement);
+
+    await step('the first pick applies and pops back to level one', async () => {
+      await userEvent.click(canvas.getByRole('option', { name: /^created$/i }));
+      await userEvent.click(
+        within(await canvas.findByRole('listbox', { name: /created values/i })).getByRole(
+          'option',
+          { name: /more than 30 days ago/i },
+        ),
+      );
+      await waitFor(async () => {
+        await expect(canvas.getByRole('listbox', { name: /filter by/i })).toBeInTheDocument();
+      });
+      // The applied value rides on the row, so the reader can see it without
+      // drilling back in.
+      await expect(
+        canvas.getByRole('option', { name: /created, more than 30 days ago/i }),
+      ).toBeInTheDocument();
+    });
+
+    await step('a second threshold is two more clicks, with no trip to the trigger', async () => {
+      await userEvent.click(canvas.getByRole('option', { name: /^chosen$/i }));
+      await userEvent.click(
+        within(await canvas.findByRole('listbox', { name: /chosen values/i })).getByRole('option', {
+          name: /never chosen/i,
+        }),
+      );
+      await waitFor(async () => {
+        await expect(canvas.getByRole('option', { name: /^chosen, never chosen$/i })).toBeInTheDocument();
+      });
+    });
+
+    await step('both render as pills, in the menu order', async () => {
+      // The pill ROOT, not its value segment — that carries the same phrase
+      // suffixed with "— change value", so an unfiltered query returns four.
+      const pills = within(canvasElement)
+        .getAllByLabelText(/^(created|chosen):/i)
+        .filter((el) => el.tagName === 'DIV');
+      await expect(pills.map((p) => p.getAttribute('aria-label'))).toEqual([
+        'Created: More than 30 days ago',
+        'Chosen: Never chosen',
+      ]);
+    });
+  },
+};
+
+/**
+ * The search box IS the custom-value input.
+ *
+ * A threshold's value space is every integer in range, so there is no facet
+ * catalog to search and a "Custom…" row could only ever open a text field the
+ * menu already has. Typing offers the value; typing something illegal says so
+ * rather than applying a threshold that `normalizeRetentionConditions` would
+ * silently drop on the next read of the URL.
+ */
+export const TypingAValueOffersItAsACustomThreshold: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = await openMenu(canvasElement);
+    await userEvent.click(canvas.getByRole('option', { name: /^created$/i }));
+    const input = await canvas.findByRole('combobox', { name: /search created values/i });
+
+    await step('a legal number leads the list, labelled custom', async () => {
+      await userEvent.type(input, '45');
+      const rows = within(
+        await canvas.findByRole('listbox', { name: /created values/i }),
+      ).getAllByRole('option');
+      await expect(rows).toHaveLength(1);
+      await expect(rows[0]).toHaveTextContent(/more than 45 days ago/i);
+      await expect(rows[0]).toHaveTextContent(/custom/i);
+    });
+
+    await step('applying it commits the typed value', async () => {
+      await userEvent.keyboard('{Enter}');
+      await waitFor(async () => {
+        await expect(
+          within(canvasElement).getByLabelText('Created: More than 45 days ago'),
+        ).toBeInTheDocument();
+      });
+    });
+
+    await step('an out-of-bounds value is refused, with its range named', async () => {
+      // `find`, not `get`: the commit above pops back to level one through a
+      // state update, so the row carrying the applied value arrives a tick later.
+      await userEvent.click(await canvas.findByRole('option', { name: /^created,/i }));
+      await userEvent.type(
+        await canvas.findByRole('combobox', { name: /search created values/i }),
+        '9999',
+      );
+      await expect(await canvas.findByText(/is not a value here/i)).toHaveTextContent(/3650/);
+    });
+  },
+};
+
+/**
+ * A threshold pill behaves like a dimension pill: edit through the value
+ * segment, clear through the ×.
+ *
+ * It has three segments rather than four — no operator, because a threshold's
+ * comparison is baked into the condition (`max_opened_count` is always "at
+ * most") and the value's own wording carries it.
+ */
+export const RetentionPillEditsAndClears: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness initialRetention={{ minAgeDays: 30 }} />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const screen = within(document.body);
+
+    await step('the pill has no operator segment', async () => {
+      const pill = canvas.getByLabelText('Created: More than 30 days ago');
+      await expect(within(pill).getAllByRole('button')).toHaveLength(2);
+    });
+
+    await step('the value segment reopens the menu at that threshold', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /change value/i }));
+      await expect(await screen.findByRole('listbox', { name: /created values/i })).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+    });
+
+    await step('choosing the value already in force clears it', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /change value/i }));
+      await userEvent.click(
+        within(await screen.findByRole('listbox', { name: /created values/i })).getByRole('option', {
+          name: /more than 30 days ago/i,
+        }),
+      );
+      await waitFor(async () => {
+        await expect(
+          canvas.queryByLabelText('Created: More than 30 days ago'),
+        ).not.toBeInTheDocument();
+      });
+    });
+  },
+};
+
+/**
+ * Reopening a condition set to a TYPED value shows that value, selected.
+ *
+ * The presets are five round numbers; the search box lets a reader apply any
+ * legal integer. So the value in force is regularly one the preset list does not
+ * contain, and a list that shows only presets then contradicts the pill sitting
+ * beside it — five rows, none of them selected, for a condition the bar says is
+ * applied. The applied value gets a row of its own, leading and labelled custom.
+ */
+export const AnAppliedCustomValueIsShownSelected: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness initialRetention={{ minAgeDays: 5 }} />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const screen = within(document.body);
+
+    await step('the bar shows the typed threshold', async () => {
+      await expect(canvas.getByLabelText('Created: More than 5 days ago')).toBeInTheDocument();
+    });
+
+    await step('reopening the condition leads with that value, selected', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /change value/i }));
+      const list = await screen.findByRole('listbox', { name: /created values/i });
+      const options = within(list).getAllByRole('option');
+
+      // Leading, so the state the reader came to change is the first thing there.
+      await expect(options[0]).toHaveAccessibleName(/more than 5 days ago/i);
+      await expect(options[0]).toHaveAttribute('aria-selected', 'true');
+      await expect(within(options[0]!).getByText('custom')).toBeInTheDocument();
+
+      // And it is an ADDITION — every preset is still reachable underneath it.
+      await expect(options).toHaveLength(6);
+      await expect(options[1]).toHaveAccessibleName(/more than 7 days ago/i);
+    });
+  },
+};
+
+/**
+ * "Create retention policy" is offered only when there is somewhere to send it.
+ *
+ * `LoreExplorer` omits `onCreatePolicy` while the `retention-policies` flag is
+ * off, because its destination (`/settings/grooming`) 404s there — the action
+ * disappears rather than dead-ending.
+ */
+export const CreatePolicyActionFollowsItsDestination: StoryObj<typeof FilterPillRow> = {
+  render: (args) => <FilterPillRow {...args} />,
+  args: {
+    filters: [{ field: 'label', operator: 'in', values: ['performance'] }],
+    onOperatorChange: fn(),
+    onRemove: fn(),
+    onClearAll: fn(),
+    onEditField: fn(),
+    retention: { maxOpenedCount: 0 },
+    onRetentionChange: fn(),
+    onEditRetentionField: fn(),
+  },
+  play: async ({ args, canvasElement, step }) => {
+    const canvas = within(canvasElement);
+
+    await step('without a destination the action is absent', async () => {
+      await expect(
+        canvas.queryByRole('button', { name: /create retention policy/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    await step('a dimension pill and a threshold pill share one row', async () => {
+      // Exact names: each pill's value segment repeats its phrase with a
+      // "— change value" suffix, so a prefix match returns two per pill.
+      await expect(canvas.getByLabelText('Label includes any performance')).toBeInTheDocument();
+      await expect(canvas.getByLabelText('Chosen: Never chosen')).toBeInTheDocument();
+    });
+
+    await step('one "Clear all" clears both halves of the bar', async () => {
+      // A single button, two callbacks. Wiring it to `onClearAll` alone is the
+      // obvious bug and leaves the thresholds behind on a bar that says it is
+      // empty.
+      await userEvent.click(canvas.getByRole('button', { name: /clear all/i }));
+      await expect(args.onClearAll).toHaveBeenCalled();
+      await expect(args.onRetentionChange).toHaveBeenCalledWith({});
+    });
+  },
+};
+
+/**
+ * The action appears once there is a destination for it.
+ */
+export const CreatePolicyActionIsOfferedWhenItCanLand: StoryObj<typeof FilterPillRow> = {
+  render: (args) => <FilterPillRow {...args} />,
+  args: {
+    ...CreatePolicyActionFollowsItsDestination.args,
+    onCreatePolicy: fn(),
+  },
+  play: async ({ args, canvasElement }) => {
+    await userEvent.click(
+      within(canvasElement).getByRole('button', { name: /create retention policy/i }),
+    );
+    await expect(args.onCreatePolicy).toHaveBeenCalled();
   },
 };
