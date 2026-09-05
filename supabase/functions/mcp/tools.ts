@@ -297,8 +297,9 @@ export async function toolRead(
     // array) would otherwise resolve to `{entries:[],missing:[]}` — a malformed
     // call reported as a successful read that found nothing. REST already 400s
     // on the same input via `ReadMemoriesBodySchema`; MCP rejects it here so the
-    // two surfaces agree. Refs that are individually unparseable still drop
-    // silently into `missing` — only the SHAPE is validated.
+    // two surfaces agree. Only the SHAPE is validated: an individually
+    // unparseable ref is dropped by `parseMemoryRefs` and appears NOWHERE in
+    // the response — not in `entries`, not in `missing`.
     if (!Array.isArray(refs) || refs.length === 0) {
       throw new UserInputError('refs must be a non-empty array of scope::key strings');
     }
@@ -349,7 +350,16 @@ async function toolReadRefs(
   keyScoping?: KeyRestriction,
 ) {
   const parsed = parseMemoryRefs(raw);
-  span.setAttributes({ 'lorekit.operation': 'memory.read_refs', 'lorekit.refs.count': parsed.length });
+  // See the REST twin in `memories/handlers/read.ts`: `count` alone cannot show
+  // that a 40-ref batch was truncated to 32, because neither the truncated tail
+  // nor an unparseable ref reaches `missing`. `raw` is already shape-checked by
+  // `toolRead`'s guard, but this function is total on its own, so the length is
+  // read defensively.
+  span.setAttributes({
+    'lorekit.operation': 'memory.read_refs',
+    'lorekit.refs.requested': Array.isArray(raw) ? raw.length : 0,
+    'lorekit.refs.count': parsed.length,
+  });
 
   const groups = groupRefsByScope(parsed);
   const tracedDb = createTracedClient(db, span);
