@@ -54,6 +54,8 @@ Attributes on `lorekit.memory.*` spans:
 | `lorekit.result.count` | `17` | List / search results: row count returned |
 | `lorekit.requested_limit` | `500` | `memory.list` / `memory.search` / `memory.list_archived`: the caller's `limit` argument BEFORE the server clamps it to the route's cap. Compare against `lorekit.result.count` to tell "got everything asked for" apart from "got the cap" |
 | `lorekit.limit_capped` | `true` | Same three tools: whether `requested_limit` exceeded the cap and was clamped down |
+| `lorekit.refs.requested` | `40` | Batch `memory.read` / `POST /memories/read`: how many `scope::key` refs the caller sent, BEFORE parsing |
+| `lorekit.refs.count` | `32` | Same two routes: how many survived parsing. Same pairing as `requested_limit`/`result.count` — the gap is refs dropped as unparseable or truncated past the 32-ref cap, and it is the ONLY place either loss is visible (neither reaches the response's `missing` list) |
 
 Rate-limit attributes on the root `lorekit.mcp` span:
 

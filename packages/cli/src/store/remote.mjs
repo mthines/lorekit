@@ -280,6 +280,36 @@ class RemoteStore {
     return { ok: true, entry: entries[0] ? withReadFields(entries[0]) : null };
   }
 
+  // readMany(refs) → { ok, entries, missing } — `POST /memories/read`, one
+  // round-trip for the whole batch (the server groups by scope and issues one
+  // `.in('key', …)` query per distinct scope — see `handlers/read.ts`). `refs`
+  // is an array of `{ scope, key }`; this transport joins each into the
+  // `scope::key` wire form the route's `ReadMemoriesBodySchema` expects. An
+  // empty/absent list short-circuits locally rather than making a request the
+  // server would just 400 on (`refs` has `.min(1)`).
+  async readMany(refs) {
+    const list = Array.isArray(refs) ? refs.filter(Boolean) : [];
+    if (!list.length) return { ok: true, entries: [], missing: [] };
+    const body = { refs: list.map((r) => `${r.scope}::${r.key}`) };
+    const res = await this._rest('/memories/read', { method: 'POST', body });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error ?? null,
+        httpStatus: res.httpStatus ?? null,
+        retryAfter: res.retryAfter ?? null,
+        networkError: res.networkError ?? null,
+        unusable: res.unusable ?? false,
+      };
+    }
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: (data.entries ?? []).map(withReadFields),
+      missing: data.missing ?? [],
+    };
+  }
+
   async write(args = {}) {
     const {
       scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,

@@ -88,6 +88,27 @@ class LocalStore {
     };
   }
 
+  // readMany(refs) → { ok, entries, missing } — batch lookup for an array of
+  // `{ scope, key }` refs, mirroring the REST/MCP batch read's shape: found
+  // entries in `entries` (same projection `read()` applies), unresolved refs
+  // (absent, archived, or expired) reported as `scope::key` strings in
+  // `missing` rather than silently dropped. A thin loop over `_findByKey` —
+  // this store has no query engine to batch against, so there is no cheaper
+  // shape than one lookup per ref.
+  async readMany(refs = []) {
+    const entries = [];
+    const missing = [];
+    for (const { scope, key } of refs) {
+      const found = this._findByKey(scope, key);
+      if (found && isLive(found.entry)) {
+        entries.push(withReadFields(found.entry));
+      } else {
+        missing.push(`${scope}::${key}`);
+      }
+    }
+    return { ok: true, entries, missing };
+  }
+
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
   // refreshes `updated`; writing an archived key revives it.
   //
@@ -399,6 +420,20 @@ class TwoTierStore {
       if (r.entry) return r;
     }
     return this.home.read({ scope, key });
+  }
+
+  // readMany(refs) → { ok, entries, missing } — per-ref `read()`, so the same
+  // project-shadows-home precedence applies to every ref individually rather
+  // than to the batch as a whole.
+  async readMany(refs = []) {
+    const entries = [];
+    const missing = [];
+    for (const { scope, key } of refs) {
+      const r = await this.read({ scope, key });
+      if (r.entry) entries.push(r.entry);
+      else missing.push(`${scope}::${key}`);
+    }
+    return { ok: true, entries, missing };
   }
 
   async write(args = {}) {

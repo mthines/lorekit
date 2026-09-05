@@ -277,6 +277,25 @@ missing. It exits **non-zero** when the key is found in no readable store, so it
 fits scripts. `--json` emits the full normalized record(s) and which store each
 came from. Both a scope and a key are required (else a usage error).
 
+#### Batch mode: several references in one call
+
+Pass **two or more** references and `show` fetches all of them in one pass
+instead of one invocation per lesson:
+
+```bash
+lorekit show global::prefer-guard-clauses repo::acme/widget::build-flags --json
+```
+
+Each positional must itself parse as a complete `<scope>::<key>` reference —
+that is what tells this apart from the existing `show <scope> <key>`
+two-positional form, whose first positional is a **bare** scope with no `::`.
+Results are reported in the same order the references were given, and
+`--json` emits `{ "results": [{ "scope", "key", "offline", "remote", "diverged" }, …] }`
+instead of the single-reference top-level shape. The remote half of a batch is
+ONE round trip (`POST /memories/read`), not one request per reference; the
+offline half still resolves each reference through the two-tier store, so a
+project-tier lesson still shadows a same-key home-tier one.
+
 ### Addressing a memory: `<scope::key>`
 
 `show`, `write` and `link` all take a memory the same way, and the single-token

@@ -7,6 +7,7 @@ import { translateDbError, RestError } from '../_shared/api/errors.ts';
 import { handleList, handleListPost } from './handlers/list.ts';
 import { handleCreate } from './handlers/create.ts';
 import { handleGet } from './handlers/get.ts';
+import { handleRead } from './handlers/read.ts';
 import { handleUpdate } from './handlers/update.ts';
 import { handleRemove } from './handlers/remove.ts';
 import { handleSearch } from './handlers/search.ts';
@@ -56,6 +57,11 @@ const router = createRouter([
   // whatever the gateway allows — neither of which an unbounded filter bar
   // fits. Each pairs with its GET route through ONE predicate function, so the
   // transports cannot answer differently.
+  // Batch read by `scope::key` reference — one call, several lessons (R1, R4,
+  // R6). Deliberately a literal route rather than a `?refs=` query form: an
+  // unbounded reference list is the same "does not fit in a URL" problem
+  // `/list`/`/facets`/`/activity`/`/pivot` solved by moving to a body.
+  { method: 'POST',   path: '/read',           handler: handleRead,         requires: 'read'  },
   { method: 'POST',   path: '/list',           handler: handleListPost,     requires: 'read'  },
   { method: 'POST',   path: '/facets',         handler: handleFacetsPost,   requires: 'read'  },
   { method: 'POST',   path: '/activity',       handler: handleActivityPost, requires: 'read'  },

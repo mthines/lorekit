@@ -38,6 +38,8 @@ import {
   ActivityQuerySchema,
   ActivityResponseSchema,
   ListMemoriesBodySchema,
+  ReadMemoriesBodySchema,
+  ReadMemoriesResponseSchema,
   ListFacetsBodySchema,
   ActivityBodySchema,
   ReadActivityQuerySchema,
@@ -126,6 +128,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('UpdateMemoryBody', UpdateMemoryBodySchema);
   registry.register('SearchMemoriesBody', SearchMemoriesBodyDocSchema);
   registry.register('ListMemoriesBody', ListMemoriesBodySchema);
+  registry.register('ReadMemoriesBody', ReadMemoriesBodySchema);
+  registry.register('ReadMemoriesResponse', ReadMemoriesResponseSchema);
   registry.register('ListFacetsBody', ListFacetsBodySchema);
   registry.register('ActivityBody', ActivityBodySchema);
   registry.register('RestoreMemoryBody', RestoreMemoryBodySchema);
@@ -549,6 +553,20 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     method: 'get', path: '/memories/{id}', summary: 'Get memory by ID', tags: ['Memories'],
     security, request: { params: MemoryIdParamsSchema },
     responses: { 200: memoryResponse('Memory'), 404: errorResponse, 401: errorResponse },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/read', summary: 'Batch-read memories by scope::key reference', tags: ['Memories'],
+    description:
+      'Fetch several lessons in one call. Each entry in `refs` is a `scope::key` reference, parsed by the ' +
+      'same grammar `POST /memories`\'s `cited` field uses. A reference in more than one scope resolves ' +
+      'independently rather than failing the whole call: one that is well-formed but matches no lesson is ' +
+      'named in `missing`, while a malformed one — and every reference past the 32nd — is dropped silently ' +
+      'and appears in neither list. `missing` is a not-found list, never a malformed-input or truncation report.',
+    security, request: { body: { content: { 'application/json': { schema: ReadMemoriesBodySchema } } } },
+    responses: {
+      200: { description: 'Batch read result', content: { 'application/json': { schema: ReadMemoriesResponseSchema } } },
+      400: errorResponse, 401: errorResponse,
+    },
   });
   registry.registerPath({
     method: 'patch', path: '/memories/{id}', summary: 'Update a memory', tags: ['Memories'],

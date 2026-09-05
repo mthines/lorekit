@@ -222,6 +222,7 @@ describe('REST audit coverage', () => {
     // entry per page render would drown the trail that exists to record change.
     // A new entry in this list needs the same justification.
     expect(readOnlyUnsafe.map(routeKey)).toEqual([
+      'memories POST /read',
       'memories POST /list',
       'memories POST /facets',
       'memories POST /activity',

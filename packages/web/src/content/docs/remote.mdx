@@ -135,6 +135,21 @@ memory.read {
 // → { "value": "Remote lore is working.", "updated_at": "…" }
 ```
 
+Fetching several lessons at once? Pass `refs` (a list of `scope::key` strings)
+instead of `scope`/`key` — one round trip for the whole batch:
+
+```json
+memory.read {
+  refs: ["global::hello-remote", "repo::acme/widget::build-flags"]
+}
+// → { "entries": [ … ], "missing": [ "repo::acme/widget::build-flags" ] }
+```
+
+Every reference resolves independently — an unresolved one lands in `missing`
+rather than failing the call. The CLI's `lorekit show` supports the same
+pattern: pass two or more `scope::key` positionals and it batches them the
+same way.
+
 </TutorialStep>
 
 <TutorialStep number={6} title="Use in CI / GitHub Actions">
