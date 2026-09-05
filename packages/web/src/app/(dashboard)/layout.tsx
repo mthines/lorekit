@@ -89,7 +89,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
       */}
       <CommandPaletteProvider>
         <CommandPalette />
-        <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
+        {/*
+          `data-app-shell` is the hook globals.css uses to stop the DOCUMENT
+          scrolling behind this fixed-height shell — see the "App shell" rule
+          there. It is a styling marker, not state; nothing reads it in JS.
+        */}
+        <div
+          data-app-shell
+          className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row"
+        >
           {/* Pass userId so Dash0Provider can call identify() and attach
               the opaque user ID to all subsequent RUM telemetry */}
           <Dash0Provider userId={user.id} />
@@ -139,7 +147,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     `env()` term, the last row of content sits under the bar on a
                     notched phone.
                   */}
-                  <main className="flex-1 overflow-y-auto p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
+                  {/*
+                    `overscroll-contain`: reaching the end of this scroller must
+                    not chain to the viewport. Without it, one more wheel notch
+                    at the bottom of a long page rubber-banded the DOCUMENT and
+                    dragged the whole shell — sidebar included — up off a black
+                    background, which reads as the page having broken.
+                  */}
+                  <main className="flex-1 overflow-y-auto overscroll-contain p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
                     <div className="flex min-h-full flex-col">
                       <div className="grow">{children}</div>
                       <SiteFooter className="-mx-4 mt-8 md:-mx-6" />

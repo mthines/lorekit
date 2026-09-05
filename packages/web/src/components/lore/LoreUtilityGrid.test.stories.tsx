@@ -8,7 +8,9 @@ import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 /**
  * Interaction tests for {@link LoreUtilityGrid} — the counts, the quadrant
  * drill-down, the `counting_since` qualifier (never the bare word "never"),
- * and the groom clipboard handoff.
+ * and the clipboard hand-off. The prompt's own wording is unit-tested in
+ * `lib/lore-utility-prompt.spec.ts`; this asserts only that the button copies
+ * the assembled prompt for the quadrant on screen.
  */
 const meta: Meta<typeof LoreUtilityGrid> = {
   title: 'Lore/LoreUtilityGrid/Tests',
@@ -91,7 +93,7 @@ export const EachRowDeepLinksIntoTheExplorer: Story = {
   },
 };
 
-export const CopyForGroomCopiesTheSelectedQuadrantOnly: Story = {
+export const CopyPromptCarriesTheInstructionAndTheSelectedQuadrantOnly: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
     await waitFor(() => expect(canvas.getByText('Noise tax')).toBeVisible());
@@ -100,11 +102,21 @@ export const CopyForGroomCopiesTheSelectedQuadrantOnly: Story = {
     // suite runs in actual Chromium via Playwright, not jsdom), so a plain
     // `Object.assign` throws — redefine the property instead.
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    await step('the handoff carries THIS quadrant\'s scope::key lines and nothing else', async () => {
+    await step('the clipboard carries a whole prompt, not a bare list of keys', async () => {
       await userEvent.click(canvas.getByRole('button', { name: /noise tax/i }));
       await waitFor(() => expect(canvas.getByText('legacy-formatting-rule')).toBeVisible());
-      await userEvent.click(canvas.getByRole('button', { name: /copy for groom/i }));
-      await waitFor(() => expect(writeText).toHaveBeenCalledWith('global::legacy-formatting-rule'));
+      await userEvent.click(canvas.getByRole('button', { name: /copy prompt/i }));
+      await waitFor(() => expect(writeText).toHaveBeenCalled());
+
+      const copied = writeText.mock.calls[0]?.[0] as string;
+      // Which quadrant produced it — the ambiguity that made the old bare
+      // `scope::key` copy unsafe, since the same lines mean "prune these"
+      // here and "promote these" one cell over.
+      await expect(copied).toContain('"Noise tax" quadrant');
+      await expect(copied).toContain('wait for my approval before any write, archive, or delete');
+      // THIS quadrant's rows, and not the whole store.
+      await expect(copied).toContain('global::legacy-formatting-rule');
+      await expect(copied).not.toContain('never-run-nx-fanouts-in-a-sandbox');
       await expect(canvas.getByRole('button', { name: /copied/i })).toBeVisible();
     });
   },
