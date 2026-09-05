@@ -66,7 +66,9 @@ from up to 400 candidates rather than from the newest handful. Memories are
 ranked by recurrence and recency, then de-duplicated, before the budget is spent. A header
 reading `9 of 50 memories loaded` means the block was truncated — the trailing
 `More lore: …` line names which scopes hold the rest, and `memory.search` /
-`memory.read` reach them. `hooks.sessionStart` picks the shape:
+`memory.read` reach them. Naming several of them by `scope::key`? Pass them all
+as `memory.read`'s `refs` array in one call instead of one `memory.read` per
+lesson — see the tool reference below. `hooks.sessionStart` picks the shape:
 `hybrid` (default, list + that map), `index` (list only) or `map`
 (map + the three most salient).
 
@@ -239,10 +241,13 @@ Read a lesson by scope and key.
 |----------|----------|------|-------------|
 | `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
 | `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+| `refs` |  | array | Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries. _(array of string)_ |
 
 Requires **read** permission.
 
-Returns: `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.
+Returns: `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every requested reference that did not resolve.
+
+**Batch reads (`refs`):** name only the `scope::key` references you actually need for this run — fewer round trips than one `memory.read` per lesson, at the cost of one call reaching into more than one scope. Each ref resolves independently: an unknown or malformed one lands in `missing` rather than failing the whole call.
 
 ---
 

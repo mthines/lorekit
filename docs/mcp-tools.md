@@ -157,6 +157,37 @@ Read a single lesson by scope + key.
 
 **Returns:** `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.
 
+### Batch reads (`refs`)
+
+Fetch several lessons in one call instead of one `memory.read` per lesson — fewer round trips, at
+the cost of one call reaching into more than one scope. `refs` cannot be combined with `scope`/`key`.
+
+```json
+{
+  "params": {
+    "name": "memory.read",
+    "arguments": {
+      "refs": ["repo::mthines/gw-tools::aw-lessons::worktree-naming", "global::code-review-basics"]
+    }
+  }
+}
+```
+
+Each entry is parsed by the same `scope::key` reference grammar `memory.write`'s `cited` field
+uses: walk the `::` boundaries left to right and split at the first one whose left side is a
+complete, valid scope — so a namespaced key (`aw-lessons::worktree-naming`) rides along in the key
+half rather than being mistaken for another scope segment. The matched scope is used **verbatim**,
+never lowercased — deliberately diverging from the singular `scope`/`key` path's normalisation
+(see [Key decisions](../CLAUDE.md#key-decisions-do-not-relitigate) for why). Silently truncated past
+32 entries, the same cap `cited` enforces.
+
+Name only the references you actually need for this run: each ref resolves independently, so an
+unknown, malformed, archived, or expired one lands in `missing` rather than failing the whole call —
+there is no way to tell "doesn't exist" from "you can't see it" from `missing` alone.
+
+**Returns:** `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }`
+— `missing` names every requested reference that did not resolve, in no particular order.
+
 ---
 
 ## memory.list

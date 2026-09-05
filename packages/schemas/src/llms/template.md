@@ -55,7 +55,9 @@ from up to 400 candidates rather than from the newest handful. Memories are
 ranked by recurrence and recency, then de-duplicated, before the budget is spent. A header
 reading `9 of 50 memories loaded` means the block was truncated — the trailing
 `More lore: …` line names which scopes hold the rest, and `memory.search` /
-`memory.read` reach them. `hooks.sessionStart` picks the shape:
+`memory.read` reach them. Naming several of them by `scope::key`? Pass them all
+as `memory.read`'s `refs` array in one call instead of one `memory.read` per
+lesson — see the tool reference below. `hooks.sessionStart` picks the shape:
 `hybrid` (default, list + that map), `index` (list only) or `map`
 (map + the three most salient).
 

@@ -495,3 +495,58 @@ nudge reads the session's already-recorded shown-set (`core/state.mjs`) and name
 from a list is a different task from an agent recalling a convention, and the shown-set is the
 only place that list already exists. The refs are taken in injection order so the SessionStart set
 leads — it is both the largest and the one in context for the whole turn.
+
+## `memory.read` batching is conditional, verbatim-scoped, and inflates a signal it doesn't count
+
+`memory.read` gained an optional `refs: string[]` of `scope::key` references (MCP, `POST
+/memories/read`, and a variadic `lorekit show`) so an agent holding several keys — the common case
+right after a SessionStart injection — pays for one round trip instead of one per lesson. Reusing
+the existing operation rather than adding a `memory.read_many` tool keeps the tool list flat, but
+it costs the response shape a real branch, and three consequences follow from batching by scope
+rather than by row.
+
+**The response shape is CONDITIONAL on the input, and that conditionality is a real cost, not a
+detail.** `scope`+`key` keeps its exact pre-existing shape — `{ "value", "updated_at" }` or `null`
+— with `entries`/`missing` appearing ONLY when `refs` is passed. A client that branches on
+`response.value` truthiness (correct for the singular path) must ALSO know to check for `entries`
+before it can support batching, and a client that doesn't will silently treat a batch response as
+"lesson not found." This is the price paid to avoid a second tool: every caller of `memory.read`
+now needs a shape-dispatch, not just the ones that want batching.
+
+**Batch resolution matches the STORED scope verbatim; the singular path normalises it.** The
+singular `scope`+`key` read runs the scope through `validateScope`, which lowercases every
+segment before the query. The batch path does not: `groupRefsByScope` groups parsed refs by their
+scope string exactly as `parseMemoryRef` split it, and the per-group query filters on that string
+as-is. The two paths can disagree on the SAME logical scope typed with different casing, and the
+reason is upstream of this change — the write path (`memory_write`) stores `memories.scope`
+exactly as the caller sent it, with no case-folding on insert. A verbatim batch match is therefore
+consistent with what is actually in the column; normalising it would make the batch path MORE
+correct-looking than the data it reads, and silently return nothing for a scope that was written
+with different casing than the ref names. This is the same choice `cited`'s reference grammar
+already made (see the entry above) — reused here rather than re-litigated.
+
+**Batching makes it cheap to open everything, which degrades `opened_count` pull-through — the
+exact ratio `/insights` is built on.** `opened_count / read_count` (see "Lore value is a RATIO"
+above) measures whether a lesson was DELIBERATELY fetched, on the premise that a targeted read
+costs something and so is a signal of intent. A `refs` call collapses that cost: naming ten keys
+that "might be relevant" is as cheap as naming one that definitely is, so `opened_count` starts
+counting curiosity alongside intent, and the ratio drifts UP without the underlying behaviour
+changing. There is no server-side way to tell the two apart after the fact — a targeted read is a
+targeted read regardless of how many refs rode in the same call. The 32-ref truncation cap (the
+same one `cited` uses) bounds the damage per call; it does not remove it. `memory.read`'s tool
+description is written the way `cited`'s is — naming only the refs actually needed for the run —
+because the mitigation is behavioural, not mechanical: there is no query-shape difference between
+a considered batch and a shotgunned one.
+
+**`/insights`' `readCoverage` card shifts upward from this change, breaking comparability with
+historical windows.** `readCoverage` (records-per-read across `memory.list`/`read`/`search`) reads
+`recordMemoryReads`, which the batch path calls exactly like the singular one — once, with every
+found id, tagged `'targeted'` never `'bulk'` (a deliberate distinction: D6 in the implementation
+plan, holding even though the mechanism is a batch of reads, because from the counter's point of
+view N separately-named refs are N targeted reads, not one bulk scan). A `refs` call resolving 5
+of 5 named lessons reports the same records-per-read shape a page of `memory.list` does, so the
+card's trend line moves for a reason unrelated to whether agents are reading MORE per call — it
+is reading whether they are asking for more THINGS per call, which batching now makes cheaper to
+do. A window straddling this feature's rollout is not comparable to one entirely before or after
+it, and the card carries no annotation marking the boundary — a known, accepted gap rather than a
+silently wrong one.
