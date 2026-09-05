@@ -35,7 +35,16 @@ export async function handleRead(
   if (!v.ok) return v.response;
 
   const parsed = parseMemoryRefs(v.data.refs);
-  span.setAttributes({ 'lorekit.operation': 'memories.read_refs', 'lorekit.refs.count': parsed.length });
+  // Both counts, because `parseMemoryRefs` TRUNCATES at `MEMORY_CITED_MAX` and
+  // drops unparseable refs silently — neither loss appears in `missing`, so
+  // `count` alone reports a 40-ref batch as a 32-ref one. The gap between the
+  // two is the only place truncation is observable. Numeric measures, not
+  // dimensions: no cardinality added.
+  span.setAttributes({
+    'lorekit.operation': 'memories.read_refs',
+    'lorekit.refs.requested': v.data.refs.length,
+    'lorekit.refs.count': parsed.length,
+  });
 
   const groups = groupRefsByScope(parsed);
   const tracedDb = createTracedClient(db, span);
