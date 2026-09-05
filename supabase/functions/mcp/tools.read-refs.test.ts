@@ -147,6 +147,54 @@ Deno.test('AC-2: refs together with scope or key is rejected', async () => {
   assertEquals(queries.length, 0, 'the rejection must happen before any db call');
 });
 
+// Review follow-up (PR #654): `parseMemoryRefs` DROPS what it cannot parse, so
+// without a shape guard a non-array or empty `refs` resolved to an empty,
+// SUCCESSFUL `{entries:[],missing:[]}` — a malformed call indistinguishable
+// from a well-formed one that matched nothing. REST already 400s on the same
+// input via `ReadMemoriesBodySchema`; this pins the MCP side to agree.
+Deno.test('a non-array refs is rejected, not read as zero matches', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb();
+
+  const err = await assertRejects(
+    () => toolRead(db, { refs: 'global::a' as unknown as string[] }, null, span),
+    UserInputError,
+  );
+  assertEquals(err.message.includes('refs'), true);
+  assertEquals(queries.length, 0, 'the rejection must happen before any db call');
+});
+
+Deno.test('an empty refs array is rejected, not read as zero matches', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb();
+
+  await assertRejects(
+    () => toolRead(db, { refs: [] }, null, span),
+    UserInputError,
+  );
+  assertEquals(queries.length, 0, 'the rejection must happen before any db call');
+});
+
+// The guard validates the SHAPE only. An individually unparseable ref inside a
+// well-formed array does NOT fail the call — but note it also does not reach
+// `missing`: `parseMemoryRefs` drops it before `missingRefs` ever sees it, and
+// `missing` is computed from PARSED refs minus found rows. So `missing` reports
+// well-formed-but-not-found, never malformed. Pinned here because the catalog
+// note documents exactly this distinction, and an earlier draft of that note
+// claimed malformed refs surfaced in `missing`.
+Deno.test('an unparseable ref is dropped, not surfaced in missing', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb();
+
+  const out = await toolRead(db, { refs: ['not-a-ref'] }, null, span) as {
+    entries: unknown[];
+    missing: string[];
+  };
+  assertEquals(out.entries, []);
+  assertEquals(out.missing, [], 'malformed refs are dropped at parse time');
+  assertEquals(queries.length, 0, 'nothing parseable means nothing to query');
+});
+
 Deno.test('AC-3: refs spanning two scopes resolve in one call', async () => {
   const { span } = newRootSpan();
   const rowsByScope = new Map<string, Row[]>([

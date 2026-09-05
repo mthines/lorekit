@@ -293,6 +293,15 @@ export async function toolRead(
     if (rawScope !== undefined || key !== undefined) {
       throw new UserInputError('refs cannot be combined with scope and key');
     }
+    // `parseMemoryRefs` DROPS what it cannot parse, so a non-array (or an empty
+    // array) would otherwise resolve to `{entries:[],missing:[]}` — a malformed
+    // call reported as a successful read that found nothing. REST already 400s
+    // on the same input via `ReadMemoriesBodySchema`; MCP rejects it here so the
+    // two surfaces agree. Refs that are individually unparseable still drop
+    // silently into `missing` — only the SHAPE is validated.
+    if (!Array.isArray(refs) || refs.length === 0) {
+      throw new UserInputError('refs must be a non-empty array of scope::key strings');
+    }
     return toolReadRefs(db, refs, userId, span, keyScoping);
   }
   if (!rawScope || !key) throw new UserInputError('scope and key are required');
