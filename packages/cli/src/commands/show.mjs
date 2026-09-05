@@ -100,13 +100,40 @@ async function readManyFrom(store, refs) {
     const msg = describeError(res);
     return refs.map(() => ({ available: true, found: false, record: null, error: msg }));
   }
+  return projectBatchResult(refs, res);
+}
+
+/** The message a ref the store never looked up carries. Exported for the spec. */
+export const REF_DROPPED_ERROR =
+  'not looked up — the store dropped this reference (past the 32-reference cap, or a scope it does not accept)';
+
+/**
+ * Project a `readMany` result back onto the requested refs, in request order.
+ * Pure — no store, no IO — so the three outcomes below are unit-testable
+ * without a mock REST server (see CLAUDE.md on the loopback-HTTP flakiness).
+ *
+ * A ref the store ANSWERED is in exactly one of `entries` or `missing`. One in
+ * NEITHER was never looked up: the remote store drops refs past the 32-reference
+ * cap and refs whose scope its stricter grammar rejects, and neither loss
+ * reaches `missing`, which is a not-found list by design. Reporting those as
+ * `found: false` would print "no such key in this store" for a lesson that may
+ * well be there, so they carry an explicit error instead. The local store
+ * answers every ref it is given, so that branch is unreachable for it by
+ * construction rather than by a transport check.
+ */
+export function projectBatchResult(refs, res) {
   const byRef = new Map();
   for (const entry of res.entries || []) {
     const record = normalizeEntry(entry);
     byRef.set(`${record.scope}::${record.key}`, record);
   }
+  const answered = new Set(res.missing || []);
   return refs.map(({ scope, key }) => {
-    const record = byRef.get(`${scope}::${key}`) || null;
+    const ref = `${scope}::${key}`;
+    const record = byRef.get(ref) || null;
+    if (!record && !answered.has(ref)) {
+      return { available: true, found: false, record: null, error: REF_DROPPED_ERROR };
+    }
     return { available: true, found: Boolean(record), record, error: null };
   });
 }
@@ -139,7 +166,12 @@ async function showRefs(refs, args, root, env) {
     const foundRemote = Boolean(remote_.available && remote_.found);
     const diverged = foundOffline && foundRemote && recordsDiverge(offline.record, remote_.record);
     const found = foundOffline || foundRemote;
-    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found };
+    // Every readable store dropped this ref rather than answering it — so a
+    // "not found" verdict would be an assertion nobody made.
+    const unanswered = !found && [offline, remote_]
+      .filter((s) => s.available)
+      .every((s) => Boolean(s.error));
+    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found, unanswered };
   });
 
   if (args.json) {
@@ -157,7 +189,12 @@ async function showRefs(refs, args, root, env) {
       renderRecordSection('Offline', r.offline);
       renderRecordSection('Remote', r.remote_, remoteAvailable ? connection.endpoint : undefined);
       if (r.diverged) status('warn', 'divergence', 'the offline and remote values differ');
-      if (!r.found) log(`    ${c.dim(`no memory found for ${r.scope}::${r.key} in the readable store(s)`)}`);
+      // "not found" and "nobody looked" are different answers: say which.
+      if (!r.found) {
+        log(`    ${c.dim(r.unanswered
+          ? `no store looked up ${r.scope}::${r.key} — it may exist`
+          : `no memory found for ${r.scope}::${r.key} in the readable store(s)`)}`);
+      }
     }
     log('');
   }
