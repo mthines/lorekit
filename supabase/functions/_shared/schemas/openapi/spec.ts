@@ -559,8 +559,9 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     description:
       'Fetch several lessons in one call. Each entry in `refs` is a `scope::key` reference, parsed by the ' +
       'same grammar `POST /memories`\'s `cited` field uses. A reference in more than one scope resolves ' +
-      'independently; an unknown or malformed one is named in `missing` rather than failing the whole call. ' +
-      'Silently truncated past 32 references.',
+      'independently rather than failing the whole call: one that is well-formed but matches no lesson is ' +
+      'named in `missing`, while a malformed one — and every reference past the 32nd — is dropped silently ' +
+      'and appears in neither list. `missing` is a not-found list, never a malformed-input or truncation report.',
     security, request: { body: { content: { 'application/json': { schema: ReadMemoriesBodySchema } } } },
     responses: {
       200: { description: 'Batch read result', content: { 'application/json': { schema: ReadMemoriesResponseSchema } } },

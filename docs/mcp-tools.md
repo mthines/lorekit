@@ -182,11 +182,17 @@ never lowercased — deliberately diverging from the singular `scope`/`key` path
 32 entries, the same cap `cited` enforces.
 
 Name only the references you actually need for this run: each ref resolves independently, so an
-unknown, malformed, archived, or expired one lands in `missing` rather than failing the whole call —
-there is no way to tell "doesn't exist" from "you can't see it" from `missing` alone.
+unknown, archived, or expired one lands in `missing` rather than failing the whole call — there is
+no way to tell "doesn't exist" from "you can't see it" from `missing` alone.
+
+A **malformed** reference does not land there. It is dropped before the query, as is every
+reference past the 32nd, so neither appears in `entries` or in `missing`: the list is a not-found
+report, never a malformed-input or truncation one. To tell "absent" from "never looked up", compare
+`entries` + `missing` against what you sent.
 
 **Returns:** `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }`
-— `missing` names every requested reference that did not resolve, in no particular order.
+— `missing` names every well-formed reference within the first 32 that matched no lesson, in no
+particular order.
 
 ---
 

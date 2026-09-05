@@ -1093,8 +1093,10 @@ export type ReadMemoriesBody = z.infer<typeof ReadMemoriesBodySchema>;
 /**
  * `POST /memories/read` response — full `MemoryEntrySchema` rows (D7: the REST
  * batch response shape is byte-identical to `GET /:id`'s, unlike MCP's leaner
- * `{scope,key,value,updated_at}` shape). `missing` names every requested
- * `scope::key` reference that did not resolve.
+ * `{scope,key,value,updated_at}` shape). `missing` names every WELL-FORMED
+ * `scope::key` reference, within the first 32, that matched no lesson — a
+ * malformed reference and every one past the cap are dropped by
+ * `parseMemoryRefs` and appear in neither array.
  */
 export const ReadMemoriesResponseSchema = z.object({
   entries: z.array(MemoryEntrySchema),

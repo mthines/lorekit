@@ -80,10 +80,16 @@ export function groupRefsByScope(refs: readonly RefEntry[]): { scope: string; ke
 }
 
 /**
- * The requested refs that did not resolve to a found row, as `scope::key`
- * strings built from the caller's OWN parsed segments — never `null` holes
- * in `entries`, so a caller always knows exactly which of its refs came back
- * empty. Order follows `requested`.
+ * The refs in `requested` that did not resolve to a found row, as `scope::key`
+ * strings built from the caller's OWN parsed segments — never `null` holes in
+ * `entries`. Order follows `requested`.
+ *
+ * `requested` is what `parseMemoryRefs` RETURNED, not what the caller sent, so
+ * this is a not-found list and nothing more: a ref dropped as unparseable, or
+ * truncated past `MEMORY_CITED_MAX`, never reaches this function and so appears
+ * in neither `entries` nor `missing`. A caller that needs to tell "absent" from
+ * "never looked up" compares its own request against `entries` + `missing`;
+ * server-side the same gap is `lorekit.refs.requested` vs `lorekit.refs.count`.
  */
 export function missingRefs(
   requested: readonly RefEntry[],
