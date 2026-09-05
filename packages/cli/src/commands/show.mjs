@@ -103,6 +103,30 @@ async function readManyFrom(store, refs) {
   return projectBatchResult(refs, res);
 }
 
+/**
+ * The line printed under a ref no store returned a record for — `null` when the
+ * ref WAS found, since the caller only asks about unresolved ones. Pure and
+ * exported so the three answers below are unit-testable.
+ *
+ * Three answers, not two. A slot carrying an `error` NEVER LOOKED — either the
+ * store dropped the ref (`REF_DROPPED_ERROR`) or the read itself failed — so
+ * its silence is not a "not found", and lumping it in with a store that did
+ * look states as absent something nobody checked. The mixed case is the whole
+ * reason this is not a boolean: the local store answers every ref it is given
+ * and never truncates, so past the remote's 32-ref cap the offline store says
+ * "no" while the remote never looked, and only naming both halves is accurate.
+ */
+export function unresolvedReason(ref, slots) {
+  const readable = slots.filter((s) => s.available);
+  const dropped = readable.filter((s) => Boolean(s.error));
+  const answered = readable.length - dropped.length;
+  if (answered === 0) return `no store looked up ${ref} — it may exist`;
+  if (dropped.length > 0) {
+    return `${ref} not found in the store(s) that looked; ${dropped.length} did not look — it may exist there`;
+  }
+  return `no memory found for ${ref} in the readable store(s)`;
+}
+
 /** The message a ref the store never looked up carries. Exported for the spec. */
 export const REF_DROPPED_ERROR =
   'not looked up — the store dropped this reference (past the 32-reference cap, or a scope it does not accept)';
@@ -166,12 +190,9 @@ async function showRefs(refs, args, root, env) {
     const foundRemote = Boolean(remote_.available && remote_.found);
     const diverged = foundOffline && foundRemote && recordsDiverge(offline.record, remote_.record);
     const found = foundOffline || foundRemote;
-    // Every readable store dropped this ref rather than answering it — so a
-    // "not found" verdict would be an assertion nobody made.
-    const unanswered = !found && [offline, remote_]
-      .filter((s) => s.available)
-      .every((s) => Boolean(s.error));
-    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found, unanswered };
+    // Which stores actually looked decides what a "not found" may claim.
+    const unresolved = found ? null : unresolvedReason(`${scope}::${key}`, [offline, remote_]);
+    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found, unresolved };
   });
 
   if (args.json) {
@@ -190,11 +211,7 @@ async function showRefs(refs, args, root, env) {
       renderRecordSection('Remote', r.remote_, remoteAvailable ? connection.endpoint : undefined);
       if (r.diverged) status('warn', 'divergence', 'the offline and remote values differ');
       // "not found" and "nobody looked" are different answers: say which.
-      if (!r.found) {
-        log(`    ${c.dim(r.unanswered
-          ? `no store looked up ${r.scope}::${r.key} — it may exist`
-          : `no memory found for ${r.scope}::${r.key} in the readable store(s)`)}`);
-      }
+      if (r.unresolved) log(`    ${c.dim(r.unresolved)}`);
     }
     log('');
   }

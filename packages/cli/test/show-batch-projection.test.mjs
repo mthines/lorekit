@@ -11,7 +11,7 @@
 // rejects — and calling that "not found" asserts something no store said.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { projectBatchResult, REF_DROPPED_ERROR } from '../src/commands/show.mjs';
+import { projectBatchResult, REF_DROPPED_ERROR, unresolvedReason } from '../src/commands/show.mjs';
 
 const ref = (scope, key) => ({ scope, key });
 const row = (scope, key) => ({ scope, key, value: 'v', updated_at: '2026-07-20T10:00:00.000Z' });
@@ -77,4 +77,56 @@ test('an absent `missing` field does not crash the projection', () => {
   // Totality, matching every other batch-read helper in this change.
   const slots = projectBatchResult([ref('global', 'a')], { entries: [row('global', 'a')] });
   assert.equal(slots[0].found, true);
+});
+
+// --- unresolvedReason -------------------------------------------------------
+// The verdict printed under a ref nothing returned. The projection above says
+// per STORE whether it looked; this says what the two stores together license
+// the CLI to claim.
+
+const looked = { available: true, found: false, record: null, error: null };
+const didNotLook = { available: true, found: false, record: null, error: REF_DROPPED_ERROR };
+const unavailable = { available: false, reason: 'no remote configured' };
+
+test('both stores looked and neither had it — a plain not-found', () => {
+  const msg = unresolvedReason('global::a', [looked, looked]);
+  assert.match(msg, /no memory found for global::a/);
+});
+
+test('the only readable store looked — still a plain not-found', () => {
+  const msg = unresolvedReason('global::a', [looked, unavailable]);
+  assert.match(msg, /no memory found for global::a/);
+});
+
+test('no readable store looked — nobody checked, so it may exist', () => {
+  const msg = unresolvedReason('global::a', [didNotLook, unavailable]);
+  assert.match(msg, /no store looked up global::a/);
+});
+
+test('an unavailable store alone is also "nobody looked"', () => {
+  // A store that is switched off never looked either — the previous wording
+  // ("no memory found in the readable store(s)") named a set that was empty.
+  const msg = unresolvedReason('global::a', [unavailable, unavailable]);
+  assert.match(msg, /no store looked up global::a/);
+});
+
+test('MIXED: one store looked and said no, the other never looked', () => {
+  // The reachable case that a boolean could not express, and the reason this
+  // function exists: `LocalStore.readMany` answers every ref and never
+  // truncates, so past the remote's 32-ref cap the offline store genuinely
+  // reports not-found while the remote silently dropped the reference.
+  const msg = unresolvedReason('global::a', [looked, didNotLook]);
+  assert.match(msg, /not found in the store\(s\) that looked/,
+    'must not claim the lesson is absent everywhere');
+  assert.match(msg, /1 did not look/);
+  assert.doesNotMatch(msg, /no memory found/,
+    'the flat not-found wording overstates what the stores reported');
+});
+
+test('a store that ERRORED counts as "did not look", not as not-found', () => {
+  // `readManyFrom` degrades a transport failure to an error on every slot; a
+  // down store's silence is not evidence of absence either.
+  const errored = { available: true, found: false, record: null, error: 'fetch failed' };
+  const msg = unresolvedReason('global::a', [looked, errored]);
+  assert.match(msg, /1 did not look/);
 });
