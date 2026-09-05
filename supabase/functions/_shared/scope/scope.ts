@@ -246,7 +246,7 @@ export function parseMemoryRefs(raw: unknown): MemoryRef[] {
   for (const entry of raw) {
     const ref = parseMemoryRef(entry);
     if (!ref) continue;
-    const id = `${ref.scope.toLowerCase()}\u0000${ref.key}`;
+    const id = `${ref.scope}\u0000${ref.key}`;
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(ref);
