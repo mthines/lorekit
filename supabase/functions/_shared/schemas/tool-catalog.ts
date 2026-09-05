@@ -108,6 +108,14 @@ export interface JsonSchemaObject {
   readonly type: 'object';
   readonly required?: readonly string[];
   readonly properties?: Readonly<Record<string, JsonSchemaProperty>>;
+  /**
+   * Mutually exclusive argument shapes, when no single `required` list can
+   * describe the tool. `oneOf` (not `anyOf`) because the alternatives are
+   * EXCLUSIVE: an input satisfying two of them is rejected, which is what
+   * makes the advertised schema agree with a handler that refuses the
+   * combined form. Shipped verbatim in `tools/list` by `toWireTool`.
+   */
+  readonly oneOf?: readonly { readonly required: readonly string[] }[];
 }
 
 export interface McpToolDoc {
@@ -289,7 +297,14 @@ export const MCP_TOOLS = [
     surfaces: { mcp: true, cli: 'show', rest: 'GET /:id', handler: 'toolRead' },
     inputSchema: {
       type: 'object',
-      required: ['scope', 'key'],
+      // `refs` is mutually exclusive with `scope`+`key` (the handler throws on
+      // the combined form), so NEITHER can be unconditionally required — a
+      // top-level `required: ['scope','key']` advertises a schema under which
+      // no legal batch call exists. The two shapes are expressed instead.
+      oneOf: [
+        { required: ['scope', 'key'] },
+        { required: ['refs'] },
+      ],
       properties: {
         scope,
         key,
@@ -298,7 +313,8 @@ export const MCP_TOOLS = [
     },
     returns: '`{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every requested reference that did not resolve.',
     notes: [
-      '**Batch reads (`refs`):** name only the `scope::key` references you actually need for this run — fewer round trips than one `memory.read` per lesson, at the cost of one call reaching into more than one scope. Each ref resolves independently: an unknown or malformed one lands in `missing` rather than failing the whole call.',
+      '**Exactly one of two argument shapes is required:** `scope` **and** `key` together (single read), **or** `refs` alone (batch read). They cannot be combined — a call carrying both is rejected. No argument is required on its own, which is why none is marked required above.',
+      '**Batch reads (`refs`):** name only the `scope::key` references you actually need for this run — fewer round trips than one `memory.read` per lesson, at the cost of one call reaching into more than one scope. Each ref resolves independently rather than failing the whole call: one that is well-formed but matches no lesson is named in `missing`, while one that is not valid `scope::key` at all is dropped silently and appears nowhere — so `missing` is a not-found list, never a malformed-input list. A `refs` that is not a non-empty array is rejected outright.',
     ],
   },
   {

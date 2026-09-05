@@ -163,9 +163,18 @@ export const MCP_TOOL_DEFS = [
     "description": "Read a lesson by scope and key",
     "inputSchema": {
       "type": "object",
-      "required": [
-        "scope",
-        "key"
+      "oneOf": [
+        {
+          "required": [
+            "scope",
+            "key"
+          ]
+        },
+        {
+          "required": [
+            "refs"
+          ]
+        }
       ],
       "properties": {
         "scope": {
