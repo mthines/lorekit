@@ -40,8 +40,8 @@ The literal routes are registered before the `/:id` routes in `index.ts` so a fu
 `POST /:id` cannot silently swallow them.
 
 **A POST here does not imply a write.** `POST /read`, `POST /list`, `POST /facets`, `POST /pivot`,
-`POST /activity` and `POST /search` are all `requires: 'read'` and none of them records an audit
-event — the verb says "the request does not fit in a URL", not "this changes something".
+`POST /activity`, `POST /search` and `POST /groom/preview` are all `requires: 'read'` and none of
+them records an audit event — the verb says "the request does not fit in a URL", not "this changes something".
 `POST /read` is the newest: a batch `scope::key` reference list cannot be carried in a query
 string (see `read.ts`). `audit-coverage.spec.ts` pins that exact list, so adding another
 read-only POST is a deliberate edit rather than a silent one.
