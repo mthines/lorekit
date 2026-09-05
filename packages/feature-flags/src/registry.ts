@@ -61,10 +61,10 @@ const REGISTRY_INPUT = [
   {
     key: 'retention-policies',
     description:
-      'Settings → Grooming — retention policies that auto-archive stale lore, plus its sidebar nav entry, and the Lore Explorer’s retention-preview conditions. Gates the dashboard UI ONLY, and it is now the single gate: the MCP/REST surface (policy.*, groom.*, memory.protect) is enabled unconditionally. It used to carry a second, independent backend gate (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret) — removed, because it never gated visibility (`tools/list` advertised the tools either way) and was unset in every environment, so its only effect was an advertised tool that always failed. Flipping this flag on is therefore a UI decision with no backend prerequisite.',
+      'Settings → Grooming — retention policies that auto-archive stale lore, plus its sidebar nav entry, and the Lore Explorer’s retention-preview conditions. Gates the dashboard UI ONLY, and it is now the single gate: the MCP/REST surface (policy.*, groom.*, memory.protect) is enabled unconditionally. It used to carry a second, independent backend gate (`LOREKIT_RETENTION_POLICIES_ENABLED`, a Supabase secret) — removed, because it never gated visibility (`tools/list` advertised the tools either way) and was unset in every environment, so its only effect was an advertised tool that always failed. Flipping this flag is therefore a UI decision with no backend prerequisite. DEFAULTS ON: the surface shipped complete (conditions live in the one filter menu, thresholds narrow every count on the page, policies reach all scopes and name themselves), so the flag is now a kill switch for turning it back OFF, not a rollout gate holding it back.',
     type: 'boolean',
     variants: { off: false, on: true },
-    defaultVariant: 'off',
+    defaultVariant: 'on',
     owner: '@lorekit/web',
     tags: ['dashboard', 'web', 'rollout'],
   },
