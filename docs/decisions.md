@@ -518,11 +518,19 @@ singular `scope`+`key` read runs the scope through `validateScope`, which lowerc
 segment before the query. The batch path does not: `groupRefsByScope` groups parsed refs by their
 scope string exactly as `parseMemoryRef` split it, and the per-group query filters on that string
 as-is. The two paths can disagree on the SAME logical scope typed with different casing, and the
-reason is upstream of this change — the write path (`memory_write`) stores `memories.scope`
-exactly as the caller sent it, with no case-folding on insert. A verbatim batch match is therefore
-consistent with what is actually in the column; normalising it would make the batch path MORE
+reason is upstream of this change — `memory_write` itself does no case-folding on insert, so what
+reaches `memories.scope` is whatever the calling transport passed it, and the transports differ:
+MCP's `memory.write` runs `validateScope` first (so MCP-written rows are lowercased), while REST's
+`POST /` validates `scope` with the shape-only `RawScopeSchema` and forwards it unchanged. The
+column therefore holds whatever each writer happened to send, and no reader can infer which. A
+verbatim batch match is consistent with that; normalising it would make the batch path MORE
 correct-looking than the data it reads, and silently return nothing for a scope that was written
-with different casing than the ref names. This is the same choice `cited`'s reference grammar
+with different casing than the ref names.
+
+Note the corollary, which cost a review round: because a REFERENCE is resolved verbatim,
+`parseMemoryRefs` must not fold two refs differing only in scope case either — doing so kept one
+address and discarded the other, and since the dominant (MCP) write path lowercases, the surviving
+one was usually the one that could not resolve. This is the same choice `cited`'s reference grammar
 already made (see the entry above) — reused here rather than re-litigated.
 
 **Batching makes it cheap to open everything, which degrades `opened_count` pull-through — the
