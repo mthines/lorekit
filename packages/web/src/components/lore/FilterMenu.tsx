@@ -436,8 +436,11 @@ export function FilterMenu({
   }, [facets, field, filters, query]);
 
   const retentionRows = useMemo(
-    () => (retentionField ? retentionValueRows(retentionField, query) : []),
-    [retentionField, query],
+    () =>
+      retentionField
+        ? retentionValueRows(retentionField, query, retention?.[retentionField])
+        : [],
+    [retentionField, query, retention],
   );
 
   const rowCount = retentionField

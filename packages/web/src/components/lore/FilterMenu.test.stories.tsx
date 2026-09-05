@@ -936,6 +936,42 @@ export const RetentionPillEditsAndClears: StoryObj<typeof RetentionHarness> = {
 };
 
 /**
+ * Reopening a condition set to a TYPED value shows that value, selected.
+ *
+ * The presets are five round numbers; the search box lets a reader apply any
+ * legal integer. So the value in force is regularly one the preset list does not
+ * contain, and a list that shows only presets then contradicts the pill sitting
+ * beside it — five rows, none of them selected, for a condition the bar says is
+ * applied. The applied value gets a row of its own, leading and labelled custom.
+ */
+export const AnAppliedCustomValueIsShownSelected: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness initialRetention={{ minAgeDays: 5 }} />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const screen = within(document.body);
+
+    await step('the bar shows the typed threshold', async () => {
+      await expect(canvas.getByLabelText('Created: More than 5 days ago')).toBeInTheDocument();
+    });
+
+    await step('reopening the condition leads with that value, selected', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /change value/i }));
+      const list = await screen.findByRole('listbox', { name: /created values/i });
+      const options = within(list).getAllByRole('option');
+
+      // Leading, so the state the reader came to change is the first thing there.
+      await expect(options[0]).toHaveAccessibleName(/more than 5 days ago/i);
+      await expect(options[0]).toHaveAttribute('aria-selected', 'true');
+      await expect(within(options[0]!).getByText('custom')).toBeInTheDocument();
+
+      // And it is an ADDITION — every preset is still reachable underneath it.
+      await expect(options).toHaveLength(6);
+      await expect(options[1]).toHaveAccessibleName(/more than 7 days ago/i);
+    });
+  },
+};
+
+/**
  * "Create retention policy" is offered only when there is somewhere to send it.
  *
  * `LoreExplorer` omits `onCreatePolicy` while the `retention-policies` flag is

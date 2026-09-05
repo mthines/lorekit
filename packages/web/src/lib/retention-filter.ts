@@ -555,11 +555,29 @@ export interface RetentionValueRow {
  * An out-of-bounds or non-numeric query yields no custom row, so the reader
  * gets the menu's empty state instead of a value that would be silently dropped
  * by `normalizeRetentionConditions` on the next read of the URL.
+ *
+ * `applied` is the condition's CURRENT value, and it earns a row of its own when
+ * it is not one of the presets. Without it, reopening a condition set to a typed
+ * value (`Created: More than 5 days ago`) showed five preset rows with none
+ * selected — the list denying a value the pill beside it was displaying. The row
+ * leads for the same reason the typed value does: it is the state the reader
+ * came to change.
  */
-export function retentionValueRows(field: RetentionField, query: string): RetentionValueRow[] {
+export function retentionValueRows(
+  field: RetentionField,
+  query: string,
+  applied?: number,
+): RetentionValueRow[] {
   const { presets } = requireRetentionField(field);
   const needle = query.trim();
-  if (!needle) return presets.map((value) => ({ value, custom: false }));
+  if (!needle) {
+    const presetRows = presets.map((value) => ({ value, custom: false }));
+    // Only when it is not already a preset — otherwise the applied value would
+    // appear twice, once labelled "custom", above its own preset row.
+    return applied === undefined || presets.includes(applied)
+      ? presetRows
+      : [{ value: applied, custom: true }, ...presetRows];
+  }
 
   const matching = presets.filter((preset) => String(preset).startsWith(needle));
   const typed = parseCondition(needle, RETENTION_CONDITION_BOUNDS[field]);

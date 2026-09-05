@@ -491,6 +491,37 @@ describe('retentionValueRows', () => {
     expect(retentionValueRows('maxOpenedCount', '0')).toEqual([{ value: 0, custom: false }]);
     expect(retentionValueRows('maxSeenCount', '0')).toEqual([{ value: 0, custom: true }]);
   });
+
+  it('gives an applied value that is NOT a preset a leading row of its own', () => {
+    // Reopening `Created` set to a typed 5 must show that 5, or the list denies
+    // the value the pill beside it is displaying and nothing reads as selected.
+    expect(retentionValueRows('minAgeDays', '', 5)).toEqual([
+      { value: 5, custom: true },
+      { value: 7, custom: false },
+      { value: 30, custom: false },
+      { value: 90, custom: false },
+      { value: 180, custom: false },
+      { value: 365, custom: false },
+    ]);
+  });
+
+  it('does not duplicate an applied value that IS a preset', () => {
+    expect(retentionValueRows('minAgeDays', '', 30)).toEqual(retentionValueRows('minAgeDays', ''));
+  });
+
+  it('leaves 0 applied on the zero-floor field as its own preset row', () => {
+    // `maxOpenedCount: 0` is the most-used threshold in the set and IS a preset,
+    // so it must not acquire a second row labelled custom.
+    expect(retentionValueRows('maxOpenedCount', '', 0)).toEqual(
+      retentionValueRows('maxOpenedCount', ''),
+    );
+  });
+
+  it('ignores the applied value once a query narrows the list', () => {
+    // The query is the reader's live question; the applied value is the state
+    // they are changing. A `3` must not resurrect an unrelated applied 5.
+    expect(retentionValueRows('minAgeDays', '3', 5).map((r) => r.value)).toEqual([3, 30, 365]);
+  });
 });
 
 describe('setRetentionCondition', () => {
