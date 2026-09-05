@@ -43,13 +43,36 @@ export interface RefEntry {
 const STRUCTURAL_KEY_CHARS = /[,()"\\]/;
 const KEY_MAX_LENGTH = 512;
 
+/**
+ * Could a row with this key EXIST? `memories.key` is `text not null` with no
+ * charset constraint, and every schema that accepts one caps it at 512, so this
+ * is the whole of it. A ref failing here is genuinely not-found — no row can
+ * carry that key — which is what makes reporting it in `missing` truthful.
+ */
+export function isStorableKey(key: string): boolean {
+  return typeof key === 'string' && key.length > 0 && key.length <= KEY_MAX_LENGTH;
+}
+
 export function isQueryableKey(key: string): boolean {
-  return (
-    typeof key === 'string'
-    && key.length > 0
-    && key.length <= KEY_MAX_LENGTH
-    && !STRUCTURAL_KEY_CHARS.test(key)
-  );
+  return isStorableKey(key) && !STRUCTURAL_KEY_CHARS.test(key);
+}
+
+/**
+ * The storable refs `groupRefsByScope` cannot batch — their key is legal in the
+ * table but not in an `.in()` value list. Each needs its own
+ * `.eq('scope', s).eq('key', k)` query, which is exactly the shape the SINGULAR
+ * `memory.read` path already uses, so nothing new is introduced.
+ *
+ * Without this the batch path would be strictly WEAKER than the singular reads
+ * it replaces: `memory_write` accepts a key containing `,()"\` (no charset rule
+ * exists anywhere on the write path), `groupRefsByScope` drops it before any
+ * query, and `missingRefs` then reports an existing lesson as not-found — the
+ * one class for which `missing`'s "these matched nothing" contract would be a
+ * lie. Order follows `refs`; the count is bounded by `MEMORY_CITED_MAX` like
+ * every other per-ref cost here.
+ */
+export function unbatchableRefs(refs: readonly RefEntry[]): RefEntry[] {
+  return refs.filter(({ key }) => isStorableKey(key) && !isQueryableKey(key));
 }
 
 /**
@@ -60,8 +83,11 @@ export function isQueryableKey(key: string): boolean {
  * concurrently, instead of one query per ref.
  *
  * A ref whose key fails `isQueryableKey` is dropped from every group — it
- * never reaches a query — and resolves to `missing` via `missingRefs` below,
- * exactly as an unresolvable scope or key does.
+ * never reaches an `.in()` list. It is NOT thereby unread: if the key is
+ * storable, `unbatchableRefs` hands it to the transport for its own `.eq`
+ * query. Only a key no row could carry (empty, or over 512 chars) is left for
+ * `missingRefs`, where "not found" is the truth rather than a stand-in for
+ * "never looked".
  */
 export function groupRefsByScope(refs: readonly RefEntry[]): { scope: string; keys: string[] }[] {
   const order: string[] = [];
@@ -90,6 +116,11 @@ export function groupRefsByScope(refs: readonly RefEntry[]): { scope: string; ke
  * in neither `entries` nor `missing`. A caller that needs to tell "absent" from
  * "never looked up" compares its own request against `entries` + `missing`;
  * server-side the same gap is `lorekit.refs.requested` vs `lorekit.refs.count`.
+ *
+ * Every ref that DOES reach here was queried — `groupRefsByScope` and
+ * `unbatchableRefs` between them cover every storable key — except one whose
+ * key no row could carry, for which "not found" is simply true. So the two
+ * silent-drop classes are both upstream of this function, and there is no third.
  */
 export function missingRefs(
   requested: readonly RefEntry[],

@@ -9,7 +9,7 @@ import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import { MEMORY_SELECT, shapeMemoryRow, ReadMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
 import { parseMemoryRefs } from '../../_shared/scope/scope.ts';
-import { groupRefsByScope, missingRefs } from '../../_shared/memory/read-refs.ts';
+import { groupRefsByScope, missingRefs, unbatchableRefs } from '../../_shared/memory/read-refs.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
 import { CLIENT_HEADER } from '../../_shared/api/router.ts';
 import { parseUsageClient } from '../../_shared/telemetry/usage-stats.ts';
@@ -20,8 +20,9 @@ type MemoryRow = Tables<'memories'>;
  * `POST /memories/read` — batch read by `scope::key` reference (R1, R4, R6, R7,
  * R8). The REST counterpart to MCP's `toolReadRefs`. Modelled on `get.ts` for
  * everything below the fan-out: one `.eq('scope', s).in('key', keys)` query
- * per DISTINCT scope (plan D5), all awaited CONCURRENTLY, `memberOrgIds`
- * resolved ONCE ahead of the fan-out and reused by every group's tenant
+ * per DISTINCT scope (plan D5), plus one `.eq('key', k)` for each key an
+ * `.in()` list cannot carry, all awaited CONCURRENTLY, `memberOrgIds`
+ * resolved ONCE ahead of the fan-out and reused by every query's tenant
  * predicate.
  *
  * Registered as a LITERAL route in `index.ts`, ahead of `/:id` — see the
@@ -47,28 +48,34 @@ export async function handleRead(
   });
 
   const groups = groupRefsByScope(parsed);
+  const singles = unbatchableRefs(parsed);
   const tracedDb = createTracedClient(db, span);
 
   const orgIds = auth.type === 'api_key' && auth.userId ? await getMemberOrgIds(db, auth.userId, span) : [];
 
+  // One query builder for both key shapes, so the batched and single-key paths
+  // cannot drift in their tenant, archived or expiry predicates.
+  const run = async (scope: string, keyFilter: { in: string[] } | { eq: string }) => {
+    const base = tracedDb.from('memories').select(MEMORY_SELECT).eq('scope', scope);
+    let query: TracedQuery<MemoryRow> = ('in' in keyFilter ? base.in('key', keyFilter.in) : base.eq('key', keyFilter.eq))
+      .is('archived_at', null)
+      .or('expires_at.is.null,expires_at.gt.now()');
+    if (auth.type === 'api_key' && auth.userId) {
+      query = applyRestTenantScope(query, auth.userId, orgIds, keyRestriction(auth));
+    }
+    const { data, error } = await query;
+    if (error) { span.error(`DB: ${error.message}`); throw error; }
+    return (data ?? []) as MemoryRow[];
+  };
+
   const rows = (
-    await Promise.all(
-      groups.map(async ({ scope, keys }) => {
-        let query: TracedQuery<MemoryRow> = tracedDb
-          .from('memories')
-          .select(MEMORY_SELECT)
-          .eq('scope', scope)
-          .in('key', keys)
-          .is('archived_at', null)
-          .or('expires_at.is.null,expires_at.gt.now()');
-        if (auth.type === 'api_key' && auth.userId) {
-          query = applyRestTenantScope(query, auth.userId, orgIds, keyRestriction(auth));
-        }
-        const { data, error } = await query;
-        if (error) { span.error(`DB: ${error.message}`); throw error; }
-        return (data ?? []) as MemoryRow[];
-      }),
-    )
+    await Promise.all([
+      ...groups.map(({ scope, keys }) => run(scope, { in: keys })),
+      // A key carrying `,()"\` is legal in the table but not in an `.in()` list,
+      // so it gets the singular read's own `.eq` rather than being dropped into
+      // `missing`, which would report an existing lesson as not found.
+      ...singles.map(({ scope, key }) => run(scope, { eq: key })),
+    ])
   ).flat();
 
   span.setAttributes({ 'lorekit.result_count': rows.length });

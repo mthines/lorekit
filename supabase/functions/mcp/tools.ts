@@ -22,7 +22,7 @@
  */
 
 import { validateScope, UserInputError, parseMemoryRefs } from '../_shared/scope/scope.ts';
-import { groupRefsByScope, missingRefs } from '../_shared/memory/read-refs.ts';
+import { groupRefsByScope, missingRefs, unbatchableRefs } from '../_shared/memory/read-refs.ts';
 import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
@@ -362,23 +362,32 @@ async function toolReadRefs(
   });
 
   const groups = groupRefsByScope(parsed);
+  const singles = unbatchableRefs(parsed);
   const tracedDb = createTracedClient(db, span);
   const orgIds = userId ? await memberOrgIds(db, userId) : [];
 
+  // One query builder for both key shapes, so the batched and single-key paths
+  // cannot drift in their tenant, archived or expiry predicates. `id` is
+  // selected purely to drive the read counter below — it is stripped before
+  // the tool's result is returned, matching the singular path's leanness (D7).
+  const run = async (scope: string, keyFilter: { in: string[] } | { eq: string }) => {
+    const base = tracedDb.from('memories').select('id,scope,key,value,updated_at').eq('scope', scope);
+    let query = ('in' in keyFilter ? base.in('key', keyFilter.in) : base.eq('key', keyFilter.eq))
+      .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
+    if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string }[];
+  };
+
   const rows = (
-    await Promise.all(
-      groups.map(async ({ scope, keys }) => {
-        // `id` is selected purely to drive the read counter below — it is
-        // stripped before the tool's result is returned, matching the
-        // singular path's own leanness (D7).
-        let query = tracedDb.from('memories').select('id,scope,key,value,updated_at').eq('scope', scope).in('key', keys)
-          .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
-        if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
-        const { data, error } = await query;
-        if (error) throw new Error(error.message);
-        return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string }[];
-      }),
-    )
+    await Promise.all([
+      ...groups.map(({ scope, keys }) => run(scope, { in: keys })),
+      // A key carrying `,()"\` is legal in the table but not in an `.in()` list,
+      // so it gets the singular path's own `.eq` — never dropped into `missing`,
+      // which would report an existing lesson as not found.
+      ...singles.map(({ scope, key }) => run(scope, { eq: key })),
+    ])
   ).flat();
 
   if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
