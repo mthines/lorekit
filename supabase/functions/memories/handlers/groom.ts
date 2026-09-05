@@ -10,7 +10,6 @@ import type { Span } from '../../_shared/telemetry/otel.ts';
 import { GroomRequestSchema } from '../../_shared/schemas/retention.ts';
 import { resolveGroomConditions } from '../../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../../_shared/retention/groom.ts';
-import { RETENTION_POLICIES_ENABLED } from '../../_shared/retention/feature-flag.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 
 /**
@@ -22,9 +21,6 @@ import type { DbClient } from '../../_shared/api/auth.ts';
  * a previewed count always equals what a run archives, on either surface.
  */
 function requireUserId(auth: AuthContext, cors: Record<string, string>): string | Response {
-  if (!RETENTION_POLICIES_ENABLED) {
-    return forbidden('retention policies are not enabled for this instance', cors);
-  }
   if (!auth.userId) {
     return forbidden('Grooming requires a user-scoped credential (service-role tokens have no owner)', cors);
   }

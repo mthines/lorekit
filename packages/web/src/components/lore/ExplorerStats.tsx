@@ -59,6 +59,10 @@ import {
   type TimeRange,
 } from '@/lib/time-range';
 import { filtersToActivityBody, requireField, type Filter } from '@/lib/filters';
+import {
+  retentionConditionsToAggregateBody,
+  type RetentionConditions,
+} from '@/lib/retention-filter';
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
 
@@ -83,6 +87,18 @@ interface ExplorerStatsProps {
    * so these do NOT narrow the Read card.
    */
   filters: Filter[];
+  /**
+   * The Explorer's active retention thresholds (00108), forwarded to
+   * `/activity` alongside the dimension filters so Written and Scopes count the
+   * same set the list shows.
+   *
+   * They do NOT narrow the Read or Expired cards, for the reasons already
+   * documented on `filters` and in `queries/explorer-stats.ts`: those read
+   * `usage_events`, which records a read's scope but nothing about the
+   * age or counters of the memories it returned, so a per-memory threshold is
+   * unanswerable there. Read stays scope-level and Expired stays account-wide.
+   */
+  retention: RetentionConditions;
   /** The Explorer's shared time range. */
   range: TimeRange;
   /** Human label for the selected scope, for captions. */
@@ -113,6 +129,7 @@ interface ExplorerStatsProps {
 export function ExplorerStats({
   scope,
   filters,
+  retention,
   range,
   scopeLabel,
   expanded,
@@ -129,7 +146,13 @@ export function ExplorerStats({
   // translation the list uses (`filtersToActivityBody`), so the header counts the
   // list's set. Read ignores them (scope-level), applied inside the query for
   // Written/Scopes only.
-  const activityFilters = useMemo(() => filtersToActivityBody(filters), [filters]);
+  // The retention thresholds ride in the SAME body object (00108), so they land
+  // in the query key `useExplorerStats` already derives from it — no separate
+  // hook parameter, and no way to send a threshold without rekeying the query.
+  const activityFilters = useMemo(
+    () => ({ ...filtersToActivityBody(filters), ...retentionConditionsToAggregateBody(retention) }),
+    [filters, retention],
+  );
 
   const { data, isLoading, isError, isFetching } = useExplorerStats(
     scope,

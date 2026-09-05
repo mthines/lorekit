@@ -1,19 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { ListMemoriesBodySchema } from '@lorekit/schemas/memory';
+import {
+  ActivityBodySchema,
+  ListFacetsBodySchema,
+  ListMemoriesBodySchema,
+  PivotBodySchema,
+} from '@lorekit/schemas/memory';
 import { GroomConditionsSchema } from '@lorekit/schemas/retention';
 import { normalizeFilters } from './filters';
 import {
   NO_RETENTION_CONDITIONS,
+  RETENTION_CONDITION_BOUNDS,
+  RETENTION_FIELDS,
   filtersToGroomDimensionFilters,
   groomConditionsToFilters,
   hasRetentionConditions,
   normalizeRetentionConditions,
+  parseCondition,
+  requireRetentionField,
   retentionConditionPlaceholder,
   retentionConditionsCount,
   retentionConditionsParamValue,
   retentionConditionsPhrase,
   retentionConditionsToGroomConditions,
+  retentionConditionsToAggregateBody,
   retentionConditionsToListBody,
+  retentionFieldMatches,
+  isAllScopes,
+  policyNameFromRule,
+  policyRulePhrase,
+  policyScopeLabel,
+  POLICY_NAME_MAX,
+  retentionValueRows,
+  setRetentionCondition,
+  type RetentionConditions,
 } from './retention-filter';
 
 describe('normalizeRetentionConditions', () => {
@@ -265,5 +284,338 @@ describe('retentionConditionPlaceholder', () => {
   it('suggests a read-count example inside the range that can actually match', () => {
     const example = Number(retentionConditionPlaceholder('maxReadCount').replace('e.g. ', ''));
     expect(example).toBeGreaterThanOrEqual(26);
+  });
+});
+
+/**
+ * Migration 00108: the three AGGREGATE routes must accept the same thresholds
+ * the list does. Before it, `/facets`, `/activity` and `/pivot` had no such
+ * parameters at all, so setting one narrowed the Explorer's rows and left every
+ * number describing them — facet counts, stat cards, matrix cells — counting
+ * the un-narrowed population.
+ *
+ * The assertions below deliberately parse against the REAL aggregate schemas
+ * rather than comparing to `retentionConditionsToListBody`'s output: proving the
+ * two functions agree with each other is worthless if both emit a field the
+ * aggregate route rejects.
+ */
+describe('retentionConditionsToAggregateBody', () => {
+  it('maps the same camelCase fields to the same wire fields the list uses', () => {
+    // Not asserted by delegation: the point is that a route which stopped
+    // taking one of the five would fail HERE, at the schema.
+    expect(
+      retentionConditionsToAggregateBody({
+        minAgeDays: 90,
+        unseenDays: 30,
+        maxSeenCount: 1,
+        maxReadCount: 300,
+        maxOpenedCount: 0,
+      }),
+    ).toEqual({
+      min_age_days: 90,
+      unseen_days: 30,
+      max_seen_count: 1,
+      max_read_count: 300,
+      max_opened_count: 0,
+    });
+  });
+
+  it('emits fields ALL THREE aggregate schemas actually CARRY', () => {
+    const body = retentionConditionsToAggregateBody({
+      minAgeDays: 7,
+      unseenDays: 90,
+      maxOpenedCount: 0,
+    });
+
+    // Asserting `safeParse(...).success` alone would be VACUOUS here, and that
+    // is worth spelling out: these schemas are not `.strict()`, so zod STRIPS
+    // an unrecognised key and still reports success. A route with no retention
+    // parameters at all — the pre-00108 state, the exact bug — would pass a
+    // success-only check while silently discarding every threshold. So each
+    // field is read back off the PARSED output, which is the only thing that
+    // proves the schema carries it.
+    const carried = (parsed: unknown) => {
+      const data = parsed as Record<string, unknown>;
+      return {
+        min_age_days: data.min_age_days,
+        unseen_days: data.unseen_days,
+        max_opened_count: data.max_opened_count,
+      };
+    };
+    const expected = { min_age_days: 7, unseen_days: 90, max_opened_count: 0 };
+
+    expect(carried(ListFacetsBodySchema.parse(body))).toEqual(expected);
+    expect(carried(ActivityBodySchema.parse(body))).toEqual(expected);
+    // Pivot requires its two axes; the thresholds must not interfere with them.
+    expect(carried(PivotBodySchema.parse({ row: 'host', col: 'kind', ...body }))).toEqual(expected);
+  });
+
+  it('omits an unset field, so a blank input never sends a threshold', () => {
+    // The whole set being absent is what "not narrowed" means on the wire — an
+    // explicit null would be read by the RPC as a filter of null, and a `0`
+    // would be a real and very aggressive filter.
+    const body = retentionConditionsToAggregateBody({});
+    expect(body).toEqual({});
+    for (const field of [
+      'min_age_days',
+      'unseen_days',
+      'max_seen_count',
+      'max_read_count',
+      'max_opened_count',
+    ]) {
+      expect(field in body).toBe(false);
+    }
+  });
+
+  it('carries maxOpenedCount: 0 rather than dropping it as falsy', () => {
+    // `max_opened_count => 0` ("nothing ever chose this lesson") is the most
+    // useful threshold in the set — migration 00105 exists for it. A truthiness
+    // check anywhere on this path turns it into no filter at all, which reads
+    // as the feature being broken rather than as a bug.
+    const body = retentionConditionsToAggregateBody({ maxOpenedCount: 0 });
+    expect(body).toEqual({ max_opened_count: 0 });
+    // Read back off the parsed output, not `.success` — see the note above on
+    // why a non-strict schema makes a success-only assertion vacuous.
+    expect(ListFacetsBodySchema.parse(body).max_opened_count).toBe(0);
+  });
+});
+
+// ── The filter menu's age & activity entries ─────────────────────────────────
+
+describe('RETENTION_FIELDS', () => {
+  it('covers every condition exactly once, and in a stable order', () => {
+    // The menu's row order, the pill order and `retentionConditionsPhrase`'s
+    // fragment order are all this one array, so a field added to
+    // `RetentionConditions` without an entry here is a condition the URL can
+    // carry and the UI can never show or clear.
+    expect(RETENTION_FIELDS.map((d) => d.field)).toEqual([
+      'minAgeDays',
+      'unseenDays',
+      'maxSeenCount',
+      'maxReadCount',
+      'maxOpenedCount',
+    ]);
+  });
+
+  it('offers only in-bounds presets', () => {
+    // A preset that `normalizeRetentionConditions` would drop is a row that
+    // applies a filter and then silently reverts on the next read of the URL.
+    for (const { field, presets } of RETENTION_FIELDS) {
+      for (const preset of presets) {
+        expect(parseCondition(preset, RETENTION_CONDITION_BOUNDS[field])).toBe(preset);
+      }
+    }
+  });
+
+  it('leads Chosen with 0 and keeps 0 out of the other counters', () => {
+    // `maxOpenedCount: 0` is migration 00105's whole point. The other two
+    // counters cannot usefully be 0 — a memory exists because it was written,
+    // and `max_read_count <= 5` matched nothing at all on the live store.
+    expect(requireRetentionField('maxOpenedCount').presets[0]).toBe(0);
+    expect(requireRetentionField('maxSeenCount').presets).not.toContain(0);
+    expect(requireRetentionField('maxReadCount').presets).not.toContain(0);
+  });
+
+  it('captions Chosen: 0 as never chosen rather than as a count', () => {
+    expect(requireRetentionField('maxOpenedCount').formatValue(0)).toBe('Never chosen');
+    expect(requireRetentionField('maxOpenedCount').formatValue(1)).toBe('1 time or fewer');
+    expect(requireRetentionField('minAgeDays').formatValue(1)).toBe('More than 1 day ago');
+    expect(requireRetentionField('minAgeDays').formatValue(30)).toBe('More than 30 days ago');
+  });
+});
+
+describe('requireRetentionField', () => {
+  it('throws on an unknown field rather than returning undefined', () => {
+    expect(() => requireRetentionField('bogus' as never)).toThrow(/Unknown retention field/);
+  });
+});
+
+describe('retentionFieldMatches', () => {
+  it('offers every entry, in order, with no query', () => {
+    expect(retentionFieldMatches('')).toEqual(RETENTION_FIELDS.map((d) => d.field));
+    expect(retentionFieldMatches('   ')).toEqual(RETENTION_FIELDS.map((d) => d.field));
+  });
+
+  it('ranks label hits above keyword hits', () => {
+    // `c` starts both "Created" and "Chosen", and also the keyword "cost" on
+    // Delivered. A keyword must never outrank a label, or typing the first
+    // letter of the row you want surfaces a different row first.
+    expect(retentionFieldMatches('c').slice(0, 2)).toEqual(['minAgeDays', 'maxOpenedCount']);
+  });
+
+  it('finds an entry by the question rather than its label', () => {
+    expect(retentionFieldMatches('never')).toEqual(['maxOpenedCount']);
+    expect(retentionFieldMatches('stale')).toEqual(['unseenDays']);
+    expect(retentionFieldMatches('cost')).toEqual(['maxReadCount']);
+  });
+
+  it('returns nothing for a query that matches no entry', () => {
+    expect(retentionFieldMatches('zzz')).toEqual([]);
+  });
+});
+
+describe('retentionValueRows', () => {
+  it('lists the presets with no query, none of them custom', () => {
+    expect(retentionValueRows('maxOpenedCount', '')).toEqual([
+      { value: 0, custom: false },
+      { value: 1, custom: false },
+      { value: 2, custom: false },
+      { value: 5, custom: false },
+    ]);
+  });
+
+  it('matches presets by NUMERIC PREFIX, so typing toward a value narrows', () => {
+    // `3` keeps 30 and 365 — a reader typing toward one of them — behind the
+    // typed value itself, which is a legal threshold in its own right. What it
+    // must NOT do is match on the rendered row text: `days` appears in every
+    // one of this field's labels and matches nothing.
+    expect(retentionValueRows('minAgeDays', '3').map((r) => r.value)).toEqual([3, 30, 365]);
+    expect(retentionValueRows('minAgeDays', '18').map((r) => r.value)).toEqual([18, 180]);
+    expect(retentionValueRows('minAgeDays', 'days')).toEqual([]);
+  });
+
+  it('offers a typed value that is not a preset, leading and labelled custom', () => {
+    expect(retentionValueRows('minAgeDays', '45')).toEqual([{ value: 45, custom: true }]);
+  });
+
+  it('does not duplicate a typed value that IS a preset', () => {
+    expect(retentionValueRows('minAgeDays', '30')).toEqual([{ value: 30, custom: false }]);
+  });
+
+  it('offers no custom row for a value normalization would drop', () => {
+    // Out of bounds, non-integer, and non-numeric all reach the menu's empty
+    // state rather than applying a threshold that vanishes on the next read of
+    // `?retention=`.
+    expect(retentionValueRows('minAgeDays', '0')).toEqual([]);
+    expect(retentionValueRows('minAgeDays', '4000')).toEqual([]);
+    expect(retentionValueRows('minAgeDays', '7.5')).toEqual([]);
+    expect(retentionValueRows('maxSeenCount', 'one')).toEqual([]);
+  });
+
+  it('offers 0 for the one field whose floor is zero', () => {
+    expect(retentionValueRows('maxOpenedCount', '0')).toEqual([{ value: 0, custom: false }]);
+    expect(retentionValueRows('maxSeenCount', '0')).toEqual([{ value: 0, custom: true }]);
+  });
+
+  it('gives an applied value that is NOT a preset a leading row of its own', () => {
+    // Reopening `Created` set to a typed 5 must show that 5, or the list denies
+    // the value the pill beside it is displaying and nothing reads as selected.
+    expect(retentionValueRows('minAgeDays', '', 5)).toEqual([
+      { value: 5, custom: true },
+      { value: 7, custom: false },
+      { value: 30, custom: false },
+      { value: 90, custom: false },
+      { value: 180, custom: false },
+      { value: 365, custom: false },
+    ]);
+  });
+
+  it('does not duplicate an applied value that IS a preset', () => {
+    expect(retentionValueRows('minAgeDays', '', 30)).toEqual(retentionValueRows('minAgeDays', ''));
+  });
+
+  it('leaves 0 applied on the zero-floor field as its own preset row', () => {
+    // `maxOpenedCount: 0` is the most-used threshold in the set and IS a preset,
+    // so it must not acquire a second row labelled custom.
+    expect(retentionValueRows('maxOpenedCount', '', 0)).toEqual(
+      retentionValueRows('maxOpenedCount', ''),
+    );
+  });
+
+  it('ignores the applied value once a query narrows the list', () => {
+    // The query is the reader's live question; the applied value is the state
+    // they are changing. A `3` must not resurrect an unrelated applied 5.
+    expect(retentionValueRows('minAgeDays', '3', 5).map((r) => r.value)).toEqual([3, 30, 365]);
+  });
+});
+
+describe('setRetentionCondition', () => {
+  it('sets a field without mutating the input', () => {
+    const before: RetentionConditions = { minAgeDays: 30 };
+    const after = setRetentionCondition(before, 'maxOpenedCount', 0);
+    expect(after).toEqual({ minAgeDays: 30, maxOpenedCount: 0 });
+    expect(before).toEqual({ minAgeDays: 30 });
+  });
+
+  it('replaces rather than accumulates — a threshold holds one value', () => {
+    expect(setRetentionCondition({ minAgeDays: 30 }, 'minAgeDays', 90)).toEqual({ minAgeDays: 90 });
+  });
+
+  it('removes the key on undefined, so the param drops rather than carrying a null', () => {
+    const cleared = setRetentionCondition({ minAgeDays: 30, unseenDays: 7 }, 'minAgeDays', undefined);
+    expect(cleared).toEqual({ unseenDays: 7 });
+    expect('minAgeDays' in cleared).toBe(false);
+  });
+
+  it('sets 0 rather than treating it as a clear', () => {
+    // The one value a truthiness check would swallow, and the most useful one
+    // in the set (00105).
+    expect(setRetentionCondition({}, 'maxOpenedCount', 0)).toEqual({ maxOpenedCount: 0 });
+    expect(hasRetentionConditions(setRetentionCondition({}, 'maxOpenedCount', 0))).toBe(true);
+  });
+});
+
+describe('policyScopeLabel / isAllScopes', () => {
+  it('reads `global` as every scope, because that is what the groom RPC does', () => {
+    expect(isAllScopes('global')).toBe(true);
+    expect(policyScopeLabel('global')).toBe('all scopes');
+  });
+
+  it('leaves a named scope as itself', () => {
+    expect(isAllScopes('repo::mthines/lorekit')).toBe(false);
+    expect(policyScopeLabel('repo::mthines/lorekit')).toBe('repo::mthines/lorekit');
+  });
+
+  it('is not fooled by surrounding whitespace', () => {
+    expect(isAllScopes('  global  ')).toBe(true);
+    expect(policyScopeLabel('  repo::a/b  ')).toBe('repo::a/b');
+  });
+});
+
+describe('policyRulePhrase', () => {
+  it('joins the conditions in the menu order', () => {
+    expect(policyRulePhrase({ minAgeDays: 90, maxOpenedCount: 0 })).toBe(
+      'created >90d ago · chosen ≤ 0×',
+    );
+  });
+
+  it('is EMPTY for a rule that narrows by nothing', () => {
+    // Not `retentionConditionsPhrase`'s 'Age & activity' fallback — that is a
+    // menu label, and it would read as a condition inside a policy name.
+    expect(policyRulePhrase({})).toBe('');
+    expect(retentionConditionsPhrase({})).toBe('Age & activity');
+  });
+
+  it('appends the filter bar, and contributes nothing for an empty one', () => {
+    // `filtersPhrase([])` answers 'Add filter' — a button label. It must never
+    // reach a name.
+    expect(policyRulePhrase({}, [])).toBe('');
+    expect(policyRulePhrase({ minAgeDays: 7 }, [])).toBe('created >7d ago');
+    expect(
+      policyRulePhrase({}, [{ field: 'host', operator: 'in', values: ['reviewer'] }]),
+    ).toContain('reviewer');
+  });
+});
+
+describe('policyNameFromRule', () => {
+  it('names the rule and the scope it runs over', () => {
+    expect(policyNameFromRule('repo::mthines/lorekit', { minAgeDays: 90, maxOpenedCount: 0 })).toBe(
+      'created >90d ago · chosen ≤ 0× in repo::mthines/lorekit',
+    );
+  });
+
+  it('says what an unnarrowed all-scopes rule actually does', () => {
+    expect(policyNameFromRule('global', {})).toBe('Every unprotected lesson in all scopes');
+  });
+
+  it('fits the schema bound, which a wide filter bar can outrun', () => {
+    const values = Array.from({ length: 200 }, (_, i) => `label-number-${i}`);
+    const name = policyNameFromRule('repo::mthines/lorekit', { minAgeDays: 90 }, [
+      { field: 'label', operator: 'in', values },
+    ]);
+    expect(name.length).toBeLessThanOrEqual(POLICY_NAME_MAX);
+    expect(name.endsWith('…')).toBe(true);
+    // Still a legal name — `min(1)` at the other end of the same schema field.
+    expect(name.length).toBeGreaterThan(0);
   });
 });

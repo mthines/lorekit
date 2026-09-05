@@ -108,16 +108,45 @@ Both answer `{ "count": <n>, "keys": [{ "scope", "key" }] }` — the exact set a
 run would archive, because a saved run and a preview resolve through the
 IDENTICAL candidate query. Nothing is changed by a preview.
 
-The [Lore Explorer](/lore) previews the same conditions a different way: its
-"Age & activity" filter (`min_age_days` / `unseen_days` / `max_seen_count` /
-`max_read_count` / `max_opened_count`)
-combines with its own filter bar (the same eight dimension filters above) to
-narrow the list to the actual lesson ROWS a policy with those conditions
-would catch, not just a count — so you can scroll through them before saving
-anything. Once at least one condition or filter is set, a **Create retention
-policy** action hands the current scope, conditions AND filter bar to
-Settings → Retention Policies, which opens the New policy dialog pre-filled
-with all of it, using the identical filter control to edit it further.
+The [Lore Explorer](/lore) previews the same conditions a different way, and it
+does it through the **same Filter menu** you use for everything else. Open
+Filter and the five conditions sit under an **Age & activity** heading, below
+the nine dimensions:
+
+| Menu entry | Condition | What it tests |
+|---|---|---|
+| Created | `min_age_days` | Written more than N days ago |
+| Last agent open | `unseen_days` | Last deliberately fetched more than N days ago (never opened counts from Created) |
+| Recurrence | `max_seen_count` | Written N times or fewer |
+| Delivered | `max_read_count` | Handed to an agent N times or fewer — bulk list/search reads count, so this runs to the hundreds |
+| Chosen | `max_opened_count` | Deliberately fetched N times or fewer — bulk reads do NOT count, so `0` means never chosen |
+
+Each offers a short preset list, and **the menu's search box doubles as the
+custom-value input**: type `45` under Created and "More than 45 days ago" is
+offered straight away. A custom value you have applied keeps a row of its own at
+the top of that list, labelled `custom`, so reopening the condition shows what
+is in force rather than five presets with none selected. Picking a value applies
+it and returns you to the list, so conditions chain without reopening the menu.
+Each committed condition becomes a pill in the same row as the dimension
+filters, and everything lives in the URL (`?retention=`), so a filtered view is
+shareable and survives a reload.
+
+Conditions AND across the filter bar's dimensions, so the list narrows to the
+actual lesson ROWS a policy with those conditions would catch, not just a count
+— you can scroll through them before saving anything.
+
+The numbers AROUND the list follow the conditions too: the filter menu's
+per-value counts, the stat cards above it and the matrix all narrow to the same
+set, so a count never describes a population the list below it is not showing.
+The one exception is the **Read** card, which stays scope-level — a read is
+recorded against a scope but not against the age or counters of the memories it
+returned, so a per-lesson threshold is unanswerable for it.
+
+Once at least one condition or filter is set, a **Create retention
+policy** action appears at the end of the pill row and hands the current scope,
+conditions AND filter bar to Settings → Retention Policies, which opens the New
+policy dialog pre-filled with all of it, using the identical filter control to
+edit it further.
 
 </TutorialStep>
 
@@ -162,6 +191,20 @@ The eight dimension filters (`tags`, `source_agent`, `trigger`, `kind`, `host`,
 reachable today through the dashboard, `POST /policies`/`PATCH /policies/:id`,
 and the MCP `policy.create`/`policy.update`/`groom.preview`/`groom.run` tools
 — `lorekit policy`/`lorekit groom` have no CLI flags for them yet.
+
+**A policy does not have to name one scope.** `--scope global` matches *every*
+lesson in the account, in every scope — that is what the dashboard's dialog
+offers as the **All scopes** row pinned to the top of the scope picker. A named
+scope always matches itself, and a `repo::owner/repo` policy additionally covers
+every `branch::owner/repo::…` under it, so a repo rule does not need a branch
+rule beside it.
+
+**The name is optional in the dashboard.** Leave the field blank and the policy
+is named after what it does — `chosen ≤ 0× in all scopes`,
+`created >90d ago · unopened >90d in repo::acme/app` — which is exactly the text
+the field shows as its placeholder while you build the rule, so you can see the
+name before you save it. Typing anything overrides it. The API and the CLI still
+require `name` explicitly.
 
 </TutorialStep>
 

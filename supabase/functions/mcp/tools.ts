@@ -40,7 +40,6 @@ import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
 import { recordCitations } from '../_shared/telemetry/citations.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../_shared/retention/groom.ts';
-import { RETENTION_POLICIES_ENABLED } from '../_shared/retention/feature-flag.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -1163,21 +1162,18 @@ export async function toolScopes(
 // policy (00088), which is what protects the JWT/dashboard path; the
 // explicit filter here is what protects the api_key path.
 //
-// Feature flag: when LOREKIT_RETENTION_POLICIES_ENABLED is unset or any
-// value other than 'true', every handler below (and its REST twin in
-// `memories/handlers/{groom,policies,protect}.ts`) rejects with
-// UserInputError instead of touching the RPCs — same posture as
-// GITHUB_APP_ENABLED in `mcp/webhook.ts`, kept dormant until this is rolled
-// out. The nightly `pg_cron` sweep (00088) is unaffected — it only ever
-// touches policies with `mode = 'auto'` AND `enabled = true`, and those can
-// only be created through this same gated surface.
+// No backend feature gate. These handlers were once fronted by a
+// `LOREKIT_RETENTION_POLICIES_ENABLED` Supabase secret that rejected every
+// call with UserInputError while it was unset — which it always was, in every
+// environment. It never gated VISIBILITY (`tools/list` advertised the seven
+// tools regardless), so the only thing it produced was an advertised tool that
+// always failed. The dashboard UI keeps its own gate — the web-side
+// OpenFeature `retention-policies` flag — because hiding an unfinished SURFACE
+// is a real need; refusing a working RPC is not.
+//
+// The nightly `pg_cron` sweep (00088) was never affected either way: it only
+// touches policies with `mode = 'auto'` AND `enabled = true`.
 // ═══════════════════════════════════════════════════════════════════════════
-
-function assertRetentionPoliciesEnabled(): void {
-  if (!RETENTION_POLICIES_ENABLED) {
-    throw new UserInputError('retention policies are not enabled for this instance');
-  }
-}
 
 /**
  * `retention_policies` row shape, as returned by the RPCs below. Every CRUD
@@ -1310,7 +1306,6 @@ export async function toolPolicyList(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.list requires a user_id');
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
@@ -1327,7 +1322,6 @@ export async function toolPolicyCreate(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.create requires a user_id');
   const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null, max_read_count = null, max_opened_count = null } = params;
   if (!rawScope || !name) throw new UserInputError('scope and name are required');
@@ -1389,7 +1383,6 @@ export async function toolPolicyUpdate(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.update requires a user_id');
   const { id } = params;
   if (!id) throw new UserInputError('id is required');
@@ -1435,7 +1428,6 @@ export async function toolPolicyDelete(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('policy.delete requires a user_id');
   const { id } = params;
   if (!id) throw new UserInputError('id is required');
@@ -1545,7 +1537,6 @@ export async function toolGroomPreview(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('groom.preview requires a user_id');
   if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
 
@@ -1574,7 +1565,6 @@ export async function toolGroomRun(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('groom.run requires a user_id');
   if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
 
@@ -1615,7 +1605,6 @@ export async function toolProtect(
   userId: string | null,
   span: Span,
 ) {
-  assertRetentionPoliciesEnabled();
   if (!userId) throw new UserInputError('memory.protect requires a user_id');
   const { scope: rawScope, key, protected: isProtected } = params;
   if (!rawScope || !key || typeof isProtected !== 'boolean') {

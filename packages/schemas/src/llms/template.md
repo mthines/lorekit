@@ -173,7 +173,7 @@ global                             # least specific
 
 ## Filtering lore (dashboard Explorer + REST)
 
-The Explorer at lorekit.io/lore filters on eight dimensions. Values combine with **OR inside one
+The Explorer at lorekit.io/lore filters on nine dimensions. Values combine with **OR inside one
 dimension** and **AND across dimensions**, and the whole filter set is in the URL, so a filtered
 view is a shareable link.
 
@@ -187,6 +187,7 @@ view is a shareable link.
 | Repository | `origin_repo` | is / is either of, is not |
 | Branch | `origin_branch` | is / is either of, is not |
 | Pull request | `origin_pr` | is / is either of, is not |
+| Owner | `personal` or an org slug | is / is either of, is not |
 
 The same filters are on the REST list route, so an agent or the CLI can ask the same questions:
 
@@ -205,6 +206,34 @@ Each dimension takes a comma-separated value list plus an optional `<dimension>_
 read as the phrase they exist for: `?kind=lesson&host=reviewer` is "reviewer's lessons". Note that
 `host` is not `source_agent`: the host OWNS the bucket, the agent WROTE the row, and they can
 differ.
+
+### Finding lore nothing is using
+
+Five numeric thresholds narrow the list by AGE and ACTIVITY rather than by a value — the same
+conditions a retention policy is written in:
+
+| Parameter | Range | Keeps a memory when |
+|-----------|-------|---------------------|
+| `min_age_days` | 1–3650 | it was created at least N days ago |
+| `unseen_days` | 1–3650 | no agent has deliberately opened it for N days (one never opened ages from its creation date) |
+| `max_seen_count` | 0–100000 | it has been written at most N times |
+| `max_read_count` | 0–100000 | it has been DELIVERED at most N times (includes every bulk list/search ride-along) |
+| `max_opened_count` | 0–100000 | an agent CHOSE to fetch it at most N times |
+
+`max_opened_count=0` is the useful one: "nothing has ever deliberately fetched this." Prefer it
+over `max_read_count=0`, which on a real store matches nothing — any memory that has been paged
+over by a `memory.list` already carries a read count in the hundreds.
+
+```bash
+# Month-old lore nothing has ever chosen to open
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?\
+min_age_days=30&max_opened_count=0"
+```
+
+These work on the aggregate reads too — `/memories/facets`, `/memories/pivot` and
+`/memories/activity` all take the same five, so a facet count describes the same set the list
+returns rather than the un-narrowed population.
 
 ### Finding lore that is about to expire
 

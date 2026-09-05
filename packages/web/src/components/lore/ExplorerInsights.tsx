@@ -112,6 +112,7 @@ import {
 } from '@/lib/persisted-preference';
 import type { RangePreset, TimeRange } from '@/lib/time-range';
 import type { Filter } from '@/lib/filters';
+import type { RetentionConditions } from '@/lib/retention-filter';
 
 /**
  * The Explorer's presets.
@@ -165,6 +166,12 @@ interface ExplorerInsightsProps {
    * "filters don't count" disclaimer any more.
    */
   filters: Filter[];
+  /**
+   * The active retention thresholds (00108). Forwarded to the stat cards for
+   * `filters`' reason — Written and Scopes must count the set the list shows —
+   * and, like `filters`, they do not reach Read or Expired.
+   */
+  retention: RetentionConditions;
   /** Per-day write counts for the heatmap. */
   heatmapData: { date: string; count: number }[];
   /**
@@ -191,6 +198,7 @@ export function ExplorerInsights({
   range,
   onRangeChange,
   filters,
+  retention,
   heatmapData,
   highlightRange,
   onSelectDate,
@@ -305,6 +313,7 @@ export function ExplorerInsights({
           <ExplorerStats
             scope={scope}
             filters={filters}
+            retention={retention}
             range={shownRange}
             scopeLabel={scopeLabel}
             expanded={open && view === 'charts'}

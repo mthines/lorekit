@@ -80,7 +80,7 @@ export const AddSaveAndRun: Story = {
     });
 
     await step('Save closes the dialog and the new row appears', async () => {
-      await userEvent.type(await canvas.findByLabelText('Policy name'), 'Fresh sweep');
+      await userEvent.type(await canvas.findByLabelText(/policy name/i), 'Fresh sweep');
       await userEvent.click(canvas.getByRole('button', { name: /save policy/i }));
       await waitFor(
         async () => {
@@ -89,6 +89,62 @@ export const AddSaveAndRun: Story = {
         { timeout: 3000 },
       );
       await expect(await canvas.findByText('Fresh sweep')).toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * The two escape hatches from "a policy must be pinned to one named scope with a
+ * name you invent": the pinned **All scopes** row, and a blank name falling back
+ * to the generated one the placeholder has been showing.
+ */
+export const AllScopesAndAGeneratedName: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const body = within(document.body);
+
+    await userEvent.click(await canvas.findByRole('button', { name: /add policy/i }));
+
+    await step('All scopes is pinned to the top of the scope list', async () => {
+      await userEvent.click(await body.findByRole('button', { name: /^Scope:/ }));
+      const options = await body.findAllByRole('option');
+      await expect(options[0]).toHaveTextContent('All scopes');
+      await userEvent.click(options[0]);
+      // A `ScopeBadge` would render this as the NAMED `global` scope; the copy
+      // that replaces it is the whole point of the pinned row.
+      await expect(await canvas.findByText(/every lesson in your account/i)).toBeInTheDocument();
+    });
+
+    await step('the name field is optional and previews the generated name', async () => {
+      const nameField = await canvas.findByLabelText(/policy name/i);
+      await expect(nameField).toHaveValue('');
+      await expect(nameField).toHaveAttribute(
+        'placeholder',
+        'Every unprotected lesson in all scopes',
+      );
+      // Blank name, and Save is live anyway.
+      await expect(canvas.getByRole('button', { name: /save policy/i })).toBeEnabled();
+    });
+
+    await step('a condition rewords the generated name as you set it', async () => {
+      fireEvent.change(canvas.getByLabelText('Chosen'), { target: { value: '0' } });
+      await waitFor(async () => {
+        await expect(await canvas.findByLabelText(/policy name/i)).toHaveAttribute(
+          'placeholder',
+          'chosen ≤ 0× in all scopes',
+        );
+      });
+    });
+
+    await step('saving blank gives the policy the name that was on offer', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /save policy/i }));
+      await waitFor(
+        async () => {
+          await expect(canvas.queryByText(/new retention policy/i)).not.toBeInTheDocument();
+        },
+        { timeout: 3000 },
+      );
+      await expect(await canvas.findByText('chosen ≤ 0× in all scopes')).toBeInTheDocument();
     });
   },
 };

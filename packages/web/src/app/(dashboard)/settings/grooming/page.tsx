@@ -8,7 +8,8 @@ import { getServerFlag } from '@/lib/feature-flags/server';
 export const metadata: Metadata = { title: 'Retention Policies — Settings' };
 
 /**
- * Behind the `retention-policies` feature flag (default `off`). This
+ * Behind the `retention-policies` feature flag (default `on` — the flag is a
+ * kill switch now, not a rollout gate, but it is still a real gate). This
  * `notFound()` check is the real access-control boundary — the nav entry
  * being hidden (`SettingsNav.tsx`, reading the same flag) is only a
  * visibility nicety, and a direct `/settings/grooming` visit must not bypass
