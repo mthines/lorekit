@@ -235,9 +235,17 @@ export const MEMORY_CITED_MAX = 32;
  * resolve through this one function (R3: no second reference parser).
  *
  * De-duplication is by the resolved `(scope, key)` pair rather than by the raw
- * string, so `Global::x` and `global::x` do not both count — the same lesson
- * named twice is one reference. Unparseable entries are DROPPED, not rejected:
- * see `MEMORY_CITED_MAX`.
+ * string, so `global::x` and `  global::x  ` are one reference. It is
+ * CASE-SENSITIVE on the scope for the same reason it already was on the key:
+ * both consumers resolve a reference by VERBATIM comparison — `cited` joins
+ * `m.scope = r.scope` (00107) and `refs` filters `.eq('scope', …)` — so
+ * `Global::x` and `global::x` are two different addresses, not one lesson
+ * spelled two ways. Folding them kept whichever came FIRST and dropped the
+ * other; since the MCP write path stores scopes lowercased (`validateScope`),
+ * the surviving mixed-case ref then resolved to nothing while the one that
+ * would have resolved had already been discarded.
+ *
+ * Unparseable entries are DROPPED, not rejected: see `MEMORY_CITED_MAX`.
  */
 export function parseMemoryRefs(raw: unknown): MemoryRef[] {
   if (!Array.isArray(raw)) return [];
