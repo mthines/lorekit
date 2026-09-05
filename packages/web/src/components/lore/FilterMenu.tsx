@@ -76,6 +76,29 @@
  * shared `BottomSheet` instead, per the repo-wide rule for transient selection
  * surfaces.
  *
+ * ## Age & activity lives here too, as five ordinary rows
+ * The five retention thresholds (`lib/retention-filter.ts` — Created, Last
+ * agent open, Recurrence, Delivered, Chosen) are siblings of the categorical
+ * dimensions at level 1, under a group heading, and each drills into its own
+ * preset list at level 2. They used to be a SECOND trigger opening a panel of
+ * five number inputs, which put two filter surfaces on one toolbar and left a
+ * reader two places to ask "what is narrowing this list?".
+ *
+ * They differ from a dimension in exactly two ways, both of which follow from
+ * a threshold holding ONE value rather than a set:
+ *
+ * - Picking a value applies it and pops back to level 1 instead of staying put,
+ *   so conditions chain (`Created → 30 → Chosen → 0`) without a trip through
+ *   the trigger. A dimension stays because its next pick is another value of
+ *   the SAME dimension; a threshold's is not.
+ * - The search box doubles as the custom-value input. There is no facet catalog
+ *   of "ages" to enumerate, so `retentionValueRows` offers whatever legal
+ *   number is typed alongside the matching presets — which is why there is no
+ *   "Custom…" row and no third level.
+ *
+ * Both props are optional together: a caller that passes neither gets the menu
+ * without the section, exactly like `status`/`onStatusChange`.
+ *
  * ## Status lives here too, but it is NOT a dimension
  * A pinned "Status" row group sits above the search box at level 1, built
  * from `MEMORY_STATUSES`/`STATUS_LABELS`/`STATUS_ICONS` (`lib/status-filter.ts`
@@ -97,12 +120,17 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   Bot,
   Boxes,
+  CalendarPlus,
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   GitBranch,
   GitPullRequest,
+  History,
   ListFilter,
+  MousePointerClick,
+  Repeat,
   Search,
   Server,
   Tag,
@@ -113,7 +141,6 @@ import {
 } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import {
-  MAX_LIST_HEIGHT,
   anchoredPosition,
   type AnchoredPosition,
 } from '@/lib/anchored-position';
@@ -128,7 +155,18 @@ import {
   type FacetValue,
   type Filter,
   type FilterField,
+  type RootSuggestion,
 } from '@/lib/filters';
+import {
+  RETENTION_CONDITION_BOUNDS,
+  requireRetentionField,
+  retentionConditionsCount,
+  retentionFieldMatches,
+  retentionValueRows,
+  setRetentionCondition,
+  type RetentionConditions,
+  type RetentionField,
+} from '@/lib/retention-filter';
 import {
   DEFAULT_STATUS,
   MEMORY_STATUSES,
@@ -155,6 +193,54 @@ export const FIELD_ICONS: Record<FilterField, LucideIcon> = {
   pr: GitPullRequest,
 };
 
+/**
+ * One icon per age/activity threshold, in the same slot a dimension's icon
+ * occupies — the rows sit in one list, so a threshold without an icon would
+ * read as a differently-shaped row rather than as a sibling.
+ *
+ * Each names its DATA rather than its condition: a calendar-plus for when a
+ * lesson was written, a clock-history for when one was last opened, a repeat
+ * for how often it recurred, a download for how often it was delivered, a
+ * pointer for how often something chose it.
+ */
+export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {
+  minAgeDays: CalendarPlus,
+  unseenDays: History,
+  maxSeenCount: Repeat,
+  maxReadCount: Download,
+  maxOpenedCount: MousePointerClick,
+};
+
+/**
+ * A level-1 row: one of `rootSuggestions`' dimension/value rows, or one of the
+ * five thresholds. A flat union rather than two lists, because `activeIndex`
+ * addresses ONE array — splitting them would mean two index spaces and an
+ * arrow key that has to know which half it is in.
+ */
+type MenuRootRow = RootSuggestion | { kind: 'retention'; field: RetentionField };
+
+/**
+ * Which value list is showing, or `null` for the level-1 row list. A
+ * discriminated union rather than two nullable fields, so "a dimension AND a
+ * threshold are both open" is unrepresentable.
+ */
+type MenuLevel =
+  | { kind: 'filter'; field: FilterField }
+  | { kind: 'retention'; field: RetentionField };
+
+/**
+ * This menu's own list height, overriding the shared default the way
+ * `FilterPill`'s operator listbox overrides it downward.
+ *
+ * Level one is now nine dimensions AND five thresholds under a heading — about
+ * 380px of rows. At the shared 256px default the whole age/activity group sat
+ * below the fold on first open, which for a section a reader does not yet know
+ * exists is the same as it not being there. It is still a cap: `anchoredPosition`
+ * takes the smaller of this and the space actually available, so a short viewport
+ * shrinks the list rather than pushing it off-screen.
+ */
+const FILTER_MENU_SIZE = { maxListHeight: 400 } as const;
+
 const LISTBOX_ID = 'filter-menu-listbox';
 const OPTION_ID_PREFIX = 'filter-menu-option-';
 
@@ -173,6 +259,20 @@ interface FilterMenuProps {
   status?: MemoryStatus;
   onStatusChange?: (status: MemoryStatus) => void;
   /**
+   * The Explorer's age/activity thresholds, rendered as five more level-1 rows
+   * (see "Age & activity lives here too" above). Optional TOGETHER with
+   * `onRetentionChange` — passing neither hides the section, which is how
+   * `LoreExplorer` keeps the whole thing behind its `retention-policies` flag
+   * without this component learning about flags.
+   *
+   * Optional rather than required-with-a-default deliberately: a required prop
+   * is not enforced across a Storybook `meta.args`/story `args` split, so
+   * making it required buys a compile-time guarantee that does not exist and
+   * costs an `undefined` read at render time.
+   */
+  retention?: RetentionConditions;
+  onRetentionChange?: (next: RetentionConditions) => void;
+  /**
    * `desktop` anchors a popover and labels the trigger; `mobile` opens the same
    * body in a `BottomSheet` and shows an icon with a count badge.
    */
@@ -185,6 +285,9 @@ interface FilterMenuProps {
   openAtField?: FilterField | null;
   /** Cleared by the menu when it closes, so the pill's request is not sticky. */
   onOpenAtFieldHandled?: () => void;
+  /** The same request from a retention pill's value segment — see {@link openAtField}. */
+  openAtRetentionField?: RetentionField | null;
+  onOpenAtRetentionFieldHandled?: () => void;
   className?: string;
 }
 
@@ -194,18 +297,31 @@ export function FilterMenu({
   onToggleValue,
   status,
   onStatusChange,
+  retention,
+  onRetentionChange,
   variant,
   openAtField = null,
   onOpenAtFieldHandled,
+  openAtRetentionField = null,
+  onOpenAtRetentionFieldHandled,
   className = '',
 }: FilterMenuProps) {
   const reduceMotion = useReducedMotion();
   const useSheet = variant === 'mobile';
   const desktop = variant === 'desktop';
 
+  // Both halves of the retention section must be present for it to render, so
+  // one flag stands in for "the caller wants thresholds" everywhere below and
+  // TypeScript narrows both props off it.
+  const retentionEnabled = retention !== undefined && onRetentionChange !== undefined;
+
   const [open, setOpen] = useState(false);
-  /** `null` = the dimension list (level 1); a field = its value list (level 2). */
-  const [field, setField] = useState<FilterField | null>(null);
+  /** `null` = the level-1 row list; a level = one row list's values (level 2). */
+  const [level, setLevel] = useState<MenuLevel | null>(null);
+  // Derived so the bulk of the component still reads in terms of "which
+  // dimension" / "which threshold" rather than unpacking the union at every use.
+  const field = level?.kind === 'filter' ? level.field : null;
+  const retentionField = level?.kind === 'retention' ? level.field : null;
   /**
    * The level the menu was opened at. Escape/Backspace pop back to it and no
    * further: a menu opened on a pill's value segment closes rather than
@@ -234,10 +350,11 @@ export function FilterMenu({
     const trigger = triggerRef.current;
     if (!trigger) return;
     setPosition(
-      anchoredPosition(trigger.getBoundingClientRect(), {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      }),
+      anchoredPosition(
+        trigger.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+        FILTER_MENU_SIZE,
+      ),
     );
   }, []);
 
@@ -266,29 +383,68 @@ export function FilterMenu({
     };
   }, [open, useSheet, measure]);
 
+  /** Open straight at one value list, the way a pill's value segment asks for. */
+  const openAtLevel = useCallback(
+    (next: MenuLevel) => {
+      // Measure before opening — see the layout effect below for why.
+      if (!useSheet) measure();
+      setLevel(next);
+      setEntryDepth(1);
+      setQuery('');
+      setActiveIndex(0);
+      setOpen(true);
+    },
+    [useSheet, measure],
+  );
+
   // A pill's value segment asks for the menu at level 2 of one dimension.
   useEffect(() => {
     if (!openAtField) return;
-    // Measure before opening — see the layout effect below for why.
-    if (!useSheet) measure();
-    setField(openAtField);
-    setEntryDepth(1);
-    setQuery('');
-    setActiveIndex(0);
-    setOpen(true);
+    openAtLevel({ kind: 'filter', field: openAtField });
     onOpenAtFieldHandled?.();
-  }, [openAtField, onOpenAtFieldHandled, useSheet, measure]);
+  }, [openAtField, onOpenAtFieldHandled, openAtLevel]);
+
+  // The same, from a retention pill. Gated on the section existing: without a
+  // setter every row in that list would be inert, and an open menu nothing
+  // responds to is worse than no menu.
+  useEffect(() => {
+    if (!openAtRetentionField || !retentionEnabled) return;
+    openAtLevel({ kind: 'retention', field: openAtRetentionField });
+    onOpenAtRetentionFieldHandled?.();
+  }, [openAtRetentionField, retentionEnabled, onOpenAtRetentionFieldHandled, openAtLevel]);
 
   // ── Rows for the current level ─────────────────────────────────────────────
 
-  const rootRows = useMemo(() => rootSuggestions(facets, query), [facets, query]);
+  // Dimensions first, thresholds after — one array, so `activeIndex` addresses
+  // the whole list and the arrows walk from Pull request straight into Created.
+  // The thresholds keep their own declaration order (`RETENTION_FIELDS`) rather
+  // than being interleaved by relevance: they are a labelled group, and a group
+  // whose members move around under a heading is harder to learn than one that
+  // does not.
+  const rootRows = useMemo<MenuRootRow[]>(() => {
+    const dimensions: MenuRootRow[] = rootSuggestions(facets, query);
+    if (!retentionEnabled) return dimensions;
+    return [
+      ...dimensions,
+      ...retentionFieldMatches(query).map((f) => ({ kind: 'retention' as const, field: f })),
+    ];
+  }, [facets, query, retentionEnabled]);
 
   const valueRows = useMemo(() => {
     if (!field) return [];
     return searchOptions(facetOptions(facets, field, selectedValues(filters, field)), query);
   }, [facets, field, filters, query]);
 
-  const rowCount = field ? valueRows.length : rootRows.length;
+  const retentionRows = useMemo(
+    () => (retentionField ? retentionValueRows(retentionField, query) : []),
+    [retentionField, query],
+  );
+
+  const rowCount = retentionField
+    ? retentionRows.length
+    : field
+      ? valueRows.length
+      : rootRows.length;
 
   // Keep the active row inside the (possibly shrinking) list.
   useEffect(() => {
@@ -341,7 +497,7 @@ export function FilterMenu({
     // silently refuses focus — which would leave the search box unfocused and
     // every keystroke going to the document.
     if (!useSheet) measure();
-    setField(null);
+    setLevel(null);
     setEntryDepth(0);
     setQuery('');
     setActiveIndex(0);
@@ -352,8 +508,8 @@ export function FilterMenu({
     setOpen(false);
   }
 
-  function pushField(next: FilterField) {
-    setField(next);
+  function pushLevel(next: MenuLevel) {
+    setLevel(next);
     // Clearing the query on push is what makes the dimension list searchable
     // AND the value list searchable with one box: the query that found the
     // dimension is meaningless against its values.
@@ -369,14 +525,14 @@ export function FilterMenu({
 
   /** Back one level, or close when already at the level the menu opened on. */
   function popLevel() {
-    if (field === null || entryDepth === 1) {
+    if (level === null || entryDepth === 1) {
       closeMenu();
       return;
     }
-    setField(null);
+    setLevel(null);
     setQuery('');
     setActiveIndex(0);
-    // Popover only — see `pushField` for why the sheet must not grab focus here.
+    // Popover only — see `pushLevel` for why the sheet must not grab focus here.
     if (!useSheet) inputRef.current?.focus();
   }
 
@@ -384,7 +540,11 @@ export function FilterMenu({
     const row = rootRows[index];
     if (!row) return;
     if (row.kind === 'field') {
-      pushField(row.field);
+      pushLevel({ kind: 'filter', field: row.field });
+      return;
+    }
+    if (row.kind === 'retention') {
+      pushLevel({ kind: 'retention', field: row.field });
       return;
     }
     // A `Dimension → value` row is a whole condition in one keystroke.
@@ -397,6 +557,36 @@ export function FilterMenu({
     if (!row || !field) return;
     onToggleValue(field, row.value);
     if (close) closeMenu();
+  }
+
+  /**
+   * Apply (or clear) one threshold and go BACK to the row list rather than
+   * staying put or closing.
+   *
+   * A threshold holds one value, so there is no "toggle a second value of the
+   * same field" to stay for; and the next thing a reader wants after
+   * `Created → 30 days` is almost always another threshold, not the results.
+   * Landing back at level 1 makes chaining the default and still leaves Escape
+   * as the one-key way out.
+   *
+   * Picking the value already in force CLEARS it, so a row is a real toggle and
+   * the menu is a second way to undo what the pill's × undoes.
+   */
+  function commitRetentionRow(index: number) {
+    const row = retentionRows[index];
+    if (!row || !retentionField || !retention || !onRetentionChange) return;
+    const cleared = retention[retentionField] === row.value;
+    onRetentionChange(
+      setRetentionCondition(retention, retentionField, cleared ? undefined : row.value),
+    );
+    if (entryDepth === 1) {
+      closeMenu();
+      return;
+    }
+    setLevel(null);
+    setQuery('');
+    setActiveIndex(0);
+    if (!useSheet) inputRef.current?.focus();
   }
 
   // ── Keyboard ───────────────────────────────────────────────────────────────
@@ -415,7 +605,7 @@ export function FilterMenu({
       setActiveIndex((i) => (rowCount === 0 ? 0 : (i - 1 + rowCount) % rowCount));
       return;
     }
-    if (e.key === 'ArrowRight' && field === null) {
+    if (e.key === 'ArrowRight' && level === null) {
       // Only when the caret is at the end, so Right still moves through text
       // the user is editing.
       const atEnd = e.currentTarget.selectionStart === query.length;
@@ -423,29 +613,36 @@ export function FilterMenu({
       const row = rootRows[activeIndex];
       if (row?.kind === 'field') {
         e.preventDefault();
-        pushField(row.field);
+        pushLevel({ kind: 'filter', field: row.field });
+      } else if (row?.kind === 'retention') {
+        e.preventDefault();
+        pushLevel({ kind: 'retention', field: row.field });
       }
       return;
     }
-    if (e.key === 'ArrowLeft' && field !== null && caretAtStart) {
+    if (e.key === 'ArrowLeft' && level !== null && caretAtStart) {
       e.preventDefault();
       popLevel();
       return;
     }
-    if (e.key === 'Backspace' && field !== null && query === '') {
+    if (e.key === 'Backspace' && level !== null && query === '') {
       e.preventDefault();
       popLevel();
       return;
     }
-    if (e.key === ' ' && field !== null && query === '') {
-      // Toggle without leaving: the next pick is more likely than not.
+    if (e.key === ' ' && level !== null && query === '') {
       e.preventDefault();
-      toggleValueRow(activeIndex, { close: false });
+      // A dimension toggles without leaving — the next pick is more likely than
+      // not another value of the same field. A threshold has no second value,
+      // so Space does what Enter does rather than pretending to multi-select.
+      if (retentionField) commitRetentionRow(activeIndex);
+      else toggleValueRow(activeIndex, { close: false });
       return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (field === null) commitRootRow(activeIndex);
+      if (level === null) commitRootRow(activeIndex);
+      else if (retentionField) commitRetentionRow(activeIndex);
       else toggleValueRow(activeIndex, { close: true });
     }
   }
@@ -477,6 +674,9 @@ export function FilterMenu({
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   const descriptor = field ? requireField(field) : null;
+  const retentionDescriptor = retentionField ? requireRetentionField(retentionField) : null;
+  /** The level-2 heading, whichever kind of list is showing. */
+  const levelLabel = retentionDescriptor?.label ?? descriptor?.label ?? null;
   // `filterCount`, not `filters.length`: it normalises first, so the badge
   // counts committed conditions rather than array entries — the same
   // defensiveness `filtersPhrase` already gives this prop in `FilterBar`.
@@ -492,8 +692,12 @@ export function FilterMenu({
   // appended "Add or edit a filter" would read as "you already have a
   // filter" on first load, which is what `FilterMenu.test.stories.tsx`'s
   // `/add filter/i` queries pin against regressing.
+  // Thresholds are filters now, so they count toward the trigger exactly like a
+  // dimension does — the whole point of folding them in is that there is ONE
+  // answer to "what is narrowing this list?".
+  const retentionCount = retention ? retentionConditionsCount(retention) : 0;
   const appliedDescriptors = [
-    activeCount > 0 ? `Filters: ${activeCount} applied.` : null,
+    activeCount + retentionCount > 0 ? `Filters: ${activeCount + retentionCount} applied.` : null,
     statusIsNonDefault ? `Status: ${STATUS_LABELS[status]}.` : null,
   ].filter(Boolean);
   const triggerDescription =
@@ -503,7 +707,7 @@ export function FilterMenu({
   // Mobile's badge is a single number (no room for a label) — it already
   // meant "how many things are narrowing this view", so a non-default status
   // counts toward it exactly like a pill does.
-  const mobileBadgeCount = activeCount + (statusIsNonDefault ? 1 : 0);
+  const mobileBadgeCount = activeCount + retentionCount + (statusIsNonDefault ? 1 : 0);
 
   // List sizing.
   //
@@ -526,21 +730,36 @@ export function FilterMenu({
     // Before the first measurement (the frame the popover mounts in) fall back
     // to the resting maximum rather than 0 — an unmeasured list must not be an
     // invisible one.
-    : { maxHeight: position?.listMaxHeight ?? MAX_LIST_HEIGHT };
+    : { maxHeight: position?.listMaxHeight ?? FILTER_MENU_SIZE.maxListHeight };
 
-  const emptyCopy = field
-    ? query.trim()
-      ? `No ${descriptor?.label.toLowerCase()} matches “${query.trim()}”.`
-      : `No ${descriptor?.label.toLowerCase()} values yet — memories pick these up as agents write them.`
-    : `Nothing matches “${query.trim()}”.`;
+  // A threshold's list is never empty for want of data — it always has presets —
+  // so the only way to see nothing here is to type something that is not a legal
+  // value. Saying so, with the range, is the difference between "this filter is
+  // broken" and "3651 is too many days".
+  const retentionEmptyCopy = retentionField
+    ? `“${query.trim()}” is not a value here — type a whole number from ${
+        RETENTION_CONDITION_BOUNDS[retentionField].min
+      } to ${RETENTION_CONDITION_BOUNDS[retentionField].max}.`
+    : '';
+
+  const emptyCopy = retentionField
+    ? retentionEmptyCopy
+    : field
+      ? query.trim()
+        ? `No ${descriptor?.label.toLowerCase()} matches “${query.trim()}”.`
+        : `No ${descriptor?.label.toLowerCase()} values yet — memories pick these up as agents write them.`
+      : `Nothing matches “${query.trim()}”.`;
 
   const list = (
     <div
       ref={listRef}
       id={LISTBOX_ID}
       role="listbox"
+      // Only a dimension is multi-select. A threshold holds one value, so
+      // announcing its list as multi-selectable would promise a second pick
+      // that silently replaces the first.
       {...(field ? { 'aria-multiselectable': true } : {})}
-      aria-label={field ? `${descriptor?.label} values` : 'Filter by'}
+      aria-label={levelLabel ? `${levelLabel} values` : 'Filter by'}
       className="overflow-y-auto p-1"
       style={{ ...listStyle, scrollPaddingBlock: '0.5rem' }}
     >
@@ -548,6 +767,58 @@ export function FilterMenu({
         <p className="px-2 py-3 text-center text-[11px] text-[var(--color-content-tertiary)]">
           {emptyCopy}
         </p>
+      ) : retentionField && retentionDescriptor ? (
+        <>
+          {retentionRows.map((row, i) => {
+            const isSelected = retention?.[retentionField] === row.value;
+            return (
+              <button
+                key={row.value}
+                id={`${OPTION_ID_PREFIX}${i}`}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => commitRetentionRow(i)}
+                onMouseEnter={() => setActiveIndex(i)}
+                className={[
+                  'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs',
+                  i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
+                  isSelected
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-content-secondary)]',
+                ].join(' ')}
+              >
+                {/* A radio, not a checkbox: the shape has to say "one of these"
+                    before the reader discovers it by picking a second. */}
+                <span
+                  aria-hidden
+                  className={[
+                    'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
+                    isSelected
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
+                      : 'border-[var(--color-border)]',
+                  ].join(' ')}
+                >
+                  {isSelected && <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />}
+                </span>
+                <span className="flex-1 truncate">{retentionDescriptor.formatValue(row.value)}</span>
+                {row.custom && (
+                  // Labelled so a typed threshold is visibly a typed one and not
+                  // a preset the reader misremembers next time.
+                  <span className="shrink-0 text-[10px] text-[var(--color-content-tertiary)]">
+                    custom
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {/* What the threshold actually tests, once under the list rather than
+              once per row: the rows are numbers, and a number without its rule
+              is the thing readers got wrong about `Delivered` vs `Chosen`. */}
+          <p className="px-2 pb-1 pt-2 text-[10px] leading-snug text-[var(--color-content-tertiary)]">
+            {retentionDescriptor.hint}
+          </p>
+        </>
       ) : field ? (
         valueRows.map((option, i) => {
           const isSelected = selectedValues(filters, field).includes(option.value);
@@ -592,6 +863,81 @@ export function FilterMenu({
         })
       ) : (
         rootRows.map((row, i) => {
+          if (row.kind === 'retention') {
+            const entry = requireRetentionField(row.field);
+            const Icon = RETENTION_FIELD_ICONS[row.field];
+            const value = retention?.[row.field];
+            // The heading is rendered BETWEEN rows rather than as an entry in
+            // `rootRows`, because `activeIndex` and the `role="option"` ids are
+            // positional — a non-selectable element in the array would shift
+            // every id past it and give the arrows a row they cannot land on.
+            const startsGroup = rootRows[i - 1]?.kind !== 'retention';
+            return (
+              <div key={`retention:${row.field}`}>
+                {startsGroup && (
+                  <p
+                    // `presentation`, not a heading: inside a listbox the only
+                    // legal children are options and groups, and a real
+                    // `role="group"` would have to wrap the rows — which the
+                    // positional ids above rule out.
+                    role="presentation"
+                    className="px-2 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]"
+                  >
+                    Age &amp; activity
+                  </p>
+                )}
+                <button
+                  id={`${OPTION_ID_PREFIX}${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={i === activeIndex}
+                  // The chosen value is a badge, and a badge is aria-hidden
+                  // decoration — fold it into the name so a screen reader hears
+                  // "Chosen, never chosen" rather than just "Chosen".
+                  aria-label={
+                    value !== undefined
+                      ? `${entry.label}, ${entry.formatValue(value)}`
+                      : undefined
+                  }
+                  onClick={() => commitRootRow(i)}
+                  onMouseEnter={() => setActiveIndex(i)}
+                  className={[
+                    'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--color-content-secondary)]',
+                    i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
+                  ].join(' ')}
+                >
+                  <Icon
+                    className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]"
+                    aria-hidden
+                  />
+                  <span
+                    className={[
+                      'flex-1 truncate',
+                      value !== undefined ? 'font-medium text-[var(--color-content-primary)]' : '',
+                    ].join(' ')}
+                  >
+                    {entry.label}
+                  </span>
+                  {value !== undefined && (
+                    <span
+                      aria-hidden
+                      // Wide enough for the longest common value ("More than
+                      // 365 days ago") — at a tighter cap every date threshold
+                      // truncated to "More than 30 d…", which is the half of
+                      // the phrase that carries no information.
+                      className="max-w-36 truncate rounded-full bg-[var(--color-accent-subtle)] px-1.5 text-[10px] font-semibold text-[var(--color-accent)]"
+                    >
+                      {entry.formatValue(value)}
+                    </span>
+                  )}
+                  <ChevronRight
+                    className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]"
+                    aria-hidden
+                  />
+                </button>
+              </div>
+            );
+          }
           const rowField = requireField(row.field);
           const Icon = FIELD_ICONS[row.field];
           const isValueRow = row.kind === 'value';
@@ -687,9 +1033,9 @@ export function FilterMenu({
 
           In the POPOVER it stays level-two-only: growth there is downward into
           empty space, so a placeholder row would cost a row and buy nothing. */}
-      {(field || useSheet) && (
+      {(level || useSheet) && (
         <div className="flex items-center gap-1 border-b border-[var(--color-border)] px-1.5 py-1.5">
-          {field ? (
+          {level ? (
             <button
               type="button"
               onClick={popLevel}
@@ -697,7 +1043,7 @@ export function FilterMenu({
               className="flex min-h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
             >
               <ChevronLeft className="size-3" aria-hidden />
-              {descriptor?.label}
+              {levelLabel}
             </button>
           ) : (
             <span className="flex min-h-6 items-center px-1.5 text-[11px] font-medium text-[var(--color-content-tertiary)]">
@@ -713,7 +1059,7 @@ export function FilterMenu({
           reader picking "Archived" is very likely about to also want to
           narrow it further with a real filter). See "Status lives here too"
           above for why this cannot become a fourth `rootRows` entry. */}
-      {!field && status !== undefined && onStatusChange && (
+      {!level && status !== undefined && onStatusChange && (
         <div
           role="radiogroup"
           aria-label="Status"
@@ -759,8 +1105,19 @@ export function FilterMenu({
           aria-controls={LISTBOX_ID}
           aria-autocomplete="list"
           aria-activedescendant={rowCount > 0 ? `${OPTION_ID_PREFIX}${activeIndex}` : undefined}
-          aria-label={field ? `Search ${descriptor?.label.toLowerCase()} values` : 'Search filters'}
-          placeholder={field ? descriptor?.searchPlaceholder : 'Filter by…'}
+          aria-label={
+            levelLabel ? `Search ${levelLabel.toLowerCase()} values` : 'Search filters'
+          }
+          // At a threshold the box is ALSO the custom-value input (there is no
+          // facet catalog to search), so the placeholder has to invite typing a
+          // number rather than reading as a search over the five presets.
+          placeholder={
+            retentionDescriptor
+              ? 'Pick one, or type a number…'
+              : field
+                ? descriptor?.searchPlaceholder
+                : 'Filter by…'
+          }
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -776,10 +1133,10 @@ export function FilterMenu({
       <div className="relative overflow-hidden">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={field ?? '__root__'}
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: field ? 12 : -12 }}
+            key={level ? `${level.kind}:${level.field}` : '__root__'}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: level ? 12 : -12 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: field ? -12 : 12 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: level ? -12 : 12 }}
             transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.16, 1, 0.3, 1] }}
           >
             {list}
@@ -790,7 +1147,14 @@ export function FilterMenu({
       {/* Footer: the two keys that are not guessable. Stating them costs one
           line and removes the only reason to reach for the mouse mid-flow. */}
       <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-2.5 py-1.5 text-[10px] leading-tight text-[var(--color-content-tertiary)]">
-        {field ? (
+        {retentionField ? (
+          <>
+            <span>One value per condition</span>
+            <span>
+              <kbd className="font-sans">Enter</kbd> apply
+            </span>
+          </>
+        ) : field ? (
           <>
             <span>
               <kbd className="font-sans">Space</kbd> select

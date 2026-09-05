@@ -39,13 +39,16 @@
  *   conditions) — one dimension per pill, OR within a dimension and AND across.
  *   Ownership (Personal / an org) is one of those dimensions now, filtered
  *   server-side like every other (migration 00064).
- * - `retention` param: the retention-preview trio (`lib/retention-filter.ts`)
- *   — min age / unseen-for / seen-at-most, the SAME conditions a saved
- *   retention policy matches on. Narrows the list to what a policy with these
- *   conditions would catch, so a reader can verify before ever saving one.
- *   Server-side (migration 00092), shareable, absent means no narrowing.
- *   Resolves to no conditions while the `retention-policies` flag is off —
- *   the whole feature is gated together with its Settings → Retention
+ * - `retention` param: the five age/activity thresholds (`lib/retention-filter.ts`)
+ *   — created / last agent open / recurrence / delivered / chosen, the SAME
+ *   conditions a saved retention policy matches on. Narrows the list to what a
+ *   policy with these conditions would catch, so a reader can verify before ever
+ *   saving one. They are picked from the SAME filter menu as the dimensions and
+ *   render as pills in the same row (see `FilterMenu`), so `?filters=` and
+ *   `?retention=` are two params behind one filter bar. Server-side (migration
+ *   00092 on the list, 00108 on the aggregates), shareable, absent means no
+ *   narrowing. Resolves to no conditions while the `retention-policies` flag is
+ *   off — the whole feature is gated together with its Settings → Retention
  *   Policies destination, which 404s while the flag is off.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
@@ -135,14 +138,11 @@ import {
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import {
-  RetentionConditionsPanel,
-  RetentionConditionsTrigger,
-} from './RetentionConditionsControl';
-import {
   hasRetentionConditions,
   normalizeRetentionConditions,
   retentionConditionsParamValue,
   type RetentionConditions,
+  type RetentionField,
 } from '@/lib/retention-filter';
 import { useReducedMotion } from 'motion/react';
 import {
@@ -198,6 +198,12 @@ const DEFAULT_EXPLORER_RANGE: TimeRange = null;
 // pinned section inside the menu, rather than its own button beside it — see
 // `FilterMenu`'s "Status lives here too" docblock for why it stays a
 // radiogroup instead of becoming a filter dimension.
+//
+// So do the five age/activity thresholds. They had a trigger and a panel of
+// their own here, which meant the control row carried TWO filter surfaces and a
+// reader had two places to ask what was narrowing the list. They are now five
+// more rows inside the same menu — see `FilterMenu`'s "Age & activity lives
+// here too".
 
 function ControlRow({
   variant,
@@ -216,8 +222,9 @@ function ControlRow({
   onStatusChange,
   retentionEnabled,
   retentionConditions,
-  retentionPanelOpen,
-  onToggleRetentionPanel,
+  onRetentionChange,
+  editingRetentionField,
+  onEditRetentionField,
 }: {
   variant: 'desktop' | 'mobile';
   search: string;
@@ -235,13 +242,15 @@ function ControlRow({
   dateActive?: boolean;
   status: MemoryStatus;
   onStatusChange: (status: MemoryStatus) => void;
-  /** Behind the `retention-policies` flag — its destination (Settings →
-   *  Retention Policies) 404s while the flag is off, so the entry point stays
-   *  hidden alongside it rather than dead-ending. */
+  /** Behind the `retention-policies` flag — the "Create retention policy"
+   *  hand-off's destination (Settings → Retention Policies) 404s while the flag
+   *  is off, so the five threshold rows stay hidden alongside it rather than
+   *  offering a narrowing whose one follow-up action dead-ends. */
   retentionEnabled: boolean;
   retentionConditions: RetentionConditions;
-  retentionPanelOpen: boolean;
-  onToggleRetentionPanel: () => void;
+  onRetentionChange: (next: RetentionConditions) => void;
+  editingRetentionField: RetentionField | null;
+  onEditRetentionField: (field: RetentionField | null) => void;
 }) {
   const desktop = variant === 'desktop';
 
@@ -267,17 +276,17 @@ function ControlRow({
         onToggleValue={onToggleFilterValue}
         status={status}
         onStatusChange={onStatusChange}
+        // Both halves, or neither: `FilterMenu` renders the section only when
+        // it has a value AND a setter, so the flag gates it by withholding the
+        // pair rather than by the menu learning about flags.
+        retention={retentionEnabled ? retentionConditions : undefined}
+        onRetentionChange={retentionEnabled ? onRetentionChange : undefined}
         editingField={editingField}
         onEditField={onEditField}
+        editingRetentionField={editingRetentionField}
+        onEditRetentionField={onEditRetentionField}
         variant={variant}
       />
-      {retentionEnabled && (
-        <RetentionConditionsTrigger
-          conditions={retentionConditions}
-          open={retentionPanelOpen}
-          onToggle={onToggleRetentionPanel}
-        />
-      )}
       <DateRangePicker
         value={range}
         onChange={onRangeChange}
@@ -474,48 +483,38 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // 404 for a reader who does not have it enabled.
   const retentionPoliciesEnabled = useFeatureFlag('retention-policies');
 
-  // URL-backed retention-preview trio (`lib/retention-filter.ts`) — narrows the
+  // URL-backed age/activity thresholds (`lib/retention-filter.ts`) — narrows the
   // list to what a retention policy with these conditions would catch. `null`
   // is the default (no narrowing); `useUrlState` drops the param entirely once
   // the last condition is cleared (`retentionConditionsParamValue`). Resolves
   // to NO conditions while the flag is off, so a stale `?retention=` from
   // before the flag was disabled (or a link shared by someone who has it)
   // cannot silently narrow the list for a reader with no way to see or clear it.
-  // Debounced exactly like `q` above (`search`/`committedSearch`): the panel's
-  // three number inputs are high-frequency, keystroke-driven input, so a raw
-  // `useUrlState` here re-navigates and reissues the full facets+list fetch on
-  // EVERY digit typed — 8 facet calls + 1 list call, repeated per keystroke,
-  // which is also why `isLoading` never got a chance to settle to `false`:
-  // each keystroke started a brand-new (uncached) query key before the
-  // previous one's response could paint, so the skeleton never cleared while
-  // typing a multi-digit value. `rawRetention` stays instantly responsive for
-  // the panel's own inputs; `committedRawRetention` re-reads the URL directly
-  // and only changes once the debounce settles, so `useMemories` below fetches
-  // once per finished edit rather than once per keystroke.
-  const [rawRetention, setRawRetention] = useDebouncedUrlState<RetentionConditions | null>(
+  //
+  // NOT debounced, and no separate `committed…` mirror — deliberately unlike `q`
+  // above. Both existed because the old panel's five number inputs were
+  // keystroke-driven, so a plain `useUrlState` reissued 8 facet calls + a list
+  // call on every digit and the skeleton never cleared mid-value. A menu row is
+  // a discrete click: one navigation, one fetch, and nothing to debounce. The
+  // second `useUrlState` that fed the aggregates only existed to lag behind that
+  // debounce, so it went with it — with one value there is no way for the pills
+  // and the counts to describe different condition sets.
+  const [rawRetention, setRawRetention] = useUrlState<RetentionConditions | null>(
     'retention',
     null,
-    { debounceMs: 350, cleanOnPathname: '/lore', navigationMode: 'push' },
+    { cleanOnPathname: '/lore', navigationMode: 'push' },
   );
-  const [committedRawRetention] = useUrlState<RetentionConditions | null>('retention', null, {
-    cleanOnPathname: '/lore',
-  });
   const retentionConditions = useMemo(
     () => (retentionPoliciesEnabled ? normalizeRetentionConditions(rawRetention) : {}),
     [rawRetention, retentionPoliciesEnabled],
-  );
-  const committedRetentionConditions = useMemo(
-    () => (retentionPoliciesEnabled ? normalizeRetentionConditions(committedRawRetention) : {}),
-    [committedRawRetention, retentionPoliciesEnabled],
   );
   const setRetentionConditions = useCallback(
     (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
     [setRawRetention],
   );
-  // The disclosure's open/closed state — ephemeral, never in the URL (the
-  // conditions themselves are the shareable part, not whether the panel is
-  // showing).
-  const [retentionPanelOpen, setRetentionPanelOpen] = useState(false);
+  // Which threshold the menu should open at, set by a retention pill's value
+  // segment — the `editingField` above, for the other half of the bar.
+  const [editingRetentionField, setEditingRetentionField] = useState<RetentionField | null>(null);
 
   const router = useRouter();
 
@@ -595,7 +594,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     search: committedSearch,
     range: resolvedRange,
     filters,
-    retentionConditions: committedRetentionConditions,
+    retentionConditions,
     showArchived,
     expiringWithinDays: expiringWithinDays(status),
   });
@@ -609,16 +608,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // without it a scoped view would show global counts and overstate the yield.
   // Archived-aware — the archived view is a different population with its own counts.
   //
-  // The retention thresholds go too (00108). They are the COMMITTED (debounced)
-  // set, the same value the list reads, so the counts and the rows they describe
-  // move on one beat rather than the menu refetching on every keystroke in an
-  // age field. Unlike a dimension, a threshold narrows even the self-excluded
-  // facet: switching `host` does not stop you looking at lore older than 30 days.
+  // The retention thresholds go too (00108) — the same value the list reads, so
+  // the counts and the rows they describe can never describe different sets.
+  // Unlike a dimension, a threshold narrows even the self-excluded facet:
+  // switching `host` does not stop you looking at lore older than 30 days.
   const { data: facets } = useFacetCatalog(
     showArchived,
     filters,
     selectedScope,
-    committedRetentionConditions,
+    retentionConditions,
   );
 
   // ── Instruments ─────────────────────────────────────────────────────────
@@ -648,9 +646,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     showArchived,
     filters,
     scope: selectedScope,
-    // 00108, and the committed set for `useFacetCatalog`'s reason: a cell must
-    // count the rows that clicking it would list.
-    retention: committedRetentionConditions,
+    // 00108, for `useFacetCatalog`'s reason: a cell must count the rows that
+    // clicking it would list.
+    retention: retentionConditions,
   });
 
   // A cell is two ordinary pills. Going through `toggleFilterValue` — the same
@@ -1155,7 +1153,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         range={range}
         onRangeChange={setRange}
         filters={filters}
-        retention={committedRetentionConditions}
+        retention={retentionConditions}
         heatmapData={heatmapData}
         highlightRange={highlightRange}
         onSelectDate={handleHeatmapDayClick}
@@ -1247,6 +1245,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onToggleFilterValue={handleToggleFilterValue}
               editingField={isMobile ? null : editingField}
               onEditField={setEditingField}
+              editingRetentionField={isMobile ? null : editingRetentionField}
+              onEditRetentionField={setEditingRetentionField}
               range={pickerRange}
               onRangeChange={handleDatePickerChange}
               dateLabel={dateLabel}
@@ -1255,19 +1255,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onStatusChange={handleStatusChange}
               retentionEnabled={retentionPoliciesEnabled}
               retentionConditions={retentionConditions}
-              retentionPanelOpen={retentionPanelOpen}
-              onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
+              onRetentionChange={setRetentionConditions}
             />
-
-            {retentionPoliciesEnabled && retentionPanelOpen && (
-              <RetentionConditionsPanel
-                conditions={retentionConditions}
-                onChange={setRetentionConditions}
-                onClose={() => setRetentionPanelOpen(false)}
-                onCreatePolicy={handleCreatePolicy}
-                filterCount={filters.length}
-              />
-            )}
 
             <FilterPillRow
               filters={filters}
@@ -1275,6 +1264,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onRemove={handleRemoveFilter}
               onClearAll={handleClearFilters}
               onEditField={setEditingField}
+              retention={retentionConditions}
+              onRetentionChange={setRetentionConditions}
+              onEditRetentionField={setEditingRetentionField}
+              // Omitted while the flag is off, which hides the action rather
+              // than offering a hand-off to a page that 404s.
+              onCreatePolicy={retentionPoliciesEnabled ? handleCreatePolicy : undefined}
             />
 
             <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
@@ -1292,6 +1287,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onToggleFilterValue={handleToggleFilterValue}
               editingField={isMobile ? editingField : null}
               onEditField={setEditingField}
+              editingRetentionField={isMobile ? editingRetentionField : null}
+              onEditRetentionField={setEditingRetentionField}
               range={pickerRange}
               onRangeChange={handleDatePickerChange}
               dateLabel={dateLabel}
@@ -1300,21 +1297,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onStatusChange={handleStatusChange}
               retentionEnabled={retentionPoliciesEnabled}
               retentionConditions={retentionConditions}
-              retentionPanelOpen={retentionPanelOpen}
-              onToggleRetentionPanel={() => setRetentionPanelOpen((open) => !open)}
+              onRetentionChange={setRetentionConditions}
             />
-
-            {retentionPoliciesEnabled && retentionPanelOpen && (
-              <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
-                <RetentionConditionsPanel
-                  conditions={retentionConditions}
-                  onChange={setRetentionConditions}
-                  onClose={() => setRetentionPanelOpen(false)}
-                  onCreatePolicy={handleCreatePolicy}
-                  filterCount={filters.length}
-                />
-              </div>
-            )}
 
             <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
               <FilterPillRow
@@ -1323,6 +1307,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
                 onRemove={handleRemoveFilter}
                 onClearAll={handleClearFilters}
                 onEditField={setEditingField}
+                retention={retentionConditions}
+                onRetentionChange={setRetentionConditions}
+                onEditRetentionField={setEditingRetentionField}
+                onCreatePolicy={retentionPoliciesEnabled ? handleCreatePolicy : undefined}
               />
             </div>
 

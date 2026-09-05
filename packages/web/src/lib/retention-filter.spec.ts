@@ -9,10 +9,14 @@ import { GroomConditionsSchema } from '@lorekit/schemas/retention';
 import { normalizeFilters } from './filters';
 import {
   NO_RETENTION_CONDITIONS,
+  RETENTION_CONDITION_BOUNDS,
+  RETENTION_FIELDS,
   filtersToGroomDimensionFilters,
   groomConditionsToFilters,
   hasRetentionConditions,
   normalizeRetentionConditions,
+  parseCondition,
+  requireRetentionField,
   retentionConditionPlaceholder,
   retentionConditionsCount,
   retentionConditionsParamValue,
@@ -20,6 +24,10 @@ import {
   retentionConditionsToGroomConditions,
   retentionConditionsToAggregateBody,
   retentionConditionsToListBody,
+  retentionFieldMatches,
+  retentionValueRows,
+  setRetentionCondition,
+  type RetentionConditions,
 } from './retention-filter';
 
 describe('normalizeRetentionConditions', () => {
@@ -364,5 +372,149 @@ describe('retentionConditionsToAggregateBody', () => {
     // Read back off the parsed output, not `.success` — see the note above on
     // why a non-strict schema makes a success-only assertion vacuous.
     expect(ListFacetsBodySchema.parse(body).max_opened_count).toBe(0);
+  });
+});
+
+// ── The filter menu's age & activity entries ─────────────────────────────────
+
+describe('RETENTION_FIELDS', () => {
+  it('covers every condition exactly once, and in a stable order', () => {
+    // The menu's row order, the pill order and `retentionConditionsPhrase`'s
+    // fragment order are all this one array, so a field added to
+    // `RetentionConditions` without an entry here is a condition the URL can
+    // carry and the UI can never show or clear.
+    expect(RETENTION_FIELDS.map((d) => d.field)).toEqual([
+      'minAgeDays',
+      'unseenDays',
+      'maxSeenCount',
+      'maxReadCount',
+      'maxOpenedCount',
+    ]);
+  });
+
+  it('offers only in-bounds presets', () => {
+    // A preset that `normalizeRetentionConditions` would drop is a row that
+    // applies a filter and then silently reverts on the next read of the URL.
+    for (const { field, presets } of RETENTION_FIELDS) {
+      for (const preset of presets) {
+        expect(parseCondition(preset, RETENTION_CONDITION_BOUNDS[field])).toBe(preset);
+      }
+    }
+  });
+
+  it('leads Chosen with 0 and keeps 0 out of the other counters', () => {
+    // `maxOpenedCount: 0` is migration 00105's whole point. The other two
+    // counters cannot usefully be 0 — a memory exists because it was written,
+    // and `max_read_count <= 5` matched nothing at all on the live store.
+    expect(requireRetentionField('maxOpenedCount').presets[0]).toBe(0);
+    expect(requireRetentionField('maxSeenCount').presets).not.toContain(0);
+    expect(requireRetentionField('maxReadCount').presets).not.toContain(0);
+  });
+
+  it('captions Chosen: 0 as never chosen rather than as a count', () => {
+    expect(requireRetentionField('maxOpenedCount').formatValue(0)).toBe('Never chosen');
+    expect(requireRetentionField('maxOpenedCount').formatValue(1)).toBe('1 time or fewer');
+    expect(requireRetentionField('minAgeDays').formatValue(1)).toBe('More than 1 day ago');
+    expect(requireRetentionField('minAgeDays').formatValue(30)).toBe('More than 30 days ago');
+  });
+});
+
+describe('requireRetentionField', () => {
+  it('throws on an unknown field rather than returning undefined', () => {
+    expect(() => requireRetentionField('bogus' as never)).toThrow(/Unknown retention field/);
+  });
+});
+
+describe('retentionFieldMatches', () => {
+  it('offers every entry, in order, with no query', () => {
+    expect(retentionFieldMatches('')).toEqual(RETENTION_FIELDS.map((d) => d.field));
+    expect(retentionFieldMatches('   ')).toEqual(RETENTION_FIELDS.map((d) => d.field));
+  });
+
+  it('ranks label hits above keyword hits', () => {
+    // `c` starts both "Created" and "Chosen", and also the keyword "cost" on
+    // Delivered. A keyword must never outrank a label, or typing the first
+    // letter of the row you want surfaces a different row first.
+    expect(retentionFieldMatches('c').slice(0, 2)).toEqual(['minAgeDays', 'maxOpenedCount']);
+  });
+
+  it('finds an entry by the question rather than its label', () => {
+    expect(retentionFieldMatches('never')).toEqual(['maxOpenedCount']);
+    expect(retentionFieldMatches('stale')).toEqual(['unseenDays']);
+    expect(retentionFieldMatches('cost')).toEqual(['maxReadCount']);
+  });
+
+  it('returns nothing for a query that matches no entry', () => {
+    expect(retentionFieldMatches('zzz')).toEqual([]);
+  });
+});
+
+describe('retentionValueRows', () => {
+  it('lists the presets with no query, none of them custom', () => {
+    expect(retentionValueRows('maxOpenedCount', '')).toEqual([
+      { value: 0, custom: false },
+      { value: 1, custom: false },
+      { value: 2, custom: false },
+      { value: 5, custom: false },
+    ]);
+  });
+
+  it('matches presets by NUMERIC PREFIX, so typing toward a value narrows', () => {
+    // `3` keeps 30 and 365 — a reader typing toward one of them — behind the
+    // typed value itself, which is a legal threshold in its own right. What it
+    // must NOT do is match on the rendered row text: `days` appears in every
+    // one of this field's labels and matches nothing.
+    expect(retentionValueRows('minAgeDays', '3').map((r) => r.value)).toEqual([3, 30, 365]);
+    expect(retentionValueRows('minAgeDays', '18').map((r) => r.value)).toEqual([18, 180]);
+    expect(retentionValueRows('minAgeDays', 'days')).toEqual([]);
+  });
+
+  it('offers a typed value that is not a preset, leading and labelled custom', () => {
+    expect(retentionValueRows('minAgeDays', '45')).toEqual([{ value: 45, custom: true }]);
+  });
+
+  it('does not duplicate a typed value that IS a preset', () => {
+    expect(retentionValueRows('minAgeDays', '30')).toEqual([{ value: 30, custom: false }]);
+  });
+
+  it('offers no custom row for a value normalization would drop', () => {
+    // Out of bounds, non-integer, and non-numeric all reach the menu's empty
+    // state rather than applying a threshold that vanishes on the next read of
+    // `?retention=`.
+    expect(retentionValueRows('minAgeDays', '0')).toEqual([]);
+    expect(retentionValueRows('minAgeDays', '4000')).toEqual([]);
+    expect(retentionValueRows('minAgeDays', '7.5')).toEqual([]);
+    expect(retentionValueRows('maxSeenCount', 'one')).toEqual([]);
+  });
+
+  it('offers 0 for the one field whose floor is zero', () => {
+    expect(retentionValueRows('maxOpenedCount', '0')).toEqual([{ value: 0, custom: false }]);
+    expect(retentionValueRows('maxSeenCount', '0')).toEqual([{ value: 0, custom: true }]);
+  });
+});
+
+describe('setRetentionCondition', () => {
+  it('sets a field without mutating the input', () => {
+    const before: RetentionConditions = { minAgeDays: 30 };
+    const after = setRetentionCondition(before, 'maxOpenedCount', 0);
+    expect(after).toEqual({ minAgeDays: 30, maxOpenedCount: 0 });
+    expect(before).toEqual({ minAgeDays: 30 });
+  });
+
+  it('replaces rather than accumulates — a threshold holds one value', () => {
+    expect(setRetentionCondition({ minAgeDays: 30 }, 'minAgeDays', 90)).toEqual({ minAgeDays: 90 });
+  });
+
+  it('removes the key on undefined, so the param drops rather than carrying a null', () => {
+    const cleared = setRetentionCondition({ minAgeDays: 30, unseenDays: 7 }, 'minAgeDays', undefined);
+    expect(cleared).toEqual({ unseenDays: 7 });
+    expect('minAgeDays' in cleared).toBe(false);
+  });
+
+  it('sets 0 rather than treating it as a clear', () => {
+    // The one value a truthiness check would swallow, and the most useful one
+    // in the set (00105).
+    expect(setRetentionCondition({}, 'maxOpenedCount', 0)).toEqual({ maxOpenedCount: 0 });
+    expect(hasRetentionConditions(setRetentionCondition({}, 'maxOpenedCount', 0))).toBe(true);
   });
 });
