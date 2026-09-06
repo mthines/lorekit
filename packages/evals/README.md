@@ -13,11 +13,16 @@ the mock.
 > it tells you where to look, not what is true. Widening N, not reinterpreting
 > the same three runs, is the way to a stronger claim.
 
-> **Nothing here gates anything.** These evals are never run in CI and never run
-> from `node --test`. Live runs are slow, costly and flaky; gating on a signal
-> whose stability has not been established would only teach people to re-run the
-> job until it passes. When the signal is shown to be stable, that is the moment
-> to revisit — as a deliberate decision, not a default.
+> **Nothing here gates anything.** Live runs are slow, costly and flaky; gating
+> on a signal whose stability has not been established would only teach people to
+> re-run the job until it passes. When the signal is shown to be stable, that is
+> the moment to revisit — as a deliberate decision, not a default. The live arms
+> also never run from `node --test`.
+>
+> _Gates nothing_ is not _never runs in CI_: [`.github/workflows/evals.yml`](../../.github/workflows/evals.yml)
+> runs them on a GitHub Actions runner, which is the only clean room available
+> (see [Running in a container](#running-in-a-container-ci-docker-a-cloud-sandbox)).
+> It reports numbers; no job there fails a PR on a lift.
 
 ## Status
 
@@ -308,6 +313,7 @@ a well-equipped machine cost $1.13 to say one word. `preflight` reports its own
 | `--model <id>`          | Model under test. Changing it mid-batch makes the arms incomparable. |
 | `--permission-mode <m>` | Passed to `claude`. See the root caveat below.                       |
 | `--lesson-file <path>`  | `golden`: the organic lesson. Absent ⇒ B-organic is skipped.         |
+| `--skip-if-unavailable` | Exit 0 with a "skipped" report when a live run cannot start. For CI. |
 
 ### Running in a container (CI, Docker, a cloud sandbox)
 
@@ -334,10 +340,71 @@ lore into arm A, which is precisely the control that must see none. This is the
 doing the job it exists for. Run the live arms somewhere those hooks are not
 installed.
 
+**That somewhere is a GitHub Actions runner**, and
+[`.github/workflows/evals.yml`](../../.github/workflows/evals.yml) is how to get
+one. A fresh runner has no user-level `~/.claude` to leak hooks, skills or
+plugins into the control arm, and it is non-root, so the default
+`bypassPermissions` is accepted rather than refused — both blockers above are
+absent by construction rather than worked around. Three tiers:
+
+| Tier        | Cost           | Trigger                                                   |
+| ----------- | -------------- | --------------------------------------------------------- |
+| `offline`   | free           | automatic, on a PR touching the harness or what it drives |
+| `preflight` | one model call | same                                                      |
+| `live`      | the experiment | `workflow_dispatch`, or a `run-evals` label on the PR     |
+
+The dispatch form takes the subcommand, `reps` (capped at 10), a variant
+narrowing and `--skip-off-target`; it writes `summary.json`'s own caveats —
+`usableReps`, the discarded count and `costUsd` — into the run's step summary and
+uploads `.eval-out` as an artifact.
+
+Every live invocation there passes `--skip-if-unavailable`, which turns an
+unstartable run into exit 0 plus a report naming what was missing, instead of a
+failure. That is what makes the workflow safe on a fork PR (secrets do not
+interpolate) and in a repository before the `ANTHROPIC_API_KEY` secret is added:
+a job with no credential must not be red for a reason unrelated to the change.
+Locally, leave the flag off — a silent exit 0 tells you nothing, which is why it
+is opt-in rather than the default. The three preconditions it decides on live in
+`src/harness/runnable.mjs`: the binary, the credential, and `bypassPermissions`
+under root.
+
 Artifacts land under `<out>/arm0-<runId>/rep-<n>/` as `transcript.jsonl`,
 `result.json` and `meta.json`, with a `summary.json` per run. They are written
 so a result can be re-read months later without re-running it — which is also
 why the low-power caveat is embedded in `summary.json` rather than only here.
+
+### Every run ships to Dash0 under `service.name=eval`
+
+An artifact you have to go and find is not a trend. `scripts/telemetry/eval-telemetry.mjs`
+reads a finished `summary.json` and exports the run as one trace (`lorekit.eval`
+plus a child span per rep) and seven gauges — success rate, mean score, rep
+counts by state, cost, mean duration, lift, and tokens-per-point — so two commits
+can be compared without re-running either.
+
+```bash
+node scripts/telemetry/eval-telemetry.mjs .eval-out             # newest run under a parent
+node scripts/telemetry/eval-telemetry.mjs .eval-out/golden-…    # one specific run
+node scripts/telemetry/eval-telemetry.mjs .eval-out --dry-run   # build and print, send nothing
+```
+
+It runs **downstream of the harness**, reading the summary the run already wrote,
+and the workflow invokes it with `if: always()`. That ordering is deliberate: an
+export failure must never retroactively fail an experiment that already spent
+real money and already produced its result.
+
+The summary's own honesty rules survive the trip. Rates are over `usableReps`,
+and a cell with zero usable reps emits **no datapoint** rather than a `0.0` —
+"nothing was measured" and "the arm scored zero" are different claims. `cost` is
+the exception and sums every billed rep, discarded ones included. Aggregates are
+read from the summary, never recomputed, so the exporter can never become a
+second grader that quietly disagrees with this one. A discarded rep is an ERROR
+span; a merely failed one is OK. The run's `caveat` rides on the root span
+verbatim.
+
+It reuses the CLI's telemetry config, so `LOREKIT_TELEMETRY_TOKEN` (already a
+repo secret) is the only credential, and `LOREKIT_TELEMETRY=0` / `DO_NOT_TRACK=1`
+turn it off. With no credential it states the reason and exits 0. Full signal
+reference: [`docs/otel.md`](../../docs/otel.md#eval-runs-servicenameeval).
 
 ## Isolation
 
@@ -447,7 +514,13 @@ runner, ['SessionStart'])` is exported from `packages/cli/src/shared/config.mjs`
 
 ## What "no CI gate" does and does not mean
 
-The LIVE runs gate nothing. Everything below the model does: the store, the
+The LIVE runs gate nothing — they run in CI (above) and report. Their
+preconditions are nevertheless checked for free on every PR that touches the
+harness: `evals.yml`'s `offline` tier runs `node --test` and both `--dry-run`
+plans, so the arm construction, scope resolution and flag refusals the paid
+tiers depend on are exercised without spawning a model.
+
+Everything below the model gates for real: the store, the
 hook, the derived scopes and the injected index are deterministic functions of
 the sandbox, so `pnpm nx test evals` asserts — for real, on every PR — that a
 seeded lesson is injected, that an empty store injects nothing, that the hook

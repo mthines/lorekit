@@ -269,10 +269,18 @@ export function summarizeArm(armId, reps = []) {
     }
   }
 
+  // Cost is summed over EVERY rep that ran, including the discarded ones.
+  //
+  // A contaminated rep is excluded from every RATE — it is not evidence — but
+  // it was still billed, and a report that quietly priced only the usable reps
+  // would understate what the experiment cost exactly when it went wrong most.
+  const billed = all.filter((r) => typeof r.costUsd === "number");
   return {
     arm: armId,
     reps: all.length,
     usableReps: usable.length,
+    costUsd:
+      billed.length > 0 ? billed.reduce((sum, r) => sum + r.costUsd, 0) : null,
     discardedReps: all.filter((r) => r.discarded).length,
     harnessFaultReps: all.filter(
       (r) => r.retrieval && r.retrieval.state === RETRIEVAL_ABSENT,

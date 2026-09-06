@@ -260,3 +260,69 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
     await fsp.rm(out, { recursive: true, force: true });
   }
 });
+
+// ── The runnability gate: where it sits, and what it may swallow ─────────────
+//
+// Both tests force unrunnability with `--command <nonexistent>` rather than by
+// unsetting a credential: the resolver reports "not on PATH" on any machine, so
+// neither test can wander onto the live path and spend a model call on a
+// developer box that happens to be fully configured.
+const UNRUNNABLE = ["--command", "/nonexistent/no-such-agent"];
+
+test("an unhonourable flag is refused even when the run could not have started", async () => {
+  // The ordering that matters most under `--skip-if-unavailable`, which CI
+  // always passes: if the gate ran first, a workflow that names a flag the
+  // subcommand cannot honour would exit 0 with a "skipped" report and stay
+  // green forever, having never run and never said the invocation was wrong.
+  await assert.rejects(
+    () =>
+      main([
+        "golden",
+        ...UNRUNNABLE,
+        "--skip-if-unavailable",
+        "--seed",
+        "canonical",
+      ]),
+    /--seed cannot be honoured here/,
+  );
+});
+
+test("an unstartable run refuses by default and skips only when asked", async () => {
+  const out = await fsp.mkdtemp(path.join(os.tmpdir(), "eval-gate-"));
+  try {
+    // Locally, silence is useless: name what is missing.
+    await assert.rejects(
+      () => main(["golden", ...UNRUNNABLE, "--out", out]),
+      /not on PATH/,
+    );
+
+    // In CI, a fork PR or a repo without the secret must not go red for a
+    // reason unrelated to the change — but the reason travels in the report,
+    // so a skipped job cannot later be misread as a run that passed.
+    const written = [];
+    const original = process.stdout.write;
+    process.stdout.write = (chunk) => (written.push(String(chunk)), true);
+    let code;
+    try {
+      code = await main([
+        "golden",
+        ...UNRUNNABLE,
+        "--skip-if-unavailable",
+        "--out",
+        out,
+      ]);
+    } finally {
+      process.stdout.write = original;
+    }
+    assert.equal(code, 0);
+    const report = JSON.parse(written.join(""));
+    assert.equal(report.subcommand, "golden");
+    assert.equal(report.skipped, true);
+    assert.ok(report.reasons.length > 0);
+    assert.match(report.readable, /not on PATH/);
+    // Nothing was built: the gate is above the sandbox, as the refusals are.
+    assert.deepEqual(await fsp.readdir(out), []);
+  } finally {
+    await fsp.rm(out, { recursive: true, force: true });
+  }
+});

@@ -3,8 +3,17 @@
 //
 // Every subcommand here spends real model tokens against `claude -p`, takes
 // minutes, and is inherently flaky. It is therefore never invoked from
-// `node --test` and never from CI — `pnpm nx test evals` covers the pure logic
-// only, and the harness gates nothing until the signal is shown to be stable.
+// `node --test` — `pnpm nx test evals` covers the pure logic only — and it
+// GATES NOTHING. That, not "it never runs in CI", is the invariant.
+//
+// It DOES now run in CI, on demand and on a label, because a GitHub Actions
+// runner is the clean-environment machine this harness needs: no user-level
+// `~/.claude`, so none of the developer hooks, skills or plugins that
+// `environment.mjs` discards a rep for, and a non-root user, so
+// `bypassPermissions` is accepted rather than refused.
+// `.github/workflows/evals.yml` is the caller; `runnable.mjs` is what makes it
+// safe — a fork PR, or a repository before the secret exists, SKIPS rather
+// than failing for a reason unrelated to the change.
 //
 // The one exception is `probe`, which spawns no model at all: it seeds the
 // store, installs the real hook and prints what the hook actually injected. It
@@ -12,9 +21,10 @@
 // against a store you are curious about, not an assertion.
 //
 // Subcommands (later PRs fill in the rest):
-//   golden  arms 0/A/B/C, graded and COMPARED — the whole experiment
-//   arm0    one attempt against an EMPTY store — the "no memory" baseline
-//   probe   seed + install the hook + print the injected set (no model)
+//   golden    arms 0/A/B/C, graded and COMPARED — the whole experiment
+//   variants  which FRAMING teaches best, on-target AND off-target
+//   arm0      one attempt against an EMPTY store — the "no memory" baseline
+//   probe     seed + install the hook + print the injected set (no model)
 //   scale   corpus size x lesson position sweep     (shipped as a node --test
 //           suite, `test/relevance/sweep.test.mjs`, not as a subcommand)
 //   review  pr-reviewer control vs treatment on PR #395               (PR6)
@@ -28,6 +38,10 @@ import {
   runAgent,
 } from "../src/harness/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/harness/arm.mjs";
+import {
+  assessRunnability,
+  describeRunnability,
+} from "../src/harness/runnable.mjs";
 import {
   VARIANT_IDS,
   describeVariant,
@@ -131,6 +145,13 @@ Options:
                        rather than reporting it as a model result.
   --keep               Leave each sandbox on disk for inspection.
   --dry-run            Build and print the plan without spawning the agent.
+  --skip-if-unavailable
+                       Exit 0 with a "skipped" report when a live run cannot
+                       start (no agent binary, no credential, or a permission
+                       mode the CLI would refuse) instead of failing. For CI:
+                       a fork PR and a repository without the secret must not
+                       go red for a reason unrelated to the change. Locally,
+                       leave it off — a silent exit 0 tells you nothing.
   -h, --help           Show this help.
 `;
 
@@ -167,6 +188,7 @@ export function parseArgs(argv) {
     git: null,
     keep: false,
     dryRun: false,
+    skipIfUnavailable: false,
     // Which flags the caller actually TYPED. Several options have meaningful
     // defaults, so a subcommand that cannot honour one has no other way to tell
     // "left at the default" apart from "asked for, and about to be ignored".
@@ -226,6 +248,9 @@ export function parseArgs(argv) {
         break;
       case "--dry-run":
         options.dryRun = true;
+        break;
+      case "--skip-if-unavailable":
+        options.skipIfUnavailable = true;
         break;
       case "-h":
       case "--help":
@@ -383,6 +408,11 @@ async function runRep({
   }
   await fsp.mkdir(repDir, { recursive: true });
 
+  // Wall-clock bounds for the rep, so an exported trace has REAL timestamps
+  // rather than a synthetic waterfall. `wallMs` alone gives a duration but no
+  // position, and a span placed by guesswork is worse than none: it reads as
+  // evidence about when the model ran.
+  const startedAt = new Date().toISOString();
   const run = await runAgent({
     prompt,
     cwd: sandbox.cwd,
@@ -442,6 +472,8 @@ async function runRep({
       arm: arm.id,
       seed: arm.seed,
       task: task.id,
+      startedAt,
+      finishedAt: new Date().toISOString(),
       model: options.model,
       targetScope: task.targetScope,
       ...run.summary,
@@ -463,6 +495,21 @@ async function runRep({
 }
 
 /**
+ * What a run actually cost, summed across its groups.
+ *
+ * Reported so a CI job that spends real money says how much, in the artifact
+ * rather than only in a billing dashboard a month later. `null` when nothing
+ * was billed (a dry run, or a skipped one) — never `0`, which would read as
+ * "this was free".
+ */
+function totalCostUsd(summaries) {
+  const billed = summaries.filter((s) => typeof s.costUsd === "number");
+  return billed.length > 0
+    ? billed.reduce((sum, s) => sum + s.costUsd, 0)
+    : null;
+}
+
+/**
  * The golden experiment. Arms 0 / A / B / C, then the comparison.
  *
  * Arm 0 runs FIRST and alone, because two later arms are built from what it
@@ -480,6 +527,7 @@ async function runGolden(options) {
     "golden defines each arm's own store",
     "the organic lesson goes in --lesson-file",
   );
+  requireRunnable(options);
 
   const id = runId();
   const outDir = path.resolve(options.out, `golden-${id}`);
@@ -575,6 +623,7 @@ async function runGolden(options) {
       `N=${options.reps} per arm is a low-power INDICATOR, not proof. ` +
       `Treat every difference as directional; widening N — not reinterpreting ` +
       `these reps — is the way to a stronger claim.`,
+    costUsd: totalCostUsd(summaries),
     skippedArms: skipped,
     arms: summaries,
     comparisons,
@@ -610,6 +659,7 @@ async function runVariants(options) {
     "variants defines its own store, scope and lesson text",
     "pick rows with --variant <id> instead",
   );
+  requireRunnable(options);
 
   const requested =
     options.variants.length > 0 ? options.variants : VARIANT_IDS;
@@ -695,6 +745,7 @@ async function runVariants(options) {
     model: options.model,
     repsRequested: options.reps,
     offTargetRun,
+    costUsd: totalCostUsd([...cells.keys()].map((cellId) => cell(cellId))),
     caveat:
       `N=${options.reps} per cell is a low-power INDICATOR, not proof. ` +
       `A ranking at this N orders the variants; it does not establish that ` +
@@ -732,6 +783,7 @@ async function runArm0(options) {
     "arm0 always runs against an EMPTY store",
     'or use the "probe" subcommand, which seeds',
   );
+  requireRunnable(options);
 
   const id = runId();
   const outDir = path.resolve(options.out, `arm0-${id}`);
@@ -840,6 +892,7 @@ async function runArm0(options) {
           // A contaminated rep is DISCARDED, not counted as a failure — the
           // same rule `retrieval.mjs` applies to a harness fault.
           discarded: !environment.clean,
+          finishedAt: new Date().toISOString(),
           wallMs: run.wallMs,
           exitCode: run.exitCode,
           timedOut: run.timedOut,
@@ -913,6 +966,7 @@ async function runPreflight(options) {
     ],
     "preflight is a single call in a fixed empty-store arm, it writes no run directory, and the model call IS the check",
   );
+  requireRunnable(options);
 
   const sandbox = await createSandbox({ keep: options.keep });
   try {
@@ -1015,12 +1069,88 @@ async function runProbe(options) {
   }
 }
 
+/** Thrown by `requireRunnable`; `main` turns it into a refusal or a skip. */
+class RunUnavailable extends Error {
+  constructor(assessment) {
+    super(describeRunnability(assessment));
+    this.name = "RunUnavailable";
+    this.assessment = assessment;
+  }
+}
+
+/**
+ * Refuse to start a subcommand that spawns a model when it cannot.
+ *
+ * Called by each live subcommand as its SECOND statement, immediately after its
+ * own `refuseUnhonourableFlags`. The order is load-bearing in both directions:
+ *
+ *   • A flag this subcommand cannot honour is a caller error, true in every
+ *     environment, and its message is the actionable one — reporting "no
+ *     credential" to someone who typed `preflight --scope-mode repo` sends them
+ *     to add a secret that will not fix anything.
+ *   • Worse under `--skip-if-unavailable`, which CI always passes: gating first
+ *     would turn a malformed invocation into exit 0 and a "skipped" report, so
+ *     a workflow could ship a wrong flag combination and stay green forever.
+ *
+ * `probe` never calls this — it seeds, installs the hook and reads what was
+ * injected without an agent, so it is the one diagnostic that stays useful on a
+ * machine with no credential at all. `--dry-run` is exempt for the same reason:
+ * refusing to print a plan because there is no credential would break the one
+ * affordance that works everywhere.
+ */
+function requireRunnable(options) {
+  if (options.dryRun) return;
+  const assessment = assessRunnability({
+    command: options.command,
+    permissionMode: options.permissionMode,
+  });
+  if (!assessment.runnable) throw new RunUnavailable(assessment);
+}
+
+/** Report an unstartable run: exit 0 with a stated reason, or refuse. */
+function reportUnavailable(options, assessment) {
+  if (!options.skipIfUnavailable) {
+    throw new Error(
+      `${describeRunnability(assessment)}\n\nPass --skip-if-unavailable to ` +
+        `exit 0 with a skipped report instead (that is what CI does).`,
+    );
+  }
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        subcommand: options.subcommand,
+        skipped: true,
+        // The reason travels IN the artifact. A skipped CI job whose reason
+        // lives only in a log line reads, months later, as a run that passed.
+        reasons: assessment.reasons,
+        readable: describeRunnability(assessment),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return 0;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.help || !options.subcommand) {
     process.stdout.write(USAGE);
     return 0;
   }
+  // Each live subcommand decides for itself that it can start, AFTER refusing
+  // any flag it cannot honour (see `requireRunnable`). Catching the verdict
+  // here rather than pre-checking it keeps that order and keeps the skip
+  // report in one place.
+  try {
+    return await dispatch(options);
+  } catch (err) {
+    if (!(err instanceof RunUnavailable)) throw err;
+    return reportUnavailable(options, err.assessment);
+  }
+}
+
+async function dispatch(options) {
   if (options.subcommand === "preflight") {
     const result = await runPreflight(options);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

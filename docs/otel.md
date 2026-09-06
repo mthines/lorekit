@@ -338,6 +338,89 @@ itself forever.
 
 ---
 
+## Eval runs (`service.name=eval`)
+
+Full runbook, arms and how to read a summary: [`packages/evals/README.md`](../packages/evals/README.md).
+
+The evals are the other synthetic experiment in this repo, and they answer the
+question the sweep does not: **does giving an agent lore actually change what it
+does?** `packages/evals` drives a headless `claude -p` against the real
+`lorekit mcp` stdio server and the real `SessionStart` hook, on a scratch store,
+and grades the transcripts. Every run is a set of *reps* — one agent session
+each — grouped into cells (arms for `golden`, framing variants for `variants`).
+
+Those numbers only mean something across commits. A rate printed in a terminal
+and lost is a number nobody can compare a month later, so
+`scripts/telemetry/eval-telemetry.mjs` ships each run to Dash0:
+
+```bash
+node scripts/telemetry/eval-telemetry.mjs packages/evals/.eval-out            # newest run
+node scripts/telemetry/eval-telemetry.mjs packages/evals/.eval-out/golden-…   # a specific run
+node scripts/telemetry/eval-telemetry.mjs <path> --dry-run                    # build, print, send nothing
+```
+
+It reads a finished `summary.json` **downstream of the harness** rather than
+exporting from inside it. That ordering is the point: a failed export can never
+retroactively fail an experiment that already spent real model money and already
+produced its result. The CI workflow runs it as `if: always()`.
+
+| Signal | Name | Notes |
+|---|---|---|
+| Trace | `lorekit.eval` + `lorekit.eval.rep` | One root span for the run, one child per rep — the rep is the unit of the experiment. Real `startedAt`/`finishedAt` from the harness; a rep with no timestamps is laid at the root's start and stamped `lorekit.eval.timing=synthetic` rather than being dropped |
+| Gauge | `lorekit.eval.success_rate` (`1`) | `{arm, task, variant}` |
+| Gauge | `lorekit.eval.mean_score` (`1`) | `{arm, task, variant}` |
+| Gauge | `lorekit.eval.reps` (`{rep}`) | `{arm, task, variant, rep_state: usable\|discarded\|ran}` — the denominator, exposed so a rate is never read without its N |
+| Gauge | `lorekit.eval.cost` (`{USD}`) | `{arm, task, variant}` |
+| Gauge | `lorekit.eval.duration` (`s`) | `{arm, task, variant}` — mean wall time per rep |
+| Gauge | `lorekit.eval.lift` (`1`) | `{measure}` — `golden`: `success_rate\|mean_score\|repeated_mistake` vs a `baseline` arm; `variants`: `on_target\|off_target\|net` |
+| Gauge | `lorekit.eval.tokens_per_point` (`{token}`) | `{variant}` — what a framing costs per point of lift |
+
+Gauges, not sums, for the same reason the sweep uses them: each is a measurement
+of one run at one commit, not something that accumulates.
+
+**Three invariants are load-bearing, and they are the reason this is not just a
+`for` loop over the summary:**
+
+- **Rates are over `usableReps`, and a cell with zero usable reps emits no
+  datapoint at all** — never `0.0`. A contaminated rep is DISCARDED, not
+  averaged, so "nothing was measured" and "the arm scored zero" must not render
+  as the same point on a chart.
+- **`cost` is the deliberate exception**: it sums every BILLED rep, discarded
+  ones included, because a discarded rep still cost money.
+- **Aggregates are READ from the summary, never recomputed here.** The exporter
+  cannot become a second, quietly-divergent grader.
+
+A rep the harness discarded is an ERROR span; a rep that merely failed its task
+is OK — failing is a valid measurement, losing the rep is the harness failing to
+measure anything. When *every* rep was discarded the root span is ERROR too, and
+the run's `caveat` rides on the root **verbatim**, so a chart can never show a
+number whose caveat was left behind in a terminal.
+
+Resource identity: `service.name=eval` (its own component — eval traffic is
+synthetic and must never mix into `api`/`cli`/`web`), `service.namespace=lorekit`,
+`deployment.environment.name=test` **always**, and `vcs.ref.head.revision` from
+git, which is what makes a run attributable to the commit it measured. Compare
+runs on `service.name=eval` keyed by that revision.
+
+Export reuses the CLI's `resolveTelemetryConfig` through the shared
+`scripts/telemetry/otlp-export.mjs`, so it honours the same token priority
+(`OTEL_EXPORTER_OTLP_HEADERS` > `LOREKIT_TELEMETRY_TOKEN` > baked-in), the same
+`Dash0-Dataset` routing and the same opt-outs (`LOREKIT_TELEMETRY`,
+`DO_NOT_TRACK`). Sharing that module is what keeps the metrics on the same
+resource as the spans — a metric on a divergent resource silently stops
+correlating. With no credential it prints a stated reason and exits 0; it exits
+non-zero only when it *was* configured and the POST failed.
+
+In CI this is the last step of the `live` job in
+[`.github/workflows/evals.yml`](../.github/workflows/evals.yml), using the
+existing `LOREKIT_TELEMETRY_TOKEN` secret — no new credential.
+
+**Sandbox note:** as with the sweep, Node's built-in `fetch` ignores
+`HTTPS_PROXY`, so in a cloud sandbox run the export with `NODE_USE_ENV_PROXY=1`.
+See the root CLAUDE.md sandbox baseline, point 6.
+
+---
+
 ## Retention-policy sweep
 
 ### Why this exists
@@ -1300,7 +1383,15 @@ unique.
 | `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/telemetry/otel.ts`. No configuration required. |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts` (server), `packages/web/src/lib/dash0-rum.ts` (browser). Both pin the literal `web`; `otel-conventions.spec.ts` asserts the two agree, because server and browser are ONE service told apart by `telemetry.sdk.language`, not by name |
 | `cli` | CLI | `packages/cli/src/telemetry/telemetry.mjs` |
+| `sweep` | The row-scaling benchmark ([above](#the-row-scaling-sweep)) | `scripts/telemetry/sweep-telemetry.mjs` |
+| `load` | The load generator | `scripts/telemetry/load-telemetry.mjs` |
+| `eval` | The eval harness ([above](#eval-runs-servicenameeval)) | `scripts/telemetry/eval-telemetry.mjs` |
 
+- **The last three are synthetic by construction** and each gets its own name for
+  the same reason: a benchmark, a load test and an eval all emit traffic nobody
+  asked for, and folding any of them into `api`/`cli`/`web` would corrupt the
+  very production numbers they exist to measure against. All three hard-code
+  `deployment.environment.name=test` and are keyed by `vcs.ref.head.revision`.
 - **The edge functions are one service, not five.** They share a deployment, a database and a
   lifecycle; each function is an *operation* on `api`, not a separate service. Splitting them
   fragments the service map for no analytical gain.
