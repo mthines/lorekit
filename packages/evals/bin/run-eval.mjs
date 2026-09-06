@@ -12,10 +12,11 @@
 // against a store you are curious about, not an assertion.
 //
 // Subcommands (later PRs fill in the rest):
+//   golden  arms 0/A/B/C, graded and COMPARED — the whole experiment
 //   arm0    one attempt against an EMPTY store — the "no memory" baseline
 //   probe   seed + install the hook + print the injected set (no model)
-//   golden  arms 0/A/B/C x {organic,canonical}                        (PR4)
-//   scale   corpus size x lesson position sweep                       (PR5)
+//   scale   corpus size x lesson position sweep     (shipped as a node --test
+//           suite, `test/relevance/sweep.test.mjs`, not as a subcommand)
 //   review  pr-reviewer control vs treatment on PR #395               (PR6)
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -27,6 +28,17 @@ import {
   runAgent,
 } from "../src/harness/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/harness/arm.mjs";
+import {
+  ARM_0,
+  ARM_C,
+  armById,
+  armCPrompt,
+  armPlan,
+  compareArms,
+  describeComparison,
+  summarizeArm,
+  transcriptDigest,
+} from "../src/harness/golden.mjs";
 import {
   assertCleanEnvironment,
   describeEnvironment,
@@ -42,6 +54,14 @@ import { taskById } from "../src/harness/task.mjs";
 const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
 
 Subcommands:
+  golden               The WHOLE experiment: arms 0 / A / B / C, graded, then
+                       compared. This is the subcommand that answers "does a
+                       stored, loaded lesson make the agent do better work?" —
+                       arm0 alone cannot, because that answer is a DIFFERENCE
+                       between two arms. B-organic is SKIPPED (with a stated
+                       reason) unless --lesson-file supplies the lesson the loop
+                       would have saved; it is never substituted with the
+                       canonical one.
   arm0                 The golden task against an empty store, then graded.
   preflight            One throwaway model call in a prepared sandbox, then
                        report what the session actually loaded. Exits non-zero
@@ -61,6 +81,13 @@ Options:
   --out <dir>          Artifact directory (default ./.eval-out).
   --timeout <ms>       Hard wall-clock ceiling per attempt (default ${DEFAULT_TIMEOUT_MS}).
   --command <bin>      Agent binary (default "claude"; override for smoke tests).
+  --model <id>         Model under test (default ${MODEL_UNDER_TEST}). Changing
+                       it mid-batch makes the arms incomparable; prefer a new run.
+  --permission-mode <m> Passed to claude (default bypassPermissions). The CLI
+                       REFUSES bypassPermissions under root/sudo, so container
+                       runs (CI, Docker, cloud sandboxes) need e.g. acceptEdits.
+  --lesson-file <path> golden: the organic lesson, read from a file. Without it
+                       (or --lesson) the B-organic arm is skipped, never faked.
   --seed <source>      probe: empty | canonical | organic (default canonical).
                        arm0 always runs against an EMPTY store and REFUSES this
                        flag rather than ignoring it.
@@ -83,21 +110,33 @@ Options:
 `;
 
 export function parseArgs(argv) {
-  const [subcommand, ...rest] = argv;
+  const [first, ...tail] = argv;
+  // `--help` in the FIRST position is a request for help, not a subcommand
+  // named "--help". Reading it as one printed the usage and exited 2, which is
+  // the code a caller uses to detect a mistake — so a script that ran
+  // `run-eval.mjs --help` to show its own users the options failed on it.
+  const askedForHelp = first === "-h" || first === "--help";
+  const rest = tail;
   const options = {
-    subcommand: subcommand || null,
+    subcommand: askedForHelp ? null : first || null,
+    help: askedForHelp,
     reps: 3,
     out: ".eval-out",
     timeoutMs: DEFAULT_TIMEOUT_MS,
     command: "claude",
+    model: MODEL_UNDER_TEST,
+    // `bypassPermissions` is the right default for a throwaway sandbox, but the
+    // CLI REFUSES it under root/sudo — so every container run (CI, Docker, a
+    // cloud sandbox) died with an empty transcript until this became settable.
+    permissionMode: "bypassPermissions",
     seed: "canonical",
     lesson: null,
+    lessonFile: null,
     scope: null,
     scopeMode: "branch",
     git: null,
     keep: false,
     dryRun: false,
-    help: false,
     // Which flags the caller actually TYPED. Several options have meaningful
     // defaults, so a subcommand that cannot honour one has no other way to tell
     // "left at the default" apart from "asked for, and about to be ignored".
@@ -118,6 +157,15 @@ export function parseArgs(argv) {
         break;
       case "--command":
         options.command = rest[++i];
+        break;
+      case "--model":
+        options.model = rest[++i];
+        break;
+      case "--permission-mode":
+        options.permissionMode = rest[++i];
+        break;
+      case "--lesson-file":
+        options.lessonFile = rest[++i];
         break;
       case "--seed":
         options.seed = rest[++i];
@@ -157,6 +205,21 @@ export function parseArgs(argv) {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error(
       `--timeout must be a positive number of ms, got ${options.timeoutMs}`,
+    );
+  }
+  // Both are passed straight to `claude`, so an empty value would build an argv
+  // with a dangling flag and fail in a way that reads as a model problem.
+  for (const [flag, value] of [
+    ["--model", options.model],
+    ["--permission-mode", options.permissionMode],
+  ]) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error(`${flag} requires a non-empty value`);
+    }
+  }
+  if (options.lesson && options.lessonFile) {
+    throw new Error(
+      "--lesson and --lesson-file both supply the organic lesson; pass one.",
     );
   }
   if (!SEED_SOURCES.includes(options.seed)) {
@@ -202,6 +265,263 @@ function refuseUnhonourableFlags(options, flags, because, hint = "") {
     `${because}, so ${ignored.join(" and ")} cannot be honoured here. ` +
       `Drop ${ignored.length > 1 ? "them" : "it"}${hint ? `, ${hint}` : ""}.`,
   );
+}
+
+/**
+ * The agent-level overrides a subcommand must forward on EVERY call.
+ *
+ * Assembled once rather than spread by hand at each call site, for the same
+ * reason `prepareArm` assembles an arm's world in one place: a flag honoured in
+ * three of four call sites is worse than one honoured nowhere, because the
+ * inconsistency is invisible in the result.
+ */
+function agentOverrides(options) {
+  return { model: options.model, permissionMode: options.permissionMode };
+}
+
+/** Read the operator-supplied organic lesson, from either affordance. */
+async function readOrganicLesson(options) {
+  if (options.lesson) return options.lesson;
+  if (options.lessonFile) {
+    const text = await fsp.readFile(path.resolve(options.lessonFile), "utf8");
+    if (text.trim() === "") {
+      throw new Error(`--lesson-file ${options.lessonFile} is empty`);
+    }
+    return text.trim();
+  }
+  return null;
+}
+
+/**
+ * Run ONE repetition of one arm: build its world, spawn the agent, verify the
+ * information environment, grade the store, and classify retrieval.
+ *
+ * Every arm goes through this one function. That is the experimental control —
+ * arms that are prepared and graded by separate code paths drift apart in some
+ * detail nobody is watching, and the difference between them stops meaning what
+ * the report says it means.
+ */
+async function runRep({ arm, options, sandbox, repDir, task, prompt, lesson }) {
+  const prepared = await prepareArm(sandbox, {
+    seed: arm.seed,
+    lesson,
+    scopeMode: options.scopeMode,
+    scope: options.scope,
+    git: options.git,
+    allowWrite: arm.allowWrite,
+  });
+  if (prepared.targetScope !== task.targetScope) {
+    throw new Error(
+      `golden grades against the fixed target ${task.targetScope}, but the ` +
+        `scope options resolved to ${prepared.targetScope}; a run with this ` +
+        `combination could only score a failure.`,
+    );
+  }
+  await fsp.mkdir(repDir, { recursive: true });
+
+  const run = await runAgent({
+    prompt,
+    cwd: sandbox.cwd,
+    env: sandbox.childEnv(),
+    transcriptPath: path.join(repDir, "transcript.jsonl"),
+    command: options.command,
+    timeoutMs: options.timeoutMs,
+    ...prepared.agentOptions,
+    ...agentOverrides(options),
+  });
+
+  const environment = assertCleanEnvironment(summarizeEnvironment(run), {
+    sandboxRoot: sandbox.root,
+    expectedHooks: prepared.hookInstall ? 1 : 0,
+  });
+  // Grade BEFORE teardown — the store is the evidence.
+  const graded = await gradeSandbox(sandbox, {
+    transcriptText: run.transcriptText,
+    target: task.targetScope,
+  });
+
+  // Retrieval is only a question for a SEEDED arm. Asking it of arm A would
+  // report `absent` — the harness-fault state — for an arm whose empty store is
+  // the entire point, and `isUsable` would then discard every control rep.
+  const seededKey = prepared.seeded.seeded[0]
+    ? prepared.seeded.seeded[0].key
+    : null;
+  let retrieval = null;
+  if (seededKey) {
+    const injection = await readInjectedLessons(sandbox);
+    const stored = await listAll(sandbox, [
+      ...new Set([...prepared.derived.readOrder, prepared.targetScope]),
+    ]);
+    retrieval = classifyRetrieval({
+      injection,
+      storeEntries: stored,
+      key: seededKey,
+    });
+  }
+
+  if (run.stderr) {
+    await fsp.writeFile(path.join(repDir, "stderr.log"), run.stderr);
+  }
+  await fsp.writeFile(
+    path.join(repDir, "grade.json"),
+    JSON.stringify(graded, null, 2),
+  );
+  await fsp.writeFile(
+    path.join(repDir, "environment.json"),
+    JSON.stringify(environment, null, 2),
+  );
+
+  return {
+    run,
+    prepared,
+    record: {
+      arm: arm.id,
+      seed: arm.seed,
+      task: task.id,
+      model: options.model,
+      targetScope: task.targetScope,
+      ...run.summary,
+      success: graded.success,
+      score: graded.score,
+      repeatedMistake: graded.repeatedMistake,
+      mistakes: graded.mistakes,
+      storedScopes: graded.storedScopes,
+      attemptedScopes: graded.attemptedScopes,
+      retrieval,
+      environmentClean: environment.clean,
+      environmentFindings: environment.findings.map((f) => f.kind),
+      discarded: !environment.clean,
+      wallMs: run.wallMs,
+      exitCode: run.exitCode,
+      timedOut: run.timedOut,
+    },
+  };
+}
+
+/**
+ * The golden experiment. Arms 0 / A / B / C, then the comparison.
+ *
+ * Arm 0 runs FIRST and alone, because two later arms are built from what it
+ * produced: arm C re-reads its transcript, and the organic lesson is the
+ * wording a real loop would have saved after it. The remaining arms are
+ * independent of each other and differ only in their store.
+ */
+async function runGolden(options) {
+  // Each arm's seed is part of the experiment's definition, not a knob: a
+  // `--seed canonical` that silently applied to every arm would make arm A a
+  // second arm B and report a lift of zero as a finding about memory.
+  refuseUnhonourableFlags(
+    options,
+    ["--seed"],
+    "golden defines each arm's own store",
+    "the organic lesson goes in --lesson-file",
+  );
+
+  const id = runId();
+  const outDir = path.resolve(options.out, `golden-${id}`);
+  const task = taskById("branch-scope");
+  const organicLesson = await readOrganicLesson(options);
+
+  await fsp.mkdir(outDir, { recursive: true });
+
+  const perArm = new Map();
+  let priorDigest = "";
+
+  // Arm 0 first — it is the only source of the prior transcript.
+  const armsToRun = [armById(ARM_0)];
+  for (let rep = 1; rep <= options.reps; rep++) {
+    const sandbox = await createSandbox({ keep: options.keep });
+    try {
+      const repDir = path.join(outDir, `arm-${ARM_0}`, `rep-${rep}`);
+      if (options.dryRun) {
+        perArm.set(ARM_0, [
+          ...(perArm.get(ARM_0) || []),
+          { arm: ARM_0, rep, dryRun: true },
+        ]);
+        continue;
+      }
+      const { run, record } = await runRep({
+        arm: armsToRun[0],
+        options,
+        sandbox,
+        repDir,
+        task,
+        prompt: task.prompt(),
+        lesson: null,
+      });
+      perArm.set(ARM_0, [...(perArm.get(ARM_0) || []), { rep, ...record }]);
+      // Keep the FIRST arm-0 transcript as arm C's material: arm C must read
+      // one attempt, and averaging or concatenating several would give it
+      // strictly more information than the single retry the arms model.
+      if (!priorDigest) priorDigest = transcriptDigest(run.transcriptText);
+    } finally {
+      await sandbox.dispose();
+    }
+  }
+
+  const { run: plannedArms, skipped } = armPlan({
+    organicLesson: Boolean(organicLesson),
+    priorTranscript: Boolean(priorDigest),
+  });
+
+  for (const arm of plannedArms) {
+    if (arm.id === ARM_0) continue;
+    for (let rep = 1; rep <= options.reps; rep++) {
+      const sandbox = await createSandbox({ keep: options.keep });
+      try {
+        const repDir = path.join(outDir, `arm-${arm.id}`, `rep-${rep}`);
+        if (options.dryRun) {
+          perArm.set(arm.id, [
+            ...(perArm.get(arm.id) || []),
+            { arm: arm.id, rep, dryRun: true },
+          ]);
+          continue;
+        }
+        const prompt =
+          arm.id === ARM_C
+            ? armCPrompt(task.prompt(), priorDigest)
+            : task.prompt();
+        const { record } = await runRep({
+          arm,
+          options,
+          sandbox,
+          repDir,
+          task,
+          prompt,
+          lesson: arm.seed === "organic" ? organicLesson : null,
+        });
+        perArm.set(arm.id, [...(perArm.get(arm.id) || []), { rep, ...record }]);
+      } finally {
+        await sandbox.dispose();
+      }
+    }
+  }
+
+  const summaries = [...perArm.entries()].map(([armId, reps]) =>
+    summarizeArm(armId, reps),
+  );
+  const comparisons = compareArms(summaries);
+
+  const summary = {
+    subcommand: "golden",
+    runId: id,
+    model: options.model,
+    repsRequested: options.reps,
+    caveat:
+      `N=${options.reps} per arm is a low-power INDICATOR, not proof. ` +
+      `Treat every difference as directional; widening N — not reinterpreting ` +
+      `these reps — is the way to a stronger claim.`,
+    skippedArms: skipped,
+    arms: summaries,
+    comparisons,
+    readable: comparisons.map(describeComparison),
+    results: Object.fromEntries(perArm),
+  };
+  await fsp.writeFile(
+    path.join(outDir, "summary.json"),
+    JSON.stringify(summary, null, 2),
+  );
+  return { outDir, summary };
 }
 
 async function runArm0(options) {
@@ -279,6 +599,7 @@ async function runArm0(options) {
           command: options.command,
           timeoutMs: options.timeoutMs,
           ...arm.agentOptions,
+          ...agentOverrides(options),
         });
         // What the session really loaded. A rep that ran with the developer's
         // skills or plugins in context is not a data point — the lorekit-memory
@@ -405,6 +726,7 @@ async function runPreflight(options) {
       command: options.command,
       timeoutMs: options.timeoutMs,
       ...arm.agentOptions,
+      ...agentOverrides(options),
     });
     const verdict = assertCleanEnvironment(summarizeEnvironment(run), {
       sandboxRoot: sandbox.root,
@@ -418,6 +740,19 @@ async function runPreflight(options) {
       findings: verdict.findings,
       environment: verdict.summary,
       costUsd: run.summary.costUsd,
+      // The agent's OWN failure, surfaced rather than left on the floor.
+      //
+      // `no-init-event` describes the symptom (nothing came back) and says
+      // nothing about the cause, so a run that died before it started — a
+      // rejected flag, an unservable model pin, a missing binary — reported as
+      // an unverifiable environment and sent the reader to look at hooks and
+      // plugins. The one line `claude` wrote to stderr names the real cause
+      // ("--dangerously-skip-permissions cannot be used with root/sudo"), and
+      // `arm0` was already writing it to `stderr.log` while preflight, the
+      // subcommand whose whole job is to diagnose, discarded it.
+      exitCode: run.exitCode,
+      timedOut: run.timedOut,
+      stderr: run.stderr ? run.stderr.trim() : null,
       argv: run.argv,
     };
   } finally {
@@ -495,6 +830,13 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.subcommand === "probe") {
     const result = await runProbe(options);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  if (options.subcommand === "golden") {
+    const { outDir, summary } = await runGolden(options);
+    process.stdout.write(
+      `${JSON.stringify(summary, null, 2)}\n\nartifacts: ${outDir}\n`,
+    );
     return 0;
   }
   if (options.subcommand !== "arm0") {

@@ -14,7 +14,7 @@ import {
 import { withSandbox } from "../../src/sandbox/sandbox.mjs";
 
 test("the model under test is pinned in exactly one constant (AC-1.2)", () => {
-  assert.equal(MODEL_UNDER_TEST, "claude-opus-4-8");
+  assert.equal(MODEL_UNDER_TEST, "claude-opus-5");
   const args = buildClaudeArgs({ prompt: "hi" });
   assert.equal(args[args.indexOf("--model") + 1], MODEL_UNDER_TEST);
 });

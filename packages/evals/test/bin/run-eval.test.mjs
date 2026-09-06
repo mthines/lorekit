@@ -58,8 +58,23 @@ test("runId is filesystem-safe and sortable", () => {
 });
 
 test("an unimplemented subcommand exits non-zero instead of pretending", async () => {
-  const code = await main(["golden"]);
+  // `golden` used to be the example here and is now implemented; `scale` and
+  // `review` are the remaining stubs. The assertion is about the REFUSAL, not
+  // about which subcommand happens to be missing, so it moves to a live stub
+  // rather than being deleted with the one that shipped.
+  const code = await main(["scale"]);
   assert.equal(code, 2);
+});
+
+test("--help in the first position is help, not an unknown subcommand", async () => {
+  // It used to parse as a subcommand named "--help", print the usage and exit
+  // 2 — the code a caller reads as "you made a mistake". Exit 0 is the whole
+  // assertion; the usage text was always printed.
+  for (const argv of [["--help"], ["-h"], []]) {
+    assert.equal(await main(argv), 0, `argv: ${JSON.stringify(argv)}`);
+  }
+  // Still honoured after a subcommand, which always worked.
+  assert.equal(await main(["arm0", "--help"]), 0);
 });
 
 test("arm0 refuses a seed flag instead of silently running an empty store", async () => {
@@ -214,7 +229,7 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
       await fsp.readFile(path.join(out, runDir, "summary.json"), "utf8"),
     );
     assert.equal(summary.subcommand, "arm0");
-    assert.equal(summary.model, "claude-opus-4-8");
+    assert.equal(summary.model, "claude-opus-5");
     assert.equal(summary.results.length, 2);
     // The low-power caveat travels with the data, not just the README (AC-1.5).
     assert.match(summary.caveat, /INDICATOR/);
@@ -230,7 +245,7 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
       assert.equal(meta.rep, rep);
       assert.equal(meta.arm, "0");
       assert.equal(meta.store, "empty");
-      assert.equal(meta.model, "claude-opus-4-8");
+      assert.equal(meta.model, "claude-opus-5");
       // The artifact records WHICH task and WHICH target it was graded against,
       // so a result file read later cannot be misattributed to another task.
       assert.equal(meta.task, "branch-scope");

@@ -1,0 +1,258 @@
+{
+  "_README": "REAL retrieval-relevance baseline mined from the hosted store. Metadata only — no lesson bodies. Safe to commit and to gate downstream PRs against, subject to review.",
+  "source": "real-hosted-snapshot",
+  "scope": "repo::mthines/lorekit",
+  "minedAt": "2026-09-06T16:12:18.963Z",
+  "entries": [
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "changelog-collapse-merge-commit-pr342",
+      "tags": [
+        "loop::review-outcomes",
+        "release-please",
+        "changelog",
+        "cli"
+      ],
+      "origin_pr": 345,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::rule::quality:missing-signal:handleRead@supabase/functions/memories/handlers/read.ts",
+      "tags": [
+        "loop::reviewer-comment-relevance"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::rule::correctness:contract-break:groupRefsByScope@packages/mcp-core/src/memory/read-refs.ts",
+      "tags": [
+        "loop::reviewer-comment-relevance"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:response-body-leaks-unentitled-resource-metadata",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::process:pr-body-omits-a-shipped-capability",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::gate:description-file-count-vs-diff-file-count",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::security:rls-predicate-half-restored-by-explicit-tenant-filter",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:early-return-drops-fallback-error-unread",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::hygiene:scratch-files-committed-at-repo-root",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::ci:credential-tier-makes-integration-suite-a-false-green",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::suggestion:move-overview-page-instead-button-show",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": null,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:issue-blocking-ac-5-setup-asserts",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 561,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::suggestion:shiki-grammar-mismatched-to-pseudo-code-snippet",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::optimality:derive-listing-order-from-date-instead-of-explicit-order-field",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::question:hook-reuse-described-as-shared-state",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::docs:stale-docblock-contradicts-shipped-code",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:missing-checkout-before-pnpm-action-setup",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 355,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::suggestion:unpinned-global-cli-on-production-deploy-path",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 355,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::suggestion:raw-string-keyed-map-fragile-for-future-entries",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::ignored-at-merge"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::process:duplicate-review-runs-on-one-trigger",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::wont-fix"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:postgrest-escaping-mechanisms-inconsistent-across-helpers",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::wont-fix"
+      ],
+      "origin_pr": 311,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:auth-helper-throws-while-docblock-promises-empty",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::wont-fix"
+      ],
+      "origin_pr": 311,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::suggestion:client-side-reexpansion-quadratic-over-buckets",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::wont-fix"
+      ],
+      "origin_pr": 311,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::issue:rollback-job-gated-on-a-failed-promote",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 355,
+      "seenCount": 1
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "reviewer-comment-relevance::nitpick:unreachable-guard-after-input-narrowing",
+      "tags": [
+        "loop::reviewer-comment-relevance",
+        "source::fixed"
+      ],
+      "origin_pr": 306,
+      "seenCount": 1
+    }
+  ]
+}

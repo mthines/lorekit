@@ -21,14 +21,22 @@ the mock.
 
 ## Status
 
-PR5 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
-the memory arms, scope control, and the golden task with its deterministic
-grader (PR3); metrics and reporting — precision@k / recall@k / MRR, the
-`ground-truth.mjs` predicate, the BOOTSTRAP seed, the `mine` runbook (PR4); the
-`order=rank` ranked mode in the hosted edge `memory.list` (PR5-A1); the
-**scale/position sweep** (PR5); and the information-environment verification
-that keeps a run from measuring the machine instead of the model. Still to come:
-the code-review domain (PR6).
+Shipped: the package and per-run isolation, the `claude -p` spawner, the memory
+arms, scope control, and the golden task with its deterministic grader (PR3);
+metrics and reporting — precision@k / recall@k / MRR, the `ground-truth.mjs`
+predicate, the `mine` runbook (PR4); the `order=rank` ranked mode in the hosted
+edge `memory.list` (PR5-A1); the **scale/position sweep** (PR5); the
+information-environment verification that keeps a run from measuring the machine
+instead of the model; and the **`golden` subcommand** — arms 0/A/B/C, graded and
+compared, which is the subcommand that actually answers the question in the
+first paragraph. Still to come: the code-review domain (PR6), whose
+`src/review-grade.mjs` is referenced below but not yet written.
+
+> **`arm0` alone cannot answer the founding question.** "Does a lesson make the
+> agent do better work" is a DIFFERENCE between two arms; running the no-memory
+> arm on its own measures the task's difficulty, not memory's contribution. That
+> gap is what `golden` closes — before it, `prepareArm` could build arms A/B/C
+> and nothing ever ran them.
 
 ## The golden task
 
@@ -181,10 +189,22 @@ Live runs are manual and spend real tokens:
 
 ```bash
 cd packages/evals
-node bin/run-eval.mjs arm0 --dry-run          # plan + artifact tree, no model call
+node bin/run-eval.mjs golden --dry-run        # the arm plan, no model call
 node bin/run-eval.mjs preflight               # one call; is the environment clean?
 node bin/run-eval.mjs arm0 --reps 1 --out ./.eval-out
+node bin/run-eval.mjs golden --reps 3 --lesson-file ./organic.md
 ```
+
+`golden` is the whole experiment. It runs arm 0 first (it is the only source of
+arm C's transcript), then A, B and C, grades every rep, and writes a
+`comparisons[]` block giving each treatment arm's success-rate difference
+against arm A. `--lesson-file` supplies the organic lesson; **without it the
+B-organic arm is skipped with a stated reason and never substituted with the
+canonical one**, which would report a curated lesson as the agent's own wording.
+
+A comparison whose either side has zero usable reps is marked
+`comparable: false` and carries **no lift at all** — not `0`, which reads as
+"memory made no difference" when the truth is "nothing was measured".
 
 Requires the `claude` CLI on `PATH` and an authenticated Claude Code install.
 Run `preflight` first — it exits non-zero when the session loaded skills,
@@ -205,6 +225,34 @@ a well-equipped machine cost $1.13 to say one word. `preflight` reports its own
 | `--command <bin>` | Agent binary; override to substitute a stand-in.         |
 | `--keep`          | Leave each sandbox on disk for inspection.               |
 | `--dry-run`       | Build the plan and artifacts without spawning the agent. |
+| `--model <id>`    | Model under test. Changing it mid-batch makes the arms incomparable. |
+| `--permission-mode <m>` | Passed to `claude`. See the root caveat below.     |
+| `--lesson-file <path>`  | `golden`: the organic lesson. Absent ⇒ B-organic is skipped. |
+
+### Running in a container (CI, Docker, a cloud sandbox)
+
+The default `--permission-mode bypassPermissions` is right for a throwaway
+sandbox, but **the `claude` CLI refuses it under root/sudo** — and the refusal
+arrives as an empty transcript, which `environment.mjs` can only report as
+`no-init-event`: an unverifiable environment, pointing the reader at hooks and
+plugins rather than at the flag that was rejected. Pass a permitted mode
+instead:
+
+```bash
+node bin/run-eval.mjs preflight --permission-mode acceptEdits
+```
+
+`preflight` now reports the child's `exitCode`, `timedOut` and `stderr`
+alongside its verdict, so a run that died before it started names its own cause
+instead of presenting as contamination.
+
+**A container whose `~/.claude` carries LoreKit's own hooks cannot produce a
+clean rep at all**, and `preflight` is right to refuse it: the user-level
+`SessionStart` / `UserPromptSubmit` hooks fire for the nested agent and inject
+lore into arm A, which is precisely the control that must see none. This is the
+`foreign-hooks-fired` finding, and it is not a false positive — it is the guard
+doing the job it exists for. Run the live arms somewhere those hooks are not
+installed.
 
 Artifacts land under `<out>/arm0-<runId>/rep-<n>/` as `transcript.jsonl`,
 `result.json` and `meta.json`, with a `summary.json` per run. They are written
@@ -384,7 +432,26 @@ machinery itself treats as outcome/relevance signal:
 set moved underneath it (the recurring "mock that reimplements the thing under
 test" trap). A grep guard (`AC-1-reuse`) fails if the literals reappear.
 
-### The committed baseline is a 2-row BOOTSTRAP PLACEHOLDER
+### The baseline is now REAL — `fixtures/ground-truth.real.json` (25 rows)
+
+`bin/mine-ground-truth.mjs` has been run against the hosted store and its
+metadata-only snapshot is committed: **25 outcome/relevance-tagged rows** for
+`repo::mthines/lorekit` (24 `loop::reviewer-comment-relevance`, 1
+`loop::review-outcomes`), stamped `source: real-hosted-snapshot`, so metrics
+built on it no longer carry the placeholder's `mustNotGate` warning.
+
+One caveat that the row count hides, and which matters for how the metrics read:
+**every mined row has `seenCount == 1`, so none is recurrence-confirmed** (the
+`seen_count >= 3` bar). The relevance weight axis is therefore flat across the
+whole baseline — precision/recall/MRR are measurable, but "weight by how often
+this recurred" currently distinguishes nothing. Re-mine once the store has
+accumulated repeat signal; the snapshot is a point-in-time freeze, not a live
+read.
+
+The 2-row seed below is retained as the documented bootstrap path, for anyone
+standing the harness up against a store that has not been mined yet.
+
+### The seed file is a 2-row BOOTSTRAP PLACEHOLDER
 
 `fixtures/ground-truth.seed.json` is a **BOOTSTRAP PLACEHOLDER**, not a real
 baseline. It holds the only two outcome/relevance-tagged rows that already exist

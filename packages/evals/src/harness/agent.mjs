@@ -26,7 +26,15 @@ import path from "node:path";
  * The model under test. Fixed by the experimental design — ONE constant, so a
  * model change is a one-line diff and can never differ between arms.
  */
-export const MODEL_UNDER_TEST = "claude-opus-4-8";
+// The model the arms run against, pinned so a batch is internally comparable.
+//
+// It is RECORDED in every rep's `meta.json` rather than assumed, because a pin
+// goes stale silently: the previous value (`claude-opus-4-8`) outlived the
+// generation it named, and a run against a model the CLI no longer serves fails
+// as an empty transcript — which reads as a harness fault, not as a stale pin.
+// `--model` overrides it for a one-off; changing a BATCH's model mid-flight
+// makes its arms incomparable, so prefer a fresh run id.
+export const MODEL_UNDER_TEST = "claude-opus-5";
 
 /** Default hard wall-clock ceiling for a single attempt. */
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
