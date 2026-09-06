@@ -122,13 +122,21 @@ Full resolution rules: [references/scope-resolution.md](./references/scope-resol
 |------|-----|-------|
 | `memory.list` | List lessons for one scope (newest first, tag filter) | read |
 | `memory.search` | Full-text search across scopes (supports `repo::owner/*`) | read |
-| `memory.read` | Read one lesson by scope + key | read |
+| `memory.read` | Read one lesson by scope + key — or several at once via `refs: ["scope::key", …]` (one round trip, up to 32) | read |
 | `memory.write` | Store or update a lesson (same scope+key updates in place) | read+write |
 
 Write tools need write permission (`lk_rw_*` or `lk_wo_*`); read tools need read
 permission (`lk_rw_*` or `lk_ro_*`). A read-only token cannot write and a
 write-only token cannot read — if a call fails with an authorization error,
 report it and move on; do not retry.
+
+Already know the exact `scope::key` refs you need — from a prior `memory.list`
+or `memory.search`, or from citations another lesson names — and need more than
+one? Pass them all as `memory.read`'s `refs` array instead of one call per
+lesson. Each ref resolves independently: an unresolved one lands in the
+response's `missing` list rather than failing the whole call, and matching is
+against the **verbatim stored scope** (no case-folding), unlike a single
+`scope`/`key` read.
 
 Every lesson this skill writes carries the tag `skill::lorekit-memory` plus a
 `source::<trigger>` tag (for example `source::stuck-loop`) so lessons are

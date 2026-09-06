@@ -14,6 +14,12 @@
 //                            split (the shorthand already carries a namespaced
 //                            key, since the split lands at the first valid-scope
 //                            prefix — see `resolveScopeArg`)
+//   show <s1::k1> <s2::k2> [...]
+//                          — multi-ref form: two or more positionals that EACH
+//                            parse as a complete `<scope>::<key>` reference (see
+//                            `isMultiRefForm` below). Batches through each
+//                            store's `readMany`, one round-trip to the remote
+//                            store rather than one request per ref.
 //
 // Uses each store's real `read({scope, key})` method (both stores expose it),
 // not a filtered `list` — a single-record lookup is what `read` is for, and it
@@ -29,7 +35,9 @@ import {
   shortDate,
   describeError,
   recordsDiverge,
+  resolveScopeArg,
   resolveScopeKeyArgs,
+  isScopeString,
   scopeIssue,
 } from '../shared/lessons-view.mjs';
 import { resolveAppBase } from '../shared/deeplink-pure.mjs';
@@ -55,6 +63,175 @@ async function readOne(store, scope, key) {
   return { available: true, found: Boolean(record), record, error: null };
 }
 
+// Is this a multi-ref invocation? Two or more positionals, no `--scope`/`--key`
+// override (a flag is an explicit single-ref assertion — see
+// `resolveScopeKeyArgs`), and EVERY positional parses as a complete
+// `<scope>::<key>` reference via `resolveScopeArg`.
+//
+// This is what keeps the existing `show <scope> <key>` two-positional form
+// unambiguous: its first positional is a BARE scope with no `::`, so
+// `resolveScopeArg` reports it with a null key and the predicate below is
+// false — the single-ref path runs unchanged, exactly as `show <scope::key>`
+// (one positional) always has.
+function isMultiRefForm(positionals, args) {
+  if (positionals.length < 2 || args.scope || args.key) return false;
+  return positionals.every((p) => resolveScopeArg(p, isScopeString).key !== null);
+}
+
+// Batch-read `refs` ({scope,key}[]) from one store via its `readMany`, and
+// project the result back into ONE `{available, found, record, error}` slot
+// per ref, in the SAME order the refs were given — mirroring what `readOne`
+// answers for a single ref, so the per-ref renderer and `--json` builder don't
+// need to know whether they are looking at a single read or a batch one.
+//
+// A transport-level failure (throw, or `{ ok:false }`) degrades EVERY ref in
+// the batch to the same error note, exactly as a per-store outage would if
+// each ref were read one at a time — a batch call doesn't get to fail more
+// silently than the single-ref path it replaces.
+async function readManyFrom(store, refs) {
+  let res;
+  try {
+    res = await store.readMany(refs);
+  } catch (e) {
+    const msg = (e && e.message) || 'error';
+    return refs.map(() => ({ available: true, found: false, record: null, error: msg }));
+  }
+  if (!res || res.ok === false) {
+    const msg = describeError(res);
+    return refs.map(() => ({ available: true, found: false, record: null, error: msg }));
+  }
+  return projectBatchResult(refs, res);
+}
+
+/**
+ * The line printed under a ref no store returned a record for — `null` when the
+ * ref WAS found, since the caller only asks about unresolved ones. Pure and
+ * exported so the three answers below are unit-testable.
+ *
+ * Three answers, not two. A slot carrying an `error` NEVER LOOKED — either the
+ * store dropped the ref (`REF_DROPPED_ERROR`) or the read itself failed — so
+ * its silence is not a "not found", and lumping it in with a store that did
+ * look states as absent something nobody checked. The mixed case is the whole
+ * reason this is not a boolean: the local store answers every ref it is given
+ * and never truncates, so past the remote's 32-ref cap the offline store says
+ * "no" while the remote never looked, and only naming both halves is accurate.
+ */
+export function unresolvedReason(ref, slots) {
+  const readable = slots.filter((s) => s.available);
+  const dropped = readable.filter((s) => Boolean(s.error));
+  const answered = readable.length - dropped.length;
+  if (answered === 0) return `no store looked up ${ref} — it may exist`;
+  if (dropped.length > 0) {
+    return `${ref} not found in the store(s) that looked; ${dropped.length} did not look — it may exist there`;
+  }
+  return `no memory found for ${ref} in the readable store(s)`;
+}
+
+/** The message a ref the store never looked up carries. Exported for the spec. */
+export const REF_DROPPED_ERROR =
+  'not looked up — the store dropped this reference (past the 32-reference cap, or a scope it does not accept)';
+
+/**
+ * Project a `readMany` result back onto the requested refs, in request order.
+ * Pure — no store, no IO — so the three outcomes below are unit-testable
+ * without a mock REST server (see CLAUDE.md on the loopback-HTTP flakiness).
+ *
+ * A ref the store ANSWERED is in exactly one of `entries` or `missing`. One in
+ * NEITHER was never looked up: the remote store drops refs past the 32-reference
+ * cap and refs whose scope its stricter grammar rejects, and neither loss
+ * reaches `missing`, which is a not-found list by design. Reporting those as
+ * `found: false` would print "no such key in this store" for a lesson that may
+ * well be there, so they carry an explicit error instead. The local store
+ * answers every ref it is given, so that branch is unreachable for it by
+ * construction rather than by a transport check.
+ */
+export function projectBatchResult(refs, res) {
+  const byRef = new Map();
+  for (const entry of res.entries || []) {
+    const record = normalizeEntry(entry);
+    byRef.set(`${record.scope}::${record.key}`, record);
+  }
+  const answered = new Set(res.missing || []);
+  return refs.map(({ scope, key }) => {
+    const ref = `${scope}::${key}`;
+    const record = byRef.get(ref) || null;
+    if (!record && !answered.has(ref)) {
+      return { available: true, found: false, record: null, error: REF_DROPPED_ERROR };
+    }
+    return { available: true, found: Boolean(record), record, error: null };
+  });
+}
+
+// The multi-ref path: resolve every ref against both stores (one `readMany`
+// round-trip per store, not one per ref) and report each in request order.
+async function showRefs(refs, args, root, env) {
+  const { local, remote, connection } = resolveStores(root, {
+    env,
+    endpoint: args.endpoint,
+    token: args.token,
+  });
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
+
+  const offlineList = localDenied
+    ? refs.map(() => ({ available: false, reason: `disabled by deny constraint (${localDenied.source})` }))
+    : await readManyFrom(local, refs);
+
+  const remoteAvailable = !remoteDenied && remote.usable();
+  const remoteList = remoteDenied
+    ? refs.map(() => ({ available: false, reason: `disabled by deny constraint (${remoteDenied.source})` }))
+    : remoteAvailable
+      ? await readManyFrom(remote, refs)
+      : refs.map(() => ({ available: false, reason: remoteUnavailableReason(connection) }));
+
+  const results = refs.map(({ scope, key }, i) => {
+    const offline = offlineList[i];
+    const remote_ = remoteList[i];
+    const foundOffline = Boolean(offline.available && offline.found);
+    const foundRemote = Boolean(remote_.available && remote_.found);
+    const diverged = foundOffline && foundRemote && recordsDiverge(offline.record, remote_.record);
+    const found = foundOffline || foundRemote;
+    // Which stores actually looked decides what a "not found" may claim.
+    const unresolved = found ? null : unresolvedReason(`${scope}::${key}`, [offline, remote_]);
+    const dropped = [offline, remote_].some((s) => s.available && Boolean(s.error));
+    return { scope, key, offline, remote_, foundOffline, foundRemote, diverged, found, unresolved, dropped };
+  });
+
+  if (args.json) {
+    log(JSON.stringify({
+      results: results.map((r) => buildJson({
+        scope: r.scope, key: r.key, offline: r.offline, remote_: r.remote_, diverged: r.diverged,
+      })),
+    }, null, 2));
+  } else {
+    heading('LoreKit memory');
+    log(`  ${c.dim(`${results.length} references`)}`);
+    for (const r of results) {
+      log('');
+      log(`  ${c.cyan(`${r.scope}::${r.key}`)}`);
+      renderRecordSection('Offline', r.offline);
+      renderRecordSection('Remote', r.remote_, remoteAvailable ? connection.endpoint : undefined);
+      if (r.diverged) status('warn', 'divergence', 'the offline and remote values differ');
+      // "not found" and "nobody looked" are different answers: say which.
+      if (r.unresolved) log(`    ${c.dim(r.unresolved)}`);
+    }
+    log('');
+  }
+
+  const foundCount = results.filter((r) => r.found).length;
+  // Bounded, non-PII telemetry — counts only, never a scope or key string.
+  return {
+    exitCode: foundCount === results.length ? 0 : 1,
+    'lorekit.cli.show.ref_count': results.length,
+    'lorekit.cli.show.found_count': foundCount,
+    'lorekit.cli.show.diverged_count': results.filter((r) => r.diverged).length,
+    // Refs at least one readable store never looked up — the batch hit the
+    // 32-ref cap, met a scope that store's grammar rejects, or the store
+    // errored. Without it a truncated batch is indistinguishable from a
+    // genuinely empty one: both report `found_count` below `ref_count`.
+    'lorekit.cli.show.dropped_count': results.filter((r) => r.dropped).length,
+  };
+}
+
 export async function show(args) {
   const root = resolveProjectRoot(args.dir);
   const env = { ...process.env };
@@ -67,6 +244,12 @@ export async function show(args) {
   //                                  the `::` split (the shorthand handles a
   //                                  namespaced key on its own now)
   const positionals = args._.slice(1);
+
+  if (isMultiRefForm(positionals, args)) {
+    const refs = positionals.map((p) => resolveScopeArg(p, isScopeString));
+    return showRefs(refs, args, root, env);
+  }
+
   const { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
     scope: args.scope,
     key: args.key,

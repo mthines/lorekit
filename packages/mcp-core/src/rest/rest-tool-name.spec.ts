@@ -27,6 +27,7 @@ describe('restToolName', () => {
       [{ fn: 'memories', method: 'GET', path: '/scopes' }, 'memory.scopes'],
       [{ fn: 'memories', method: 'GET', path: '/usage' }, 'memory.usage'],
       [{ fn: 'memories', method: 'GET', path: '/:id' }, 'memory.read'],
+      [{ fn: 'memories', method: 'POST', path: '/read' }, 'memory.read'],
       [{ fn: 'memories', method: 'PATCH', path: '/:id' }, 'memory.write'],
       [{ fn: 'memories', method: 'POST', path: '/:id/restore' }, 'memory.restore'],
     ];
@@ -74,7 +75,9 @@ describe('restToolName', () => {
     // POST forms for a different reason: those are ONE read over two transports
     // (the body form exists only because a query string cannot carry an
     // unbounded filter bar), so splitting the name would break the usage series
-    // at the moment the dashboard switched.
+    // at the moment the dashboard switched. memory.read is the same shape: its
+    // batch POST /read is a second shape of the same read, not a second
+    // operation.
     //
     // Everything else is 1:1 — a new duplicate here needs a reason written down
     // above, not just an updated expectation.
@@ -87,6 +90,7 @@ describe('restToolName', () => {
       'memory.facets',
       'memory.list',
       'memory.pivot',
+      'memory.read',
       'memory.restore',
       'memory.write',
     ]);

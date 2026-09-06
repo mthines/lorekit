@@ -6,7 +6,7 @@
 import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction } from './auth.ts';
 import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
-import { UserInputError, safeValidateScope } from '../_shared/scope/scope.ts';
+import { UserInputError, safeValidateScope, parseMemoryRefs } from '../_shared/scope/scope.ts';
 import { scopeTypeAttribute } from '../_shared/scope/scope-type-attribute.ts';
 import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
 import { TtlError } from './ttl.ts';
@@ -231,6 +231,35 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     }
 
     const rawScope = toolArgs['scope'] as string | undefined;
+    // A batch `memory.read` names its scopes INSIDE `refs` (`scope::key`
+    // strings) — it carries neither `scope` nor `scopes` — so every scope
+    // dimension recorded null for it: the `lorekit.scope.type` attribute was
+    // omitted, `usage_events.scope_type`/`scope`/`scope_count` were all null,
+    // and the `lorekit.tool.duration` histogram put every batch read in the
+    // unlabelled bucket of the one dimension it carries. That is the failure
+    // `_shared/scope/scope-type-attribute.ts`'s own header records for
+    // `memory.search`'s `scopes` array, one array shape later.
+    //
+    // Parsed by `parseMemoryRefs` — the grammar is never re-split here (the
+    // `isReferenceScope` rule is deliberately not `validateScope`, so a second
+    // reader would divide `branch::o/r::feat/x::key` differently). It runs a
+    // second time inside `toolReadRefs`, which is cheaper over ≤ 32 pure
+    // string splits than threading parsed state through dispatch, and it is
+    // what makes the dispatcher and the handler agree on which refs the call
+    // actually names — including the truncated tail, which is attributed to
+    // neither.
+    //
+    // DISTINCT, unlike `scopes`: an entry of `scopes` IS one scope the caller
+    // asked for, whereas many refs routinely name one scope, so the only count
+    // that means anything here is how many scopes the batch touched — the same
+    // unit `groupRefsByScope` already turns the batch into queries by.
+    const refScopes = 'refs' in toolArgs
+      ? [...new Set(parseMemoryRefs(toolArgs['refs']).map((r) => r.scope))]
+      : undefined;
+    // Resolved ONCE and fed to all three consumers below, so the type, the
+    // count and the exact scope can never disagree about what the call named.
+    // A `scopes` array wins when present; no tool takes both.
+    const rawScopes = toolArgs['scopes'] ?? refScopes;
     // BOUNDED, and absent rather than placeholdered. This used to be
     // `rawScope ? rawScope.split('::')[0] : 'unknown'`, which had two failure
     // modes: an ungrammatical scope echoed the caller's own prefix into a
@@ -238,13 +267,13 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // all recorded the literal `unknown`. `memory.search` takes `scopes` (an
     // ARRAY), so EVERY search landed in that placeholder bucket. See
     // `_shared/scope/scope-type-attribute.ts`.
-    const scopeType = scopeTypeAttribute(rawScope, toolArgs['scopes']);
-    // How many scopes an ARRAY-bearing call (`memory.search`) touched —
-    // `usage_events.scope_count` (migration 00078). Undefined for a
-    // singular-`scope` tool, matching the RPC's own `default null`. Counted
-    // from the SAME `scopes` value `scopeType` above just read, so the two can
-    // never disagree about whether the call carried an array at all.
-    const rawScopes = toolArgs['scopes'];
+    const scopeType = scopeTypeAttribute(rawScope, rawScopes);
+    // How many scopes an ARRAY-bearing call (`memory.search`, or a batch
+    // `memory.read`) touched — `usage_events.scope_count` (migration 00078).
+    // Undefined for a singular-`scope` tool, matching the RPC's own
+    // `default null`. Counted from the SAME array `scopeType` above just read,
+    // so the two can never disagree about whether the call carried one at all.
+    //
     // Filter blanks ONCE and reuse for both the count and the single-scope
     // resolution below, so the two can never name a different entry: a single
     // real scope preceded by an empty-string entry must still be attributed,

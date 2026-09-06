@@ -85,9 +85,12 @@ describe('parseMemoryRef — the reference grammar', () => {
   });
 
   it('returns the scope VERBATIM, never lowercased', () => {
-    // `memories.scope` is stored as written on the REST path, so normalising a
-    // reference would resolve a mixed-case scope's lesson to nothing — the same
-    // trap `parseScopeFilter` exists to avoid on the read side.
+    // `memory_write` does no case-folding on insert, but the transports differ
+    // in what they hand it — MCP lowercases via `validateScope`, REST's
+    // shape-only `RawScopeSchema` does not — so no reader can infer how a row
+    // was cased. Normalising a reference would make it look more correct than
+    // the data it reads, and would resolve a mixed-case scope's lesson to
+    // nothing — the same trap `parseScopeFilter` exists to avoid on the read side.
     expect(parseMemoryRef('Repo::Acme/App::My-Key')).toEqual({ scope: 'Repo::Acme/App', key: 'My-Key' });
   });
 
@@ -138,15 +141,30 @@ describe('parseMemoryRefs — the `cited` array', () => {
     ]);
   });
 
-  it('de-duplicates by the RESOLVED pair, case-insensitively on the scope', () => {
-    // The same lesson named twice is one citation, however it was spelled.
-    expect(parseMemoryRefs(['global::a', 'Global::a', '  global::a  '])).toEqual([{ scope: 'global', key: 'a' }]);
+  it('de-duplicates by the RESOLVED pair, ignoring surrounding whitespace', () => {
+    // The same lesson named twice is one citation. Trimming is not a case fold:
+    // the pair is compared verbatim (see the scope test below).
+    expect(parseMemoryRefs(['global::a', '  global::a  '])).toEqual([{ scope: 'global', key: 'a' }]);
   });
 
   it('does NOT fold two keys that differ only in case', () => {
     // Keys are case-sensitive in `memories`, so folding them would credit one
     // lesson for another's citation.
     expect(parseMemoryRefs(['global::a', 'global::A'])).toHaveLength(2);
+  });
+
+  it('does NOT fold two scopes that differ only in case', () => {
+    // Same reason as keys, one level up: both consumers resolve a reference by
+    // VERBATIM comparison — `cited` joins `m.scope = r.scope` (00107) and the
+    // batch `refs` read filters `.eq('scope', …)` — so these are two distinct
+    // addresses. Folding them kept whichever came FIRST; because the MCP write
+    // path lowercases scopes (`validateScope`), the surviving `Global::a`
+    // resolved to nothing while `global::a`, which would have resolved, had
+    // already been dropped.
+    expect(parseMemoryRefs(['Global::a', 'global::a'])).toEqual([
+      { scope: 'Global', key: 'a' },
+      { scope: 'global', key: 'a' },
+    ]);
   });
 
   it(`truncates at ${MEMORY_CITED_MAX} rather than erroring`, () => {

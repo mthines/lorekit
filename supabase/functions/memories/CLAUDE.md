@@ -10,6 +10,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | / | create.ts | write |
 | DELETE | / | remove.ts | write |
 | POST | /list | list.ts | read |
+| POST | /read | read.ts | read |
 | POST | /facets | facets.ts | read |
 | POST | /activity | activity.ts | read |
 | POST | /pivot | pivot.ts | read |
@@ -33,15 +34,17 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/list`, `/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`,
-`/pivot`, `/activity` and `/read-activity` all collide with `/:id`.
+`/list`, `/read`, `/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`,
+`/facets`, `/pivot`, `/activity` and `/read-activity` all collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
 
-**A POST here does not imply a write.** `POST /list`, `POST /facets`, `POST /pivot`, `POST /activity` and
-`POST /search` are all `requires: 'read'` and none of them records an audit event — the verb
-says "the request does not fit in a URL", not "this changes something". `audit-coverage.spec.ts`
-pins that exact list, so a fifth read-only POST is a deliberate edit rather than a silent one.
+**A POST here does not imply a write.** `POST /read`, `POST /list`, `POST /facets`, `POST /pivot`,
+`POST /activity`, `POST /search` and `POST /groom/preview` are all `requires: 'read'` and none of
+them records an audit event — the verb says "the request does not fit in a URL", not "this changes something".
+`POST /read` is the newest: a batch `scope::key` reference list cannot be carried in a query
+string (see `read.ts`). `audit-coverage.spec.ts` pins that exact list, so adding another
+read-only POST is a deliberate edit rather than a silent one.
 
 ## `GET /` / `POST /list` response — `total` (migration 00094)
 

@@ -98,6 +98,21 @@ Rules:
   `memory.write`) so the two surfaces aggregate as one series.   Guard: `auth.type !== 'service'`
   and a resolved user; there is no BYOD/`supportsHostedBilling` equivalent because the REST
   functions have no storage adapter and always target the hosted database.
+- **A route whose scopes live in the request BODY reports them back on the response**, through
+  `SCOPE_COUNT_HEADER` / `RESOLVED_SCOPE_HEADER` / `SCOPE_TYPE_HEADER`, read here after the
+  handler returns (the same post-response read `RESULT_COUNT_HEADER` already uses). The router
+  must never consume the body — that is the handler's — so for `POST /memories/search` and
+  `POST /memories/read` the query string it *can* read carries no scope at all, and without these
+  the call records null on every scope dimension: `usage_events.scope_type`/`.scope`/`.scope_count`
+  and the `lorekit.scope.type` span attribute, which also puts every such call in the unlabelled
+  bucket of the `lorekit.tool.duration` histogram's one dimension. The TYPE is its own header
+  rather than something derived from the resolved scope, because the resolved scope is set only
+  when the body names exactly ONE scope — so a batch spanning several, the case whose type is the
+  informative `mixed`, is exactly the case a derivation would report null for. The handler
+  produces it with the shared `scopeTypeAttribute`; `parseScopeTypeAttribute` from that same
+  module re-checks it here, so the vocabulary is never copied into this file and an unrecognised
+  value records no type rather than admitting an unbounded string into a low-cardinality
+  dimension. Both are read BEFORE `span.end()`, so the attribute lands on the span that owns it.
 - The response→`usage_events.outcome` classification is the pure, unit-tested
   `_shared/rest/rest-response-outcome.ts` (`classifyResponseOutcome(status, bodyCode)`, mirror of
   `packages/mcp-core/src/rest/rest-response-outcome.ts`). Only the body read for the 429 cap-vs-rate

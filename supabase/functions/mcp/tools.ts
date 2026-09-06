@@ -21,7 +21,8 @@
  * decides what a member may do.
  */
 
-import { validateScope, UserInputError } from '../_shared/scope/scope.ts';
+import { validateScope, UserInputError, parseMemoryRefs } from '../_shared/scope/scope.ts';
+import { groupRefsByScope, missingRefs, unbatchableRefs } from '../_shared/memory/read-refs.ts';
 import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
@@ -287,7 +288,23 @@ export async function toolRead(
   span: Span,
   keyScoping?: KeyRestriction,
 ) {
-  const { scope: rawScope, key } = params;
+  const { scope: rawScope, key, refs } = params;
+  if (refs !== undefined) {
+    if (rawScope !== undefined || key !== undefined) {
+      throw new UserInputError('refs cannot be combined with scope and key');
+    }
+    // `parseMemoryRefs` DROPS what it cannot parse, so a non-array (or an empty
+    // array) would otherwise resolve to `{entries:[],missing:[]}` — a malformed
+    // call reported as a successful read that found nothing. REST already 400s
+    // on the same input via `ReadMemoriesBodySchema`; MCP rejects it here so the
+    // two surfaces agree. Only the SHAPE is validated: an individually
+    // unparseable ref is dropped by `parseMemoryRefs` and appears NOWHERE in
+    // the response — not in `entries`, not in `missing`.
+    if (!Array.isArray(refs) || refs.length === 0) {
+      throw new UserInputError('refs must be a non-empty array of scope::key strings');
+    }
+    return toolReadRefs(db, refs, userId, span, keyScoping);
+  }
   if (!rawScope || !key) throw new UserInputError('scope and key are required');
   const scope = validateScope(rawScope);
 
@@ -310,6 +327,84 @@ export async function toolRead(
   recordMemoryReads(db, [data.id], 'targeted', 'mcp');
   const { id: _id, ...rest } = data;
   return rest;
+}
+
+/**
+ * Batch mode behind `memory.read`'s `refs` field (R1, R4, R6, R7).
+ *
+ * One `.eq('scope', s).in('key', keys)` query per DISTINCT scope (plan D5),
+ * all awaited CONCURRENTLY via `Promise.all` — never one query per ref, never
+ * a single logic-tree `.or()` query. `memberOrgIds` is resolved ONCE, ahead of
+ * the fan-out, and reused by every group's tenant predicate.
+ *
+ * D6: however many refs resolve, they are recorded as ONE `'targeted'` batch
+ * (never `'bulk'`) — a batch read is still an agent naming exact lessons it
+ * wants, the same intent `memory.read`'s singular path already counts as
+ * targeted; `'bulk'` describes an unscoped `memory.list` page, not this.
+ */
+async function toolReadRefs(
+  db: DbClient,
+  raw: unknown,
+  userId: string | null,
+  span: Span,
+  keyScoping?: KeyRestriction,
+) {
+  const parsed = parseMemoryRefs(raw);
+  // See the REST twin in `memories/handlers/read.ts`: `count` alone cannot show
+  // that a 40-ref batch was truncated to 32, because neither the truncated tail
+  // nor an unparseable ref reaches `missing`. `raw` is already shape-checked by
+  // `toolRead`'s guard, but this function is total on its own, so the length is
+  // read defensively.
+  span.setAttributes({
+    'lorekit.operation': 'memory.read_refs',
+    'lorekit.refs.requested': Array.isArray(raw) ? raw.length : 0,
+    'lorekit.refs.count': parsed.length,
+  });
+
+  const groups = groupRefsByScope(parsed);
+  const singles = unbatchableRefs(parsed);
+  const tracedDb = createTracedClient(db, span);
+  const orgIds = userId ? await memberOrgIds(db, userId) : [];
+
+  // One query builder for both key shapes, so the batched and single-key paths
+  // cannot drift in their tenant, archived or expiry predicates. `id` is
+  // selected purely to drive the read counter below — it is stripped before
+  // the tool's result is returned, matching the singular path's leanness (D7).
+  const run = async (scope: string, keyFilter: { in: string[] } | { eq: string }) => {
+    const base = tracedDb.from('memories').select('id,scope,key,value,updated_at').eq('scope', scope);
+    let query = ('in' in keyFilter ? base.in('key', keyFilter.in) : base.eq('key', keyFilter.eq))
+      .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
+    if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string }[];
+  };
+
+  const rows = (
+    await Promise.all([
+      ...groups.map(({ scope, keys }) => run(scope, { in: keys })),
+      // A key carrying `,()"\` is legal in the table but not in an `.in()` list,
+      // so it gets the singular path's own `.eq` — never dropped into `missing`,
+      // which would report an existing lesson as not found.
+      ...singles.map(({ scope, key }) => run(scope, { eq: key })),
+    ])
+  ).flat();
+
+  if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
+  const entries = rows.map(({ id: _id, ...rest }) => rest);
+  const missing = missingRefs(parsed, rows);
+  // `result.count` is what every other tool reports, so a batch read that omits
+  // it is absent from any panel built over that attribute rather than reading
+  // zero. `refs.missing` is its complement and the one this shape adds: a batch
+  // whose refs mostly miss is an agent working from a stale ref list, and
+  // `result.count` alone cannot show it — 3 rows from a 20-ref batch and 3 rows
+  // from a 3-ref batch are the same number. Stamped from the SAME `missing` the
+  // caller receives, so the two can never describe different sets.
+  span.setAttributes({
+    'lorekit.result.count': rows.length,
+    'lorekit.refs.missing': missing.length,
+  });
+  return { entries, missing };
 }
 
 export async function toolList(

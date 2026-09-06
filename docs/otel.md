@@ -42,7 +42,7 @@ Attributes on `lorekit.memory.*` spans:
 |-----------|---------|-------|
 | `lorekit.tool.name` | `memory.write` | Bounded set — safe as metric dimension |
 | `lorekit.scope` | `repo::mthines/gw-tools` | Canonical scope string |
-| `lorekit.scope.type` | `repo` | `global` \| `project` \| `repo` \| `branch` \| `mixed` (a multi-type `memory.search`) \| `invalid` (ungrammatical input). **Omitted entirely** when the operation carries no scope — never a placeholder. Resolved by the shared `scope-type-attribute.ts` |
+| `lorekit.scope.type` | `repo` | `global` \| `project` \| `repo` \| `branch` \| `mixed` (a multi-type `memory.search`, or a batch `memory.read` whose `refs` span several scope types) \| `invalid` (ungrammatical input). **Omitted entirely** when the operation carries no scope — never a placeholder. Resolved by the shared `scope-type-attribute.ts`. A batch read names its scopes inside `refs` rather than in a `scope` argument or query string, so MCP resolves them from the parsed refs and REST's handler reports the type to the router through `X-LoreKit-Scope-Type` — see "Scope attribution for body-carried scopes" below |
 | `lorekit.key` | `aw-lessons::worktree-naming` | Lesson key |
 | `lorekit.source_agent` | `aw-executor` | Agent that triggered the write |
 | `lorekit.trigger` | `stuck-loop` | What triggered the write |
@@ -54,6 +54,34 @@ Attributes on `lorekit.memory.*` spans:
 | `lorekit.result.count` | `17` | List / search results: row count returned |
 | `lorekit.requested_limit` | `500` | `memory.list` / `memory.search` / `memory.list_archived`: the caller's `limit` argument BEFORE the server clamps it to the route's cap. Compare against `lorekit.result.count` to tell "got everything asked for" apart from "got the cap" |
 | `lorekit.limit_capped` | `true` | Same three tools: whether `requested_limit` exceeded the cap and was clamped down |
+| `lorekit.refs.requested` | `40` | Batch `memory.read` / `POST /memories/read`: how many `scope::key` refs the caller sent, BEFORE parsing |
+| `lorekit.refs.count` | `32` | Same two routes: how many survived parsing. Same pairing as `requested_limit`/`result.count` — the gap is refs dropped as unparseable or truncated past the 32-ref cap, and it is the ONLY place either loss is visible (neither reaches the response's `missing` list) |
+| `lorekit.refs.missing` | `5` | Same two routes: how many parsed refs resolved to no row — the length of the response's own `missing` list, stamped from that same list. The complement of `result.count`, and not derivable from it: 3 rows from a 20-ref batch and 3 rows from a 3-ref batch are the same `result.count`, but only the first is an agent working from a stale ref list |
+
+#### Scope attribution for body-carried scopes
+
+`POST /memories/search` and `POST /memories/read` name their scopes in the
+request BODY. The router never consumes the body — that is the handler's — so it
+cannot resolve `lorekit.scope.type`, `usage_events.scope_type`, `.scope` or
+`.scope_count` for those routes from the query string alone. The handler
+therefore reports them back on the response, and the router reads them after the
+handler returns (the same post-response read `X-LoreKit-Result-Count` already
+uses):
+
+| Response header | Feeds | Set when |
+|-----------------|-------|----------|
+| `X-LoreKit-Scope-Count` | `usage_events.scope_count` | The body named at least one scope |
+| `X-LoreKit-Resolved-Scope` | `usage_events.scope` | The body named exactly ONE distinct scope |
+| `X-LoreKit-Scope-Type` | `lorekit.scope.type`, `usage_events.scope_type` | The scopes resolve to a type |
+
+The type is a separate header rather than something derived from the resolved
+scope, because `X-LoreKit-Resolved-Scope` is absent precisely when a batch spans
+several scopes — the case whose type is the informative `mixed`. The handler
+produces the value with the same shared `scopeTypeAttribute` the router uses on
+the query-string path, and the router re-checks it with that module's own
+`parseScopeTypeAttribute`: an absent or unrecognised value records no type, so
+the dimension stays bounded by a validator on the reading side rather than by
+trust in the writer.
 
 Rate-limit attributes on the root `lorekit.mcp` span:
 

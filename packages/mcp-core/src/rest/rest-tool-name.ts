@@ -45,6 +45,11 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   // ── memories ──────────────────────────────────────────────────────────────
   'memories GET /': 'memory.list',
   'memories POST /': 'memory.write',
+  // Batch read by `scope::key` reference — its own body transport (never a
+  // `?refs=` query form), mapped to `memory.read`: one operation, two shapes
+  // (singular `GET /:id`, batch `POST /read`), the same reason `POST /list`
+  // maps to `memory.list` above.
+  'memories POST /read': 'memory.read',
   'memories POST /search': 'memory.search',
   'memories POST /restore': 'memory.restore',
   'memories POST /purge': 'memory.purge',

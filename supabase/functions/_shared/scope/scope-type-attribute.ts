@@ -40,8 +40,39 @@
  * The closed vocabulary. `global`/`project`/`repo`/`branch` mirror
  * `scope.ts`'s `ScopePrefix`; `mixed` and `invalid` are the two answers a
  * single prefix cannot give.
+ *
+ * A runtime ARRAY with the type derived from it, rather than a union declared
+ * on its own, because {@link parseScopeTypeAttribute} has to VALIDATE an
+ * incoming value against this vocabulary and cannot enumerate a TypeScript
+ * union at runtime.
  */
-export type ScopeTypeAttribute = 'global' | 'project' | 'repo' | 'branch' | 'mixed' | 'invalid';
+export const SCOPE_TYPE_ATTRIBUTES = ['global', 'project', 'repo', 'branch', 'mixed', 'invalid'] as const;
+
+export type ScopeTypeAttribute = typeof SCOPE_TYPE_ATTRIBUTES[number];
+
+const ATTRIBUTE_VALUES: ReadonlySet<string> = new Set(SCOPE_TYPE_ATTRIBUTES);
+
+/**
+ * Read a scope type back off the wire, or `null`.
+ *
+ * The counterpart to {@link scopeTypeAttribute} for the one case where the
+ * value does not originate in this process: a REST handler whose scopes live in
+ * the request BODY reports its type to the router through a response header,
+ * because the router never consumes the body and so cannot resolve the type
+ * itself. Without this the router would hold its own copy of the six strings —
+ * in the one place whose entire job is keeping the dimension bounded.
+ *
+ * Total and fail-safe, matching rule 2 above: anything outside the vocabulary
+ * records NO type rather than admitting an unbounded value into a dimension
+ * declared low-cardinality. A trusting reader would hand the exporter whatever
+ * a handler wrote, which is exactly the failure `scopeTypeAttribute` exists to
+ * prevent one layer down.
+ */
+export function parseScopeTypeAttribute(raw: unknown): ScopeTypeAttribute | null {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().toLowerCase();
+  return ATTRIBUTE_VALUES.has(v) ? (v as ScopeTypeAttribute) : null;
+}
 
 const VALID_PREFIXES = new Set<string>(['global', 'project', 'repo', 'branch']);
 
