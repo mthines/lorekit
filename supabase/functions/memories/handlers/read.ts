@@ -11,7 +11,14 @@ import { MEMORY_SELECT, shapeMemoryRow, ReadMemoriesBodySchema } from '../../_sh
 import { parseMemoryRefs } from '../../_shared/scope/scope.ts';
 import { groupRefsByScope, missingRefs, unbatchableRefs } from '../../_shared/memory/read-refs.ts';
 import { recordMemoryReads } from '../../_shared/telemetry/memory-reads.ts';
-import { CLIENT_HEADER } from '../../_shared/api/router.ts';
+import {
+  CLIENT_HEADER,
+  RESULT_COUNT_HEADER,
+  RESOLVED_SCOPE_HEADER,
+  SCOPE_COUNT_HEADER,
+  SCOPE_TYPE_HEADER,
+} from '../../_shared/api/router.ts';
+import { scopeTypeAttribute } from '../../_shared/scope/scope-type-attribute.ts';
 import { parseUsageClient } from '../../_shared/telemetry/usage-stats.ts';
 
 type MemoryRow = Tables<'memories'>;
@@ -78,15 +85,59 @@ export async function handleRead(
     ])
   ).flat();
 
-  span.setAttributes({ 'lorekit.result_count': rows.length });
+  // `lorekit.result.count` — the DOTTED spelling every other handler and MCP's
+  // own batch path use (`list.ts`, `search.ts`, `archive.ts`, `toolReadRefs`),
+  // and the one `docs/otel.md` documents. This read shipped `result_count`,
+  // which is a different attribute key: a dashboard panel or alert querying the
+  // documented name reports NOTHING for batch reads rather than reporting zero.
+  //
+  // `missing` computed ONCE into a local and used for both the attribute and the
+  // body, so the number the telemetry reports can never describe a different set
+  // from the one the caller received. Its complement is the useful signal: a
+  // batch whose refs mostly miss is an agent working from a stale ref list, and
+  // it is invisible in `result.count` alone (a 20-ref batch returning 3 rows and
+  // a 3-ref batch returning 3 rows are the same number).
+  const missing = missingRefs(parsed, rows as { scope: string; key: string }[]);
+  span.setAttributes({
+    'lorekit.result.count': rows.length,
+    'lorekit.refs.missing': missing.length,
+  });
   const res = ok(
     {
       entries: rows.map((r) => shapeMemoryRow(r as Record<string, unknown>)),
-      missing: missingRefs(parsed, rows as { scope: string; key: string }[]),
+      missing,
     },
     cors,
   );
-  res.headers.set('X-LoreKit-Result-Count', String(rows.length));
+  res.headers.set(RESULT_COUNT_HEADER, String(rows.length));
+  // Scope attribution for the router's usage event and the `lorekit.scope.type`
+  // span attribute — the router never consumes the body, so without these three
+  // headers a batch read records NO scope on any dimension: `usage_events`'
+  // `scope_type`/`scope`/`scope_count` all null, and the `lorekit.tool.duration`
+  // histogram putting every batch read in the unlabelled bucket of its one
+  // dimension. `search.ts` sets the first two for exactly this reason.
+  //
+  // Counted over DISTINCT scopes, not refs: many refs routinely name one scope,
+  // so the only count that means anything is how many scopes the batch touched —
+  // the same unit `groupRefsByScope` already turns the batch into queries by.
+  // Derived from `parsed`, so a truncated or unparseable tail is attributed to
+  // nothing rather than to the scopes that survived.
+  const scopes = [...new Set(parsed.map((r) => r.scope))];
+  if (scopes.length > 0) {
+    res.headers.set(SCOPE_COUNT_HEADER, String(scopes.length));
+    // The single resolved scope only when the batch named exactly one. A batch
+    // spanning several — the shape this feature exists for — has no single
+    // scope, which is why the TYPE header is separate rather than derived from
+    // this one: `mixed` is precisely the answer this header cannot give.
+    if (scopes.length === 1) res.headers.set(RESOLVED_SCOPE_HEADER, scopes[0]);
+    // Produced with the SAME shared resolver the router uses on the
+    // query-string path, and re-validated against the closed vocabulary by that
+    // module's own `parseScopeTypeAttribute` on the router side — the dimension
+    // stays bounded by a check on the reading side, never by trust in this
+    // writer.
+    const scopeType = scopeTypeAttribute(undefined, scopes);
+    if (scopeType) res.headers.set(SCOPE_TYPE_HEADER, scopeType);
+  }
   // D6: however many refs resolve, this is ONE 'targeted' batch — never
   // 'bulk' — matching MCP's toolReadRefs (an agent naming exact lessons it
   // wants, the same intent memory.read's singular path already counts as

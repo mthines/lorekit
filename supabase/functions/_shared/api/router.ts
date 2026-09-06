@@ -9,7 +9,10 @@ import { classifyResponseOutcome } from '../rest/rest-response-outcome.ts';
 import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../telemetry/usage-stats.ts';
 import { parseSessionKind } from '../telemetry/session-kind.ts';
 import { safeValidateScope } from '../scope/scope.ts';
-import { scopeTypeAttribute } from '../scope/scope-type-attribute.ts';
+import {
+  scopeTypeAttribute,
+  parseScopeTypeAttribute,
+} from '../scope/scope-type-attribute.ts';
 import type { Span } from '../telemetry/otel.ts';
 
 /**
@@ -52,6 +55,28 @@ export const SCOPE_COUNT_HEADER = 'x-lorekit-scope-count';
  * for that case, not a guessed single scope.
  */
 export const RESOLVED_SCOPE_HEADER = 'x-lorekit-resolved-scope';
+
+/**
+ * Response header a body-carried-scope handler sets with the BOUNDED scope
+ * type of the scopes its body named, for `usage_events.scope_type` and the
+ * `lorekit.scope.type` span attribute.
+ *
+ * The third of this trio, and the one {@link RESOLVED_SCOPE_HEADER} cannot
+ * stand in for: that header is set only when the body names exactly ONE scope,
+ * so a request spanning several — a batch `POST /memories/read` over
+ * `global` + `repo::…`, which is the shape the feature exists for — has no
+ * single resolved scope but does have a type, `mixed`. Deriving the type from
+ * the resolved scope would therefore report null for precisely the calls the
+ * dimension is most interesting for.
+ *
+ * The handler produces the value with the SAME shared `scopeTypeAttribute` the
+ * router uses on the query-string path, and `parseScopeTypeAttribute` — from
+ * that same owning module, so the vocabulary is never copied here — re-checks
+ * it. The dimension is bounded by a validator on the reading side, never by
+ * trust in the writer. Fail-safe: an absent or unrecognised value records no
+ * type.
+ */
+export const SCOPE_TYPE_HEADER = 'x-lorekit-scope-type';
 
 /**
  * Request header naming the SURFACE the call came from (`dashboard` / `cli` /
@@ -301,8 +326,25 @@ export function createRouter(routes: Route[], functionName: string) {
       try {
         const res = await route.handler(req, resolved.auth, resolved.db, hs, params, cors);
         const durationMs = Date.now() - startedMs;
+        // A handler whose scopes live in the BODY reports its bounded scope
+        // type back through SCOPE_TYPE_HEADER — the router never consumes the
+        // body, so `scopeType` above saw only the query string and is null for
+        // those routes. The query-string type still wins when present; only a
+        // call that gave the router nothing to read falls back to the header.
+        //
+        // Resolved HERE, before the span ends, so the attribute still lands on
+        // this span, and reused by the usage event below so the dimension and
+        // the ledger row cannot disagree. The error path below keeps the plain
+        // `scopeType`: a handler that threw returned no response, so there are
+        // no headers to read — the same reason `resultCount` is success-only.
+        const effectiveScopeType = scopeType ?? parseScopeTypeAttribute(res.headers.get(SCOPE_TYPE_HEADER));
         const planName = planNamePromise ? await planNamePromise : null;
         if (planName) hs.setAttributes({ 'lorekit.plan': planName });
+        // Only when the pre-handler read found nothing — line above already
+        // stamped it otherwise, and re-setting would be a no-op at best.
+        if (!scopeType && effectiveScopeType) {
+          hs.setAttributes({ 'lorekit.scope.type': effectiveScopeType });
+        }
         hs.setAttributes({ 'http.response.status_code': res.status }).end();
         // ── tell the caller which account it authenticated as ────────────────
         //
@@ -323,20 +365,20 @@ export function createRouter(routes: Route[], functionName: string) {
         if (usageUserId !== null) {
           // Record count from the handler's own header — fail-safe to null.
           const resultCount = parseResultCountHeader(res.headers.get(RESULT_COUNT_HEADER));
-          // How many scopes an array-bearing body (POST /memories/search)
-          // named, and — only when that count is exactly one — the resolved
-          // scope itself. `usageScope` (query-string-derived) wins when
-          // present; only a query-string-less call (search) falls back to the
-          // header. Read AFTER the handler runs, same as `resultCount` above,
-          // because the body — where `scopes` actually lives — is the
-          // handler's to consume, never the router's.
+          // How many scopes an array-bearing body (POST /memories/search, or a
+          // batch POST /memories/read) named, and — only when that count is
+          // exactly one — the resolved scope itself. `usageScope`
+          // (query-string-derived) wins when present; only a query-string-less
+          // call falls back to the header. Read AFTER the handler runs, same as
+          // `resultCount` above, because the body — where `scopes` and `refs`
+          // actually live — is the handler's to consume, never the router's.
           const scopeCount = parseResultCountHeader(res.headers.get(SCOPE_COUNT_HEADER));
           const scope = usageScope ?? safeValidateScope(res.headers.get(RESOLVED_SCOPE_HEADER));
           recordUsageEvent(resolved.db, {
             userId: usageUserId,
             planName,
             toolName,
-            scopeType,
+            scopeType: effectiveScopeType,
             scope,
             scopeCount,
             authType: usageAuthType(resolved.auth),

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { scopeTypeAttribute, type ScopeTypeAttribute } from './scope-type-attribute.js';
+import {
+  scopeTypeAttribute,
+  parseScopeTypeAttribute,
+  SCOPE_TYPE_ATTRIBUTES,
+  type ScopeTypeAttribute,
+} from './scope-type-attribute.js';
 
 /**
  * The vocabulary this dimension is allowed to take. Asserted as a SET rather
@@ -107,6 +112,70 @@ describe('scopeTypeAttribute — the scopes array (memory.search)', () => {
 describe('scopeTypeAttribute — precedence and boundedness', () => {
   it('prefers the singular scope when both arguments are supplied', () => {
     expect(scopeTypeAttribute('global', ['repo::mthines/lorekit'])).toBe('global');
+  });
+
+  it('round-trips every value it can produce back through the parser', () => {
+    // The wire path a body-carried-scope handler takes: resolve here, write the
+    // value to a response header, and have the router read it back. A value this
+    // module emits that its own parser rejects would silently drop the dimension
+    // for exactly the routes that need the header.
+    const produced = [
+      scopeTypeAttribute('global'),
+      scopeTypeAttribute('project::agent-skills'),
+      scopeTypeAttribute('repo::mthines/lorekit'),
+      scopeTypeAttribute('branch::mthines/lorekit::feat/x'),
+      scopeTypeAttribute(undefined, ['global', 'repo::mthines/lorekit']),
+      scopeTypeAttribute('nope'),
+    ];
+    expect(new Set(produced)).toEqual(ALLOWED);
+    for (const value of produced) expect(parseScopeTypeAttribute(value)).toBe(value);
+  });
+});
+
+describe('parseScopeTypeAttribute — reading a scope type off the wire', () => {
+  it.each([...SCOPE_TYPE_ATTRIBUTES])('accepts %s', (value) => {
+    expect(parseScopeTypeAttribute(value)).toBe(value);
+  });
+
+  it('trims and lowercases, matching what scopeTypeAttribute does to its input', () => {
+    expect(parseScopeTypeAttribute('  RePo  ')).toBe('repo');
+  });
+
+  it.each([
+    // The placeholder the module exists to stop emitting — never revive it by
+    // letting it back in through the header.
+    'unknown',
+    // A caller-shaped prefix, the unbounded-dimension regression itself.
+    'attacker-controlled',
+    // A scope, rather than a scope TYPE: right idea, wrong vocabulary.
+    'repo::mthines/lorekit',
+    '',
+    '   ',
+  ])('records no type for %o', (raw) => {
+    expect(parseScopeTypeAttribute(raw)).toBeNull();
+  });
+
+  it.each([null, undefined, 42, {}, []])('records no type for the non-string %o', (raw) => {
+    // `Headers.get` returns null for an absent header, and the mirrored edge
+    // copy is read by untyped call sites, so the guard is a runtime one.
+    expect(parseScopeTypeAttribute(raw)).toBeNull();
+  });
+
+  it('never returns a value outside the closed vocabulary', () => {
+    const inputs: unknown[] = ['global', 'REPO', 'unknown', 'x'.repeat(500), null, 42, ''];
+    for (const input of inputs) {
+      const value = parseScopeTypeAttribute(input);
+      if (value !== null) expect(ALLOWED.has(value)).toBe(true);
+    }
+  });
+
+  it('exports exactly the vocabulary this file names, in no particular order', () => {
+    // ALLOWED stays hand-written on purpose. The exported array is what the
+    // router validates a handler's header against, so deriving the assertion
+    // from it would test the constant against itself and a seventh value could
+    // be added with nothing failing.
+    expect(new Set(SCOPE_TYPE_ATTRIBUTES)).toEqual(ALLOWED);
+    expect(SCOPE_TYPE_ATTRIBUTES).toHaveLength(ALLOWED.size);
   });
 
   it('only ever returns a member of the closed vocabulary', () => {

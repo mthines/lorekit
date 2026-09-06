@@ -393,6 +393,17 @@ async function toolReadRefs(
   if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
   const entries = rows.map(({ id: _id, ...rest }) => rest);
   const missing = missingRefs(parsed, rows);
+  // `result.count` is what every other tool reports, so a batch read that omits
+  // it is absent from any panel built over that attribute rather than reading
+  // zero. `refs.missing` is its complement and the one this shape adds: a batch
+  // whose refs mostly miss is an agent working from a stale ref list, and
+  // `result.count` alone cannot show it — 3 rows from a 20-ref batch and 3 rows
+  // from a 3-ref batch are the same number. Stamped from the SAME `missing` the
+  // caller receives, so the two can never describe different sets.
+  span.setAttributes({
+    'lorekit.result.count': rows.length,
+    'lorekit.refs.missing': missing.length,
+  });
   return { entries, missing };
 }
 
