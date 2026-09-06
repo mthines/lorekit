@@ -29,6 +29,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { DEFAULT_AGENT_COMMAND, DEFAULT_PERMISSION_MODE } from "./agent.mjs";
+
 /**
  * The environment variables that can carry credentials for `claude -p`.
  *
@@ -86,8 +88,8 @@ export function resolveCommandPath(command, { env = process.env } = {}) {
  */
 export function assessRunnability({
   env = process.env,
-  command = "claude",
-  permissionMode = "bypassPermissions",
+  command = DEFAULT_AGENT_COMMAND,
+  permissionMode = DEFAULT_PERMISSION_MODE,
   uid = typeof process.getuid === "function" ? process.getuid() : null,
   resolve = resolveCommandPath,
 } = {}) {

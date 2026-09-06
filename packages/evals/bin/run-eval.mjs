@@ -33,8 +33,10 @@ import path from "node:path";
 import process from "node:process";
 
 import {
-  MODEL_UNDER_TEST,
+  DEFAULT_AGENT_COMMAND,
+  DEFAULT_PERMISSION_MODE,
   DEFAULT_TIMEOUT_MS,
+  MODEL_UNDER_TEST,
   runAgent,
 } from "../src/harness/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/harness/arm.mjs";
@@ -169,12 +171,12 @@ export function parseArgs(argv) {
     reps: 3,
     out: ".eval-out",
     timeoutMs: DEFAULT_TIMEOUT_MS,
-    command: "claude",
+    command: DEFAULT_AGENT_COMMAND,
     model: MODEL_UNDER_TEST,
     // `bypassPermissions` is the right default for a throwaway sandbox, but the
     // CLI REFUSES it under root/sudo — so every container run (CI, Docker, a
     // cloud sandbox) died with an empty transcript until this became settable.
-    permissionMode: "bypassPermissions",
+    permissionMode: DEFAULT_PERMISSION_MODE,
     seed: "canonical",
     lesson: null,
     lessonFile: null,
