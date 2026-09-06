@@ -282,7 +282,7 @@ Deno.test("AC-7: N found rows record one targeted read for all N ids", async () 
   assertEquals((recordCalls[0].args.p_memory_ids as string[]).sort(), ['1', '2']);
 });
 
-Deno.test('AC-11: an unqueryable key becomes missing and issues no query', async () => {
+Deno.test('AC-11: a storable-but-unqueryable key is queried by its own eq, not dropped', async () => {
   const { span } = newRootSpan();
   const rowsByScope = new Map<string, Row[]>([
     ['repo::o/r', [{ id: '2', scope: 'repo::o/r', key: 'good-key', value: 'v', updated_at: 't' }]],
@@ -298,9 +298,41 @@ Deno.test('AC-11: an unqueryable key becomes missing and issues no query', async
 
   assertEquals(result.entries.length, 1);
   assertEquals(result.entries[0].scope, 'repo::o/r');
+  // It is missing because no row carries the key — NOT because nobody looked.
   assertEquals(result.missing, ['global::bad,key']);
-  // No query was ever built for the 'global' scope — the bad ref never
-  // reached a filter list at all, it never merely returned zero rows.
+  // A comma is structural in a PostgREST `.in()` list but perfectly storable,
+  // so the ref gets its OWN single-key query rather than being reported absent
+  // unqueried. Asserting no query here is what this test did before the fix.
+  const globalQuery = queries.find((q) => q.filters.some(([c, v]) => c === 'scope' && v === 'global'));
+  assertEquals(globalQuery !== undefined, true);
+  // `.eq` records a bare string, `.in` records an array — so this also pins
+  // that the bad key never rode in a filter list, which is the exposure the
+  // guard exists for: postgrest-js quotes [,()] without escaping a `"` or `\`.
+  assertEquals(globalQuery!.filters.find(([c]) => c === 'key')?.[1], 'bad,key');
+});
+
+Deno.test('AC-11: a key no row could carry becomes missing and issues no query', async () => {
+  const { span } = newRootSpan();
+  const rowsByScope = new Map<string, Row[]>([
+    ['repo::o/r', [{ id: '2', scope: 'repo::o/r', key: 'good-key', value: 'v', updated_at: 't' }]],
+  ]);
+  const { db, queries } = fakeDb({ rowsByScope });
+  // 513 chars — past the write schema's bound, so `memories.key` cannot hold it
+  // and no row can ever match. Unstorable, not merely unbatchable.
+  const unstorable = 'a'.repeat(513);
+
+  const result = await toolRead(
+    db,
+    { refs: [`global::${unstorable}`, 'repo::o/r::good-key'] },
+    null,
+    span,
+  ) as { entries: { scope: string; key: string }[]; missing: string[] };
+
+  assertEquals(result.entries.length, 1);
+  assertEquals(result.entries[0].scope, 'repo::o/r');
+  assertEquals(result.missing, [`global::${unstorable}`]);
+  // No query was ever built for the 'global' scope — this ref never reached a
+  // filter list at all, it did not merely return zero rows.
   const scopesQueried = queries.map((q) => q.filters.find(([c]) => c === 'scope')?.[1]);
   assertEquals(scopesQueried.includes('global'), false);
 });
