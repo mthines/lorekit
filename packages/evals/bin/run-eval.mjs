@@ -29,7 +29,17 @@ import {
 } from "../src/harness/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/harness/arm.mjs";
 import {
+  VARIANT_IDS,
+  describeVariant,
+  rankVariants,
+  renderVariant,
+  scoreVariant,
+  summarizeCell,
+  variantById,
+} from "../src/harness/variants.mjs";
+import {
   ARM_0,
+  ARM_A,
   ARM_C,
   armById,
   armCPrompt,
@@ -62,6 +72,16 @@ Subcommands:
                        reason) unless --lesson-file supplies the lesson the loop
                        would have saved; it is never substituted with the
                        canonical one.
+  variants             Which FRAMING of one fact teaches best, and what does it
+                       cost? Crosses the lesson ladder (rule-only … padded)
+                       against an ON-TARGET task and an OFF-TARGET one, so a
+                       wording is charged for the neighbouring tasks it
+                       misdirects and not only credited for the one it helps.
+                       Reports a net lift and a tokens-per-point cost. This is
+                       the expensive subcommand: (variants x tasks + tasks) x
+                       reps model calls — 60 at the defaults. Narrow it with
+                       --variant, or halve it with --skip-off-target (which
+                       gives up the net number, not just some detail).
   arm0                 The golden task against an empty store, then graded.
   preflight            One throwaway model call in a prepared sandbox, then
                        report what the session actually loaded. Exits non-zero
@@ -88,6 +108,11 @@ Options:
                        runs (CI, Docker, cloud sandboxes) need e.g. acceptEdits.
   --lesson-file <path> golden: the organic lesson, read from a file. Without it
                        (or --lesson) the B-organic arm is skipped, never faked.
+  --variant <id>       variants: run only these rows (repeatable). Known ids:
+                       ${VARIANT_IDS.join(", ")}.
+  --skip-off-target    variants: run the on-target task only. Halves the cost
+                       and gives up the NET value — the resulting lifts cannot
+                       see what a framing costs on tasks it is not about.
   --seed <source>      probe: empty | canonical | organic (default canonical).
                        arm0 always runs against an EMPTY store and REFUSES this
                        flag rather than ignoring it.
@@ -132,6 +157,11 @@ export function parseArgs(argv) {
     seed: "canonical",
     lesson: null,
     lessonFile: null,
+    // Repeatable, and EMPTY means "every variant" — an explicit list is a
+    // narrowing, so the difference between "asked for none" and "asked for all"
+    // never has to be inferred from a sentinel.
+    variants: [],
+    skipOffTarget: false,
     scope: null,
     scopeMode: "branch",
     git: null,
@@ -166,6 +196,12 @@ export function parseArgs(argv) {
         break;
       case "--lesson-file":
         options.lessonFile = rest[++i];
+        break;
+      case "--variant":
+        options.variants.push(rest[++i]);
+        break;
+      case "--skip-off-target":
+        options.skipOffTarget = true;
         break;
       case "--seed":
         options.seed = rest[++i];
@@ -216,6 +252,12 @@ export function parseArgs(argv) {
     if (typeof value !== "string" || value.trim() === "") {
       throw new Error(`${flag} requires a non-empty value`);
     }
+  }
+  // A `--variant` with no value pushes `undefined` and would reach the row
+  // loop as a cell whose id renders "undefined-branch-scope" — a run that costs
+  // real calls and produces an unreadable artifact.
+  if (options.variants.some((v) => typeof v !== "string" || v.trim() === "")) {
+    throw new Error("--variant requires a non-empty variant id");
   }
   if (options.lesson && options.lessonFile) {
     throw new Error(
@@ -301,20 +343,42 @@ async function readOrganicLesson(options) {
  * detail nobody is watching, and the difference between them stops meaning what
  * the report says it means.
  */
-async function runRep({ arm, options, sandbox, repDir, task, prompt, lesson }) {
+async function runRep({
+  arm,
+  options,
+  sandbox,
+  repDir,
+  task,
+  prompt,
+  lesson,
+  lessonKey = null,
+  // Where the lesson is SEEDED, when that is not the scope being graded.
+  //
+  // golden leaves this null: seeding at the graded target IS arm B's
+  // definition, and a mismatch there could only score a failure. The variant
+  // experiment must separate the two — it runs one lesson against two tasks
+  // with two different targets, so the lesson is seeded once at `global` and
+  // the grading target comes from the task. Keeping the override explicit
+  // means golden's guard is unchanged rather than loosened for everyone.
+  seedScope = null,
+  seedScopeMode = null,
+  git = undefined,
+}) {
   const prepared = await prepareArm(sandbox, {
     seed: arm.seed,
     lesson,
-    scopeMode: options.scopeMode,
-    scope: options.scope,
-    git: options.git,
+    lessonKey,
+    scopeMode: seedScopeMode || options.scopeMode,
+    scope: seedScope || options.scope,
+    git: git === undefined ? options.git : git,
     allowWrite: arm.allowWrite,
   });
-  if (prepared.targetScope !== task.targetScope) {
+  const expectedScope = seedScope || task.targetScope;
+  if (prepared.targetScope !== expectedScope) {
     throw new Error(
-      `golden grades against the fixed target ${task.targetScope}, but the ` +
-        `scope options resolved to ${prepared.targetScope}; a run with this ` +
-        `combination could only score a failure.`,
+      `this run seeds at ${expectedScope}, but the scope options resolved to ` +
+        `${prepared.targetScope}; a run with this combination could only ` +
+        `score a failure.`,
     );
   }
   await fsp.mkdir(repDir, { recursive: true });
@@ -516,6 +580,141 @@ async function runGolden(options) {
     comparisons,
     readable: comparisons.map(describeComparison),
     results: Object.fromEntries(perArm),
+  };
+  await fsp.writeFile(
+    path.join(outDir, "summary.json"),
+    JSON.stringify(summary, null, 2),
+  );
+  return { outDir, summary };
+}
+
+/**
+ * The variant experiment: which FRAMING of one fact teaches best, and at what
+ * cost in context?
+ *
+ * Structure — a full crossing of variants × tasks, plus one shared control per
+ * task. Every treatment cell seeds ONE lesson at `global`, so the lesson
+ * reaches both tasks by the same delivery path and the only thing that differs
+ * between two cells in a row is the task, and between two rows is the wording.
+ *
+ * The control is run ONCE PER TASK and reused across every variant, rather than
+ * once per cell. Both readings are defensible; this one buys reps for the arms
+ * that actually differ, and it is stated here because a reader comparing two
+ * variants is comparing them against the SAME baseline draw, which makes the
+ * between-variant differences cleaner than the absolute lifts.
+ */
+async function runVariants(options) {
+  refuseUnhonourableFlags(
+    options,
+    ["--seed", "--scope", "--scope-mode", "--lesson", "--lesson-file"],
+    "variants defines its own store, scope and lesson text",
+    "pick rows with --variant <id> instead",
+  );
+
+  const requested =
+    options.variants.length > 0 ? options.variants : VARIANT_IDS;
+  for (const id of requested) variantById(id); // refuse an unknown id up front
+
+  const id = runId();
+  const outDir = path.resolve(options.out, `variants-${id}`);
+  const tasks = [taskById("branch-scope")];
+  if (!options.skipOffTarget) tasks.push(taskById("repo-scope"));
+  await fsp.mkdir(outDir, { recursive: true });
+
+  // One lesson, one delivery path, two tasks. `global` is injected in any
+  // directory, so seeding there holds scope RESOLUTION fixed and leaves the
+  // wording as the only variable — retrieval already has its own experiment.
+  const seeding = { seedScope: "global", seedScopeMode: "global", git: true };
+  const baselineArm = armById(ARM_A);
+  const treatmentArm = { id: "B-variant", seed: "organic", allowWrite: false };
+
+  const cells = new Map(); // `${cellId}` -> reps[]
+  const push = (cellId, rep) =>
+    cells.set(cellId, [...(cells.get(cellId) || []), rep]);
+
+  const runCell = async ({ cellId, arm, task, variant }) => {
+    for (let rep = 1; rep <= options.reps; rep++) {
+      const sandbox = await createSandbox({ keep: options.keep });
+      try {
+        const repDir = path.join(outDir, cellId, `rep-${rep}`);
+        if (options.dryRun) {
+          push(cellId, { cell: cellId, rep, dryRun: true });
+          continue;
+        }
+        const { record } = await runRep({
+          arm,
+          options,
+          sandbox,
+          repDir,
+          task,
+          prompt: task.prompt(),
+          lesson: variant ? variant.body : null,
+          lessonKey: variant ? variant.key : null,
+          ...seeding,
+        });
+        push(cellId, { rep, variant: variant ? variant.id : null, ...record });
+      } finally {
+        await sandbox.dispose();
+      }
+    }
+  };
+
+  // Controls first: every variant is scored against them, so a run that dies
+  // partway through still has the denominator for whatever finished.
+  for (const task of tasks) {
+    await runCell({ cellId: `baseline-${task.id}`, arm: baselineArm, task });
+  }
+  const rendered = requested.map(renderVariant);
+  for (const variant of rendered) {
+    for (const task of tasks) {
+      await runCell({
+        cellId: `${variant.id}-${task.id}`,
+        arm: treatmentArm,
+        task,
+        variant,
+      });
+    }
+  }
+
+  const cell = (cellId) => summarizeCell(cellId, cells.get(cellId) || []);
+  const offTargetRun = !options.skipOffTarget;
+  const scored = rendered.map((variant) =>
+    scoreVariant({
+      variant,
+      onTarget: cell(`${variant.id}-branch-scope`),
+      offTarget: offTargetRun ? cell(`${variant.id}-repo-scope`) : null,
+      baselineOnTarget: cell("baseline-branch-scope"),
+      baselineOffTarget: offTargetRun ? cell("baseline-repo-scope") : null,
+    }),
+  );
+  const ranked = rankVariants(scored);
+
+  const summary = {
+    subcommand: "variants",
+    runId: id,
+    model: options.model,
+    repsRequested: options.reps,
+    offTargetRun,
+    caveat:
+      `N=${options.reps} per cell is a low-power INDICATOR, not proof. ` +
+      `A ranking at this N orders the variants; it does not establish that ` +
+      `the top row beats the second. Widening N — not reinterpreting these ` +
+      `reps — is the way to a stronger claim.` +
+      (offTargetRun
+        ? ""
+        : ` The off-target task was SKIPPED, so no net value was computed: ` +
+          `these are on-target lifts only, and a framing that misdirects ` +
+          `other tasks looks free here.`),
+    variants: rendered.map(({ body, ...meta }) => ({
+      ...meta,
+      bodyChars: body.length,
+    })),
+    cells: Object.fromEntries(
+      [...cells.keys()].map((cellId) => [cellId, cell(cellId)]),
+    ),
+    ranked,
+    readable: ranked.map(describeVariant),
+    results: Object.fromEntries(cells),
   };
   await fsp.writeFile(
     path.join(outDir, "summary.json"),
@@ -834,6 +1033,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (options.subcommand === "golden") {
     const { outDir, summary } = await runGolden(options);
+    process.stdout.write(
+      `${JSON.stringify(summary, null, 2)}\n\nartifacts: ${outDir}\n`,
+    );
+    return 0;
+  }
+  if (options.subcommand === "variants") {
+    const { outDir, summary } = await runVariants(options);
     process.stdout.write(
       `${JSON.stringify(summary, null, 2)}\n\nartifacts: ${outDir}\n`,
     );

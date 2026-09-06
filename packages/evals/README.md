@@ -29,7 +29,9 @@ edge `memory.list` (PR5-A1); the **scale/position sweep** (PR5); the
 information-environment verification that keeps a run from measuring the machine
 instead of the model; and the **`golden` subcommand** — arms 0/A/B/C, graded and
 compared, which is the subcommand that actually answers the question in the
-first paragraph. Still to come: the code-review domain (PR6), whose
+first paragraph; and the **`variants` subcommand** — the lesson-framing ladder
+crossed against an on-target and an off-target task, which answers the question
+after it. Still to come: the code-review domain (PR6), whose
 `src/review-grade.mjs` is referenced below but not yet written.
 
 > **`arm0` alone cannot answer the founding question.** "Does a lesson make the
@@ -57,7 +59,8 @@ careful about separators is solving an easier task than a real turn presents.
 The target scope never appears in the prompt, and neither does a literal `::`;
 that last one is why the task's key has no `::` in it, which a test caught.
 
-Full statement, rubric and the two stubbed alternates: `fixtures/spec.md`.
+Full statement, rubric, the off-target companion task and the two stubbed
+alternates: `fixtures/spec.md`.
 
 ## Grading
 
@@ -177,6 +180,82 @@ would, and prints the injected index — scope, key and observed position per
 lesson. It is the fastest way to answer "is arm B actually different from arm
 A?" before spending a single token.
 
+## Which framing teaches best — the `variants` axis
+
+`golden` varies the STORE and holds the lesson fixed, so it can answer "does a
+stored lesson help?" and nothing else. `variants` answers the next question:
+given that it helps, **which wording of it helps most, and what does that
+wording cost?**
+
+Two things make the answer meaningful rather than a beauty contest.
+
+**It is an ablation ladder, not a set of rewrites.** Every variant in
+`src/harness/variants.mjs` states the same fact. They differ only in which
+ingredients they carry — trigger, rule, example, anti-example, consequence — and
+in how those are phrased. A row that also knew more would win for an
+uninteresting reason, so a test asserts the reduced rows are strict subsets of
+`full`, that no variant quotes a graded target verbatim (that would measure
+copying), and that `padded` is `full` plus filler that never mentions scope
+syntax.
+
+| Variant            | The one question it asks                                                     |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `rule-only`        | Is the bare rule enough, with no example and no failure mode?                |
+| `rule-example`     | Does one concrete correct example beat the rule alone?                       |
+| `rule-antiexample` | Does naming the wrong forms beat showing the right one?                      |
+| `full`             | What does everything at once achieve, and at what cost?                      |
+| `imperative`       | Do terse ALWAYS/NEVER directives beat the same content stated descriptively? |
+| `narrative`        | Does a first-person account of the failure beat a stated rule?               |
+| `untriggered`      | Does removing the statement of WHEN it applies cost anything?                |
+| `padded`           | Does length alone dilute a lesson whose content is unchanged?                |
+| `full-opaque-key`  | How much of a lesson's effect is carried by its KEY alone?                   |
+
+The key is part of the framing — it is injected with the body and read first —
+so it is held constant across the ladder and varied in exactly one row, which is
+what keeps its effect separable instead of smeared across every result.
+
+**Value is a difference of differences.** Every SessionStart injects the whole
+resolved set, so a lesson that sharpens one task and misdirects a neighbouring
+one can be net-negative however large its on-target lift. Each variant is
+therefore run against **both** tasks in `task.mjs`:
+
+- on-target `branch-scope` — what the lesson is about;
+- off-target `repo-scope` — the same repository, one granularity coarser.
+
+`repo-scope` is a deliberate **neighbour, not a stranger**. It is the situation
+where an over-emphatic branch lesson misfires by writing `branch::…` when
+`repo::…` was asked, and `grade.mjs` already scores exactly that at 60 — a
+second task with no new grader, which is why this axis is cheap. It measures
+OVER-APPLICATION, not the cost of pure irrelevance; a genuinely unrelated task
+would measure that and is not built.
+
+The scoring is biased against the lesson on purpose: off-target **downside is
+charged in full, upside is not credited**, because at these rep counts an
+apparent gain on a task the lesson is not about is far likelier to be noise than
+transfer. `tokensPerPoint` is withheld (`null`, never `Infinity` and never a
+flattering negative) unless there was a net gain to price, and a variant with an
+unmeasured cell is `comparable: false` with every derived number `null` — the
+flattering half of an unfinished measurement is never published on its own.
+
+```bash
+cd packages/evals
+node bin/run-eval.mjs variants --dry-run                      # the plan, no model call
+node bin/run-eval.mjs variants --reps 3                       # 60 calls at the defaults
+node bin/run-eval.mjs variants --reps 3 --variant full --variant rule-only
+node bin/run-eval.mjs variants --reps 3 --skip-off-target     # half the cost, no net value
+```
+
+`--skip-off-target` gives up the net number, not merely some detail: what is
+left is on-target lifts, in which a framing that misdirects other tasks looks
+free. The run's own `caveat` says so.
+
+Two things it deliberately does not do. It runs **one control per task**, reused
+across every variant, which buys reps for the arms that actually differ and
+means between-variant comparisons share a baseline draw. And it seeds every
+variant at `global` — one lesson, one delivery path, both tasks — so scope
+resolution is held fixed and the wording is the only variable; retrieval has its
+own experiment and its own classifier.
+
 ## Running
 
 ```bash
@@ -193,6 +272,7 @@ node bin/run-eval.mjs golden --dry-run        # the arm plan, no model call
 node bin/run-eval.mjs preflight               # one call; is the environment clean?
 node bin/run-eval.mjs arm0 --reps 1 --out ./.eval-out
 node bin/run-eval.mjs golden --reps 3 --lesson-file ./organic.md
+node bin/run-eval.mjs variants --reps 3        # which FRAMING, and what it costs
 ```
 
 `golden` is the whole experiment. It runs arm 0 first (it is the only source of
@@ -217,17 +297,17 @@ a well-equipped machine cost $1.13 to say one word. `preflight` reports its own
 `costUsd`, which is the honest per-rep floor to plan a batch against. Start at
 `--reps 1` when validating plumbing.
 
-| Flag              | Meaning                                                  |
-| ----------------- | -------------------------------------------------------- |
-| `--reps <n>`      | Repetitions per arm (default 3).                         |
-| `--out <dir>`     | Artifact root (default `./.eval-out`).                   |
-| `--timeout <ms>`  | Hard wall-clock ceiling per attempt.                     |
-| `--command <bin>` | Agent binary; override to substitute a stand-in.         |
-| `--keep`          | Leave each sandbox on disk for inspection.               |
-| `--dry-run`       | Build the plan and artifacts without spawning the agent. |
-| `--model <id>`    | Model under test. Changing it mid-batch makes the arms incomparable. |
-| `--permission-mode <m>` | Passed to `claude`. See the root caveat below.     |
-| `--lesson-file <path>`  | `golden`: the organic lesson. Absent ⇒ B-organic is skipped. |
+| Flag                    | Meaning                                                              |
+| ----------------------- | -------------------------------------------------------------------- |
+| `--reps <n>`            | Repetitions per arm (default 3).                                     |
+| `--out <dir>`           | Artifact root (default `./.eval-out`).                               |
+| `--timeout <ms>`        | Hard wall-clock ceiling per attempt.                                 |
+| `--command <bin>`       | Agent binary; override to substitute a stand-in.                     |
+| `--keep`                | Leave each sandbox on disk for inspection.                           |
+| `--dry-run`             | Build the plan and artifacts without spawning the agent.             |
+| `--model <id>`          | Model under test. Changing it mid-batch makes the arms incomparable. |
+| `--permission-mode <m>` | Passed to `claude`. See the root caveat below.                       |
+| `--lesson-file <path>`  | `golden`: the organic lesson. Absent ⇒ B-organic is skipped.         |
 
 ### Running in a container (CI, Docker, a cloud sandbox)
 
@@ -495,7 +575,7 @@ refused too (exit 5): an empty ground truth scores `recallAtK = 1` by design
 ("nothing to miss"), so an empty `real-hosted-snapshot` would look perfect while
 measuring nothing. Its flags are strict:
 `--scope` and `--out` each require a present, non-empty value — `--confirm
---scope` is a usage error rather than a run that quietly mines *every* scope —
+--scope` is a usage error rather than a run that quietly mines _every_ scope —
 and an unrecognised flag is refused rather than ignored.
 
 The CLI token is **user-scoped**, and so is every mine this script performs — it
@@ -527,10 +607,10 @@ size does relevance degrade?**
 target surfaces in the top-50 page (the hard-coded `limit = 50`, not `k`) — in
 two ways:
 
-| Arm | Model |
-| --- | ----- |
-| **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline. |
-| **ranked** | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/shared/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
+| Arm         | Model                                                                                                                                                                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline.                                                                                                                                                           |
+| **ranked**  | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/shared/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
 
 The ranked arm calls the **real** ranker — the zero-import parity twin of the
 edge function — never a reimplementation. A grep guard (`AC-1` in
@@ -582,8 +662,20 @@ pnpm nx test evals                   # via Nx
 To reproduce the cliff curve shown above:
 
 ```js
-import { runSweep, summarizeCliff, CANDIDATE_LIMIT } from './src/relevance/sweep.mjs';
-const curve = runSweep({ targetRows, query, poolSizes: [10, 50, 100, 200, 300, 500], k: 5, now, seed: 123, targetAgeDays: 400 });
+import {
+  runSweep,
+  summarizeCliff,
+  CANDIDATE_LIMIT,
+} from "./src/relevance/sweep.mjs";
+const curve = runSweep({
+  targetRows,
+  query,
+  poolSizes: [10, 50, 100, 200, 300, 500],
+  k: 5,
+  now,
+  seed: 123,
+  targetAgeDays: 400,
+});
 console.log(summarizeCliff(curve));
 // → { recency: { cliffAt: 100 }, ranked: { cliffAt: 300 } }
 ```

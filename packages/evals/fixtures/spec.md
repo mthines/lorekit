@@ -90,6 +90,37 @@ every number the harness printed would silently become wrong.
 deliberately does **not** restate the task; a lesson containing the answer to
 the exact prompt would measure copying rather than recall.
 
+## The off-target task — `repo-scope`
+
+Record a lesson scoped to `mthines/gw-tools` as a whole. Exactly one string is
+correct:
+
+```
+repo::mthines/gw-tools
+```
+
+It exists so a lesson's framing can be charged for what it costs on tasks it is
+**not** about, and not only credited for the one it is. Every SessionStart
+injects the whole resolved set, so a wording that sharpens `branch-scope` and
+misdirects its neighbour may be net-negative however large its on-target lift.
+
+It is a **neighbour, not a stranger** — the same repository, one granularity
+coarser, in the same directory. That adjacency is the point: it is the exact
+situation in which an over-emphatic branch lesson misfires by writing a
+`branch::` scope where a `repo::` one was asked for, and the rubric above
+already scores that at **60** ("branch scope for the right repo"). So the second
+task needs no second grader; the over-application band it turns on was already
+there.
+
+Its prompt is deliberately the same SHAPE as the golden one — same instruction
+to use `memory.write`, same closing "reply with the scope string" — so the two
+tasks differ in what they ask for and in nothing else. It says "not to any one
+branch" explicitly, because without that a branch scope would be a defensible
+reading and the 60 band would stop meaning over-application.
+
+What it does **not** measure: the cost of a lesson that is simply irrelevant. A
+genuinely unrelated task would measure that, and is not built.
+
 ## Alternates (stubbed, not built)
 
 Two further tasks are registered as stubs in `task.mjs` for later

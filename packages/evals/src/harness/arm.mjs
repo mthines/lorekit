@@ -115,6 +115,12 @@ export function nominalScopeForMode(mode, { ownerRepo, branch, cwd } = {}) {
  * @param {object} [options]
  * @param {string} [options.seed]       empty | canonical | organic
  * @param {string} [options.lesson]     arm-0 text, required for `organic`
+ * @param {string} [options.lessonKey]  the key to seed `organic` under. A
+ *                                      lesson's key is injected with its body
+ *                                      and read first, so it is part of the
+ *                                      FRAMING under test, not decoration —
+ *                                      the variant experiment varies it
+ *                                      deliberately and in isolation.
  * @param {string} [options.scopeMode]  branch | repo | project | global
  * @param {string} [options.scope]      an explicit scope; overrides scopeMode
  * @param {boolean} [options.git]       force git identity on/off (default: on
@@ -126,6 +132,7 @@ export async function prepareArm(
   {
     seed = "canonical",
     lesson = null,
+    lessonKey = null,
     scopeMode = "branch",
     scope = null,
     git = null,
@@ -183,7 +190,11 @@ export async function prepareArm(
   else if (seed === "canonical")
     seeded = await seedCanonical(sandbox, { scope: targetScope });
   else if (seed === "organic")
-    seeded = await seedOrganic(sandbox, { scope: targetScope, value: lesson });
+    seeded = await seedOrganic(sandbox, {
+      scope: targetScope,
+      key: lessonKey || undefined,
+      value: lesson,
+    });
 
   const mcp = await writeMcpConfig(sandbox, { allowWrite });
   const hookInstall = hook ? installSessionStartHook(sandbox) : null;
