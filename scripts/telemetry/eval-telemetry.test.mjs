@@ -211,6 +211,38 @@ test("the root span carries the caveat verbatim, not a paraphrase", () => {
   assert.equal(attrs(root)["lorekit.eval.discarded_reps"], 0);
 });
 
+test("a harness-fault rep is not usable, matching the harness's own rule", () => {
+  // `golden.mjs`'s isUsable excludes a rep whose retrieval state is "absent" —
+  // a harness fault measures nothing, exactly like contamination. This copy
+  // omitted that clause, so `lorekit.eval.usable_reps` counted a rep the
+  // summary's own `usableReps` had already dropped: one run, two different N,
+  // with the chart disagreeing with the artifact it was built from.
+  const clean = buildTracePayload(GOLDEN, T0).payload.resourceSpans[0]
+    .scopeSpans[0];
+  const withFault = {
+    ...GOLDEN,
+    results: {
+      ...GOLDEN.results,
+      A: [
+        { ...GOLDEN.results.A[0], retrieval: { state: "absent" } },
+        ...GOLDEN.results.A.slice(1),
+      ],
+    },
+  };
+  const faulted = buildTracePayload(withFault, T0).payload.resourceSpans[0]
+    .scopeSpans[0];
+  const root = faulted.spans[0];
+  assert.equal(
+    attrs(clean.spans[0])["lorekit.eval.usable_reps"] - 1,
+    attrs(root)["lorekit.eval.usable_reps"],
+  );
+  // It is NOT discarded, though — the two states are distinct and the counts
+  // must not collapse into each other.
+  assert.equal(attrs(root)["lorekit.eval.discarded_reps"], 0);
+  // And it still gets a span: it ran, it cost money, it is part of the record.
+  assert.equal(faulted.spans.length, clean.spans.length);
+});
+
 test("a cell with zero usable reps emits no rate, never 0.0", () => {
   // 0.0 draws a flat line that reads as a failing arm. Absent reads as what it
   // is: nothing was measured.

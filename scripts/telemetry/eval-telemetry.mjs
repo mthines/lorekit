@@ -261,9 +261,25 @@ export function buildTracePayload(summary, nowMs = Date.now()) {
   return { traceId, payload: spansEnvelope(SERVICE_NAME, spans) };
 }
 
-/** A rep that ran, was not contaminated, and is therefore evidence. */
+/**
+ * A rep that ran, was not contaminated, and is therefore evidence.
+ *
+ * MIRRORS `isUsable` in `packages/evals/src/harness/golden.mjs` — the third
+ * clause is not optional. A harness fault (`retrieval.state === "absent"`) is
+ * excluded there for the same reason contamination is: nothing was measured.
+ * Omitting it here made `lorekit.eval.usable_reps` on the root span count a
+ * rep the summary's own `usableReps` had already thrown out, so a chart and
+ * the artifact it came from reported two different N for one run.
+ *
+ * Copied rather than imported, following the repo's mirrored-pure-module
+ * pattern: this script runs from the repo root against artifacts, and must
+ * not take a dependency on a workspace package to read a JSON file.
+ */
+const RETRIEVAL_ABSENT = "absent";
 function isUsable(rep) {
-  return Boolean(rep) && !rep.dryRun && !rep.discarded;
+  if (!rep || rep.dryRun || rep.discarded) return false;
+  if (rep.retrieval && rep.retrieval.state === RETRIEVAL_ABSENT) return false;
+  return true;
 }
 
 export function buildMetricsPayload(summary, timeMs = Date.now()) {

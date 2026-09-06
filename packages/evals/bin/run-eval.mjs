@@ -671,6 +671,12 @@ async function runVariants(options) {
   const outDir = path.resolve(options.out, `variants-${id}`);
   const tasks = [taskById("branch-scope")];
   if (!options.skipOffTarget) tasks.push(taskById("repo-scope"));
+  // Cells are KEYED by `task.id`, so the read-back below must derive its ids
+  // from the same objects rather than repeating the literals. Spelling them
+  // twice meant renaming a task silently produced empty cells — every score
+  // `comparable: false` across a 60-call run, with nothing failing loudly.
+  const onTargetTask = tasks.find((t) => t.role === "on-target");
+  const offTargetTask = tasks.find((t) => t.role === "off-target");
   await fsp.mkdir(outDir, { recursive: true });
 
   // One lesson, one delivery path, two tasks. `global` is injected in any
@@ -733,10 +739,12 @@ async function runVariants(options) {
   const scored = rendered.map((variant) =>
     scoreVariant({
       variant,
-      onTarget: cell(`${variant.id}-branch-scope`),
-      offTarget: offTargetRun ? cell(`${variant.id}-repo-scope`) : null,
-      baselineOnTarget: cell("baseline-branch-scope"),
-      baselineOffTarget: offTargetRun ? cell("baseline-repo-scope") : null,
+      onTarget: cell(`${variant.id}-${onTargetTask.id}`),
+      offTarget: offTargetRun ? cell(`${variant.id}-${offTargetTask.id}`) : null,
+      baselineOnTarget: cell(`baseline-${onTargetTask.id}`),
+      baselineOffTarget: offTargetRun
+        ? cell(`baseline-${offTargetTask.id}`)
+        : null,
     }),
   );
   const ranked = rankVariants(scored);
@@ -832,7 +840,11 @@ async function runArm0(options) {
         rep,
         arm: "0",
         task: task.id,
-        model: MODEL_UNDER_TEST,
+        // The model that will actually be SPAWNED, not the default. These must
+        // be the same value: `agentOverrides` passes `options.model` to the
+        // child, so recording the constant made `arm0 --model X` run X and
+        // report the default — a lie that now reaches `lorekit.eval.model`.
+        model: options.model,
         store: "empty",
         targetScope: task.targetScope,
         scopeMode: arm.scopeMode,
@@ -913,7 +925,7 @@ async function runArm0(options) {
   const summary = {
     subcommand: "arm0",
     runId: id,
-    model: MODEL_UNDER_TEST,
+    model: options.model,
     reps: options.reps,
     // Restated in every artifact on purpose: whoever reads a result file months
     // from now must see the caveat without going back to the README.
