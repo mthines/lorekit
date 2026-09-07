@@ -451,5 +451,18 @@ jobs:
         with:
           name: evals-${{ steps.args.outputs.subcommand }}-${{ github.run_id }}
           path: packages/evals/.eval-out
+          # `--out ./.eval-out` writes a DOT-directory (deliberately — it keeps
+          # a paid run's output out of `git status`), and upload-artifact
+          # excludes hidden paths by default. Without this the step reported
+          # "No files were found" and uploaded NOTHING, while the Dash0 export
+          # ten lines above read the same path successfully — it does not care
+          # about the dot. So a run's headline numbers survived in the step
+          # summary and its per-rep transcripts were silently discarded, which
+          # is the half you need to audit WHY a rep scored what it did.
+          # Observed on run 34108079460, the first live `golden` run.
+          # `if-no-files-found: ignore` is what let it pass quietly; it stays,
+          # because a skipped run (no credential) legitimately writes no
+          # directory — the missing-file case is not the same as this one.
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
