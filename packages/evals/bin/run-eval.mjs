@@ -76,7 +76,7 @@ import { gradeSandbox } from "../src/grading/grade.mjs";
 import { readInjectedLessons } from "../src/sandbox/hook-install.mjs";
 import { classifyRetrieval } from "../src/grading/retrieval.mjs";
 import { createSandbox } from "../src/sandbox/sandbox.mjs";
-import { listAll } from "../src/sandbox/store-setup.mjs";
+import { harvestOrganicLesson, listAll } from "../src/sandbox/store-setup.mjs";
 import { taskById } from "../src/harness/task.mjs";
 
 const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
@@ -579,12 +579,16 @@ async function runGolden(options) {
   const id = runId();
   const outDir = path.resolve(options.out, `golden-${id}`);
   const task = taskById("branch-scope");
-  const organicLesson = await readOrganicLesson(options);
+  const suppliedLesson = await readOrganicLesson(options);
 
   await fsp.mkdir(outDir, { recursive: true });
 
   const perArm = new Map();
   let priorDigest = "";
+  // What arm 0 wrote, harvested from its own store. Only consulted when the
+  // operator supplied nothing — an explicit --lesson/--lesson-file is a
+  // deliberate choice of material and always wins over a harvest.
+  let harvested = null;
 
   // Arm 0 first — it is the only source of the prior transcript. Skipping it
   // when it was not selected is the ENTIRE saving of `--arm`: leaving it
@@ -627,10 +631,27 @@ async function runGolden(options) {
       // one attempt, and averaging or concatenating several would give it
       // strictly more information than the single retry the arms model.
       if (!priorDigest) priorDigest = transcriptDigest(run.transcriptText);
+      // And the FIRST arm-0 lesson as arm B-organic's, on the same rule and
+      // for the same reason. Harvested before `dispose()` — the sandbox store
+      // is the only place this text exists.
+      if (!suppliedLesson && !harvested) {
+        harvested = await harvestOrganicLesson(sandbox);
+      }
     } finally {
       await sandbox.dispose();
     }
   }
+
+  // The operator's own material always wins; the harvest is the fallback that
+  // makes the arm reachable at all. `null` for both means the arm is skipped —
+  // the canonical lesson is never substituted here, at either layer.
+  const organicLesson =
+    suppliedLesson || (harvested && harvested.value) || null;
+  const organicSource = suppliedLesson
+    ? "operator"
+    : harvested
+      ? "arm-0"
+      : null;
 
   const { run: plannedArms, skipped } = armPlan({
     organicLesson: Boolean(organicLesson),
@@ -690,6 +711,24 @@ async function runGolden(options) {
     // present, because "arm A is missing" and "arm A was never asked for" are
     // read very differently by whoever opens this file next.
     armsRequested: narrowed ? selectedArms : null,
+    // WHERE arm B-organic's lesson came from. Recorded because the arm's whole
+    // claim is that the text is the agent's own: "operator" is a human's file
+    // and "arm-0" is this run's own write, and a reader who cannot tell them
+    // apart cannot tell whether the number is about the loop or about a person
+    // writing a good lesson. `null` means the arm did not run.
+    organicLesson: organicSource && {
+      source: organicSource,
+      chars: organicLesson.length,
+      // Present only on a harvest — where in the store it was found, and how
+      // many candidates there were, so seeding from one of several is visible.
+      ...(harvested && organicSource === "arm-0"
+        ? {
+            scope: harvested.scope,
+            key: harvested.key,
+            candidates: harvested.entries,
+          }
+        : {}),
+    },
     caveat:
       `N=${options.reps} per arm is a low-power INDICATOR, not proof. ` +
       `Treat every difference as directional; widening N — not reinterpreting ` +
@@ -737,9 +776,7 @@ async function runVariants(options) {
   // the spend behind it while every other row kept `--reps` — and emit the
   // variant twice in the ranking.
   const requested =
-    options.variants.length > 0
-      ? [...new Set(options.variants)]
-      : VARIANT_IDS;
+    options.variants.length > 0 ? [...new Set(options.variants)] : VARIANT_IDS;
   for (const id of requested) variantById(id); // refuse an unknown id up front
 
   const id = runId();
@@ -815,7 +852,9 @@ async function runVariants(options) {
     scoreVariant({
       variant,
       onTarget: cell(`${variant.id}-${onTargetTask.id}`),
-      offTarget: offTargetRun ? cell(`${variant.id}-${offTargetTask.id}`) : null,
+      offTarget: offTargetRun
+        ? cell(`${variant.id}-${offTargetTask.id}`)
+        : null,
       baselineOnTarget: cell(`baseline-${onTargetTask.id}`),
       baselineOffTarget: offTargetRun
         ? cell(`baseline-${offTargetTask.id}`)

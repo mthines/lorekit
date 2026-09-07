@@ -185,10 +185,11 @@ export function armPlan({
   };
   const reasons = {
     "organic-lesson":
-      "no organic lesson supplied — pass --lesson-file <path> with the lesson " +
-      "the loop would have saved after arm 0. It is never auto-substituted " +
-      "with the canonical one, which would report a curated lesson as the " +
-      "agent's own wording.",
+      "no organic lesson — arm 0 was not run, or ran and wrote nothing to " +
+      "harvest. Supply one explicitly with --lesson-file <path>, or include " +
+      "arm 0 so its own write can be carried over. It is never auto-" +
+      "substituted with the canonical one, which would report a curated " +
+      "lesson as the agent's own wording.",
     "prior-transcript":
       "arm 0 produced no transcript to paste back, so there is nothing for " +
       "this arm to re-read.",
