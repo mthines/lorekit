@@ -287,6 +287,11 @@ export function renderAllVariants() {
   return VARIANT_IDS.map(renderVariant);
 }
 
+// The floor a net lift must clear before it counts as a gain. `netLift` is a
+// sum of floats, so an exact wash lands near zero rather than on it; anything
+// under a tenth of a basis point is dust this harness cannot resolve.
+const NET_LIFT_EPSILON = 1e-9;
+
 /**
  * Score one variant from the four cells it needs.
  *
@@ -344,8 +349,14 @@ export function scoreVariant({
   // Cost per point is only meaningful for a variant that actually gained. A
   // zero or negative net lift has no "cost per point of lift" — dividing would
   // manufacture an infinity or, worse, a flattering negative.
+  //
+  // The bar is an EPSILON, not `> 0`: `netLift` is a sum of two floats, so a
+  // genuine wash lands a hair off zero rather than on it (2.78e-17 observed),
+  // clears a bare `> 0`, and prints a `tokensPerPoint` in the tens of
+  // quadrillions beside a rendered `net +0pp`. A tenth of a basis point of
+  // lift is below anything this harness can resolve at N=3 anyway.
   const tokensPerPoint =
-    netLift !== null && netLift > 0
+    netLift !== null && netLift > NET_LIFT_EPSILON
       ? Math.round(variant.estTokens / (netLift * 100))
       : null;
 

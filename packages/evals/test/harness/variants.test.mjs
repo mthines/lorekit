@@ -233,6 +233,29 @@ test("cost per point is withheld unless there was a gain to price", () => {
   );
 });
 
+test("float dust in a washed-out net lift does not buy a cost per point", () => {
+  // A genuine wash that lands NEXT to zero rather than on it. The two lifts
+  // are (0.3 - 0.1) and (0.5 - 0.7), which in binary floats are
+  // 0.19999999999999998 and -0.19999999999999996 — summing to +2.78e-17.
+  // A bare `netLift > 0` admits that and prints a cost per point in the tens
+  // of quadrillions beside a rendered `net +0pp`, which is the failure this
+  // pins. The test above pins EXACT zero and cannot see it.
+  const dusty = scoreVariant({
+    variant: renderVariant("full"),
+    onTarget: cell(3, 0.3),
+    offTarget: cell(3, 0.5),
+    baselineOnTarget: cell(3, 0.1),
+    baselineOffTarget: cell(3, 0.7),
+  });
+
+  // The dust is real — this is not a test that the arithmetic changed.
+  assert.ok(dusty.netLift > 0, "expected the float sum to land above zero");
+  assert.ok(dusty.netLift < 1e-9, "expected the residue to be dust, not a gain");
+
+  // …and it buys nothing.
+  assert.equal(dusty.tokensPerPoint, null);
+});
+
 test("ranking never places an unmeasured variant above a measured one", () => {
   const measured = (id, net) => ({
     variant: id,
