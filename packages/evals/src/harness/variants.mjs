@@ -433,11 +433,25 @@ export function rankVariants(scored = []) {
 /** One sentence per variant, carrying its N and refusing to overclaim. */
 export function describeVariant(scored) {
   const n = scored.usableReps;
+  // The discard total across all four cells. Appended ONLY when non-zero: a
+  // clean run should not carry "0 discarded" on every line, but a line resting
+  // on salvaged data must say so — "3 usable" reads very differently after 4
+  // discards, and this sentence is the surface most likely to be quoted
+  // without the table beside it. Deliberately a TOTAL, not a per-cell
+  // breakdown, because the breakdown already rides on `ranked[]` and the
+  // wording here says which reps it is counting.
+  const d = scored.discardedReps || {};
+  const discarded =
+    (d.onTarget || 0) +
+    (d.offTarget || 0) +
+    (d.baselineOnTarget || 0) +
+    (d.baselineOffTarget || 0);
   const reps =
     `on-target ${n.onTarget} vs ${n.baselineOnTarget} usable reps` +
     (scored.offTargetRun
       ? `, off-target ${n.offTarget} vs ${n.baselineOffTarget}`
-      : ", off-target not run");
+      : ", off-target not run") +
+    (discarded > 0 ? `; ${discarded} discarded across all cells` : "");
   if (!scored.comparable) {
     return `${scored.variant}: not comparable (${reps}).`;
   }

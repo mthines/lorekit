@@ -281,6 +281,34 @@ test("the discard count travels with the usable count into ranked[]", () => {
   assert.equal(noOff.discardedReps.offTarget, 0);
 });
 
+test("the readable line names discards only when there were some", () => {
+  const clean = describeVariant(
+    scoreVariant({
+      variant: renderVariant("full"),
+      onTarget: cell(3, 1, 0),
+      offTarget: cell(3, 1, 0),
+      baselineOnTarget: cell(3, 0.5, 0),
+      baselineOffTarget: cell(3, 1, 0),
+    }),
+  );
+  // A clean run must not carry "0 discarded" on every line.
+  assert.doesNotMatch(clean, /discarded/);
+
+  const salvaged = describeVariant(
+    scoreVariant({
+      variant: renderVariant("full"),
+      onTarget: cell(3, 1, 2),
+      offTarget: cell(3, 1, 1),
+      baselineOnTarget: cell(3, 0.5, 0),
+      baselineOffTarget: cell(3, 1, 1),
+    }),
+  );
+  // …but a line resting on salvaged data has to say so: "3 usable" reads
+  // very differently after 4 discards, and this sentence gets quoted
+  // without the table beside it.
+  assert.match(salvaged, /4 discarded across all cells/);
+});
+
 test("float dust in a washed-out net lift does not buy a cost per point", () => {
   // A genuine wash that lands NEXT to zero rather than on it. The two lifts
   // are (0.3 - 0.1) and (0.5 - 0.7), which in binary floats are
