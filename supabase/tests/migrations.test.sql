@@ -9979,6 +9979,85 @@ begin
 end;
 $$;
 
+-- ── 109. usage_events.mcp_client (00110) ─────────────────────────────────────
+-- `memory.read`'s top-level `oneOf` (#654) made Bedrock reject the WHOLE
+-- tools/list, and a second client dropped only `memory.read` from a 22-tool
+-- list. Neither produced an error here: we answered 200 with a valid result and
+-- the rejection happened in the host's own process. The only recoverable signal
+-- is the shape of the absence, and it is only legible PER CLIENT — hence a
+-- bounded `mcp_client` dimension distinct from `client` (the SURFACE, 00054)
+-- and `host` (a bucket's owning host, 00056).
+-- AC-1: the writer RPC persists the new trailing p_mcp_client parameter.
+-- AC-2: omitting it leaves null — which is CORRECT for the REST surface, where
+--       there is no MCP client, so the absence must be representable.
+-- AC-3: the length CHECK is a real backstop, not decoration.
+-- AC-4: EXACTLY ONE overload survives — 00110's DROP names 00082's
+--       seventeen-argument signature, and a stale drop target is SILENT,
+--       leaving two overloads live and every named-argument call ambiguous
+--       (the failure 00082's own header warns about).
+do $$
+declare
+  v_id        uuid;
+  v_client    text;
+  v_overloads int;
+  v_raised    boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1: a Claude Code call persists mcp_client = 'claude-code'.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.read',
+    p_scope_type => 'repo', p_auth_type => 'api_key', p_outcome => 'ok',
+    p_mcp_client => 'claude-code') into v_id;
+  assert v_id is not null, '109 AC-1: the writer must return the inserted id';
+  select mcp_client into v_client from usage_events where id = v_id;
+  assert v_client = 'claude-code',
+    format('109 AC-1: p_mcp_client must be persisted, got %s', v_client);
+
+  -- AC-2: omitting p_mcp_client leaves the column null. This is the REST
+  -- surface's row, and it must be distinguishable from an MCP row rather than
+  -- defaulted to something that would aggregate.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1', p_tool_name => 'memory.list',
+    p_scope_type => 'repo', p_auth_type => 'jwt', p_outcome => 'ok') into v_id;
+  select mcp_client into v_client from usage_events where id = v_id;
+  assert v_client is null,
+    format('109 AC-2: mcp_client must default to null, got %s', v_client);
+
+  -- AC-3: the length CHECK is a real backstop -- the app-side
+  -- `resolveMcpClient` is the primary gate (it maps an unrecognised
+  -- caller-supplied name to `other`), but a direct insert must not be able to
+  -- put an unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, mcp_client)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.read', 'api_key', 'ok', repeat('x', 33));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised,
+    '109 AC-3: usage_events_mcp_client_len must reject a 33-char mcp_client';
+
+  -- AC-3b: ...and it must ACCEPT the boundary, or the backstop is a limit on
+  -- the vocabulary rather than on abuse.
+  insert into usage_events (user_id, tool_name, auth_type, outcome, mcp_client)
+    values ('00000000-0000-0000-0000-0000000000a1', 'memory.read', 'api_key', 'ok', repeat('x', 32));
+
+  -- AC-4: one signature only.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_record_usage_event';
+  assert v_overloads = 1,
+    format('109 AC-4: lorekit_record_usage_event has %s overloads — 00110 must DROP '
+           '00082''s seventeen-argument signature, not leave it live beside the new one',
+           v_overloads);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

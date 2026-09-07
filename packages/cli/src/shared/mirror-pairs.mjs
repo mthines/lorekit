@@ -77,6 +77,11 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/scope/scope-type-attribute.ts', edge: 'supabase/functions/_shared/scope/scope-type-attribute.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/auth/account-wide-tools.ts', edge: 'supabase/functions/_shared/auth/account-wide-tools.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/io-ledger.ts', edge: 'supabase/functions/_shared/telemetry/io-ledger.ts', driftChecked: true },
+  // WHICH MCP host is talking to us (`lorekit.mcp.client.*`, `usage_events.mcp_client`).
+  // Bounded on purpose — the inputs it reads (`clientInfo.name`, `User-Agent`)
+  // are caller-supplied free text, so a drifted copy is an unbounded telemetry
+  // dimension on one surface and not the other. Import-free, byte-comparable.
+  { core: 'packages/mcp-core/src/telemetry/mcp-client-attribute.ts', edge: 'supabase/functions/_shared/telemetry/mcp-client-attribute.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/db-query-metrics.ts', edge: 'supabase/functions/_shared/telemetry/db-query-metrics.ts', driftChecked: true },
   // Retention-policy candidate/precedence logic. The SQL RPC
   // (`lorekit_groom_candidates`, migration 00088) is authoritative; this is the

@@ -80,6 +80,21 @@ export interface UsageEventParams {
    * attribution (an older CLI, or a caller that never set the header).
    */
   sessionKind?: string | null;
+  /**
+   * WHICH MCP HOST made the call (`claude-code`/`agent0`/`cursor`/… /`other`,
+   * migration 00110) — bounded by `_shared/telemetry/mcp-client-attribute.ts`,
+   * resolved from the `initialize` handshake's `clientInfo` or, per request,
+   * from `User-Agent`. Null means unattributed, and null is CORRECT on the
+   * REST surface: a REST call has no MCP client.
+   *
+   * Distinct from every neighbour: `client` is the SURFACE
+   * (`dashboard`/`cli`/`mcp`/`api`), `host` is a memory bucket's owning host,
+   * `authType` is how the caller authenticated. This one answers "did a
+   * particular MCP host stop calling us, or stop calling one tool" — the
+   * question the `oneOf` incident (#654) could not be asked, because a schema
+   * the host refuses produces no error on this side at all.
+   */
+  mcpClient?: string | null;
 }
 
 /**
@@ -119,6 +134,7 @@ export function recordUsageEvent(
     p_scope:       params.scope ?? undefined,
     p_scope_count: params.scopeCount ?? undefined,
     p_session_kind: params.sessionKind ?? undefined,
+    p_mcp_client:  params.mcpClient ?? undefined,
     // `kind`/`host` have been on `UsageEventParams` and on the writer RPC since
     // 00056, and the MCP handler has been resolving and passing them all along —
     // but they were never in this payload, so the RPC used its defaults and

@@ -558,3 +558,94 @@ is reading whether they are asking for more THINGS per call, which batching now 
 do. A window straddling this feature's rollout is not comparable to one entirely before or after
 it, and the card carries no annotation marking the boundary — a known, accepted gap rather than a
 silently wrong one.
+
+---
+
+## Which MCP client is calling is a BOUNDED, LoreKit-namespaced dimension read from two inputs
+
+`memory.read`'s top-level `oneOf` made Amazon Bedrock reject the whole `tools/list` response —
+`input_schema does not support oneOf, allOf, or anyOf at the top level`, applied to the ENTIRE
+request rather than the one offending tool — so every Bedrock-hosted agent lost the LoreKit server
+outright the day it reached production. Separately, a second MCP client dropped `memory.read` and
+only `memory.read` from a 22-tool list. **Neither failure produced a single error on this side.**
+We answered `tools/list` with HTTP 200 and a valid JSON-RPC result; the rejection happened
+afterwards, inside the host's own process, against the host's own model API. The last event in our
+system was a success, and the incident was discovered by a human noticing two orgs had gone quiet.
+
+Nothing recovers the upstream error text — **there is no callback**, and no amount of telemetry
+changes that. This decision is therefore about detecting the *absence* of expected behaviour, which
+is a weaker signal than an error and has to be treated as one. Three blind spots compounded to make
+even the absence unreadable:
+
+1. `tools/list` records **no** usage event at all — `recordUsageEvent` fires in the `tools/call`
+   path, the rate-limit branch, and the REST router, nowhere else.
+2. `initialize` **ignored `params` entirely**, discarding `clientInfo`. A repo-wide grep for
+   `clientInfo` returned nothing.
+3. The `outcome` vocabulary (`ok`/`cap_exceeded`/`rate_limited`/`permission_denied`/`error`) has no
+   state for "succeeded and was useless" — the same structural gap already recorded for
+   `readCoverage`.
+
+**Only prevention stops this class of bug** (a build-time portability gate on the wire schema, which
+is a separate change). What identity buys is that the *next* portability regression reads as a chart
+with a step in it. Both failure signatures are legible only per client — a host that handshakes,
+lists, and then never calls a tool; or one that keeps calling every tool except the one whose schema
+it refused — and neither shows up in an aggregate, because total traffic barely moves when one host
+family drops out and "`memory.read` calls fell" is unreadable without knowing whose.
+
+**Read from BOTH `clientInfo` and `User-Agent`, per request — not from the handshake alone.** This
+server is stateless: it negotiates protocol `2024-11-05` over plain POSTs with no session, so
+`clientInfo` arrives on `initialize` and nowhere else, and every `tools/list` / `tools/call` after
+it is a separate request that does not carry it. Labelling only the handshake span would leave every
+tool-call span unlabelled — precisely the per-tool question the dimension exists to answer, and the
+signature the second client produced. `User-Agent` is the only per-request client signal available.
+It is best-effort and frequently absent (a host on node's own `fetch` sends nothing useful), so a
+bounded `lorekit.mcp.client.source` (`client_info` | `user_agent`) records which input answered and
+a reader can tell a record from a hint. Treating them as interchangeable would be the error;
+omitting the weaker one would be a bigger one.
+
+**Bounded output, always, and the two asymmetric absence rules.** Both inputs are caller-supplied
+free text, so echoing either would hand an unbounded telemetry dimension to anyone who can set a
+header. `mcp-client-attribute.ts` maps them to a closed vocabulary — the `scope-type-attribute.ts`
+posture, including the runtime ARRAY with the type derived from it, because the parse has to
+validate at runtime and a type-only union cannot. The two rules differ by input, deliberately:
+
+- An unrecognised **`clientInfo.name`** reports `other`. A host that named itself is a real,
+  countable unknown MCP client, and a growing `other` share is the signal to extend the pattern
+  list.
+- An unrecognised **`User-Agent`** reports nothing and the attribute is OMITTED. A bare runtime UA
+  (`node`, `undici`) identifies nothing, so calling it `other` would pollute the bucket that means
+  "an MCP client we have not catalogued".
+
+Absence omits rather than placeholders, on both paths — a placeholder is a value that aggregates,
+and it would aggregate into the largest bucket of the dimension while meaning "nobody told us".
+`version` is the one value passed through rather than mapped, so it is char-allowlisted, capped at
+32, taken from `clientInfo` only, and stamped on the **`initialize` span alone**: `initialize` is
+once per session, and a per-request version attribute would put an open-ended dimension on every
+span.
+
+**`lorekit.mcp.client.*`, not `mcp.client.*` — checked upstream first, which is the ordering to
+follow.** OTel semconv 1.43.0 defines `mcp.method.name`, `mcp.protocol.version`, `mcp.session.id`
+and `mcp.resource.uri`, and NO attribute for client identity; the `mcp.client.*` prefix is spent
+upstream on client-role METRIC names (`mcp.client.operation.duration`,
+`mcp.client.session.duration`). A server-side identity attribute at `mcp.client.name` would squat a
+reserved namespace with unrelated semantics and collide if upstream ever defines it. Nothing
+upstream fits, so this is LoreKit-internal. It is `…client.name`, never a bare `…client`, because an
+attribute must not also be a namespace prefix of another attribute.
+
+**Stored as `usage_events.mcp_client`, never a second `client`.** Both obvious words are already
+spent in this codebase with unrelated meanings: `client` (00054) is the SURFACE
+(`dashboard`/`cli`/`mcp`/`api`, from `X-LoreKit-Client`, and what migration 00054 uses to keep
+dashboard reads out of the "Memories read" metric), and `host` (00056) is a memory bucket's owning
+host. Reusing either would have made two different questions share one column name. Migration 00110
+adds the nullable column plus the 00054/00082 length CHECK as a backstop only — never a CHECK
+enumerating members, because the vocabulary is expected to grow as clients are catalogued and the
+app-side resolver is the primary gate.
+
+**Null is CORRECT on the REST surface** and must stay representable: a REST call has no MCP client.
+The writer's new parameter is trailing and defaulted, so the REST router passes nothing and records
+null without knowing the column exists.
+
+**What this deliberately does NOT add.** A `tools/list` usage event, and the list→call funnel alert
+it would enable, are a separate change. `mcp.method` already on the root span supports a crude
+version of that query today — weak, because it is keyed on `auth.user_id` rather than a session, and
+until now carried no client dimension at all.

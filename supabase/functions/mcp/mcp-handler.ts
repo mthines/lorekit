@@ -28,6 +28,7 @@ import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/aut
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/telemetry/usage-stats.ts';
 import { parseSessionKind } from '../_shared/telemetry/session-kind.ts';
+import { resolveMcpClient, mcpClientAttributes } from '../_shared/telemetry/mcp-client-attribute.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 /**
@@ -111,7 +112,39 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
   const { id = null, method, params = {} } = body;
 
-  span.setAttributes({ 'mcp.method': method ?? 'unknown' });
+  // WHICH MCP host is calling — the dimension the `oneOf` incident (#654) had
+  // no way to ask for. A host that rejects a tool schema rejects it in ITS own
+  // process, against ITS own model API, so we see HTTP 200 and a valid result
+  // and nothing else ever arrives; the only recoverable signal is the shape of
+  // the absence (a host that lists and never calls, or calls every tool but
+  // one), and that is unreadable in an aggregate.
+  //
+  // Read from BOTH inputs, not just the handshake: this server is stateless
+  // (protocol `2024-11-05` over plain POSTs, no session), so `clientInfo`
+  // arrives on `initialize` ALONE and every `tools/list` / `tools/call` after
+  // it is a separate request without it. Labelling only the handshake would
+  // leave every tool-call span unlabelled — precisely the per-tool question
+  // this exists to answer — so `User-Agent` is the per-request fallback, and
+  // the bounded `source` attribute records which one answered. `clientInfo` is
+  // read off a parsed JSON body no schema has looked at yet, hence the cast.
+  const mcpClient = resolveMcpClient({
+    clientInfo: (params as { clientInfo?: unknown }).clientInfo,
+    userAgent: req.headers.get('user-agent'),
+  });
+
+  span.setAttributes({
+    'mcp.method': method ?? 'unknown',
+    // Stamped on the ROOT span for EVERY method, which is what makes the
+    // funnel queryable: this span already carries `mcp.tool.name` on a
+    // `tools/call`, so client × tool is one query and needs no child-span
+    // attribute.
+    //
+    // The version rides on `initialize` only. It is the one value passed
+    // through rather than mapped to a closed set (char-allowlisted and capped
+    // at 32 in the resolver), and `initialize` is once per session, so a
+    // per-request version would put an open-ended dimension on every span.
+    ...mcpClientAttributes(mcpClient, { includeVersion: method === 'initialize' }),
+  });
 
   if (method === 'initialize') {
     span.setAttributes({ 'mcp.protocol_version': '2024-11-05' });
@@ -426,6 +459,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           kind: usageKind,
           host: usageHost,
           sessionKind,
+          // WHICH MCP host, bounded (migration 00110). On the SPAN this is
+          // stamped for every method; here it is only ever a `tools/call`, and
+          // that is the row the funnel needs — a host whose `tools/list` is
+          // fine but whose calls for one tool stop.
+          mcpClient: mcpClient.name,
         });
       }
 
@@ -485,6 +523,9 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           kind: usageKind,
           host: usageHost,
           sessionKind,
+          // See the success branch — recorded on both paths so a client's
+          // error rate is answerable, not just its success count.
+          mcpClient: mcpClient.name,
         });
       }
 

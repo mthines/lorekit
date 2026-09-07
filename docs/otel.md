@@ -91,6 +91,74 @@ Rate-limit attributes on the root `lorekit.mcp` span:
 | `rate_limit.current_count` | `47` | Current window request count |
 | `rate_limit.limit_value` | `120` | Effective RPM limit |
 
+### Which MCP client is calling (`lorekit.mcp.client.*`)
+
+Stamped by `mcp-handler.ts` on the root `lorekit.mcp` span for **every** MCP
+method, and recorded as `usage_events.mcp_client` on every `tools/call` row
+(migration 00110).
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `lorekit.mcp.client.name` | `claude-code` | Bounded — `claude-code` \| `claude-desktop` \| `agent0` \| `cursor` \| `windsurf` \| `vscode` \| `cline` \| `continue` \| `zed` \| `lorekit-cli` \| `mcp-remote` \| `mcp-inspector` \| `other`. **Omitted entirely** when nothing identified the caller, never a placeholder. Resolved by the shared `mcp-client-attribute.ts` |
+| `lorekit.mcp.client.source` | `client_info` | `client_info` (the `initialize` handshake's `clientInfo.name` — authoritative) \| `user_agent` (the per-request fallback — a hint). `null` exactly when `name` is |
+| `lorekit.mcp.client.version` | `1.0.88` | The host's self-reported version, from `clientInfo` only. Stamped on the **`initialize` span alone** — it is the one value passed through rather than mapped to a closed set (char-allowlisted, capped at 32), and `initialize` is once per session, so a per-request version would put an open-ended dimension on every span |
+
+**Why this dimension exists.** `memory.read`'s top-level `oneOf` (#654) made
+Amazon Bedrock reject the whole `tools/list` response, so every Bedrock-hosted
+agent lost the LoreKit server outright; a second MCP client independently
+dropped `memory.read` — and only `memory.read` — from a 22-tool list. Neither
+failure produced a single error on this side: we answered `tools/list` with HTTP
+200 and a valid JSON-RPC result, and the rejection happened afterwards, inside
+the host's own process, against the host's own model API. The last event in our
+system was a success.
+
+No callback exists, so the upstream error text is unrecoverable. What IS
+recoverable is the **shape of the absence**, and both shapes are only legible
+per client — a host that handshakes, lists, and then never calls a tool, or one
+that keeps calling every tool except the one whose schema it refused. Neither
+shows up in an aggregate: total traffic barely moves when one host family drops
+out, and "`memory.read` calls fell" is unreadable without knowing whose.
+
+```sql
+-- Hosts that listed the tools but never called one, last 7 days.
+-- (`mcp.method` on the root span is the trace-side half of the same funnel.)
+select mcp_client, count(*) as calls
+  from usage_events
+ where created_at > now() - interval '7 days' and mcp_client is not null
+ group by 1 order by 2 desc;
+
+-- Per-tool degradation: which host stopped calling ONE tool?
+select mcp_client, tool_name, date_trunc('day', created_at) as day, count(*)
+  from usage_events
+ where created_at > now() - interval '30 days' and mcp_client is not null
+ group by 1, 2, 3 order by 3 desc, 4 desc;
+```
+
+**Why both inputs, not just the handshake.** This server is stateless — it
+negotiates protocol `2024-11-05` over plain POSTs with no session — so
+`clientInfo` arrives on `initialize` **only**, and every `tools/list` /
+`tools/call` after it is a separate request without it. Labelling only the
+handshake would leave every tool-call span unlabelled, which is precisely the
+per-tool question the dimension exists to answer. `User-Agent` is therefore read
+as the per-request fallback, and `source` records which input answered so a
+reader knows the fidelity. It is best-effort by nature and frequently absent (a
+host on node's own `fetch` sends nothing useful).
+
+**Why `lorekit.*` and not `mcp.*`.** Upstream OTel semconv (1.43.0) defines
+`mcp.method.name`, `mcp.protocol.version`, `mcp.session.id` and
+`mcp.resource.uri` but **no** client-identity attribute, and it spends the
+`mcp.client.*` prefix on client-role *metric* names
+(`mcp.client.operation.duration`, `mcp.client.session.duration`) — so putting a
+server-side identity attribute at `mcp.client.name` would squat a reserved
+namespace with unrelated semantics. Nothing upstream fits, so this is
+LoreKit-internal and lives beside `lorekit.tool.name` and `lorekit.scope.type`.
+
+**Why `mcp_client` and not `client` in `usage_events`.** Both obvious words are
+already spent with unrelated meanings: `client` is the *surface*
+(`dashboard`/`cli`/`mcp`/`api`, from `X-LoreKit-Client`) and `host` is a memory
+bucket's owning host. `authType` is how the caller authenticated. This column is
+the only one that answers *which MCP host*.
+
 ### Self-time attribution (every root request span)
 
 `traceRequest` splits each request's duration into time spent waiting on
@@ -492,6 +560,14 @@ select tool_name,
 | `outcome` | `text` | `ok` \| `cap_exceeded` \| `rate_limited` \| `permission_denied` \| `error` |
 | `duration_ms` | `integer` | Wall-clock handler time |
 | `memory_count` | `integer` | Active memories at write time (write path only, future use) |
+| `result_count` | `integer` | Records the call touched — a bulk `list` returning 31 rows is one call with `result_count = 31`, so "memories read" is a record total, not a count of read calls |
+| `scope` | `text` | The EXACT scope the call touched, normalised. Null when absent, ungrammatical, or when a batch named two or more scopes (which of several a read "belongs to" is genuinely ambiguous — `scope_count` is the honest answer there) |
+| `scope_count` | `integer` | How many scopes an array-bearing call (`memory.search`'s `scopes`, a batch `memory.read`'s `refs`) named. Null for a singular-`scope` tool |
+| `correlation_id` | `text` | Client-supplied grouping key (PR / session / job), from `X-LoreKit-Correlation-Id`. The unbounded drill-down key |
+| `client` | `text` | The **surface**: `dashboard` \| `cli` \| `mcp` \| `api`, from `X-LoreKit-Client`. Distinct from `auth_type` — a dashboard read and an agent read over a Supabase JWT are both `jwt` + `memory.list` |
+| `session_kind` | `text` | `local` \| `ci` \| `pr` \| `unknown`, from `X-LoreKit-Session-Kind`. The bounded dimension charts group on; the CLI derives it, the edge only validates |
+| `mcp_client` | `text` | The **MCP host**: `claude-code` \| `agent0` \| `cursor` \| … \| `other`, bounded by `mcp-client-attribute.ts`. Null for a REST call, correctly — a REST call has no MCP client. See "Which MCP client is calling" above |
+| `kind` / `host` | `text` | Memory taxonomy — the bucket kind and owning host, resolved the same way the write stores it |
 | `created_at` | `timestamptz` | Event timestamp |
 
 Rows are retained for **90 days** and purged weekly by `lorekit_purge_old_usage_events()`.
