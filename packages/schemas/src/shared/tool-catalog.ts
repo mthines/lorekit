@@ -99,18 +99,32 @@ export interface JsonSchemaProperty {
   readonly enum?: readonly string[];
 }
 
+/**
+ * The subset of JSON Schema an `inputSchema` may use — and deliberately NO
+ * `oneOf` / `anyOf` / `allOf` at this level.
+ *
+ * Amazon Bedrock validates every tool definition it is handed and refuses a
+ * top-level union outright: `input_schema does not support oneOf, allOf, or
+ * anyOf at the top level`. Because that validation rejects the whole REQUEST,
+ * one such tool does not degrade to "this tool is unavailable" — it takes the
+ * entire `tools/list` down with it, so every Bedrock-hosted agent loses the
+ * LoreKit integration completely. `memory.read` shipped exactly that shape in
+ * #654 and broke Agent0 in production (2026-09-06).
+ *
+ * Mutually exclusive argument shapes therefore live in the tool's
+ * `description` — which is the half a model actually reads — and are enforced
+ * by the handler, which is where they were always enforced anyway. The absence
+ * of the field here makes a re-added `oneOf` an excess-property COMPILE error
+ * under the catalog's `satisfies`; `tool-catalog-parity.spec.ts` guards the
+ * runtime side for anything that reaches the wire past a cast.
+ *
+ * A union NESTED inside a property is fine — Bedrock rejects only the top
+ * level — but nothing here needs one, so the type does not model it.
+ */
 export interface JsonSchemaObject {
   readonly type: 'object';
   readonly required?: readonly string[];
   readonly properties?: Readonly<Record<string, JsonSchemaProperty>>;
-  /**
-   * Mutually exclusive argument shapes, when no single `required` list can
-   * describe the tool. `oneOf` (not `anyOf`) because the alternatives are
-   * EXCLUSIVE: an input satisfying two of them is rejected, which is what
-   * makes the advertised schema agree with a handler that refuses the
-   * combined form. Shipped verbatim in `tools/list` by `toWireTool`.
-   */
-  readonly oneOf?: readonly { readonly required: readonly string[] }[];
 }
 
 export interface McpToolDoc {
@@ -286,20 +300,22 @@ export const MCP_TOOLS = [
   },
   {
     name: 'memory.read',
-    description: 'Read a lesson by scope and key',
+    description:
+      'Read one lesson by `scope` + `key`, or several at once by `refs`. Pass exactly one of those two shapes: `scope` and `key` together, or `refs` alone — a call carrying both, or neither, is rejected.',
     permission: 'read',
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'show', rest: 'GET /:id', handler: 'toolRead' },
     inputSchema: {
       type: 'object',
-      // `refs` is mutually exclusive with `scope`+`key` (the handler throws on
-      // the combined form), so NEITHER can be unconditionally required — a
-      // top-level `required: ['scope','key']` advertises a schema under which
-      // no legal batch call exists. The two shapes are expressed instead.
-      oneOf: [
-        { required: ['scope', 'key'] },
-        { required: ['refs'] },
-      ],
+      // NO top-level `required` and NO top-level union. `refs` is mutually
+      // exclusive with `scope`+`key`, so neither can be unconditionally
+      // required — `required: ['scope','key']` would advertise a schema under
+      // which no legal batch call exists. JSON Schema spells the alternative
+      // `oneOf`, and this entry did until Bedrock rejected it;
+      // `JsonSchemaObject` carries the why. The rule lives in `description`
+      // now, and `toolRead` enforces it either way: both shapes gets `refs
+      // cannot be combined with scope and key`, neither gets `scope and key
+      // are required`.
       properties: {
         scope,
         key,
@@ -308,7 +324,7 @@ export const MCP_TOOLS = [
     },
     returns: '`{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every well-formed reference within the first 32 that matched no lesson.',
     notes: [
-      '**Exactly one of two argument shapes is required:** `scope` **and** `key` together (single read), **or** `refs` alone (batch read). They cannot be combined — a call carrying both is rejected. No argument is required on its own, which is why none is marked required above.',
+      '**Exactly one of two argument shapes is required:** `scope` **and** `key` together (single read), **or** `refs` alone (batch read). They cannot be combined — a call carrying both is rejected, and so is one carrying neither. No argument is required on its own, which is why none is marked required above: the table cannot express "one of these two groups", so this rule is the whole of it. The schema deliberately does NOT advertise the alternatives as a top-level `oneOf` either — Amazon Bedrock rejects a tool whose `input_schema` carries one, and it fails the entire request rather than that one tool. Both shapes are validated by the server on every call regardless.',
       '**Batch reads (`refs`):** name only the `scope::key` references you actually need for this run — fewer round trips than one `memory.read` per lesson, at the cost of one call reaching into more than one scope. Each ref resolves independently rather than failing the whole call: one that is well-formed but matches no lesson is named in `missing`, while one that is not valid `scope::key` at all — and every ref past the 32nd — is dropped silently and appears nowhere. So `missing` is a not-found list, never a malformed-input list and never a truncation report: if you send more than 32 refs, compare `entries` + `missing` against what you sent to see what was cut. A `refs` that is not a non-empty array is rejected outright.',
     ],
   },
