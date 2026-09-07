@@ -316,6 +316,11 @@ export function scoreVariant({
   baselineOffTarget = null,
 } = {}) {
   const usable = (cell) => Boolean(cell) && cell.usableReps > 0;
+  // An ABSENT cell discarded nothing — it was never run. That is a different
+  // statement from "ran and threw everything away", and both render as 0 here,
+  // so the two are told apart by `offTargetRun` rather than by this number.
+  const cellDiscards = (cell) =>
+    cell && typeof cell.discardedReps === "number" ? cell.discardedReps : 0;
   const onComparable = usable(onTarget) && usable(baselineOnTarget);
   // Skipping the off-target task is a deliberate, cheaper mode; failing to
   // MEASURE it is not. The two must stay distinguishable, so `offTargetRun`
@@ -381,6 +386,23 @@ export function scoreVariant({
       baselineOffTarget: usable(baselineOffTarget)
         ? baselineOffTarget.usableReps
         : 0,
+    },
+    // The discard count travels WITH the usable count, because the pair is the
+    // claim: "3 usable" means something different after 0 discards than after
+    // 5, and a reader given only the first cannot tell a clean cell from a
+    // salvaged one. `cells` has always carried it (`summarizeCell` delegates
+    // to `summarizeArm`), but this projection dropped it, so every consumer
+    // reading `ranked[]` — the step summary among them — could report the
+    // usable half alone.
+    //
+    // Counted UNCONDITIONALLY, with no `usable()` guard: a cell with zero
+    // usable reps is precisely the one whose discard count the reader needs,
+    // and gating it would zero out the only number explaining the emptiness.
+    discardedReps: {
+      onTarget: cellDiscards(onTarget),
+      offTarget: cellDiscards(offTarget),
+      baselineOnTarget: cellDiscards(baselineOnTarget),
+      baselineOffTarget: cellDiscards(baselineOffTarget),
     },
   };
 }

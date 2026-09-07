@@ -31,10 +31,11 @@ import {
   taskById,
 } from "../../src/harness/task.mjs";
 
-const cell = (usableReps, successRate) => ({
+const cell = (usableReps, successRate, discardedReps = 0) => ({
   usableReps,
   successRate,
   meanScore: successRate === null ? null : successRate * 100,
+  discardedReps,
 });
 
 test("every variant id is unique and resolvable", () => {
@@ -231,6 +232,53 @@ test("cost per point is withheld unless there was a gain to price", () => {
     gained.tokensPerPoint,
     Math.round(renderVariant("rule-only").estTokens / 50),
   );
+});
+
+test("the discard count travels with the usable count into ranked[]", () => {
+  // The pair IS the claim: "3 usable" means something different after 0
+  // discards than after 5, and a consumer reading `ranked[]` — the CI step
+  // summary among them — can only report what this projection carries.
+  const scored = scoreVariant({
+    variant: renderVariant("full"),
+    onTarget: cell(3, 1, 2),
+    offTarget: cell(3, 1, 1),
+    baselineOnTarget: cell(3, 0.5, 0),
+    baselineOffTarget: cell(3, 1, 4),
+  });
+
+  assert.deepEqual(scored.discardedReps, {
+    onTarget: 2,
+    offTarget: 1,
+    baselineOnTarget: 0,
+    baselineOffTarget: 4,
+  });
+
+  // Counted even when the cell has NO usable reps — that is exactly the cell
+  // whose discard count explains the emptiness, so gating it behind `usable()`
+  // would blank the one number the reader needs.
+  const empty = scoreVariant({
+    variant: renderVariant("full"),
+    onTarget: cell(0, null, 5),
+    offTarget: cell(0, null, 3),
+    baselineOnTarget: cell(3, 0.5, 0),
+    baselineOffTarget: cell(3, 1, 0),
+  });
+  assert.equal(empty.usableReps.onTarget, 0);
+  assert.equal(empty.discardedReps.onTarget, 5);
+  assert.equal(empty.discardedReps.offTarget, 3);
+
+  // An ABSENT cell discarded nothing — it was never run. `offTargetRun` is
+  // what tells that apart from "ran and threw everything away"; this number
+  // does not try to.
+  const noOff = scoreVariant({
+    variant: renderVariant("full"),
+    onTarget: cell(3, 1, 2),
+    offTarget: null,
+    baselineOnTarget: cell(3, 0.5, 0),
+    baselineOffTarget: null,
+  });
+  assert.equal(noOff.offTargetRun, false);
+  assert.equal(noOff.discardedReps.offTarget, 0);
 });
 
 test("float dust in a washed-out net lift does not buy a cost per point", () => {

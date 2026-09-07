@@ -399,11 +399,13 @@ jobs:
                 }
               }
               if (Array.isArray(j.ranked) && j.ranked.length) {
-                out.push("", "### Usable reps per variant", "");
+                out.push("", "### Reps per variant", "");
                 for (const r of j.ranked) {
                   const n = r.usableReps || {};
+                  const d = r.discardedReps || {};
                   out.push(
-                    `- **${r.variant}**: ${n.onTarget} on-target, ${n.offTarget} off-target`,
+                    `- **${r.variant}**: ${n.onTarget} usable / ${d.onTarget} discarded on-target, ` +
+                      `${n.offTarget} usable / ${d.offTarget} discarded off-target`,
                   );
                 }
               }
