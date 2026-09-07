@@ -313,16 +313,14 @@ export const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       // NO top-level `required` and NO top-level union. `refs` is mutually
-      // exclusive with `scope`+`key` (the handler throws on the combined form),
-      // so neither can be unconditionally required — a top-level
-      // `required: ['scope','key']` advertises a schema under which no legal
-      // batch call exists. JSON Schema spells that `oneOf`, and this entry did
-      // until Bedrock rejected the whole tool list over it (see
-      // `JsonSchemaObject`). The exclusivity now lives in the `description`
-      // above, and `toolRead` enforces it either way — a call with both shapes
-      // gets `refs cannot be combined with scope and key`, one with neither
-      // gets `scope and key are required`. Only the machine-readable form was
-      // lost; nothing about what the tool accepts changed.
+      // exclusive with `scope`+`key`, so neither can be unconditionally
+      // required — `required: ['scope','key']` would advertise a schema under
+      // which no legal batch call exists. JSON Schema spells the alternative
+      // `oneOf`, and this entry did until Bedrock rejected it;
+      // `JsonSchemaObject` carries the why. The rule lives in `description`
+      // now, and `toolRead` enforces it either way: both shapes gets `refs
+      // cannot be combined with scope and key`, neither gets `scope and key
+      // are required`.
       properties: {
         scope,
         key,

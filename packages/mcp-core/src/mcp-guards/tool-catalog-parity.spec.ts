@@ -160,6 +160,8 @@ describe('wire projection', () => {
   // one that only appeared on the wire is the case worth catching.
   it('never advertises a top-level union — Bedrock rejects the whole tool list over one', () => {
     for (const tool of MCP_TOOLS) {
+      // Cast because: `JsonSchemaObject` deliberately declares no union keys,
+      // so reading them means stepping outside the very type that forbids them.
       const advertised = toWireTool(tool).inputSchema as Record<string, unknown>;
       for (const combinator of ['oneOf', 'anyOf', 'allOf']) {
         expect(advertised[combinator], `${tool.name} advertises a top-level ${combinator}`).toBeUndefined();
