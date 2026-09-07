@@ -679,8 +679,14 @@ async function runVariants(options) {
   );
   requireRunnable(options);
 
+  // De-duped: cells are keyed by variant id, so a repeated `--variant full`
+  // would push two runs into ONE cell — doubling that row's `usableReps` and
+  // the spend behind it while every other row kept `--reps` — and emit the
+  // variant twice in the ranking.
   const requested =
-    options.variants.length > 0 ? options.variants : VARIANT_IDS;
+    options.variants.length > 0
+      ? [...new Set(options.variants)]
+      : VARIANT_IDS;
   for (const id of requested) variantById(id); // refuse an unknown id up front
 
   const id = runId();
