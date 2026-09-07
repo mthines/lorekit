@@ -160,22 +160,9 @@ export const MCP_TOOL_DEFS = [
   },
   {
     "name": "memory.read",
-    "description": "Read a lesson by scope and key",
+    "description": "Read one lesson by `scope` + `key`, or several at once by `refs`. Pass exactly one of those two shapes: `scope` and `key` together, or `refs` alone — a call carrying both, or neither, is rejected.",
     "inputSchema": {
       "type": "object",
-      "oneOf": [
-        {
-          "required": [
-            "scope",
-            "key"
-          ]
-        },
-        {
-          "required": [
-            "refs"
-          ]
-        }
-      ],
       "properties": {
         "scope": {
           "type": "string",

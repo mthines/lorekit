@@ -157,6 +157,19 @@ Read a single lesson by scope + key.
 
 **Returns:** `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.
 
+### The two argument shapes
+
+`memory.read` takes **exactly one** of two shapes: `scope` **and** `key` together, or `refs` alone.
+A call carrying both is rejected (`refs cannot be combined with scope and key`), and so is one
+carrying neither (`scope and key are required`).
+
+The advertised `inputSchema` does **not** encode that as a top-level `oneOf`, even though JSON
+Schema would: Amazon Bedrock refuses any tool whose `input_schema` carries `oneOf` / `anyOf` /
+`allOf` at the top level, and it fails the **entire request** rather than dropping the one tool — so
+one such schema costs a Bedrock-hosted client its whole `tools/list`, not one operation. The rule
+therefore lives in the tool's `description` and is enforced by the server on every call. Nothing
+about what the tool accepts changed; only the machine-readable form of the constraint did.
+
 ### Batch reads (`refs`)
 
 Fetch several lessons in one call instead of one `memory.read` per lesson — fewer round trips, at
