@@ -57,11 +57,13 @@ import {
   ARM_0,
   ARM_A,
   ARM_C,
+  GOLDEN_ARMS,
   armById,
   armCPrompt,
   armPlan,
   compareArms,
   describeComparison,
+  resolveArmSelection,
   summarizeArm,
   transcriptDigest,
 } from "../src/harness/golden.mjs";
@@ -87,7 +89,8 @@ Subcommands:
                        between two arms. B-organic is SKIPPED (with a stated
                        reason) unless --lesson-file supplies the lesson the loop
                        would have saved; it is never substituted with the
-                       canonical one.
+                       canonical one. Narrow the spend with --arm; a selection
+                       without arm A carries no lift, by construction.
   variants             Which FRAMING of one fact teaches best, and what does it
                        cost? Crosses the lesson ladder (rule-only … padded)
                        against an ON-TARGET task and an OFF-TARGET one, so a
@@ -124,6 +127,14 @@ Options:
                        runs (CI, Docker, cloud sandboxes) need e.g. acceptEdits.
   --lesson-file <path> golden: the organic lesson, read from a file. Without it
                        (or --lesson) the B-organic arm is skipped, never faked.
+  --arm <id>           golden: run only these arms (repeatable). Known ids:
+                       ${GOLDEN_ARMS.map((a) => a.id).join(", ")}. Empty means
+                       every arm. The cheapest real golden is one arm at
+                       --reps 1. Two rules: arm C needs arm 0 (it re-reads its
+                       transcript) and is refused without it; a selection
+                       WITHOUT arm A reports no lift at all, because a lift is
+                       a difference against the baseline and the baseline did
+                       not run — the comparison says so rather than printing 0.
   --variant <id>       variants: run only these rows (repeatable). Known ids:
                        ${VARIANT_IDS.join(", ")}.
   --skip-off-target    variants: run the on-target task only. Halves the cost
@@ -184,6 +195,10 @@ export function parseArgs(argv) {
     // narrowing, so the difference between "asked for none" and "asked for all"
     // never has to be inferred from a sentinel.
     variants: [],
+    // The same shape, for golden's arms. The two cost dials are deliberately
+    // symmetric: one is `--variant` on the variants ladder, the other `--arm`
+    // on the golden arms, and neither needs its own mental model.
+    arms: [],
     skipOffTarget: false,
     scope: null,
     scopeMode: "branch",
@@ -223,6 +238,9 @@ export function parseArgs(argv) {
         break;
       case "--variant":
         options.variants.push(rest[++i]);
+        break;
+      case "--arm":
+        options.arms.push(rest[++i]);
         break;
       case "--skip-off-target":
         options.skipOffTarget = true;
@@ -285,6 +303,12 @@ export function parseArgs(argv) {
   // real calls and produces an unreadable artifact.
   if (options.variants.some((v) => typeof v !== "string" || v.trim() === "")) {
     throw new Error("--variant requires a non-empty variant id");
+  }
+  // Same trap as `--variant`: a bare `--arm` pushes `undefined`, which would
+  // reach `resolveArmSelection` as an id and be refused there — but with a
+  // message about an unknown arm rather than about the missing value.
+  if (options.arms.some((a) => typeof a !== "string" || a.trim() === "")) {
+    throw new Error("--arm requires a non-empty arm id");
   }
   if (options.lesson && options.lessonFile) {
     throw new Error(
@@ -534,7 +558,23 @@ async function runGolden(options) {
     "golden defines each arm's own store",
     "the organic lesson goes in --lesson-file",
   );
+  // The variants ladder's dials, typed at the arms experiment. Refused rather
+  // than ignored for the reason every other refusal here exists: a caller who
+  // narrowed with `--variant` and got all four arms reads the bill as the
+  // harness misbehaving, and the cost of finding out is a paid run.
+  refuseUnhonourableFlags(
+    options,
+    ["--variant", "--skip-off-target"],
+    "golden runs ARMS, not the variants ladder",
+    "narrow the arms with --arm <id>",
+  );
   requireRunnable(options);
+
+  // Resolved BEFORE the sandbox and before `requireRunnable` has spent
+  // anything: an unknown id or a C-without-0 selection is an argument mistake,
+  // and the whole point of the flag is to spend less.
+  const selectedArms = resolveArmSelection(options.arms);
+  const narrowed = options.arms.length > 0;
 
   const id = runId();
   const outDir = path.resolve(options.out, `golden-${id}`);
@@ -546,9 +586,12 @@ async function runGolden(options) {
   const perArm = new Map();
   let priorDigest = "";
 
-  // Arm 0 first — it is the only source of the prior transcript.
-  const armsToRun = [armById(ARM_0)];
-  for (let rep = 1; rep <= options.reps; rep++) {
+  // Arm 0 first — it is the only source of the prior transcript. Skipping it
+  // when it was not selected is the ENTIRE saving of `--arm`: leaving it
+  // unconditional would charge for it on every subset run, and arm C is
+  // refused up front rather than silently pulling it back in.
+  const armsToRun = selectedArms.includes(ARM_0) ? [armById(ARM_0)] : [];
+  for (let rep = 1; armsToRun.length > 0 && rep <= options.reps; rep++) {
     const sandbox = await createSandbox({ keep: options.keep });
     try {
       const repDir = path.join(outDir, `arm-${ARM_0}`, `rep-${rep}`);
@@ -592,6 +635,11 @@ async function runGolden(options) {
   const { run: plannedArms, skipped } = armPlan({
     organicLesson: Boolean(organicLesson),
     priorTranscript: Boolean(priorDigest),
+    // `null`, not the full id list, when nothing was narrowed: the skip reason
+    // for an unselected arm names the selection, and "not selected — this run
+    // asked for 0, A, B-organic, B-canonical, C" is a sentence no unnarrowed
+    // run should ever be able to produce.
+    selected: narrowed ? selectedArms : null,
   });
 
   for (const arm of plannedArms) {
@@ -637,6 +685,11 @@ async function runGolden(options) {
     runId: id,
     model: options.model,
     repsRequested: options.reps,
+    // `null` means the whole experiment ran. A subset is recorded ON THE
+    // ARTIFACT rather than left to be inferred from which arms happen to be
+    // present, because "arm A is missing" and "arm A was never asked for" are
+    // read very differently by whoever opens this file next.
+    armsRequested: narrowed ? selectedArms : null,
     caveat:
       `N=${options.reps} per arm is a low-power INDICATOR, not proof. ` +
       `Treat every difference as directional; widening N — not reinterpreting ` +
@@ -673,8 +726,8 @@ async function runGolden(options) {
 async function runVariants(options) {
   refuseUnhonourableFlags(
     options,
-    ["--seed", "--scope", "--scope-mode", "--lesson", "--lesson-file"],
-    "variants defines its own store, scope and lesson text",
+    ["--seed", "--scope", "--scope-mode", "--lesson", "--lesson-file", "--arm"],
+    "variants defines its own store, scope and lesson text, and runs no arms",
     "pick rows with --variant <id> instead",
   );
   requireRunnable(options);
@@ -814,6 +867,16 @@ async function runArm0(options) {
     ["--seed", "--lesson"],
     "arm0 always runs against an EMPTY store",
     'or use the "probe" subcommand, which seeds',
+  );
+  // arm0 IS one arm, so a narrowing flag has nothing to narrow. It is refused
+  // rather than ignored because `--arm B-canonical` on this subcommand looks
+  // exactly like a request for the seeded arm and would silently deliver the
+  // empty-store one instead — a paid run answering a different question.
+  refuseUnhonourableFlags(
+    options,
+    ["--arm", "--variant", "--skip-off-target"],
+    "arm0 is a single fixed arm and selects nothing",
+    'narrow the arms with "golden --arm <id>"',
   );
   requireRunnable(options);
 
@@ -999,6 +1062,9 @@ async function runPreflight(options) {
       "--reps",
       "--out",
       "--dry-run",
+      "--arm",
+      "--variant",
+      "--skip-off-target",
     ],
     "preflight is a single call in a fixed empty-store arm, it writes no run directory, and the model call IS the check",
   );
@@ -1056,8 +1122,17 @@ async function runProbe(options) {
   // `--dry-run` most misleadingly of all, since probe is already dry.
   refuseUnhonourableFlags(
     options,
-    ["--reps", "--out", "--timeout", "--command", "--dry-run"],
-    "probe builds one arm, spawns no model, writes no run directory and is already dry",
+    [
+      "--reps",
+      "--out",
+      "--timeout",
+      "--command",
+      "--dry-run",
+      "--arm",
+      "--variant",
+      "--skip-off-target",
+    ],
+    "probe builds one arm, spawns no model, writes no run directory, selects nothing and is already dry",
   );
 
   const sandbox = await createSandbox({ keep: options.keep });

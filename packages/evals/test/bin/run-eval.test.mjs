@@ -49,6 +49,18 @@ test("parseArgs rejects nonsense rather than running a bad experiment", () => {
     /positive number/,
   );
   assert.throws(() => parseArgs(["arm0", "--nope"]), /unknown option/);
+  // A bare `--arm` pushes `undefined`, which would reach the selection as an
+  // id and be refused there — with a message about an unknown arm rather than
+  // about the value that was never typed. Same trap `--variant` already has.
+  assert.throws(() => parseArgs(["golden", "--arm"]), /non-empty arm id/);
+});
+
+test("--arm is repeatable and EMPTY means every arm", () => {
+  assert.deepEqual(parseArgs(["golden"]).arms, []);
+  assert.deepEqual(
+    parseArgs(["golden", "--arm", "A", "--arm", "B-canonical"]).arms,
+    ["A", "B-canonical"],
+  );
 });
 
 test("runId is filesystem-safe and sortable", () => {
@@ -168,6 +180,46 @@ test("probe refuses the run flags it cannot honour either", async () => {
   await assert.rejects(() => main(["probe", "--command", "echo"]), /--command/);
   // Already dry; the flag would have promised something probe never does.
   await assert.rejects(() => main(["probe", "--dry-run"]), /--dry-run/);
+});
+
+test("the two narrowing flags are refused by every subcommand that runs neither", async () => {
+  // `--arm` narrows golden's arms and `--variant` narrows the variants ladder.
+  // Crossed over, or aimed at a subcommand that is already a single fixed
+  // arm, they select nothing — and being SILENTLY IGNORED is the failure that
+  // matters: `arm0 --arm B-canonical` reads exactly like a request for the
+  // seeded arm and would have delivered the empty-store one at full price.
+  await assert.rejects(
+    () => main(["golden", "--dry-run", "--variant", "full"]),
+    /golden runs ARMS, not the variants ladder/,
+  );
+  await assert.rejects(
+    () => main(["golden", "--dry-run", "--skip-off-target"]),
+    /--skip-off-target cannot be honoured here/,
+  );
+  await assert.rejects(
+    () => main(["variants", "--dry-run", "--arm", "A"]),
+    /--arm cannot be honoured here/,
+  );
+  await assert.rejects(
+    () => main(["arm0", "--dry-run", "--arm", "B-canonical"]),
+    /arm0 is a single fixed arm and selects nothing/,
+  );
+  await assert.rejects(() => main(["probe", "--arm", "A"]), /--arm/);
+  await assert.rejects(() => main(["preflight", "--arm", "A"]), /--arm/);
+});
+
+test("golden refuses a bad --arm selection BEFORE it spends anything", async () => {
+  // Both land in `resolveArmSelection`, which runs above `createSandbox` and
+  // above the first model call — the whole point of the flag is to spend less,
+  // so learning the selection was wrong from the bill would defeat it.
+  await assert.rejects(
+    () => main(["golden", "--dry-run", "--arm", "nope"]),
+    /unknown arm/,
+  );
+  await assert.rejects(
+    () => main(["golden", "--dry-run", "--arm", "C"]),
+    /Add --arm 0/,
+  );
 });
 
 test("parseArgs records which flags were actually typed", () => {

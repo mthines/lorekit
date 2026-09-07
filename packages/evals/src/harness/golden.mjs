@@ -106,6 +106,54 @@ export function armById(id) {
 }
 
 /**
+ * Resolve an operator-supplied `--arm` list into the arms this run will cover.
+ *
+ * Empty (or absent) means EVERY arm — an explicit list is a NARROWING, so
+ * "asked for none" and "asked for all" never have to be told apart by a
+ * sentinel. That is the same shape `--variant` already has for the variants
+ * experiment, deliberately: the two cost dials should not need different
+ * mental models.
+ *
+ * Two rules are enforced here, before anything is spent, rather than
+ * discovered from an artifact afterwards:
+ *
+ *   - an unknown id is REFUSED, because the alternative is a typo quietly
+ *     running three arms instead of four and the missing arm reading as a
+ *     result about memory;
+ *   - selecting arm C without arm 0 is REFUSED, because arm C's entire
+ *     construction is re-reading ARM 0's transcript. Left to `armPlan` it
+ *     would be skipped for "arm 0 produced no transcript" — true, and no help
+ *     at all in working out what to type instead.
+ *
+ * Arm A is deliberately NOT forced into the selection. A run without the
+ * baseline is a legitimate thing to want ("just score the seeded arm"), and
+ * its honest consequence is that the run carries no lift — which `compareArms`
+ * states per comparison, naming the absent baseline. Forcing arm A in would
+ * silently double the cheapest run's cost to protect a number the operator did
+ * not ask for.
+ *
+ * @param {string[]} [ids]  the ids the operator asked for; empty means all
+ * @returns {string[]} the selected ids, in canonical arm order
+ */
+export function resolveArmSelection(ids = []) {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return GOLDEN_ARMS.map((a) => a.id);
+  }
+  const asked = new Set(ids);
+  for (const id of asked) armById(id); // refuses an unknown id
+  if (asked.has(ARM_C) && !asked.has(ARM_0)) {
+    throw new Error(
+      `arm ${ARM_C} re-reads arm ${ARM_0}'s transcript, so it cannot run ` +
+        `without it. Add --arm ${ARM_0}.`,
+    );
+  }
+  // Canonical order, never the order they were typed: arm 0 has to run first
+  // because it is the source of arm C's material, and an artifact read months
+  // later should list its arms the same way every time.
+  return GOLDEN_ARMS.filter((a) => asked.has(a.id)).map((a) => a.id);
+}
+
+/**
  * Decide which arms can actually run, and record WHY each excluded one cannot.
  *
  * An arm that cannot run is dropped with a stated reason rather than quietly
@@ -114,15 +162,23 @@ export function armById(id) {
  * result as if it were the loop's own wording, which is the one thing that
  * source exists to measure.
  *
+ * An arm the operator did not SELECT is dropped through the same channel, for
+ * the same reason: a cheap subset run and a run whose organic lesson was
+ * missing must be told apart by reading the artifact, not by remembering which
+ * flags were typed.
+ *
  * @param {object}  [available]
  * @param {boolean} [available.organicLesson]  an operator-supplied lesson exists
  * @param {boolean} [available.priorTranscript] arm 0 produced a transcript
+ * @param {string[]|null} [available.selected]  `--arm` narrowing; null = all
  * @returns {{ run: object[], skipped: {id: string, reason: string}[] }}
  */
 export function armPlan({
   organicLesson = false,
   priorTranscript = false,
+  selected = null,
 } = {}) {
+  const chosen = selected === null ? null : new Set(selected);
   const have = {
     "organic-lesson": Boolean(organicLesson),
     "prior-transcript": Boolean(priorTranscript),
@@ -141,6 +197,19 @@ export function armPlan({
   const run = [];
   const skipped = [];
   for (const arm of GOLDEN_ARMS) {
+    // Selection is checked FIRST. An arm the operator excluded is skipped for
+    // that reason and not for a dependency it was never going to have — arm C
+    // dropped from a `--arm 0 A` run is "not selected", never "arm 0 produced
+    // no transcript", which would read as a fault in a run that behaved.
+    if (chosen && !chosen.has(arm.id)) {
+      skipped.push({
+        id: arm.id,
+        reason:
+          `not selected — this run asked for ` +
+          `${[...chosen].join(", ")} via --arm.`,
+      });
+      continue;
+    }
     if (arm.needs && !have[arm.needs]) {
       skipped.push({ id: arm.id, reason: reasons[arm.needs] });
       continue;
@@ -309,6 +378,14 @@ export function summarizeArm(armId, reps = []) {
  * no usable reps is not a small number with wide error bars — it is not a number
  * at all, and reporting `0` or `null` as though it were a result is how a broken
  * batch gets read as "memory made no difference".
+ *
+ * A `--arm` subset that leaves the baseline out lands in exactly the same
+ * place: no control summary, so no lift, for every treatment in the run. That
+ * is the rule which makes cheap arm subsetting safe, and it is structural — it
+ * falls out of the control being absent from `summaries`, not from a check
+ * someone has to remember to write. The two cases get DIFFERENT reasons,
+ * because "the baseline never ran" and "the baseline ran and every rep was
+ * discarded" call for different actions from whoever reads the artifact.
  */
 export function compareArms(summaries = [], { baseline = BASELINE_ARM } = {}) {
   const byId = new Map(summaries.map((s) => [s.arm, s]));
@@ -349,7 +426,10 @@ export function compareArms(summaries = [], { baseline = BASELINE_ARM } = {}) {
           : null,
       reason: comparable
         ? null
-        : "not comparable: one or both arms have zero usable reps.",
+        : control === null
+          ? `not comparable: the baseline arm ${baseline} did not run, so ` +
+            `there is nothing to measure against. Add --arm ${baseline}.`
+          : "not comparable: one or both arms have zero usable reps.",
     });
   }
   return comparisons;
