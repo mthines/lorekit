@@ -511,6 +511,11 @@ function totalCostUsd(summaries) {
     : null;
 }
 
+// Stands in for arm 0's transcript under `--dry-run`, where no arm 0 ran. It
+// is only ever tested for truthiness (`Boolean(priorDigest)`); the arm loop
+// skips `armCPrompt` under `--dry-run`, so it can never reach a model.
+const DRY_RUN_DIGEST = "(dry-run: arm 0 was planned, not run)";
+
 /**
  * The golden experiment. Arms 0 / A / B / C, then the comparison.
  *
@@ -552,6 +557,17 @@ async function runGolden(options) {
           ...(perArm.get(ARM_0) || []),
           { arm: ARM_0, rep, dryRun: true },
         ]);
+        // A dry run PLANS; it does not spend. A live arm 0 would have produced
+        // a transcript right here, so the plan has to show arm C running —
+        // otherwise the free offline tier reports arm C skipped for a reason
+        // ("arm 0 produced no transcript") that is an artefact of the dry run
+        // rather than a fact about the arms, and the one tier that costs
+        // nothing structurally cannot exercise arm C's wiring.
+        //
+        // Safe as a sentinel: the arm loop below `continue`s past `armCPrompt`
+        // under `--dry-run`, so this value is only ever read through
+        // `Boolean(priorDigest)` and never reaches a prompt.
+        if (!priorDigest) priorDigest = DRY_RUN_DIGEST;
         continue;
       }
       const { run, record } = await runRep({
