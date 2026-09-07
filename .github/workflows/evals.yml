@@ -1,0 +1,468 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Evals — does a stored, loaded lesson actually change what the agent does?
+#
+# `@lorekit/evals` runs a headless `claude -p` against the REAL `lorekit mcp`
+# stdio server and the REAL SessionStart hook, on a scratch store. Nothing is
+# mocked, which is the point and also the cost: every arm is a live model call.
+#
+# WHY THIS LIVES IN CI AND NOT ONLY ON A LAPTOP.
+# The harness discards a repetition whose session loaded something it did not
+# put there — a user-level `~/.claude` skill, plugin or hook is contamination,
+# because a lesson the agent got from somewhere else is not the lesson under
+# test. A developer machine running LoreKit's own Claude plugin therefore
+# CANNOT produce a usable control arm: arm A is supposed to be empty and is
+# not. A GitHub Actions runner has no user-level `~/.claude` at all, and is
+# non-root, so `--permission-mode bypassPermissions` is accepted rather than
+# refused. It is the clean room the experiment has been asking for.
+#
+# THREE TIERS, PRICED BY WHAT THEY SPEND.
+#   offline    free      unit tests + `--dry-run` plans. Auto, path-filtered.
+#   preflight  ~1 call   proves THIS runner is clean. Auto, path-filtered.
+#   live       many      `golden` / `variants`. Manual dispatch or a label.
+# The split exists so a routine change to the harness is validated for free and
+# only a deliberate act spends money.
+#
+# NOTHING HERE GATES A MERGE. The offline tier is a real check on the harness's
+# own code; the live tiers report numbers. An eval result is evidence about the
+# product, not a verdict on the diff — a lesson that stops helping is a finding,
+# not a broken build. (`evals:test` also runs inside ci.yml's `nx affected`
+# pass; it is repeated here so this workflow is self-contained and so the
+# dry-run plans, which `nx` does not run, are exercised beside it.)
+#
+# EVERY LIVE RUN SHIPS TO DASH0 under `service.name=eval` — one trace plus
+# seven gauges, exported from the finished `summary.json` by
+# `scripts/telemetry/eval-telemetry.mjs`. It runs `if: always()` and DOWNSTREAM
+# of the harness, so a telemetry failure can never retroactively fail an
+# experiment that already spent money and already produced its result. It uses
+# the existing `LOREKIT_TELEMETRY_TOKEN` secret; no new credential. Signal
+# reference: docs/otel.md → "Eval runs".
+#
+# SETUP (one-time): add an `ANTHROPIC_API_KEY` repository secret
+#   (Settings → Secrets and variables → Actions → New repository secret).
+# Until it exists — and on every fork PR, where secrets do not interpolate —
+# the live steps pass `--skip-if-unavailable` and exit 0 with a "skipped"
+# report naming what was missing. A job that has no credential must not be red
+# for a reason that has nothing to do with the change under review.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Evals
+
+on:
+  pull_request:
+    branches: [main]
+    # `labeled` is here so adding `run-evals` to an open PR starts the paid
+    # tier without a push. The other three are the default set, restated
+    # because naming any type replaces the default.
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      subcommand:
+        description: "Which experiment to run"
+        type: choice
+        default: preflight
+        options: [preflight, golden, variants]
+      reps:
+        description: "Repetitions per arm/cell (1-10; N=3 is a low-power indicator)"
+        type: string
+        default: "3"
+      variants:
+        description: "variants only — space-separated ids, empty for all"
+        type: string
+        default: ""
+      skip_off_target:
+        description: "variants only — halve the cost, giving up the NET value"
+        type: boolean
+        default: false
+
+# A newer push supersedes an in-flight PR run. A manual dispatch is exempt: it
+# is a deliberate, paid run, and cancelling one because someone pushed to the
+# branch would throw away the reps already bought.
+concurrency:
+  group: evals-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+permissions: {}
+
+env:
+  # The `evals` package imports `@lorekit/core`'s TypeScript source and relies
+  # on Node's native type stripping (its declared `engines` floor is 22.18). On
+  # Node 20 every target here dies with ERR_UNKNOWN_FILE_EXTENSION.
+  NODE_VERSION: "22"
+
+jobs:
+  # ── What changed, and did someone ask for the paid tier? ─────────────────────
+  #    An inline `git diff` rather than `on.pull_request.paths`, matching
+  #    ci.yml: a native path filter applies to EVERY activity type, so a
+  #    `run-evals` label on a PR that touches no eval path would not start the
+  #    workflow at all — and asking for a run on an unrelated PR is exactly the
+  #    case the label exists for.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      evals: ${{ steps.filter.outputs.evals }}
+      live: ${{ steps.live.outputs.live }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compare changed paths against the eval globs
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            # A manual dispatch names its own experiment; there is no diff to consult.
+            echo "evals=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "Comparing ${BASE}...HEAD"
+          CHANGED="$(git diff --name-only "${BASE}" HEAD)"
+          echo "$CHANGED"
+          # The harness itself, plus the two packages it drives END TO END and
+          # would silently mis-measure if they changed underneath it: the CLI
+          # (the `mcp` stdio server, the SessionStart hook engine, the local
+          # store) and mcp-core (scope resolution — which decides whether a
+          # seeded lesson is even reachable from the graded scope). `schemas` is
+          # here because both import it, and the two telemetry modules because
+          # the `live` tier ships every run to Dash0 through them. This workflow
+          # names itself for the same reason every sibling gate in ci.yml does:
+          # so an edit to the job runs the job.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/evals/|packages/cli/src/|packages/cli/bin/|packages/mcp-core/src/|packages/schemas/src/|scripts/telemetry/(eval-telemetry|otlp-export)(\.test)?\.mjs|\.github/workflows/evals\.yml)'; then
+            echo "evals=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "evals=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decide whether the paid tier was asked for
+        id: live
+        env:
+          # `contains` over the PR's current label set, not
+          # `github.event.label.name`: the latter is only populated on the
+          # `labeled` event, so a push to an already-labelled PR would drop
+          # back to the free tier without anyone removing the label.
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'run-evals') }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$LABELLED" = "true" ]; then
+            echo "live=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "live=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Tier 1 — free. The harness's own code, and the plans it would run. ───────
+  #    `--dry-run` builds every arm, resolves every scope and refuses every
+  #    illegal flag combination WITHOUT spawning a model, so the wiring that
+  #    the paid tiers depend on is proven at zero cost. The unit tests cover
+  #    grading, variant scoring and the runnability gate.
+  offline:
+    name: Harness tests + dry-run plans
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.evals == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        working-directory: packages/evals
+        run: node --test
+
+      # `scripts/**` is outside `nx affected`, so nothing else executes this —
+      # the same reason ci.yml's bench job names its sibling telemetry tests
+      # explicitly. Dependency-free by design, so it needs nothing the install
+      # above provides and would pass just as well before it.
+      - name: Unit-test the Dash0 export payloads
+        run: node --test scripts/telemetry/eval-telemetry.test.mjs
+
+      - name: Dry-run plan — golden
+        working-directory: packages/evals
+        run: node bin/run-eval.mjs golden --dry-run --reps 1
+
+      - name: Dry-run plan — variants
+        working-directory: packages/evals
+        run: node bin/run-eval.mjs variants --dry-run --reps 1
+
+  # ── Tier 2 — one model call. Is THIS runner a clean room? ───────────────────
+  #    `preflight` prepares a real sandbox, spends one throwaway prompt, then
+  #    reads the session's own init event back to report what actually loaded.
+  #    It exits non-zero when the environment is contaminated — which is the
+  #    single fact no local run in a developer's shell can establish, and the
+  #    precondition every number the paid tier produces rests on.
+  preflight:
+    name: Preflight — environment is clean
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.evals == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Preflight
+        working-directory: packages/evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node bin/run-eval.mjs preflight --skip-if-unavailable
+
+  # ── Tier 3 — the experiment. Only when someone asks. ────────────────────────
+  #    Manual dispatch, or a `run-evals` label on the PR. `golden` answers
+  #    "does a loaded lesson make the work better?"; `variants` answers "which
+  #    FRAMING teaches best, and what does it cost in context?" — the latter is
+  #    (variants x tasks + tasks) x reps model calls, 60 at the defaults.
+  live:
+    name: Live experiment
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.live == 'true'
+    # A live batch is long: `variants` at the defaults is 60 sequential model
+    # calls. The default 360-minute ceiling would let a wedged run burn an hour
+    # of quota before anyone noticed.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      # Every input is validated against a literal allow-list before it reaches
+      # a command line. These are write-access-only inputs, but a workflow that
+      # interpolates a free-text field into `run:` is a shell-injection sink
+      # regardless of who can reach it, and `reps` doubles as the cost ceiling.
+      - name: Resolve the run arguments
+        id: args
+        env:
+          # A label run has no inputs, so it takes the cheaper of the two
+          # experiments at the documented default N.
+          SUBCOMMAND: ${{ github.event.inputs.subcommand || 'golden' }}
+          REPS: ${{ github.event.inputs.reps || '3' }}
+          VARIANTS: ${{ github.event.inputs.variants || '' }}
+          SKIP_OFF_TARGET: ${{ github.event.inputs.skip_off_target || 'false' }}
+        run: |
+          set -euo pipefail
+          case "$SUBCOMMAND" in
+            preflight|golden|variants) ;;
+            *) echo "::error::unknown subcommand: $SUBCOMMAND"; exit 1 ;;
+          esac
+          if ! printf '%s' "$REPS" | grep -qE '^([1-9]|10)$'; then
+            echo "::error::reps must be 1-10, got: $REPS"
+            exit 1
+          fi
+          ARGS="$SUBCOMMAND --skip-if-unavailable"
+          # `preflight` REFUSES --reps and --out rather than ignoring them: it
+          # is one call in a fixed arm and writes no run directory, so passing
+          # them would fail the run instead of being harmlessly redundant.
+          if [ "$SUBCOMMAND" != "preflight" ]; then
+            ARGS="$ARGS --reps $REPS --out ./.eval-out"
+          fi
+          # `--variant` / `--skip-off-target` mean nothing to golden or
+          # preflight, and neither REFUSES them — they would be accepted and
+          # dropped, so a run narrowed to two variants would quietly run the
+          # whole golden experiment instead. Refuse the combination here.
+          if [ "$SUBCOMMAND" != "variants" ] && { [ -n "$VARIANTS" ] || [ "$SKIP_OFF_TARGET" = "true" ]; }; then
+            echo "::error::--variant / --skip-off-target apply to the variants subcommand only, not $SUBCOMMAND"
+            exit 1
+          fi
+          for id in $VARIANTS; do
+            if ! printf '%s' "$id" | grep -qE '^[a-z0-9-]+$'; then
+              echo "::error::not a variant id: $id"
+              exit 1
+            fi
+            ARGS="$ARGS --variant $id"
+          done
+          if [ "$SKIP_OFF_TARGET" = "true" ]; then
+            ARGS="$ARGS --skip-off-target"
+          fi
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          echo "subcommand=$SUBCOMMAND" >> "$GITHUB_OUTPUT"
+
+      - name: Run
+        working-directory: packages/evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ARGS: ${{ steps.args.outputs.args }}
+        # Word-splitting `$ARGS` is intentional and safe: the step above built
+        # it from an allow-listed vocabulary, so there is nothing in it a shell
+        # could split badly.
+        run: node bin/run-eval.mjs $ARGS
+
+      # The summary carries its own caveats — `usableReps` (never `reps`) as the
+      # only N a conclusion may cite, the discarded count, and the cost — so the
+      # step summary reproduces them rather than paraphrasing a headline. Cost
+      # is run-wide; the two counts are per arm (`golden`) / per variant
+      # (`variants`), which is the only level they exist at.
+      # `--out` names a PARENT directory; each run writes its own
+      # `<subcommand>-<timestamp>/` beneath it, so the newest one is resolved
+      # here rather than assumed. A run that skipped (no credential) produced no
+      # directory at all, and that is reported as such — not as a missing file.
+      # `preflight` writes no run directory by design, so it has nothing to
+      # report or upload — its whole result is the exit code and the stdout above.
+      - name: Report
+        if: always() && steps.args.outputs.subcommand != 'preflight'
+        working-directory: packages/evals
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const root = ".eval-out";
+            const dirs = fs.existsSync(root)
+              ? fs
+                  .readdirSync(root, { withFileTypes: true })
+                  .filter((e) => e.isDirectory())
+                  .map((e) => path.join(root, e.name))
+                  .filter((d) => fs.existsSync(path.join(d, "summary.json")))
+                  .sort()
+              : [];
+            const out = [];
+            if (dirs.length === 0) {
+              out.push("## Evals", "", "No summary produced — the run skipped (no credential) or failed before writing one.");
+            } else {
+              const dir = dirs[dirs.length - 1];
+              const raw = fs.readFileSync(path.join(dir, "summary.json"), "utf8");
+              const j = JSON.parse(raw);
+              out.push(`## Evals — ${path.basename(dir)}`, "");
+              // Cost is the only one of the three that IS top-level, because
+              // it is the one figure that sums across the whole run — every
+              // billed rep, discarded ones included.
+              if (j.costUsd !== undefined && j.costUsd !== null) {
+                out.push(`- **costUsd**: ${j.costUsd}`);
+              }
+              // usableReps, never reps: a contaminated repetition is discarded,
+              // not averaged, so it is the only N a conclusion may cite. It is
+              // deliberately PER ROW rather than top-level — each arm and each
+              // variant discards independently, so a single summed N would be
+              // a number no conclusion here may actually cite. Printing it
+              // beside the row it belongs to is the whole point; an earlier
+              // version read `j.usableReps`/`j.discardedReps` at the top level,
+              // where neither subcommand has ever written them, and silently
+              // printed cost alone.
+              if (Array.isArray(j.arms) && j.arms.length) {
+                out.push("", "### Reps per arm", "");
+                for (const a of j.arms) {
+                  out.push(
+                    `- **${a.arm}**: ${a.usableReps} usable, ${a.discardedReps} discarded`,
+                  );
+                }
+              }
+              if (Array.isArray(j.ranked) && j.ranked.length) {
+                out.push("", "### Reps per variant", "");
+                for (const r of j.ranked) {
+                  const n = r.usableReps || {};
+                  const d = r.discardedReps || {};
+                  out.push(
+                    `- **${r.variant}**: ${n.onTarget} usable / ${d.onTarget} discarded on-target, ` +
+                      `${n.offTarget} usable / ${d.offTarget} discarded off-target`,
+                  );
+                }
+              }
+              if (j.caveat) out.push("", `> ${j.caveat}`);
+              const list = (title, rows) => {
+                if (Array.isArray(rows) && rows.length) {
+                  out.push("", `### ${title}`, "");
+                  for (const r of rows) {
+                    out.push(`- ${typeof r === "string" ? r : JSON.stringify(r)}`);
+                  }
+                }
+              };
+              list("Skipped arms", j.skippedArms);
+              list("Findings", j.readable);
+              out.push("", "<details><summary>summary.json</summary>", "", "```json", raw, "```", "", "</details>");
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
+          '
+
+      # Ship the run to Dash0 under `service.name=eval` — its own service, so
+      # eval numbers never mix into the `api`/`cli`/`web`/`mcp` dashboards, and
+      # `deployment.environment.name=test` (hardcoded in the shared exporter) so
+      # they never reach a production view. Reuses the SAME
+      # `LOREKIT_TELEMETRY_TOKEN` secret emit-trace.yml and the release job
+      # already use — no new secret to configure. With the secret absent it
+      # reports `no-credential` and exits 0, like every other tier here. Not
+      # `no-endpoint`: `resolveTelemetryConfig` falls back to a committed
+      # `DEFAULT_ENDPOINT`, so there is always an endpoint and the missing
+      # token is the only reachable reason on this path.
+      #
+      # After Report, before Upload: the numbers are already in the step summary
+      # and are uploaded regardless, so an export that fails costs the run
+      # nothing — which is why it is allowed to be visible instead of swallowed.
+      - name: Export the run to Dash0
+        if: always() && steps.args.outputs.subcommand != 'preflight'
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: node scripts/telemetry/eval-telemetry.mjs packages/evals/.eval-out
+
+      - name: Upload artifacts
+        if: always() && steps.args.outputs.subcommand != 'preflight'
+        uses: actions/upload-artifact@v7
+        with:
+          name: evals-${{ steps.args.outputs.subcommand }}-${{ github.run_id }}
+          path: packages/evals/.eval-out
+          # `--out ./.eval-out` writes a DOT-directory (deliberately — it keeps
+          # a paid run's output out of `git status`), and upload-artifact
+          # excludes hidden paths by default. Without this the step reported
+          # "No files were found" and uploaded NOTHING, while the Dash0 export
+          # ten lines above read the same path successfully — it does not care
+          # about the dot. So a run's headline numbers survived in the step
+          # summary and its per-rep transcripts were silently discarded, which
+          # is the half you need to audit WHY a rep scored what it did.
+          # Observed on run 34108079460, the first live `golden` run.
+          # `if-no-files-found: ignore` is what let it pass quietly; it stays,
+          # because a skipped run (no credential) legitimately writes no
+          # directory — the missing-file case is not the same as this one.
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14

@@ -23,10 +23,17 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 
 /**
- * The model under test. Fixed by the experimental design — ONE constant, so a
- * model change is a one-line diff and can never differ between arms.
+ * The model the arms run against, pinned so a batch is internally comparable.
+ *
+ * It is RECORDED in every rep's `meta.json` rather than assumed, because a pin
+ * goes stale silently: the previous value (`claude-opus-4-8`) outlived the
+ * generation it named, and a run against a model the CLI no longer serves fails
+ * as an empty transcript — which reads as a harness fault, not as a stale pin.
+ *
+ * `--model` overrides it for a one-off; changing a BATCH's model mid-flight
+ * makes its arms incomparable, so prefer a fresh run id.
  */
-export const MODEL_UNDER_TEST = "claude-opus-4-8";
+export const MODEL_UNDER_TEST = "claude-opus-5";
 
 /** Default hard wall-clock ceiling for a single attempt. */
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -35,6 +42,18 @@ export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 export const KILL_GRACE_MS = 5_000;
 
 export const DEFAULT_OUTPUT_FORMAT = "stream-json";
+
+/**
+ * The binary that is spawned, and the permission mode it is spawned with.
+ *
+ * Named here rather than repeated as literals because `runnable.mjs` PREDICTS
+ * whether this spawn can start, and a predicate that checked a different binary
+ * or a different mode than the one actually used would green-light a run that
+ * then dies with an empty transcript — the exact failure that module exists to
+ * rule out.
+ */
+export const DEFAULT_AGENT_COMMAND = "claude";
+export const DEFAULT_PERMISSION_MODE = "bypassPermissions";
 
 /**
  * Build the `claude` argv. Pure, so the flag contract is unit-testable without
@@ -47,7 +66,7 @@ export function buildClaudeArgs({
   mcpConfigPath = null,
   strictMcpConfig = true,
   allowedTools = [],
-  permissionMode = "bypassPermissions",
+  permissionMode = DEFAULT_PERMISSION_MODE,
   // Skills and slash commands are auto-discovered from `~/.claude/skills`, so a
   // developer's own installs load into every run. On this repo that is not a
   // hypothetical: `lorekit-memory` is a globally installed skill whose SKILL.md
@@ -212,7 +231,7 @@ export async function runAgent({
   cwd,
   env = process.env,
   transcriptPath,
-  command = "claude",
+  command = DEFAULT_AGENT_COMMAND,
   // Argv prefixed BEFORE the claude flags. Its only purpose is to let a test
   // substitute a scripted stand-in (`node fake-claude.mjs …`) while the flag
   // contract under test stays exactly the one production builds.

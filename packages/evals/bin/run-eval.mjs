@@ -3,8 +3,17 @@
 //
 // Every subcommand here spends real model tokens against `claude -p`, takes
 // minutes, and is inherently flaky. It is therefore never invoked from
-// `node --test` and never from CI — `pnpm nx test evals` covers the pure logic
-// only, and the harness gates nothing until the signal is shown to be stable.
+// `node --test` — `pnpm nx test evals` covers the pure logic only — and it
+// GATES NOTHING. That, not "it never runs in CI", is the invariant.
+//
+// It DOES now run in CI, on demand and on a label, because a GitHub Actions
+// runner is the clean-environment machine this harness needs: no user-level
+// `~/.claude`, so none of the developer hooks, skills or plugins that
+// `environment.mjs` discards a rep for, and a non-root user, so
+// `bypassPermissions` is accepted rather than refused.
+// `.github/workflows/evals.yml` is the caller; `runnable.mjs` is what makes it
+// safe — a fork PR, or a repository before the secret exists, SKIPS rather
+// than failing for a reason unrelated to the change.
 //
 // The one exception is `probe`, which spawns no model at all: it seeds the
 // store, installs the real hook and prints what the hook actually injected. It
@@ -12,21 +21,50 @@
 // against a store you are curious about, not an assertion.
 //
 // Subcommands (later PRs fill in the rest):
-//   arm0    one attempt against an EMPTY store — the "no memory" baseline
-//   probe   seed + install the hook + print the injected set (no model)
-//   golden  arms 0/A/B/C x {organic,canonical}                        (PR4)
-//   scale   corpus size x lesson position sweep                       (PR5)
+//   golden    arms 0/A/B/C, graded and COMPARED — the whole experiment
+//   variants  which FRAMING teaches best, on-target AND off-target
+//   arm0      one attempt against an EMPTY store — the "no memory" baseline
+//   probe     seed + install the hook + print the injected set (no model)
+//   scale   corpus size x lesson position sweep     (shipped as a node --test
+//           suite, `test/relevance/sweep.test.mjs`, not as a subcommand)
 //   review  pr-reviewer control vs treatment on PR #395               (PR6)
 import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
 import {
-  MODEL_UNDER_TEST,
+  DEFAULT_AGENT_COMMAND,
+  DEFAULT_PERMISSION_MODE,
   DEFAULT_TIMEOUT_MS,
+  MODEL_UNDER_TEST,
   runAgent,
 } from "../src/harness/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/harness/arm.mjs";
+import {
+  assessRunnability,
+  describeRunnability,
+} from "../src/harness/runnable.mjs";
+import {
+  VARIANT_IDS,
+  describeVariant,
+  rankVariants,
+  renderVariant,
+  scoreVariant,
+  summarizeCell,
+  variantById,
+} from "../src/harness/variants.mjs";
+import {
+  ARM_0,
+  ARM_A,
+  ARM_C,
+  armById,
+  armCPrompt,
+  armPlan,
+  compareArms,
+  describeComparison,
+  summarizeArm,
+  transcriptDigest,
+} from "../src/harness/golden.mjs";
 import {
   assertCleanEnvironment,
   describeEnvironment,
@@ -42,6 +80,24 @@ import { taskById } from "../src/harness/task.mjs";
 const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
 
 Subcommands:
+  golden               The WHOLE experiment: arms 0 / A / B / C, graded, then
+                       compared. This is the subcommand that answers "does a
+                       stored, loaded lesson make the agent do better work?" —
+                       arm0 alone cannot, because that answer is a DIFFERENCE
+                       between two arms. B-organic is SKIPPED (with a stated
+                       reason) unless --lesson-file supplies the lesson the loop
+                       would have saved; it is never substituted with the
+                       canonical one.
+  variants             Which FRAMING of one fact teaches best, and what does it
+                       cost? Crosses the lesson ladder (rule-only … padded)
+                       against an ON-TARGET task and an OFF-TARGET one, so a
+                       wording is charged for the neighbouring tasks it
+                       misdirects and not only credited for the one it helps.
+                       Reports a net lift and a tokens-per-point cost. This is
+                       the expensive subcommand: (variants x tasks + tasks) x
+                       reps model calls — 60 at the defaults. Narrow it with
+                       --variant, or halve it with --skip-off-target (which
+                       gives up the net number, not just some detail).
   arm0                 The golden task against an empty store, then graded.
   preflight            One throwaway model call in a prepared sandbox, then
                        report what the session actually loaded. Exits non-zero
@@ -61,6 +117,18 @@ Options:
   --out <dir>          Artifact directory (default ./.eval-out).
   --timeout <ms>       Hard wall-clock ceiling per attempt (default ${DEFAULT_TIMEOUT_MS}).
   --command <bin>      Agent binary (default "claude"; override for smoke tests).
+  --model <id>         Model under test (default ${MODEL_UNDER_TEST}). Changing
+                       it mid-batch makes the arms incomparable; prefer a new run.
+  --permission-mode <m> Passed to claude (default bypassPermissions). The CLI
+                       REFUSES bypassPermissions under root/sudo, so container
+                       runs (CI, Docker, cloud sandboxes) need e.g. acceptEdits.
+  --lesson-file <path> golden: the organic lesson, read from a file. Without it
+                       (or --lesson) the B-organic arm is skipped, never faked.
+  --variant <id>       variants: run only these rows (repeatable). Known ids:
+                       ${VARIANT_IDS.join(", ")}.
+  --skip-off-target    variants: run the on-target task only. Halves the cost
+                       and gives up the NET value — the resulting lifts cannot
+                       see what a framing costs on tasks it is not about.
   --seed <source>      probe: empty | canonical | organic (default canonical).
                        arm0 always runs against an EMPTY store and REFUSES this
                        flag rather than ignoring it.
@@ -79,25 +147,50 @@ Options:
                        rather than reporting it as a model result.
   --keep               Leave each sandbox on disk for inspection.
   --dry-run            Build and print the plan without spawning the agent.
+  --skip-if-unavailable
+                       Exit 0 with a "skipped" report when a live run cannot
+                       start (no agent binary, no credential, or a permission
+                       mode the CLI would refuse) instead of failing. For CI:
+                       a fork PR and a repository without the secret must not
+                       go red for a reason unrelated to the change. Locally,
+                       leave it off — a silent exit 0 tells you nothing.
   -h, --help           Show this help.
 `;
 
 export function parseArgs(argv) {
-  const [subcommand, ...rest] = argv;
+  const [first, ...tail] = argv;
+  // `--help` in the FIRST position is a request for help, not a subcommand
+  // named "--help". Reading it as one printed the usage and exited 2, which is
+  // the code a caller uses to detect a mistake — so a script that ran
+  // `run-eval.mjs --help` to show its own users the options failed on it.
+  const askedForHelp = first === "-h" || first === "--help";
+  const rest = tail;
   const options = {
-    subcommand: subcommand || null,
+    subcommand: askedForHelp ? null : first || null,
+    help: askedForHelp,
     reps: 3,
     out: ".eval-out",
     timeoutMs: DEFAULT_TIMEOUT_MS,
-    command: "claude",
+    command: DEFAULT_AGENT_COMMAND,
+    model: MODEL_UNDER_TEST,
+    // `bypassPermissions` is the right default for a throwaway sandbox, but the
+    // CLI REFUSES it under root/sudo — so every container run (CI, Docker, a
+    // cloud sandbox) died with an empty transcript until this became settable.
+    permissionMode: DEFAULT_PERMISSION_MODE,
     seed: "canonical",
     lesson: null,
+    lessonFile: null,
+    // Repeatable, and EMPTY means "every variant" — an explicit list is a
+    // narrowing, so the difference between "asked for none" and "asked for all"
+    // never has to be inferred from a sentinel.
+    variants: [],
+    skipOffTarget: false,
     scope: null,
     scopeMode: "branch",
     git: null,
     keep: false,
     dryRun: false,
-    help: false,
+    skipIfUnavailable: false,
     // Which flags the caller actually TYPED. Several options have meaningful
     // defaults, so a subcommand that cannot honour one has no other way to tell
     // "left at the default" apart from "asked for, and about to be ignored".
@@ -118,6 +211,21 @@ export function parseArgs(argv) {
         break;
       case "--command":
         options.command = rest[++i];
+        break;
+      case "--model":
+        options.model = rest[++i];
+        break;
+      case "--permission-mode":
+        options.permissionMode = rest[++i];
+        break;
+      case "--lesson-file":
+        options.lessonFile = rest[++i];
+        break;
+      case "--variant":
+        options.variants.push(rest[++i]);
+        break;
+      case "--skip-off-target":
+        options.skipOffTarget = true;
         break;
       case "--seed":
         options.seed = rest[++i];
@@ -143,6 +251,9 @@ export function parseArgs(argv) {
       case "--dry-run":
         options.dryRun = true;
         break;
+      case "--skip-if-unavailable":
+        options.skipIfUnavailable = true;
+        break;
       case "-h":
       case "--help":
         options.help = true;
@@ -157,6 +268,27 @@ export function parseArgs(argv) {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error(
       `--timeout must be a positive number of ms, got ${options.timeoutMs}`,
+    );
+  }
+  // Both are passed straight to `claude`, so an empty value would build an argv
+  // with a dangling flag and fail in a way that reads as a model problem.
+  for (const [flag, value] of [
+    ["--model", options.model],
+    ["--permission-mode", options.permissionMode],
+  ]) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error(`${flag} requires a non-empty value`);
+    }
+  }
+  // A `--variant` with no value pushes `undefined` and would reach the row
+  // loop as a cell whose id renders "undefined-branch-scope" — a run that costs
+  // real calls and produces an unreadable artifact.
+  if (options.variants.some((v) => typeof v !== "string" || v.trim() === "")) {
+    throw new Error("--variant requires a non-empty variant id");
+  }
+  if (options.lesson && options.lessonFile) {
+    throw new Error(
+      "--lesson and --lesson-file both supply the organic lesson; pass one.",
     );
   }
   if (!SEED_SOURCES.includes(options.seed)) {
@@ -204,6 +336,476 @@ function refuseUnhonourableFlags(options, flags, because, hint = "") {
   );
 }
 
+/**
+ * The agent-level overrides a subcommand must forward on EVERY call.
+ *
+ * Assembled once rather than spread by hand at each call site, for the same
+ * reason `prepareArm` assembles an arm's world in one place: a flag honoured in
+ * three of four call sites is worse than one honoured nowhere, because the
+ * inconsistency is invisible in the result.
+ */
+function agentOverrides(options) {
+  return { model: options.model, permissionMode: options.permissionMode };
+}
+
+/** Read the operator-supplied organic lesson, from either affordance. */
+async function readOrganicLesson(options) {
+  if (options.lesson) return options.lesson;
+  if (options.lessonFile) {
+    const text = await fsp.readFile(path.resolve(options.lessonFile), "utf8");
+    if (text.trim() === "") {
+      throw new Error(`--lesson-file ${options.lessonFile} is empty`);
+    }
+    return text.trim();
+  }
+  return null;
+}
+
+/**
+ * Run ONE repetition of one arm: build its world, spawn the agent, verify the
+ * information environment, grade the store, and classify retrieval.
+ *
+ * Every arm goes through this one function. That is the experimental control —
+ * arms that are prepared and graded by separate code paths drift apart in some
+ * detail nobody is watching, and the difference between them stops meaning what
+ * the report says it means.
+ */
+async function runRep({
+  arm,
+  options,
+  sandbox,
+  repDir,
+  task,
+  prompt,
+  lesson,
+  lessonKey = null,
+  // Where the lesson is SEEDED, when that is not the scope being graded.
+  //
+  // golden leaves this null: seeding at the graded target IS arm B's
+  // definition, and a mismatch there could only score a failure. The variant
+  // experiment must separate the two — it runs one lesson against two tasks
+  // with two different targets, so the lesson is seeded once at `global` and
+  // the grading target comes from the task. Keeping the override explicit
+  // means golden's guard is unchanged rather than loosened for everyone.
+  seedScope = null,
+  seedScopeMode = null,
+  git = undefined,
+}) {
+  const prepared = await prepareArm(sandbox, {
+    seed: arm.seed,
+    lesson,
+    lessonKey,
+    scopeMode: seedScopeMode || options.scopeMode,
+    scope: seedScope || options.scope,
+    git: git === undefined ? options.git : git,
+    allowWrite: arm.allowWrite,
+  });
+  const expectedScope = seedScope || task.targetScope;
+  if (prepared.targetScope !== expectedScope) {
+    throw new Error(
+      `this run seeds at ${expectedScope}, but the scope options resolved to ` +
+        `${prepared.targetScope}; a run with this combination could only ` +
+        `score a failure.`,
+    );
+  }
+  await fsp.mkdir(repDir, { recursive: true });
+
+  // Wall-clock bounds for the rep, so an exported trace has REAL timestamps
+  // rather than a synthetic waterfall. `wallMs` alone gives a duration but no
+  // position, and a span placed by guesswork is worse than none: it reads as
+  // evidence about when the model ran.
+  const startedAt = new Date().toISOString();
+  const run = await runAgent({
+    prompt,
+    cwd: sandbox.cwd,
+    env: sandbox.childEnv(),
+    transcriptPath: path.join(repDir, "transcript.jsonl"),
+    command: options.command,
+    timeoutMs: options.timeoutMs,
+    ...prepared.agentOptions,
+    ...agentOverrides(options),
+  });
+
+  const environment = assertCleanEnvironment(summarizeEnvironment(run), {
+    sandboxRoot: sandbox.root,
+    expectedHooks: prepared.hookInstall ? 1 : 0,
+  });
+  // Grade BEFORE teardown — the store is the evidence.
+  const graded = await gradeSandbox(sandbox, {
+    transcriptText: run.transcriptText,
+    target: task.targetScope,
+  });
+
+  // Retrieval is only a question for a SEEDED arm. Asking it of arm A would
+  // report `absent` — the harness-fault state — for an arm whose empty store is
+  // the entire point, and `isUsable` would then discard every control rep.
+  const seededKey = prepared.seeded.seeded[0]
+    ? prepared.seeded.seeded[0].key
+    : null;
+  let retrieval = null;
+  if (seededKey) {
+    const injection = await readInjectedLessons(sandbox);
+    const stored = await listAll(sandbox, [
+      ...new Set([...prepared.derived.readOrder, prepared.targetScope]),
+    ]);
+    retrieval = classifyRetrieval({
+      injection,
+      storeEntries: stored,
+      key: seededKey,
+    });
+  }
+
+  if (run.stderr) {
+    await fsp.writeFile(path.join(repDir, "stderr.log"), run.stderr);
+  }
+  await fsp.writeFile(
+    path.join(repDir, "grade.json"),
+    JSON.stringify(graded, null, 2),
+  );
+  await fsp.writeFile(
+    path.join(repDir, "environment.json"),
+    JSON.stringify(environment, null, 2),
+  );
+
+  return {
+    run,
+    prepared,
+    record: {
+      arm: arm.id,
+      seed: arm.seed,
+      task: task.id,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      model: options.model,
+      targetScope: task.targetScope,
+      ...run.summary,
+      success: graded.success,
+      score: graded.score,
+      repeatedMistake: graded.repeatedMistake,
+      mistakes: graded.mistakes,
+      storedScopes: graded.storedScopes,
+      attemptedScopes: graded.attemptedScopes,
+      retrieval,
+      environmentClean: environment.clean,
+      environmentFindings: environment.findings.map((f) => f.kind),
+      discarded: !environment.clean,
+      wallMs: run.wallMs,
+      exitCode: run.exitCode,
+      timedOut: run.timedOut,
+    },
+  };
+}
+
+/**
+ * What a run actually cost, summed across its groups.
+ *
+ * Reported so a CI job that spends real money says how much, in the artifact
+ * rather than only in a billing dashboard a month later. `null` when nothing
+ * was billed (a dry run, or a skipped one) — never `0`, which would read as
+ * "this was free".
+ */
+function totalCostUsd(summaries) {
+  const billed = summaries.filter((s) => typeof s.costUsd === "number");
+  return billed.length > 0
+    ? billed.reduce((sum, s) => sum + s.costUsd, 0)
+    : null;
+}
+
+// Stands in for arm 0's transcript under `--dry-run`, where no arm 0 ran. It
+// is only ever tested for truthiness (`Boolean(priorDigest)`); the arm loop
+// skips `armCPrompt` under `--dry-run`, so it can never reach a model.
+const DRY_RUN_DIGEST = "(dry-run: arm 0 was planned, not run)";
+
+/**
+ * The golden experiment. Arms 0 / A / B / C, then the comparison.
+ *
+ * Arm 0 runs FIRST and alone, because two later arms are built from what it
+ * produced: arm C re-reads its transcript, and the organic lesson is the
+ * wording a real loop would have saved after it. The remaining arms are
+ * independent of each other and differ only in their store.
+ */
+async function runGolden(options) {
+  // Each arm's seed is part of the experiment's definition, not a knob: a
+  // `--seed canonical` that silently applied to every arm would make arm A a
+  // second arm B and report a lift of zero as a finding about memory.
+  refuseUnhonourableFlags(
+    options,
+    ["--seed"],
+    "golden defines each arm's own store",
+    "the organic lesson goes in --lesson-file",
+  );
+  requireRunnable(options);
+
+  const id = runId();
+  const outDir = path.resolve(options.out, `golden-${id}`);
+  const task = taskById("branch-scope");
+  const organicLesson = await readOrganicLesson(options);
+
+  await fsp.mkdir(outDir, { recursive: true });
+
+  const perArm = new Map();
+  let priorDigest = "";
+
+  // Arm 0 first — it is the only source of the prior transcript.
+  const armsToRun = [armById(ARM_0)];
+  for (let rep = 1; rep <= options.reps; rep++) {
+    const sandbox = await createSandbox({ keep: options.keep });
+    try {
+      const repDir = path.join(outDir, `arm-${ARM_0}`, `rep-${rep}`);
+      if (options.dryRun) {
+        perArm.set(ARM_0, [
+          ...(perArm.get(ARM_0) || []),
+          { arm: ARM_0, rep, dryRun: true },
+        ]);
+        // A dry run PLANS; it does not spend. A live arm 0 would have produced
+        // a transcript right here, so the plan has to show arm C running —
+        // otherwise the free offline tier reports arm C skipped for a reason
+        // ("arm 0 produced no transcript") that is an artefact of the dry run
+        // rather than a fact about the arms, and the one tier that costs
+        // nothing structurally cannot exercise arm C's wiring.
+        //
+        // Safe as a sentinel: the arm loop below `continue`s past `armCPrompt`
+        // under `--dry-run`, so this value is only ever read through
+        // `Boolean(priorDigest)` and never reaches a prompt.
+        if (!priorDigest) priorDigest = DRY_RUN_DIGEST;
+        continue;
+      }
+      const { run, record } = await runRep({
+        arm: armsToRun[0],
+        options,
+        sandbox,
+        repDir,
+        task,
+        prompt: task.prompt(),
+        lesson: null,
+      });
+      perArm.set(ARM_0, [...(perArm.get(ARM_0) || []), { rep, ...record }]);
+      // Keep the FIRST arm-0 transcript as arm C's material: arm C must read
+      // one attempt, and averaging or concatenating several would give it
+      // strictly more information than the single retry the arms model.
+      if (!priorDigest) priorDigest = transcriptDigest(run.transcriptText);
+    } finally {
+      await sandbox.dispose();
+    }
+  }
+
+  const { run: plannedArms, skipped } = armPlan({
+    organicLesson: Boolean(organicLesson),
+    priorTranscript: Boolean(priorDigest),
+  });
+
+  for (const arm of plannedArms) {
+    if (arm.id === ARM_0) continue;
+    for (let rep = 1; rep <= options.reps; rep++) {
+      const sandbox = await createSandbox({ keep: options.keep });
+      try {
+        const repDir = path.join(outDir, `arm-${arm.id}`, `rep-${rep}`);
+        if (options.dryRun) {
+          perArm.set(arm.id, [
+            ...(perArm.get(arm.id) || []),
+            { arm: arm.id, rep, dryRun: true },
+          ]);
+          continue;
+        }
+        const prompt =
+          arm.id === ARM_C
+            ? armCPrompt(task.prompt(), priorDigest)
+            : task.prompt();
+        const { record } = await runRep({
+          arm,
+          options,
+          sandbox,
+          repDir,
+          task,
+          prompt,
+          lesson: arm.seed === "organic" ? organicLesson : null,
+        });
+        perArm.set(arm.id, [...(perArm.get(arm.id) || []), { rep, ...record }]);
+      } finally {
+        await sandbox.dispose();
+      }
+    }
+  }
+
+  const summaries = [...perArm.entries()].map(([armId, reps]) =>
+    summarizeArm(armId, reps),
+  );
+  const comparisons = compareArms(summaries);
+
+  const summary = {
+    subcommand: "golden",
+    runId: id,
+    model: options.model,
+    repsRequested: options.reps,
+    caveat:
+      `N=${options.reps} per arm is a low-power INDICATOR, not proof. ` +
+      `Treat every difference as directional; widening N — not reinterpreting ` +
+      `these reps — is the way to a stronger claim.`,
+    costUsd: totalCostUsd(summaries),
+    skippedArms: skipped,
+    arms: summaries,
+    comparisons,
+    readable: comparisons.map(describeComparison),
+    results: Object.fromEntries(perArm),
+  };
+  await fsp.writeFile(
+    path.join(outDir, "summary.json"),
+    JSON.stringify(summary, null, 2),
+  );
+  return { outDir, summary };
+}
+
+/**
+ * The variant experiment: which FRAMING of one fact teaches best, and at what
+ * cost in context?
+ *
+ * Structure — a full crossing of variants × tasks, plus one shared control per
+ * task. Every treatment cell seeds ONE lesson at `global`, so the lesson
+ * reaches both tasks by the same delivery path and the only thing that differs
+ * between two cells in a row is the task, and between two rows is the wording.
+ *
+ * The control is run ONCE PER TASK and reused across every variant, rather than
+ * once per cell. Both readings are defensible; this one buys reps for the arms
+ * that actually differ, and it is stated here because a reader comparing two
+ * variants is comparing them against the SAME baseline draw, which makes the
+ * between-variant differences cleaner than the absolute lifts.
+ */
+async function runVariants(options) {
+  refuseUnhonourableFlags(
+    options,
+    ["--seed", "--scope", "--scope-mode", "--lesson", "--lesson-file"],
+    "variants defines its own store, scope and lesson text",
+    "pick rows with --variant <id> instead",
+  );
+  requireRunnable(options);
+
+  // De-duped: cells are keyed by variant id, so a repeated `--variant full`
+  // would push two runs into ONE cell — doubling that row's `usableReps` and
+  // the spend behind it while every other row kept `--reps` — and emit the
+  // variant twice in the ranking.
+  const requested =
+    options.variants.length > 0
+      ? [...new Set(options.variants)]
+      : VARIANT_IDS;
+  for (const id of requested) variantById(id); // refuse an unknown id up front
+
+  const id = runId();
+  const outDir = path.resolve(options.out, `variants-${id}`);
+  const tasks = [taskById("branch-scope")];
+  if (!options.skipOffTarget) tasks.push(taskById("repo-scope"));
+  // Cells are KEYED by `task.id`, so the read-back below must derive its ids
+  // from the same objects rather than repeating the literals. Spelling them
+  // twice meant renaming a task silently produced empty cells — every score
+  // `comparable: false` across a 60-call run, with nothing failing loudly.
+  const onTargetTask = tasks.find((t) => t.role === "on-target");
+  const offTargetTask = tasks.find((t) => t.role === "off-target");
+  await fsp.mkdir(outDir, { recursive: true });
+
+  // One lesson, one delivery path, two tasks. `global` is injected in any
+  // directory, so seeding there holds scope RESOLUTION fixed and leaves the
+  // wording as the only variable — retrieval already has its own experiment.
+  const seeding = { seedScope: "global", seedScopeMode: "global", git: true };
+  const baselineArm = armById(ARM_A);
+  const treatmentArm = { id: "B-variant", seed: "organic", allowWrite: false };
+
+  const cells = new Map(); // `${cellId}` -> reps[]
+  const push = (cellId, rep) =>
+    cells.set(cellId, [...(cells.get(cellId) || []), rep]);
+
+  const runCell = async ({ cellId, arm, task, variant }) => {
+    for (let rep = 1; rep <= options.reps; rep++) {
+      const sandbox = await createSandbox({ keep: options.keep });
+      try {
+        const repDir = path.join(outDir, cellId, `rep-${rep}`);
+        if (options.dryRun) {
+          push(cellId, { cell: cellId, rep, dryRun: true });
+          continue;
+        }
+        const { record } = await runRep({
+          arm,
+          options,
+          sandbox,
+          repDir,
+          task,
+          prompt: task.prompt(),
+          lesson: variant ? variant.body : null,
+          lessonKey: variant ? variant.key : null,
+          ...seeding,
+        });
+        push(cellId, { rep, variant: variant ? variant.id : null, ...record });
+      } finally {
+        await sandbox.dispose();
+      }
+    }
+  };
+
+  // Controls first: every variant is scored against them, so a run that dies
+  // partway through still has the denominator for whatever finished.
+  for (const task of tasks) {
+    await runCell({ cellId: `baseline-${task.id}`, arm: baselineArm, task });
+  }
+  const rendered = requested.map(renderVariant);
+  for (const variant of rendered) {
+    for (const task of tasks) {
+      await runCell({
+        cellId: `${variant.id}-${task.id}`,
+        arm: treatmentArm,
+        task,
+        variant,
+      });
+    }
+  }
+
+  const cell = (cellId) => summarizeCell(cellId, cells.get(cellId) || []);
+  const offTargetRun = !options.skipOffTarget;
+  const scored = rendered.map((variant) =>
+    scoreVariant({
+      variant,
+      onTarget: cell(`${variant.id}-${onTargetTask.id}`),
+      offTarget: offTargetRun ? cell(`${variant.id}-${offTargetTask.id}`) : null,
+      baselineOnTarget: cell(`baseline-${onTargetTask.id}`),
+      baselineOffTarget: offTargetRun
+        ? cell(`baseline-${offTargetTask.id}`)
+        : null,
+    }),
+  );
+  const ranked = rankVariants(scored);
+
+  const summary = {
+    subcommand: "variants",
+    runId: id,
+    model: options.model,
+    repsRequested: options.reps,
+    offTargetRun,
+    costUsd: totalCostUsd([...cells.keys()].map((cellId) => cell(cellId))),
+    caveat:
+      `N=${options.reps} per cell is a low-power INDICATOR, not proof. ` +
+      `A ranking at this N orders the variants; it does not establish that ` +
+      `the top row beats the second. Widening N — not reinterpreting these ` +
+      `reps — is the way to a stronger claim.` +
+      (offTargetRun
+        ? ""
+        : ` The off-target task was SKIPPED, so no net value was computed: ` +
+          `these are on-target lifts only, and a framing that misdirects ` +
+          `other tasks looks free here.`),
+    variants: rendered.map(({ body, ...meta }) => ({
+      ...meta,
+      bodyChars: body.length,
+    })),
+    cells: Object.fromEntries(
+      [...cells.keys()].map((cellId) => [cellId, cell(cellId)]),
+    ),
+    ranked,
+    readable: ranked.map(describeVariant),
+    results: Object.fromEntries(cells),
+  };
+  await fsp.writeFile(
+    path.join(outDir, "summary.json"),
+    JSON.stringify(summary, null, 2),
+  );
+  return { outDir, summary };
+}
+
 async function runArm0(options) {
   // Arm 0 is the empty-store arm by definition — its job is to produce the
   // organic lesson the seeded arms are later given — so it cannot honour a seed.
@@ -213,6 +815,7 @@ async function runArm0(options) {
     "arm0 always runs against an EMPTY store",
     'or use the "probe" subcommand, which seeds',
   );
+  requireRunnable(options);
 
   const id = runId();
   const outDir = path.resolve(options.out, `arm0-${id}`);
@@ -259,7 +862,11 @@ async function runArm0(options) {
         rep,
         arm: "0",
         task: task.id,
-        model: MODEL_UNDER_TEST,
+        // The model that will actually be SPAWNED, not the default. These must
+        // be the same value: `agentOverrides` passes `options.model` to the
+        // child, so recording the constant made `arm0 --model X` run X and
+        // report the default — a lie that now reaches `lorekit.eval.model`.
+        model: options.model,
         store: "empty",
         targetScope: task.targetScope,
         scopeMode: arm.scopeMode,
@@ -279,6 +886,7 @@ async function runArm0(options) {
           command: options.command,
           timeoutMs: options.timeoutMs,
           ...arm.agentOptions,
+          ...agentOverrides(options),
         });
         // What the session really loaded. A rep that ran with the developer's
         // skills or plugins in context is not a data point — the lorekit-memory
@@ -320,6 +928,7 @@ async function runArm0(options) {
           // A contaminated rep is DISCARDED, not counted as a failure — the
           // same rule `retrieval.mjs` applies to a harness fault.
           discarded: !environment.clean,
+          finishedAt: new Date().toISOString(),
           wallMs: run.wallMs,
           exitCode: run.exitCode,
           timedOut: run.timedOut,
@@ -338,7 +947,7 @@ async function runArm0(options) {
   const summary = {
     subcommand: "arm0",
     runId: id,
-    model: MODEL_UNDER_TEST,
+    model: options.model,
     reps: options.reps,
     // Restated in every artifact on purpose: whoever reads a result file months
     // from now must see the caveat without going back to the README.
@@ -393,6 +1002,7 @@ async function runPreflight(options) {
     ],
     "preflight is a single call in a fixed empty-store arm, it writes no run directory, and the model call IS the check",
   );
+  requireRunnable(options);
 
   const sandbox = await createSandbox({ keep: options.keep });
   try {
@@ -405,6 +1015,7 @@ async function runPreflight(options) {
       command: options.command,
       timeoutMs: options.timeoutMs,
       ...arm.agentOptions,
+      ...agentOverrides(options),
     });
     const verdict = assertCleanEnvironment(summarizeEnvironment(run), {
       sandboxRoot: sandbox.root,
@@ -418,6 +1029,19 @@ async function runPreflight(options) {
       findings: verdict.findings,
       environment: verdict.summary,
       costUsd: run.summary.costUsd,
+      // The agent's OWN failure, surfaced rather than left on the floor.
+      //
+      // `no-init-event` describes the symptom (nothing came back) and says
+      // nothing about the cause, so a run that died before it started — a
+      // rejected flag, an unservable model pin, a missing binary — reported as
+      // an unverifiable environment and sent the reader to look at hooks and
+      // plugins. The one line `claude` wrote to stderr names the real cause
+      // ("--dangerously-skip-permissions cannot be used with root/sudo"), and
+      // `arm0` was already writing it to `stderr.log` while preflight, the
+      // subcommand whose whole job is to diagnose, discarded it.
+      exitCode: run.exitCode,
+      timedOut: run.timedOut,
+      stderr: run.stderr ? run.stderr.trim() : null,
       argv: run.argv,
     };
   } finally {
@@ -481,12 +1105,88 @@ async function runProbe(options) {
   }
 }
 
+/** Thrown by `requireRunnable`; `main` turns it into a refusal or a skip. */
+class RunUnavailable extends Error {
+  constructor(assessment) {
+    super(describeRunnability(assessment));
+    this.name = "RunUnavailable";
+    this.assessment = assessment;
+  }
+}
+
+/**
+ * Refuse to start a subcommand that spawns a model when it cannot.
+ *
+ * Called by each live subcommand as its SECOND statement, immediately after its
+ * own `refuseUnhonourableFlags`. The order is load-bearing in both directions:
+ *
+ *   • A flag this subcommand cannot honour is a caller error, true in every
+ *     environment, and its message is the actionable one — reporting "no
+ *     credential" to someone who typed `preflight --scope-mode repo` sends them
+ *     to add a secret that will not fix anything.
+ *   • Worse under `--skip-if-unavailable`, which CI always passes: gating first
+ *     would turn a malformed invocation into exit 0 and a "skipped" report, so
+ *     a workflow could ship a wrong flag combination and stay green forever.
+ *
+ * `probe` never calls this — it seeds, installs the hook and reads what was
+ * injected without an agent, so it is the one diagnostic that stays useful on a
+ * machine with no credential at all. `--dry-run` is exempt for the same reason:
+ * refusing to print a plan because there is no credential would break the one
+ * affordance that works everywhere.
+ */
+function requireRunnable(options) {
+  if (options.dryRun) return;
+  const assessment = assessRunnability({
+    command: options.command,
+    permissionMode: options.permissionMode,
+  });
+  if (!assessment.runnable) throw new RunUnavailable(assessment);
+}
+
+/** Report an unstartable run: exit 0 with a stated reason, or refuse. */
+function reportUnavailable(options, assessment) {
+  if (!options.skipIfUnavailable) {
+    throw new Error(
+      `${describeRunnability(assessment)}\n\nPass --skip-if-unavailable to ` +
+        `exit 0 with a skipped report instead (that is what CI does).`,
+    );
+  }
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        subcommand: options.subcommand,
+        skipped: true,
+        // The reason travels IN the artifact. A skipped CI job whose reason
+        // lives only in a log line reads, months later, as a run that passed.
+        reasons: assessment.reasons,
+        readable: describeRunnability(assessment),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return 0;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.help || !options.subcommand) {
     process.stdout.write(USAGE);
     return 0;
   }
+  // Each live subcommand decides for itself that it can start, AFTER refusing
+  // any flag it cannot honour (see `requireRunnable`). Catching the verdict
+  // here rather than pre-checking it keeps that order and keeps the skip
+  // report in one place.
+  try {
+    return await dispatch(options);
+  } catch (err) {
+    if (!(err instanceof RunUnavailable)) throw err;
+    return reportUnavailable(options, err.assessment);
+  }
+}
+
+async function dispatch(options) {
   if (options.subcommand === "preflight") {
     const result = await runPreflight(options);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -495,6 +1195,20 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.subcommand === "probe") {
     const result = await runProbe(options);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  if (options.subcommand === "golden") {
+    const { outDir, summary } = await runGolden(options);
+    process.stdout.write(
+      `${JSON.stringify(summary, null, 2)}\n\nartifacts: ${outDir}\n`,
+    );
+    return 0;
+  }
+  if (options.subcommand === "variants") {
+    const { outDir, summary } = await runVariants(options);
+    process.stdout.write(
+      `${JSON.stringify(summary, null, 2)}\n\nartifacts: ${outDir}\n`,
+    );
     return 0;
   }
   if (options.subcommand !== "arm0") {

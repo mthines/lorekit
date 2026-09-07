@@ -58,8 +58,23 @@ test("runId is filesystem-safe and sortable", () => {
 });
 
 test("an unimplemented subcommand exits non-zero instead of pretending", async () => {
-  const code = await main(["golden"]);
+  // `golden` used to be the example here and is now implemented; `scale` and
+  // `review` are the remaining stubs. The assertion is about the REFUSAL, not
+  // about which subcommand happens to be missing, so it moves to a live stub
+  // rather than being deleted with the one that shipped.
+  const code = await main(["scale"]);
   assert.equal(code, 2);
+});
+
+test("--help in the first position is help, not an unknown subcommand", async () => {
+  // It used to parse as a subcommand named "--help", print the usage and exit
+  // 2 — the code a caller reads as "you made a mistake". Exit 0 is the whole
+  // assertion; the usage text was always printed.
+  for (const argv of [["--help"], ["-h"], []]) {
+    assert.equal(await main(argv), 0, `argv: ${JSON.stringify(argv)}`);
+  }
+  // Still honoured after a subcommand, which always worked.
+  assert.equal(await main(["arm0", "--help"]), 0);
 });
 
 test("arm0 refuses a seed flag instead of silently running an empty store", async () => {
@@ -214,7 +229,7 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
       await fsp.readFile(path.join(out, runDir, "summary.json"), "utf8"),
     );
     assert.equal(summary.subcommand, "arm0");
-    assert.equal(summary.model, "claude-opus-4-8");
+    assert.equal(summary.model, "claude-opus-5");
     assert.equal(summary.results.length, 2);
     // The low-power caveat travels with the data, not just the README (AC-1.5).
     assert.match(summary.caveat, /INDICATOR/);
@@ -230,7 +245,7 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
       assert.equal(meta.rep, rep);
       assert.equal(meta.arm, "0");
       assert.equal(meta.store, "empty");
-      assert.equal(meta.model, "claude-opus-4-8");
+      assert.equal(meta.model, "claude-opus-5");
       // The artifact records WHICH task and WHICH target it was graded against,
       // so a result file read later cannot be misattributed to another task.
       assert.equal(meta.task, "branch-scope");
@@ -241,6 +256,72 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
 
     const homes = summary.results.map((r) => r.lorekitHome);
     assert.notEqual(homes[0], homes[1]);
+  } finally {
+    await fsp.rm(out, { recursive: true, force: true });
+  }
+});
+
+// ── The runnability gate: where it sits, and what it may swallow ─────────────
+//
+// Both tests force unrunnability with `--command <nonexistent>` rather than by
+// unsetting a credential: the resolver reports "not on PATH" on any machine, so
+// neither test can wander onto the live path and spend a model call on a
+// developer box that happens to be fully configured.
+const UNRUNNABLE = ["--command", "/nonexistent/no-such-agent"];
+
+test("an unhonourable flag is refused even when the run could not have started", async () => {
+  // The ordering that matters most under `--skip-if-unavailable`, which CI
+  // always passes: if the gate ran first, a workflow that names a flag the
+  // subcommand cannot honour would exit 0 with a "skipped" report and stay
+  // green forever, having never run and never said the invocation was wrong.
+  await assert.rejects(
+    () =>
+      main([
+        "golden",
+        ...UNRUNNABLE,
+        "--skip-if-unavailable",
+        "--seed",
+        "canonical",
+      ]),
+    /--seed cannot be honoured here/,
+  );
+});
+
+test("an unstartable run refuses by default and skips only when asked", async () => {
+  const out = await fsp.mkdtemp(path.join(os.tmpdir(), "eval-gate-"));
+  try {
+    // Locally, silence is useless: name what is missing.
+    await assert.rejects(
+      () => main(["golden", ...UNRUNNABLE, "--out", out]),
+      /not on PATH/,
+    );
+
+    // In CI, a fork PR or a repo without the secret must not go red for a
+    // reason unrelated to the change — but the reason travels in the report,
+    // so a skipped job cannot later be misread as a run that passed.
+    const written = [];
+    const original = process.stdout.write;
+    process.stdout.write = (chunk) => (written.push(String(chunk)), true);
+    let code;
+    try {
+      code = await main([
+        "golden",
+        ...UNRUNNABLE,
+        "--skip-if-unavailable",
+        "--out",
+        out,
+      ]);
+    } finally {
+      process.stdout.write = original;
+    }
+    assert.equal(code, 0);
+    const report = JSON.parse(written.join(""));
+    assert.equal(report.subcommand, "golden");
+    assert.equal(report.skipped, true);
+    assert.ok(report.reasons.length > 0);
+    assert.match(report.readable, /not on PATH/);
+    // Nothing was built: the gate is above the sandbox, as the refusals are.
+    assert.deepEqual(await fsp.readdir(out), []);
   } finally {
     await fsp.rm(out, { recursive: true, force: true });
   }

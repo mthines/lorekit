@@ -13,22 +13,37 @@ the mock.
 > it tells you where to look, not what is true. Widening N, not reinterpreting
 > the same three runs, is the way to a stronger claim.
 
-> **Nothing here gates anything.** These evals are never run in CI and never run
-> from `node --test`. Live runs are slow, costly and flaky; gating on a signal
-> whose stability has not been established would only teach people to re-run the
-> job until it passes. When the signal is shown to be stable, that is the moment
-> to revisit — as a deliberate decision, not a default.
+> **Nothing here gates anything.** Live runs are slow, costly and flaky; gating
+> on a signal whose stability has not been established would only teach people to
+> re-run the job until it passes. When the signal is shown to be stable, that is
+> the moment to revisit — as a deliberate decision, not a default. The live arms
+> also never run from `node --test`.
+>
+> _Gates nothing_ is not _never runs in CI_: [`.github/workflows/evals.yml`](../../.github/workflows/evals.yml)
+> runs them on a GitHub Actions runner, which is the only clean room available
+> (see [Running in a container](#running-in-a-container-ci-docker-a-cloud-sandbox)).
+> It reports numbers; no job there fails a PR on a lift.
 
 ## Status
 
-PR5 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
-the memory arms, scope control, and the golden task with its deterministic
-grader (PR3); metrics and reporting — precision@k / recall@k / MRR, the
-`ground-truth.mjs` predicate, the BOOTSTRAP seed, the `mine` runbook (PR4); the
-`order=rank` ranked mode in the hosted edge `memory.list` (PR5-A1); the
-**scale/position sweep** (PR5); and the information-environment verification
-that keeps a run from measuring the machine instead of the model. Still to come:
-the code-review domain (PR6).
+Shipped: the package and per-run isolation, the `claude -p` spawner, the memory
+arms, scope control, and the golden task with its deterministic grader (PR3);
+metrics and reporting — precision@k / recall@k / MRR, the `ground-truth.mjs`
+predicate, the `mine` runbook (PR4); the `order=rank` ranked mode in the hosted
+edge `memory.list` (PR5-A1); the **scale/position sweep** (PR5); the
+information-environment verification that keeps a run from measuring the machine
+instead of the model; and the **`golden` subcommand** — arms 0/A/B/C, graded and
+compared, which is the subcommand that actually answers the question in the
+first paragraph; and the **`variants` subcommand** — the lesson-framing ladder
+crossed against an on-target and an off-target task, which answers the question
+after it. Still to come: the code-review domain (PR6), whose
+`src/review-grade.mjs` is referenced below but not yet written.
+
+> **`arm0` alone cannot answer the founding question.** "Does a lesson make the
+> agent do better work" is a DIFFERENCE between two arms; running the no-memory
+> arm on its own measures the task's difficulty, not memory's contribution. That
+> gap is what `golden` closes — before it, `prepareArm` could build arms A/B/C
+> and nothing ever ran them.
 
 ## The golden task
 
@@ -49,7 +64,8 @@ careful about separators is solving an easier task than a real turn presents.
 The target scope never appears in the prompt, and neither does a literal `::`;
 that last one is why the task's key has no `::` in it, which a test caught.
 
-Full statement, rubric and the two stubbed alternates: `fixtures/spec.md`.
+Full statement, rubric, the off-target companion task and the two stubbed
+alternates: `fixtures/spec.md`.
 
 ## Grading
 
@@ -169,6 +185,82 @@ would, and prints the injected index — scope, key and observed position per
 lesson. It is the fastest way to answer "is arm B actually different from arm
 A?" before spending a single token.
 
+## Which framing teaches best — the `variants` axis
+
+`golden` varies the STORE and holds the lesson fixed, so it can answer "does a
+stored lesson help?" and nothing else. `variants` answers the next question:
+given that it helps, **which wording of it helps most, and what does that
+wording cost?**
+
+Two things make the answer meaningful rather than a beauty contest.
+
+**It is an ablation ladder, not a set of rewrites.** Every variant in
+`src/harness/variants.mjs` states the same fact. They differ only in which
+ingredients they carry — trigger, rule, example, anti-example, consequence — and
+in how those are phrased. A row that also knew more would win for an
+uninteresting reason, so a test asserts the reduced rows are strict subsets of
+`full`, that no variant quotes a graded target verbatim (that would measure
+copying), and that `padded` is `full` plus filler that never mentions scope
+syntax.
+
+| Variant            | The one question it asks                                                     |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `rule-only`        | Is the bare rule enough, with no example and no failure mode?                |
+| `rule-example`     | Does one concrete correct example beat the rule alone?                       |
+| `rule-antiexample` | Does naming the wrong forms beat showing the right one?                      |
+| `full`             | What does everything at once achieve, and at what cost?                      |
+| `imperative`       | Do terse ALWAYS/NEVER directives beat the same content stated descriptively? |
+| `narrative`        | Does a first-person account of the failure beat a stated rule?               |
+| `untriggered`      | Does removing the statement of WHEN it applies cost anything?                |
+| `padded`           | Does length alone dilute a lesson whose content is unchanged?                |
+| `full-opaque-key`  | How much of a lesson's effect is carried by its KEY alone?                   |
+
+The key is part of the framing — it is injected with the body and read first —
+so it is held constant across the ladder and varied in exactly one row, which is
+what keeps its effect separable instead of smeared across every result.
+
+**Value is a difference of differences.** Every SessionStart injects the whole
+resolved set, so a lesson that sharpens one task and misdirects a neighbouring
+one can be net-negative however large its on-target lift. Each variant is
+therefore run against **both** tasks in `task.mjs`:
+
+- on-target `branch-scope` — what the lesson is about;
+- off-target `repo-scope` — the same repository, one granularity coarser.
+
+`repo-scope` is a deliberate **neighbour, not a stranger**. It is the situation
+where an over-emphatic branch lesson misfires by writing `branch::…` when
+`repo::…` was asked, and `grade.mjs` already scores exactly that at 60 — a
+second task with no new grader, which is why this axis is cheap. It measures
+OVER-APPLICATION, not the cost of pure irrelevance; a genuinely unrelated task
+would measure that and is not built.
+
+The scoring is biased against the lesson on purpose: off-target **downside is
+charged in full, upside is not credited**, because at these rep counts an
+apparent gain on a task the lesson is not about is far likelier to be noise than
+transfer. `tokensPerPoint` is withheld (`null`, never `Infinity` and never a
+flattering negative) unless there was a net gain to price, and a variant with an
+unmeasured cell is `comparable: false` with every derived number `null` — the
+flattering half of an unfinished measurement is never published on its own.
+
+```bash
+cd packages/evals
+node bin/run-eval.mjs variants --dry-run                      # the plan, no model call
+node bin/run-eval.mjs variants --reps 3                       # 60 calls at the defaults
+node bin/run-eval.mjs variants --reps 3 --variant full --variant rule-only
+node bin/run-eval.mjs variants --reps 3 --skip-off-target     # half the cost, no net value
+```
+
+`--skip-off-target` gives up the net number, not merely some detail: what is
+left is on-target lifts, in which a framing that misdirects other tasks looks
+free. The run's own `caveat` says so.
+
+Two things it deliberately does not do. It runs **one control per task**, reused
+across every variant, which buys reps for the arms that actually differ and
+means between-variant comparisons share a baseline draw. And it seeds every
+variant at `global` — one lesson, one delivery path, both tasks — so scope
+resolution is held fixed and the wording is the only variable; retrieval has its
+own experiment and its own classifier.
+
 ## Running
 
 ```bash
@@ -181,10 +273,23 @@ Live runs are manual and spend real tokens:
 
 ```bash
 cd packages/evals
-node bin/run-eval.mjs arm0 --dry-run          # plan + artifact tree, no model call
+node bin/run-eval.mjs golden --dry-run        # the arm plan, no model call
 node bin/run-eval.mjs preflight               # one call; is the environment clean?
 node bin/run-eval.mjs arm0 --reps 1 --out ./.eval-out
+node bin/run-eval.mjs golden --reps 3 --lesson-file ./organic.md
+node bin/run-eval.mjs variants --reps 3        # which FRAMING, and what it costs
 ```
+
+`golden` is the whole experiment. It runs arm 0 first (it is the only source of
+arm C's transcript), then A, B and C, grades every rep, and writes a
+`comparisons[]` block giving each treatment arm's success-rate difference
+against arm A. `--lesson-file` supplies the organic lesson; **without it the
+B-organic arm is skipped with a stated reason and never substituted with the
+canonical one**, which would report a curated lesson as the agent's own wording.
+
+A comparison whose either side has zero usable reps is marked
+`comparable: false` and carries **no lift at all** — not `0`, which reads as
+"memory made no difference" when the truth is "nothing was measured".
 
 Requires the `claude` CLI on `PATH` and an authenticated Claude Code install.
 Run `preflight` first — it exits non-zero when the session loaded skills,
@@ -197,19 +302,113 @@ a well-equipped machine cost $1.13 to say one word. `preflight` reports its own
 `costUsd`, which is the honest per-rep floor to plan a batch against. Start at
 `--reps 1` when validating plumbing.
 
-| Flag              | Meaning                                                  |
-| ----------------- | -------------------------------------------------------- |
-| `--reps <n>`      | Repetitions per arm (default 3).                         |
-| `--out <dir>`     | Artifact root (default `./.eval-out`).                   |
-| `--timeout <ms>`  | Hard wall-clock ceiling per attempt.                     |
-| `--command <bin>` | Agent binary; override to substitute a stand-in.         |
-| `--keep`          | Leave each sandbox on disk for inspection.               |
-| `--dry-run`       | Build the plan and artifacts without spawning the agent. |
+| Flag                    | Meaning                                                              |
+| ----------------------- | -------------------------------------------------------------------- |
+| `--reps <n>`            | Repetitions per arm (default 3).                                     |
+| `--out <dir>`           | Artifact root (default `./.eval-out`).                               |
+| `--timeout <ms>`        | Hard wall-clock ceiling per attempt.                                 |
+| `--command <bin>`       | Agent binary; override to substitute a stand-in.                     |
+| `--keep`                | Leave each sandbox on disk for inspection.                           |
+| `--dry-run`             | Build the plan and artifacts without spawning the agent.             |
+| `--model <id>`          | Model under test. Changing it mid-batch makes the arms incomparable. |
+| `--permission-mode <m>` | Passed to `claude`. See the root caveat below.                       |
+| `--lesson-file <path>`  | `golden`: the organic lesson. Absent ⇒ B-organic is skipped.         |
+| `--skip-if-unavailable` | Exit 0 with a "skipped" report when a live run cannot start. For CI. |
+
+### Running in a container (CI, Docker, a cloud sandbox)
+
+The default `--permission-mode bypassPermissions` is right for a throwaway
+sandbox, but **the `claude` CLI refuses it under root/sudo** — and the refusal
+arrives as an empty transcript, which `environment.mjs` can only report as
+`no-init-event`: an unverifiable environment, pointing the reader at hooks and
+plugins rather than at the flag that was rejected. Pass a permitted mode
+instead:
+
+```bash
+node bin/run-eval.mjs preflight --permission-mode acceptEdits
+```
+
+`preflight` now reports the child's `exitCode`, `timedOut` and `stderr`
+alongside its verdict, so a run that died before it started names its own cause
+instead of presenting as contamination.
+
+**A container whose `~/.claude` carries LoreKit's own hooks cannot produce a
+clean rep at all**, and `preflight` is right to refuse it: the user-level
+`SessionStart` / `UserPromptSubmit` hooks fire for the nested agent and inject
+lore into arm A, which is precisely the control that must see none. This is the
+`foreign-hooks-fired` finding, and it is not a false positive — it is the guard
+doing the job it exists for. Run the live arms somewhere those hooks are not
+installed.
+
+**That somewhere is a GitHub Actions runner**, and
+[`.github/workflows/evals.yml`](../../.github/workflows/evals.yml) is how to get
+one. A fresh runner has no user-level `~/.claude` to leak hooks, skills or
+plugins into the control arm, and it is non-root, so the default
+`bypassPermissions` is accepted rather than refused — both blockers above are
+absent by construction rather than worked around. Three tiers:
+
+| Tier        | Cost           | Trigger                                                   |
+| ----------- | -------------- | --------------------------------------------------------- |
+| `offline`   | free           | automatic, on a PR touching the harness or what it drives |
+| `preflight` | one model call | same                                                      |
+| `live`      | the experiment | `workflow_dispatch`, or a `run-evals` label on the PR     |
+
+The dispatch form takes the subcommand, `reps` (capped at 10), a variant
+narrowing and `--skip-off-target`; it writes `summary.json`'s own caveats into
+the run's step summary and uploads `.eval-out` as an artifact. `costUsd` is
+reported once for the run, because it is the one figure that sums across it.
+`usableReps` and the discarded count are reported **per arm** (`golden`) and
+**per variant** (`variants`), because that is the only place they exist: each
+arm and each cell discards independently, so there is no run-wide N a
+conclusion could honestly cite.
+
+Every live invocation there passes `--skip-if-unavailable`, which turns an
+unstartable run into exit 0 plus a report naming what was missing, instead of a
+failure. That is what makes the workflow safe on a fork PR (secrets do not
+interpolate) and in a repository before the `ANTHROPIC_API_KEY` secret is added:
+a job with no credential must not be red for a reason unrelated to the change.
+Locally, leave the flag off — a silent exit 0 tells you nothing, which is why it
+is opt-in rather than the default. The three preconditions it decides on live in
+`src/harness/runnable.mjs`: the binary, the credential, and `bypassPermissions`
+under root.
 
 Artifacts land under `<out>/arm0-<runId>/rep-<n>/` as `transcript.jsonl`,
 `result.json` and `meta.json`, with a `summary.json` per run. They are written
 so a result can be re-read months later without re-running it — which is also
 why the low-power caveat is embedded in `summary.json` rather than only here.
+
+### Every run ships to Dash0 under `service.name=eval`
+
+An artifact you have to go and find is not a trend. `scripts/telemetry/eval-telemetry.mjs`
+reads a finished `summary.json` and exports the run as one trace (`lorekit.eval`
+plus a child span per rep) and seven gauges — success rate, mean score, rep
+counts by state, cost, mean duration, lift, and tokens-per-point — so two commits
+can be compared without re-running either.
+
+```bash
+node scripts/telemetry/eval-telemetry.mjs .eval-out             # newest run under a parent
+node scripts/telemetry/eval-telemetry.mjs .eval-out/golden-…    # one specific run
+node scripts/telemetry/eval-telemetry.mjs .eval-out --dry-run   # build and print, send nothing
+```
+
+It runs **downstream of the harness**, reading the summary the run already wrote,
+and the workflow invokes it with `if: always()`. That ordering is deliberate: an
+export failure must never retroactively fail an experiment that already spent
+real money and already produced its result.
+
+The summary's own honesty rules survive the trip. Rates are over `usableReps`,
+and a cell with zero usable reps emits **no datapoint** rather than a `0.0` —
+"nothing was measured" and "the arm scored zero" are different claims. `cost` is
+the exception and sums every billed rep, discarded ones included. Aggregates are
+read from the summary, never recomputed, so the exporter can never become a
+second grader that quietly disagrees with this one. A discarded rep is an ERROR
+span; a merely failed one is OK. The run's `caveat` rides on the root span
+verbatim.
+
+It reuses the CLI's telemetry config, so `LOREKIT_TELEMETRY_TOKEN` (already a
+repo secret) is the only credential, and `LOREKIT_TELEMETRY=0` / `DO_NOT_TRACK=1`
+turn it off. With no credential it states the reason and exits 0. Full signal
+reference: [`docs/otel.md`](../../docs/otel.md#eval-runs-servicenameeval).
 
 ## Isolation
 
@@ -319,7 +518,13 @@ runner, ['SessionStart'])` is exported from `packages/cli/src/shared/config.mjs`
 
 ## What "no CI gate" does and does not mean
 
-The LIVE runs gate nothing. Everything below the model does: the store, the
+The LIVE runs gate nothing — they run in CI (above) and report. Their
+preconditions are nevertheless checked for free on every PR that touches the
+harness: `evals.yml`'s `offline` tier runs `node --test` and both `--dry-run`
+plans, so the arm construction, scope resolution and flag refusals the paid
+tiers depend on are exercised without spawning a model.
+
+Everything below the model gates for real: the store, the
 hook, the derived scopes and the injected index are deterministic functions of
 the sandbox, so `pnpm nx test evals` asserts — for real, on every PR — that a
 seeded lesson is injected, that an empty store injects nothing, that the hook
@@ -384,7 +589,26 @@ machinery itself treats as outcome/relevance signal:
 set moved underneath it (the recurring "mock that reimplements the thing under
 test" trap). A grep guard (`AC-1-reuse`) fails if the literals reappear.
 
-### The committed baseline is a 2-row BOOTSTRAP PLACEHOLDER
+### The baseline is now REAL — `fixtures/ground-truth.real.json` (25 rows)
+
+`bin/mine-ground-truth.mjs` has been run against the hosted store and its
+metadata-only snapshot is committed: **25 outcome/relevance-tagged rows** for
+`repo::mthines/lorekit` (24 `loop::reviewer-comment-relevance`, 1
+`loop::review-outcomes`), stamped `source: real-hosted-snapshot`, so metrics
+built on it no longer carry the placeholder's `mustNotGate` warning.
+
+One caveat that the row count hides, and which matters for how the metrics read:
+**every mined row has `seenCount == 1`, so none is recurrence-confirmed** (the
+`seen_count >= 3` bar). The relevance weight axis is therefore flat across the
+whole baseline — precision/recall/MRR are measurable, but "weight by how often
+this recurred" currently distinguishes nothing. Re-mine once the store has
+accumulated repeat signal; the snapshot is a point-in-time freeze, not a live
+read.
+
+The 2-row seed below is retained as the documented bootstrap path, for anyone
+standing the harness up against a store that has not been mined yet.
+
+### The seed file is a 2-row BOOTSTRAP PLACEHOLDER
 
 `fixtures/ground-truth.seed.json` is a **BOOTSTRAP PLACEHOLDER**, not a real
 baseline. It holds the only two outcome/relevance-tagged rows that already exist
@@ -428,7 +652,7 @@ refused too (exit 5): an empty ground truth scores `recallAtK = 1` by design
 ("nothing to miss"), so an empty `real-hosted-snapshot` would look perfect while
 measuring nothing. Its flags are strict:
 `--scope` and `--out` each require a present, non-empty value — `--confirm
---scope` is a usage error rather than a run that quietly mines *every* scope —
+--scope` is a usage error rather than a run that quietly mines _every_ scope —
 and an unrecognised flag is refused rather than ignored.
 
 The CLI token is **user-scoped**, and so is every mine this script performs — it
@@ -460,10 +684,10 @@ size does relevance degrade?**
 target surfaces in the top-50 page (the hard-coded `limit = 50`, not `k`) — in
 two ways:
 
-| Arm | Model |
-| --- | ----- |
-| **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline. |
-| **ranked** | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/shared/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
+| Arm         | Model                                                                                                                                                                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline.                                                                                                                                                           |
+| **ranked**  | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/shared/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
 
 The ranked arm calls the **real** ranker — the zero-import parity twin of the
 edge function — never a reimplementation. A grep guard (`AC-1` in
@@ -515,8 +739,20 @@ pnpm nx test evals                   # via Nx
 To reproduce the cliff curve shown above:
 
 ```js
-import { runSweep, summarizeCliff, CANDIDATE_LIMIT } from './src/relevance/sweep.mjs';
-const curve = runSweep({ targetRows, query, poolSizes: [10, 50, 100, 200, 300, 500], k: 5, now, seed: 123, targetAgeDays: 400 });
+import {
+  runSweep,
+  summarizeCliff,
+  CANDIDATE_LIMIT,
+} from "./src/relevance/sweep.mjs";
+const curve = runSweep({
+  targetRows,
+  query,
+  poolSizes: [10, 50, 100, 200, 300, 500],
+  k: 5,
+  now,
+  seed: 123,
+  targetAgeDays: 400,
+});
 console.log(summarizeCliff(curve));
 // → { recency: { cliffAt: 100 }, ranked: { cliffAt: 300 } }
 ```
