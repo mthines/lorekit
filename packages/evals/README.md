@@ -354,9 +354,13 @@ absent by construction rather than worked around. Three tiers:
 | `live`      | the experiment | `workflow_dispatch`, or a `run-evals` label on the PR     |
 
 The dispatch form takes the subcommand, `reps` (capped at 10), a variant
-narrowing and `--skip-off-target`; it writes `summary.json`'s own caveats —
-`usableReps`, the discarded count and `costUsd` — into the run's step summary and
-uploads `.eval-out` as an artifact.
+narrowing and `--skip-off-target`; it writes `summary.json`'s own caveats into
+the run's step summary and uploads `.eval-out` as an artifact. `costUsd` is
+reported once for the run, because it is the one figure that sums across it.
+`usableReps` and the discarded count are reported **per arm** (`golden`) and
+**per variant** (`variants`), because that is the only place they exist: each
+arm and each cell discards independently, so there is no run-wide N a
+conclusion could honestly cite.
 
 Every live invocation there passes `--skip-if-unavailable`, which turns an
 unstartable run into exit 0 plus a report naming what was missing, instead of a

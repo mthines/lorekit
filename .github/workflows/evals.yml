@@ -341,7 +341,9 @@ jobs:
 
       # The summary carries its own caveats — `usableReps` (never `reps`) as the
       # only N a conclusion may cite, the discarded count, and the cost — so the
-      # step summary reproduces them rather than paraphrasing a headline.
+      # step summary reproduces them rather than paraphrasing a headline. Cost
+      # is run-wide; the two counts are per arm (`golden`) / per variant
+      # (`variants`), which is the only level they exist at.
       # `--out` names a PARENT directory; each run writes its own
       # `<subcommand>-<timestamp>/` beneath it, so the newest one is resolved
       # here rather than assumed. A run that skipped (no credential) produced no
@@ -372,10 +374,37 @@ jobs:
               const raw = fs.readFileSync(path.join(dir, "summary.json"), "utf8");
               const j = JSON.parse(raw);
               out.push(`## Evals — ${path.basename(dir)}`, "");
+              // Cost is the only one of the three that IS top-level, because
+              // it is the one figure that sums across the whole run — every
+              // billed rep, discarded ones included.
+              if (j.costUsd !== undefined && j.costUsd !== null) {
+                out.push(`- **costUsd**: ${j.costUsd}`);
+              }
               // usableReps, never reps: a contaminated repetition is discarded,
-              // not averaged, so it is the only N a conclusion may cite.
-              for (const k of ["usableReps", "discardedReps", "costUsd"]) {
-                if (j[k] !== undefined) out.push(`- **${k}**: ${j[k]}`);
+              // not averaged, so it is the only N a conclusion may cite. It is
+              // deliberately PER ROW rather than top-level — each arm and each
+              // variant discards independently, so a single summed N would be
+              // a number no conclusion here may actually cite. Printing it
+              // beside the row it belongs to is the whole point; an earlier
+              // version read `j.usableReps`/`j.discardedReps` at the top level,
+              // where neither subcommand has ever written them, and silently
+              // printed cost alone.
+              if (Array.isArray(j.arms) && j.arms.length) {
+                out.push("", "### Reps per arm", "");
+                for (const a of j.arms) {
+                  out.push(
+                    `- **${a.arm}**: ${a.usableReps} usable, ${a.discardedReps} discarded`,
+                  );
+                }
+              }
+              if (Array.isArray(j.ranked) && j.ranked.length) {
+                out.push("", "### Usable reps per variant", "");
+                for (const r of j.ranked) {
+                  const n = r.usableReps || {};
+                  out.push(
+                    `- **${r.variant}**: ${n.onTarget} on-target, ${n.offTarget} off-target`,
+                  );
+                }
               }
               if (j.caveat) out.push("", `> ${j.caveat}`);
               const list = (title, rows) => {
