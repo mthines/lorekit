@@ -193,7 +193,8 @@ jobs:
 
       # `scripts/**` is outside `nx affected`, so nothing else executes this —
       # the same reason ci.yml's bench job names its sibling telemetry tests
-      # explicitly. Dependency-free by design, so it runs before any install.
+      # explicitly. Dependency-free by design, so it needs nothing the install
+      # above provides and would pass just as well before it.
       - name: Unit-test the Dash0 export payloads
         run: node --test scripts/telemetry/eval-telemetry.test.mjs
 
@@ -428,7 +429,10 @@ jobs:
       # they never reach a production view. Reuses the SAME
       # `LOREKIT_TELEMETRY_TOKEN` secret emit-trace.yml and the release job
       # already use — no new secret to configure. With the secret absent it
-      # reports `no-endpoint` and exits 0, like every other tier here.
+      # reports `no-credential` and exits 0, like every other tier here. Not
+      # `no-endpoint`: `resolveTelemetryConfig` falls back to a committed
+      # `DEFAULT_ENDPOINT`, so there is always an endpoint and the missing
+      # token is the only reachable reason on this path.
       #
       # After Report, before Upload: the numbers are already in the step summary
       # and are uploaded regardless, so an export that fails costs the run
