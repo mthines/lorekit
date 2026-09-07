@@ -180,6 +180,12 @@ describe('wire projection', () => {
     for (const shape of ['scope', 'key', 'refs']) {
       expect(read?.description, `memory.read description names ${shape}`).toContain(shape);
     }
+    // Naming the three fields is not the same as stating the rule. A rewrite
+    // that kept all three tokens but dropped the exclusivity clause would pass
+    // the loop above — and since this change removed the `oneOf`, that clause
+    // is the ONLY place the rule survives. So assert the clause, not just the
+    // vocabulary around it.
+    expect(read?.description, 'memory.read states the exclusivity rule').toMatch(/exactly one/i);
   });
 
   it('describes every property of every tool', () => {
