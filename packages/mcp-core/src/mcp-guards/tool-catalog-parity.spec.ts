@@ -140,17 +140,52 @@ describe('wire projection', () => {
       for (const required of tool.inputSchema.required ?? []) {
         expect(tool.inputSchema.properties?.[required], `${tool.name}.${required}`).toBeDefined();
       }
-      // A `oneOf` branch's `required` reaches the wire exactly as the top-level
-      // one does, so it gets the same check — otherwise the alternatives are
-      // the one part of the schema where a typo names a property that does not
-      // exist and nothing notices.
-      for (const branch of tool.inputSchema.oneOf ?? []) {
-        expect(branch.required.length, `${tool.name} oneOf branch`).toBeGreaterThan(0);
-        for (const required of branch.required) {
-          expect(tool.inputSchema.properties?.[required], `${tool.name} oneOf ${required}`).toBeDefined();
-        }
+    }
+  });
+
+  // Amazon Bedrock refuses a tool whose `input_schema` carries `oneOf`,
+  // `anyOf` or `allOf` at the top level, and it fails the WHOLE request rather
+  // than dropping the one tool — so a single union here costs every
+  // Bedrock-hosted client the entire `tools/list`, not one operation.
+  // `memory.read` shipped a top-level `oneOf` in #654 to express its two
+  // mutually exclusive argument shapes and took Agent0 down in production
+  // (2026-09-06). Mutually exclusive shapes belong in the `description` and in
+  // the handler; `JsonSchemaObject` drops the field so the catalog cannot
+  // express one, and this is the runtime half of that guard — it holds for a
+  // schema that reaches the wire past a cast, and for a hand-written literal
+  // in some future entry.
+  //
+  // Asserted on the WIRE projection, because that is what a client is handed;
+  // a union the catalog held but `toWireTool` stripped would be harmless, and
+  // one that only appeared on the wire is the case worth catching.
+  it('never advertises a top-level union — Bedrock rejects the whole tool list over one', () => {
+    for (const tool of MCP_TOOLS) {
+      // Cast because: `JsonSchemaObject` deliberately declares no union keys,
+      // so reading them means stepping outside the very type that forbids them.
+      const advertised = toWireTool(tool).inputSchema as Record<string, unknown>;
+      for (const combinator of ['oneOf', 'anyOf', 'allOf']) {
+        expect(advertised[combinator], `${tool.name} advertises a top-level ${combinator}`).toBeUndefined();
       }
     }
+  });
+
+  it('describes the mutually exclusive argument shapes it cannot express in the schema', () => {
+    // The corollary of the guard above: `memory.read` accepts `scope`+`key` OR
+    // `refs`, the schema can no longer say so, and the `description` is the
+    // only place a model reads it from. Dropping the union without carrying
+    // the rule across would leave the batch shape undiscoverable.
+    const read = MCP_TOOLS.find((tool) => tool.name === 'memory.read');
+    expect(read).toBeDefined();
+    expect(read?.inputSchema.required).toBeUndefined();
+    for (const shape of ['scope', 'key', 'refs']) {
+      expect(read?.description, `memory.read description names ${shape}`).toContain(shape);
+    }
+    // Naming the three fields is not the same as stating the rule. A rewrite
+    // that kept all three tokens but dropped the exclusivity clause would pass
+    // the loop above — and since this change removed the `oneOf`, that clause
+    // is the ONLY place the rule survives. So assert the clause, not just the
+    // vocabulary around it.
+    expect(read?.description, 'memory.read states the exclusivity rule').toMatch(/exactly one/i);
   });
 
   it('describes every property of every tool', () => {

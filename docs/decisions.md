@@ -558,3 +558,57 @@ is reading whether they are asking for more THINGS per call, which batching now 
 do. A window straddling this feature's rollout is not comparable to one entirely before or after
 it, and the card carries no annotation marking the boundary — a known, accepted gap rather than a
 silently wrong one.
+
+## A tool's `inputSchema` carries no top-level `oneOf`/`anyOf`/`allOf`
+
+`memory.read` takes two mutually exclusive argument shapes — `scope`+`key`, or `refs` — and no
+single `required` list describes that. JSON Schema spells it `oneOf`, and the tool advertised
+exactly that from [#654](https://github.com/mthines/lorekit/pull/654) (2026-09-06):
+
+```ts
+oneOf: [{ required: ['scope', 'key'] }, { required: ['refs'] }],
+```
+
+**Amazon Bedrock rejects it, and it fails the entire request rather than the one tool.** Bedrock
+validates every tool definition it is handed against a narrower JSON Schema subset than the direct
+Anthropic API and refuses the three union combinators at the root of `input_schema`:
+
+```
+input_schema does not support oneOf, allOf, or anyOf at the top level
+```
+
+Because that validation rejects the whole *request*, one bad tool is not a degraded tool — it is a
+dead integration. Every Bedrock-hosted agent with the LoreKit MCP server attached lost the entire
+`tools/list`, so no LoreKit call of any kind succeeded. It took Agent0 down in two orgs the day
+after #654 promoted to production (`deployed/api-production` pointed at that SHA), and a second
+MCP client independently dropped `memory.read` — and only `memory.read` — from a 22-tool list.
+
+The rejection is specific, not a general aversion to unions: dropping the `oneOf` returns 200, a
+union NESTED inside a property returns 200, and a bare union with no sibling `type` returns a
+*different* error. It is precisely a top-level union alongside `type: object`.
+
+**So the constraint lives in prose and in the handler, not in the schema.** `memory.read`'s
+`description` states the rule ("Pass exactly one of those two shapes…"), which is the half a model
+actually reads, and `toolRead` enforces it on every call as it always did — a call with both shapes
+gets `refs cannot be combined with scope and key`, one with neither gets `scope and key are
+required`. Only the machine-readable form of the constraint was lost; what the tool accepts did not
+change, and no client that was calling it correctly needs to change.
+
+Note what is NOT the fix. "Move the `oneOf` below the top level" does not exist as an option: the
+exclusivity holds *between two top-level properties*, and no nested position can express "`refs`
+xor (`scope` and `key`)". Nor is a per-consumer proxy that rewrites incoming schemas a substitute —
+worth having as a shield against third-party servers, but it leaves every other Bedrock-hosted
+client of *this* server broken.
+
+Two gates keep it out, deliberately at different layers, because the compile gate cannot see a
+schema that reaches the wire past a cast:
+
+- `JsonSchemaObject` simply has no `oneOf`/`anyOf`/`allOf` field, so re-adding one is an
+  excess-property **compile** error under the catalog's `satisfies`.
+- `tool-catalog-parity.spec.ts` asserts no tool's **wire projection** carries any of the three —
+  asserted on `toWireTool`'s output, because that is what a client is handed.
+
+A future tool with genuinely exclusive argument shapes gets the same treatment: state it in the
+description, enforce it in the handler, and leave the schema permissive. If one ever needs a union
+badly enough to be worth the blast radius, it has to be gated per-client at the transport, never
+declared in the catalog.
