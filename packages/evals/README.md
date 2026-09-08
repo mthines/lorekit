@@ -406,7 +406,7 @@ existing only because it fails in a second, before `pnpm install` and before
 the Claude CLI is fetched. The cheapest useful dispatch is
 `golden` / `reps: 1` / `arms: 0` — one model call.
 
-Two subcommands are deliberately absent from the choice list:
+Two subcommands warrant a note on the choice list:
 
 - **`probe` is present and free** — it seeds a store, installs the real
   SessionStart hook and prints what gets injected, spawning no model at all. It
