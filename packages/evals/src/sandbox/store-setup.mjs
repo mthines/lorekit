@@ -128,7 +128,9 @@ export async function seedLesson(
  */
 export async function harvestOrganicLesson(sandbox) {
   const { store } = storeFor(sandbox);
-  const inventory = await store.listScopes();
+  const inventory = (await store.listScopes())
+    .slice()
+    .sort((a, b) => a.scope.localeCompare(b.scope));
   const found = [];
   for (const row of Array.isArray(inventory) ? inventory : []) {
     const res = await store.list({ scope: row.scope });
@@ -147,8 +149,10 @@ export async function harvestOrganicLesson(sandbox) {
   // digest follows. Merging what the agent wrote across two writes would seed
   // arm B with more than any single turn of the loop ever produces, which
   // inflates the arm the whole experiment is trying to measure honestly.
-  // `list()` is newest-first, and `listScopes()` walks in a stable order, so
-  // this is the most recent write of the first scope holding one.
+  // `list()` is newest-first, and the inventory is sorted above because
+  // `listScopes()` documents itself as unsorted (it returns `Map` insertion
+  // order from a filesystem walk), so this is the most recent write of the
+  // alphabetically-first scope holding one — deterministic across runs.
   return { ...found[0], entries: found.length };
 }
 
