@@ -106,6 +106,57 @@ export async function seedLesson(
 }
 
 /**
+ * Read back what arm 0 wrote, so arm B (organic) can be seeded with it.
+ *
+ * This is the SAME move arm C already makes with arm 0's transcript: arm 0
+ * exists to produce the material the later arms consume, and requiring an
+ * operator to ferry that material out of an artifact by hand is why the
+ * organic arm had never once run. The transcript is carried automatically;
+ * the lesson was not, and the asymmetry was not a decision.
+ *
+ * Enumerated with `listScopes()` rather than read from the target scope,
+ * for the reason `gradeSandbox` gives: the agent may have written somewhere
+ * nobody predicted — and in practice it does, since the very mistake under
+ * test is writing to a MALFORMED scope. Reading only the canonical scope
+ * would harvest nothing from exactly the runs worth harvesting.
+ *
+ * Returns `null` when arm 0 wrote nothing usable. That is a real outcome, not
+ * an error: it means the loop this experiment is about did not produce a
+ * lesson, and the caller must skip the arm rather than substitute one.
+ *
+ * @returns {Promise<null | {value: string, key: string, scope: string, entries: number}>}
+ */
+export async function harvestOrganicLesson(sandbox) {
+  const { store } = storeFor(sandbox);
+  const inventory = (await store.listScopes())
+    .slice()
+    .sort((a, b) => a.scope.localeCompare(b.scope));
+  const found = [];
+  for (const row of Array.isArray(inventory) ? inventory : []) {
+    const res = await store.list({ scope: row.scope });
+    for (const entry of (res && res.entries) || []) {
+      if (typeof entry.value === "string" && entry.value.trim() !== "") {
+        found.push({
+          value: entry.value.trim(),
+          key: entry.key,
+          scope: row.scope,
+        });
+      }
+    }
+  }
+  if (found.length === 0) return null;
+  // ONE lesson, never a concatenation of several — the same rule arm C's
+  // digest follows. Merging what the agent wrote across two writes would seed
+  // arm B with more than any single turn of the loop ever produces, which
+  // inflates the arm the whole experiment is trying to measure honestly.
+  // `list()` is newest-first, and the inventory is sorted above because
+  // `listScopes()` documents itself as unsorted (it returns `Map` insertion
+  // order from a filesystem walk), so this is the most recent write of the
+  // alphabetically-first scope holding one — deterministic across runs.
+  return { ...found[0], entries: found.length };
+}
+
+/**
  * Arm B (organic): seed the lesson the agent itself distilled in arm 0.
  * The text is passed in verbatim — the point of this source is that it is the
  * model's own words, warts included, not something the harness improved.

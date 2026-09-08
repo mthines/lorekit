@@ -21,6 +21,7 @@ import {
   compareArms,
   describeComparison,
   isUsable,
+  resolveArmSelection,
   summarizeArm,
   transcriptDigest,
 } from "../../src/harness/golden.mjs";
@@ -87,6 +88,81 @@ test("with everything available, all five arms run", () => {
   });
   assert.equal(run.length, GOLDEN_ARMS.length);
   assert.deepEqual(skipped, []);
+});
+
+test("an empty --arm list is every arm, and a list is a NARROWING", () => {
+  assert.deepEqual(
+    resolveArmSelection([]),
+    GOLDEN_ARMS.map((a) => a.id),
+  );
+  assert.deepEqual(
+    resolveArmSelection(),
+    GOLDEN_ARMS.map((a) => a.id),
+  );
+  assert.deepEqual(resolveArmSelection([ARM_A, ARM_B_CANONICAL]), [
+    ARM_A,
+    ARM_B_CANONICAL,
+  ]);
+});
+
+test("--arm returns CANONICAL order, not the order they were typed", () => {
+  // Arm 0 has to run first — it is the source of arm C's material — so the
+  // selection cannot be allowed to hand back a list that puts it last.
+  assert.deepEqual(resolveArmSelection([ARM_C, ARM_A, ARM_0]), [
+    ARM_0,
+    ARM_A,
+    ARM_C,
+  ]);
+  // Repeats collapse: a doubled id would otherwise run the arm twice, paying
+  // twice for one cell, exactly as a repeated --variant once did.
+  assert.deepEqual(resolveArmSelection([ARM_A, ARM_A]), [ARM_A]);
+});
+
+test("--arm refuses an unknown id rather than running a smaller experiment", () => {
+  assert.throws(() => resolveArmSelection(["B-cannonical"]), /unknown arm/);
+});
+
+test("--arm C without arm 0 is refused, and the message says what to type", () => {
+  // Arm C re-reads arm 0's transcript. Left to armPlan this is skipped for
+  // "arm 0 produced no transcript" — accurate, and useless as guidance.
+  assert.throws(() => resolveArmSelection([ARM_C]), /Add --arm 0/);
+  assert.doesNotThrow(() => resolveArmSelection([ARM_0, ARM_C]));
+});
+
+test("an unselected arm is skipped for NOT BEING SELECTED, not for a missing dep", () => {
+  const { run, skipped } = armPlan({
+    organicLesson: true,
+    priorTranscript: false,
+    selected: [ARM_A, ARM_B_CANONICAL],
+  });
+  assert.deepEqual(
+    run.map((a) => a.id),
+    [ARM_A, ARM_B_CANONICAL],
+  );
+  const c = skipped.find((s) => s.id === ARM_C);
+  assert.match(c.reason, /not selected/);
+  // The dependency reason would be TRUE here too — arm 0 was not run, so
+  // there is no transcript — and reporting it would read as a fault in a run
+  // that did exactly what it was asked.
+  assert.doesNotMatch(c.reason, /no transcript/);
+});
+
+test("a --arm subset that omits the baseline reports NO lift, and says why", () => {
+  // The rule that makes cheap subsetting safe. It is structural — the control
+  // is simply absent from `summaries` — but the REASON has to distinguish
+  // this from a baseline that ran and was entirely discarded, because the two
+  // ask the reader for different things.
+  const [b] = compareArms([
+    summarizeArm(ARM_B_CANONICAL, [clean({ success: true, score: 100 })]),
+  ]);
+  assert.equal(b.comparable, false);
+  assert.equal(b.successRateLift, null);
+  assert.equal(b.meanScoreLift, null);
+  assert.equal(b.repeatedMistakeDelta, null);
+  assert.match(b.reason, /baseline arm A did not run/);
+  assert.match(describeComparison(b), /Add --arm A/);
+  // And it must NOT claim the reps were unusable — they were fine.
+  assert.doesNotMatch(b.reason, /usable reps/);
 });
 
 test("a contaminated or harness-fault rep is not usable", () => {

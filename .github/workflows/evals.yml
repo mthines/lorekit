@@ -18,9 +18,20 @@
 # THREE TIERS, PRICED BY WHAT THEY SPEND.
 #   offline    free      unit tests + `--dry-run` plans. Auto, path-filtered.
 #   preflight  ~1 call   proves THIS runner is clean. Auto, path-filtered.
-#   live       many      `golden` / `variants`. Manual dispatch or a label.
+#   live       0..many   `probe` (free), `golden` / `variants` (paid). Manual
+#                        dispatch or a label.
 # The split exists so a routine change to the harness is validated for free and
 # only a deliberate act spends money.
+#
+# NARROWING A PAID RUN. Both experiments take a subset: `--arm <id>` picks
+# golden's arms and `--variant <id>` picks the variants ladder's rows, both
+# repeatable, both meaning "every one" when empty. The cheapest real experiment
+# is therefore one arm at `--reps 1` — a single model call. The one thing a
+# subset cannot buy is a lift it did not measure: a selection without arm A has
+# no baseline, so every comparison in it reports `comparable: false` and names
+# the absent arm, rather than printing a 0 that reads as "memory made no
+# difference". That rule is structural (the control is simply not in the
+# summary), not a check anyone has to remember.
 #
 # NOTHING HERE GATES A MERGE. The offline tier is a real check on the harness's
 # own code; the live tiers report numbers. An eval result is evidence about the
@@ -53,6 +64,10 @@ on:
     # `labeled` is here so adding `run-evals` to an open PR starts the paid
     # tier without a push. The other three are the default set, restated
     # because naming any type replaces the default.
+    #
+    # `unlabeled` is deliberately NOT here. The live job removes the label
+    # itself when it finishes, so listening for the removal would have the
+    # workflow re-trigger on its own cleanup.
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
@@ -60,11 +75,22 @@ on:
         description: "Which experiment to run"
         type: choice
         default: preflight
-        options: [preflight, golden, variants]
+        # `arm0` is deliberately ABSENT. It is a real subcommand and it is the
+        # cheapest paid one, but its summary.json carries neither `arms[]` nor
+        # `cells{}` nor `costUsd`, so the Report step below would render an
+        # empty report and the Dash0 export would emit no datapoints — a paid
+        # run with no record of what it bought. `golden --arm 0` is the same
+        # single arm at the same cost, through the pipeline that reports and
+        # exports it, so that is the affordance offered here.
+        options: [preflight, probe, golden, variants]
       reps:
         description: "Repetitions per arm/cell (1-10; N=3 is a low-power indicator)"
         type: string
         default: "3"
+      arms:
+        description: "golden only — space-separated arm ids, empty for all (0 A B-organic B-canonical C)"
+        type: string
+        default: ""
       variants:
         description: "variants only — space-separated ids, empty for all"
         type: string
@@ -150,6 +176,11 @@ jobs:
           # `github.event.label.name`: the latter is only populated on the
           # `labeled` event, so a push to an already-labelled PR would drop
           # back to the free tier without anyone removing the label.
+          #
+          # Reading the LIVE set is what makes the label sticky, and the live
+          # job's last step is what makes it one-shot again: it removes the
+          # label when the run ends, pass or fail, so the next push is free
+          # unless someone deliberately asks again.
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'run-evals') }}
           EVENT: ${{ github.event_name }}
         run: |
@@ -260,9 +291,19 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+      # For the label removal at the end of the job, and nothing else. Labels
+      # live on the issues API, so `pull-requests: write` is the grant that
+      # covers `DELETE /issues/{n}/labels/{name}`.
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
+        with:
+          # This job holds `pull-requests: write` for the label drop and also
+          # spawns the agent under test. Nothing here uses git auth — the label
+          # step goes through GH_TOKEN — so keep the token out of .git/config
+          # rather than leaving it where the run could read it.
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -290,33 +331,59 @@ jobs:
           # experiments at the documented default N.
           SUBCOMMAND: ${{ github.event.inputs.subcommand || 'golden' }}
           REPS: ${{ github.event.inputs.reps || '3' }}
+          ARMS: ${{ github.event.inputs.arms || '' }}
           VARIANTS: ${{ github.event.inputs.variants || '' }}
           SKIP_OFF_TARGET: ${{ github.event.inputs.skip_off_target || 'false' }}
         run: |
           set -euo pipefail
           case "$SUBCOMMAND" in
-            preflight|golden|variants) ;;
+            preflight|probe|golden|variants) ;;
             *) echo "::error::unknown subcommand: $SUBCOMMAND"; exit 1 ;;
           esac
           if ! printf '%s' "$REPS" | grep -qE '^([1-9]|10)$'; then
             echo "::error::reps must be 1-10, got: $REPS"
             exit 1
           fi
-          ARGS="$SUBCOMMAND --skip-if-unavailable"
-          # `preflight` REFUSES --reps and --out rather than ignoring them: it
-          # is one call in a fixed arm and writes no run directory, so passing
-          # them would fail the run instead of being harmlessly redundant.
-          if [ "$SUBCOMMAND" != "preflight" ]; then
+          ARGS="$SUBCOMMAND"
+          # `probe` spawns no model, so there is no credential for it to be
+          # missing: `--skip-if-unavailable` would be accepted and ignored, and
+          # promising to skip on an unavailability that cannot arise is worse
+          # than not offering it.
+          if [ "$SUBCOMMAND" != "probe" ]; then
+            ARGS="$ARGS --skip-if-unavailable"
+          fi
+          # `preflight` and `probe` REFUSE --reps and --out rather than
+          # ignoring them: neither writes a run directory, and preflight is one
+          # call in a fixed arm, so passing them would FAIL the run instead of
+          # being harmlessly redundant.
+          if [ "$SUBCOMMAND" = "golden" ] || [ "$SUBCOMMAND" = "variants" ]; then
             ARGS="$ARGS --reps $REPS --out ./.eval-out"
           fi
-          # `--variant` / `--skip-off-target` mean nothing to golden or
-          # preflight, and neither REFUSES them — they would be accepted and
-          # dropped, so a run narrowed to two variants would quietly run the
-          # whole golden experiment instead. Refuse the combination here.
-          if [ "$SUBCOMMAND" != "variants" ] && { [ -n "$VARIANTS" ] || [ "$SKIP_OFF_TARGET" = "true" ]; }; then
-            echo "::error::--variant / --skip-off-target apply to the variants subcommand only, not $SUBCOMMAND"
+          # Which subcommand each narrowing flag belongs to. The harness now
+          # refuses every one of these crossings itself, so this is the second
+          # of two independent checks rather than the only one — but it is the
+          # one that fails in a second, before pnpm install and before the
+          # Claude CLI is fetched, and it names the input rather than the flag.
+          if [ "$SUBCOMMAND" != "golden" ] && [ -n "$ARMS" ]; then
+            echo "::error::arms applies to the golden subcommand only, not $SUBCOMMAND"
             exit 1
           fi
+          if [ "$SUBCOMMAND" != "variants" ] && { [ -n "$VARIANTS" ] || [ "$SKIP_OFF_TARGET" = "true" ]; }; then
+            echo "::error::variants / skip_off_target apply to the variants subcommand only, not $SUBCOMMAND"
+            exit 1
+          fi
+          # Arm ids are the only allow-listed vocabulary here that is not
+          # lowercase-only: `A`, `B-organic` and `B-canonical` all carry
+          # capitals, so the variant pattern would have rejected every arm but
+          # `0`. Matched against the literal set instead of a shape, because
+          # the set is five items and closed.
+          for id in $ARMS; do
+            case "$id" in
+              0|A|B-organic|B-canonical|C) ;;
+              *) echo "::error::not an arm id: $id"; exit 1 ;;
+            esac
+            ARGS="$ARGS --arm $id"
+          done
           for id in $VARIANTS; do
             if ! printf '%s' "$id" | grep -qE '^[a-z0-9-]+$'; then
               echo "::error::not a variant id: $id"
@@ -329,6 +396,16 @@ jobs:
           fi
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
           echo "subcommand=$SUBCOMMAND" >> "$GITHUB_OUTPUT"
+          # Whether this run leaves a run directory to report on, export and
+          # upload. Derived ONCE here rather than restated as a growing
+          # `!= 'preflight'` chain on each of the three steps below — that
+          # chain is exactly how `probe` would have been added to the choice
+          # list and silently failed three steps that assume a summary.json.
+          if [ "$SUBCOMMAND" = "golden" ] || [ "$SUBCOMMAND" = "variants" ]; then
+            echo "artifacts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifacts=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run
         working-directory: packages/evals
@@ -352,7 +429,7 @@ jobs:
       # `preflight` writes no run directory by design, so it has nothing to
       # report or upload — its whole result is the exit code and the stdout above.
       - name: Report
-        if: always() && steps.args.outputs.subcommand != 'preflight'
+        if: always() && steps.args.outputs.artifacts == 'true'
         working-directory: packages/evals
         run: |
           node -e '
@@ -440,13 +517,13 @@ jobs:
       # and are uploaded regardless, so an export that fails costs the run
       # nothing — which is why it is allowed to be visible instead of swallowed.
       - name: Export the run to Dash0
-        if: always() && steps.args.outputs.subcommand != 'preflight'
+        if: always() && steps.args.outputs.artifacts == 'true'
         env:
           LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
         run: node scripts/telemetry/eval-telemetry.mjs packages/evals/.eval-out
 
       - name: Upload artifacts
-        if: always() && steps.args.outputs.subcommand != 'preflight'
+        if: always() && steps.args.outputs.artifacts == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: evals-${{ steps.args.outputs.subcommand }}-${{ github.run_id }}
@@ -466,3 +543,37 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+
+      # The label is a ONE-SHOT trigger, and this step is what makes that true.
+      #
+      # `live` is decided from the PR's CURRENT label set, not from
+      # `github.event.label.name` — deliberately, so a push to an
+      # already-labelled PR does not silently drop back to the free tier. The
+      # cost of that correctness is that the label is STICKY: every subsequent
+      # `synchronize` re-runs the paid tier until a human removes it. That is
+      # not what anyone means by "run the evals on this PR", and it has already
+      # billed a second unasked-for `golden` run on this branch. Removing the
+      # label here turns "label it" into exactly one paid run, which is what
+      # the affordance always looked like it did.
+      #
+      # `always()`: a FAILED run must drop the label too. Leaving it on after a
+      # failure is the worst case — the next push re-spends on a run already
+      # known to be broken.
+      #
+      # The delete is allowed to fail without failing the job — the label may be
+      # gone already (a human removed it, or a re-run of this job), and absent is
+      # the state this step wants. But the reason is SURFACED rather than
+      # asserted: the command never reports a status code here, so claiming
+      # "already removed" was a guess that read as a fact. A failure that is not
+      # a 404 leaves the label on the PR, and the warning says so.
+      - name: Drop the run-evals label
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api -X DELETE \
+            "repos/${REPO}/issues/${PR_NUMBER}/labels/run-evals" \
+            --silent \
+            || echo "::warning::could not remove the run-evals label; if it is still on the PR the next push will re-spend."

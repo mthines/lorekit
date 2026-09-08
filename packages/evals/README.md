@@ -277,6 +277,7 @@ node bin/run-eval.mjs golden --dry-run        # the arm plan, no model call
 node bin/run-eval.mjs preflight               # one call; is the environment clean?
 node bin/run-eval.mjs arm0 --reps 1 --out ./.eval-out
 node bin/run-eval.mjs golden --reps 3 --lesson-file ./organic.md
+node bin/run-eval.mjs golden --reps 1 --arm 0  # one arm, one call — the cheapest real run
 node bin/run-eval.mjs variants --reps 3        # which FRAMING, and what it costs
 ```
 
@@ -289,7 +290,9 @@ canonical one**, which would report a curated lesson as the agent's own wording.
 
 A comparison whose either side has zero usable reps is marked
 `comparable: false` and carries **no lift at all** — not `0`, which reads as
-"memory made no difference" when the truth is "nothing was measured".
+"memory made no difference" when the truth is "nothing was measured". A `--arm`
+selection that omits the baseline lands in exactly the same place, with a
+different reason: see [Narrowing a paid run](#narrowing-a-paid-run).
 
 Requires the `claude` CLI on `PATH` and an authenticated Claude Code install.
 Run `preflight` first — it exits non-zero when the session loaded skills,
@@ -313,7 +316,48 @@ a well-equipped machine cost $1.13 to say one word. `preflight` reports its own
 | `--model <id>`          | Model under test. Changing it mid-batch makes the arms incomparable. |
 | `--permission-mode <m>` | Passed to `claude`. See the root caveat below.                       |
 | `--lesson-file <path>`  | `golden`: the organic lesson. Absent ⇒ B-organic is skipped.         |
+| `--arm <id>`            | `golden`: run only these arms (repeatable). Empty ⇒ all.             |
+| `--variant <id>`        | `variants`: run only these rows (repeatable). Empty ⇒ all.           |
+| `--skip-off-target`     | `variants`: on-target task only. Halves the cost, gives up the NET.  |
 | `--skip-if-unavailable` | Exit 0 with a "skipped" report when a live run cannot start. For CI. |
+
+Each narrowing flag belongs to exactly one subcommand and is **refused**, not
+ignored, everywhere else — including crossed over (`golden --variant`,
+`variants --arm`) and aimed at a subcommand that is already a single fixed arm
+(`arm0 --arm B-canonical`, which reads exactly like a request for the seeded
+arm and would otherwise have delivered the empty-store one at full price).
+
+### Narrowing a paid run
+
+`--arm` is the cost dial for `golden`, the way `--variant` is for `variants`.
+Empty means every arm; a list is a narrowing.
+
+```bash
+node bin/run-eval.mjs golden --reps 1 --arm 0                 # 1 call — the cheapest real run
+node bin/run-eval.mjs golden --reps 3 --arm A --arm B-canonical   # 6 calls — the headline contrast
+node bin/run-eval.mjs golden --reps 3 --arm 0 --arm A --arm C     # 9 calls — the arm-C diagnostic
+```
+
+Two rules, both enforced before anything is spent:
+
+- **Arm C needs arm 0.** Arm C's whole construction is re-reading arm 0's
+  transcript, so `--arm C` alone is refused with the flag to add. Left to the
+  arm planner it would be skipped for "arm 0 produced no transcript" — true,
+  and no help at all in working out what to type.
+- **A selection without arm A carries no lift.** Arm A is the baseline, a lift
+  is a difference against it, and a run that did not measure the baseline has
+  no difference to report. Every comparison in such a run is
+  `comparable: false` with a reason naming the absent arm — never a `0`, which
+  reads as "memory made no difference". This is structural: the control is
+  simply not in `summaries`, so there is no check to forget. Arm A is
+  deliberately **not** forced into the selection either — a "just score the
+  seeded arm" run is a legitimate thing to want, and silently doubling the
+  cheapest run's cost to protect a number nobody asked for is the worse trade.
+
+A narrowed run records `armsRequested` on its `summary.json` (`null` when the
+whole experiment ran), and every unselected arm appears in `skippedArms` with
+`not selected` as its reason — so "arm A is missing" and "arm A was never asked
+for" are told apart by reading the artifact, not by remembering the flags.
 
 ### Running in a container (CI, Docker, a cloud sandbox)
 
@@ -347,22 +391,54 @@ plugins into the control arm, and it is non-root, so the default
 `bypassPermissions` is accepted rather than refused — both blockers above are
 absent by construction rather than worked around. Three tiers:
 
-| Tier        | Cost           | Trigger                                                   |
-| ----------- | -------------- | --------------------------------------------------------- |
-| `offline`   | free           | automatic, on a PR touching the harness or what it drives |
-| `preflight` | one model call | same                                                      |
-| `live`      | the experiment | `workflow_dispatch`, or a `run-evals` label on the PR     |
+| Tier        | Cost            | Trigger                                                   |
+| ----------- | --------------- | --------------------------------------------------------- |
+| `offline`   | free            | automatic, on a PR touching the harness or what it drives |
+| `preflight` | one model call  | same                                                      |
+| `live`      | free .. the lot | `workflow_dispatch`, or a `run-evals` label on the PR     |
 
-The dispatch form takes the subcommand, `reps` (capped at 10), a variant
-narrowing and `--skip-off-target`; it writes `summary.json`'s own caveats into
-the run's step summary and uploads `.eval-out` as an artifact. `costUsd` is
+The dispatch form takes the subcommand, `reps` (capped at 10), an **arm**
+narrowing for `golden`, a **variant** narrowing plus `--skip-off-target` for
+`variants`, and it validates every one against a literal allow-list before it
+reaches a command line. Each narrowing is refused on the subcommand it does not
+belong to — twice over, once here and once in the harness, the workflow's copy
+existing only because it fails in a second, before `pnpm install` and before
+the Claude CLI is fetched. The cheapest useful dispatch is
+`golden` / `reps: 1` / `arms: 0` — one model call.
+
+Two subcommands warrant a note on the choice list:
+
+- **`probe` is present and free** — it seeds a store, installs the real
+  SessionStart hook and prints what gets injected, spawning no model at all. It
+  writes no run directory, so the report, the Dash0 export and the artifact
+  upload all skip for it, driven by one `artifacts` output the resolver derives
+  rather than a growing `!= 'preflight'` chain on each step.
+- **`arm0` is absent on purpose.** It is a real subcommand and the cheapest
+  paid one, but its `summary.json` carries neither `arms[]` nor `cells{}` nor
+  `costUsd`, so the report would render empty and the Dash0 export would emit
+  no datapoints — a paid run with no record of what it bought.
+  `golden --arm 0` is the same single arm at the same cost, through the
+  pipeline that reports and exports it.
+
+**The `run-evals` label is one-shot.** The `live` gate reads the PR's _current_
+label set rather than `github.event.label.name`, because the latter is only
+populated on the `labeled` event and a push to an already-labelled PR would
+silently drop back to the free tier. The cost of that correctness is a sticky
+label that re-spends on every subsequent push — which has already billed one
+unasked-for `golden` run. The job's last step therefore removes the label
+itself, on success _and_ on failure (leaving it on after a failure is the worst
+case: the next push re-spends on a run already known to be broken). `unlabeled`
+is not in the workflow's trigger types, so that cleanup cannot re-trigger it.
+
+The step summary writes `summary.json`'s own caveats into
+the run, and `.eval-out` is uploaded as an artifact. `costUsd` is
 reported once for the run, because it is the one figure that sums across it.
 `usableReps` and the discarded count are reported **per arm** (`golden`) and
 **per variant** (`variants`), because that is the only place they exist: each
 arm and each cell discards independently, so there is no run-wide N a
 conclusion could honestly cite.
 
-Every live invocation there passes `--skip-if-unavailable`, which turns an
+Every live invocation that spawns a model passes `--skip-if-unavailable`, which turns an
 unstartable run into exit 0 plus a report naming what was missing, instead of a
 failure. That is what makes the workflow safe on a fork PR (secrets do not
 interpolate) and in a repository before the `ANTHROPIC_API_KEY` secret is added:
@@ -370,7 +446,9 @@ a job with no credential must not be red for a reason unrelated to the change.
 Locally, leave the flag off — a silent exit 0 tells you nothing, which is why it
 is opt-in rather than the default. The three preconditions it decides on live in
 `src/harness/runnable.mjs`: the binary, the credential, and `bypassPermissions`
-under root.
+under root. `probe` is not given the flag: it spawns no model, so there is no
+credential for it to be missing, and promising to skip on an unavailability
+that cannot arise is worse than not offering it.
 
 Artifacts land under `<out>/arm0-<runId>/rep-<n>/` as `transcript.jsonl`,
 `result.json` and `meta.json`, with a `summary.json` per run. They are written

@@ -57,11 +57,13 @@ import {
   ARM_0,
   ARM_A,
   ARM_C,
+  GOLDEN_ARMS,
   armById,
   armCPrompt,
   armPlan,
   compareArms,
   describeComparison,
+  resolveArmSelection,
   summarizeArm,
   transcriptDigest,
 } from "../src/harness/golden.mjs";
@@ -74,7 +76,7 @@ import { gradeSandbox } from "../src/grading/grade.mjs";
 import { readInjectedLessons } from "../src/sandbox/hook-install.mjs";
 import { classifyRetrieval } from "../src/grading/retrieval.mjs";
 import { createSandbox } from "../src/sandbox/sandbox.mjs";
-import { listAll } from "../src/sandbox/store-setup.mjs";
+import { harvestOrganicLesson, listAll } from "../src/sandbox/store-setup.mjs";
 import { taskById } from "../src/harness/task.mjs";
 
 const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
@@ -87,7 +89,8 @@ Subcommands:
                        between two arms. B-organic is SKIPPED (with a stated
                        reason) unless --lesson-file supplies the lesson the loop
                        would have saved; it is never substituted with the
-                       canonical one.
+                       canonical one. Narrow the spend with --arm; a selection
+                       without arm A carries no lift, by construction.
   variants             Which FRAMING of one fact teaches best, and what does it
                        cost? Crosses the lesson ladder (rule-only … padded)
                        against an ON-TARGET task and an OFF-TARGET one, so a
@@ -124,6 +127,14 @@ Options:
                        runs (CI, Docker, cloud sandboxes) need e.g. acceptEdits.
   --lesson-file <path> golden: the organic lesson, read from a file. Without it
                        (or --lesson) the B-organic arm is skipped, never faked.
+  --arm <id>           golden: run only these arms (repeatable). Known ids:
+                       ${GOLDEN_ARMS.map((a) => a.id).join(", ")}. Empty means
+                       every arm. The cheapest real golden is one arm at
+                       --reps 1. Two rules: arm C needs arm 0 (it re-reads its
+                       transcript) and is refused without it; a selection
+                       WITHOUT arm A reports no lift at all, because a lift is
+                       a difference against the baseline and the baseline did
+                       not run — the comparison says so rather than printing 0.
   --variant <id>       variants: run only these rows (repeatable). Known ids:
                        ${VARIANT_IDS.join(", ")}.
   --skip-off-target    variants: run the on-target task only. Halves the cost
@@ -184,6 +195,10 @@ export function parseArgs(argv) {
     // narrowing, so the difference between "asked for none" and "asked for all"
     // never has to be inferred from a sentinel.
     variants: [],
+    // The same shape, for golden's arms. The two cost dials are deliberately
+    // symmetric: one is `--variant` on the variants ladder, the other `--arm`
+    // on the golden arms, and neither needs its own mental model.
+    arms: [],
     skipOffTarget: false,
     scope: null,
     scopeMode: "branch",
@@ -223,6 +238,9 @@ export function parseArgs(argv) {
         break;
       case "--variant":
         options.variants.push(rest[++i]);
+        break;
+      case "--arm":
+        options.arms.push(rest[++i]);
         break;
       case "--skip-off-target":
         options.skipOffTarget = true;
@@ -285,6 +303,12 @@ export function parseArgs(argv) {
   // real calls and produces an unreadable artifact.
   if (options.variants.some((v) => typeof v !== "string" || v.trim() === "")) {
     throw new Error("--variant requires a non-empty variant id");
+  }
+  // Same trap as `--variant`: a bare `--arm` pushes `undefined`, which would
+  // reach `resolveArmSelection` as an id and be refused there — but with a
+  // message about an unknown arm rather than about the missing value.
+  if (options.arms.some((a) => typeof a !== "string" || a.trim() === "")) {
+    throw new Error("--arm requires a non-empty arm id");
   }
   if (options.lesson && options.lessonFile) {
     throw new Error(
@@ -515,6 +539,15 @@ function totalCostUsd(summaries) {
 // is only ever tested for truthiness (`Boolean(priorDigest)`); the arm loop
 // skips `armCPrompt` under `--dry-run`, so it can never reach a model.
 const DRY_RUN_DIGEST = "(dry-run: arm 0 was planned, not run)";
+// Arm B-organic's counterpart. Shaped like a real harvest so the summary's
+// provenance block stays well-formed instead of spreading `undefined`s, and
+// self-describing for the same reason the digest above is.
+const DRY_RUN_HARVEST = Object.freeze({
+  value: "(dry-run: arm 0's lesson was planned, not harvested)",
+  key: "(dry-run)",
+  scope: "(dry-run)",
+  entries: 0,
+});
 
 /**
  * The golden experiment. Arms 0 / A / B / C, then the comparison.
@@ -534,21 +567,44 @@ async function runGolden(options) {
     "golden defines each arm's own store",
     "the organic lesson goes in --lesson-file",
   );
+  // The variants ladder's dials, typed at the arms experiment. Refused rather
+  // than ignored for the reason every other refusal here exists: a caller who
+  // narrowed with `--variant` and got all four arms reads the bill as the
+  // harness misbehaving, and the cost of finding out is a paid run.
+  refuseUnhonourableFlags(
+    options,
+    ["--variant", "--skip-off-target"],
+    "golden runs ARMS, not the variants ladder",
+    "narrow the arms with --arm <id>",
+  );
+  // Resolved BEFORE the sandbox and before `requireRunnable` has spent
+  // anything: an unknown id or a C-without-0 selection is an argument mistake,
+  // and the whole point of the flag is to spend less.
+  const selectedArms = resolveArmSelection(options.arms);
+  const narrowed = options.arms.length > 0;
+
   requireRunnable(options);
 
   const id = runId();
   const outDir = path.resolve(options.out, `golden-${id}`);
   const task = taskById("branch-scope");
-  const organicLesson = await readOrganicLesson(options);
+  const suppliedLesson = await readOrganicLesson(options);
 
   await fsp.mkdir(outDir, { recursive: true });
 
   const perArm = new Map();
   let priorDigest = "";
+  // What arm 0 wrote, harvested from its own store. Only consulted when the
+  // operator supplied nothing — an explicit --lesson/--lesson-file is a
+  // deliberate choice of material and always wins over a harvest.
+  let harvested = null;
 
-  // Arm 0 first — it is the only source of the prior transcript.
-  const armsToRun = [armById(ARM_0)];
-  for (let rep = 1; rep <= options.reps; rep++) {
+  // Arm 0 first — it is the only source of the prior transcript. Skipping it
+  // when it was not selected is the ENTIRE saving of `--arm`: leaving it
+  // unconditional would charge for it on every subset run, and arm C is
+  // refused up front rather than silently pulling it back in.
+  const armsToRun = selectedArms.includes(ARM_0) ? [armById(ARM_0)] : [];
+  for (let rep = 1; armsToRun.length > 0 && rep <= options.reps; rep++) {
     const sandbox = await createSandbox({ keep: options.keep });
     try {
       const repDir = path.join(outDir, `arm-${ARM_0}`, `rep-${rep}`);
@@ -568,6 +624,10 @@ async function runGolden(options) {
         // under `--dry-run`, so this value is only ever read through
         // `Boolean(priorDigest)` and never reaches a prompt.
         if (!priorDigest) priorDigest = DRY_RUN_DIGEST;
+        // Same artefact, same fix: without this the plan reports B-organic
+        // skipped for "arm 0 was not run, or ran and wrote nothing to harvest"
+        // — both clauses false under a dry run that planned arm 0.
+        if (!suppliedLesson && !harvested) harvested = DRY_RUN_HARVEST;
         continue;
       }
       const { run, record } = await runRep({
@@ -584,14 +644,36 @@ async function runGolden(options) {
       // one attempt, and averaging or concatenating several would give it
       // strictly more information than the single retry the arms model.
       if (!priorDigest) priorDigest = transcriptDigest(run.transcriptText);
+      // And the FIRST arm-0 lesson as arm B-organic's, on the same rule and
+      // for the same reason. Harvested before `dispose()` — the sandbox store
+      // is the only place this text exists.
+      if (!suppliedLesson && !harvested) {
+        harvested = await harvestOrganicLesson(sandbox);
+      }
     } finally {
       await sandbox.dispose();
     }
   }
 
+  // The operator's own material always wins; the harvest is the fallback that
+  // makes the arm reachable at all. `null` for both means the arm is skipped —
+  // the canonical lesson is never substituted here, at either layer.
+  const organicLesson =
+    suppliedLesson || (harvested && harvested.value) || null;
+  const organicSource = suppliedLesson
+    ? "operator"
+    : harvested
+      ? "arm-0"
+      : null;
+
   const { run: plannedArms, skipped } = armPlan({
     organicLesson: Boolean(organicLesson),
     priorTranscript: Boolean(priorDigest),
+    // `null`, not the full id list, when nothing was narrowed: the skip reason
+    // for an unselected arm names the selection, and "not selected — this run
+    // asked for 0, A, B-organic, B-canonical, C" is a sentence no unnarrowed
+    // run should ever be able to produce.
+    selected: narrowed ? selectedArms : null,
   });
 
   for (const arm of plannedArms) {
@@ -637,6 +719,29 @@ async function runGolden(options) {
     runId: id,
     model: options.model,
     repsRequested: options.reps,
+    // `null` means the whole experiment ran. A subset is recorded ON THE
+    // ARTIFACT rather than left to be inferred from which arms happen to be
+    // present, because "arm A is missing" and "arm A was never asked for" are
+    // read very differently by whoever opens this file next.
+    armsRequested: narrowed ? selectedArms : null,
+    // WHERE arm B-organic's lesson came from. Recorded because the arm's whole
+    // claim is that the text is the agent's own: "operator" is a human's file
+    // and "arm-0" is this run's own write, and a reader who cannot tell them
+    // apart cannot tell whether the number is about the loop or about a person
+    // writing a good lesson. `null` means the arm did not run.
+    organicLesson: organicSource && {
+      source: organicSource,
+      chars: organicLesson.length,
+      // Present only on a harvest — where in the store it was found, and how
+      // many candidates there were, so seeding from one of several is visible.
+      ...(harvested && organicSource === "arm-0"
+        ? {
+            scope: harvested.scope,
+            key: harvested.key,
+            candidates: harvested.entries,
+          }
+        : {}),
+    },
     caveat:
       `N=${options.reps} per arm is a low-power INDICATOR, not proof. ` +
       `Treat every difference as directional; widening N — not reinterpreting ` +
@@ -673,8 +778,8 @@ async function runGolden(options) {
 async function runVariants(options) {
   refuseUnhonourableFlags(
     options,
-    ["--seed", "--scope", "--scope-mode", "--lesson", "--lesson-file"],
-    "variants defines its own store, scope and lesson text",
+    ["--seed", "--scope", "--scope-mode", "--lesson", "--lesson-file", "--arm"],
+    "variants defines its own store, scope and lesson text, and runs no arms",
     "pick rows with --variant <id> instead",
   );
   requireRunnable(options);
@@ -684,9 +789,7 @@ async function runVariants(options) {
   // the spend behind it while every other row kept `--reps` — and emit the
   // variant twice in the ranking.
   const requested =
-    options.variants.length > 0
-      ? [...new Set(options.variants)]
-      : VARIANT_IDS;
+    options.variants.length > 0 ? [...new Set(options.variants)] : VARIANT_IDS;
   for (const id of requested) variantById(id); // refuse an unknown id up front
 
   const id = runId();
@@ -762,7 +865,9 @@ async function runVariants(options) {
     scoreVariant({
       variant,
       onTarget: cell(`${variant.id}-${onTargetTask.id}`),
-      offTarget: offTargetRun ? cell(`${variant.id}-${offTargetTask.id}`) : null,
+      offTarget: offTargetRun
+        ? cell(`${variant.id}-${offTargetTask.id}`)
+        : null,
       baselineOnTarget: cell(`baseline-${onTargetTask.id}`),
       baselineOffTarget: offTargetRun
         ? cell(`baseline-${offTargetTask.id}`)
@@ -814,6 +919,16 @@ async function runArm0(options) {
     ["--seed", "--lesson"],
     "arm0 always runs against an EMPTY store",
     'or use the "probe" subcommand, which seeds',
+  );
+  // arm0 IS one arm, so a narrowing flag has nothing to narrow. It is refused
+  // rather than ignored because `--arm B-canonical` on this subcommand looks
+  // exactly like a request for the seeded arm and would silently deliver the
+  // empty-store one instead — a paid run answering a different question.
+  refuseUnhonourableFlags(
+    options,
+    ["--arm", "--variant", "--skip-off-target"],
+    "arm0 is a single fixed arm and selects nothing",
+    'narrow the arms with "golden --arm <id>"',
   );
   requireRunnable(options);
 
@@ -999,6 +1114,9 @@ async function runPreflight(options) {
       "--reps",
       "--out",
       "--dry-run",
+      "--arm",
+      "--variant",
+      "--skip-off-target",
     ],
     "preflight is a single call in a fixed empty-store arm, it writes no run directory, and the model call IS the check",
   );
@@ -1056,8 +1174,17 @@ async function runProbe(options) {
   // `--dry-run` most misleadingly of all, since probe is already dry.
   refuseUnhonourableFlags(
     options,
-    ["--reps", "--out", "--timeout", "--command", "--dry-run"],
-    "probe builds one arm, spawns no model, writes no run directory and is already dry",
+    [
+      "--reps",
+      "--out",
+      "--timeout",
+      "--command",
+      "--dry-run",
+      "--arm",
+      "--variant",
+      "--skip-off-target",
+    ],
+    "probe builds one arm, spawns no model, writes no run directory, selects nothing and is already dry",
   );
 
   const sandbox = await createSandbox({ keep: options.keep });
