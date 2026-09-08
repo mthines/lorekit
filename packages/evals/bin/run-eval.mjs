@@ -539,6 +539,15 @@ function totalCostUsd(summaries) {
 // is only ever tested for truthiness (`Boolean(priorDigest)`); the arm loop
 // skips `armCPrompt` under `--dry-run`, so it can never reach a model.
 const DRY_RUN_DIGEST = "(dry-run: arm 0 was planned, not run)";
+// Arm B-organic's counterpart. Shaped like a real harvest so the summary's
+// provenance block stays well-formed instead of spreading `undefined`s, and
+// self-describing for the same reason the digest above is.
+const DRY_RUN_HARVEST = Object.freeze({
+  value: "(dry-run: arm 0's lesson was planned, not harvested)",
+  key: "(dry-run)",
+  scope: "(dry-run)",
+  entries: 0,
+});
 
 /**
  * The golden experiment. Arms 0 / A / B / C, then the comparison.
@@ -615,6 +624,10 @@ async function runGolden(options) {
         // under `--dry-run`, so this value is only ever read through
         // `Boolean(priorDigest)` and never reaches a prompt.
         if (!priorDigest) priorDigest = DRY_RUN_DIGEST;
+        // Same artefact, same fix: without this the plan reports B-organic
+        // skipped for "arm 0 was not run, or ran and wrote nothing to harvest"
+        // — both clauses false under a dry run that planned arm 0.
+        if (!suppliedLesson && !harvested) harvested = DRY_RUN_HARVEST;
         continue;
       }
       const { run, record } = await runRep({
