@@ -298,6 +298,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
+        with:
+          # This job holds `pull-requests: write` for the label drop and also
+          # spawns the agent under test. Nothing here uses git auth — the label
+          # step goes through GH_TOKEN — so keep the token out of .git/config
+          # rather than leaving it where the run could read it.
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
