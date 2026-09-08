@@ -554,8 +554,12 @@ jobs:
       # failure is the worst case — the next push re-spends on a run already
       # known to be broken.
       #
-      # `|| true` on a 404: the label may be gone already (a human removed it,
-      # or a re-run of this job). Absent is the state this step wants.
+      # The delete is allowed to fail without failing the job — the label may be
+      # gone already (a human removed it, or a re-run of this job), and absent is
+      # the state this step wants. But the reason is SURFACED rather than
+      # asserted: the command never reports a status code here, so claiming
+      # "already removed" was a guess that read as a fact. A failure that is not
+      # a 404 leaves the label on the PR, and the warning says so.
       - name: Drop the run-evals label
         if: always() && github.event_name == 'pull_request'
         env:
@@ -565,5 +569,5 @@ jobs:
         run: |
           gh api -X DELETE \
             "repos/${REPO}/issues/${PR_NUMBER}/labels/run-evals" \
-            --silent 2>/dev/null \
-            || echo "run-evals was not on the PR (already removed) — nothing to do."
+            --silent \
+            || echo "::warning::could not remove the run-evals label; if it is still on the PR the next push will re-spend."
