@@ -577,13 +577,13 @@ async function runGolden(options) {
     "golden runs ARMS, not the variants ladder",
     "narrow the arms with --arm <id>",
   );
-  requireRunnable(options);
-
   // Resolved BEFORE the sandbox and before `requireRunnable` has spent
   // anything: an unknown id or a C-without-0 selection is an argument mistake,
   // and the whole point of the flag is to spend less.
   const selectedArms = resolveArmSelection(options.arms);
   const narrowed = options.arms.length > 0;
+
+  requireRunnable(options);
 
   const id = runId();
   const outDir = path.resolve(options.out, `golden-${id}`);
