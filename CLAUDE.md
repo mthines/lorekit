@@ -424,6 +424,19 @@ on read tools — both with the standard `-32001` permission-denied error. The g
 `packages/mcp-core/src/auth/permissions.ts`, mirrored self-contained into
 `supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern).
 
+**Entitlement must gate the response BODY, not only the write.** On any
+`supabase/functions/mcp/**` (or REST) handler authenticated by a user JWT but keyed on a
+**caller-supplied resource id**, the same `entitled` / `verdict.kind === 'linked'` computation
+that gates the RPC/upsert MUST also gate every field of the success response. The recurring
+bug: the check guards the DB write while the 200 body still returns third-party/unentitled
+metadata sourced from the fetched object — an information leak even though nothing was written.
+The tell when reviewing: an `entitled` value that gates the mutation but is never referenced
+when constructing the response literal; grep the response literal for fields sourced from the
+fetched third-party object. (Related, still-open residue not covered by this rule: a
+pending-vs-linked `status` field / not-found-vs-ok split can remain an existence oracle —
+`status` can't simply be dropped because `packages/web/src/lib/github-installations.ts`
+branches on it.)
+
 ---
 
 ## Limits & rate limiting
