@@ -54,7 +54,7 @@ const REGISTRY_INPUT = [
       'The consolidated /insights dashboard page (usage health, agent breakdown, scope consumption, hot/cold lore, runs) — gates the page itself (404 when off), its sidebar nav item, and its command-palette entry.',
     type: 'boolean',
     variants: { off: false, on: true },
-    defaultVariant: 'off',
+    defaultVariant: 'on',
     owner: '@lorekit/web',
     tags: ['dashboard', 'web', 'rollout'],
   },

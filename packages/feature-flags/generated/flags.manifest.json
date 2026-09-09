@@ -10,7 +10,7 @@
         "off": false,
         "on": true
       },
-      "defaultVariant": "off",
+      "defaultVariant": "on",
       "experiment": null,
       "owner": "@lorekit/web",
       "tags": [
