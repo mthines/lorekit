@@ -20,7 +20,11 @@ import { withQueryClient } from '@/mocks/decorators';
 const meta: Meta<typeof LessonDetailSheet> = {
   title: 'Lore/LessonDetailSheet',
   component: LessonDetailSheet,
-  parameters: { layout: 'centered' },
+  // R3 wired LessonDetailSheet to useRouter()/useSearchParams() (filter-from-
+  // metadata navigation), so every story now needs the App Router context —
+  // same fix already applied to LessonDetailSheet.test.stories.tsx and
+  // LorePage.stories.tsx for the identical reason.
+  parameters: { layout: 'centered', nextjs: { appDirectory: true } },
   decorators: [withQueryClient],
 };
 
