@@ -276,7 +276,7 @@ off-by-one here does not throw, it shows a row that already expired.
 
 ## `GET /facets`
 
-`lorekit_memory_facets` (00052, widened by 00057 and 00108) returns
+`lorekit_memory_facets` (00052, widened by 00057, 00108 and 00110) returns
 `{ facets: [{ facet, value, count }] }` for all nine dimensions — `tag`, `source_agent`,
 `trigger`, `kind`, `host`, `origin_repo`, `origin_branch`, `origin_pr`, `owner` —
 ordered facet asc, count desc, value asc. `?archived=` partitions exactly as it does on
@@ -301,14 +301,35 @@ to the RPC, which counts each dimension with every OTHER active filter applied b
 to. With no filters supplied the response is the pre-00057 global catalog, unchanged. Two
 consequences to know before reading a number:
 
-- A value whose count falls to zero under the other dimensions' filters emits **no row**, the
-  same omission a null column value has — so it drops out of the menu until the filter is
-  cleared, rather than showing as a selectable `0`. Emitting the zeroes would mean returning the
-  tenant's entire distinct value set for `tag` / `origin_branch` on every call.
+- **As of 00110, a value whose count falls to zero under the other filters still emits a row**
+  (`count: 0`) rather than being omitted — reversed from the original 00057 behaviour described
+  above. The RPC enumerates every candidate value from the full (retention/scope/tenant-filtered)
+  population FIRST, via `cross join lateral` for `tag` and a `union all` of one branch per scalar
+  dimension, and only THEN counts how many of those rows also satisfy every other active filter
+  (`count(*) filter (where matched)`) — so a value that exists at all always gets a row, and one
+  that currently matches nothing is visibly `0` instead of silently absent. This does not change
+  what emits no row at all: a NULL column value still yields no facet row (there is still no
+  value to enumerate), and the tenant/retention/scope predicates still apply before enumeration —
+  only the "zero under the CURRENT DIMENSION FILTERS" case changed.
 - `q` and `key` are **NOT** mirrored, so with a search active a count is an upper bound on what
   selecting the value would return, not the exact yield. Mirroring `q` would put a second
   implementation of `likeNeedle`'s LIKE escaping in plpgsql, which the repo-wide "a filter value
   is encoded ONE way" rule forbids.
+
+**Self-exclusion for `label` is narrowed to within-group CO-OCCURRENCE under `tags_mode='all'`
+(migration 00110).** Self-exclusion says "count with every OTHER filter applied, not this
+dimension's own" — right for a scalar dimension (there is only ever one value to swap) and right
+for `label` under `tags_mode='any'` (any one OR'd value could be swapped for another). It was
+wrong for `label` under AND mode: with `perf` already selected, self-exclusion counted every row
+carrying a CANDIDATE label, including rows that never carried `perf` — so a second label's count
+could exceed what the resulting two-label AND filter would actually match. The RPC's label
+branch now additionally requires the row to satisfy every already-selected tag whenever
+`p_tags_mode = 'all'`; under `tags_mode='any'` the added condition is a no-op, so that mode and
+every scalar dimension are bit-for-bit unchanged. This is a WITHIN-dimension fix only — a `kind`
+filter still narrows the `label` counts (and vice versa) exactly as before; only how the `label`
+facet treats OTHER, already-selected labels changed. `migrations.test.sql`'s own added block
+(after the 00108 checks) asserts co-occurrence under AND, the zero-stays row, unchanged
+self-exclusion under OR, and that a cross-group filter still narrows the label counts.
 
 **`created_since` / `created_until` and the five retention thresholds ARE mirrored, as of
 00108** — `min_age_days`, `unseen_days`, `max_seen_count`, `max_read_count`,

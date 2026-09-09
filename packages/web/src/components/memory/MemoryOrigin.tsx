@@ -1,5 +1,6 @@
 import { GitBranch, GitCommitHorizontal, GitPullRequest, Github } from 'lucide-react';
 import { originLinks, type MemoryOriginFields, type OriginLinkKind } from '@/lib/origin';
+import { FilterableMetaValue } from '@/components/ui/FilterableMetaValue';
 
 /**
  * The "recorded from" provenance rows of a memory's Metadata list.
@@ -27,7 +28,33 @@ const ROW_META: Record<OriginLinkKind, { label: string; Icon: typeof GitBranch }
   repo: { label: 'Recorded in', Icon: Github },
 };
 
-export function MemoryOrigin({ origin, scope }: { origin: MemoryOriginFields; scope?: string }) {
+/**
+ * Which `FilterField` (see `lib/filters.ts`) each origin kind narrows to.
+ * `commit` has no filter dimension (no `FilterField` names it), so it gets no
+ * affordance — matching Decision D2's "no clean equals dimension" rule.
+ */
+const FILTERABLE_KIND_FIELD: Partial<Record<OriginLinkKind, 'repo' | 'branch' | 'pr'>> = {
+  repo: 'repo',
+  branch: 'branch',
+  'pull-request': 'pr',
+};
+
+export function MemoryOrigin({
+  origin,
+  scope,
+  onFilterOrigin,
+}: {
+  origin: MemoryOriginFields;
+  scope?: string;
+  /**
+   * R3: when provided, the repo/branch/pull-request rows get a hover-reveal
+   * "Filter by this" affordance (`FilterableMetaValue`) that calls back with
+   * the `FilterField` + raw value to toggle into `?filters=`. Omitted by
+   * standalone callers (e.g. a read-only origin summary elsewhere) that have
+   * no filter bar to apply to.
+   */
+  onFilterOrigin?: (field: 'repo' | 'branch' | 'pr', value: string) => void;
+}) {
   const links = originLinks(origin, scope);
   if (links.length === 0) return null;
 
@@ -35,24 +62,40 @@ export function MemoryOrigin({ origin, scope }: { origin: MemoryOriginFields; sc
     <>
       {links.map(({ kind, label, url }) => {
         const { label: rowLabel, Icon } = ROW_META[kind];
+        const valueNode = url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
+          >
+            {label}
+          </a>
+        ) : (
+          // No repository recorded, so there is nothing to link to — show
+          // the value rather than hiding provenance we do have.
+          <span className="font-mono text-[var(--color-content-secondary)]">{label}</span>
+        );
+        const filterField = FILTERABLE_KIND_FIELD[kind];
+        // The filter VALUE must match the raw stored field (`origin_pr` is
+        // numeric), not the display `label` — which for a pull request is the
+        // formatted `#482`, not the bare number `toggleFilterValue` expects.
+        const filterValue =
+          kind === 'pull-request' && origin.origin_pr != null ? String(origin.origin_pr) : label;
         return (
           <div key={kind} className="flex items-center gap-2 text-xs">
             <Icon className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
             <dt className="text-[var(--color-content-tertiary)]">{rowLabel}</dt>
             <dd className="ml-auto min-w-0 truncate">
-              {url ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
+              {onFilterOrigin && filterField ? (
+                <FilterableMetaValue
+                  label={`Filter by ${rowLabel.toLowerCase()} "${label}"`}
+                  onFilter={() => onFilterOrigin(filterField, filterValue)}
                 >
-                  {label}
-                </a>
+                  {valueNode}
+                </FilterableMetaValue>
               ) : (
-                // No repository recorded, so there is nothing to link to — show
-                // the value rather than hiding provenance we do have.
-                <span className="font-mono text-[var(--color-content-secondary)]">{label}</span>
+                valueNode
               )}
             </dd>
           </div>

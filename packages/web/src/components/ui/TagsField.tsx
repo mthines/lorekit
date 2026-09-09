@@ -40,6 +40,7 @@
 import { useState, useRef, useCallback, useId } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Tag } from 'lucide-react';
+import { FilterableMetaValue } from './FilterableMetaValue';
 
 export interface TagsFieldProps {
   /** Section label shown as a heading. */
@@ -56,6 +57,13 @@ export interface TagsFieldProps {
   maxTags?: number;
   /** Optional class applied to the root wrapper. */
   className?: string;
+  /**
+   * R3 (lore-explorer-panel-nav-facets): when provided, every chip gets a
+   * hover-reveal "Filter by this label" affordance that calls back with the
+   * bare tag value. The sole caller today is `LessonDetailSheet` — an editing
+   * context (e.g. a future bulk-tag editor) would simply omit this.
+   */
+  onTagFilter?: (tag: string) => void;
 }
 
 export function TagsField({
@@ -66,6 +74,7 @@ export function TagsField({
   placeholder = 'Add tag…',
   maxTags = 20,
   className = '',
+  onTagFilter,
 }: TagsFieldProps) {
   const [inputValue, setInputValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -131,7 +140,13 @@ export function TagsField({
               transition={{ duration: 0.15, ease: 'easeOut' }}
               className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-0.5 font-mono text-xs text-[var(--color-content-secondary)]"
             >
-              {tag}
+              {onTagFilter ? (
+                <FilterableMetaValue label={`Filter by label "${tag}"`} onFilter={() => onTagFilter(tag)}>
+                  <span>{tag}</span>
+                </FilterableMetaValue>
+              ) : (
+                tag
+              )}
               {editable && (
                 <button
                   type="button"

@@ -75,10 +75,13 @@ function Harness({
   onClose,
   lesson = LESSON,
   initialContentTab,
+  layout = 'sheet',
 }: {
   onClose: () => void;
   lesson?: LessonEntry;
   initialContentTab?: ContentTab;
+  /** @default 'sheet' — every existing story below exercises the mobile sheet. */
+  layout?: 'auto' | 'drawer' | 'sheet';
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -88,7 +91,7 @@ function Harness({
         setOpen(false);
         onClose();
       }}
-      layout="sheet"
+      layout={layout}
       initialContentTab={initialContentTab}
     />
   );
@@ -101,6 +104,11 @@ const meta: Meta<typeof Harness> = {
   parameters: {
     chromatic: { disableSnapshot: true },
     layout: 'centered',
+    // R3: the panel reads `useRouter`/`useSearchParams` (directly, and via
+    // `useUrlState`) to apply a metadata filter as a navigation. Without this,
+    // those hooks throw "expected app router to be mounted" — same fix as
+    // `LorePage.stories.tsx`.
+    nextjs: { appDirectory: true },
   },
   args: { onClose: fn() },
   decorators: [withQueryClient],
@@ -145,6 +153,30 @@ export const OpensAsASheet: Story = {
       await expect(await body().findByRole('dialog', { name: /memory detail/i })).toBeVisible();
       await expect(handle()).toBeInTheDocument();
       await expect(backdrop()).toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * R1 (lore-explorer-panel-nav-facets): the desktop DRAWER is deliberately
+ * non-modal — the list stays visible and clickable behind it, so it renders
+ * no backdrop and carries no `aria-modal` at all (not even `"false"` — the
+ * attribute is fully absent, the conventional way a non-modal dialog is
+ * marked). Regression guard for the pre-R1 behaviour, which always rendered a
+ * scrim and hard-coded `aria-modal="true"` regardless of presentation.
+ */
+export const OpensAsADrawerWithoutBackdrop: Story = {
+  render: (args) => <Harness onClose={args.onClose} layout="drawer" />,
+  play: async ({ step }) => {
+    await step('the drawer renders as a non-modal dialog with no backdrop', async () => {
+      const dialog = await body().findByRole('dialog', { name: /memory detail/i });
+      // The drawer's entrance animates opacity 0→1 (unlike the sheet's pure
+      // `y` transform), so — like `EditingRevealsSaveBar`'s bar — poll rather
+      // than asserting immediately after the element mounts.
+      await waitFor(() => expect(dialog).toBeVisible());
+      await expect(dialog).not.toHaveAttribute('aria-modal');
+      await expect(backdrop()).not.toBeInTheDocument();
+      await expect(handle()).not.toBeInTheDocument();
     });
   },
 };
