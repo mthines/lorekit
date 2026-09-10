@@ -152,6 +152,7 @@ jobs:
       - name: Remind to re-seed the orgs-smoke user
         run: |
           echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/smoke/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
+          echo "::notice::The reset also wiped any demo data from a prior '/preview --seed'. Once the smoke user is re-seeded, repopulate it with a '/preview --seed' comment on any open PR (see docs/deployment.md → 'Seed the preview with demo data') — not done here, for the same service-role-key reason."
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM

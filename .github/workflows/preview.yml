@@ -51,11 +51,17 @@ jobs:
       pr_number: ${{ github.event.issue.number }}
       pr_sha: ${{ steps.pr.outputs.sha }}
       pr_branch: ${{ steps.pr.outputs.branch }}
+      seed: ${{ steps.check.outputs.seed }}
     steps:
       - name: Check commenter authorization
         id: check
         env:
           ASSOCIATION: ${{ github.event.comment.author_association }}
+          # Read only through an env var, never interpolated into the shell —
+          # `${{ github.event.comment.body }}` inside a `run:` is a script-
+          # injection vector (same rule web-preview.yml documents for its
+          # `--if-changed` flag).
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           case "$ASSOCIATION" in
             OWNER|MEMBER|COLLABORATOR)
@@ -65,6 +71,15 @@ jobs:
               echo "authorized=false" >> "$GITHUB_OUTPUT"
               ;;
           esac
+          # Opt-in only: `/preview` alone never seeds. See "Seed the preview
+          # with demo data" in docs/deployment.md for why this stays opt-in —
+          # the preview project is shared across every open PR's `/preview`
+          # run, and most runs never open the dashboard.
+          if printf '%s\n' "$COMMENT_BODY" | grep -qE -- '--seed\b'; then
+            echo "seed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "seed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Add 👀 reaction
         if: steps.check.outputs.authorized == 'true'
@@ -163,6 +178,45 @@ jobs:
 
       - name: Deploy edge functions
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+
+  # Opt-in only: `/preview --seed` (never plain `/preview`). Runs after the
+  # migrations are on the project, in parallel with deploy-web/smoke — it
+  # writes DEMO rows under the fixed smoke-user account, backdated so the
+  # dashboard's Insights/heatmap/Explorer read as a lived-in workspace instead
+  # of empty. See "Seed the preview with demo data" in docs/deployment.md.
+  seed:
+    name: Seed preview data
+    runs-on: ubuntu-latest
+    needs: [guard, deploy-api]
+    if: needs.guard.outputs.authorized == 'true' && needs.guard.outputs.seed == 'true'
+    environment: preview
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard.outputs.pr_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      # The seed targets the fixed smoke user (LOREKIT_SMOKE_EMAIL) — the same
+      # account the orgs REST smoke signs in as — so it is optional in the
+      # same way that suite is: unset → skip, announced, never fail the run.
+      - name: Seed as the fixed smoke user (optional)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
+        run: |
+          if [ -z "$LOREKIT_SMOKE_EMAIL" ]; then
+            echo "::warning::--seed requested but LOREKIT_SMOKE_EMAIL is not set — skipping. Seed it once with scripts/smoke/seed-smoke-user.mjs to enable /preview --seed."
+            exit 0
+          fi
+          node scripts/seed/seed-preview.mjs --user-email "$LOREKIT_SMOKE_EMAIL"
 
   deploy-web:
     name: Deploy web → Vercel preview
@@ -373,7 +427,7 @@ jobs:
     name: Post result comment
     runs-on: ubuntu-latest
     if: always() && needs.guard.outputs.authorized == 'true'
-    needs: [guard, deploy-api, deploy-web, smoke]
+    needs: [guard, deploy-api, deploy-web, smoke, seed]
     environment: preview
     permissions:
       pull-requests: write
@@ -385,6 +439,8 @@ jobs:
           RESULT_DEPLOY_API: ${{ needs.deploy-api.result }}
           RESULT_DEPLOY_WEB: ${{ needs.deploy-web.result }}
           RESULT_SMOKE: ${{ needs.smoke.result }}
+          RESULT_SEED: ${{ needs.seed.result }}
+          SEED_REQUESTED: ${{ needs.guard.outputs.seed }}
           VERCEL_URL: ${{ needs.deploy-web.outputs.vercel_url }}
           PR_SHA: ${{ needs.guard.outputs.pr_sha }}
           PR_BRANCH: ${{ needs.guard.outputs.pr_branch }}
@@ -395,6 +451,8 @@ jobs:
             const api   = process.env.RESULT_DEPLOY_API;
             const web   = process.env.RESULT_DEPLOY_WEB;
             const smoke = process.env.RESULT_SMOKE;
+            const seed  = process.env.RESULT_SEED;
+            const seedRequested = process.env.SEED_REQUESTED === 'true';
             const vUrl  = process.env.VERCEL_URL || '';
             const hasWeb = /^https?:\/\//.test(vUrl);
             const webLink = hasWeb ? `[${vUrl}](${vUrl})` : '(not available)';
@@ -415,11 +473,18 @@ jobs:
               `| API (Supabase edge functions + migrations) | ${icon(api)} ${api} |`,
               `| Web (Vercel preview) | ${icon(web)} ${web} |`,
               `| Smoke tests | ${icon(smoke)} ${smoke} |`,
+              // Never reveal the smoke-user's email here — this is a public PR
+              // comment, not a masked Actions log. Sign-in details live in
+              // docs/deployment.md, not the report.
+              ...(seedRequested ? [`| Seed demo data | ${icon(seed)} ${seed} |`] : []),
               '',
               '**Endpoints:**',
               `- API: ${apiUrl}`,
               `- Web: ${webLink}`,
               '',
+              ...(seedRequested && seed === 'success'
+                ? ['Seeded with demo data — sign in as the preview\'s smoke-test account (see docs/deployment.md → "Seed the preview with demo data") and filter the Explorer by `preview-seed/` to find it.', '']
+                : []),
               `[View workflow run](${runUrl})`,
             ].join('\n');
             await github.rest.issues.createComment({
