@@ -47,12 +47,20 @@ test('renderReadDailySql and renderCitationsSql scope their DELETE to the given 
   const { memories, readDaily, citations } = buildDataset({ now: NOW });
   const ids = memories.map((m) => m.id);
   const readSql = renderReadDailySql(readDaily, ids);
-  const citeSql = renderCitationsSql(citations, ids);
+  const citeSql = renderCitationsSql(citations, ids, USER_ID);
   assert.match(readSql, /delete from memory_read_daily where memory_id = any\(/);
   assert.match(citeSql, /delete from memory_citations where cited_memory_id = any\(/);
   for (const id of ids) {
     assert.ok(readSql.includes(id), `read_daily delete is missing memory id ${id}`);
   }
+});
+
+test('renderCitationsSql fills in the NOT NULL user_id column', () => {
+  const { memories, citations } = buildDataset({ now: NOW });
+  const ids = memories.map((m) => m.id);
+  const sql = renderCitationsSql(citations, ids, USER_ID);
+  assert.match(sql, /insert into memory_citations \(user_id, cited_memory_id, citing_memory_id, correlation_id, created_at\)/);
+  assert.ok(sql.includes(USER_ID), 'citations insert is missing the seeded user_id');
 });
 
 test('renderUsageEventsSql scopes its DELETE to the seeded user AND the seed correlation prefix', () => {
@@ -75,4 +83,10 @@ test('renderResetSql deletes exactly the seed-prefixed memories, seed-prefixed u
   assert.ok(sql.includes('preview-seed-%'));
   assert.ok(sql.includes(org.id));
   assert.ok(sql.includes(USER_ID));
+});
+
+test('renderResetSql scopes the org delete to created_by, so one user cannot drop another user\'s shared org', () => {
+  const { org } = buildDataset({ now: NOW });
+  const sql = renderResetSql(org, USER_ID);
+  assert.match(sql, new RegExp(`delete from orgs where id = '${org.id}' and created_by = '${USER_ID}';`));
 });

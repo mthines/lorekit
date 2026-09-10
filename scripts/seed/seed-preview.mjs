@@ -16,24 +16,25 @@
  * Two ways to reach the database, so this also works against a local
  * `supabase start` stack without a Management API token:
  *
- *   --target preview   Supabase Management API (`POST /v1/projects/{ref}/database/query`),
- *                       authenticated with SUPABASE_ACCESS_TOKEN — the same
- *                       repo-level secret every deploy workflow already holds.
- *                       No new secret. Reads SUPABASE_PROJECT_REF.
- *   --psql <url>        Direct `psql` against a local/self-hosted Postgres —
- *                       for `supabase start` or a BYOD project. Never used in
- *                       CI (the runner has no route to a pooler host).
+ *   SUPABASE_PROJECT_REF  Supabase Management API (`POST /v1/projects/{ref}/database/query`),
+ *                         authenticated with SUPABASE_ACCESS_TOKEN — the same
+ *                         repo-level secret every deploy workflow already holds.
+ *                         No new secret.
+ *   --psql <url>          Direct `psql` against a local/self-hosted Postgres —
+ *                         for `supabase start` or a BYOD project. Never used in
+ *                         CI (the runner has no route to a pooler host). Still
+ *                         refused if the URL names the production project ref.
  *
  * ## Usage
  *
  *   SUPABASE_ACCESS_TOKEN=… SUPABASE_PROJECT_REF=<preview-ref> \
- *     node scripts/seed/seed-preview.mjs --target preview --user-email you@example.com
+ *     node scripts/seed/seed-preview.mjs --user-email you@example.com
  *
  *   node scripts/seed/seed-preview.mjs --psql postgresql://postgres:postgres@127.0.0.1:54322/postgres \
  *     --user-email you@example.com
  *
- *   node scripts/seed/seed-preview.mjs --target preview --user-email … --dry-run   # print SQL, write nothing
- *   node scripts/seed/seed-preview.mjs --target preview --user-email … --reset     # wipe this seed's rows first
+ *   node scripts/seed/seed-preview.mjs --user-email … --dry-run   # print SQL, write nothing
+ *   node scripts/seed/seed-preview.mjs --user-email … --reset     # wipe this seed's rows first
  *
  * The target user must already exist (seed it with
  * scripts/smoke/seed-smoke-user.mjs first) — this script never creates one,
@@ -63,11 +64,11 @@ export const PRODUCTION_PROJECT_REF = 'pqokxlhvnosogizsjztg';
 
 export function parseArgs(argv) {
   const opts = {
-    target: null, psqlUrl: null, projectRef: null, userEmail: null,
+    psqlUrl: null, projectRef: null, userEmail: null,
     days: 30, reset: false, dryRun: false,
   };
   const flags = {
-    '--target': 'target', '--psql': 'psqlUrl', '--project-ref': 'projectRef',
+    '--psql': 'psqlUrl', '--project-ref': 'projectRef',
     '--user-email': 'userEmail', '--days': 'days',
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -87,6 +88,9 @@ export function parseArgs(argv) {
  */
 export function resolveChannel(opts, env = {}) {
   if (opts.psqlUrl) {
+    if (opts.psqlUrl.includes(PRODUCTION_PROJECT_REF)) {
+      return { ok: false, error: `Refusing to seed the PRODUCTION project (${PRODUCTION_PROJECT_REF}). This script only ever targets a preview or local stack — there is no override.` };
+    }
     return { ok: true, channel: 'psql', url: opts.psqlUrl };
   }
   const ref = opts.projectRef ?? env.SUPABASE_PROJECT_REF ?? '';
@@ -177,7 +181,7 @@ export function buildStatements({ dataset, userId, reset }) {
   statements.push({ name: 'memories', sql: renderMemoriesSql(dataset.memories, userId) });
   const memoryIds = dataset.memories.map((m) => m.id);
   statements.push({ name: 'read_daily', sql: renderReadDailySql(dataset.readDaily, memoryIds) });
-  statements.push({ name: 'citations', sql: renderCitationsSql(dataset.citations, memoryIds) });
+  statements.push({ name: 'citations', sql: renderCitationsSql(dataset.citations, memoryIds, userId) });
   statements.push({ name: 'usage_events', sql: renderUsageEventsSql(dataset.usageEvents, userId) });
   return statements;
 }
@@ -198,7 +202,10 @@ async function main() {
   console.log(`Dataset: ${dataset.memories.length} memories, ${dataset.usageEvents.length} usage events, ${dataset.readDaily.length} read-daily rows, ${dataset.citations.length} citations, keys prefixed "${SEED_KEY_PREFIX}".`);
 
   if (opts.dryRun) {
-    console.log(`\n[dry-run] Resolving on channel: ${resolved.channel === 'api' ? `Management API (ref ${resolved.ref})` : `psql (${resolved.url})`}`);
+    // Redact any embedded credentials (postgresql://user:PASSWORD@host) before
+    // this ever reaches a terminal or a CI log.
+    const redactedUrl = resolved.channel === 'psql' ? resolved.url.replace(/\/\/[^@/]*@/, '//***@') : null;
+    console.log(`\n[dry-run] Resolving on channel: ${resolved.channel === 'api' ? `Management API (ref ${resolved.ref})` : `psql (${redactedUrl})`}`);
     console.log('[dry-run] Would resolve user id for', opts.userEmail, 'then run:');
     const statements = buildStatements({ dataset, userId: '<resolved-user-id>', reset: opts.reset });
     for (const s of statements) {

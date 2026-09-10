@@ -138,15 +138,16 @@ on conflict (memory_id, day, read_kind) do update set count = excluded.count;
 }
 
 /** Delete-then-insert `memory_citations` for exactly the memory ids this dataset owns. */
-export function renderCitationsSql(citations, memoryIds) {
+export function renderCitationsSql(citations, memoryIds, userId) {
   if (memoryIds.length === 0) return '-- no memories to attach citations to';
   const del = `delete from memory_citations where cited_memory_id = any(${sqlUuidArray(memoryIds)});`;
   if (citations.length === 0) return del;
   const rows = citations
-    .map((c) => `(${sqlString(c.cited_memory_id)}, null, ${sqlString(c.correlation_id)}, ${sqlString(c.created_at)})`)
+    .map((c) => `(${sqlString(userId)}, ${sqlString(c.cited_memory_id)}, null, `
+      + `${sqlString(c.correlation_id)}, ${sqlString(c.created_at)})`)
     .join(',\n  ');
   const insert = `
-insert into memory_citations (cited_memory_id, citing_memory_id, correlation_id, created_at)
+insert into memory_citations (user_id, cited_memory_id, citing_memory_id, correlation_id, created_at)
 values
   ${rows};
 `.trim();
@@ -208,11 +209,16 @@ values
  * Used by `--reset` before reseeding, and is exactly what makes a reseed with
  * a CHANGED dataset shape (a template renamed or removed) converge instead of
  * accumulating orphaned rows the upsert path can't reach.
+ *
+ * The org delete is also scoped to `created_by = userId` — the org id is a
+ * fixed constant shared by every seed run, so without this filter one user's
+ * `--reset` would drop the shared preview org (and cascade its membership row)
+ * out from under whichever user actually created it.
  */
 export function renderResetSql(org, userId) {
   return `
 delete from memories where user_id = ${sqlString(userId)} and key like ${sqlString(`${SEED_KEY_PREFIX}%`)};
 delete from usage_events where user_id = ${sqlString(userId)} and correlation_id like ${sqlString(`${SEED_CORRELATION_PREFIX}-%`)};
-delete from orgs where id = ${sqlString(org.id)};
+delete from orgs where id = ${sqlString(org.id)} and created_by = ${sqlString(userId)};
 `.trim();
 }

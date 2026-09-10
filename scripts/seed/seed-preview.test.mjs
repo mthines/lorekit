@@ -5,7 +5,7 @@ import { parseArgs, resolveChannel, buildStatements, PRODUCTION_PROJECT_REF } fr
 import { buildDataset } from './preview-dataset.mjs';
 
 test('parseArgs reads flags and defaults days to 30', () => {
-  const opts = parseArgs(['--target', 'preview', '--user-email', 'a@b.com', '--reset', '--dry-run']);
+  const opts = parseArgs(['--user-email', 'a@b.com', '--reset', '--dry-run']);
   assert.equal(opts.userEmail, 'a@b.com');
   assert.equal(opts.reset, true);
   assert.equal(opts.dryRun, true);
@@ -55,10 +55,19 @@ test('resolveChannel skips the access-token requirement on a dry run — it neve
   assert.equal(result.channel, 'api');
 });
 
-test('resolveChannel prefers an explicit --psql url over any project ref, and never checks it for production', () => {
+test('resolveChannel prefers an explicit --psql url over any project ref', () => {
   const result = resolveChannel({ psqlUrl: 'postgresql://localhost/x', projectRef: PRODUCTION_PROJECT_REF }, {});
   assert.equal(result.ok, true);
   assert.equal(result.channel, 'psql');
+});
+
+test('resolveChannel refuses a --psql url that names the production project ref too', () => {
+  const result = resolveChannel(
+    { psqlUrl: `postgresql://postgres.${PRODUCTION_PROJECT_REF}:pw@aws-0-region.pooler.supabase.com:5432/postgres`, projectRef: null },
+    {},
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /production/i);
 });
 
 test('resolveChannel demands SOME target — no implicit default', () => {

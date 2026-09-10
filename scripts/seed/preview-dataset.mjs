@@ -145,7 +145,7 @@ function scopeType(scope) {
 }
 
 /** Spread `count` targeted+bulk reads across the days since a memory was created. */
-function buildReadDailyForMemory(memoryId, ageDays, deliveries, rand) {
+function buildReadDailyForMemory(memoryId, ageDays, deliveries, rand, now) {
   if (deliveries <= 0) return [];
   const span = Math.max(1, Math.min(ageDays, 30));
   const rows = [];
@@ -158,7 +158,7 @@ function buildReadDailyForMemory(memoryId, ageDays, deliveries, rand) {
     if (dayCount === 0) continue;
     const bulk = Math.round(dayCount * 0.7);
     const targeted = dayCount - bulk;
-    const day = new Date(Date.now() - d * MS_PER_DAY).toISOString().slice(0, 10);
+    const day = new Date(now.getTime() - d * MS_PER_DAY).toISOString().slice(0, 10);
     if (bulk > 0) rows.push({ memory_id: memoryId, day, read_kind: 'bulk', count: bulk });
     if (targeted > 0) rows.push({ memory_id: memoryId, day, read_kind: 'targeted', count: targeted });
     remaining -= dayCount;
@@ -233,7 +233,7 @@ export function buildDataset({ now = new Date(), days = 30 } = {}) {
     };
     memories.push(memory);
 
-    for (const row of buildReadDailyForMemory(memory.id, t.ageDays, deliveries, rand)) {
+    for (const row of buildReadDailyForMemory(memory.id, t.ageDays, deliveries, rand, now)) {
       readDaily.push(row);
     }
     for (let c = 0; c < cited; c++) {
