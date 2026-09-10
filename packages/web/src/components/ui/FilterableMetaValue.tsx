@@ -53,6 +53,18 @@ interface FilterableMetaValueProps {
   /** Accessible name / floating label for the affordance, e.g. `Filter by host "reviewer"`. */
   label: string;
   onFilter: () => void;
+  /**
+   * Whether this value is already part of the currently-applied filter/scope
+   * state (`isMetaValueActiveFilter`, `lib/filter-from-metadata.ts`) — i.e.
+   * whether ACTIVATING this affordance would be a no-op. Renders the value
+   * with the same subtle accent-orange "this is applied" cue the filter
+   * bar's own committed pills use, so the panel answers "which of this
+   * memory's attributes am I already filtering by" independent of hover/
+   * focus. Purely a passive visual state — it never disables the affordance
+   * (toggling it back OFF is still exactly what activating does).
+   * @default false
+   */
+  active?: boolean;
 }
 
 /** Matches `Tooltip`/`AnchoredTooltip`'s gap, so the two read as one system. */
@@ -60,7 +72,7 @@ const GAP = 6;
 /** Bridges the visual gap between the value and the floating panel above it. */
 const CLOSE_DELAY_MS = 200;
 
-export function FilterableMetaValue({ children, label, onFilter }: FilterableMetaValueProps) {
+export function FilterableMetaValue({ children, label, onFilter, active = false }: FilterableMetaValueProps) {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,7 +149,17 @@ export function FilterableMetaValue({ children, label, onFilter }: FilterableMet
       role="button"
       tabIndex={0}
       aria-label={label}
-      className="inline-flex min-w-0 items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      // The active-filter cue is a passive style on the anchor itself, not an
+      // extra wrapping element — same "border-accent/40 + bg-accent-subtle"
+      // combo `FilterPill`/`FilterMenu`'s trigger use for their own applied
+      // state (see `isMetaValueActiveFilter`), just scaled down to a value's
+      // inline footprint. Independent of hover/focus (the flyout below).
+      className={[
+        'inline-flex min-w-0 items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+        active
+          ? 'rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] px-1 py-0.5 -mx-1 -my-0.5'
+          : '',
+      ].join(' ')}
       onMouseEnter={openNow}
       onMouseLeave={scheduleClose}
       onFocus={openNow}

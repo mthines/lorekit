@@ -23,8 +23,8 @@ import { FormActionBar } from '@/components/ui/FormActionBar';
 import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { tryParseJsonContainer } from '@/lib/json-tree';
 import { isTypingTarget } from '@/lib/lesson-list-nav';
-import { metadataFilterTargets, applyMetadataFilterHref, type MetadataFilterTarget } from '@/lib/filter-from-metadata';
-import { resolveFilters, type Filter } from '@/lib/filters';
+import { metadataFilterTargets, applyMetadataFilterHref, isMetaValueActiveFilter, type MetadataFilterTarget } from '@/lib/filter-from-metadata';
+import { resolveFilters, isValueSelected, type Filter, type FilterField } from '@/lib/filters';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
@@ -357,7 +357,10 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   // Wraps a metadata row's VALUE in the hover-reveal filter affordance when a
   // target exists for it, else renders the bare value — the one shape every
   // metadata row below shares, so a fifth filterable field costs one call
-  // site rather than a fifth copy of this ternary.
+  // site rather than a fifth copy of this ternary. Also carries the passive
+  // "is this already applied" accent (`isMetaValueActiveFilter`), computed
+  // against the SAME `resolvedFilters`/`scopeParam` the Explorer's own filter
+  // bar reads — this panel has no separate notion of "applied".
   function metaFilterValue(
     target: MetadataFilterTarget | undefined,
     label: string,
@@ -365,10 +368,22 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   ): ReactNode {
     if (!target) return value;
     return (
-      <FilterableMetaValue label={label} onFilter={() => handleApplyFilterTarget(target)}>
+      <FilterableMetaValue
+        label={label}
+        onFilter={() => handleApplyFilterTarget(target)}
+        active={isMetaValueActiveFilter(target, resolvedFilters, scopeParam)}
+      >
         {value}
       </FilterableMetaValue>
     );
+  }
+
+  // Same active-filter check, keyed by field directly rather than a
+  // precomputed target — used by the two callers below (`TagsField`,
+  // `MemoryOrigin`) that build their own per-row targets internally instead
+  // of going through `metadataFilterTargets`.
+  function isFieldValueActive(field: FilterField, value: string): boolean {
+    return isValueSelected(resolvedFilters, field, value);
   }
 
   // The applicable filter/scope targets for THIS lesson's metadata — computed
@@ -800,6 +815,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                           label: `Filter by label "${tag}"`,
                         })
                       }
+                      isTagActive={(tag) => isFieldValueActive('label', tag)}
                     />
                   )}
                 />
@@ -1209,6 +1225,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                   label: `Filter by ${field} "${value}"`,
                                 })
                               }
+                              isValueActive={isFieldValueActive}
                             />
                           </>
                         )}

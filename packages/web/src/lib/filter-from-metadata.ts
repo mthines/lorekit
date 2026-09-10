@@ -19,6 +19,7 @@
 
 import {
   filtersParamValue,
+  isValueSelected,
   requireField,
   toggleFilterValue,
   type Filter,
@@ -193,4 +194,37 @@ export function applyMetadataFilterHref(
 
   const qs = params.toString();
   return qs ? `/lore?${qs}` : '/lore';
+}
+
+// ── Active-filter matching (R9 — "which of this memory's values am I already filtering by") ──
+
+/**
+ * Whether `target` matches the currently-applied filter/scope state — i.e.
+ * whether ACTIVATING it would be a no-op because it is already applied. Used
+ * to render the metadata value it came from (a tag chip, the scope badge, a
+ * kind/host/agent/trigger value, an origin repo/branch/PR chip) with the same
+ * "this is active" accent the filter bar's own committed pills use, so the
+ * panel answers "which of THIS memory's attributes are the ones I'm filtering
+ * by" without a parallel matching scheme.
+ *
+ * A `filter` target matches when its value is currently selected for its
+ * field — reusing {@link isValueSelected}, the SAME membership check
+ * `FilterMenu`'s value checkboxes use, so a value that reads "selected" in
+ * the menu reads "active" here too. Deliberately operator-agnostic: whether
+ * the field is combined with `in` (is/is either of), `nin` (is not), or
+ * `all` (includes all) does not change whether THIS value is part of the
+ * set the field currently names — the panel is answering "is this among
+ * what's applied", not restating the qualifier a `FilterPill` already shows.
+ *
+ * A `scope` target matches when it equals the current `?scope=` EXACTLY —
+ * scope is a single value, not a set, so there is no operator to consider,
+ * and `null` (no scope filter active) never matches any scope string.
+ */
+export function isMetaValueActiveFilter(
+  target: MetadataFilterTarget,
+  filters: readonly Filter[],
+  scope: string | null,
+): boolean {
+  if (target.kind === 'scope') return scope !== null && scope === target.scope;
+  return isValueSelected(filters, target.field, target.value);
 }

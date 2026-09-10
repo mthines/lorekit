@@ -64,6 +64,15 @@ export interface TagsFieldProps {
    * context (e.g. a future bulk-tag editor) would simply omit this.
    */
   onTagFilter?: (tag: string) => void;
+  /**
+   * Whether a given tag is currently part of the applied Label filter
+   * (`isMetaValueActiveFilter`, `lib/filter-from-metadata.ts`). When it
+   * returns true the chip gets the same subtle accent-orange "applied" tint
+   * as a committed `FilterPill` — a passive visual state, independent of the
+   * `onTagFilter` hover affordance above. Omitted (or absent) renders every
+   * chip in its neutral style, matching the pre-existing look.
+   */
+  isTagActive?: (tag: string) => boolean;
 }
 
 export function TagsField({
@@ -75,6 +84,7 @@ export function TagsField({
   maxTags = 20,
   className = '',
   onTagFilter,
+  isTagActive,
 }: TagsFieldProps) {
   const [inputValue, setInputValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -130,7 +140,9 @@ export function TagsField({
         onClick={() => editable && inputRef.current?.focus()}
       >
         <AnimatePresence initial={false} mode="popLayout">
-          {tags.map((tag, i) => (
+          {tags.map((tag, i) => {
+            const active = isTagActive?.(tag) ?? false;
+            return (
             <motion.span
               key={tag}
               layout
@@ -138,7 +150,15 @@ export function TagsField({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.85 }}
               transition={{ duration: 0.15, ease: 'easeOut' }}
-              className="flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-0.5 font-mono text-xs text-[var(--color-content-secondary)]"
+              className={[
+                'flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs',
+                // Same subtle amber "applied" tint as a committed `FilterPill`
+                // — a tag that matches the currently-applied Label filter
+                // reads as active, everything else stays neutral.
+                active
+                  ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)]',
+              ].join(' ')}
             >
               {onTagFilter ? (
                 <FilterableMetaValue label={`Filter by label "${tag}"`} onFilter={() => onTagFilter(tag)}>
@@ -161,7 +181,8 @@ export function TagsField({
                 </button>
               )}
             </motion.span>
-          ))}
+            );
+          })}
         </AnimatePresence>
 
         {/* Add-tag input — only in edit mode */}

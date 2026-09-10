@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyMetadataFilterHref,
+  isMetaValueActiveFilter,
   metadataFilterTargets,
   type CurrentExplorerParams,
+  type MetadataFilterTarget,
 } from './filter-from-metadata';
+import type { Filter } from './filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 function lesson(overrides: Partial<LessonEntry> = {}): LessonEntry {
@@ -156,5 +159,96 @@ describe('applyMetadataFilterHref', () => {
     });
     const params = new URLSearchParams(href.split('?')[1]);
     expect(JSON.parse(params.get('scope') ?? 'null')).toBe('project::acme');
+  });
+});
+
+describe('isMetaValueActiveFilter', () => {
+  const labelTarget: MetadataFilterTarget = {
+    kind: 'filter',
+    field: 'label',
+    value: 'agent0::incident-memory',
+    label: 'Filter by label "agent0::incident-memory"',
+  };
+
+  it('matches a label target whose value is selected under `all` (AC-25)', () => {
+    const filters: Filter[] = [{ field: 'label', operator: 'all', values: ['agent0::incident-memory'] }];
+    expect(isMetaValueActiveFilter(labelTarget, filters, null)).toBe(true);
+  });
+
+  it('does not match a label target whose value is not selected', () => {
+    const filters: Filter[] = [{ field: 'label', operator: 'all', values: ['dataset::default'] }];
+    expect(isMetaValueActiveFilter(labelTarget, filters, null)).toBe(false);
+  });
+
+  it('matches regardless of operator — `in`, `nin`, and `all` all count as applied', () => {
+    for (const operator of ['in', 'nin', 'all'] as const) {
+      const filters: Filter[] = [{ field: 'label', operator, values: ['agent0::incident-memory'] }];
+      expect(isMetaValueActiveFilter(labelTarget, filters, null)).toBe(true);
+    }
+  });
+
+  it('matches a scope target iff it equals the current ?scope= exactly', () => {
+    const target: MetadataFilterTarget = {
+      kind: 'scope',
+      scope: 'repo::mthines/lorekit',
+      label: 'Filter by scope repo::mthines/lorekit',
+    };
+    expect(isMetaValueActiveFilter(target, [], 'repo::mthines/lorekit')).toBe(true);
+    expect(isMetaValueActiveFilter(target, [], 'repo::other/repo')).toBe(false);
+    expect(isMetaValueActiveFilter(target, [], null)).toBe(false);
+  });
+
+  it('matches repo/branch/pr filter targets the same way as label', () => {
+    const repoTarget: MetadataFilterTarget = {
+      kind: 'filter',
+      field: 'repo',
+      value: 'mthines/lorekit',
+      label: 'Filter by repository "mthines/lorekit"',
+    };
+    const branchTarget: MetadataFilterTarget = {
+      kind: 'filter',
+      field: 'branch',
+      value: 'main',
+      label: 'Filter by branch "main"',
+    };
+    const prTarget: MetadataFilterTarget = {
+      kind: 'filter',
+      field: 'pr',
+      value: '482',
+      label: 'Filter by pull request "482"',
+    };
+    const filters: Filter[] = [
+      { field: 'repo', operator: 'in', values: ['mthines/lorekit'] },
+      { field: 'branch', operator: 'in', values: ['main'] },
+      { field: 'pr', operator: 'in', values: ['482'] },
+    ];
+    expect(isMetaValueActiveFilter(repoTarget, filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter(branchTarget, filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter(prTarget, filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter({ ...prTarget, value: '999' }, filters, null)).toBe(false);
+  });
+
+  it('matches kind/host/agent/trigger filter targets the same way as label', () => {
+    const filters: Filter[] = [
+      { field: 'kind', operator: 'in', values: ['lesson'] },
+      { field: 'host', operator: 'in', values: ['reviewer'] },
+      { field: 'agent', operator: 'in', values: ['aw'] },
+      { field: 'trigger', operator: 'in', values: ['stuck-loop'] },
+    ];
+    const target = (field: 'kind' | 'host' | 'agent' | 'trigger', value: string): MetadataFilterTarget => ({
+      kind: 'filter',
+      field,
+      value,
+      label: `Filter by ${field} "${value}"`,
+    });
+    expect(isMetaValueActiveFilter(target('kind', 'lesson'), filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter(target('host', 'reviewer'), filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter(target('agent', 'aw'), filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter(target('trigger', 'stuck-loop'), filters, null)).toBe(true);
+    expect(isMetaValueActiveFilter(target('kind', 'bus'), filters, null)).toBe(false);
+  });
+
+  it('returns false when no filter is applied at all', () => {
+    expect(isMetaValueActiveFilter(labelTarget, [], null)).toBe(false);
   });
 });

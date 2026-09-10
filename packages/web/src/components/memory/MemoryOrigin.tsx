@@ -1,6 +1,7 @@
 import { GitBranch, GitCommitHorizontal, GitPullRequest, Github } from 'lucide-react';
 import { originLinks, type MemoryOriginFields, type OriginLinkKind } from '@/lib/origin';
 import { FilterableMetaValue } from '@/components/ui/FilterableMetaValue';
+import type { FilterField } from '@/lib/filters';
 
 /**
  * The "recorded from" provenance rows of a memory's Metadata list.
@@ -43,6 +44,7 @@ export function MemoryOrigin({
   origin,
   scope,
   onFilterOrigin,
+  isValueActive,
 }: {
   origin: MemoryOriginFields;
   scope?: string;
@@ -54,6 +56,14 @@ export function MemoryOrigin({
    * no filter bar to apply to.
    */
   onFilterOrigin?: (field: 'repo' | 'branch' | 'pr', value: string) => void;
+  /**
+   * Whether a given (field, value) is currently part of the applied filter
+   * state (`isMetaValueActiveFilter`, `lib/filter-from-metadata.ts`) — drives
+   * the same subtle accent-orange "applied" cue a committed `FilterPill`
+   * uses. Only consulted alongside `onFilterOrigin` (a row with no filter
+   * affordance has nothing to mark active either).
+   */
+  isValueActive?: (field: FilterField, value: string) => boolean;
 }) {
   const links = originLinks(origin, scope);
   if (links.length === 0) return null;
@@ -91,6 +101,7 @@ export function MemoryOrigin({
                 <FilterableMetaValue
                   label={`Filter by ${rowLabel.toLowerCase()} "${label}"`}
                   onFilter={() => onFilterOrigin(filterField, filterValue)}
+                  active={isValueActive?.(filterField, filterValue) ?? false}
                 >
                   {valueNode}
                 </FilterableMetaValue>
