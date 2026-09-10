@@ -2,7 +2,7 @@
 
 /**
  * Persists dismissed pending-invite ids in localStorage so a user who
- * dismisses the Overview banner doesn't see it reappear on next load.
+ * dismisses the `/lore` banner doesn't see it reappear on next load.
  * Shared by `PendingInvitesBanner` (dismiss action) and `SettingsNav` (badge
  * count) so both read the same source of truth. This is storage plumbing,
  * not decision logic — the pure predicate it feeds (`visibleInvites` /

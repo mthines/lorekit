@@ -49,7 +49,7 @@ auth:
       : "${AW_PREVIEW_URL:?export AW_PREVIEW_URL to the PR preview origin (match base_url)}"
       AUTH_LOGIN_URL="$AW_PREVIEW_URL/login" \
         AUTH_STORAGE_STATE=./.auth/preview.json \
-        AUTH_POST_LOGIN_URL_PATTERN='/overview' \
+        AUTH_POST_LOGIN_URL_PATTERN='/lore' \
         node scripts/auth-bootstrap-credentials.mjs
     timeout_seconds: 120
 

@@ -73,7 +73,7 @@ connected takes three steps.
 
 Sign in to the dashboard at
 [lorekit.io](https://lorekit.io) with GitHub, then
-**Overview → Connect your agent → Generate new token**.
+**Lore Explorer → Connect your agent → Generate new token**.
 
 Pick **Read + Write** for agents that should learn, or **Read only** for
 context-injection-only setups like CI.

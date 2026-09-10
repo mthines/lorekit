@@ -40,7 +40,7 @@ export interface DashboardBootstrapDeps<TUser, TOnboarding> {
    *
    * The guarantee is scoped to THIS helper's caller, not to every consumer of
    * the underlying read. A page that awaits `getOnboardingState()` itself
-   * still surfaces the rejection — `app/(dashboard)/overview/page.tsx` does
+   * still surfaces the rejection — `app/(dashboard)/lore/page.tsx` does
    * exactly that, and because the read is React-`cache()`d it awaits the same
    * memoised rejection this fallback absorbed for the layout.
    */

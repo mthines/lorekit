@@ -110,8 +110,8 @@ pnpm nx health supabase
 
 ## Step 7 — Generate an API token
 
-1. Open the web dashboard: https://lorekit.io/overview (or your own Vercel URL after step 8)
-2. Go to **Overview → Step 2: Connect your agent**
+1. Open the web dashboard: https://lorekit.io/lore (or your own Vercel URL after step 8)
+2. Go to **Lore Explorer → Step 2: Connect your agent**
 3. Click **Generate new token**
 4. Enter a name (e.g. `claude-local`, `ci-github-actions`)
 5. Choose **Read + Write** for agents that learn, **Read only** for CI context injection,
@@ -205,7 +205,7 @@ For any other MCP-compatible agent, add the endpoint and Bearer token to the age
 To have LoreKit learn from PR review comments automatically. Webhook secrets
 are **per-repository** — generate one for each repo you want to webhook:
 
-1. Open the web dashboard → **Overview → Set up the GitHub webhook**
+1. Open the web dashboard → **Lore Explorer → Set up the GitHub webhook**
 2. Under **Webhook secrets**, add the repo (`owner/repo`) and copy the
    generated secret — it's shown once
 3. Go to that repo on GitHub → Settings → Webhooks → Add webhook

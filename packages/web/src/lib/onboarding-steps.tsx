@@ -13,8 +13,8 @@ import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
  * enrichment — surfaced post-connect via `GithubAppTeaser`, not as a required
  * checklist step.
  *
- * Used by the Overview page (dashboard). The `/learn/setup` page has its own
- * static tutorial layout and no longer calls this function.
+ * Used by the `/lore` page (the app's home route). The `/learn/setup` page
+ * has its own static tutorial layout and no longer calls this function.
  *
  * Completion state is NOT computed here — it lives in the
  * {@link OnboardingProvider}, which overlays server signals with the user's

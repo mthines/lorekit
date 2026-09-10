@@ -601,7 +601,7 @@ For a manual `.mcp.json` entry (any MCP-compatible agent):
 }
 ```
 
-Generate a token from the LoreKit dashboard: **Overview → Connect your agent → Generate new token**.
+Generate a token from the LoreKit dashboard: **Lore Explorer → Connect your agent → Generate new token**.
 
 ---
 

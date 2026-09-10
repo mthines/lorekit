@@ -23,8 +23,8 @@ interface GithubAppTeaserProps {
 }
 
 /**
- * GithubAppTeaser — a lightweight, dismissible discovery card shown on the
- * Overview once the user has connected an agent (connect step done) but
+ * GithubAppTeaser — a lightweight, dismissible discovery card shown on
+ * `/lore` once the user has connected an agent (connect step done) but
  * before any PR-review memory has arrived (hasWebhook is false).
  *
  * Design rationale (UX review, July 2026):

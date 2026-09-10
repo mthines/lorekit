@@ -41,9 +41,9 @@ Pieces (all under `packages/web`):
 A story opts in via `parameters.msw.handlers` and the decorators:
 
 ```tsx
-const meta: Meta<typeof DashboardStats> = {
-  title: 'Pages/Dashboard Stats',
-  component: DashboardStats,
+const meta: Meta<typeof LorePageClient> = {
+  title: 'Pages/Lore Explorer',
+  component: LorePageClient,
   parameters: { layout: 'fullscreen', msw: { handlers: memoryHandlers() } },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
 };
@@ -52,13 +52,12 @@ const meta: Meta<typeof DashboardStats> = {
 Shipped examples:
 
 - **`src/app/(dashboard)/lore/LorePage.stories.tsx`** — a *true full-page* story of the
-  `/lore` client page. Its scope tree + contribution heatmap resolve from the
-  MSW-mocked PostgREST reads. Needs `parameters.nextjs.appDirectory: true` (the page uses
-  `useRouter`/`useSearchParams` via `useUrlState`).
-- **`src/components/dashboard/DashboardStats.stories.tsx`** — a full-view story of the
-  Overview page's main content. `/overview` is a **server component** (it `await`s the
-  Supabase *server* client, so it can't render in the browser), so the largest *client*
-  subtree is storied instead — the guidance for any RSC page.
+  extracted `LorePageClient` component. Its scope tree + contribution heatmap resolve from the
+  MSW-mocked PostgREST reads. Needs `parameters.nextjs.appDirectory: true` (the component uses
+  `useRouter`/`useSearchParams` via `useUrlState`). `/lore/page.tsx` itself is a **server
+  component** (it `await`s onboarding state server-side, so it can't render in the browser) —
+  the guidance for any RSC page is to story its largest client subtree instead, which is exactly
+  what this story does.
 
 ### Rendering-model note
 

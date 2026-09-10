@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { expect, within } from 'storybook/test';
 
-import LorePage from './page';
+import LorePageClient from './LorePageClient';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import {
   withQueryClient,
@@ -12,14 +12,16 @@ import {
 } from '@/mocks/decorators';
 
 /**
- * Interaction tests for the `/lore` page — asserts the page resolves against the
- * MSW-mocked data and the scope selector renders its chips.
+ * Interaction tests for the `/lore` client subtree — asserts it resolves
+ * against the MSW-mocked data and the scope selector renders its chips.
+ * `/lore/page.tsx` is a server wrapper now (see `LorePage.stories.tsx`), so
+ * this mounts the extracted `LorePageClient` directly.
  * `/Tests` namespace, `test`-tagged, `chromatic.disableSnapshot` so the visual
  * `afterEach` skips these while the `play` functions run in the browser.
  */
-const meta: Meta<typeof LorePage> = {
+const meta: Meta<typeof LorePageClient> = {
   title: 'Pages/Lore Explorer/Tests',
-  component: LorePage,
+  component: LorePageClient,
   tags: ['test'],
   parameters: {
     chromatic: { disableSnapshot: true },
@@ -39,7 +41,7 @@ const meta: Meta<typeof LorePage> = {
 };
 
 export default meta;
-type Story = StoryObj<typeof LorePage>;
+type Story = StoryObj<typeof LorePageClient>;
 
 export const RendersScopeSelector: Story = {
   play: async ({ canvasElement, step }) => {

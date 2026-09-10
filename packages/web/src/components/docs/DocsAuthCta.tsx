@@ -6,13 +6,14 @@ import { ArrowRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 /**
- * Small hydration island for the public docs header: shows "Overview" to a
- * signed-in reader and "Sign in" to everyone else. Kept client-side (a browser
- * session check) so the rest of the `/docs` layout stays statically rendered.
+ * Small hydration island for the public docs header: shows "Lore Explorer" to
+ * a signed-in reader and "Sign in" to everyone else. Kept client-side (a
+ * browser session check) so the rest of the `/docs` layout stays statically
+ * rendered.
  *
- * Until the session resolves it renders the neutral "Sign in" affordance, so the
- * header never flashes empty; a logged-in reader briefly sees "Sign in" then it
- * swaps to "Overview".
+ * Until the session resolves it renders the neutral "Sign in" affordance, so
+ * the header never flashes empty; a logged-in reader briefly sees "Sign in"
+ * then it swaps to "Lore Explorer".
  */
 export function DocsAuthCta() {
   const [signedIn, setSignedIn] = useState(false);
@@ -32,8 +33,8 @@ export function DocsAuthCta() {
     };
   }, []);
 
-  const href = signedIn ? '/overview' : '/login';
-  const label = signedIn ? 'Overview' : 'Sign in';
+  const href = signedIn ? '/lore' : '/login';
+  const label = signedIn ? 'Lore Explorer' : 'Sign in';
 
   return (
     <Link

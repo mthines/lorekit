@@ -20,7 +20,7 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 
 ## Generating a token
 
-1. Go to the LoreKit dashboard → **Overview**
+1. Go to the LoreKit dashboard → **Lore Explorer**
 2. Expand **Step 2: Connect your agent**
 3. Click **Generate new token**
 4. Enter a name (e.g. `aw-executor`, `ci-github-actions`, `local-dev`)
@@ -201,7 +201,7 @@ Use a **read+write** token stored as a GitHub Actions secret:
 
 ## Revoking a token
 
-In the dashboard → Overview → Step 2 → your token list → click the trash icon → confirm. Revocation is immediate.
+In the dashboard → Lore Explorer → Step 2 → your token list → click the trash icon → confirm. Revocation is immediate.
 
 ## Limits
 

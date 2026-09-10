@@ -67,7 +67,7 @@ export default function RootError({ error, reset }: ErrorProps) {
           <Button
             variant="secondary"
             fullWidth
-            href="/overview"
+            href="/lore"
             leftIcon={<Home className="size-4" />}
             analyticsId="error.go-home"
           >

@@ -9,7 +9,7 @@ import {
   Lock,
   Tag,
   FileCog,
-  LayoutDashboard,
+  Telescope,
   BookOpen,
   Settings,
   Library,
@@ -51,7 +51,7 @@ function SampleCommands() {
     { id: 'd-config', label: 'Configuration', description: 'All .lorekit.json / config.json options', icon: <FileCog className="size-4" />, group: 'Docs' },
   ];
   const nav: Command[] = [
-    { id: 'n-overview', label: 'Go to Overview', icon: <LayoutDashboard className="size-4" />, group: 'Navigate', shortcut: { keys: ['g', 'o'] }, onSelect: noop },
+    { id: 'n-insights', label: 'Go to Insights', icon: <Telescope className="size-4" />, group: 'Navigate', shortcut: { keys: ['g', 'i'] }, onSelect: noop },
     { id: 'n-explorer', label: 'Go to Lore Explorer', icon: <BookOpen className="size-4" />, group: 'Navigate', shortcut: { keys: ['g', 'e'] }, onSelect: noop },
     { id: 'n-settings', label: 'Go to Settings', icon: <Settings className="size-4" />, group: 'Navigate', shortcut: { keys: ['g', 's'] }, onSelect: noop },
   ];

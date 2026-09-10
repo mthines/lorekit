@@ -27,7 +27,7 @@ describe('evaluateFlag', () => {
   });
 
   it('resolves a static boolean flag to its default variant value', async () => {
-    expect(await evaluateFlag('insights-page')).toBe(true);
+    expect(await evaluateFlag('retention-policies')).toBe(true);
   });
 
   it('resolves the same flag identically across calls (no per-call state)', async () => {
@@ -52,13 +52,13 @@ describe('evaluateFlagDetails', () => {
   });
 
   it('returns variant and reason alongside the value', async () => {
-    const details = await evaluateFlagDetails('insights-page');
+    const details = await evaluateFlagDetails('retention-policies');
     expect(details).toMatchObject({ value: true, variant: 'on', reason: 'STATIC' });
   });
 
   it('reports OVERRIDE when a session override is present', async () => {
-    const details = await evaluateFlagDetails('insights-page', {
-      flagOverrides: { 'insights-page': 'off' },
+    const details = await evaluateFlagDetails('retention-policies', {
+      flagOverrides: { 'retention-policies': 'off' },
     });
     expect(details).toMatchObject({ value: false, variant: 'off', reason: 'OVERRIDE' });
   });

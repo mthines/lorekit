@@ -207,7 +207,7 @@ export async function generateToken(
         },
       });
 
-      revalidatePath('/overview');
+      revalidatePath('/lore');
       // 'layout' so nested /settings/* pages (where tokens actually render) revalidate,
       // not just the /settings redirect page.
       revalidatePath('/settings', 'layout');
@@ -286,7 +286,7 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
       // from a real revoke.
       if (count === 0) {
         span.setAttribute('lorekit.api_token.revoke.no_op', true);
-        revalidatePath('/overview');
+        revalidatePath('/lore');
         revalidatePath('/settings', 'layout');
         return {};
       }
@@ -308,7 +308,7 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
           : { name: null, token_prefix: null, pre_read_unavailable: preReadError?.message ?? 'not_found' },
       });
 
-      revalidatePath('/overview');
+      revalidatePath('/lore');
       revalidatePath('/settings', 'layout');
       return {};
     },
@@ -392,7 +392,7 @@ export async function setTokenScoping(
         },
       });
 
-      revalidatePath('/overview');
+      revalidatePath('/lore');
       revalidatePath('/settings', 'layout');
       return { scoping: applied.scoping };
     },

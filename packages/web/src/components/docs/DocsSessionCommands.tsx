@@ -4,7 +4,7 @@
  * DocsSessionCommands
  *
  * Makes a PUBLIC command palette feel connected to the app: when the visitor is
- * SIGNED IN, it registers the "Navigate" group (Go to Overview / Lore Explorer
+ * SIGNED IN, it registers the "Navigate" group (Go to Lore Explorer / Insights
  * / Settings) so they can jump back into the app. When signed out, it registers
  * nothing and the palette shows only that surface's own group.
  *
@@ -28,23 +28,10 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BookOpen, LayoutDashboard, Settings } from 'lucide-react';
+import { BookOpen, Telescope, Settings } from 'lucide-react';
 import { useCommand } from '@/components/command/useCommand';
 import { createClient } from '@/lib/supabase/client';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
-
-function GoToDashboardCommand() {
-  const router = useRouter();
-  useCommand({
-    id: 'docs-nav-overview',
-    label: 'Go to Overview',
-    icon: <LayoutDashboard className="size-4" />,
-    group: 'Navigate',
-    shortcut: { keys: ['g', 'o'] },
-    onSelect: () => router.push('/overview'),
-  });
-  return null;
-}
 
 function GoToExplorerCommand() {
   const router = useRouter();
@@ -55,6 +42,19 @@ function GoToExplorerCommand() {
     group: 'Navigate',
     shortcut: { keys: ['g', 'e'] },
     onSelect: () => router.push('/lore'),
+  });
+  return null;
+}
+
+function GoToInsightsCommand() {
+  const router = useRouter();
+  useCommand({
+    id: 'docs-nav-insights',
+    label: 'Go to Insights',
+    icon: <Telescope className="size-4" />,
+    group: 'Navigate',
+    shortcut: { keys: ['g', 'i'] },
+    onSelect: () => router.push('/insights'),
   });
   return null;
 }
@@ -94,8 +94,8 @@ export function DocsSessionCommands() {
 
   return (
     <>
-      <GoToDashboardCommand />
       <GoToExplorerCommand />
+      <GoToInsightsCommand />
       <GoToSettingsCommand />
     </>
   );

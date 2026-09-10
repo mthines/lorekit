@@ -505,7 +505,8 @@ from.
 That matters because Next.js Server Actions are a `POST` to the page route
 carrying a **build-time action ID**. A tab on build A that posts build A's
 action ID to build B gets a bare **404** — no error surface, just a dead button.
-This is exactly what happened on the Overview page: every `POST /dashboard` went
+This is exactly what happened on the Overview page (since renamed to `/lore`;
+the `POST /dashboard` action route is unchanged): every `POST /dashboard` went
 from `200` to `404` after a `main` push, with the browser reporting
 `service.version` from one commit and the server span reporting another.
 
@@ -1153,7 +1154,7 @@ Also add your domain to Supabase → Auth → URL Configuration:
 For LoreKit to learn from PR review comments. Webhook secrets are
 **per-repository**:
 
-1. Web dashboard → Overview → **Set up the GitHub webhook** → add the repo
+1. Web dashboard → Lore Explorer → **Set up the GitHub webhook** → add the repo
    (`owner/repo`) under **Webhook secrets** and copy the generated secret
 2. Repo → Settings → Webhooks → Add webhook
 3. Payload URL: `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`

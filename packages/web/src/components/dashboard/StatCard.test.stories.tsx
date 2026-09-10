@@ -15,7 +15,7 @@ import type { StatTrend } from '@/lib/aggregations';
  * the common case changed).
  *
  * No visual baseline: the chip's appearance is already covered by the
- * `DashboardStats` and `ExplorerInsights` baselines, which render real cards.
+ * `ExplorerInsights` and `LorePage` baselines, which render real cards.
  */
 function trendWith(changePct: number): StatTrend {
   return {

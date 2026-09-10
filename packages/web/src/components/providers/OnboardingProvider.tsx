@@ -25,7 +25,7 @@ interface OnboardingContextValue {
   completedCount: number;
   total: number;
   allDone: boolean;
-  /** Overview-only: hide the inline checklist (the sidebar stays the way back). */
+  /** /lore-only: hide the inline checklist (the sidebar stays the way back). */
   dismissed: boolean;
   dismiss: () => void;
   /** False until localStorage has been read, so SSR and first paint agree. */

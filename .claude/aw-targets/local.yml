@@ -30,8 +30,9 @@ auth:
     when: missing-or-expired
     # Automated credentials capture: headless Chromium fills the email + password
     # form and saves the session to ./.auth/local.json once the URL reaches
-    # /overview. The `. ./.env.local` sourcing loads the creds on a local machine
-    # and is a harmless no-op on Claude Web, where they are already exported.
+    # /lore (the app's post-login landing route). The `. ./.env.local` sourcing
+    # loads the creds on a local machine and is a harmless no-op on Claude Web,
+    # where they are already exported.
     command: |
       set -a
       [ -f .env.local ] && . ./.env.local
@@ -39,7 +40,7 @@ auth:
       set +a
       AUTH_LOGIN_URL=http://localhost:3000/login \
         AUTH_STORAGE_STATE=./.auth/local.json \
-        AUTH_POST_LOGIN_URL_PATTERN='/overview' \
+        AUTH_POST_LOGIN_URL_PATTERN='/lore' \
         node scripts/auth-bootstrap-credentials.mjs
     timeout_seconds: 120
 

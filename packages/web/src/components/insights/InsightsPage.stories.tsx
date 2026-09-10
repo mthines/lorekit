@@ -87,7 +87,7 @@ const meta: Meta<typeof InsightsPage> = {
     layout: 'fullscreen',
     msw: { handlers: handlers() },
     // ScopeConsumption's local RangePicker and RunsList both need the App
-    // Router context — same reason DashboardStats.stories.tsx sets it.
+    // Router context — same reason LorePage.stories.tsx sets it.
     nextjs: { appDirectory: true },
   },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],

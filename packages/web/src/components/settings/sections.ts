@@ -25,10 +25,9 @@ export const SETTINGS_SECTIONS: readonly SectionNavItem[] = [
   { id: 'integrations', label: 'Integrations', href: '/settings/integrations', icon: Blocks },
   { id: 'organization', label: 'Organization', href: '/settings/organization', icon: Users },
   // Behind the `retention-policies` feature flag — filtered out in
-  // `SettingsNav.tsx` (a client component) when the flag is off, the same
-  // `useFeatureFlag` pattern `Sidebar.tsx` uses for `insights-page`. Kept
-  // unconditional here since this module is plain, synchronous data with no
-  // access to an evaluation context.
+  // `SettingsNav.tsx` (a client component) when the flag is off, via
+  // `useFeatureFlag`. Kept unconditional here since this module is plain,
+  // synchronous data with no access to an evaluation context.
   { id: 'grooming', label: 'Retention Policies', href: '/settings/grooming', icon: Archive },
   { id: 'audit', label: 'Audit Logs', href: '/settings/audit', icon: ShieldCheck },
   { id: 'plan', label: 'Plan', href: '/settings/plan', icon: CreditCard },

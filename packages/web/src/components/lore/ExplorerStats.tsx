@@ -3,10 +3,10 @@
 /**
  * The Lore Explorer's selection-aware stats header.
  *
- * The Overview's stat row answers "how is my lore doing" for the whole account.
- * This answers the same question for whatever the Explorer is currently showing
- * — so the number and the list that produced it finally sit on one page, and a
- * scope click moves both.
+ * The now-deleted Overview page's stat row used to answer "how is my lore
+ * doing" for the whole account. This answers the same question for whatever
+ * the Explorer is currently showing — so the number and the list that
+ * produced it finally sit on one page, and a scope click moves both.
  *
  * Four cards, and the order is the reading order: the two memory-count cards
  * sit together (written, then read) so like compares with like, then the
@@ -71,9 +71,9 @@ const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => t
  * reaches today. `bucketPlanForRange` is called with `shown`, which is
  * `effectiveStatsRange`'s output, so an unbounded or unparseable selection has
  * ALREADY been substituted for the bounded `90d` default and charts 90 days,
- * not these 30 daily buckets. It stays as the same 30-day grid the Overview
- * uses so that if the preset table ever stops resolving, a bad link degrades to
- * a page that renders rather than a broken one.
+ * not these 30 daily buckets. It stays as the same 30-day grid so that if the
+ * preset table ever stops resolving, a bad link degrades to a page that
+ * renders rather than a broken one.
  */
 const FALLBACK_PLAN = RANGE_BUCKETS['30d'];
 
@@ -163,7 +163,7 @@ export function ExplorerStats({
   );
 
   // The absolute arm anchors its grid at its own end, not at the clock — see
-  // `gridAnchor`. Shared with the Overview so the two pages bucket identically.
+  // `gridAnchor`.
   const gridNowIso = useMemo(() => gridAnchor(shown, nowIso), [shown, nowIso]);
   const rows = data?.rows;
   const readBuckets = data?.readBuckets;
@@ -172,8 +172,7 @@ export function ExplorerStats({
     [rows, gridNowIso, plan],
   );
   // Split retrieved (bulk) from opened (targeted) — migration 00080's
-  // read_kind. Same filter-then-reuse-computeCountTrend approach as the
-  // Overview; see DashboardStats.tsx for the fuller comment.
+  // read_kind.
   const retrievedBuckets = useMemo(() => (readBuckets ?? []).filter((b) => b.read_kind !== 'targeted'), [readBuckets]);
   const openedBuckets = useMemo(() => (readBuckets ?? []).filter((b) => b.read_kind === 'targeted'), [readBuckets]);
   const retrievedTrend = useMemo(

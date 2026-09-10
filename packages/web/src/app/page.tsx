@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { classifyAuthCallback } from '@/lib/auth-callback-params';
-import { getServerFlag } from '@/lib/feature-flags/server';
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -36,15 +35,11 @@ export default async function RootPage({
 
   const user = await getVerifiedUser();
   if (user) {
-    // While `insights-page` is on, Insights takes Overview's "home" slot —
-    // including its onboarding duties, which is why the landing route is
-    // `/insights` and not `/lore`: `buildOnboardingSteps({ autoGenerateToken:
-    // true })` mints a brand-new user's first API token, and landing anywhere
-    // that does not call it leaves a fresh signup with no token and no setup
-    // instructions. Overview stays reachable by direct URL, just unreferenced.
-    // See Sidebar.tsx's matching nav filter and insights/page.tsx's gate.
-    const insightsEnabled = await getServerFlag('insights-page', user.id);
-    redirect(insightsEnabled ? '/insights' : '/overview');
+    // `/lore` is the app's home slot — `buildOnboardingSteps({
+    // autoGenerateToken: true })` mints a brand-new user's first API token
+    // there, so landing anywhere else leaves a fresh signup with no token and
+    // no setup instructions. See Sidebar.tsx's nav and lore/page.tsx.
+    redirect('/lore');
   }
   redirect('/login');
 }

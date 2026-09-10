@@ -4,32 +4,26 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, GraduationCap, Telescope } from 'lucide-react';
+import { BookOpen, Settings, GraduationCap, Telescope } from 'lucide-react';
 import { CommandPaletteFab } from '@/components/command/CommandPaletteFab';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
-import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
-// Primary content nav — 4 entries here, but Overview and Insights are
-// mutually exclusive behind the `insights-page` flag (see the filter in
-// `Sidebar()`), so only 3 ever render at once — still within the mobile tab
-// bar's 3–5 item guideline. Insights joined Explorer/Getting-started as the
-// single place to dig into consumption and usage — it used to be four panels
-// scattered across Overview and the Explorer (scope leaderboard, hot/cold
-// lore, operational health, who's-reading), which made "how is my lore
-// actually being used" a scavenger hunt across two pages.
+// Primary content nav — 3 entries, within the mobile tab bar's 3–5 item
+// guideline. Insights sits alongside Explorer/Getting-started as the single
+// place to dig into consumption and usage — it used to be four panels
+// scattered across the deleted Overview page and the Explorer (scope
+// leaderboard, hot/cold lore, operational health, who's-reading), which made
+// "how is my lore actually being used" a scavenger hunt across two pages.
 // `mobileLabel` is shorter than `label` where the sidebar's 224px rail affords
 // copy the tab bar's column does not: the bar carries up to FOUR tabs plus the
 // docked command FAB, so a column is ~1/5 of the viewport (66px on a 330px
 // phone) and "Getting started" would wrap or clip there.
 const NAV = [
-  // Order is the reader's journey, NOT the flag's bookkeeping: find your lore,
-  // then ask how it is being used, then set more of it up. So Insights sits
-  // AFTER the Explorer rather than taking the first slot — the rail's opening
-  // destination stays the one you use every day. Overview leads only while the
-  // flag is off, where it is the sole at-a-glance surface; the two are still
-  // mutually exclusive, they just no longer share a position.
-  { href: '/overview', label: 'Overview', icon: LayoutDashboard },
+  // Order is the reader's journey: find your lore, then ask how it is being
+  // used, then set more of it up. So Insights sits AFTER the Explorer rather
+  // than taking the first slot — the rail's opening destination stays the one
+  // you use every day.
   { href: '/lore', label: 'Explorer', icon: BookOpen },
   { href: '/insights', label: 'Insights', icon: Telescope },
   { href: '/docs', label: 'Getting started', mobileLabel: 'Setup', icon: GraduationCap },
@@ -59,31 +53,10 @@ export function Sidebar({ user }: SidebarProps) {
   const showProgress = hydrated && !allDone;
   const isUserActive = pathname === '/settings/user';
 
-  // Overview and Insights are mutually exclusive destinations while
-  // `insights-page` rolls out — never both, so filtering drops whichever one
-  // the flag currently disables (they hold different slots; see NAV's own
-  // comment for why Insights follows the Explorer). `/insights`'s own page
-  // enforces the REAL access-control boundary (`notFound()` in
-  // insights/page.tsx); this filter — like the matching one in
-  // NavigationCommands.tsx — is only a visibility nicety, matching the
-  // developer-page precedent's nav-link-vs-page-check split. Overview has no
-  // equivalent page-level gate, so it stays reachable by direct URL even while
-  // hidden from nav — but nothing links to it any more: `/insights` now hosts
-  // the onboarding checklist and the first-token mint it used to own alone
-  // (`buildOnboardingSteps({ autoGenerateToken: true })`), and the root page
-  // redirects there. See insights/page.tsx.
-  const insightsEnabled = useFeatureFlag('insights-page');
-  const nav = NAV.filter((item) => {
-    if (item.href === '/insights') return insightsEnabled;
-    if (item.href === '/overview') return !insightsEnabled;
-    return true;
-  });
-
   // The FAB sits between the second and third destination, so the row is
   // split here rather than at render time — the split point is layout, not
-  // state. Derived from the (possibly Insights-filtered) `nav` so the mobile
-  // bar and desktop rail never disagree about which destinations exist.
-  const mobileTabs = [...nav, SETTINGS];
+  // state.
+  const mobileTabs = [...NAV, SETTINGS];
   const mobileTabsBeforeFab = mobileTabs.slice(0, 2);
   const mobileTabsAfterFab = mobileTabs.slice(2);
 
@@ -111,7 +84,7 @@ export function Sidebar({ user }: SidebarProps) {
 
         {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
-          {nav.map(({ href, label, icon: Icon }) => {
+          {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link
@@ -183,12 +156,10 @@ export function Sidebar({ user }: SidebarProps) {
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
       {/*
         Five columns: two destinations, the docked command FAB, two more
-        destinations. Overview and Insights are mutually exclusive (see the
-        `nav` filter above), so the tab count stays four regardless of the
-        `insights-page` flag. The FAB gets a column of its own rather than
-        floating over the row so the four tabs keep even, predictable hit
-        areas — nothing shifts under the disc, and there is no tab hiding
-        behind it.
+        destinations — the three NAV entries plus Settings, always four
+        tabs. The FAB gets a column of its own rather than floating over
+        the row so the four tabs keep even, predictable hit areas —
+        nothing shifts under the disc, and there is no tab hiding behind it.
 
         `pb-[env(safe-area-inset-bottom)]` keeps the labels clear of the home
         indicator on a notched phone; the dashboard layout's `main` reserves the
