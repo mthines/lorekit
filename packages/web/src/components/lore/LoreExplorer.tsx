@@ -919,6 +919,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   const isLessonSelected = (lesson: LessonEntry) =>
     openLesson?.key === lesson.key && openLesson?.scope === lesson.scope;
 
+  // The open lesson's position in the server-filtered `lessons` array, or -1
+  // when nothing is open. Shared by the roving-tabindex render below and the
+  // arrow-key handler so the two never compute it differently.
+  const openLessonIndex = openLesson
+    ? lessons.findIndex((l) => l.scope === openLesson.scope && l.key === openLesson.key)
+    : -1;
+  // Single tab stop for the whole list (WAI-ARIA roving tabindex): the open
+  // row when one exists, else the first row — matching how a native listbox
+  // with no selection is still reachable in exactly one Tab stop.
+  const rovingTabIndexTarget = openLessonIndex === -1 ? 0 : openLessonIndex;
+
   // ── R2: ArrowUp/ArrowDown list navigation ─────────────────────────────────
   // Roving-tabindex model over the server-filtered `lessons` array: an arrow
   // press moves the OPEN lesson to the next/previous row and moves focus to
@@ -936,10 +947,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     if (isTypingTarget(document.activeElement)) return;
 
-    const currentIndex = openLesson
-      ? lessons.findIndex((l) => l.scope === openLesson.scope && l.key === openLesson.key)
-      : -1;
-    const next = nextLessonIndex(currentIndex === -1 ? null : currentIndex, e.key, lessons.length);
+    const next = nextLessonIndex(openLessonIndex === -1 ? null : openLessonIndex, e.key, lessons.length);
     if (next === null) return;
 
     e.preventDefault();
@@ -1126,17 +1134,35 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     return (
       <div
         className="flex flex-col gap-2"
-        role="list"
+        // Listbox + option (not plain list/listitem): a non-modal master-
+        // detail list is a selection widget, not a static list — `aria-selected`
+        // below requires an ancestor role that supports it. Mirrors the
+        // existing `role="listbox"` / `role="option"` pattern already used by
+        // `MemoryExpandButton`'s recent-memories dropdown.
+        role="listbox"
         aria-label="Memories"
+        // Announces that this list drives the (globally-rendered) detail
+        // panel — present only while a lesson is actually open, since the
+        // panel doesn't exist in the DOM otherwise.
+        aria-controls={openLesson ? 'lesson-detail-panel' : undefined}
         onKeyDown={handleListKeyDown}
       >
         {lessons.map((lesson, i) => (
-          <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
+          <div key={`${lesson.scope}::${lesson.key}`} role="option" aria-selected={isLessonSelected(lesson)}>
             <LessonCard
               lesson={lesson}
               selected={isLessonSelected(lesson)}
               onClick={() => handleLessonClick(lesson)}
               index={i}
+              // Roving tabindex: exactly one card is a Tab stop at a time (the
+              // open lesson, or the first row when nothing is open yet) — the
+              // rest are reachable only via ArrowUp/Down, matching a native
+              // listbox's single tab stop instead of one per row.
+              tabIndex={i === rovingTabIndexTarget ? 0 : -1}
+              // The wrapping `role="option"` above already announces
+              // selection via `aria-selected` — the card's own `aria-pressed`
+              // would double-announce it.
+              selectionAnnouncedByParent
             />
           </div>
         ))}

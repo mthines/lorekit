@@ -99,9 +99,13 @@ interface LessonCardProps {
   selected: boolean;
   onClick: () => void;
   index: number;
+  /** Roving-tabindex override — see {@link MemoryCardProps.tabIndex}. */
+  tabIndex?: number;
+  /** See {@link MemoryCardProps.selectionAnnouncedByParent}. */
+  selectionAnnouncedByParent?: boolean;
 }
 
-export function LessonCard({ lesson, selected, onClick, index }: LessonCardProps) {
+export function LessonCard({ lesson, selected, onClick, index, tabIndex, selectionAnnouncedByParent }: LessonCardProps) {
   return (
     <MemoryCard
       memory={memoryFromLesson(lesson)}
@@ -109,6 +113,8 @@ export function LessonCard({ lesson, selected, onClick, index }: LessonCardProps
       selected={selected}
       onClick={onClick}
       index={index}
+      tabIndex={tabIndex}
+      selectionAnnouncedByParent={selectionAnnouncedByParent}
     />
   );
 }

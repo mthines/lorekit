@@ -278,6 +278,34 @@ export const OpenFocusSkipsWhenAlreadyInside: Story = {
   },
 };
 
+/**
+ * Focus-management delta (2026-09-10, on already-open PR #660): the desktop
+ * DRAWER is non-modal (R1) — per WAI-ARIA's master-detail pattern the list
+ * keeps keyboard ownership, so opening/updating the panel must NEVER steal
+ * focus the way the mobile sheet's dialog behavior does. Regression guard for
+ * the reported bug: before the modality gate below, the SAME unconditional
+ * `close.focus()` fired for the drawer too, so a click that opened a memory
+ * moved focus into the panel and broke the Explorer's ArrowUp/ArrowDown list
+ * navigation immediately afterward — arrows kept "working" (no crash) but
+ * silently stopped changing the selection, since the list no longer had
+ * focus. Non-vacuous by construction: reverting the `isSheet` gate on the
+ * open-focus effect in `LessonDetailSheet.tsx` fails this assertion the same
+ * way `OpenFocusSkipsWhenAlreadyInside` fails against its own pre-fix code.
+ */
+export const DrawerOpenDoesNotStealFocus: Story = {
+  render: (args) => <Harness onClose={args.onClose} layout="drawer" />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('opening the drawer leaves focus where it was — never on the close button', async () => {
+      // Wait past the ~80 ms open-focus timer the mobile sheet relies on (see
+      // `settleOpenFocus`) — the drawer must skip it entirely, not merely
+      // delay it.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await expect(body().getByRole('button', { name: /close detail panel/i })).not.toHaveFocus();
+    });
+  },
+};
+
 // ── Content tabs ─────────────────────────────────────────────────────────────
 
 export const PreviewIsDefault: Story = {

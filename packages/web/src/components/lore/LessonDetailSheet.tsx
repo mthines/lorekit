@@ -303,6 +303,18 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
 
 export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto', initialContentTab = DEFAULT_CONTENT_TAB }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Non-modal master-detail focus model (WAI-ARIA): the panel is an OBSERVER
+  // of list selection, not a focus-stealing dialog, on the desktop drawer —
+  // the list keeps keyboard ownership so ArrowUp/Down keeps working right
+  // after a click opens the panel. `previouslyFocused` remembers the list
+  // item that was focused at the moment THIS lesson became the open one
+  // (updated on every open/switch below, via the `shownLessonIdRef` effect) —
+  // both a click and R2's arrow-nav already leave focus there natively, so
+  // this doesn't reach into LoreExplorer's DOM, it just remembers what was
+  // already focused. Used to: (a) skip the open-focus steal for the drawer,
+  // (b) return focus there on Escape/close. Mirrors `ConfirmDialog`'s
+  // `previouslyFocused` pattern, generalized to "switch" as well as "open".
+  const previouslyFocused = useRef<HTMLElement | null>(null);
   // Content view: Preview (rendered markdown, default) vs Edit (raw textarea).
   const [contentTab, setContentTab] = useState<ContentTab>(initialContentTab);
   const queryClient = useQueryClient();
@@ -484,15 +496,31 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
     if (shownLessonIdRef.current === lessonId) return;
     shownLessonIdRef.current = lessonId;
     setContentTab(DEFAULT_CONTENT_TAB);
+    // Remember whatever was focused at the moment of THIS open/switch — for a
+    // click that's the clicked card's own button (native click-focus); for
+    // R2's arrow-nav it's the card `handleListKeyDown` already called
+    // `.focus()` on before this effect runs. Not captured on close
+    // (`lessonId === null`) — there is nothing to remember returning to.
+    if (lessonId !== null) previouslyFocused.current = document.activeElement as HTMLElement | null;
   }, [lessonId]);
 
-  // Focus close button on open; restore on close. The delay lets the open
-  // animation start first, which means focus can already be somewhere inside
-  // the panel by the time it fires (a fast click straight into the Content
-  // textarea) — pulling it back to the close button would swallow the keystrokes
-  // that follow. So this only ever moves focus INTO the panel, never within it.
+  // Focus INTO the panel on open — MOBILE SHEET ONLY (modality-aware, mirrors
+  // R1's backdrop gate). The sheet covers the list and is a true modal, so
+  // moving focus in (and trapping it, via the Escape/close behavior below) is
+  // the correct dialog pattern. The desktop drawer is deliberately NON-MODAL:
+  // the list stays visible and clickable, and per WAI-ARIA's master-detail
+  // pattern the list keeps keyboard ownership, so opening/switching the panel
+  // must NOT steal focus away from the active list item — that is exactly
+  // what broke ArrowUp/ArrowDown right after a click (the bug this fixes).
+  // Entering the panel on desktop is a DELIBERATE action (Tab from the list).
+  //
+  // The delay lets the open animation start first, which means focus can
+  // already be somewhere inside the panel by the time it fires (a fast click
+  // straight into the Content textarea) — pulling it back to the close button
+  // would swallow the keystrokes that follow. So this only ever moves focus
+  // INTO the panel, never within it.
   useEffect(() => {
-    if (lesson) {
+    if (lesson && isSheet) {
       const timer = setTimeout(() => {
         const close = closeRef.current;
         if (!close) return;
@@ -503,17 +531,48 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
       return () => clearTimeout(timer);
     }
     return undefined;
+  }, [lesson, isSheet]);
+
+  // Restore focus to the list on close — for BOTH presentations, standard
+  // return-focus-to-trigger dialog hygiene (mirrors `ConfirmDialog`). Skipped
+  // if the remembered element is no longer in the document (e.g. the list
+  // re-rendered a shorter page while the panel was open).
+  useEffect(() => {
+    if (lesson !== null) return undefined;
+    const target = previouslyFocused.current;
+    previouslyFocused.current = null;
+    if (target?.isConnected) target.focus();
+    return undefined;
   }, [lesson]);
 
-  // Close on Escape — but only when the form is clean (the useEditableForm hook
+  // Escape — modality-aware (only when the form is clean; useEditableForm
   // captures Escape first when the form is dirty to trigger a discard).
+  // Mobile sheet: a genuine modal, so Escape closes it directly (focus then
+  // returns to the list via the restore-on-close effect above).
+  // Desktop drawer: non-modal, so Escape is a two-step "back out" rather than
+  // an immediate close — least-surprising for a panel the user can still see
+  // and click around: the FIRST Escape (focus is inside the panel, e.g. the
+  // user tabbed in to edit) returns focus to the active list item WITHOUT
+  // closing, so a reader can glance back at the list without losing their
+  // place in the panel's content; a SECOND Escape (focus is now back in the
+  // list, or was already there — an arrow-nav user never left it) closes.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && lesson && !isDirty) onClose();
+      if (e.key !== 'Escape' || !lesson || isDirty) return;
+      if (!isSheet) {
+        const panel = closeRef.current?.closest('[role="dialog"]');
+        const focusInsidePanel = panel ? panel.contains(document.activeElement) : false;
+        if (focusInsidePanel && previouslyFocused.current?.isConnected) {
+          e.preventDefault();
+          previouslyFocused.current.focus();
+          return;
+        }
+      }
+      onClose();
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [lesson, onClose, isDirty]);
+  }, [lesson, onClose, isDirty, isSheet]);
 
   // Global P / E shortcuts switch the Content tab — but never while focus is in
   // a form field (so typing "p"/"e" into the textarea, tags or expiry input is
@@ -631,6 +690,11 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
             // rather than explicitly false on a non-modal dialog.
             aria-modal={isSheet ? true : undefined}
             aria-label="Memory detail"
+            // Static id — exactly one instance of this panel ever renders
+            // (globally, via `MemorySidebarProvider`) — so the list can point
+            // `aria-controls` at it (see `LoreExplorer.tsx`'s results list),
+            // announcing that selecting a row updates this panel.
+            id="lesson-detail-panel"
           >
             {/* Drag handle — bottom sheet only. Grabbing it starts the drag; the
                 body scrolls independently (dragListener is off). */}
