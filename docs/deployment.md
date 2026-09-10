@@ -964,6 +964,56 @@ smoke path deliberately does not carry; CI only ever uses the anon key +
 email/password to mint the JWT. Re-run with the production ref + key to seed the
 production project too.
 
+#### Seed the preview with demo data
+
+A fresh `/preview` deploy pushes migrations and edge functions, but the
+account behind it usually has no lore — the dashboard shows an empty Explorer,
+a flat heatmap, and an Insights page with nothing to compute a ratio from.
+Comment **`/preview --seed`** (instead of plain `/preview`) on a PR to also
+populate it: `scripts/seed/seed-preview.mjs` writes a realistic, backdated
+dataset — memories across every scope type and Explorer filter dimension
+(label, kind, host, agent, trigger, origin repo/branch/PR), a mix of archived,
+protected, and expired-or-active-TTL rows, an org with a couple of org-owned
+memories, and ~30 days of usage events, per-memory read/opened counters, and
+citations — under the fixed smoke-user account (`LOREKIT_SMOKE_EMAIL`).
+
+**Opt-in, not the default**, for three reasons: the preview project is
+*shared* across every open PR's `/preview` run, so an implicit seed on every
+comment would mean one PR's preview silently changes what another PR's
+preview shows; most `/preview` runs exist to exercise the API contract and
+never open the dashboard; and an always-seeded account makes the genuinely
+empty state (onboarding, first-token mint, the empty Explorer) untestable.
+
+```bash
+# What the `seed` job in preview.yml runs — the Management API channel, no
+# new secret (SUPABASE_ACCESS_TOKEN is already a repo-level secret).
+SUPABASE_ACCESS_TOKEN=<token> SUPABASE_PROJECT_REF=<preview-ref> \
+  node scripts/seed/seed-preview.mjs --user-email <smoke-user-email>
+
+# Local / supabase start — no Management API token needed.
+node scripts/seed/seed-preview.mjs --user-email <email> \
+  --psql postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
+node scripts/seed/seed-preview.mjs --user-email <email> --dry-run   # print the SQL, write nothing
+node scripts/seed/seed-preview.mjs --user-email <email> --reset     # wipe this seed's rows first, then reseed
+```
+
+The target user must already exist — seed it first with
+[`seed-smoke-user.mjs`](#seed-the-orgs-smoke-user) above; this script never
+creates one, for the same reason the smoke suites don't. It refuses the
+**production** project ref unconditionally (no override flag), matching
+[Rebuilding the shared preview project](#rebuilding-the-shared-preview-project)'s
+own belt-and-suspenders check. Every seeded memory's key is prefixed
+`preview-seed/` — search the Explorer for that prefix to find (or `--reset` to
+remove) exactly what this script wrote, and nothing else. Re-running it is
+close to idempotent: memories upsert on `(user_id, scope, key)`, so a reseed
+without `--reset` refreshes the same rows rather than duplicating them.
+
+A [Rebuilding the shared preview project](#rebuilding-the-shared-preview-project)
+run wipes any seeded demo data along with everything else (and the smoke
+user, per the notice above) — reseed with `/preview --seed` on any open PR
+once the smoke user is re-seeded.
+
 ### Recommended branch protection
 
 Require a PR to `main` and mark the single **`CI Summary`** job as the required

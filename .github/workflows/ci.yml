@@ -48,6 +48,7 @@ jobs:
       migrations: ${{ steps.filter.outputs.migrations }}
       bench: ${{ steps.filter.outputs.bench }}
       deploy: ${{ steps.filter.outputs.deploy }}
+      seed: ${{ steps.filter.outputs.seed }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -167,6 +168,15 @@ jobs:
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Preview-seed gate: the pure dataset/SQL builders `/preview --seed`
+          # runs against the shared preview project. `scripts/**` is outside
+          # `nx affected`, so without this job a change here would ship with
+          # its own tests never having run.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/seed/|\.github/workflows/(preview|rebuild-preview|ci)\.yml)'; then
+            echo "seed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "seed=false" >> "$GITHUB_OUTPUT"
           fi
           # Benchmark gate: the row-scaling sweep and the load test, and the
           # pure modules their unit tests protect. Its own filter — naming its
@@ -501,6 +511,26 @@ jobs:
       # node's built-in runner, zero deps — no install step needed.
       - name: Unit-test the deploy-scope resolver
         run: node --test scripts/ci/resolve-deploy-scope.test.mjs
+
+  seed-tests:
+    name: Preview-seed dataset/SQL builders (unit)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.seed == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # node's built-in runner, zero deps — no install step needed.
+      - name: Unit-test the seed dataset, SQL builders, and CLI
+        run: node --test scripts/seed/preview-dataset.test.mjs scripts/seed/preview-sql.test.mjs scripts/seed/seed-preview.test.mjs
 
   # ── Web-preview filter — the decision that spends Vercel quota ───────────────
   #    The filter deciding whether a push deploys a dashboard preview exists in
@@ -839,7 +869,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, preview-filter, bench-tests, edge-typecheck]
+    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, seed-tests, preview-filter, bench-tests, edge-typecheck]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate
