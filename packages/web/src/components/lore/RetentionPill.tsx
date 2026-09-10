@@ -60,7 +60,9 @@ export function RetentionPill({ field, value, onEditValue, onRemove }: Retention
       animate={{ opacity: 1, scale: 1 }}
       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-      className="flex items-stretch overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+      // Same subtle amber "applied" tint as `FilterPill` — a threshold is a
+      // filter now (00108), so it reads as one.
+      className="flex items-stretch overflow-hidden rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)]"
       aria-label={phrase}
     >
       {/* Type — inert by design; a <span>, not a disabled button, so it is

@@ -229,7 +229,14 @@ export function FilterPill({
       // `group` is not used for hover: each segment owns its own hover state,
       // because they are separate targets and a shared one would suggest the
       // whole pill is a single button.
-      className="flex items-stretch overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+      //
+      // The subtle amber tint is the same "this is applied right now" cue as
+      // the active scope pill / selected facet checkbox (`border-accent/40` +
+      // `bg-accent-subtle`, not the loud fully-opaque border those use — a
+      // whole row of committed conditions rendered at full accent strength
+      // would compete with the Filter trigger's own applied state instead of
+      // quietly agreeing with it).
+      className="flex items-stretch overflow-hidden rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)]"
       aria-label={phrase}
     >
       {/* Type — inert by design. A <span>, not a disabled button: a disabled
