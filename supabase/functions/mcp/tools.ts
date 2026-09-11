@@ -336,8 +336,17 @@ export async function toolRead(
   // boundary: `scope`+`key` is unique, so the scoped path can only ever match
   // one row, and an unscoped one matches once per scope holding that key.
   // PostgREST cannot ORDER BY our precedence rank (it is a list, not a column),
-  // so the ranking happens below over whatever came back.
-  const { data, error } = await query.limit(UNSCOPED_READ_CANDIDATE_LIMIT);
+  // so the ranking happens below over whatever came back. It still has to come
+  // back in a DEFINED order: without one, a key held in more than
+  // UNSCOPED_READ_CANDIDATE_LIMIT scopes truncates to whichever rows Postgres
+  // happened to return, so the same call can answer differently on consecutive
+  // runs — the precise failure `pickScopeWinner`'s total order exists to
+  // prevent, reintroduced one layer above it. `updated_at desc` is also the
+  // comparator's own first tie-break, so the rows kept are the ones that would
+  // win anyway.
+  const { data, error } = await query
+    .order('updated_at', { ascending: false })
+    .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string }[];
   // Stamped BEFORE the miss return, not after: a miss is exactly the population

@@ -25,12 +25,14 @@ function makeDb(rows: Row[] | null, error: null | { message: string } = null) {
     eq: vi.fn(),
     is: vi.fn(),
     or: vi.fn(),
+    order: vi.fn(),
     limit: vi.fn().mockResolvedValue({ data: rows, error }),
   };
   // Make every chained method return the chain itself for fluent chaining.
   chain.eq.mockReturnValue(chain);
   chain.is.mockReturnValue(chain);
   chain.or.mockReturnValue(chain);
+  chain.order.mockReturnValue(chain);
   return {
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue(chain),
@@ -102,7 +104,12 @@ describe('read', () => {
 // instead of silently surfacing hidden rows.
 
 function makeCapturingDb() {
-  const calls: { is: unknown[][]; or: unknown[][]; eq: unknown[][] } = { is: [], or: [], eq: [] };
+  const calls: { is: unknown[][]; or: unknown[][]; eq: unknown[][]; order: unknown[][] } = {
+    is: [],
+    or: [],
+    eq: [],
+    order: [],
+  };
   const chain: Record<string, ReturnType<typeof vi.fn>> = {};
   chain['eq'] = vi.fn((...args: unknown[]) => {
     calls.eq.push(args);
@@ -114,6 +121,10 @@ function makeCapturingDb() {
   });
   chain['or'] = vi.fn((...args: unknown[]) => {
     calls.or.push(args);
+    return chain;
+  });
+  chain['order'] = vi.fn((...args: unknown[]) => {
+    calls.order.push(args);
     return chain;
   });
   chain['limit'] = vi.fn().mockResolvedValue({
@@ -195,5 +206,22 @@ describe('read without a scope', () => {
     const { db, calls } = makeCapturingDb();
     await read(db, { scope: 'global', key: 'k' });
     expect(calls.eq).toContainEqual(['scope', 'global']);
+  });
+
+  // The candidate fetch is capped, so WHICH rows come back decides the winner
+  // before `pickScopeWinner`'s total order ever runs. Without an ORDER BY, a key
+  // held in more scopes than the cap truncates to whatever order Postgres
+  // returned and the same call can answer differently on consecutive runs — the
+  // determinism `scope-precedence` exists to provide, lost one layer above it.
+  it('orders the candidate fetch so the cap truncates deterministically', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { key: 'k' });
+    expect(calls.order).toEqual([['updated_at', { ascending: false }]]);
+  });
+
+  it('orders the candidate fetch on the scoped path too', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { scope: 'global', key: 'k' });
+    expect(calls.order).toEqual([['updated_at', { ascending: false }]]);
   });
 });

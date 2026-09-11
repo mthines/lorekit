@@ -669,12 +669,30 @@ more than one place; that is the caller's cue to pass an explicit scope next tim
 unscoped read is silently lossy. `memory.list`/`list_archived` likewise put `scope` on every entry —
 a cross-scope page is unreadable otherwise, and one shape covers both call forms.
 
-**Only the WINNER is counted as read.** `recordMemoryReads` receives the resolved row, not the
-candidate set. Counting all 50 candidates would inflate `read_count` — the denominator of the
-`opened_count / read_count` pull-through ratio `/insights` is built on — for a read that delivered
-exactly one lesson.
+**Only the WINNER is counted as read — on the MCP surface.** `recordMemoryReads` receives the
+resolved row, not the candidate set. Counting all 50 candidates would inflate `read_count` — the
+denominator of the `opened_count / read_count` pull-through ratio `/insights` is built on — for a
+read that delivered exactly one lesson.
 
-The candidate window is bounded at 50 rows. It is far above the number of scopes any one key
+**The CLI's remote path does NOT get that property, and this is a known gap.** `lorekit show <key>`
+without a scope resolves client-side, so it fetches its candidates through `GET /memories` — a LIST
+route, which records EVERY row it returns and grades the call `targeted` only when a scope filter
+and a key are both present (`handlers/list.ts`). An unscoped remote `show` therefore books a `bulk`
+read against all N candidates and an `opened_count` against none, which is the wrong sign on both
+halves of the ratio. It is left as-is deliberately: the fix is not local to the CLI — every
+alternative either changes what `GET /memories` records (a public-contract change with its own
+migration assertions, affecting the Lore Explorer and every API-token caller) or spends a second
+round trip per read. The exposure is bounded by how rare an unscoped remote `show` is against how
+often the Explorer and agents read normally, and it is the same class of accepted, written-down
+distortion as the `refs` batching entry above. Do not read `/insights` pull-through across a window
+where unscoped CLI reads spiked without accounting for it.
+
+The candidate window is bounded at 50 rows, and the fetch that fills it is ORDERED (`updated_at`
+desc) before the cap applies on both the edge and `mcp-core`. The order is not cosmetic: the cap
+truncates BEFORE `pickScopeWinner` runs, so an unordered fetch hands the comparator whichever rows
+Postgres happened to return and reintroduces, one layer above it, the exact same-call-answers-
+differently failure the total order exists to prevent. `updated_at` desc is also the comparator's
+own first tie-break, so the rows kept are the ones most likely to win anyway. It is far above the number of scopes any one key
 realistically occupies, and a caller that needs a guarantee rather than a resolution passes an
 explicit scope. `lorekit show` keeps its own guard on the other side: a lone positional is
 reinterpreted as a bare key only when it neither IS a scope nor LOOKS like an attempt at one

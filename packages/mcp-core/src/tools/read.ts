@@ -66,7 +66,15 @@ export async function read(db: SupabaseClient, raw: unknown): Promise<ReadResult
       // unscoped path is the only one that fetches candidates to rank.
       if (input.scope !== undefined) query = query.eq('scope', input.scope);
 
-      const { data, error } = await query.limit(UNSCOPED_READ_CANDIDATE_LIMIT);
+      // Ordered before the cap: the precedence rank is a list, not a column, so
+      // PostgREST cannot sort by it and the ranking happens below — but WHICH
+      // rows survive the cap must still be deterministic, or a key held in more
+      // than UNSCOPED_READ_CANDIDATE_LIMIT scopes truncates to whatever order
+      // Postgres returned and the same call answers differently on consecutive
+      // runs. `updated_at desc` is the comparator's own first tie-break.
+      const { data, error } = await query
+        .order('updated_at', { ascending: false })
+        .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
 
       if (error) throw error;
       const rows = (data ?? []) as { scope: string; value: string; updated_at: string }[];
