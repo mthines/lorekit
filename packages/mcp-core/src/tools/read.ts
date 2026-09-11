@@ -71,7 +71,12 @@ export async function read(db: SupabaseClient, raw: unknown): Promise<ReadResult
       // rows survive the cap must still be deterministic, or a key held in more
       // than UNSCOPED_READ_CANDIDATE_LIMIT scopes truncates to whatever order
       // Postgres returned and the same call answers differently on consecutive
-      // runs. `updated_at desc` is the comparator's own first tie-break.
+      // runs. `updated_at desc` is the comparator's SECOND key, not its first:
+      // precedence ranks by scope TYPE first, so a truncating fetch can still
+      // drop a stale `project::` row in favour of fresher `global` ones. It is
+      // the best key PostgREST can sort on, and a key in >50 scopes is
+      // pathological by the cap's own definition — deterministic beats
+      // correct-under-a-shape that does not occur.
       const { data, error } = await query
         .order('updated_at', { ascending: false })
         .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
