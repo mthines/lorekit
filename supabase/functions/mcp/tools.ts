@@ -340,19 +340,23 @@ export async function toolRead(
   const { data, error } = await query.limit(UNSCOPED_READ_CANDIDATE_LIMIT);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string }[];
+  // Stamped BEFORE the miss return, not after: a miss is exactly the population
+  // these two measures exist to size — how often an unscoped read fans out and
+  // still finds nothing. Stamping them after the return also made this surface
+  // disagree with the `mcp-core` twin, which stamps both before its own.
+  // Numeric/boolean measures, not dimensions — no cardinality added. Together
+  // they are the only way to see how often an unscoped read was AMBIGUOUS,
+  // which is what would justify surfacing the fallback more loudly.
+  span.setAttributes({
+    'lorekit.read.unscoped': scope === null,
+    'lorekit.read.candidates': rows.length,
+  });
   const winner = pickScopeWinner(rows);
   if (!winner) return null;
   // Stamp the RESOLVED scope, not the requested one — on an unscoped read the
   // scope the caller cares about is the one that answered. `lorekit.scope.type`
   // is left to the transport's own attribute pass, which reads `lorekit.scope`.
-  span.setAttributes({
-    'lorekit.scope': winner.scope,
-    // Numeric/boolean measures, not dimensions — no cardinality added. Together
-    // they are the only way to see how often an unscoped read was AMBIGUOUS,
-    // which is what would justify surfacing the fallback more loudly.
-    'lorekit.read.unscoped': scope === null,
-    'lorekit.read.candidates': rows.length,
-  });
+  span.setAttributes({ 'lorekit.scope': winner.scope });
   // memory.read is a TARGETED read (one exact scope+key) for the per-memory
   // counter (migration 00077) — and, since the transport IS MCP, an agent
   // deliberately opening this lesson, so it also bumps last_opened_at
