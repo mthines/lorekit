@@ -87,6 +87,18 @@ describe('appliesWhenOf', () => {
     assert.equal(appliesWhenOf({ value: '**Applies when:** alpha\n**Do this instead:** no' }), 'alpha');
   });
 
+  // A label's colon is written both inside and outside the bold in the wild.
+  // Recognising only one spelling swaps early truncation for an overrun, which
+  // is the same defect pointing the other way.
+  test('a label whose colon sits OUTSIDE the bold also stops the paragraph', () => {
+    assert.equal(appliesWhenOf({ value: '**Applies when:** alpha\n**Why**: no' }), 'alpha');
+    assert.equal(appliesWhenOf({ value: '**Applies when:** alpha\n**Do this instead**: no' }), 'alpha');
+  });
+
+  test('the opener is read in either colon spelling', () => {
+    assert.equal(appliesWhenOf({ value: '**Applies when**: x\n**Why:** no' }), 'x');
+  });
+
   test('a trailing paragraph with no blank line after it is still read', () => {
     assert.equal(appliesWhenOf({ value: '# T\n\n**Applies when:** trailing, at EOF' }), 'trailing, at EOF');
   });

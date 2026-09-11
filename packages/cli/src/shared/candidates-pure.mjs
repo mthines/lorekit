@@ -66,25 +66,33 @@ export function statusOf(member) {
   return typeof fromMeta === 'string' ? fromMeta.trim() : '';
 }
 
-// Spans the whole **Applies when:** PARAGRAPH, not its first line. Markdown
-// prose wraps, and the skill's own worked example wraps — a single-line `(.+?)`
-// with `m` stopped at the first newline and silently dropped the qualifying
-// half of the signal, which is the opposite of "printed verbatim". Stops at a
-// blank line or at the next bold label, so it cannot run on into the body.
+// Is this line a bold LABEL, and which one? Returns `{ name, rest }` or null.
 //
-// Deliberately NOT `m`: under that flag the `$` alternative below matches at
-// every end-of-LINE, so the lazy quantifier stops at the first newline and the
-// wrapping bug survives the rewrite. The leading `(?:^|\n)` does the
-// line-anchoring `^` would have, and `$` then means end of input.
+// Deliberately a line test rather than another alternative in a lookahead. Four
+// separate defects in this function were one paragraph-terminating lookahead
+// failing a different way each time — truncating at the first newline, then at
+// any bold token, then failing to stop at a label whose colon sits OUTSIDE the
+// bold (`**Why**:` rather than `**Why:**`). Each fix narrowed the failure
+// without ending the class, because "where does this paragraph stop" is a
+// line-level question and a single pattern answering it has to encode every
+// spelling at once. Asked per line it is four lines of obvious code, and a new
+// spelling is a new case here rather than a new branch inside a lookahead.
 //
-// The bold stop is a LABEL (`**Word:**`), not merely bold. `\n[ \t]*\*\*` alone
-// ends the paragraph at any continuation line that happens to open with an
-// inline bold token — `**foo()** in the parser.` — which is the same truncation
-// this pattern exists to prevent, just one wrap further in. `[^\n*]+:\*\*`
-// requires the closing colon on the same line, which every label here has and a
-// mid-sentence bold token does not.
-const APPLIES_WHEN_RE =
-  /(?:^|\n)[ \t]*\*\*Applies when:\*\*[ \t]*([\s\S]*?)(?=\n[ \t]*\n|\n[ \t]*\*\*[^\n*]+:\*\*|$)/i;
+// A label carries a colon; bold alone does not. `**foo()** in the parser.` is
+// prose continuing the paragraph, `**Why:**` and `**Why**:` both end it.
+const BOLD_LEAD_RE = /^[ \t]*\*\*([^\n*]+?)\*\*[ \t]*(:?)[ \t]*/;
+
+function boldLabel(line) {
+  const m = BOLD_LEAD_RE.exec(line);
+  if (!m) return null;
+  const [matched, inner, trailingColon] = m;
+  const innerColon = inner.endsWith(':');
+  if (trailingColon !== ':' && !innerColon) return null;
+  return {
+    name: (innerColon ? inner.slice(0, -1) : inner).trim().toLowerCase(),
+    rest: line.slice(matched.length),
+  };
+}
 
 /**
  * A member's applicability signal, printed verbatim and never interpreted. The
@@ -100,8 +108,20 @@ const APPLIES_WHEN_RE =
 export function appliesWhenOf(member) {
   const value = member?.value;
   if (typeof value === 'string') {
-    const m = APPLIES_WHEN_RE.exec(value);
-    if (m && m[1]) return m[1].replace(/\s+/g, ' ').trim();
+    const lines = value.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const label = boldLabel(lines[i]);
+      if (!label || label.name !== 'applies when') continue;
+      // The paragraph runs until a blank line, the next label, or the end.
+      const paragraph = [label.rest];
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() === '' || boldLabel(lines[j])) break;
+        paragraph.push(lines[j]);
+      }
+      const text = paragraph.join(' ').replace(/\s+/g, ' ').trim();
+      if (text) return text;
+      break; // declared but empty — fall through to the legacy field
+    }
   }
   const fromMeta = parseMetaComment(value)['trigger-context'];
   return typeof fromMeta === 'string' ? fromMeta.trim() : '';
