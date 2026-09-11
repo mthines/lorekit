@@ -228,7 +228,7 @@ async function candidates(args) {
     heading('LoreKit invariants candidates');
     log(`  project: ${c.dim(root)}`);
     log(`  scopes:  ${scopes.join('  →  ')}`);
-    log(`  ${c.dim(`criteria: summed seen_count >= ${minSeenCount}, or a member's meta status is non-"active"`)}`);
+    log(`  ${c.dim(`criteria: summed seen_count >= ${minSeenCount}, or a member's status is non-"active"`)}`);
 
     if (offlineSection.available && offlineSection.popCapped) {
       log(`  ${c.yellow('!')} population cap (${POP_CAP}) reached for Offline — results are partial. Narrow with --key-prefix, --since, or --max.`);

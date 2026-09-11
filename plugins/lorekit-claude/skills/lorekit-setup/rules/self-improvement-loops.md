@@ -234,7 +234,7 @@ Then:
 1. Match each lesson's **Applies when** line against the current run. Consider
    only matches. Expired lessons do not come back — the store's own TTL drops
    them, so the read never has to filter on a date in the prose.
-2. Apply each matching *"What to do next time"* as a **consideration**, not a
+2. Apply each matching **Do this instead** line as a **consideration**, not a
    command — it biases the run unless it conflicts with the user's stated intent
    or a task-specific constraint. On conflict, the user's intent wins; surface it.
 3. On a `repo::` vs `global` collision, the `repo::` lesson wins (closer scope).

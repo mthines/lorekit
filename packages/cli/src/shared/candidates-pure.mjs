@@ -76,7 +76,15 @@ export function statusOf(member) {
 // every end-of-LINE, so the lazy quantifier stops at the first newline and the
 // wrapping bug survives the rewrite. The leading `(?:^|\n)` does the
 // line-anchoring `^` would have, and `$` then means end of input.
-const APPLIES_WHEN_RE = /(?:^|\n)[ \t]*\*\*Applies when:\*\*[ \t]*([\s\S]*?)(?=\n[ \t]*\n|\n[ \t]*\*\*|$)/i;
+//
+// The bold stop is a LABEL (`**Word:**`), not merely bold. `\n[ \t]*\*\*` alone
+// ends the paragraph at any continuation line that happens to open with an
+// inline bold token — `**foo()** in the parser.` — which is the same truncation
+// this pattern exists to prevent, just one wrap further in. `[^\n*]+:\*\*`
+// requires the closing colon on the same line, which every label here has and a
+// mid-sentence bold token does not.
+const APPLIES_WHEN_RE =
+  /(?:^|\n)[ \t]*\*\*Applies when:\*\*[ \t]*([\s\S]*?)(?=\n[ \t]*\n|\n[ \t]*\*\*[^\n*]+:\*\*|$)/i;
 
 /**
  * A member's applicability signal, printed verbatim and never interpreted. The

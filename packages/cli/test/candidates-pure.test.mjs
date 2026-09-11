@@ -74,6 +74,19 @@ describe('appliesWhenOf', () => {
     assert.equal(appliesWhenOf({ value: '**Applies when:** a\nb\nc\n\n**Why:** no' }), 'a b c');
   });
 
+  // The stop condition is a bold LABEL, not merely bold. A continuation line
+  // opening with an inline bold token is prose, and ending the paragraph there
+  // is the same truncation one wrap further in.
+  test('a continuation line starting with an inline bold token is not a stop', () => {
+    const value = '# T\n\n**Applies when:** you touch\n**foo()** in the parser.\n\n**Why:** x';
+    assert.equal(appliesWhenOf({ value }), 'you touch **foo()** in the parser.');
+  });
+
+  test('a real bold label still stops the paragraph', () => {
+    assert.equal(appliesWhenOf({ value: '**Applies when:** alpha\n**Why:** no' }), 'alpha');
+    assert.equal(appliesWhenOf({ value: '**Applies when:** alpha\n**Do this instead:** no' }), 'alpha');
+  });
+
   test('a trailing paragraph with no blank line after it is still read', () => {
     assert.equal(appliesWhenOf({ value: '# T\n\n**Applies when:** trailing, at EOF' }), 'trailing, at EOF');
   });
