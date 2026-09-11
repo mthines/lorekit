@@ -58,7 +58,7 @@ this rule should say so out loud rather than sell the store.
 |  | Lesson (`self-improvement-loops.md`) | CI state record (this file) |
 | --- | --- | --- |
 | Author | a model, at the end of a run | a script, deterministically |
-| Value | prose + a `meta:` comment | JSON (an object, not a bare scalar) |
+| Value | markdown prose only — metadata lives in the store's own fields | JSON (an object, not a bare scalar) |
 | How a reader uses it | **advisory** — a consideration that can be overridden | **authoritative** — parsed and branched on |
 | Recurrence / promotion | yes (`seen_count`, human-gated hardening) | n/a — nothing is inferred, so nothing needs gating |
 | Entrenchment risk | high — the reason those guards exist | none; the risks are cardinality and secrets instead |

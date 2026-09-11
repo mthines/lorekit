@@ -34,9 +34,9 @@ A lesson is a compile candidate only if **all four** hold:
 1. **Trigger detectable without judgement.** The condition that should fire the
    check can be recognized from a file path, a diff shape, or another mechanical
    signal — not "whether this edit is the kind that matters," which needs a
-   reader's judgement. This is exactly what the existing "trigger-context must be
-   concrete" requirement in the lessons loop exists for: a lesson with a vague
-   trigger-context was never going to compile, so demanding concreteness at
+   reader's judgement. This is exactly what the existing "**Applies when** must
+   be concrete" requirement in the lessons loop exists for: a lesson with a vague
+   applicability signal was never going to compile, so demanding concreteness at
    write time is what keeps the door open later.
 2. **Assertion statable as must-remain-true.** The rule has to be expressible as
    an invariant ("if A changed, B must also be in the changed set"), not a
@@ -114,8 +114,9 @@ A read-only survey over the memory store. It reuses `dedupe`'s Jaccard clusterin
 to find near-duplicate lessons, then ranks the resulting clusters by
 `(summed seen_count × distinct scopes)`, descending. A cluster is worth
 reporting when the summed `seen_count` across its members is at least
-`--min-seen-count` (default 3), or any member's `meta` comment already declares a
-non-`active` status. For each candidate it prints every memory the merge would
+`--min-seen-count` (default 3), or any member already declares a non-`active`
+status — read from a `status::<value>` tag, falling back to a legacy `meta`
+comment for lessons written before tags were the convention. For each candidate it prints every memory the merge would
 collapse — deliberately the default view, not hidden behind `--verbose`, because
 that list *is* the point of the command: a human decides from it whether the
 cluster deserves a hand-written entry.
@@ -127,9 +128,9 @@ you to notice by hand.
 
 Two things it deliberately does **not** do, on purpose:
 
-- **It does not classify trigger-contexts.** A lesson's raw `trigger-context`
-  string, when present, is printed verbatim — never interpreted into a
-  glob/command/error-shape. Turning "parses into a detectable trigger" from a
+- **It does not classify applicability signals.** A lesson's raw signal
+  (its **Applies when** line, or a legacy `trigger-context` meta field) is
+  printed verbatim — never interpreted into a glob/command/error-shape. Turning "parses into a detectable trigger" from a
   string into an actual predicate is the human step the compile pipeline
   protects; automating it would be exactly the "auto-compile" this pipeline
   refuses to do.
