@@ -11,6 +11,7 @@ import {
   parseMetaComment as parseMetaTs,
   statusOf as statusTs,
   isCandidate as isCandidateTs,
+  rankCandidates as rankTs,
   scoreCandidate as scoreTs,
 } from './duplicate-clusters.js';
 
@@ -276,6 +277,7 @@ describe('recurrence registry + candidate ranking parity', () => {
       statusOf: (member: unknown) => string;
       isCandidate: (members: unknown[], opts?: unknown) => boolean;
       scoreCandidate: (members: unknown[]) => number;
+      rankCandidates: (clusters: unknown[], opts?: unknown) => unknown[];
     };
     const values = [
       '<!-- meta: seen_count=3 status=active -->body',
@@ -324,5 +326,26 @@ describe('recurrence registry + candidate ranking parity', () => {
       expect(isCandidateTs(members)).toBe(cliCand.isCandidate(members));
       expect(scoreTs(members)).toBe(cliCand.scoreCandidate(members));
     }
+
+    // `isCandidate` and `scoreCandidate` agreeing says nothing about the layer
+    // the consumer actually reads: `rankCandidates` is where each member's
+    // resolved `status` is attached, and the clusters response reports that
+    // field. Compare the shape both twins are contracted on — `appliesWhen` is
+    // deliberately excluded, being CLI print-only with no response counterpart.
+    const clusters = [
+      { members: memberSets[0], size: 2 },
+      { members: memberSets[4], size: 1 },
+      { members: memberSets[5], size: 1 },
+      { members: memberSets[3], size: 2 },
+    ];
+    const rankShape = (ranked: { members: { scope?: string | null; key?: string | null; status?: string }[]; size: number; score: number }[]) =>
+      ranked.map((c) => ({
+        size: c.size,
+        score: c.score,
+        members: c.members.map((m) => ({ scope: m.scope, key: m.key, status: m.status })),
+      }));
+    expect(rankShape(rankTs(clusters) as never)).toEqual(
+      rankShape(cliCand.rankCandidates(clusters) as never),
+    );
   });
 });

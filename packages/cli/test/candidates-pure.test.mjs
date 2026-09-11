@@ -54,6 +54,34 @@ describe('appliesWhenOf', () => {
     assert.equal(appliesWhenOf({ value }), 'new');
   });
 
+  // Every fixture above is single-line, which is exactly how the truncation bug
+  // survived: markdown prose wraps, and the skill's own worked example wraps.
+  test('a WRAPPED applies-when paragraph is returned whole, re-flowed to one line', () => {
+    const value =
+      '# Take the heredoc form\n\n' +
+      '**Applies when:** shelling out to `slackSendMessage` with text interpolated from\n' +
+      'a ticket title that may contain backticks or apostrophes\n\n' +
+      '**Why:** the shell re-interprets them';
+    assert.equal(
+      appliesWhenOf({ value }),
+      'shelling out to `slackSendMessage` with text interpolated from a ticket title that may contain backticks or apostrophes',
+    );
+  });
+
+  test('the paragraph stops at a blank line or the next bold label, never running into the body', () => {
+    assert.equal(appliesWhenOf({ value: '**Applies when:** alpha beta\n**Why:** not this' }), 'alpha beta');
+    assert.equal(appliesWhenOf({ value: '**Applies when:** alpha\n\nloose body text' }), 'alpha');
+    assert.equal(appliesWhenOf({ value: '**Applies when:** a\nb\nc\n\n**Why:** no' }), 'a b c');
+  });
+
+  test('a trailing paragraph with no blank line after it is still read', () => {
+    assert.equal(appliesWhenOf({ value: '# T\n\n**Applies when:** trailing, at EOF' }), 'trailing, at EOF');
+  });
+
+  test('the label must open a line — an inline mention is not a declaration', () => {
+    assert.equal(appliesWhenOf({ value: 'prose mentioning **Applies when:** inline' }), '');
+  });
+
   test('a lesson declaring neither yields the empty string, never a throw', () => {
     assert.equal(appliesWhenOf({ value: '# just a title' }), '');
     assert.equal(appliesWhenOf({}), '');

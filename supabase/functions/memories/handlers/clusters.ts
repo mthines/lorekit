@@ -193,9 +193,12 @@ export async function handleClusters(
       hook: lessonHook(m.value),
       seen_count: m.seenCount,
       updated_at: m.updatedAt,
-      // Reported verbatim from the lesson's own meta comment, never validated
-      // against a vocabulary — see `ClusterMemberSchema.status`.
-      status: m.meta['status'] ?? null,
+      // Reported verbatim from whichever source the lesson declared it in — a
+      // `status::` tag first, a legacy meta comment second — and never validated
+      // against a vocabulary; see `ClusterMemberSchema.status`. Read from the
+      // resolved `status` rather than out of `meta`, so this agrees with the
+      // `isCandidate` predicate that ranked the member in the first place.
+      status: m.status || null,
     })),
   }));
 

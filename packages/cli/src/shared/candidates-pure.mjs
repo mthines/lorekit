@@ -66,19 +66,34 @@ export function statusOf(member) {
   return typeof fromMeta === 'string' ? fromMeta.trim() : '';
 }
 
-const APPLIES_WHEN_RE = /^\s*\*\*Applies when:\*\*\s*(.+?)\s*$/im;
+// Spans the whole **Applies when:** PARAGRAPH, not its first line. Markdown
+// prose wraps, and the skill's own worked example wraps — a single-line `(.+?)`
+// with `m` stopped at the first newline and silently dropped the qualifying
+// half of the signal, which is the opposite of "printed verbatim". Stops at a
+// blank line or at the next bold label, so it cannot run on into the body.
+//
+// Deliberately NOT `m`: under that flag the `$` alternative below matches at
+// every end-of-LINE, so the lazy quantifier stops at the first newline and the
+// wrapping bug survives the rewrite. The leading `(?:^|\n)` does the
+// line-anchoring `^` would have, and `$` then means end of input.
+const APPLIES_WHEN_RE = /(?:^|\n)[ \t]*\*\*Applies when:\*\*[ \t]*([\s\S]*?)(?=\n[ \t]*\n|\n[ \t]*\*\*|$)/i;
 
 /**
  * A member's applicability signal, printed verbatim and never interpreted. The
- * canonical home is the visible `**Applies when:**` line the lorekit-setup
+ * canonical home is the visible `**Applies when:**` paragraph the lorekit-setup
  * skill prescribes; a legacy `trigger-context` meta field is the fallback.
  * Returns `''` when the lesson declares neither.
+ *
+ * Internal newlines are collapsed to single spaces — the only transformation,
+ * and a presentational one: the caller prints this as one field on one line, so
+ * a wrapped source paragraph must re-flow rather than break the record. No word
+ * is added, removed, or reordered, which is the sense in which it stays verbatim.
  */
 export function appliesWhenOf(member) {
   const value = member?.value;
   if (typeof value === 'string') {
     const m = APPLIES_WHEN_RE.exec(value);
-    if (m && m[1]) return m[1].trim();
+    if (m && m[1]) return m[1].replace(/\s+/g, ' ').trim();
   }
   const fromMeta = parseMetaComment(value)['trigger-context'];
   return typeof fromMeta === 'string' ? fromMeta.trim() : '';

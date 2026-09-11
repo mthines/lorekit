@@ -1279,9 +1279,15 @@ export const ClusterMemberSchema = z.object({
   seen_count: z.number().int().nonnegative().nullable(),
   updated_at: z.string().datetime().nullable(),
   /**
-   * `status` as the lesson's own `<!-- meta: … -->` comment declares it, when it
-   * has one. Reported verbatim and NOT validated against a vocabulary — none is
-   * defined anywhere in this codebase, and inventing one here would be the
+   * `status` as the lesson itself declares it, when it declares one: a
+   * `status::<value>` TAG — the canonical home, per the `lorekit-setup` skill —
+   * falling back to a legacy `<!-- meta: … status=… -->` body comment, with the
+   * tag winning when both are present. That is the same resolution `isCandidate`
+   * ranks on, so a member cannot be reported `null` on the strength of a status
+   * it was selected for.
+   *
+   * Reported verbatim and NOT validated against a vocabulary — none is defined
+   * anywhere in this codebase, and inventing one here would be the
    * classification step the read-only boundary above exists to prevent.
    */
   status: z.string().nullable(),

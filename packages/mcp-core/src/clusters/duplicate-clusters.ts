@@ -505,7 +505,14 @@ export function scoreCandidate(members: readonly ClusterableEntry[] = []): numbe
 }
 
 export interface RankedCandidate<T extends ClusterableEntry = ClusterableEntry> {
-  members: (T & { meta: Record<string, string> })[];
+  /**
+   * `status` rides alongside `meta` rather than being left inside it: the
+   * resolution prefers a `status::` tag over the meta comment, so a consumer
+   * reading `meta['status']` would report `null` for exactly the lessons
+   * `isCandidate` selected ON their status. Typed here so that mistake is a
+   * compile error rather than a silent null in the response.
+   */
+  members: (T & { meta: Record<string, string>; status: string })[];
   size: number;
   minSimilarity: number;
   maxSimilarity: number;
@@ -537,7 +544,16 @@ export function rankCandidates<T extends ClusterableEntry>(
   return (clusters ?? [])
     .filter((cl) => isCandidate(cl?.members, { minSeenCount }))
     .map((cl) => {
-      const members = (cl.members ?? []).map((m) => ({ ...m, meta: parseMetaComment(m?.value) }));
+      const members = (cl.members ?? []).map((m) => ({
+        ...m,
+        meta: parseMetaComment(m?.value),
+        // Resolved rather than left to the consumer to dig out of `meta`: a
+        // lesson written under the current convention declares its status as a
+        // `status::` TAG and carries no meta comment at all, so a reader doing
+        // `meta['status']` reports `null` for exactly the lessons `isCandidate`
+        // just ranked ON that status. Matches the CLI twin's shape.
+        status: statusOf(m),
+      }));
       return {
         members,
         size: cl.size ?? members.length,
