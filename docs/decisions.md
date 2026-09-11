@@ -508,8 +508,10 @@ it costs the response shape a real branch, and three consequences follow from ba
 rather than by row.
 
 **The response shape is CONDITIONAL on the input, and that conditionality is a real cost, not a
-detail.** `scope`+`key` keeps its exact pre-existing shape — `{ "value", "updated_at" }` or `null`
-— with `entries`/`missing` appearing ONLY when `refs` is passed. A client that branches on
+detail.** The singular path keeps its own shape — `{ "value", "updated_at", "scope" }` or `null`
+(`scope` was added later by "An omitted scope means EVERYWHERE" below; `other_scopes` joins it only
+when an unscoped read was ambiguous) — with `entries`/`missing` appearing ONLY when `refs` is
+passed. A client that branches on
 `response.value` truthiness (correct for the singular path) must ALSO know to check for `entries`
 before it can support batching, and a client that doesn't will silently treat a batch response as
 "lesson not found." This is the price paid to avoid a second tool: every caller of `memory.read`
@@ -517,7 +519,9 @@ now needs a shape-dispatch, not just the ones that want batching.
 
 **Batch resolution matches the STORED scope verbatim; the singular path normalises it.** The
 singular `scope`+`key` read runs the scope through `validateScope`, which lowercases every
-segment before the query. The batch path does not: `groupRefsByScope` groups parsed refs by their
+segment before the query (an UNSCOPED singular read has no scope to normalise — it filters on
+`key` alone and resolves by precedence, so the question does not arise there). The batch path does
+not: `groupRefsByScope` groups parsed refs by their
 scope string exactly as `parseMemoryRef` split it, and the per-group query filters on that string
 as-is. The two paths can disagree on the SAME logical scope typed with different casing, and the
 reason is upstream of this change — `memory_write` itself does no case-folding on insert, so what
@@ -563,8 +567,8 @@ silently wrong one.
 
 ## A tool's `inputSchema` carries no top-level `oneOf`/`anyOf`/`allOf`
 
-`memory.read` takes two mutually exclusive argument shapes — `scope`+`key`, or `refs` — and no
-single `required` list describes that. JSON Schema spells it `oneOf`, and the tool advertised
+`memory.read` takes two mutually exclusive argument shapes — `key` (with an optional `scope`), or
+`refs` — and no single `required` list describes that. JSON Schema spells it `oneOf`, and the tool advertised
 exactly that from [#654](https://github.com/mthines/lorekit/pull/654) (2026-09-06):
 
 ```ts
@@ -592,8 +596,8 @@ union NESTED inside a property returns 200, and a bare union with no sibling `ty
 **So the constraint lives in prose and in the handler, not in the schema.** `memory.read`'s
 `description` states the rule ("Pass exactly one of those two shapes…"), which is the half a model
 actually reads, and `toolRead` enforces it on every call as it always did — a call with both shapes
-gets `refs cannot be combined with scope and key`, one with neither gets `scope and key are
-required`. Only the machine-readable form of the constraint was lost; what the tool accepts did not
+gets `refs cannot be combined with scope and key`, one with neither gets `key is required`. Only
+the machine-readable form of the constraint was lost; what the tool accepts did not
 change, and no client that was calling it correctly needs to change.
 
 Note what is NOT the fix. "Move the `oneOf` below the top level" does not exist as an option: the
@@ -614,3 +618,70 @@ A future tool with genuinely exclusive argument shapes gets the same treatment: 
 description, enforce it in the handler, and leave the schema permissive. If one ever needs a union
 badly enough to be worth the blast radius, it has to be gated per-client at the transport, never
 declared in the catalog.
+
+## An omitted scope means EVERYWHERE, not `global`
+
+Every read surface used to REQUIRE a scope up front. `memory.read { key: "…" }` — the shape an agent
+reaches for most, because it has just been handed a `scope::key` ref and only kept the half it
+recognises — failed with `scope and key are required`. `memory.list` and `memory.list_archived`
+threw the same way, and `lorekit show <key>` reported a usage error. The obvious patch is to default
+the missing scope to `global`.
+
+**That default is worse than the error it replaces.** A `global` fallback converts a loud,
+recoverable failure into a quiet wrong answer: a repo-scoped lesson read without a scope returns
+`null`, and `null` is indistinguishable from "no such lesson." On the store this was designed
+against, repo-scoped entries outnumbered global ones roughly two to one — so the fallback would
+have silently missed the majority case, and an agent has no way to tell a miss caused by the
+default apart from a genuine one. An error at least tells you what to do next.
+
+**So an omitted scope means "every scope you can see," resolved by precedence.** `memory.read`
+matches the key across the caller's whole visible set and returns ONE winner; `memory.list` and
+`memory.list_archived` simply widen — a list already returns many rows, and collapsing it to one
+per key would break the Lore Explorer, which reads the REST list routes. Those REST list routes are
+deliberately UNCHANGED: they were already account-wide, and narrowing them to a winner would be the
+regression, not the fix.
+
+**Precedence is over scope TYPES, not over the caller's own scopes.** `resolvePrecedence`
+(`lessons-pure.mjs`) resolves a key across `deriveScope().readOrder` — the caller's actual project,
+branch and repo, narrow to broad. The edge functions cannot compute that: there is no working
+directory behind an MCP call, only a bearer token. The one definition BOTH runtimes can compute is
+scope-type specificity, and that is what `scope-precedence.ts` encodes — the same `project → branch
+→ repo → global` order `readOrder` uses, so a hosted read resolves the way the SessionStart
+injection already does. Within a band, most-recently-updated wins, then scope ascending; both
+tie-breaks are load-bearing, because without a TOTAL order the winner of an unscoped read is
+whatever order Postgres happened to return, and the same call answers differently on consecutive
+runs.
+
+**Three copies, two different guards.** `packages/mcp-core/src/scope/scope-precedence.ts` and its
+byte-identical edge mirror are held together by `edge-parity.spec.ts` (registered in
+`mirror-pairs.mjs`, `driftChecked: true`, which is why the module is import-free). The CLI's
+`packages/cli/src/shared/scope-precedence.mjs` cannot be byte-compared across languages, so it is
+held BEHAVIOURALLY by `scope-precedence-parity.spec.ts` — both loaded, both run over the same
+fixtures, same winner, same shadowed list, same comparator SIGN for every pair. The failure that
+guard exists for is silent by construction: `lorekit show <key>` and `memory.read { key }` resolving
+the same key to different lessons, with nothing to error about.
+
+**A single read now always reports the scope that answered, and names the ones it shadowed.** The
+`scope` field is unconditional — present on a scoped read too — deliberately NOT a second
+conditional response shape, because this file already records regretting one of those (see
+"`memory.read` batching is conditional" above). `other_scopes` appears only when the key existed in
+more than one place; that is the caller's cue to pass an explicit scope next time, and without it an
+unscoped read is silently lossy. `memory.list`/`list_archived` likewise put `scope` on every entry —
+a cross-scope page is unreadable otherwise, and one shape covers both call forms.
+
+**Only the WINNER is counted as read.** `recordMemoryReads` receives the resolved row, not the
+candidate set. Counting all 50 candidates would inflate `read_count` — the denominator of the
+`opened_count / read_count` pull-through ratio `/insights` is built on — for a read that delivered
+exactly one lesson.
+
+The candidate window is bounded at 50 rows. It is far above the number of scopes any one key
+realistically occupies, and a caller that needs a guarantee rather than a resolution passes an
+explicit scope. `lorekit show` keeps its own guard on the other side: a lone positional is
+reinterpreted as a bare key only when it neither IS a scope nor LOOKS like an attempt at one
+(`looksLikeScopeAttempt`), so `show foo bar` and `show global::` still report a bad scope instead of
+quietly hunting for a key that was never meant.
+
+Telemetry follows the existing rule that `lorekit.scope.type` is OMITTED when an operation carries
+no scope, never stamped with a placeholder. Unscoped reads are distinguishable by
+`lorekit.read.unscoped` / `lorekit.read.candidates` (and `lorekit.list.unscoped` on the two list
+tools) — numeric and boolean measures, adding no dimension cardinality.

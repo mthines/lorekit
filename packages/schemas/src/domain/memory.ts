@@ -65,7 +65,14 @@ export const MemoryWriteSchema = z.object({
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
-export const MemoryReadSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
+/**
+ * `scope` is OPTIONAL on every read schema below. Omitting it resolves the key
+ * across every scope the caller can see (single read) or lists account-wide
+ * (the two listings) — see `scope-precedence.ts` for how a single read picks a
+ * winner. The WRITE schemas keep `scope` required: a write has to be told where
+ * the lesson belongs, and there is no sane default for that.
+ */
+export const MemoryReadSchema = z.object({ scope: ScopeSchema.optional(), key: z.string().min(1).max(512) });
 
 /**
  * How much of each entry a list read puts on the wire.
@@ -89,12 +96,12 @@ export type MemoryListView = z.infer<typeof MemoryListViewSchema>;
 /** Characters of `value` echoed in a `summary` entry's `preview`. */
 export const LIST_PREVIEW_CHARS = 200;
 
-export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().min(1).max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
+export const MemoryListSchema = z.object({ scope: ScopeSchema.optional(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().min(1).max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
 export const MemoryDeleteSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512), force: z.boolean().optional().default(false) });
 export const MemorySearchSchema = z.object({ q: z.string().min(1), scopes: z.array(RawScopeSchema).optional(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(20), cursor: z.string().optional() });
 export const MemoryArchiveSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
 export const MemoryRestoreSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
-export const MemoryListArchivedSchema = z.object({ scope: ScopeSchema, limit: z.number().int().min(1).max(100).optional().default(50) });
+export const MemoryListArchivedSchema = z.object({ scope: ScopeSchema.optional(), limit: z.number().int().min(1).max(100).optional().default(50) });
 export const MemoryPurgeSchema = z.object({ retention_days: z.number().int().min(1).max(365).optional().default(PURGE_RETENTION_DAYS_DEFAULT) });
 
 // REST-specific

@@ -75,6 +75,11 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/limits/expiring-window.ts', edge: 'supabase/functions/_shared/limits/expiring-window.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/cors-origins.ts', edge: 'supabase/functions/_shared/api/cors-origins.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/scope/scope-type-attribute.ts', edge: 'supabase/functions/_shared/scope/scope-type-attribute.ts', driftChecked: true },
+  // Which row an UNSCOPED read resolves to. Import-free on both sides (it only
+  // parses the scope prefix and compares strings), so the byte comparison
+  // applies — which is the point: a precedence that drifted between MCP and
+  // REST would hand the same key-only read two different lessons.
+  { core: 'packages/mcp-core/src/scope/scope-precedence.ts', edge: 'supabase/functions/_shared/scope/scope-precedence.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/auth/account-wide-tools.ts', edge: 'supabase/functions/_shared/auth/account-wide-tools.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/io-ledger.ts', edge: 'supabase/functions/_shared/telemetry/io-ledger.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/db-query-metrics.ts', edge: 'supabase/functions/_shared/telemetry/db-query-metrics.ts', driftChecked: true },

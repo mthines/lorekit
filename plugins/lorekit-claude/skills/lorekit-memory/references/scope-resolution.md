@@ -37,6 +37,27 @@ Query most specific first, then merge; more specific scopes win on key collision
 branch::{owner}/{repo}::{branch}   →   repo::{owner}/{repo}   →   project::{name}   →   global
 ```
 
+## Reading without a scope
+
+`memory.read`, `memory.list` and `memory.list_archived` all take an **optional**
+`scope`. Omitting it does not mean `global` — it means "every scope I can see".
+
+`memory.read { key }` resolves the key across all of them and returns ONE
+lesson, preferring the most specific scope type:
+
+```text
+project::{name}   →   branch::{owner}/{repo}::{branch}   →   repo::{owner}/{repo}   →   global
+```
+
+(Same precedence as the read order above, ranked by scope TYPE rather than by
+your own scopes — a hosted call has no working directory to derive them from.)
+Ties within a type break by most-recently-updated. The response's `scope` names
+the scope that answered; `other_scopes`, when present, lists the ones it
+shadowed — pass an explicit `scope` next time if that is not the one you meant.
+
+`memory.list` / `memory.list_archived` simply widen instead: every entry carries
+its own `scope`, and nothing is resolved away.
+
 ## Write scope (retrospective)
 
 Use the narrowest scope that correctly describes where the lesson applies:
@@ -54,7 +75,8 @@ Use the narrowest scope that correctly describes where the lesson applies:
 ```
 
 Wildcards work **only** in `memory.search` — not in `memory.list`,
-`memory.read`, or `memory.write`.
+`memory.read`, or `memory.write`. On the two read tools, omitting `scope`
+entirely (above) is the way to reach past a single scope.
 
 ## Validation rules
 

@@ -57,6 +57,9 @@ Attributes on `lorekit.memory.*` spans:
 | `lorekit.refs.requested` | `40` | Batch `memory.read` / `POST /memories/read`: how many `scope::key` refs the caller sent, BEFORE parsing |
 | `lorekit.refs.count` | `32` | Same two routes: how many survived parsing. Same pairing as `requested_limit`/`result.count` — the gap is refs dropped as unparseable or truncated past the 32-ref cap, and it is the ONLY place either loss is visible (neither reaches the response's `missing` list) |
 | `lorekit.refs.missing` | `5` | Same two routes: how many parsed refs resolved to no row — the length of the response's own `missing` list, stamped from that same list. The complement of `result.count`, and not derivable from it: 3 rows from a 20-ref batch and 3 rows from a 3-ref batch are the same `result.count`, but only the first is an agent working from a stale ref list |
+| `lorekit.read.unscoped` | `true` | Singular `memory.read`: the caller named no scope, so the key was resolved across every visible scope by precedence (see [decisions](./decisions.md#an-omitted-scope-means-everywhere-not-global)). `lorekit.scope` then reports the scope that ANSWERED, not one the caller asked for |
+| `lorekit.read.candidates` | `3` | Same tool: how many rows the key matched before precedence picked one. `1` is unambiguous; anything higher means the response carried `other_scopes` and the caller is reading a key that lives in several places |
+| `lorekit.list.unscoped` | `true` | `memory.list` / `memory.list_archived`: listed across every visible scope rather than one. `lorekit.scope` is OMITTED on these, per the rule above — there is no single scope to name |
 
 #### Scope attribution for body-carried scopes
 

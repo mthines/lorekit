@@ -8,7 +8,12 @@ import { getTracer, getToolDurationHistogram } from '../telemetry/telemetry.js';
 export const LIST_PREVIEW_CHARS = 200;
 
 export const ListInputSchema = z.object({
-  scope: ScopeSchema,
+  /**
+   * OPTIONAL. Omitting it lists across every scope the caller can see — what
+   * `GET /memories` and `lorekit list` have always done. Each entry names its
+   * own `scope`, so a mixed listing stays readable.
+   */
+  scope: ScopeSchema.optional(),
   tags: z.array(z.string()).optional(),
   limit: z.number().int().min(1).max(100).optional().default(50),
   // Taxonomy filters — the `kind`/`host` columns added in migration 00056.
@@ -27,6 +32,13 @@ export const ListInputSchema = z.object({
 export type ListInput = z.infer<typeof ListInputSchema>;
 
 export interface ListEntry {
+  /**
+   * The scope this lesson lives in. Present on EVERY entry, scoped listing
+   * included: an unscoped listing mixes scopes and is unreadable without it,
+   * and a field that appeared only on the unscoped shape would be one more
+   * conditional response for consumers to dispatch on.
+   */
+  scope: string;
   key: string;
   value: string;
   tags: string[];
@@ -34,6 +46,7 @@ export interface ListEntry {
 }
 
 export interface ListSummaryEntry {
+  scope: string;
   key: string;
   tags: string[];
   updated_at: string;
@@ -73,19 +86,24 @@ export async function list(
 
   return tracer.startActiveSpan('lorekit.memory.list', { kind: 0 }, async (span) => {
     span.setAttribute('lorekit.tool.name', 'memory.list');
-    span.setAttribute('lorekit.scope', input.scope);
-    span.setAttribute('lorekit.scope.type', scopeType(input.scope));
+    // Omitted when the caller named no scope — stamping a placeholder would
+    // make an account-wide read indistinguishable from one that named it.
+    if (input.scope !== undefined) {
+      span.setAttribute('lorekit.scope', input.scope);
+      span.setAttribute('lorekit.scope.type', scopeType(input.scope));
+    }
+    span.setAttribute('lorekit.list.unscoped', input.scope === undefined);
 
     try {
       let query = db
         .from('memories')
-        .select('key,value,tags,updated_at')
-        .eq('scope', input.scope)
+        .select('scope,key,value,tags,updated_at')
         // Exclude archived rows and expired rows (see read.ts for the rationale).
         .is('archived_at', null)
         .or('expires_at.is.null,expires_at.gt.now()')
         .limit(input.limit);
 
+      if (input.scope !== undefined) query = query.eq('scope', input.scope);
       if (input.tags && input.tags.length > 0) {
         query = query.overlaps('tags', input.tags);
       }
@@ -108,7 +126,9 @@ export async function list(
       span.end();
       hist.record((Date.now() - startTime) / 1000, {
         'lorekit.tool.name': 'memory.list',
-        'lorekit.scope.type': scopeType(input.scope),
+        // Omitted when unscoped — see the identical note in `read.ts`: there is
+        // no member of this bounded vocabulary meaning "the caller did not say".
+        ...(input.scope !== undefined ? { 'lorekit.scope.type': scopeType(input.scope) } : {}),
       });
     }
   });

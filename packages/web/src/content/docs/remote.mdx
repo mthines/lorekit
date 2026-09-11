@@ -132,8 +132,23 @@ memory.read {
   scope: "global",
   key:   "hello-remote"
 }
-// → { "value": "Remote lore is working.", "updated_at": "…" }
+// → { "value": "Remote lore is working.", "updated_at": "…", "scope": "global" }
 ```
+
+`scope` is optional. Leave it out and the key is resolved across every scope you
+can see, preferring the most specific type (`project` → `branch` → `repo` →
+`global`) — useful when you were handed a key without one. An omitted scope does
+**not** mean `global`:
+
+```json
+memory.read { key: "hello-remote" }
+// → { "value": "…", "updated_at": "…", "scope": "global" }
+```
+
+The `scope` field always names the scope that answered. If the key exists in
+more than one, the response also carries `other_scopes` — pass an explicit
+`scope` next time if it picked the wrong one. `memory.list` takes the same
+optional `scope`, listing across everything when you omit it.
 
 Fetching several lessons at once? Pass `refs` (a list of `scope::key` strings)
 instead of `scope`/`key` — one round trip for the whole batch:

@@ -90,9 +90,30 @@ describe('list', () => {
     await expect(list(db, { scope: 'global', limit: 0 })).rejects.toThrow();
   });
 
-  it('throws ZodError for missing scope', async () => {
-    const db = makeDb([]);
-    await expect(list(db, {})).rejects.toThrow();
+  it('lists ACROSS scopes when none is given, instead of rejecting the call', async () => {
+    // `scope` used to be required here, which made MCP the one read surface an
+    // agent could not use without already knowing a scope name — `GET /memories`
+    // and `lorekit list` have always defaulted to account-wide.
+    const mixed = [
+      { ...fakeEntry, scope: 'global' },
+      { ...fakeEntry, scope: 'repo::o/r', key: 'lesson-b' },
+    ];
+    const result = await list(makeDb(mixed), {});
+    expect(result.entries).toHaveLength(2);
+    // Each entry names its own scope, so a mixed listing stays readable.
+    expect(result.entries.map((e) => e.scope)).toEqual(['global', 'repo::o/r']);
+  });
+
+  it('does not filter on scope when none was given', async () => {
+    const { db, calls } = makeCapturingDb();
+    await list(db, {});
+    expect(calls.eq).toEqual([]);
+  });
+
+  it('filters on scope when one was given', async () => {
+    const { db, calls } = makeCapturingDb();
+    await list(db, { scope: 'global' });
+    expect(calls.eq).toContainEqual(['scope', 'global']);
   });
 
   it('throws ScopeValidationError for invalid scope format', async () => {
@@ -111,11 +132,18 @@ describe('list', () => {
 // this guards that the query the tool builds carries both filters.
 
 function makeCapturingDb() {
-  const calls: { is: unknown[][]; or: unknown[][] } = { is: [], or: [] };
+  const calls: { is: unknown[][]; or: unknown[][]; eq: unknown[][] } = { is: [], or: [], eq: [] };
   const chain: Record<string, ReturnType<typeof vi.fn>> = {};
-  for (const m of ['eq', 'limit', 'overlaps']) {
+  for (const m of ['limit', 'overlaps']) {
     chain[m] = vi.fn(() => chain);
   }
+  // Recorded so the scope-optional tests can assert that an unscoped list
+  // applies NO scope filter — the difference between "listed everything" and
+  // "quietly listed one scope" is invisible in the rows alone.
+  chain['eq'] = vi.fn((...args: unknown[]) => {
+    calls.eq.push(args);
+    return chain;
+  });
   chain['is'] = vi.fn((...args: unknown[]) => {
     calls.is.push(args);
     return chain;

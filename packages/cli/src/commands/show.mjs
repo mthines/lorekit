@@ -40,6 +40,7 @@ import {
   isScopeString,
   scopeIssue,
 } from '../shared/lessons-view.mjs';
+import { SCOPE_PRECEDENCE } from '../shared/scope-precedence.mjs';
 import { resolveAppBase } from '../shared/deeplink-pure.mjs';
 import { emitLink } from './link.mjs';
 import { log, err, heading, status, c } from '../shared/util.mjs';
@@ -232,6 +233,24 @@ async function showRefs(refs, args, root, env) {
   };
 }
 
+/**
+ * Was this argument MEANT as a scope, even though it is not a valid one?
+ *
+ * The discriminator is the segment before the first `:` — if it is one of the
+ * four scope types, the caller was reaching for scope syntax and got it wrong
+ * (`global::`, `repo:noslash`, `branch::o/r`), and naming the scope is more
+ * useful than silently looking up a lesson keyed on that exact string.
+ *
+ * The case this must NOT catch is the reason the unscoped read exists:
+ * `pre-exec-lessons::automation-network-no-cli-blocks-everything` is a KEY that
+ * happens to contain `::`. Its first segment is not a scope type, so it reads
+ * as the key it is. A test for "does it contain `::`" would get that backwards.
+ */
+function looksLikeScopeAttempt(token) {
+  const head = String(token).split(':')[0].toLowerCase();
+  return SCOPE_PRECEDENCE.includes(head);
+}
+
 export async function show(args) {
   const root = resolveProjectRoot(args.dir);
   const env = { ...process.env };
@@ -250,10 +269,36 @@ export async function show(args) {
     return showRefs(refs, args, root, env);
   }
 
-  const { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
+  let { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
     scope: args.scope,
     key: args.key,
   });
+  // A LONE positional that is neither a valid scope nor an ATTEMPT at one is a
+  // KEY, not a malformed scope.
+  //
+  // `resolveScopeKeyArgs` reports an unparseable first positional as the scope
+  // (with a null key) so its callers can name it as the malformed scope it is —
+  // right for `write`, which cannot proceed without knowing where to put the
+  // lesson. `show` can: a key alone resolves across every scope. So
+  // `lorekit show my-key` is a key-only lookup rather than "invalid scope
+  // my-key", which is what it used to say.
+  //
+  // Reinterpreted HERE rather than inside the shared parser: `write` and `link`
+  // must keep the strict reading, and the difference is about what each command
+  // can DO without a scope, not about how the arguments are spelled.
+  //
+  // Three things switch it off, each because the argument was plainly meant as
+  // a scope and a silent re-read would bury the user's actual mistake:
+  //   - an explicit `--scope` (a flag is an assertion, so a bad one is an error)
+  //   - MORE THAN ONE positional (`show foo bar` is the `<scope> <key>` form —
+  //     `foo` is a scope that failed to parse, not a key with a stray argument)
+  //   - a token that LOOKS like a scope attempt (`global::`, `repo:noslash`) —
+  //     see `looksLikeScopeAttempt`.
+  if (!key && scope && !args.scope && positionals.length === 1
+      && !isScopeString(scope) && !looksLikeScopeAttempt(scope)) {
+    key = scope;
+    scope = '';
+  }
   // Scope validity is checked FIRST, for the same reason as in `write`: a bad
   // scope is the root cause, and "a key is required" is downstream noise.
   const badScope = scope ? scopeIssue(scope) : null;
@@ -263,10 +308,11 @@ export async function show(args) {
     err(`Run ${c.cyan('lorekit show --help')} for options.`);
     return 1;
   }
-  if (!scope || !key) {
+  if (!key) {
     err(`${c.red('Usage:')} lorekit show <scope::key> [--json]`);
     err(`       lorekit show <scope> <key> [--json]`);
-    err(`Both a scope and a key are required. Run ${c.cyan('lorekit show --help')} for options.`);
+    err(`       lorekit show <key> [--json]        (searches every scope)`);
+    err(`A key is required. Run ${c.cyan('lorekit show --help')} for options.`);
     return 1;
   }
   // `show` consumes every positional it is given — unlike `write`, it has no
@@ -276,6 +322,18 @@ export async function show(args) {
     err(`${c.red('Error:')} unexpected argument ${c.cyan(positionals[consumed])}`);
     err(`Parsed scope ${c.cyan(scope)} and key ${c.cyan(key)} from the arguments before it.`);
     err(`Run ${c.cyan('lorekit show --help')} for options.`);
+    return 1;
+  }
+
+  // `--link` is the one form that still needs a scope up front. It deliberately
+  // touches no store, and the deep link it prints is `?scope=…&lesson=…` — so
+  // without a scope there is nothing to resolve the key against and the URL
+  // would open the dashboard on an empty scope. Say so rather than emitting a
+  // link that goes nowhere.
+  if (args.link && !scope) {
+    err(`${c.red('Error:')} --link needs a scope — it builds a URL without reading any store.`);
+    err(`Pass ${c.cyan('lorekit show <scope>::' + key + ' --link')} or add ${c.cyan('--scope <s>')}.`);
+    err(`Run ${c.cyan('lorekit show ' + key)} to find which scope holds it.`);
     return 1;
   }
 

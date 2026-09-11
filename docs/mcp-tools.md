@@ -141,7 +141,8 @@ on someone's laptop, so if a lesson should decay it has to say so with
 
 ## memory.read
 
-Read a single lesson by scope + key.
+Read a single lesson by key. `scope` is **optional** — omit it and the key is resolved across every
+scope you can see (see [Unscoped reads](#unscoped-reads)).
 
 ```json
 {
@@ -155,13 +156,50 @@ Read a single lesson by scope + key.
 }
 ```
 
-**Returns:** `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.
+**Returns:** `{ "value": "<markdown>", "updated_at": "<iso>", "scope": "<canonical scope>" }`, or
+`null` if not found. `scope` names the scope that actually answered — the same value you passed when
+you passed one, and the resolved winner when you did not. An ambiguous unscoped read additionally
+carries `other_scopes: ["<scope>", …]`, every OTHER scope the key also exists in.
+
+### Unscoped reads
+
+Omitting `scope` is not an error and does not mean `global`. It means **"look everywhere I can
+see"**: the key is matched across every visible scope and one winner is returned, chosen by scope
+**type specificity** — `project` → `branch` → `repo` → `global`, the same `readOrder` the SessionStart
+hook injects lessons in. Ties within a band break by most-recently-updated, then by scope ascending,
+so the same call always resolves to the same lesson.
+
+The precedence is over scope *types*, not over your own scope list, because there is no working
+directory behind an MCP call — the server sees only a bearer token. A CLI read, which does know your
+git context, still resolves the same way for the same reason: `lorekit show <key>` and
+`memory.read { key }` must never hand you different lessons.
+
+```json
+{ "params": { "name": "memory.read", "arguments": { "key": "aw-lessons::worktree-naming" } } }
+```
+
+```json
+{
+  "value": "…",
+  "updated_at": "2026-09-01T10:14:22.108Z",
+  "scope": "repo::mthines/lorekit",
+  "other_scopes": ["global"]
+}
+```
+
+`other_scopes` is the signal to pass an explicit `scope` next time: the key was ambiguous, and only
+you know which one you meant. It is omitted entirely when the key lived in exactly one scope.
+
+Resolution considers at most the **50** most recent matching rows. That bound is far above the number
+of scopes any one key realistically lives in; pass an explicit `scope` if you need a guarantee rather
+than a resolution.
 
 ### The two argument shapes
 
-`memory.read` takes **exactly one** of two shapes: `scope` **and** `key` together, or `refs` alone.
+`memory.read` takes **exactly one** of two shapes: `key` (with an optional `scope`), or `refs` alone.
 A call carrying both is rejected (`refs cannot be combined with scope and key`), and so is one
-carrying neither (`scope and key are required`).
+carrying neither (`key is required`). A `scope` with no `key` is likewise rejected — a scope alone
+describes a list, and `memory.list` is that tool.
 
 The advertised `inputSchema` does **not** encode that as a top-level `oneOf`, even though JSON
 Schema would: Amazon Bedrock refuses any tool whose `input_schema` carries `oneOf` / `anyOf` /
@@ -212,6 +250,9 @@ particular order.
 ## memory.list
 
 List all lessons for a scope — newest first by default, or best-first with `order: "rank"`.
+`scope` is **optional**: omit it to list across every scope you can see. Each entry names its own
+`scope`, so a cross-scope page is still readable. Unlike `memory.read`, nothing is resolved away —
+a list returns every match rather than one winner.
 
 ```json
 {
@@ -229,7 +270,7 @@ List all lessons for a scope — newest first by default, or best-first with `or
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `scope` | required | Scope to list |
+| `scope` | all visible scopes | Scope to list. Omit to list across every scope you can see |
 | `tags` | `[]` | Filter — only return lessons with at least one of these tags |
 | `limit` | `50` | Max results (cap: 100) |
 | `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
@@ -238,7 +279,7 @@ List all lessons for a scope — newest first by default, or best-first with `or
 | `host` | | Filter to the owning skill/agent, e.g. `reviewer`, `aw`, `ci-auto-fix` |
 | `view` | `full` | `full` returns each entry's complete `value`. `summary` omits `value` and returns `value_bytes` + a 200-character `preview` instead |
 
-**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — with `view: "summary"` each entry is `{ "key", "tags", "updated_at", "value_bytes", "preview" }` instead, and `value` is omitted entirely.
+**Returns:** `{ "entries": [{ "scope", "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — with `view: "summary"` each entry is `{ "scope", "key", "tags", "updated_at", "value_bytes", "preview" }` instead, and `value` is omitted entirely. `scope` is present on every entry, scoped call or not, so one response shape covers both.
 
 - `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
 - `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
@@ -280,6 +321,7 @@ reading them all. `summary` answers that question directly:
 {
   "entries": [
     {
+      "scope": "repo::mthines/lorekit",
       "key": "reviewer-lessons::prefer-explicit-null-checks",
       "tags": ["loop::reviewer-lessons"],
       "updated_at": "2026-08-14T09:12:04.221Z",
@@ -405,11 +447,12 @@ List every scope the caller can see, with how many active memories it holds and 
 last written to. Takes no arguments. Requires a token with read permission (`lk_rw_*` or
 `lk_ro_*`).
 
-This is the one read tool that takes **no scope**, and that is the point of it: every other
-read tool requires a scope up front (`memory.read` / `memory.list` take a `scope`,
-`memory.search` a `scopes` list), so without an inventory an agent can only reach lore whose
-scope it could already name. Reach for it before a `memory.list`/`memory.search` when you do
-not already know which scope to ask about.
+No other read tool *requires* a scope — `memory.read` / `memory.list` resolve across everything
+visible when you omit theirs, and `memory.search` takes an optional `scopes` list — but they all
+answer a question about lore, not about the shape of your store. This one answers the shape: which
+scopes exist, how much each holds, and when each was last written. Reach for it when you want to
+*name* a scope (to narrow a list, or to decide where a write belongs), not merely to read without
+one.
 
 It is **store-wide**, not limited to any working directory — unlike the `lorekit list` /
 `search` / `stats` commands, which are scoped to the current repo. It is the same inventory
@@ -453,7 +496,7 @@ so whole scopes go missing for exactly the accounts with the most lore.
 
 ## memory.list_archived
 
-List soft-archived lessons for a scope, newest archived first. Requires a token with read permission (`lk_rw_*` or `lk_ro_*`).
+List soft-archived lessons for a scope, newest archived first. Requires a token with read permission (`lk_rw_*` or `lk_ro_*`). `scope` is **optional** — omit it to list the archive across every scope you can see.
 
 ```json
 {
@@ -469,10 +512,10 @@ List soft-archived lessons for a scope, newest archived first. Requires a token 
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `scope` | required | Scope to list archived entries for |
+| `scope` | all visible scopes | Scope to list archived entries for. Omit to list across every scope you can see |
 | `limit` | `50` | Max results (cap: 100) |
 
-**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`
+**Returns:** `{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "archived_at" }] }`
 
 ---
 

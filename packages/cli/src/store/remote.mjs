@@ -22,7 +22,18 @@ import { restFetch, mcpToRestBase } from '../shared/mcp.mjs';
 import { rememberAccountId } from '../telemetry/telemetry-identity.mjs';
 import { getActiveTraceparent } from '../telemetry/telemetry.mjs';
 import { withReadFields } from './entry-fields.mjs';
+import { pickScopeWinner } from '../shared/scope-precedence.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
+
+/**
+ * How many same-key rows an UNSCOPED read fetches before picking a winner.
+ *
+ * Deliberately the same number the hosted `memory.read` caps its own candidate
+ * fan-out at, so a key living in a pathological number of scopes truncates at
+ * the same point on both surfaces instead of the two considering different
+ * candidate sets and disagreeing about the winner.
+ */
+const UNSCOPED_READ_CANDIDATE_LIMIT = 50;
 
 // Drop undefined/null args so JSON payloads stay tidy.
 function stripUndefined(obj) {
@@ -249,12 +260,24 @@ class RemoteStore {
     };
   }
 
+  // read({ scope, key }) → { ok, entry } — `scope` is OPTIONAL.
+  //
+  // Without one the key can match once per scope holding it, so the precedence
+  // pick happens HERE rather than server-side: `GET /memories` is a LIST route,
+  // and narrowing it to a single winner would change what every other caller of
+  // it gets back. The rule is the shared `scope-precedence` one, so this
+  // resolves identically to MCP's `memory.read` (which picks server-side
+  // because it must answer with one lesson) and to the offline store.
   async read({ scope, key } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (key) p.set('key', key);
-    // scope+key is unique, so one row is all there can be — don't pull the default page of 50.
-    p.set('limit', '1');
+    // With a scope, `scope`+`key` is unique and one row is all there can be —
+    // don't pull the default page of 50. Without one, fetch the candidates the
+    // precedence pick needs; the cap matches the hosted read's own so the two
+    // surfaces truncate a pathological key at the same point rather than
+    // disagreeing about which lessons were even considered.
+    p.set('limit', scope ? '1' : String(UNSCOPED_READ_CANDIDATE_LIMIT));
     const res = await this._rest(`/memories?${p}`);
     // `unusable` is passed through: `_rest` short-circuits an unconfigured
     // store with that flag and NOTHING else, so a caller that drops it is left
@@ -275,9 +298,13 @@ class RemoteStore {
       };
     }
     const entries = res.data?.entries ?? [];
+    // `key` is an EXACT filter server-side, so every row here carries the key
+    // that was asked for; precedence only has to choose among their scopes. A
+    // scoped read has at most one candidate, so the pick is a no-op there.
+    const winner = pickScopeWinner(entries);
     // Same projection as list/search — a single read must not answer with a
     // different shape than the listing the caller found the key in.
-    return { ok: true, entry: entries[0] ? withReadFields(entries[0]) : null };
+    return { ok: true, entry: winner ? withReadFields(winner) : null };
   }
 
   // readMany(refs) → { ok, entries, missing } — `POST /memories/read`, one
