@@ -346,9 +346,12 @@ export async function toolRead(
   // UNSCOPED_READ_CANDIDATE_LIMIT scopes truncates to whichever rows Postgres
   // happened to return, so the same call can answer differently on consecutive
   // runs — the precise failure `pickScopeWinner`'s total order exists to
-  // prevent, reintroduced one layer above it. `updated_at desc` is also the
-  // comparator's own first tie-break, so the rows kept are the ones that would
-  // win anyway.
+  // prevent, reintroduced one layer above it. `updated_at desc` is the
+  // comparator's SECOND key, not its first: precedence ranks by scope TYPE
+  // first, so a truncating fetch can still drop a stale `project::` row in
+  // favour of fresher `global` ones. It is the best key PostgREST can sort on,
+  // and >50 scopes holding one key is pathological by the cap's own definition
+  // — deterministic beats correct-under-a-shape that does not occur.
   const { data, error } = await query
     .order('updated_at', { ascending: false })
     .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
