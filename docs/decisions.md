@@ -682,19 +682,27 @@ read against all N candidates and an `opened_count` against none, which is the w
 halves of the ratio. It is left as-is deliberately: the fix is not local to the CLI — every
 alternative either changes what `GET /memories` records (a public-contract change with its own
 migration assertions, affecting the Lore Explorer and every API-token caller) or spends a second
-round trip per read. The exposure is bounded by how rare an unscoped remote `show` is against how
-often the Explorer and agents read normally, and it is the same class of accepted, written-down
-distortion as the `refs` batching entry above. Do not read `/insights` pull-through across a window
-where unscoped CLI reads spiked without accounting for it.
+round trip per read. The exposure is bounded STRUCTURALLY, not by how rare an unscoped remote `show`
+is — a usage assumption that decays exactly as this affordance gets adopted. The candidate fetch is
+`key`-filtered, so the rows it touches are the scopes actually holding that key, typically one or
+two, never the 50 the cap invites a reader to assume: one or two extra denominator rows per unscoped
+`show`, not a 50x inflation. The sharper half is the NUMERATOR. The agent deliberately opened a
+lesson, but the open is picked client-side, so `opened_count` records nothing — the same action
+attributes differently depending on whether the scope was typed. It is the same class of accepted,
+written-down distortion as the `refs` batching entry above. Do not read `/insights` pull-through
+across a window where unscoped CLI reads spiked without accounting for it.
 
-The candidate window is bounded at 50 rows, and the fetch that fills it is ORDERED (`updated_at`
-desc) before the cap applies on both the edge and `mcp-core`. The order is not cosmetic: the cap
-truncates BEFORE `pickScopeWinner` runs, so an unordered fetch hands the comparator whichever rows
-Postgres happened to return and reintroduces, one layer above it, the exact same-call-answers-
-differently failure the total order exists to prevent. `updated_at` desc is also the comparator's
-own first tie-break, so the rows kept are the ones most likely to win anyway. It is far above the number of scopes any one key
-realistically occupies, and a caller that needs a guarantee rather than a resolution passes an
-explicit scope. `lorekit show` keeps its own guard on the other side: a lone positional is
+The candidate window is bounded at 50 rows — far above the number of scopes any one key realistically
+occupies, and a caller that needs a guarantee rather than a resolution passes an explicit scope. The
+fetch that fills it is ORDERED (`updated_at` desc) before the cap applies, on both the edge and
+`mcp-core`. The order is not cosmetic: the cap truncates BEFORE `pickScopeWinner` runs, so an
+unordered fetch hands the comparator whichever rows Postgres happened to return and reintroduces, one
+layer above it, the exact same-call-answers-differently failure the total order exists to prevent.
+`updated_at` desc is the comparator's SECOND key, not its first — precedence ranks by scope TYPE
+first, so a truncating fetch can still drop a stale `project::` row in favour of fresher `global`
+ones. It is nonetheless the best key PostgREST can sort on, and a key held in more than 50 scopes is
+pathological by the cap's own definition: deterministic beats correct-under-a-shape that does not
+occur. `lorekit show` keeps its own guard on the other side: a lone positional is
 reinterpreted as a bare key only when it neither IS a scope nor LOOKS like an attempt at one
 (`looksLikeScopeAttempt`), so `show foo bar` and `show global::` still report a bad scope instead of
 quietly hunting for a key that was never meant.
