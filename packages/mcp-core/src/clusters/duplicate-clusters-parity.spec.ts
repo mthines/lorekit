@@ -9,7 +9,9 @@ import {
   RECURRENCE_CLUSTERS as CLUSTERS_TS,
   resolveRecurrenceClass as resolveTs,
   parseMetaComment as parseMetaTs,
+  statusOf as statusTs,
   isCandidate as isCandidateTs,
+  rankCandidates as rankTs,
   scoreCandidate as scoreTs,
 } from './duplicate-clusters.js';
 
@@ -52,11 +54,18 @@ interface CliCluster {
   maxSimilarity: number;
 }
 
-const row = (scope: string, key: string, value: string, seenCount = 1) => ({
+const row = (
+  scope: string,
+  key: string,
+  value: string,
+  seenCount = 1,
+  tags: string[] = [],
+) => ({
   scope,
   key,
   value,
   seenCount,
+  tags,
 });
 
 /**
@@ -262,11 +271,13 @@ describe('recurrence registry + candidate ranking parity', () => {
     }
   });
 
-  it.skipIf(!cliRegistryPresent)('agrees on parseMetaComment, isCandidate and scoreCandidate', async () => {
+  it.skipIf(!cliRegistryPresent)('agrees on parseMetaComment, statusOf, isCandidate and scoreCandidate', async () => {
     const cliCand = (await import(/* @vite-ignore */ `file://${cliCandidatesPath}`)) as {
       parseMetaComment: (v: unknown) => Record<string, string>;
+      statusOf: (member: unknown) => string;
       isCandidate: (members: unknown[], opts?: unknown) => boolean;
       scoreCandidate: (members: unknown[]) => number;
+      rankCandidates: (clusters: unknown[], opts?: unknown) => unknown[];
     };
     const values = [
       '<!-- meta: seen_count=3 status=active -->body',
@@ -280,15 +291,61 @@ describe('recurrence registry + candidate ranking parity', () => {
       expect(parseMetaTs(v)).toEqual(cliCand.parseMetaComment(v));
     }
 
+    // `statusOf` reads a `status::<value>` TAG first and a legacy meta comment
+    // second, so every case below must vary the tags — a fixture that only ever
+    // carries `[]` exercises the fallback alone and would let a missing tag path
+    // pass. That is exactly how the tag convention reached the CLI without the
+    // TS twin: the old `row()` emitted no `tags` at all, so this file's
+    // `isCandidate` assertion held vacuously on the half that had diverged.
+    const statusMembers = [
+      { value: values[0], tags: [] },
+      { value: '# clean markdown', tags: ['loop::aw-lessons', 'status::structural'] },
+      { value: '# clean markdown', tags: ['status::active'] },
+      { value: values[0], tags: ['status::promoted'] }, // tag wins over meta `active`
+      { value: '# clean markdown', tags: ['status::'] }, // bare prefix carries no value
+      { value: '# clean markdown', tags: [] },
+      { value: 42, tags: 'not-an-array' },
+      {},
+      null,
+    ];
+    for (const m of statusMembers) {
+      expect(statusTs(m as never)).toBe(cliCand.statusOf(m));
+    }
+
     const memberSets = [
       [row('global', 'a', values[0], 2), row('global', 'b', values[0], 1)],
       [row('global', 'a', values[1], 1)],
       [row('global', 'a', values[3], 1)],
       [row('global', 'a', values[3], 3), row('repo::x/y', 'b', values[3], 3)],
+      // A tag-only lesson — the shape `lorekit-setup` now prescribes, and the
+      // one the two implementations disagreed on until `statusOf` was mirrored.
+      [row('global', 'a', '# clean markdown', 1, ['status::structural'])],
+      [row('global', 'a', '# clean markdown', 1, ['status::active'])],
     ];
     for (const members of memberSets) {
       expect(isCandidateTs(members)).toBe(cliCand.isCandidate(members));
       expect(scoreTs(members)).toBe(cliCand.scoreCandidate(members));
     }
+
+    // `isCandidate` and `scoreCandidate` agreeing says nothing about the layer
+    // the consumer actually reads: `rankCandidates` is where each member's
+    // resolved `status` is attached, and the clusters response reports that
+    // field. Compare the shape both twins are contracted on — `appliesWhen` is
+    // deliberately excluded, being CLI print-only with no response counterpart.
+    const clusters = [
+      { members: memberSets[0], size: 2 },
+      { members: memberSets[4], size: 1 },
+      { members: memberSets[5], size: 1 },
+      { members: memberSets[3], size: 2 },
+    ];
+    const rankShape = (ranked: { members: { scope?: string | null; key?: string | null; status?: string }[]; size: number; score: number }[]) =>
+      ranked.map((c) => ({
+        size: c.size,
+        score: c.score,
+        members: c.members.map((m) => ({ scope: m.scope, key: m.key, status: m.status })),
+      }));
+    expect(rankShape(rankTs(clusters) as never)).toEqual(
+      rankShape(cliCand.rankCandidates(clusters) as never),
+    );
   });
 });

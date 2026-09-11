@@ -44,6 +44,89 @@ export function parseMetaComment(value) {
   return out;
 }
 
+const STATUS_TAG_PREFIX = 'status::';
+
+/**
+ * A member's declared status. The canonical home is a `status::<value>` tag —
+ * first-class, filterable, and visible to a human reading the lesson — which is
+ * what the lorekit-setup skill now prescribes. A legacy `<!-- meta: status=… -->`
+ * comment in the body is still honoured so lessons written under the older
+ * convention keep their signal; the tag wins when both are present. Returns `''`
+ * when neither declares one.
+ */
+export function statusOf(member) {
+  const tags = Array.isArray(member?.tags) ? member.tags : [];
+  for (const t of tags) {
+    if (typeof t === 'string' && t.startsWith(STATUS_TAG_PREFIX)) {
+      const v = t.slice(STATUS_TAG_PREFIX.length).trim();
+      if (v) return v;
+    }
+  }
+  const fromMeta = parseMetaComment(member?.value).status;
+  return typeof fromMeta === 'string' ? fromMeta.trim() : '';
+}
+
+// Is this line a bold LABEL, and which one? Returns `{ name, rest }` or null.
+//
+// Deliberately a line test rather than another alternative in a lookahead. Four
+// separate defects in this function were one paragraph-terminating lookahead
+// failing a different way each time — truncating at the first newline, then at
+// any bold token, then failing to stop at a label whose colon sits OUTSIDE the
+// bold (`**Why**:` rather than `**Why:**`). Each fix narrowed the failure
+// without ending the class, because "where does this paragraph stop" is a
+// line-level question and a single pattern answering it has to encode every
+// spelling at once. Asked per line it is four lines of obvious code, and a new
+// spelling is a new case here rather than a new branch inside a lookahead.
+//
+// A label carries a colon; bold alone does not. `**foo()** in the parser.` is
+// prose continuing the paragraph, `**Why:**` and `**Why**:` both end it.
+const BOLD_LEAD_RE = /^[ \t]*\*\*([^\n*]+?)\*\*[ \t]*(:?)[ \t]*/;
+
+function boldLabel(line) {
+  const m = BOLD_LEAD_RE.exec(line);
+  if (!m) return null;
+  const [matched, inner, trailingColon] = m;
+  const innerColon = inner.endsWith(':');
+  if (trailingColon !== ':' && !innerColon) return null;
+  return {
+    name: (innerColon ? inner.slice(0, -1) : inner).trim().toLowerCase(),
+    rest: line.slice(matched.length),
+  };
+}
+
+/**
+ * A member's applicability signal, printed verbatim and never interpreted. The
+ * canonical home is the visible `**Applies when:**` paragraph the lorekit-setup
+ * skill prescribes; a legacy `trigger-context` meta field is the fallback.
+ * Returns `''` when the lesson declares neither.
+ *
+ * Internal newlines are collapsed to single spaces — the only transformation,
+ * and a presentational one: the caller prints this as one field on one line, so
+ * a wrapped source paragraph must re-flow rather than break the record. No word
+ * is added, removed, or reordered, which is the sense in which it stays verbatim.
+ */
+export function appliesWhenOf(member) {
+  const value = member?.value;
+  if (typeof value === 'string') {
+    const lines = value.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const label = boldLabel(lines[i]);
+      if (!label || label.name !== 'applies when') continue;
+      // The paragraph runs until a blank line, the next label, or the end.
+      const paragraph = [label.rest];
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() === '' || boldLabel(lines[j])) break;
+        paragraph.push(lines[j]);
+      }
+      const text = paragraph.join(' ').replace(/\s+/g, ' ').trim();
+      if (text) return text;
+      break; // declared but empty — fall through to the legacy field
+    }
+  }
+  const fromMeta = parseMetaComment(value)['trigger-context'];
+  return typeof fromMeta === 'string' ? fromMeta.trim() : '';
+}
+
 function totalSeen(members) {
   return (members || []).reduce((n, m) => n + (Number.isFinite(m.seenCount) ? m.seenCount : 0), 0);
 }
@@ -57,14 +140,15 @@ function distinctScopeCount(members) {
  * summed `seenCount` across members crosses `minSeenCount` (default 3 — the
  * kickoff's "seen_count >= 3" criterion, applied to the SUM across the
  * cluster's members rather than any single one, since the whole pitch of a
- * candidate is "these N sightings are really one entry"), or a member's own
- * meta comment already declares a non-"active" status.
+ * candidate is "these N sightings are really one entry"), or a member already
+ * declares a non-"active" status (a `status::<value>` tag, or a legacy meta
+ * comment — see `statusOf`).
  */
 export function isCandidate(members, { minSeenCount = 3 } = {}) {
   if (totalSeen(members) >= minSeenCount) return true;
   return (members || []).some((m) => {
-    const status = parseMetaComment(m.value).status;
-    return typeof status === 'string' && status.length > 0 && status !== 'active';
+    const status = statusOf(m);
+    return status.length > 0 && status !== 'active';
   });
 }
 
@@ -90,7 +174,12 @@ export function rankCandidates(clusters, { minSeenCount = 3, resolveClass } = {}
   return (clusters || [])
     .filter((cl) => isCandidate(cl.members, { minSeenCount }))
     .map((cl) => {
-      const members = (cl.members || []).map((m) => ({ ...m, meta: parseMetaComment(m.value) }));
+      const members = (cl.members || []).map((m) => ({
+        ...m,
+        meta: parseMetaComment(m.value),
+        status: statusOf(m),
+        appliesWhen: appliesWhenOf(m),
+      }));
       return {
         members,
         size: cl.size ?? members.length,
