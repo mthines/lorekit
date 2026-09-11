@@ -13,8 +13,8 @@ const nextConfig: NextConfig = {
   // Server Actions are a POST to the page route carrying a build-time action ID
   // (see src/middleware.ts). `deploy.yml` flips production with an alias swap on
   // every push to main, so a tab opened before the swap posts the OLD build's
-  // action ID to the NEW deployment, which 404s it — the Overview's Accept /
-  // Decline / onboarding buttons go silently dead until a hard reload.
+  // action ID to the NEW deployment, which 404s it — the Lore Explorer's
+  // Accept / Decline / onboarding buttons go silently dead until a hard reload.
   //
   // Inert today, on both of the two possible build paths:
   //   - Built by Vercel: Next.js >= 14.1.4 gets Skew Protection with no
@@ -29,12 +29,14 @@ const nextConfig: NextConfig = {
   // See src/lib/deployment-id.ts and docs/deployment.md for the full rationale.
   deploymentId: resolveDeploymentId(process.env),
 
-  // `/dashboard` was renamed to `/overview` — the page has always been titled
-  // "Overview" in its metadata, its `<h1>`, and the sidebar, so the URL was the
-  // only thing still calling it a dashboard. The old path is in bookmarks, docs,
-  // invite emails already delivered, and any link shared before the rename, so
-  // it redirects rather than 404s. Not permanent (308): a browser caches a 308
-  // indefinitely, and `/dashboard` may be reused later.
+  // `/dashboard` and `/overview` are both old names for the app's home
+  // route, which is now the Lore Explorer at `/lore`. `/dashboard` predates
+  // the "Overview" rename; `/overview` was the page itself, deleted once its
+  // onboarding + first-token-mint duties moved to `/lore`. Both paths are in
+  // bookmarks, docs, invite emails already delivered, and any link shared
+  // before the renames, so they redirect rather than 404. Not permanent
+  // (308): a browser caches a 308 indefinitely, and either path may be
+  // reused later.
   //
   // `/settings/webhooks` was renamed to `/settings/integrations`. The old path
   // is in bookmarks, docs, and any link shared before the rename, so it
@@ -51,7 +53,8 @@ const nextConfig: NextConfig = {
   // 308 would be cached by browsers indefinitely.
   async redirects() {
     return [
-      { source: '/dashboard', destination: '/overview', permanent: false },
+      { source: '/dashboard', destination: '/lore', permanent: false },
+      { source: '/overview', destination: '/lore', permanent: false },
       { source: '/settings/webhooks', destination: '/settings/integrations', permanent: true },
       { source: '/settings', destination: '/settings/api-keys', permanent: false },
     ];

@@ -7,9 +7,10 @@
  * range moves all three together instead of leaving them describing three
  * different periods.
  *
- * Distinct from `useDashboardData` (the Overview's FIXED 62-day window,
- * re-bucketed client-side so its range picker never refetches): this fetches
- * the EXACT selected window from `GET /memories/usage`, plus the immediately
+ * Distinct from the now-deleted Overview page's `useDashboardData` (a FIXED
+ * 62-day window, re-bucketed client-side so its range picker never
+ * refetched): this fetches the EXACT selected window from `GET
+ * /memories/usage`, plus the immediately
  * preceding window of the same length, so a `TrendChip` can answer "is my
  * agent's call volume up this week vs. last" without a second aggregation
  * path. Two requests instead of one wide fetch because `/usage` returns a flat

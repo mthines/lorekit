@@ -3,11 +3,12 @@
 /**
  * The shared stat-card primitives.
  *
- * These were local to `DashboardStats` until the Lore Explorer grew a stats
- * header of its own showing the same four kinds of number. Two copies of a card
- * whose whole job is to be comparable would defeat the point: the Overview's
- * "Memories written" and the Explorer's have to look and read identically, or a
- * reader cannot carry a number from one page to the other.
+ * These were local to the now-deleted Overview page's `DashboardStats` until
+ * the Lore Explorer grew a stats header of its own showing the same four
+ * kinds of number. Two copies of a card whose whole job is to be comparable
+ * would defeat the point: Insights' "Memories written" and the Explorer's
+ * have to look and read identically, or a reader cannot carry a number from
+ * one page to the other.
  *
  * Presentation only — every value, series and caption is computed by the caller
  * (`lib/aggregations.ts`, `lib/time-range.ts`), so this file has no opinion
@@ -114,10 +115,11 @@ export interface StatCardProps {
   rangeTitle?: string;
   /**
    * Opt this card into the two-density morph used by the Lore Explorer's
-   * collapsible insights panel. OFF by default, so every OTHER caller (the
-   * Overview) renders the card exactly as before — a `collapsible` card gets an
-   * animated reveal region that a plain one never mounts, so the two share one
-   * component without the Overview inheriting the Explorer's collapse machinery.
+   * collapsible insights panel. OFF by default, so every OTHER caller
+   * (`ExplorerStats`, `HealthSummary`) renders the card exactly as before —
+   * a `collapsible` card gets an animated reveal region that a plain one
+   * never mounts, so the two share one component without those callers
+   * inheriting the Explorer's collapse machinery.
    */
   collapsible?: boolean;
   /**
@@ -164,7 +166,7 @@ export function StatCard({
   // evidence away still left four tiles at full type scale filling about half a
   // phone's viewport before the first memory — so the compact state also drops the
   // icon box and the headline a step. Expanded is untouched, and so is every
-  // non-collapsible caller (the Overview).
+  // non-collapsible caller (`ExplorerStats`, `HealthSummary`).
   //
   // This is the one property the two densities do NOT share: an earlier revision
   // promised the icon, number and label "never move" between them. Size is what
@@ -277,7 +279,8 @@ export function StatCard({
 
 /**
  * The collapsible rendering of {@link StatCard}, split out so the plain card's
- * markup stays untouched (and its Overview baseline with it).
+ * markup stays untouched (and its `ExplorerStats`/`HealthSummary` baselines
+ * with it).
  *
  * The icon sits LEFT OF THE NUMBER, with the label beneath — so a COLLAPSED card
  * is barely taller than the number itself (no header row, no tag). That trio is

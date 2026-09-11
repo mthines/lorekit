@@ -6,14 +6,14 @@
  * pages:
  *
  *   - Operational health (friction/latency/coverage) and "who's reading"
- *     (client/kind/host) used to live at the bottom of the Overview.
+ *     (client/kind/host) used to live at the bottom of the now-deleted
+ *     Overview page.
  *   - Scope consumption and hot/cold lore used to live at the bottom of the
  *     Lore Explorer.
  *
- * Overview stays the at-a-glance summary and the Explorer stays focused on
- * finding and editing lessons; this page is where a reader comes on purpose
- * to understand consumption, not somewhere they scroll past on the way to
- * something else.
+ * The Explorer stays focused on finding and editing lessons; this page is
+ * where a reader comes on purpose to understand consumption, not somewhere
+ * they scroll past on the way to something else.
  *
  * ## Two different windows, captioned rather than blurred
  *
@@ -22,13 +22,13 @@
  * (`lib/queries/insights-usage.ts`) — switching it moves the verdict banner,
  * the friction/latency/coverage diagnostics, and the client breakdown
  * together, so they can never describe three different periods. This is
- * distinct from the Overview's `useDashboardData()`, which fetches one FIXED
- * 62-day window once and re-buckets client-side; here the window itself is
- * the query (same reasoning as `useExplorerStats`), because a period-over-period
- * trend needs the ACTUAL preceding window, not a slice of a wider one. Presets
- * are bounded only (`24h`/`7d`/`30d`/`90d`, no `all`) for the same reason the
- * Overview's picker omits it: a trend chip needs a preceding window of equal
- * length, and "all time" has none.
+ * distinct from the deleted Overview page's `useDashboardData()`, which
+ * fetched one FIXED 62-day window once and re-bucketed client-side; here the
+ * window itself is the query (same reasoning as `useExplorerStats`), because
+ * a period-over-period trend needs the ACTUAL preceding window, not a slice
+ * of a wider one. Presets are bounded only (`24h`/`7d`/`30d`/`90d`, no `all`)
+ * for the same reason that page's picker omitted it: a trend chip needs a
+ * preceding window of equal length, and "all time" has none.
  *
  * `HealthSummary`/`UsageHealth` additionally exclude dashboard-originated
  * calls (`excludeDashboardReads`) — this page's own tagline is "how your

@@ -34,9 +34,9 @@ describe('GET /api/auth/callback — GitHub App Setup-URL return', () => {
   //   → auth.error_code=pkce_code_verifier_not_found
   // GitHub's OAuth `code` was handed to Supabase's PKCE exchange, which cannot
   // succeed, so the installation was never associated and the user was
-  // redirected to /overview?error=pkce_code_verifier_not_found.
+  // redirected to /lore?error=pkce_code_verifier_not_found.
   const SETUP_RETURN =
-    '?code=ddecac6946df5f3899f9&installation_id=150410512&setup_action=install&next=%2Foverview';
+    '?code=ddecac6946df5f3899f9&installation_id=150410512&setup_action=install&next=%2Flore';
 
   it('never hands the GitHub code to the Supabase PKCE exchange', async () => {
     await get(SETUP_RETURN);
@@ -63,9 +63,9 @@ describe('GET /api/auth/callback — GitHub App Setup-URL return', () => {
 
 describe('GET /api/auth/callback — Supabase flows are unaffected', () => {
   it('still exchanges a plain PKCE code', async () => {
-    const response = await get('?code=abc123&next=%2Foverview');
+    const response = await get('?code=abc123&next=%2Flore');
     expect(exchangeCodeForSession).toHaveBeenCalledWith('abc123');
-    expect(response.headers.get('location')).toBe(`${ORIGIN}/overview`);
+    expect(response.headers.get('location')).toBe(`${ORIGIN}/lore`);
   });
 
   it('still forwards a failed exchange to the destination with a reason', async () => {
@@ -73,15 +73,15 @@ describe('GET /api/auth/callback — Supabase flows are unaffected', () => {
       data: { user: null },
       error: { code: 'pkce_code_verifier_not_found', name: 'AuthApiError', message: 'nope' },
     });
-    const response = await get('?code=abc123&next=%2Foverview');
+    const response = await get('?code=abc123&next=%2Flore');
     expect(response.headers.get('location')).toBe(
-      `${ORIGIN}/overview?error=pkce_code_verifier_not_found`,
+      `${ORIGIN}/lore?error=pkce_code_verifier_not_found`,
     );
   });
 
   it('still treats a provider error as terminal', async () => {
-    const response = await get('?error=access_denied&next=%2Foverview');
+    const response = await get('?error=access_denied&next=%2Flore');
     expect(exchangeCodeForSession).not.toHaveBeenCalled();
-    expect(response.headers.get('location')).toBe(`${ORIGIN}/overview?error=access_denied`);
+    expect(response.headers.get('location')).toBe(`${ORIGIN}/lore?error=access_denied`);
   });
 });

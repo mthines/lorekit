@@ -189,7 +189,7 @@ function AllSetPanel({ onReview }: { onReview: () => void }) {
 interface OnboardingChecklistProps {
   steps: OnboardingStep[];
   /**
-   * `inline` (Overview): a dismissible first-run card that hides once complete
+   * `inline` (/lore): a dismissible first-run card that hides once complete
    * or dismissed. `page` (dedicated /onboarding): always shown, with a celebratory
    * state when everything is done. Both share the same provider-backed progress.
    */

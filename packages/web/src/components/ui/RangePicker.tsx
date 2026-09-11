@@ -1,14 +1,15 @@
 'use client';
 
 /**
- * RangePicker — the ONE time-range control, shared by the Overview and the
+ * RangePicker — the ONE time-range control, shared by Insights and the
  * Explorer.
  *
  * The two pages read the same `range` param (`lib/time-range.ts`) but had
- * grown only one control between them: the Overview's, private to
- * `DashboardStats`. So the Explorer had no way to say "last 24 hours" at all —
- * its only range affordances were a calendar and a heatmap click, both of which
- * express a WINDOW when what a reader usually wants is a HORIZON.
+ * grown only one control between them: the now-deleted Overview page's,
+ * private to `DashboardStats`. So the Explorer had no way to say "last 24
+ * hours" at all — its only range affordances were a calendar and a heatmap
+ * click, both of which express a WINDOW when what a reader usually wants is
+ * a HORIZON.
  *
  * Sharing the component rather than copying its markup is what makes the two
  * pages stay consistent: a change to how a range is picked lands in one place
@@ -17,7 +18,7 @@
  *
  * ## Presets are per-surface, and that is not an inconsistency
  *
- * The Overview omits `all`: every card there shows a period-over-period change,
+ * Insights omits `all`: every card there shows a period-over-period change,
  * which needs a PRECEDING window of equal length, and "all time" has none. The
  * Explorer offers it, because a list has no such requirement and browsing
  * everything is the thing people come to the Explorer to do. Same control, same
@@ -83,7 +84,7 @@ export function RangePicker({
   const active = isPresetRange(value) ? value.preset : null;
   // `range === null` means unbounded, which IS the `all` preset semantically.
   const resolved = active ?? (value === null ? 'all' : null);
-  // …but only if THIS surface offers that preset. The Overview omits `all`, so a
+  // …but only if THIS surface offers that preset. Insights omits `all`, so a
   // shared `?range=null` link resolving to `all` would check no radio here; fall
   // back to the custom-window chip instead of leaving the control looking unset.
   const selected = resolved && presets.includes(resolved) ? resolved : null;

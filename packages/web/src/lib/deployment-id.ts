@@ -5,7 +5,7 @@
  * ## Why this exists
  *
  * Next.js Server Actions are invoked as a `POST` to the page route that hosts
- * them (`POST /dashboard` for the actions behind the Overview's invite banner
+ * them (`POST /lore` for the actions behind the pending-invite banner
  * and onboarding checklist — see the note in `src/middleware.ts`). The action
  * is addressed by an **action ID that is minted at build time** and is only
  * known to the deployment that produced the bundle.

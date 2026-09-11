@@ -18,9 +18,9 @@
  *    actionable prompt (narrow the hook, or write the lore that's missing)
  *    rather than a bare fraction.
  *
- * All three come from ONE `/usage` call already fetched by `useDashboardData`
- * — no new endpoint. Pure aggregation lives in `lib/usage-health.ts`; this is
- * the display shell.
+ * All three come from ONE `/usage` call already fetched by
+ * `lib/queries/insights-usage.ts` — no new endpoint. Pure aggregation lives
+ * in `lib/usage-health.ts`; this is the display shell.
  *
  * These are DIAGNOSTICS, not the additive stat cards above them, so they are
  * deliberately NOT bound by the bars-sum-to-headline invariant those cards

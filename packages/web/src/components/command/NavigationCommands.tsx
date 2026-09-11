@@ -11,10 +11,8 @@
  *
  * ### Navigate
  * Top-level destinations with "g → X" chained shortcuts (Gmail / Linear style):
- *   g o → Overview (Home) — only while `insights-page` is OFF
- *   g e → Lore Explorer
- *   g i → Insights — only while `insights-page` is ON (see Sidebar.tsx's
- *         matching nav filter; the two are mutually exclusive)
+ *   g e → Lore Explorer (Home)
+ *   g i → Insights
  *   g s → Settings
  *   g g → Docs
  *
@@ -39,7 +37,6 @@
 import { useRouter } from 'next/navigation';
 import {
   BookOpen,
-  LayoutDashboard,
   Settings,
   GraduationCap,
   Key,
@@ -52,32 +49,13 @@ import {
   Library,
   Telescope,
 } from 'lucide-react';
-import { useEffect } from 'react';
 import { useCommand } from './useCommand';
-import { useCommandPalette } from './CommandPaletteProvider';
-import { useFeatureFlag } from '@/components/providers/FeatureFlagsProvider';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { useLoreData, searchLessonsByQuery } from '@/lib/queries/lore';
 import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import type { Command } from './types';
-
-// `Command` has no enabled/hidden field, and `useCommand` always registers on
-// mount — so a flag-gated entry (like `nav-insights` below) can't use it
-// directly. This calls `useCommandPalette()` unconditionally (rules of
-// hooks) and only decides INSIDE the effect whether to call `register`,
-// mirroring the page's `notFound()` gate and the Sidebar's nav filter so all
-// three surfaces agree on visibility.
-function useConditionalCommand(enabled: boolean, command: Command): void {
-  const { register } = useCommandPalette();
-
-  useEffect(() => {
-    if (!enabled) return;
-    return register(command);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, register, command.id, command.label, command.onSelect]);
-}
 
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
@@ -196,21 +174,6 @@ export function NavigationCommands() {
 
   // ── Navigate ─────────────────────────────────────────────────────────────
 
-  // Overview and Insights are mutually exclusive destinations while
-  // `insights-page` rolls out, so exactly one of the two is ever registered
-  // (see Sidebar.tsx's matching `nav`/`mobileTabs` filter and
-  // insights/page.tsx's `notFound()` gate).
-  const insightsEnabled = useFeatureFlag('insights-page');
-
-  useConditionalCommand(!insightsEnabled, {
-    id: 'nav-overview',
-    label: 'Go to Overview',
-    icon: <LayoutDashboard className="size-4" />,
-    group: 'Navigate',
-    shortcut: { keys: ['g', 'o'] },
-    onSelect: () => router.push('/overview'),
-  });
-
   useCommand({
     id: 'nav-explorer',
     label: 'Go to Lore Explorer',
@@ -220,7 +183,7 @@ export function NavigationCommands() {
     onSelect: () => router.push('/lore'),
   });
 
-  useConditionalCommand(insightsEnabled, {
+  useCommand({
     id: 'nav-insights',
     label: 'Go to Insights',
     icon: <Telescope className="size-4" />,

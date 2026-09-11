@@ -52,7 +52,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // The middleware forwards x-pathname and x-search from request.nextUrl so we
     // don't need to parse the raw request here.
     const headersList = await headers();
-    const pathname = headersList.get('x-pathname') ?? '/overview';
+    const pathname = headersList.get('x-pathname') ?? '/lore';
     const search = headersList.get('x-search') ?? '';
     // Bounded: this value is about to be percent-encoded a SECOND time (the
     // search string already is), so a wide Explorer filter bar would roughly

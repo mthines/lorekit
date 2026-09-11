@@ -3,9 +3,10 @@
 /**
  * The Lore Explorer's stats header data.
  *
- * Distinct from `useDashboardData`, which fetches ONE wide window once and
- * re-buckets client-side so the Overview's range picker never refetches. That
- * trick does not transfer: the Explorer's header follows a scope selection and
+ * Distinct from the now-deleted Overview page's `useDashboardData`, which
+ * fetched ONE wide window once and re-bucketed client-side so its range
+ * picker never refetched. That trick does not transfer: the Explorer's
+ * header follows a scope selection and
  * a range that can be any absolute window, so the window itself is the query.
  * It therefore fetches per selection and leans on TanStack's cache instead.
  *

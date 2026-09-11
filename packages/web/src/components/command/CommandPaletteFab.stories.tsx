@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { GraduationCap, LayoutDashboard, BookOpen, Settings } from 'lucide-react';
+import { GraduationCap, Telescope, BookOpen, Settings } from 'lucide-react';
 
 import { CommandPaletteFab } from './CommandPaletteFab';
 import { CommandPaletteProvider } from './CommandPaletteProvider';
@@ -23,8 +23,8 @@ import { CommandPaletteProvider } from './CommandPaletteProvider';
  */
 
 const STUB_TABS = [
-  { label: 'Overview', icon: LayoutDashboard, active: true },
-  { label: 'Explorer', icon: BookOpen, active: false },
+  { label: 'Explorer', icon: BookOpen, active: true },
+  { label: 'Insights', icon: Telescope, active: false },
   { label: 'Setup', icon: GraduationCap, active: false },
   { label: 'Settings', icon: Settings, active: false },
 ] as const;

@@ -56,11 +56,13 @@ it can never ship a flag that silently resolves to `undefined`.
 
 > **Every `example-*` key in this document is illustrative, not a real flag.**
 > Grep for one and you will find only this file. The registry holds exactly the
-> flags that gate live behaviour — today four rollout gates, all plain booleans:
-> `insights-page`, `retention-policies`, `lore-explorer-instruments` and
-> `lore-explorer-duplicate-clusters`. It briefly also held five
-> demonstration entries (an A/B experiment, two unread toggles, and one each to
-> exercise the `string` and `object` paths); they were removed, because a flag
+> flags that gate live behaviour — today three rollout gates, all plain booleans:
+> `retention-policies`, `lore-explorer-instruments` and
+> `lore-explorer-duplicate-clusters`. It has also held entries since removed: the
+> rollout gate for the `/insights` route (deleted once that page became
+> unconditional — see docs/decisions.md) and five demonstration entries (an
+> A/B experiment, two unread toggles, and one each to exercise the `string`
+> and `object` paths); the demonstration ones were removed because a flag
 > that gates nothing is indistinguishable at a call site from one left behind
 > after a rollout, and the mechanisms they showed are covered by
 > `provider.spec.ts` against its own fixtures. Illustrate a flag here; don't

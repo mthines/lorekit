@@ -69,7 +69,8 @@ export function SettingsNav({ userEmail }: SettingsNavProps) {
   const badgeCount = hasHydrated ? pendingInviteCount(invites, dismissedIds) : 0;
   // `grooming`'s page-level `notFound()` gate (`settings/grooming/page.tsx`)
   // is the real access-control boundary; this filter is only a visibility
-  // nicety — same split as `Sidebar.tsx`'s `insights-page` filter.
+  // nicety, matching the developer-page precedent's nav-link-vs-page-check
+  // split.
   const retentionPoliciesEnabled = useFeatureFlag('retention-policies');
 
   const items = SETTINGS_SECTIONS.filter(

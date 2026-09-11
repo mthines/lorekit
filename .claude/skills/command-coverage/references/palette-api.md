@@ -130,8 +130,8 @@ Never propose a token that collides with these.
 | Keys        | Command                | id (dashboard / docs)          |
 | ----------- | ---------------------- | ------------------------------ |
 | `mod+k`     | Open palette           | (built into the provider)      |
-| `g` `o`     | Go to Overview         | `nav-overview` / `docs-nav-overview` |
 | `g` `e`     | Go to Lore Explorer    | `nav-explorer` / `docs-nav-explorer` |
+| `g` `i`     | Go to Insights         | `nav-insights` / `docs-nav-insights` |
 | `g` `s`     | Go to Settings         | `nav-settings` / `docs-nav-settings` |
 | `g` `g`     | Go to Docs             | `nav-docs`                     |
 

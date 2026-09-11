@@ -46,7 +46,7 @@ describe('boundedReturnTo', () => {
   });
 
   it('keeps a bare pathname unchanged', () => {
-    expect(boundedReturnTo('/overview', '')).toBe('/overview');
+    expect(boundedReturnTo('/lore', '')).toBe('/lore');
   });
 
   it('keeps a return trip of exactly the budget', () => {

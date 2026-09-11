@@ -50,7 +50,7 @@ Everything lives at **Settings → Organization**.
      configured — see [below](#invite-emails)).
    - A **handle** invite is in-app only (there's no address to email).
 3. **They accept.** The invitee sees a **pending-invite banner** on their
-   Overview the next time they sign in, plus a badge on the Organization nav
+   Lore Explorer the next time they sign in, plus a badge on the Organization nav
    item. Accepting adds them to the org; declining clears it.
 4. **Manage.** From the same page an owner/admin can change a member's role,
    remove a member, revoke a pending invite, or (owner) rename/delete the org.

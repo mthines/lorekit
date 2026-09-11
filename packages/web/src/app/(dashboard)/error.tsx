@@ -2,7 +2,7 @@
 
 /**
  * Dashboard error boundary — catches errors in any dashboard route
- * (overview, lore explorer, activity) before they reach the root boundary.
+ * (lore explorer, insights, activity) before they reach the root boundary.
  * More contextual than the root error: the sidebar stays visible so the
  * user can navigate to another section without losing their session.
  */
@@ -19,8 +19,8 @@ interface ErrorProps {
 }
 
 const PAGE_LABELS: Record<string, string> = {
-  '/overview': 'the overview',
   '/lore': 'the Lore Explorer',
+  '/insights': 'Insights',
   '/activity': 'the Activity feed',
 };
 
@@ -64,8 +64,8 @@ export default function DashboardError({ error, reset }: ErrorProps) {
         >
           Retry
         </Button>
-        <Button variant="secondary" href="/overview" analyticsId="dashboard-error.overview">
-          Overview
+        <Button variant="secondary" href="/lore" analyticsId="dashboard-error.lore">
+          Lore Explorer
         </Button>
       </div>
 

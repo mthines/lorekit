@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * PendingInvitesBanner — a dismissible Overview banner surfacing invites
+ * PendingInvitesBanner — a dismissible `/lore` banner surfacing invites
  * addressed to the current user. Passive, one invite shown at a time (not a
  * modal interrupt — ux-design core-principles). Accepting routes to the
  * Explorer filtered to the new org with a one-time toast; declining/dismissing

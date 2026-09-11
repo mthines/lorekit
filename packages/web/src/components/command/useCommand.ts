@@ -12,12 +12,12 @@
  * @example — simple navigation action
  * ```tsx
  * useCommand({
- *   id: 'go-dashboard',
- *   label: 'Go to Overview',
- *   icon: <LayoutDashboard className="size-4" />,
+ *   id: 'go-lore',
+ *   label: 'Go to Lore Explorer',
+ *   icon: <BookOpen className="size-4" />,
  *   group: 'Navigate',
- *   shortcut: { keys: ['g', 'h'] },
- *   onSelect: () => router.push('/overview'),
+ *   shortcut: { keys: ['g', 'e'] },
+ *   onSelect: () => router.push('/lore'),
  * });
  * ```
  *

@@ -4,8 +4,8 @@
  *
  * Colours live in the shared `Badge` variants (see components/ui/Badge.tsx),
  * keyed by the same `ScopePrefix`. Keep this file free of layout so it can be
- * imported by both the `ScopeBadge` pill and the `ScopeTree` / `ScopeHealthCard`
- * custom layouts without dragging JSX along.
+ * imported by both the `ScopeBadge` pill and the `ScopeTree` custom layout
+ * without dragging JSX along.
  */
 
 import { Globe, Layers, FolderGit2, GitBranch, type LucideIcon } from 'lucide-react';

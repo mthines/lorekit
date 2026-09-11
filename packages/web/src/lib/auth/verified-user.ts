@@ -17,7 +17,8 @@
  * page as a whole. Observed in production: `GET /overview`'s p95 exceeded
  * 166s (normal baseline ~1.7s) while Supabase Auth was responding in
  * 12-52s per call — a single render calling `getUser()` more than once
- * multiplied that delay instead of paying it once.
+ * multiplied that delay instead of paying it once. (`/overview` was the
+ * app's home route at the time; it has since been renamed to `/lore`.)
  *
  * `getServerFlag`/`getAllServerFlags` (`lib/feature-flags/server.ts`) already
  * solved this ad hoc via a `knownUserId` parameter threaded through from the

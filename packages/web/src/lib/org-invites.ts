@@ -37,7 +37,7 @@ export interface OrgInvite {
   expires_at: string | null;
   /**
    * Embedded org name/slug (PostgREST join via `org_invites.org_id ->
-   * orgs.id`, no new RPC/migration) — the Overview pending-invite banner
+   * orgs.id`, no new RPC/migration) — the `/lore` pending-invite banner
    * needs the org's name ("invited you to Acme Team"), which the bare
    * `org_id` alone can't render. Undefined if the embed can't resolve.
    */

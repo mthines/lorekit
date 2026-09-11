@@ -5,7 +5,7 @@
  * Call sites should only ever need:
  *
  *   import { evaluateFlag } from '@lorekit/feature-flags';
- *   const showInsights = await evaluateFlag('insights-page', {
+ *   const retentionPoliciesEnabled = await evaluateFlag('retention-policies', {
  *     targetingKey: userId,
  *   });
  *

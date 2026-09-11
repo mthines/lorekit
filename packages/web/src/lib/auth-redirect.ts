@@ -11,10 +11,10 @@
  * Accepts only same-origin absolute paths: a leading `/` but not `//`
  * (scheme-relative URLs such as `//evil.com` are followed by browsers as an
  * absolute URL and are an open-redirect vector), and not `/\` (which some
- * browsers normalise to `//`). Anything else falls back to `/overview`.
+ * browsers normalise to `//`). Anything else falls back to `/lore`.
  */
 
-export const DEFAULT_POST_LOGIN_PATH = '/overview';
+export const DEFAULT_POST_LOGIN_PATH = '/lore';
 
 export function safeNextPath(
   raw: string | null | undefined,
