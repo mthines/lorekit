@@ -44,7 +44,7 @@ type Row = { id: string; scope: string; key: string; value: string; updated_at: 
 
 /**
  * A fake `db` covering both `toolRead` paths:
- *  - singular (`key`, optionally `scope`): `.select(...).eq('key',…)[.eq('scope',…)].is(...).or(...).limit(n)`
+ *  - singular (`key`, optionally `scope`): `.select(...).eq('key',…)[.eq('scope',…)].is(...).or(...).order(...).limit(n)`
  *  - batch (`refs`): one `.select(...).eq('scope',…).in('key',…).is(...).or(...)` PER
  *    distinct scope group, awaited directly.
  *
@@ -61,15 +61,27 @@ type Row = { id: string; scope: string; key: string; value: string; updated_at: 
  */
 function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRows?: Row[] } = {}) {
   const order: string[] = [];
-  const queries: { table: string; filters: [string, unknown][]; single: boolean }[] = [];
+  const queries: {
+    table: string;
+    filters: [string, unknown][];
+    single: boolean;
+    orderBy: [string, unknown][];
+  }[] = [];
   const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 
   function chain(table: string) {
-    const rec: { table: string; filters: [string, unknown][]; single: boolean; batch: boolean } = {
+    const rec: {
+      table: string;
+      filters: [string, unknown][];
+      single: boolean;
+      batch: boolean;
+      orderBy: [string, unknown][];
+    } = {
       table,
       filters: [],
       single: false,
       batch: false,
+      orderBy: [],
     };
     queries.push(rec);
     // deno-lint-ignore no-explicit-any
@@ -80,6 +92,7 @@ function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRows?: Row[] } =
       is(col: string, val: unknown) { rec.filters.push([col, val]); return builder; },
       or(_expr: string) { return builder; },
       maybeSingle() { rec.single = true; return builder; },
+      order(col: string, opts?: unknown) { rec.orderBy.push([col, opts]); return builder; },
       limit(_n: number) { return builder; },
       // deno-lint-ignore no-explicit-any
       then(resolve: (v: unknown) => void, reject?: (e: unknown) => void) {
@@ -417,6 +430,37 @@ Deno.test('unscoped: issues no scope predicate, so nothing is silently narrowed'
   const read = queries.find((q) => q.table === 'memories');
   assertEquals(read?.filters.some(([c]) => c === 'scope'), false);
   assertEquals(read?.filters.some(([c, v]) => c === 'key' && v === 'a'), true);
+});
+
+// The candidate fetch is capped, so WHICH rows come back decides the winner
+// before `pickScopeWinner`'s total order ever runs. Without an ORDER BY, a key
+// held in more scopes than the cap truncates to whatever order Postgres
+// returned and the same call answers differently on consecutive runs. The
+// `mcp-core` twin asserts the identical tuple — this is the edge half.
+Deno.test('unscoped: the candidate fetch is ordered so the cap truncates deterministically', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'global', value: 'v', updated_at: 't' } as any],
+  });
+
+  await toolRead(db, { key: 'a' }, null, span);
+
+  const read = queries.find((q) => q.table === 'memories');
+  assertEquals(read?.orderBy, [['updated_at', { ascending: false }]]);
+});
+
+Deno.test('unscoped: the scoped path is ordered too', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'global', value: 'v', updated_at: 't' } as any],
+  });
+
+  await toolRead(db, { scope: 'global', key: 'a' }, null, span);
+
+  const read = queries.find((q) => q.table === 'memories');
+  assertEquals(read?.orderBy, [['updated_at', { ascending: false }]]);
 });
 
 Deno.test('unscoped: the more specific scope wins and the rest are named', async () => {

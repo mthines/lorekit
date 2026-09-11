@@ -324,7 +324,16 @@ export async function toolRead(
   // than a different question quietly answered.
   const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
 
-  span.setAttributes({ 'lorekit.key': key, ...(scope ? { 'lorekit.scope': scope } : {}) });
+  // `lorekit.read.unscoped` is known from the INPUT, so it is stamped here
+  // rather than after the fetch: a read that throws on PostgREST is still a
+  // read that was or was not scoped, and stamping it later left exactly those
+  // spans without it — the same asymmetry with the `mcp-core` twin (which sets
+  // it before its own `try`) that d38502c set out to close.
+  span.setAttributes({
+    'lorekit.key': key,
+    'lorekit.read.unscoped': scope === null,
+    ...(scope ? { 'lorekit.scope': scope } : {}),
+  });
 
   const tracedDb = createTracedClient(db, span);
   // `id` is selected purely to drive the per-memory read counter below — it is
@@ -358,16 +367,13 @@ export async function toolRead(
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string }[];
   // Stamped BEFORE the miss return, not after: a miss is exactly the population
-  // these two measures exist to size — how often an unscoped read fans out and
-  // still finds nothing. Stamping them after the return also made this surface
-  // disagree with the `mcp-core` twin, which stamps both before its own.
-  // Numeric/boolean measures, not dimensions — no cardinality added. Together
-  // they are the only way to see how often an unscoped read was AMBIGUOUS,
+  // this measure exists to size — how often an unscoped read fans out and still
+  // finds nothing. Stamping it after the return also made this surface disagree
+  // with the `mcp-core` twin, which stamps it before its own. A numeric measure,
+  // not a dimension — no cardinality added; paired with `lorekit.read.unscoped`
+  // above it is the only way to see how often an unscoped read was AMBIGUOUS,
   // which is what would justify surfacing the fallback more loudly.
-  span.setAttributes({
-    'lorekit.read.unscoped': scope === null,
-    'lorekit.read.candidates': rows.length,
-  });
+  span.setAttributes({ 'lorekit.read.candidates': rows.length });
   const winner = pickScopeWinner(rows);
   if (!winner) return null;
   // Stamp the RESOLVED scope, not the requested one — on an unscoped read the
