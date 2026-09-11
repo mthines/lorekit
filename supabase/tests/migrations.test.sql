@@ -9979,6 +9979,117 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §110 — within-group facet counting: co-occurrence (AND) vs. self-exclusion
+--        (OR), and a stable (zero-stays) value set for every dimension (00110)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Four memories, one fresh user so every count is exact:
+--   f110-1: tags {perf, flaky}, agent aw   — carries BOTH labels
+--   f110-2: tags {perf},        agent aw   — carries only perf
+--   f110-3: tags {flaky},       agent ci   — carries flaky but NOT perf
+--   f110-4: tags {other},       agent aw   — carries neither selected label
+--
+-- AC-13: p_tags=[perf], mode='all' (AND) — the `flaky` cell must report
+--        CO-OCCURRENCE: memories with perf AND flaky = {f110-1} = 1, not the
+--        self-excluded total {f110-1, f110-3} = 2.
+-- AC-14: under that same AND selection, `other` (present on f110-4, which
+--        carries no perf) must still be LISTED, at count = 0, not omitted.
+-- AC-15: p_tags=[perf], mode='any' (OR) — self-exclusion must be UNCHANGED:
+--        `flaky`'s count is its plain total {f110-1, f110-3} = 2, ignoring the
+--        perf selection entirely. A scalar dimension (source_agent) keeps
+--        self-exclusion in EVERY mode, AND-selected or not.
+-- AC-16: a filter on a DIFFERENT group (source_agent) still narrows the tag
+--        facet's counts (cross-group AND) — `perf` under agent=[ci] must be
+--        0-and-listed (only f110-3 has agent ci, and it lacks perf), while
+--        `flaky` under agent=[ci] must be 1 (f110-3 alone).
+do $$
+declare
+  v_user  uuid := '11000000-0000-0000-0000-000000000001';
+  v_count bigint;
+  v_rows  bigint;
+begin
+  insert into auth.users (id) values (v_user) on conflict do nothing;
+
+  insert into memories (user_id, scope, key, value, tags, source_agent) values
+    (v_user, 'project::facet-cooccur', 'f110-1', 'v', array['perf','flaky'], 'aw'),
+    (v_user, 'project::facet-cooccur', 'f110-2', 'v', array['perf'],         'aw'),
+    (v_user, 'project::facet-cooccur', 'f110-3', 'v', array['flaky'],        'ci'),
+    (v_user, 'project::facet-cooccur', 'f110-4', 'v', array['other'],        'aw');
+
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- ── AC-13: AND mode is co-occurrence, not self-exclusion ────────────────
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_tags => array['perf'], p_tags_mode => 'all')
+   where facet = 'tag' and value = 'flaky';
+  assert v_count = 1,
+    format('110 AC-13: flaky under tags=[perf] mode=all must be the CO-OCCURRING '
+           'count (perf AND flaky = 1), got %s', v_count);
+
+  -- ── AC-14: a non-co-occurring value stays LISTED at count = 0 ───────────
+  select count(*) into v_rows from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_tags => array['perf'], p_tags_mode => 'all')
+   where facet = 'tag' and value = 'other';
+  assert v_rows = 1,
+    '110 AC-14a: a facet value with zero co-occurring rows must still be ENUMERATED, not omitted';
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_tags => array['perf'], p_tags_mode => 'all')
+   where facet = 'tag' and value = 'other';
+  assert v_count = 0,
+    format('110 AC-14b: `other` must report count = 0 under tags=[perf] mode=all, got %s', v_count);
+
+  -- ── AC-15: OR mode keeps the pre-00110 self-exclusion behaviour ─────────
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_tags => array['perf'], p_tags_mode => 'any')
+   where facet = 'tag' and value = 'flaky';
+  assert v_count = 2,
+    format('110 AC-15a: flaky under tags=[perf] mode=any (OR) must stay SELF-EXCLUDED '
+           '(plain total = 2), got %s', v_count);
+
+  -- A scalar dimension keeps self-exclusion regardless of the tag mode in play.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_tags => array['perf'], p_tags_mode => 'all',
+      p_source_agent => array['aw'], p_source_agent_mode => 'in')
+   where facet = 'source_agent' and value = 'ci';
+  assert v_count = 0,
+    format('110 AC-15b: source_agent self-exclusion must apply the OTHER groups '
+           '(tags=[perf] all) but keep its own selection out — ci has no perf, so 0, got %s',
+           v_count);
+
+  -- ── AC-16: a DIFFERENT group''s filter still narrows the tag facet (AND) ──
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_source_agent => array['ci'], p_source_agent_mode => 'in')
+   where facet = 'tag' and value = 'flaky';
+  assert v_count = 1,
+    format('110 AC-16a: flaky under source_agent=[ci] must narrow to the ci row alone, got %s', v_count);
+
+  select count(*) into v_rows from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_source_agent => array['ci'], p_source_agent_mode => 'in')
+   where facet = 'tag' and value = 'perf';
+  assert v_rows = 1,
+    '110 AC-16b: `perf` must stay LISTED under source_agent=[ci] even though it 0-matches';
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'project::facet-cooccur',
+      p_source_agent => array['ci'], p_source_agent_mode => 'in')
+   where facet = 'tag' and value = 'perf';
+  assert v_count = 0,
+    format('110 AC-16c: `perf` under source_agent=[ci] must be 0 (no ci row carries perf), got %s',
+           v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

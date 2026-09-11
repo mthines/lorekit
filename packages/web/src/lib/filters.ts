@@ -797,6 +797,21 @@ export function filtersToQueryParams(
  * selecting it would actually yield while the dimension you are standing in
  * still shows its alternatives. Absent filters → the global catalog, unchanged.
  *
+ * **Migration 00110 narrows that rule for `label` under `tags_mode='all'`
+ * only.** Self-exclusion is still exactly right for every scalar dimension and
+ * for `label` under `tags_mode='any'` (there is at most one thing to swap for
+ * another). It stopped being right for `label` under AND mode: with `perf`
+ * already selected, plain self-exclusion counted every row carrying a
+ * candidate label — including rows that never carried `perf` — which could
+ * show a bigger number than the AND-of-both-labels filter the click actually
+ * produces. `lorekit_memory_facets` now requires a candidate label's row to
+ * also satisfy every already-selected tag whenever the mode is `'all'`
+ * (within-group co-occurrence); `tags_mode='any'` and every other dimension
+ * are bit-for-bit unchanged. Also as of 00110, a value with zero matches under
+ * the current filters reports `count: 0` and stays in the menu instead of
+ * disappearing — the catalog is enumerated from the full filtered population
+ * first, THEN counted, rather than filtered rows grouped after the fact.
+ *
  * The cast is sound because `filtersToQueryParams` only ever sets dimension
  * keys; the two query types differ only in the NON-dimension keys (`q`, `key`,
  * `sort`, …) it never touches — which the facets route deliberately does not

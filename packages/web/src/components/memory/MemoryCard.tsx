@@ -252,6 +252,25 @@ export interface MemoryCardProps {
   onClick?: () => void;
   /** Stagger index for the enter animation. */
   index?: number;
+  /**
+   * Tab-stop override for the card's underlying interactive element — the
+   * roving-tabindex model (WAI-ARIA listbox): a caller managing a list of
+   * cards as a single-tab-stop selection widget sets `0` on the active card
+   * and `-1` on the rest, so ArrowUp/Down remain the only way to reach an
+   * inactive row. Omitted (default browser tab order) for callers that don't
+   * manage roving focus.
+   */
+  tabIndex?: number;
+  /**
+   * `true` when an ANCESTOR already announces selection via `aria-selected`
+   * on a `role="option"` wrapper (e.g. the Lore Explorer's listbox) — the
+   * card-layout button then omits `aria-pressed` to avoid a double
+   * announcement, mirroring the same rationale `density="compact"` already
+   * documents for its own inner button. `false` (default) keeps
+   * `aria-pressed` for callers with no such wrapper (e.g. the duplicate
+   * cluster members list, which stays plain `list`/`listitem`).
+   */
+  selectionAnnouncedByParent?: boolean;
   /** Icon rendered in a bordered box before the content (row layout). */
   leadingIcon?: ReactNode;
   /** Scope pill. @default true (false in compact) */
@@ -282,6 +301,8 @@ export const MemoryCard = memo(function MemoryCard({
   selected = false,
   onClick,
   index = 0,
+  tabIndex,
+  selectionAnnouncedByParent = false,
   leadingIcon,
   showScope = true,
   showScopePath,
@@ -473,8 +494,9 @@ export const MemoryCard = memo(function MemoryCard({
       <button
         type="button"
         onClick={onClick}
-        aria-pressed={selected}
+        aria-pressed={selectionAnnouncedByParent ? undefined : selected}
         aria-label={`Open memory ${memoryKey}`}
+        tabIndex={tabIndex}
         className="absolute inset-0 z-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       />
       {/* `flex-col gap-2` rather than per-child `mb-*`/`mt-*`: a fixed bottom

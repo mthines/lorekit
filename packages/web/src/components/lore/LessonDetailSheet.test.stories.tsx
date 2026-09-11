@@ -75,10 +75,13 @@ function Harness({
   onClose,
   lesson = LESSON,
   initialContentTab,
+  layout = 'sheet',
 }: {
   onClose: () => void;
   lesson?: LessonEntry;
   initialContentTab?: ContentTab;
+  /** @default 'sheet' — every existing story below exercises the mobile sheet. */
+  layout?: 'auto' | 'drawer' | 'sheet';
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -88,7 +91,7 @@ function Harness({
         setOpen(false);
         onClose();
       }}
-      layout="sheet"
+      layout={layout}
       initialContentTab={initialContentTab}
     />
   );
@@ -101,6 +104,11 @@ const meta: Meta<typeof Harness> = {
   parameters: {
     chromatic: { disableSnapshot: true },
     layout: 'centered',
+    // R3: the panel reads `useRouter`/`useSearchParams` (directly, and via
+    // `useUrlState`) to apply a metadata filter as a navigation. Without this,
+    // those hooks throw "expected app router to be mounted" — same fix as
+    // `LorePage.stories.tsx`.
+    nextjs: { appDirectory: true },
   },
   args: { onClose: fn() },
   decorators: [withQueryClient],
@@ -145,6 +153,30 @@ export const OpensAsASheet: Story = {
       await expect(await body().findByRole('dialog', { name: /memory detail/i })).toBeVisible();
       await expect(handle()).toBeInTheDocument();
       await expect(backdrop()).toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * R1 (lore-explorer-panel-nav-facets): the desktop DRAWER is deliberately
+ * non-modal — the list stays visible and clickable behind it, so it renders
+ * no backdrop and carries no `aria-modal` at all (not even `"false"` — the
+ * attribute is fully absent, the conventional way a non-modal dialog is
+ * marked). Regression guard for the pre-R1 behaviour, which always rendered a
+ * scrim and hard-coded `aria-modal="true"` regardless of presentation.
+ */
+export const OpensAsADrawerWithoutBackdrop: Story = {
+  render: (args) => <Harness onClose={args.onClose} layout="drawer" />,
+  play: async ({ step }) => {
+    await step('the drawer renders as a non-modal dialog with no backdrop', async () => {
+      const dialog = await body().findByRole('dialog', { name: /memory detail/i });
+      // The drawer's entrance animates opacity 0→1 (unlike the sheet's pure
+      // `y` transform), so — like `EditingRevealsSaveBar`'s bar — poll rather
+      // than asserting immediately after the element mounts.
+      await waitFor(() => expect(dialog).toBeVisible());
+      await expect(dialog).not.toHaveAttribute('aria-modal');
+      await expect(backdrop()).not.toBeInTheDocument();
+      await expect(handle()).not.toBeInTheDocument();
     });
   },
 };
@@ -241,6 +273,34 @@ export const OpenFocusSkipsWhenAlreadyInside: Story = {
       // unconditional focus would have pulled focus onto the close button by now.
       await new Promise((resolve) => setTimeout(resolve, 250));
       await expect(editTab).toHaveFocus();
+      await expect(body().getByRole('button', { name: /close detail panel/i })).not.toHaveFocus();
+    });
+  },
+};
+
+/**
+ * Focus-management delta (2026-09-10, on already-open PR #660): the desktop
+ * DRAWER is non-modal (R1) — per WAI-ARIA's master-detail pattern the list
+ * keeps keyboard ownership, so opening/updating the panel must NEVER steal
+ * focus the way the mobile sheet's dialog behavior does. Regression guard for
+ * the reported bug: before the modality gate below, the SAME unconditional
+ * `close.focus()` fired for the drawer too, so a click that opened a memory
+ * moved focus into the panel and broke the Explorer's ArrowUp/ArrowDown list
+ * navigation immediately afterward — arrows kept "working" (no crash) but
+ * silently stopped changing the selection, since the list no longer had
+ * focus. Non-vacuous by construction: reverting the `isSheet` gate on the
+ * open-focus effect in `LessonDetailSheet.tsx` fails this assertion the same
+ * way `OpenFocusSkipsWhenAlreadyInside` fails against its own pre-fix code.
+ */
+export const DrawerOpenDoesNotStealFocus: Story = {
+  render: (args) => <Harness onClose={args.onClose} layout="drawer" />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('opening the drawer leaves focus where it was — never on the close button', async () => {
+      // Wait past the ~80 ms open-focus timer the mobile sheet relies on (see
+      // `settleOpenFocus`) — the drawer must skip it entirely, not merely
+      // delay it.
+      await new Promise((resolve) => setTimeout(resolve, 250));
       await expect(body().getByRole('button', { name: /close detail panel/i })).not.toHaveFocus();
     });
   },

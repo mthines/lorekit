@@ -711,6 +711,12 @@ export function FilterMenu({
   // meant "how many things are narrowing this view", so a non-default status
   // counts toward it exactly like a pill does.
   const mobileBadgeCount = activeCount + retentionCount + (statusIsNonDefault ? 1 : 0);
+  // The trigger's applied state — UI-polish refinement, separate from
+  // `open` (which is transient) and from `statusIsNonDefault` (which already
+  // gets its own label change, not a colour). "Filters non-empty" is
+  // literally `filterCount`/`retentionConditionsCount`, the same predicate
+  // the badge text above already uses.
+  const hasAppliedFilters = activeCount + retentionCount > 0;
 
   // List sizing.
   //
@@ -1191,11 +1197,18 @@ export function FilterMenu({
         className={[
           'flex min-h-9 shrink-0 items-center rounded-lg border transition-colors duration-150',
           desktop ? 'gap-1.5 px-2.5 py-1.5 text-xs font-medium' : 'gap-1 px-2 py-2',
-          // The trigger stays visually active while its menu is open, so the
-          // surface never looks orphaned from the control that opened it.
-          open
-            ? 'border-[var(--color-content-tertiary)] bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
-            : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+          // Applied wins over "menu open": it is the persistent state ("is
+          // anything narrowing this view right now"), where `open` is only
+          // ever true for the instant the menu is on screen. Same subtle
+          // amber tint as an applied pill / the active scope pill / a
+          // selected facet checkbox — `border-accent/40` + `bg-accent-subtle`,
+          // not the loud fully-opaque accent border those use for a pressed
+          // selection.
+          hasAppliedFilters
+            ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+            : open
+              ? 'border-[var(--color-content-tertiary)] bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
+              : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
         ].join(' ')}
       >
         <ListFilter className={desktop ? 'size-3.5 shrink-0' : 'size-4 shrink-0'} aria-hidden />

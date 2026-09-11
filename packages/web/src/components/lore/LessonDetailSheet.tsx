@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick, Quote } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
@@ -13,6 +14,7 @@ import { formatPerDay, formatPullThrough, lessonUtility } from '@/lib/lesson-uti
 import { Badge } from '@/components/ui/Badge';
 import { Button, IconButton } from '@/components/ui/Button';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { FilterableMetaValue } from '@/components/ui/FilterableMetaValue';
 import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { JsonViewer } from '@/components/ui/JsonViewer';
@@ -20,6 +22,10 @@ import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
 import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { tryParseJsonContainer } from '@/lib/json-tree';
+import { isTypingTarget } from '@/lib/lesson-list-nav';
+import { metadataFilterTargets, applyMetadataFilterHref, isMetaValueActiveFilter, type MetadataFilterTarget } from '@/lib/filter-from-metadata';
+import { resolveFilters, isValueSelected, type Filter, type FilterField } from '@/lib/filters';
+import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -30,6 +36,11 @@ import { originLinks } from '@/lib/origin';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
 import { toast } from 'sonner';
+
+// Module-scoped for reference stability across renders — `useUrlState`
+// compares its default by reference for the "value equals default" check, the
+// same reason `LoreExplorer.tsx` keeps its own `NO_TAGS` at module scope.
+const NO_TAGS: string[] = [];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -292,9 +303,103 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
 
 export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto', initialContentTab = DEFAULT_CONTENT_TAB }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Non-modal master-detail focus model (WAI-ARIA): the panel is an OBSERVER
+  // of list selection, not a focus-stealing dialog, on the desktop drawer —
+  // the list keeps keyboard ownership so ArrowUp/Down keeps working right
+  // after a click opens the panel. `previouslyFocused` remembers the list
+  // item that was focused at the moment THIS lesson became the open one
+  // (updated on every open/switch below, via the `shownLessonIdRef` effect) —
+  // both a click and R2's arrow-nav already leave focus there natively, so
+  // this doesn't reach into LoreExplorer's DOM, it just remembers what was
+  // already focused. Used to: (a) skip the open-focus steal for the drawer,
+  // (b) return focus there on Escape/close. Mirrors `ConfirmDialog`'s
+  // `previouslyFocused` pattern, generalized to "switch" as well as "open".
+  const previouslyFocused = useRef<HTMLElement | null>(null);
   // Content view: Preview (rendered markdown, default) vs Edit (raw textarea).
   const [contentTab, setContentTab] = useState<ContentTab>(initialContentTab);
   const queryClient = useQueryClient();
+  const router = useRouter();
+
+  // R3: applying a metadata filter from the panel is a NAVIGATION — filter
+  // state lives entirely in the URL (`?filters=`/`?scope=`), and this panel is
+  // rendered globally by `MemorySidebarProvider`, outside the Explorer's own
+  // state. So it reads the SAME URL params the Explorer does (mirroring
+  // `LoreExplorer.tsx`'s own `useUrlState` calls exactly, legacy `?tags=`/
+  // `?owner=` included, so a value toggled from here folds in whatever a
+  // shared legacy link already selected) and computes the next href with the
+  // pure `applyMetadataFilterHref` (`lib/filter-from-metadata.ts`).
+  const searchParams = useSearchParams();
+  const [scopeParam] = useUrlState<string | null>('scope', null, { cleanOnPathname: '/lore' });
+  const [rawFilters] = useUrlState<Filter[] | null>('filters', null, { cleanOnPathname: '/lore' });
+  const [legacyTags] = useUrlState<string[]>('tags', NO_TAGS, { cleanOnPathname: '/lore' });
+  const [legacyOwner] = useUrlState<unknown>('owner', 'all', { cleanOnPathname: '/lore' });
+  const resolvedFilters = useMemo(
+    () => resolveFilters(rawFilters, legacyTags, legacyOwner),
+    [rawFilters, legacyTags, legacyOwner],
+  );
+
+  function handleApplyFilterTarget(target: MetadataFilterTarget) {
+    const href = applyMetadataFilterHref(
+      {
+        filters: resolvedFilters,
+        scope: scopeParam,
+        // `?lesson=`/`?memoryId=` are opaque pass-through strings —
+        // `searchParams.get` already decodes them, matching what
+        // `applyMetadataFilterHref` expects (see its own docblock).
+        lesson: searchParams.get('lesson'),
+        memoryId: searchParams.get('memoryId'),
+      },
+      target,
+    );
+    router.push(href);
+  }
+
+  // Wraps a metadata row's VALUE in the hover-reveal filter affordance when a
+  // target exists for it, else renders the bare value — the one shape every
+  // metadata row below shares, so a fifth filterable field costs one call
+  // site rather than a fifth copy of this ternary. Also carries the passive
+  // "is this already applied" accent (`isMetaValueActiveFilter`), computed
+  // against the SAME `resolvedFilters`/`scopeParam` the Explorer's own filter
+  // bar reads — this panel has no separate notion of "applied".
+  function metaFilterValue(
+    target: MetadataFilterTarget | undefined,
+    label: string,
+    value: ReactNode,
+  ): ReactNode {
+    if (!target) return value;
+    return (
+      <FilterableMetaValue
+        label={label}
+        onFilter={() => handleApplyFilterTarget(target)}
+        active={isMetaValueActiveFilter(target, resolvedFilters, scopeParam)}
+      >
+        {value}
+      </FilterableMetaValue>
+    );
+  }
+
+  // Same active-filter check, keyed by field directly rather than a
+  // precomputed target — used by the two callers below (`TagsField`,
+  // `MemoryOrigin`) that build their own per-row targets internally instead
+  // of going through `metadataFilterTargets`.
+  function isFieldValueActive(field: FilterField, value: string): boolean {
+    return isValueSelected(resolvedFilters, field, value);
+  }
+
+  // The applicable filter/scope targets for THIS lesson's metadata — computed
+  // once from the single source of truth (`metadataFilterTargets`) rather than
+  // re-deriving field mappings at each row below. `scopeTarget` covers both
+  // the header's `ScopeBadge` chip and the scope-derived "Repo" row: both mean
+  // "narrow to this scope" (Decision D2), so they share one target.
+  const metadataTargets = useMemo(
+    () => (lesson ? metadataFilterTargets(lesson) : []),
+    [lesson],
+  );
+  const scopeTarget = metadataTargets.find((t) => t.kind === 'scope');
+  const kindTarget = metadataTargets.find((t) => t.kind === 'filter' && t.field === 'kind');
+  const hostTarget = metadataTargets.find((t) => t.kind === 'filter' && t.field === 'host');
+  const agentTarget = metadataTargets.find((t) => t.kind === 'filter' && t.field === 'agent');
+  const triggerTarget = metadataTargets.find((t) => t.kind === 'filter' && t.field === 'trigger');
   // Below `md` the panel is a bottom sheet; at/above it a right-side drawer.
   // `useIsMobile` shares one matchMedia listener across all consumers. An
   // explicit `layout` overrides the breakpoint (Storybook).
@@ -406,15 +511,31 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
     if (shownLessonIdRef.current === lessonId) return;
     shownLessonIdRef.current = lessonId;
     setContentTab(DEFAULT_CONTENT_TAB);
+    // Remember whatever was focused at the moment of THIS open/switch — for a
+    // click that's the clicked card's own button (native click-focus); for
+    // R2's arrow-nav it's the card `handleListKeyDown` already called
+    // `.focus()` on before this effect runs. Not captured on close
+    // (`lessonId === null`) — there is nothing to remember returning to.
+    if (lessonId !== null) previouslyFocused.current = document.activeElement as HTMLElement | null;
   }, [lessonId]);
 
-  // Focus close button on open; restore on close. The delay lets the open
-  // animation start first, which means focus can already be somewhere inside
-  // the panel by the time it fires (a fast click straight into the Content
-  // textarea) — pulling it back to the close button would swallow the keystrokes
-  // that follow. So this only ever moves focus INTO the panel, never within it.
+  // Focus INTO the panel on open — MOBILE SHEET ONLY (modality-aware, mirrors
+  // R1's backdrop gate). The sheet covers the list and is a true modal, so
+  // moving focus in (and trapping it, via the Escape/close behavior below) is
+  // the correct dialog pattern. The desktop drawer is deliberately NON-MODAL:
+  // the list stays visible and clickable, and per WAI-ARIA's master-detail
+  // pattern the list keeps keyboard ownership, so opening/switching the panel
+  // must NOT steal focus away from the active list item — that is exactly
+  // what broke ArrowUp/ArrowDown right after a click (the bug this fixes).
+  // Entering the panel on desktop is a DELIBERATE action (Tab from the list).
+  //
+  // The delay lets the open animation start first, which means focus can
+  // already be somewhere inside the panel by the time it fires (a fast click
+  // straight into the Content textarea) — pulling it back to the close button
+  // would swallow the keystrokes that follow. So this only ever moves focus
+  // INTO the panel, never within it.
   useEffect(() => {
-    if (lesson) {
+    if (lesson && isSheet) {
       const timer = setTimeout(() => {
         const close = closeRef.current;
         if (!close) return;
@@ -425,17 +546,48 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
       return () => clearTimeout(timer);
     }
     return undefined;
+  }, [lesson, isSheet]);
+
+  // Restore focus to the list on close — for BOTH presentations, standard
+  // return-focus-to-trigger dialog hygiene (mirrors `ConfirmDialog`). Skipped
+  // if the remembered element is no longer in the document (e.g. the list
+  // re-rendered a shorter page while the panel was open).
+  useEffect(() => {
+    if (lesson !== null) return undefined;
+    const target = previouslyFocused.current;
+    previouslyFocused.current = null;
+    if (target?.isConnected) target.focus();
+    return undefined;
   }, [lesson]);
 
-  // Close on Escape — but only when the form is clean (the useEditableForm hook
+  // Escape — modality-aware (only when the form is clean; useEditableForm
   // captures Escape first when the form is dirty to trigger a discard).
+  // Mobile sheet: a genuine modal, so Escape closes it directly (focus then
+  // returns to the list via the restore-on-close effect above).
+  // Desktop drawer: non-modal, so Escape is a two-step "back out" rather than
+  // an immediate close — least-surprising for a panel the user can still see
+  // and click around: the FIRST Escape (focus is inside the panel, e.g. the
+  // user tabbed in to edit) returns focus to the active list item WITHOUT
+  // closing, so a reader can glance back at the list without losing their
+  // place in the panel's content; a SECOND Escape (focus is now back in the
+  // list, or was already there — an arrow-nav user never left it) closes.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && lesson && !isDirty) onClose();
+      if (e.key !== 'Escape' || !lesson || isDirty) return;
+      if (!isSheet) {
+        const panel = closeRef.current?.closest('[role="dialog"]');
+        const focusInsidePanel = panel ? panel.contains(document.activeElement) : false;
+        if (focusInsidePanel && previouslyFocused.current?.isConnected) {
+          e.preventDefault();
+          previouslyFocused.current.focus();
+          return;
+        }
+      }
+      onClose();
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [lesson, onClose, isDirty]);
+  }, [lesson, onClose, isDirty, isSheet]);
 
   // Global P / E shortcuts switch the Content tab — but never while focus is in
   // a form field (so typing "p"/"e" into the textarea, tags or expiry input is
@@ -443,13 +595,11 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   useEffect(() => {
     if (!lesson) return undefined;
     function onKeyDown(e: KeyboardEvent) {
-      const el = document.activeElement as HTMLElement | null;
-      const inFormField =
-        el != null &&
-        (el.tagName === 'INPUT' ||
-          el.tagName === 'TEXTAREA' ||
-          el.tagName === 'SELECT' ||
-          el.isContentEditable);
+      // `isTypingTarget` (lib/lesson-list-nav.ts) is the ONE canonical home
+      // for "is focus in a form field" — the Explorer's arrow-key list
+      // navigation (R2) needs the identical check, so this delegates rather
+      // than keeping a second inline copy that could drift from it.
+      const inFormField = isTypingTarget(document.activeElement);
       const hasModifier = e.metaKey || e.ctrlKey || e.altKey;
       const next = shortcutTabForKey(e.key, { hasModifier, inFormField, canEdit: !isArchived });
       if (!next) return;
@@ -494,18 +644,24 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
     <AnimatePresence>
       {lesson && (
         <>
-          {/* Backdrop */}
-          <motion.div
-            key="backdrop"
-            data-testid="lesson-sheet-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
-            onClick={onClose}
-            aria-hidden
-          />
+          {/* Backdrop — MOBILE SHEET ONLY (R1). A bottom sheet without a scrim
+              is a broken pattern (it covers the list behind it anyway), but the
+              desktop drawer is deliberately non-modal: the list stays visible
+              AND clickable behind it, so clicking a different row swaps the
+              open memory without closing the panel first. */}
+          {isSheet && (
+            <motion.div
+              key="backdrop"
+              data-testid="lesson-sheet-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+              onClick={onClose}
+              aria-hidden
+            />
+          )}
 
           {/* Panel — a right-side drawer on desktop, a native-style bottom sheet
               on mobile (same convention as the Explorer's filters; the sheet
@@ -543,8 +699,17 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                 : 'inset-y-0 right-0 w-full max-w-lg border-l border-[var(--color-border)]',
             ].join(' ')}
             role="dialog"
-            aria-modal="true"
+            // Only the mobile sheet is modal — see the backdrop above (R1).
+            // `undefined` (not `false`) omits the attribute entirely for the
+            // drawer, matching how `aria-modal` is conventionally absent
+            // rather than explicitly false on a non-modal dialog.
+            aria-modal={isSheet ? true : undefined}
             aria-label="Memory detail"
+            // Static id — exactly one instance of this panel ever renders
+            // (globally, via `MemorySidebarProvider`) — so the list can point
+            // `aria-controls` at it (see `LoreExplorer.tsx`'s results list),
+            // announcing that selecting a row updates this panel.
+            id="lesson-detail-panel"
           >
             {/* Drag handle — bottom sheet only. Grabbing it starts the drag; the
                 body scrolls independently (dragListener is off). */}
@@ -562,7 +727,11 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
             <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] p-5">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
-                  <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath linkRepo />
+                  {metaFilterValue(
+                    scopeTarget,
+                    `Filter by scope "${lesson.scope}"`,
+                    <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath linkRepo />,
+                  )}
                   <OwnershipBadge org={lesson.org} />
                   {isArchived && (
                     <span className="rounded-full bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)]">
@@ -638,6 +807,15 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                       tags={field.value}
                       onChange={field.onChange}
                       editable={!isArchived}
+                      onTagFilter={(tag) =>
+                        handleApplyFilterTarget({
+                          kind: 'filter',
+                          field: 'label',
+                          value: tag,
+                          label: `Filter by label "${tag}"`,
+                        })
+                      }
+                      isTagActive={(tag) => isFieldValueActive('label', tag)}
                     />
                   )}
                 />
@@ -716,7 +894,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Layers className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Kind</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {lesson.kind}
+                                  {metaFilterValue(kindTarget, `Filter by kind "${lesson.kind}"`, lesson.kind)}
                                 </dd>
                               </div>
                             )}
@@ -725,7 +903,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Cpu className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Host</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {lesson.host}
+                                  {metaFilterValue(hostTarget, `Filter by host "${lesson.host}"`, lesson.host)}
                                 </dd>
                               </div>
                             )}
@@ -734,7 +912,11 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {lesson.source_agent}
+                                  {metaFilterValue(
+                                    agentTarget,
+                                    `Filter by agent "${lesson.source_agent}"`,
+                                    lesson.source_agent,
+                                  )}
                                 </dd>
                               </div>
                             )}
@@ -743,7 +925,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {lesson.trigger}
+                                  {metaFilterValue(triggerTarget, `Filter by trigger "${lesson.trigger}"`, lesson.trigger)}
                                 </dd>
                               </div>
                             )}
@@ -1004,14 +1186,22 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Github className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Repo</dt>
                                 <dd className="ml-auto">
-                                  <a
-                                    href={repoUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
-                                  >
-                                    {repoDisplay}
-                                  </a>
+                                  {/* Derived from the SCOPE, so its affordance
+                                      narrows by scope, not a `repo` filter
+                                      (Decision D2) — the same target the
+                                      header's ScopeBadge chip uses. */}
+                                  {metaFilterValue(
+                                    scopeTarget,
+                                    `Filter by scope "${lesson.scope}"`,
+                                    <a
+                                      href={repoUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
+                                    >
+                                      {repoDisplay}
+                                    </a>,
+                                  )}
                                 </dd>
                               </div>
                             )}
@@ -1024,7 +1214,19 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 margin; when there isn't, the intra-cluster
                                 `gap-2` still visually separates these rows from
                                 the timeline above. */}
-                            <MemoryOrigin origin={lesson} scope={lesson.scope} />
+                            <MemoryOrigin
+                              origin={lesson}
+                              scope={lesson.scope}
+                              onFilterOrigin={(field, value) =>
+                                handleApplyFilterTarget({
+                                  kind: 'filter',
+                                  field,
+                                  value,
+                                  label: `Filter by ${field} "${value}"`,
+                                })
+                              }
+                              isValueActive={isFieldValueActive}
+                            />
                           </>
                         )}
                       </dl>

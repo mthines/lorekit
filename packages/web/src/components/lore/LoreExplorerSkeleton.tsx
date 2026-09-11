@@ -1,3 +1,5 @@
+import { LessonCardSkeleton } from './LessonCardSkeleton';
+
 // Skeleton for the data-only part of the Lore Explorer.
 // Used by lore/page.tsx inline (so the title stays visible while data loads)
 // and by lore/loading.tsx (route-level fallback on first navigation).
@@ -54,15 +56,16 @@ function ControlRowSkeleton({ variant }: { variant: 'desktop' | 'mobile' }) {
   );
 }
 
-/** The memory card list — same card shape on both breakpoints. */
+/**
+ * The memory card list — the real `LessonCardSkeleton` (matching `MemoryCard`
+ * shape), not a plain box, so this placeholder resolves to the loaded list
+ * with no jump (R4). Same shape on both breakpoints.
+ */
 function CardsSkeleton() {
   return (
     <div className="flex flex-col gap-2">
       {CARDS.map((i) => (
-        <div
-          key={i}
-          className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
-        />
+        <LessonCardSkeleton key={i} />
       ))}
     </div>
   );
