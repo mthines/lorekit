@@ -23,8 +23,14 @@ type MemoryRow = Tables<'memories'>;
  * `value` is unavoidable — it is what gets tokenized — and it is also the
  * expensive one, which is what bounds `CANDIDATE_LIMIT` below. Bodies never
  * leave the function: only `lessonHook`'s first line reaches the response.
+ *
+ * `tags` is here for `statusOf`: a lesson written under the current convention
+ * declares `structural` as a `status::structural` TAG rather than in the body,
+ * and `isCandidate` treats a non-`active` status as candidacy evidence on its
+ * own. Omitting the column made every such lesson read as status-less, so the
+ * predicate silently lost half its inputs. Tags never reach the response.
  */
-const CLUSTERS_SELECT = 'scope,key,value,seen_count,updated_at';
+const CLUSTERS_SELECT = 'scope,key,value,seen_count,updated_at,tags';
 
 /**
  * How many rows may be fetched before clustering.
@@ -156,6 +162,7 @@ export async function handleClusters(
     key: r.key,
     value: r.value,
     seenCount: (r as MemoryRow & { seen_count?: number | null }).seen_count ?? null,
+    tags: r.tags ?? null,
     updatedAt: r.updated_at,
   }));
 

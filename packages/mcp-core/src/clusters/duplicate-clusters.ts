@@ -94,6 +94,12 @@ export interface ClusterableEntry {
   key?: string | null;
   value?: string | null;
   seenCount?: number | null;
+  /**
+   * The row's tags. Only `status::<value>` is read here (see `statusOf`), but a
+   * caller that omits the field entirely makes every lesson written under the
+   * tag convention look status-less — so a reader of this type must fetch it.
+   */
+  tags?: readonly string[] | null;
 }
 
 /** A group of rows the heuristic linked together. */
@@ -423,6 +429,34 @@ export function parseMetaComment(value: unknown): Record<string, string> {
   return out;
 }
 
+const STATUS_TAG_PREFIX = 'status::';
+
+/**
+ * A member's declared status.
+ *
+ * The canonical home is a `status::<value>` tag — first-class, filterable, and
+ * visible to a human reading the lesson — which is what the `lorekit-setup`
+ * skill prescribes. A legacy `<!-- meta: status=… -->` comment in the body is
+ * still honoured so lessons written under the older convention keep their
+ * signal; the tag wins when both are present. Returns `''` when neither
+ * declares one.
+ *
+ * Kept byte-for-byte in step with the CLI's `statusOf`
+ * (`packages/cli/src/shared/candidates-pure.mjs`) — `duplicate-clusters-parity.spec.ts`
+ * asserts the two agree, including on tag-only members.
+ */
+export function statusOf(member: ClusterableEntry | null | undefined): string {
+  const tags = Array.isArray(member?.tags) ? member.tags : [];
+  for (const t of tags) {
+    if (typeof t === 'string' && t.startsWith(STATUS_TAG_PREFIX)) {
+      const v = t.slice(STATUS_TAG_PREFIX.length).trim();
+      if (v) return v;
+    }
+  }
+  const fromMeta = parseMetaComment(member?.value)['status'];
+  return typeof fromMeta === 'string' ? fromMeta.trim() : '';
+}
+
 function totalSeen(members: readonly ClusterableEntry[] = []): number {
   return (members ?? []).reduce(
     (n, m) => n + (Number.isFinite(m?.seenCount) ? (m.seenCount as number) : 0),
@@ -442,9 +476,10 @@ export const DEFAULT_MIN_SEEN_COUNT = 3;
  * Either the summed `seenCount` across members crosses `minSeenCount` — the SUM
  * rather than any single member's count, since the whole pitch of a candidate is
  * "these N sightings are really one entry" — or a member's own meta comment
- * already declares a non-`active` status. The disjunction matters: a lesson
- * somebody marked `structural` is a candidate on that evidence alone, however
- * few times it has recurred.
+ * already declares a non-`active` status — read by `statusOf`, so a
+ * `status::<value>` tag counts as well as a legacy meta comment. The
+ * disjunction matters: a lesson somebody marked `structural` is a candidate on
+ * that evidence alone, however few times it has recurred.
  */
 export function isCandidate(
   members: readonly ClusterableEntry[] = [],
@@ -452,8 +487,8 @@ export function isCandidate(
 ): boolean {
   if (totalSeen(members) >= minSeenCount) return true;
   return (members ?? []).some((m) => {
-    const status = parseMetaComment(m?.value)['status'];
-    return typeof status === 'string' && status.length > 0 && status !== 'active';
+    const status = statusOf(m);
+    return status.length > 0 && status !== 'active';
   });
 }
 

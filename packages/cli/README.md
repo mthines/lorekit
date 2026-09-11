@@ -542,10 +542,11 @@ lorekit invariants candidates --scope repo::owner/repo
 ```
 
 A cluster is a candidate when the **summed `seen_count`** across its members
-is at least `--min-seen-count` (default `3`), or any member's own
-`<!-- meta: seen_count=… status=… trigger-context="…" -->` comment (the
-convention documented in the `lorekit-setup` skill's
-`self-improvement-loops.md`) already declares a non-`"active"` status.
+is at least `--min-seen-count` (default `3`), or any member already declares a
+non-`"active"` status. Status is read from a `status::<value>` **tag** — the
+canonical home, per the `lorekit-setup` skill's `self-improvement-loops.md` —
+falling back to a legacy `<!-- meta: … status=… -->` body comment for lessons
+written before tags were the convention; the tag wins when both are present.
 Candidates are ranked by (summed `seen_count` × distinct scopes), descending.
 **For each candidate it prints every memory the merge would collapse** —
 that list is the whole point of the command.
@@ -555,10 +556,11 @@ whose members already resolve to a named recurrence class is flagged as a
 stronger case ("this should join an existing invariant") than a merely
 similar one ("this might be a new class").
 
-It deliberately does **not** classify a `trigger-context` into a
-glob/command/error-shape — that judgment is the human step the compile
-pipeline's "never auto-compile, never auto-gate" rule protects, so the raw
-string is printed, never interpreted — and it does **not** know about
+It deliberately does **not** classify a member's applicability signal — its
+visible `**Applies when:**` body line, or a legacy `trigger-context` meta
+field — into a glob/command/error-shape. That judgment is the human step the
+compile pipeline's "never auto-compile, never auto-gate" rule protects, so the
+raw string is printed, never interpreted — and it does **not** know about
 `compiled_to` (no such field exists yet, so an already-compiled candidate can
 still surface here — a known, named gap, not a silent omission).
 
