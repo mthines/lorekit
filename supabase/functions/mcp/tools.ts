@@ -317,7 +317,12 @@ export async function toolRead(
   // injection and not the scope it came from — a hard `scope and key are
   // required` error. `key` stays required: without it there is no read at all,
   // only a list.
-  const scope = rawScope ? validateScope(rawScope) : null;
+  // `!== undefined && !== null`, never a truthiness test: `""` is falsy, so a
+  // truthy check reads an EXPLICIT empty scope as an omitted one and silently
+  // widens the read account-wide. `validateScope('')` already rejects it with
+  // a clear message, and a caller that sent a scope deserves that error rather
+  // than a different question quietly answered.
+  const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
 
   span.setAttributes({ 'lorekit.key': key, ...(scope ? { 'lorekit.scope': scope } : {}) });
 
@@ -483,7 +488,12 @@ export async function toolList(
   // MCP was the odd one out, rejecting the call outright — so an agent that did
   // not already know a scope name could not discover anything through this tool
   // (`memory.scopes` existed precisely to work around that).
-  const scope = rawScope ? validateScope(rawScope) : null;
+  // `!== undefined && !== null`, never a truthiness test: `""` is falsy, so a
+  // truthy check reads an EXPLICIT empty scope as an omitted one and silently
+  // widens the read account-wide. `validateScope('')` already rejects it with
+  // a clear message, and a caller that sent a scope deserves that error rather
+  // than a different question quietly answered.
+  const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
   const pageLimit = Math.min(limit, 100);
   // Recorded BEFORE the clamp so a future cap decision has the caller's actual
   // ask, not just the truncated `result.count` — without this, every call
@@ -873,7 +883,12 @@ export async function toolListArchived(
   // Optional for the same reason as `memory.list`, whose `?archived=true` form
   // this is the MCP twin of — the two must not disagree about whether a scope
   // is needed to look at the same rows.
-  const scope = rawScope ? validateScope(rawScope) : null;
+  // `!== undefined && !== null`, never a truthiness test: `""` is falsy, so a
+  // truthy check reads an EXPLICIT empty scope as an omitted one and silently
+  // widens the read account-wide. `validateScope('')` already rejects it with
+  // a clear message, and a caller that sent a scope deserves that error rather
+  // than a different question quietly answered.
+  const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
   const pageLimit = Math.min(limit, 100);
 
   // See toolList's identical comment: recorded pre-clamp so a capped call is
