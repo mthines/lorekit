@@ -21,9 +21,8 @@ export default async function OrganizationSettingsPage() {
     >
       {/* OrganizationManager reads the `?org=` search param (useUrlState) to drive
           its deep-linkable master/detail view, which requires a Suspense boundary
-          per the useUrlState SSR contract. */}
-      {/* Fallback mirrors the org list's row shape so the layout doesn't jump
-          once the client value hydrates. */}
+          per the useUrlState SSR contract. The fallback mirrors the org list's row
+          shape so the layout doesn't jump once the client value hydrates. */}
       <Suspense fallback={<OrgListSkeleton />}>
         <OrganizationManager initialOrgs={orgs} currentUserId={user?.id ?? ''} />
       </Suspense>
