@@ -44,6 +44,11 @@ import {
   ORG_DELETE_RETENTION_DAYS,
 } from '@/lib/org-ui';
 import { useUrlState } from '@/lib/hooks/useUrlState';
+import {
+  OrgMembersSkeleton,
+  OrgInvitesSkeleton,
+  OrgScopesSkeleton,
+} from '@/components/dashboard/OrganizationSkeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Button, IconButton } from '@/components/ui/Button';
@@ -863,7 +868,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
               )}
             </div>
             {loadingOrgData ? (
-              <p className="text-xs text-[var(--color-content-tertiary)]">Loading members…</p>
+              <OrgMembersSkeleton manageable={Boolean(caps?.canManageRoles)} />
             ) : (
               <AnimatePresence>
                 {members.map((member) => {
@@ -955,6 +960,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
           {(caps?.canInvite || pendingInvites.length > 0) && (
             <section className="flex flex-col gap-1.5">
               <SectionLabel>Invites</SectionLabel>
+              {loadingOrgData && <OrgInvitesSkeleton />}
               {pendingInvites.length > 0 && (
                 <AnimatePresence>
                   {pendingInvites.map((invite) => (
@@ -1015,7 +1021,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                 Writes under a bound scope auto-route to {selectedOrg.name} for write-capable members.
               </p>
               {loadingOrgData ? (
-                <p className="text-xs text-[var(--color-content-tertiary)]">Loading scopes…</p>
+                <OrgScopesSkeleton />
               ) : bindings.length === 0 ? (
                 <EmptyState
                   icon={Link}
