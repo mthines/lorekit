@@ -71,6 +71,11 @@ across runs** — recurrence is the cheap external signal that the lesson is rea
 not a one-off. This is the episodic → procedural promotion path, with a human
 gate on the slow tier so a single bad run can never rewrite the host.
 
+Both tiers are **read by people as well as agents** — a teammate browsing the
+dashboard, a reviewer asking why a rule exists. That is why a lesson body is
+plain markdown with no hidden payload; see
+[the lesson record](#the-lesson-record).
+
 The fast tier is optional: if LoreKit's `memory.*` tools are not connected, the
 loop is a silent no-op (log one line, continue). The slow tier is just editing
 the host and is unaffected.
@@ -101,24 +106,115 @@ Reserve `branch::` for throwaway notes; a loop normally writes `global` or
 ### The lesson record
 
 A loop lesson is **procedural** ("how to do better next time"), not a fact about
-the user. Keep the machine-read metadata in a `meta:` comment at the top of the
-`value` so the prose stays readable:
+the user. The `value` is **markdown a human reads** — in the dashboard, in a
+SessionStart injection, in another agent's context — and nothing else. Write it
+to this shape:
 
 ```markdown
-<!-- meta: seen_count=1 status=active expires=<ISO 8601, ~90 days out> trigger-context="<concrete signal — file glob, task type, tool, error shape>" -->
+# <one-line takeaway — what to do, not what the lesson is about>
 
-# <one-line lesson title>
+**Applies when:** <concrete signal — file glob, task type, tool name, error shape>
 
-**What failed:** <concrete observable from the run>
+**What happened:** <the concrete observable from the run>
 **Why:** <root cause, if known; "unknown" is allowed>
-**What to do next time:** <prescriptive, actionable, testable instruction>
+**Do this instead:** <prescriptive, actionable, testable instruction>
 **Promotion target:** <the host rule/step this would harden if promoted, or "none">
 ```
 
-`trigger-context` must be **concrete** (globs, task types, tool names, error
-shapes) — never "when it feels relevant" — so the read step can match it
-mechanically. `seen_count`, `status`, and `expires` drive recurrence, promotion,
-and decay.
+`Applies when` must be **concrete** (globs, task types, tool names, error
+shapes) — never "when it feels relevant" — so the read step can match it against
+the current run. It is a visible line, not hidden metadata: the reader deciding
+whether a lesson is theirs needs it first, which is why it sits directly under
+the title.
+
+#### Never put machine metadata in the body
+
+**A lesson body carries no hidden or machine-only payload — no HTML comment, no
+front-matter block, no JSON blob, no `key=value` header.** Every byte of `value`
+must render as prose a person can read. This is not a style preference; a body
+field is the wrong home for each of these on the merits:
+
+| Fact | Where it belongs | Why not the body |
+| ---- | ---------------- | ---------------- |
+| **Recurrence count** | `seen_count`, a store column | `memory_write` sets `seen_count = memories.seen_count + 1` on every overwrite. A count written into prose is a snapshot the writer guessed at and nothing ever updates — stale the first time the lesson recurs, and readers of the real counter never see it |
+| **Expiry** | `ttl_days` on the write (`clear_ttl` to make permanent) | Expiry is enforced against the column by `memory.purge_expired` and the read filters. A date in prose expires nothing |
+| **Status** (`structural`, `promoted`) | a `status::<value>` tag | Tags are first-class and filterable — `memory.list { tags: ["status::structural"] }` finds them. Prose is not queryable |
+| **Owning host / bucket kind** | the `host` and `kind` write fields | Both are first-class, inferred from the `loop::<host>-lessons` tag when omitted, and drive the Explorer's own facets |
+| **Provenance** (repo, branch, commit, PR) | `origin_repo` / `origin_branch` / `origin_commit` / `origin_pr` | First-class, and the dashboard renders them as links |
+| **Trigger** (`stuck-loop`, `command-failure`, …) | the `trigger` write field | Already a facet; restating it in prose adds a line and no information |
+
+An HTML comment is the worst of both worlds: markdown renders it to *nothing*, so
+a human sees a lesson that starts mid-thought, while the fields inside it silently
+disagree with the store's own columns. If a fact has a first-class home, put it
+there and leave it out of the prose entirely.
+
+This rule governs **lesson** bodies. A CI **state record** is a different shape
+on purpose — its whole `value` is a JSON object, authoritative and parsed rather
+than read, with no prose wrapped around it. See
+[ci-state-records.md](./ci-state-records.md).
+
+#### Writing rules
+
+Enforce these on every write, autonomous or not:
+
+- **One lesson per record.** Two takeaways are two keys.
+- **Lead with the takeaway.** The `#` title is the instruction, not the topic —
+  "Pass `--node-modules-dir=none` to `deno check`", not "Notes on deno check".
+- **Bold label, then one short paragraph.** No nesting past one list level, no
+  sub-headings; the whole record is read at a glance or not at all.
+- **Fence every command or snippet**, with a language tag.
+- **Budget ~1,500 characters.** A lesson longer than a screen is a document, and
+  a loop that injects documents crowds out the run it was meant to help. Cut the
+  narrative, keep the instruction.
+- **No run residue** — no transcript excerpts, reasoning traces, session or
+  correlation IDs, timestamps, or "in this run I…" framing. A lesson is written
+  for the *next* run, which has none of that context.
+- **No secrets or PII**, per the privacy pre-flight in the write step.
+
+#### Worked example
+
+❌ **Don't** — a hidden header, a title that names a topic, and a run narrative:
+
+```markdown
+<!-- meta: seen_count=1 status=active expires=2026-12-11 trigger-context="bash: line 5: dash0link: command not found" -->
+# Notes on the Slack tool
+**What failed:** In this run I called `slackSendMessage --args='{ … `dash0link` … }'`
+and got `bash: line 5: dash0link: command not found`, then retried twice with
+different escaping before it worked. Session 4b1c2efe, 2026-09-11.
+```
+
+Everything before the title renders to nothing for a human; `seen_count` and
+`expires` contradict the store the moment the lesson recurs; the title says what
+the lesson is *about* rather than what to do; and the run residue is dead weight
+in every future context window.
+
+✅ **Do** — the same lesson, all metadata in its own field:
+
+````markdown
+# Send Slack messages via a heredoc, not inline `--args='…'`
+
+**Applies when:** shelling out to `slackSendMessage` with text interpolated from
+an external source (ticket titles, PR titles) that may contain backticks or apostrophes.
+
+**What happened:** Inline `--args='{ … }'` failed with `bash: dash0link: command not found` —
+the shell expanded backticks in the JSON, and an apostrophe closed the quoted argument early.
+**Why:** Single quotes do not protect the string once the outer shell re-processes it.
+**Do this instead:** Pass the JSON through a quoted heredoc, which needs no escaping:
+
+```bash
+tools invoke slack.slackSendMessage --args="$(cat <<'ENDJSON'
+{ "text": "…" }
+ENDJSON
+)"
+```
+
+**Promotion target:** the automation prompt's message-building step.
+````
+
+Written with `tags: ["loop::<host>-lessons", "source::command-failure"]`,
+`trigger: "command-failure"`, and `ttl_days: 90` — so the recurrence count, the
+expiry, the owning host and the trigger are all queryable, and the body is
+readable start to finish.
 
 ---
 
@@ -135,9 +231,9 @@ memory.search { q: "<keywords>", scopes: ["repo::{owner}/*", "global"], limit: 1
 
 Then:
 
-1. Match each lesson's `trigger-context` against the current run. Consider only
-   matches. **Skip any lesson whose `expires` is in the past** — treat it as
-   stale.
+1. Match each lesson's **Applies when** line against the current run. Consider
+   only matches. Expired lessons do not come back — the store's own TTL drops
+   them, so the read never has to filter on a date in the prose.
 2. Apply each matching *"What to do next time"* as a **consideration**, not a
    command — it biases the run unless it conflicts with the user's stated intent
    or a task-specific constraint. On conflict, the user's intent wins; surface it.
@@ -161,23 +257,31 @@ caught something, a near-miss, a guess that paid off. Not on smooth successes.
    memory.search { q: "<key words of the lesson>", scopes: ["repo::{owner}/{repo}", "global"], limit: 10 }
    ```
 
-3. **Write** to the classified scope:
+3. **Write** to the classified scope, putting every fact in its own field and
+   nothing but prose in `value`:
 
    ```text
    memory.write {
-     scope: "<global | repo::{owner}/{repo}>",
-     key:   "<host>-lessons::<slug>",
-     value: "<the lesson body above>",
-     tags:  ["loop::<host>-lessons", "source::<trigger>"],
-     trigger: "<stuck-loop | command-failure | gotcha | near-miss | assumption-wrong | paid-off | manual>"
+     scope:     "<global | repo::{owner}/{repo}>",
+     key:       "<host>-lessons::<slug>",
+     value:     "<the markdown lesson body above — no hidden blocks>",
+     tags:      ["loop::<host>-lessons", "source::<trigger>"],   # + "status::structural" when it is
+     trigger:   "<stuck-loop | command-failure | gotcha | near-miss | assumption-wrong | paid-off | manual>",
+     ttl_days:  90
    }
    ```
 
-Same `scope` + `key` overwrites in place. **A recurrence resolves to an UPDATE
-that increments `seen_count` by 1 and refreshes `expires`** — that is what makes
-recurrence countable and drives promotion. If a lesson you applied at the start
-of the run worked (the failure did not recur), still write the UPDATE:
-successful application is recurrence evidence.
+   `host` and `kind` are inferred from the `loop::<host>-lessons` tag; pass them
+   explicitly only when the tag does not carry them. Add the `origin_*` fields
+   when the run knows them.
+
+Same `scope` + `key` overwrites in place. **A recurrence resolves to an UPDATE:
+the store increments `seen_count` by 1 for you, and re-passing `ttl_days`
+refreshes the expiry** — that is what makes recurrence countable and drives
+promotion. Never hand-write a count into the body to track this; the column is
+the only copy that stays true. If a lesson you applied at the start of the run
+worked (the failure did not recur), still write the UPDATE: successful
+application is recurrence evidence.
 
 The privacy pre-flight is never skipped, autonomous or not: a candidate lesson
 containing a secret, token, credential, or PII is **dropped, not written**. The
@@ -381,8 +485,9 @@ hotspots during review), and every code-changing host — `aw`, `implement-sugge
 
 After a read or write, a lesson is **promotion-eligible** when either:
 
-- `seen_count >= 3` — the same failure recurred across at least three runs, or
-- it is tagged `status=structural` because it reflects a design gap, not a
+- `seen_count >= 3` — the same failure recurred across at least three runs (read
+  the store's column, never a number written into the body), or
+- it carries the `status::structural` tag because it reflects a design gap, not a
   one-off.
 
 For an eligible lesson, **surface a one-line suggestion — never act silently**:
@@ -394,8 +499,8 @@ The promotion target follows the lesson's scope: a `global` lesson hardens the
 **host's own source** (every user of the host benefits); a `repo::` lesson
 hardens the **repo's own rules / docs** (every teammate in that repo benefits).
 Promotion is a normal, human-reviewed edit — LoreKit does not apply it. After a
-successful promotion, write an UPDATE setting `status=promoted` so the lesson
-stops re-suggesting and stands as an audit trail of why the rule exists.
+successful promotion, write an UPDATE adding the `status::promoted` tag so the
+lesson stops re-suggesting and stands as an audit trail of why the rule exists.
 
 A recurring lesson can be promoted a second time, past the prose rule above,
 into a **compiled invariant** — a declarative, mechanically-checked assertion
@@ -420,9 +525,10 @@ guards are what make the loop safe:
    run; it can never silently disable a gate, skip a step, or change a limit. The
    only path from a lesson to changed behavior is the human-reviewed slow tier.
 2. **Recurrence gates promotion, not a single run** (`seen_count >= 3`, or an
-   explicit `status=structural` marker in the lesson's `meta:` comment).
-3. **Every lesson expires** (default ~90 days from last sighting; the read step
-   ignores expired lessons, so stale beliefs decay instead of entrenching).
+   explicit `status::structural` tag on the lesson).
+3. **Every lesson expires** — `ttl_days: 90` on the write, refreshed on each
+   recurrence, so stale beliefs decay instead of entrenching. The store enforces
+   this; an expiry stated only in prose is decoration.
 4. **Contradiction is surfaced, not silently overwritten** — the dedup search
    finds the prior lesson; a genuine reversal is a reviewed decision.
 5. **The privacy pre-flight is never bypassed** — secrets / PII are dropped, not
@@ -436,13 +542,14 @@ To add a loop to a host called `<host>`:
 
 - [ ] Pick the bucket: tag `loop::<host>-lessons`, key `<host>-lessons::<slug>`.
 - [ ] Add the **read step** at the start of the host's run (narrow-to-broad
-      `memory.list` filtered by the tag; apply matches as considerations; skip
-      expired).
+      `memory.list` filtered by the tag; apply matches as considerations).
 - [ ] Add the **write step** at the host's existing failure / end-of-run points
-      (classify scope, `memory.search` to dedup, `memory.write`). No new
-      reflection stage — hook the points the host already detects.
+      (classify scope, `memory.search` to dedup, `memory.write` with `ttl_days`).
+      No new reflection stage — hook the points the host already detects.
+- [ ] State the **body contract** in the host's own write step: markdown to the
+      shape above, no hidden blocks, every store-backed fact in its own field.
 - [ ] Add the **promotion suggestion** when a read/written lesson hits
-      `seen_count >= 3` or `status=structural`.
+      `seen_count >= 3` or carries `status::structural`.
 - [ ] State the **entrenchment guards** so a future maintainer does not "optimize
       them away".
 - [ ] Confirm the loop **degrades silently** when `memory.*` is not connected.

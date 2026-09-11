@@ -66,7 +66,7 @@ mechanically-checked rule instead of text a reader has to notice.
 | **Compiled invariant** | A declarative `obligations-map.mjs` entry a CI gate checks against a changed-file set — see [rules/compiled-invariants.md](./rules/compiled-invariants.md) | **Yes** | Enforced once `gating`; most lessons never qualify |
 
 A recurrence gate connects the first two: a lesson that recurs (`seen_count >= 3`)
-or is marked `status=structural` becomes promotion-eligible. Entrenchment guards
+or carries the `status::structural` tag becomes promotion-eligible. Entrenchment guards
 keep the fast tier from reinforcing its own wrong conclusions. The third rung has
 its own, stricter gate — the compilability test — and most promotion-eligible
 lessons stop at the second rung because they fail it.
@@ -92,6 +92,30 @@ It covers: when to add a loop (and when not to), the bucket convention (tag
 `loop::<host>-lessons` + key namespace), scope selection, the lesson schema, the
 read/write steps, the promotion gate, the entrenchment guards, a wiring
 checklist, and an interactive setup flow.
+
+### A lesson body is markdown for humans — nothing hidden
+
+Whatever host you wire, its write step carries one non-negotiable contract: the
+`value` is **markdown a person reads**, and it carries no HTML comment, no
+front-matter, no JSON blob, and no `key=value` header. Every fact the store
+already models goes in its own write field, never restated in the prose:
+
+| Fact | Field, not prose |
+| ---- | ---------------- |
+| Recurrence | `seen_count` — the store increments it on every overwrite |
+| Expiry | `ttl_days` (`clear_ttl` to make permanent) |
+| Status (`structural` / `promoted`) | a `status::<value>` tag |
+| Owning host, bucket kind | `host`, `kind` |
+| Repo / branch / commit / PR | the `origin_*` fields |
+| What triggered the write | `trigger` |
+
+A hidden block does not just look untidy — it is *wrong*. A `seen_count=1` baked
+into prose is stale the first time the lesson recurs, while the column that
+governs promotion moves without it, and a markdown reader is shown a lesson that
+begins mid-sentence. Structure the prose instead: a takeaway title, a visible
+**Applies when** line, then short bold-labelled paragraphs under ~1,500
+characters. The full shape, the field-by-field rationale, and the writing rules
+are [the lesson record](./rules/self-improvement-loops.md#the-lesson-record).
 
 ## The shared codebase-knowledge layer (automatic cross-loop synergy)
 

@@ -44,6 +44,46 @@ export function parseMetaComment(value) {
   return out;
 }
 
+const STATUS_TAG_PREFIX = 'status::';
+
+/**
+ * A member's declared status. The canonical home is a `status::<value>` tag —
+ * first-class, filterable, and visible to a human reading the lesson — which is
+ * what the lorekit-setup skill now prescribes. A legacy `<!-- meta: status=… -->`
+ * comment in the body is still honoured so lessons written under the older
+ * convention keep their signal; the tag wins when both are present. Returns `''`
+ * when neither declares one.
+ */
+export function statusOf(member) {
+  const tags = Array.isArray(member?.tags) ? member.tags : [];
+  for (const t of tags) {
+    if (typeof t === 'string' && t.startsWith(STATUS_TAG_PREFIX)) {
+      const v = t.slice(STATUS_TAG_PREFIX.length).trim();
+      if (v) return v;
+    }
+  }
+  const fromMeta = parseMetaComment(member?.value).status;
+  return typeof fromMeta === 'string' ? fromMeta.trim() : '';
+}
+
+const APPLIES_WHEN_RE = /^\s*\*\*Applies when:\*\*\s*(.+?)\s*$/im;
+
+/**
+ * A member's applicability signal, printed verbatim and never interpreted. The
+ * canonical home is the visible `**Applies when:**` line the lorekit-setup
+ * skill prescribes; a legacy `trigger-context` meta field is the fallback.
+ * Returns `''` when the lesson declares neither.
+ */
+export function appliesWhenOf(member) {
+  const value = member?.value;
+  if (typeof value === 'string') {
+    const m = APPLIES_WHEN_RE.exec(value);
+    if (m && m[1]) return m[1].trim();
+  }
+  const fromMeta = parseMetaComment(value)['trigger-context'];
+  return typeof fromMeta === 'string' ? fromMeta.trim() : '';
+}
+
 function totalSeen(members) {
   return (members || []).reduce((n, m) => n + (Number.isFinite(m.seenCount) ? m.seenCount : 0), 0);
 }
@@ -57,14 +97,15 @@ function distinctScopeCount(members) {
  * summed `seenCount` across members crosses `minSeenCount` (default 3 — the
  * kickoff's "seen_count >= 3" criterion, applied to the SUM across the
  * cluster's members rather than any single one, since the whole pitch of a
- * candidate is "these N sightings are really one entry"), or a member's own
- * meta comment already declares a non-"active" status.
+ * candidate is "these N sightings are really one entry"), or a member already
+ * declares a non-"active" status (a `status::<value>` tag, or a legacy meta
+ * comment — see `statusOf`).
  */
 export function isCandidate(members, { minSeenCount = 3 } = {}) {
   if (totalSeen(members) >= minSeenCount) return true;
   return (members || []).some((m) => {
-    const status = parseMetaComment(m.value).status;
-    return typeof status === 'string' && status.length > 0 && status !== 'active';
+    const status = statusOf(m);
+    return status.length > 0 && status !== 'active';
   });
 }
 
@@ -90,7 +131,12 @@ export function rankCandidates(clusters, { minSeenCount = 3, resolveClass } = {}
   return (clusters || [])
     .filter((cl) => isCandidate(cl.members, { minSeenCount }))
     .map((cl) => {
-      const members = (cl.members || []).map((m) => ({ ...m, meta: parseMetaComment(m.value) }));
+      const members = (cl.members || []).map((m) => ({
+        ...m,
+        meta: parseMetaComment(m.value),
+        status: statusOf(m),
+        appliesWhen: appliesWhenOf(m),
+      }));
       return {
         members,
         size: cl.size ?? members.length,

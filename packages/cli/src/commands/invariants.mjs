@@ -14,15 +14,16 @@
 //
 // Criteria (pure scoring in `../shared/candidates-pure.mjs`):
 //   - summed seen_count across a cluster's members >= --min-seen-count
-//     (default 3), OR any member's `<!-- meta: ... status=... -->` comment
-//     already declares a non-"active" status
+//     (default 3), OR any member already declares a non-"active" status —
+//     a `status::<value>` tag, or a legacy `<!-- meta: ... status=... -->`
+//     comment for lessons written before tags were the convention
 //   - ranked by (summed seen_count × distinct scopes), descending
 //
 // What this deliberately does NOT do:
-//   - classify a trigger-context into a glob/command/error-shape. The raw
-//     `trigger-context` string (when a lesson's meta comment carries one) is
-//     printed verbatim, never interpreted — "parses into a detectable
-//     trigger" is the human step the compile pipeline protects.
+//   - classify an applicability signal into a glob/command/error-shape. The raw
+//     string (a lesson's `**Applies when:**` line, or a legacy meta comment's
+//     `trigger-context`) is printed verbatim, never interpreted — "parses into
+//     a detectable trigger" is the human step the compile pipeline protects.
 //   - check `compiled_to`. No such field exists yet (no schema, no server
 //     support — see the kickoff's Open Questions), so a candidate already
 //     compiled into an obligations-map.mjs entry can still surface here. A
@@ -150,7 +151,13 @@ function buildCandidates(entries, { threshold, minSeenCount }) {
     ...cl,
     members: cl.members.map((m) => {
       const raw = byAddress.get(`${m.scope}::${m.key}`);
-      return { scope: m.scope, key: m.key, seenCount: seenCountOf(raw), value: raw?.value ?? '' };
+      return {
+        scope: m.scope,
+        key: m.key,
+        seenCount: seenCountOf(raw),
+        value: raw?.value ?? '',
+        tags: Array.isArray(raw?.tags) ? raw.tags : [],
+      };
     }),
   }));
   return rankCandidates(clusters, { minSeenCount, resolveClass: resolveRecurrenceClass });
@@ -281,8 +288,8 @@ function renderSection(header, section) {
     }
     for (const m of cand.members) {
       const fields = [`seen_count=${m.seenCount}`];
-      if (m.meta.status) fields.push(`status=${m.meta.status}`);
-      if (m.meta['trigger-context']) fields.push(`trigger-context=${JSON.stringify(m.meta['trigger-context'])}`);
+      if (m.status) fields.push(`status=${m.status}`);
+      if (m.appliesWhen) fields.push(`applies-when=${JSON.stringify(m.appliesWhen)}`);
       log(`    ${c.cyan('-')} ${m.scope}::${m.key}  ${c.dim(`(${fields.join(', ')})`)}`);
     }
   }

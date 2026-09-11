@@ -114,8 +114,9 @@ A read-only survey over the memory store. It reuses `dedupe`'s Jaccard clusterin
 to find near-duplicate lessons, then ranks the resulting clusters by
 `(summed seen_count × distinct scopes)`, descending. A cluster is worth
 reporting when the summed `seen_count` across its members is at least
-`--min-seen-count` (default 3), or any member's `meta` comment already declares a
-non-`active` status. For each candidate it prints every memory the merge would
+`--min-seen-count` (default 3), or any member already declares a non-`active`
+status — read from a `status::<value>` tag, falling back to a legacy `meta`
+comment for lessons written before tags were the convention. For each candidate it prints every memory the merge would
 collapse — deliberately the default view, not hidden behind `--verbose`, because
 that list *is* the point of the command: a human decides from it whether the
 cluster deserves a hand-written entry.
@@ -127,9 +128,9 @@ you to notice by hand.
 
 Two things it deliberately does **not** do, on purpose:
 
-- **It does not classify trigger-contexts.** A lesson's raw `trigger-context`
-  string, when present, is printed verbatim — never interpreted into a
-  glob/command/error-shape. Turning "parses into a detectable trigger" from a
+- **It does not classify trigger-contexts.** A lesson's raw applicability signal
+  (its **Applies when** line, or a legacy `trigger-context` meta field) is
+  printed verbatim — never interpreted into a glob/command/error-shape. Turning "parses into a detectable trigger" from a
   string into an actual predicate is the human step the compile pipeline
   protects; automating it would be exactly the "auto-compile" this pipeline
   refuses to do.
