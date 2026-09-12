@@ -61,6 +61,8 @@ import { LoreUtilityGrid } from '@/components/lore/LoreUtilityGrid';
 import { LoreCostHeadline } from '@/components/lore/LoreCostHeadline';
 import { RunsList } from '@/components/settings/RunsList';
 import { RangePicker } from '@/components/ui/RangePicker';
+import { track } from '@/lib/analytics/track';
+import { rangeTelemetry, type InsightsRangeSection } from '@/lib/analytics/lore-events';
 import { useInsightsUsage } from '@/lib/queries/insights-usage';
 import { failuresByToolOutcome, excludeDashboardReads } from '@/lib/usage-health';
 import { effectiveStatsRange, statsWindow } from '@/lib/queries/explorer-stats';
@@ -122,6 +124,21 @@ export function InsightsPage() {
   // The shared window for HealthSummary/UsageHealth/AgentBreakdown — see the
   // module docblock for why this is a separate control from ScopeConsumption's.
   const [usageRange, setUsageRange] = useState<TimeRange>(DEFAULT_AGENT_ACTIVITY_RANGE);
+
+  // The page carries TWO independent windows on purpose (see the docblock), so
+  // a bare `range_changed` could not say which one a reader moved. One wrapper
+  // names the section rather than two near-identical inline handlers.
+  function commitRange(section: InsightsRangeSection, next: TimeRange) {
+    const { preset, spanDays } = rangeTelemetry(next, nowIso);
+    track({
+      name: 'insights.range_changed',
+      section,
+      preset,
+      ...(spanDays === undefined ? {} : { spanDays }),
+    });
+    if (section === 'agent-activity') setUsageRange(next);
+    else setScopeRange(next);
+  }
   const usageRangeCaption = useMemo(() => rangeCaption(usageRange, nowIso), [usageRange, nowIso]);
   const { data: usageData, isLoading, isError } = useInsightsUsage(usageRange, nowIso);
   const currentRows = useMemo(() => usageData?.current.rows ?? [], [usageData]);
@@ -157,7 +174,7 @@ export function InsightsPage() {
         trailing={
           <RangePicker
             value={usageRange}
-            onChange={setUsageRange}
+            onChange={(next) => commitRange('agent-activity', next)}
             presets={AGENT_ACTIVITY_PRESETS}
             nowIso={nowIso}
             // Two independent windows on one page, so neither picker may keep
@@ -222,7 +239,7 @@ export function InsightsPage() {
         trailing={
           <RangePicker
             value={scopeRange}
-            onChange={setScopeRange}
+            onChange={(next) => commitRange('scope-consumption', next)}
             presets={SCOPE_CONSUMPTION_PRESETS}
             nowIso={nowIso}
             label="Scope consumption time range"

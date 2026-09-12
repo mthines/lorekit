@@ -50,7 +50,7 @@ import {
   Telescope,
 } from 'lucide-react';
 import { useCommand } from './useCommand';
-import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { useMemorySidebar, type OpenLessonById } from '@/components/providers/MemorySidebarProvider';
 import { useLoreData, searchLessonsByQuery } from '@/lib/queries/lore';
 import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
 import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
@@ -77,7 +77,10 @@ import type { Command } from './types';
  * it — the palette is exactly the caller `useLessonByRef`'s cache-miss path
  * exists for otherwise).
  */
-function lessonToCommand(lesson: LessonEntry, openLessonById: (ref: { scope: string; key: string }, lesson: LessonEntry) => void): Command {
+function lessonToCommand(
+  lesson: LessonEntry,
+  openLessonById: OpenLessonById,
+): Command {
   return {
     id: `lore-lesson-${lesson.scope}::${lesson.key}`,
     label: `${lesson.scope} · ${lesson.key}`,
@@ -86,7 +89,10 @@ function lessonToCommand(lesson: LessonEntry, openLessonById: (ref: { scope: str
     // command below) renders under its own "Lore" separator rather than as an
     // ungrouped run mixed visually with whatever else is on screen.
     group: 'Lore',
-    onSelect: () => openLessonById({ scope: lesson.scope, key: lesson.key }, lesson),
+    onSelect: () =>
+      openLessonById({ scope: lesson.scope, key: lesson.key }, lesson, {
+        surface: 'command-palette',
+      }),
   };
 }
 

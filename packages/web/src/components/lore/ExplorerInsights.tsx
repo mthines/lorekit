@@ -91,6 +91,7 @@ import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/Seg
 import type { DateRange } from '@/components/ui/DateRangePicker';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { usePersistedPreference } from '@/lib/hooks/usePersistedPreference';
+import { track } from '@/lib/analytics/track';
 // The span and the fetch window that must cover it live together — see the
 // module for why they cannot be two numbers in two files.
 import { HEATMAP_WEEKS } from '@/lib/heatmap-window';
@@ -256,11 +257,18 @@ export function ExplorerInsights({
             items={VIEW_ITEMS}
             value={view}
             onChange={(next) => {
+              track({ name: 'lore.view_changed', panel: 'activity', view: next });
               viewPref.write(next);
               // Picking a view while folded EXPANDS. Otherwise the segment lights
               // up and nothing else happens, which reads as a dead control — and
               // "show me the heatmap" is a request to see it, not to select it.
-              if (!open) openPref.write(serializeBooleanPreference(true));
+              // The expansion is reported too: it is a real state change, and
+              // leaving it silent would make the panel look permanently folded
+              // for every reader who only ever opens it this way.
+              if (!open) {
+                track({ name: 'lore.panel_toggled', panel: 'activity', open: true });
+                openPref.write(serializeBooleanPreference(true));
+              }
             }}
             labels="wide"
             className="min-w-0"
@@ -274,9 +282,10 @@ export function ExplorerInsights({
             />
             <button
               type="button"
-              onClick={() =>
-                openPref.write(serializeBooleanPreference(!open))
-              }
+              onClick={() => {
+                track({ name: 'lore.panel_toggled', panel: 'activity', open: !open });
+                openPref.write(serializeBooleanPreference(!open));
+              }}
               aria-expanded={open}
               // Only reference the detail region while it EXISTS — AnimatePresence
               // unmounts it when collapsed, so a static IDREF would dangle exactly

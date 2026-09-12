@@ -166,7 +166,7 @@ export function MemoryExpandButton({
               </p>
             ) : (
               <ul className="flex flex-col divide-y divide-[var(--color-border-subtle)]">
-                {lessons.map((lesson) => {
+                {lessons.map((lesson, i) => {
                   const isSelected =
                     openLesson?.key === lesson.key && openLesson?.scope === lesson.scope;
                   return (
@@ -177,9 +177,12 @@ export function MemoryExpandButton({
                         selected={isSelected}
                         onClick={() => {
                           if (isSelected) {
-                            closeLesson();
+                            closeLesson('toggle');
                           } else {
-                            openLessonById({ scope: lesson.scope, key: lesson.key });
+                            openLessonById({ scope: lesson.scope, key: lesson.key }, undefined, {
+                              surface: 'header-recents',
+                              index: i,
+                            });
                           }
                           setIsDropdownOpen(false);
                         }}

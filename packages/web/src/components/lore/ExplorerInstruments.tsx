@@ -57,6 +57,7 @@ import { BottomSheet } from '@/components/ui/BottomSheet';
 import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/SegmentedControl';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { usePersistedPreference } from '@/lib/hooks/usePersistedPreference';
+import { track } from '@/lib/analytics/track';
 import {
   DEFAULT_INSTRUMENT,
   DEFAULT_INSTRUMENTS_OPEN,
@@ -117,7 +118,12 @@ export function ExplorerInstruments({
   const reduceMotion = useReducedMotionConfig();
   const isMobile = useIsMobile();
 
-  const setOpen = (next: boolean) => openPref.write(serializeBooleanPreference(next));
+  // One place for the disclosure, so the header chevron and the mobile sheet's
+  // own dismiss (which also collapses the panel) report one state, not two.
+  const setOpen = (next: boolean) => {
+    track({ name: 'lore.panel_toggled', panel: 'instruments', open: next });
+    openPref.write(serializeBooleanPreference(next));
+  };
 
   // Rendered ONCE, then placed either inline or in the sheet.
   const body = open ? renderInstrument(instrument) : null;
@@ -137,6 +143,7 @@ export function ExplorerInstruments({
           items={ITEMS}
           value={instrument}
           onChange={(next) => {
+            track({ name: 'lore.view_changed', panel: 'instruments', view: next });
             instrumentPref.write(next);
             // Picking an instrument while folded EXPANDS. Otherwise the segment
             // lights up and nothing happens, which reads as a dead control —

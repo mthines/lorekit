@@ -792,11 +792,82 @@ rate means the Resend key/domain needs attention.
 Typed browser events for product surfaces, emitted through the one `track()`
 wrapper. Attributes use the `lorekit.*` namespace.
 
+### Global
+
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
 | `command_palette.opened` | The palette overlay was shown | `lorekit.command_palette.trigger` |
 | `command_palette.command_selected` | A command was executed | `lorekit.command.id`, `lorekit.command.source`, `lorekit.command.group` (optional — omitted when the command has no group) |
 | `install_command.copied` | A visitor copied a shell command | `lorekit.install_command.id`, `lorekit.install_command.surface`, `lorekit.install_command.succeeded` |
+| `ui.button_click` | A `Button`/`IconButton` carrying an `analyticsId` was clicked | `lorekit.ui.button_id`, `lorekit.ui.button_variant`, `lorekit.ui.button_size` (both optional) |
+
+### Content (`/docs`, `/blog`)
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `content.scroll_depth` | A reader crossed 25/50/75/100 % of an article | `lorekit.content.type`, `lorekit.content.slug`, `lorekit.content.depth_percent` |
+| `content.section_read` | A reader left a section after dwelling in it | `lorekit.content.type`, `lorekit.content.slug`, `lorekit.content.section.id`, `.section.dwell_ms`, `.section.dwell_bucket`, `.section.index` (omitted when the heading is not in the TOC) |
+| `content.read` | End-of-page-view reading summary (one per view) | `lorekit.content.type`, `lorekit.content.slug`, `.max_depth_percent`, `.engaged_ms`, `.engaged_bucket`, `.sections_read`, `.completed`, `.top_section.id` (optional) |
+
+### Lore Explorer (`lore.*`)
+
+Everything a reader touches on `/lore` is their own content — a scope, a label,
+a memory key, a search term — so **no `lore.*` attribute carries any of it**.
+The derivations that reduce each to something bounded live in the pure
+`lib/analytics/lore-events.ts` (with `lore-events.spec.ts` pinning them): a
+scope becomes its TYPE, a filter becomes its FIELD, a search becomes its
+LENGTH, a cluster becomes a size BUCKET. Read that module before adding an
+attribute here.
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `lore.memory_opened` | A memory was selected into the detail panel | `lorekit.lore.memory.surface` (`lore-list`/`lore-cluster`/`lore-keyboard`/`command-palette`/`header-recents`), `.scope_type`, `.index` (optional) |
+| `lore.memory_closed` | The detail panel was dismissed | `lorekit.lore.memory.close_reason` |
+| `lore.memory_content_tab` | Preview ⇄ Edit inside the panel | `lorekit.lore.memory.content_tab`, `.content_tab_source` (`click`/`shortcut`) |
+| `lore.memory_edit` | An edit was saved or discarded | `lorekit.lore.memory.edit_action`, `.edit_outcome` (saves only), `.changed_value`, `.changed_tags`, `.changed_ttl` |
+| `lore.memory_archive_toggled` | A memory was archived or restored | `lorekit.lore.memory.archive_action`, `.archive_outcome` |
+| `lore.filter_changed` | Any filter-bar mutation, age/activity thresholds included | `lorekit.lore.filter.action`, `.field` (optional), `.operator` (optional), `.count`, `.retention_count` |
+| `lore.status_changed` | Active / Archived / Expiring | `lorekit.lore.status` |
+| `lore.search_committed` | The debounced search settled | `lorekit.lore.search.length` |
+| `lore.scope_selected` | A scope chip or Browse-all row was picked | `lorekit.lore.scope.type`, `.source` (`strip`/`browse-all`) |
+| `lore.range_changed` | Any of the FIVE controls that write `?range=` | `lorekit.lore.range.preset`, `.source`, `.span_days` (omitted when unbounded) |
+| `lore.panel_toggled` | A disclosure opened or closed | `lorekit.lore.panel.name` (`activity`/`instruments`/`duplicate-clusters`/`scope-browser`), `.open` |
+| `lore.view_changed` | A panel swapped its body | `lorekit.lore.view.panel`, `.name` (`charts`/`heatmap`/`matrix`/`timeline`) |
+| `lore.instrument_used` | A matrix axis/cell or a timeline brush | `lorekit.lore.instrument.name`, `.action`, `.field` (axis changes only) |
+| `lore.cluster_selected` | A duplicate cluster drove the list, or was cleared | `lorekit.lore.cluster.action`, `.size_bucket` (selects only) |
+| `lore.results_paged` | "Load more" appended a page | `lorekit.lore.results.page` |
+
+Three of these are load-bearing in a way a name does not convey:
+
+- **`surface` on `lore.memory_opened`.** A row click, an arrow-key walk, a
+  cluster member, the palette and the header dropdown were previously
+  indistinguishable — the page emitted `ui.button_click` for its buttons and
+  nothing at all for the memories, which is the gap this family closes. The
+  parameter is REQUIRED on `openLessonById`, so a future opener costs a type
+  error rather than arriving unattributed.
+- **`close_reason`.** Most closes are not a reader dismissing anything: the
+  Explorer folds the panel on every filter, scope and status change, because the
+  open memory may not survive the new predicate. Counting those as dismissals
+  would make the panel look abandoned when it was taken away.
+- **`source` on `lore.range_changed`.** Five controls write one param (the
+  preset rail, the calendar, its own presets, a heatmap cell, the timeline
+  brush). Without the source the event says the window moved and nothing about
+  which affordance earns its place.
+
+### Insights (`insights.*`)
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `insights.range_changed` | One of the page's two independent windows moved | `lorekit.insights.range.section` (`agent-activity`/`scope-consumption`), `.preset`, `.span_days` (optional) |
+| `insights.utility_quadrant_selected` | A utility quadrant was opened or closed | `lorekit.insights.utility.quadrant`, `.selected` |
+| `insights.utility_prompt_copied` | A grooming prompt reached the clipboard | `lorekit.insights.utility.quadrant`, `.entry_count`, `.succeeded` |
+| `insights.scope_opened` | A row handed off to the Explorer | `lorekit.insights.scope.type`, `.source` |
+
+`insights.range_changed` names its SECTION because the page deliberately carries
+two independent windows (see `InsightsPage.tsx`); a bare preset could not say
+which one a reader moved. `insights.scope_opened` is the only evidence that the
+leaderboard's and the grid's "pick a row to open it in the Explorer" promise is
+ever taken.
 
 `install_command.copied` exists because copying `npx @lorekit/cli install` is the
 strongest intent signal a logged-out visitor can produce short of authenticating
