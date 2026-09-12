@@ -172,7 +172,11 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   // Selecting anything collapses the browse surface — the choice is made.
   function choose(scope: string | null, source: LoreScopeSource) {
     onSelect(scope, source);
-    setOpen(false);
+    // Through `setBrowseOpen`, so an auto-collapse reports like every other
+    // close — but ONLY when something was open to collapse: a strip chip is
+    // clicked with the browser shut far more often than not, and reporting
+    // those would invent a close for each one.
+    if (open) setBrowseOpen(false);
     setQuery('');
   }
 
