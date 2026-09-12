@@ -279,3 +279,40 @@ test('show flags a divergence when the same key differs between the two stores',
     server.close();
   }
 });
+
+// ── the resolved scope is REPORTED, not left blank ────────────────────────────
+// `show <key>` with no scope resolves across every scope by precedence. The
+// header slot echoes what the caller ASKED for, so with no scope it rendered
+// empty — the reader saw a value and had no way to tell which scope produced
+// it. The scope that answered is per-store (offline and remote can resolve
+// differently, which is why this command shows both), so it belongs in each
+// section rather than in the one header slot.
+
+test('show <key> with no scope names the scope that answered', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['shared-key']);
+  assert.equal(res.status, 0, res.stderr);
+  // Line-anchored: a loose `Offline[\s\S]*scope` would also match the header
+  // slot and pass with the section line absent.
+  assert.match(res.stdout, /^ {2}scope {3}global$/m);
+  // The header says the read was unscoped instead of rendering an empty slot.
+  assert.match(res.stdout, /scope:\s+any — resolved by precedence/);
+});
+
+test('show <scope> <key> does not repeat the scope in each section', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['global', 'shared-key']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /scope:\s+global/);
+  assert.doesNotMatch(res.stdout, /any — resolved by precedence/);
+  // One scope line in total — the header's — not one per section.
+  assert.equal(res.stdout.match(/scope/g).length, 1);
+});
+
+test('a missing unscoped key does not report a bare `::key` ref', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['no-such-key-anywhere']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /key "no-such-key-anywhere" in any scope/);
+  assert.doesNotMatch(res.stdout, /for ::/);
+});

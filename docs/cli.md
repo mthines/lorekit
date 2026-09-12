@@ -60,7 +60,10 @@ gracefully when unconfigured; `--json`/`--scope`; `--all` drains all pages via `
 independently builds BOTH stores via `src/shared/stores.mjs` + renders via the reusable
 `src/shared/lessons-view.mjs`, the seam all the `search`/`show`/`stats`/`diff` read commands stack
 on; the shared deny-wins block those five read commands all use is extracted into
-`resolveDenies(root,{env})` in `control.mjs`
+`resolveDenies(root,{env})` in `control.mjs`. At the STORE layer `list({scope})` takes an optional
+scope on the same rule the read tools use — omitting it widens across every scope, each entry
+naming its own, and the two-tier merge keys on `scope::key` so a key held in several scopes is not
+collapsed to whichever tier answered first
 
 ### `search`
 
@@ -84,7 +87,11 @@ resolves the key across EVERY scope the store holds, picking a winner by the sha
 most-recently-updated, then scope ascending. That module is the CLI twin of
 `packages/mcp-core/src/scope/scope-precedence.ts`, held to it BEHAVIOURALLY by
 `scope-precedence-parity.spec.ts`, so `lorekit show <key>` and `memory.read { key }` can never
-resolve the same key to different lessons. Offline, `LocalStore._findAllByKey` walks the store and
+resolve the same key to different lessons. An unscoped `show` REPORTS the scope that answered, on a
+`scope` line inside each store's section rather than in the header slot, which echoes what the
+caller asked for and so renders `any — resolved by precedence`; the two stores can resolve the same
+key differently, which is why the answer belongs per-section. Offline,
+`LocalStore._findAllByKey` walks the store and
 `TwoTierStore` collapses each scope to one candidate (project shadowing home) before picking;
 remote, `RemoteStore.read` widens its `GET /memories` page to 50 candidates and picks client-side
 with the same function. `--link` still needs an explicit scope, a deep link naming one. **variadic**
@@ -394,7 +401,11 @@ stay silent on a clean session]; always exit 0, best-effort, never blocks the ho
 ### `mcp`
 
 A hand-rolled local stdio MCP server exposing `memory.*` from the resolved store — lets `.mcp.json`
-point at the CLI instead of `mcp-remote`, for offline local-mode tool calls
+point at the CLI instead of `mcp-remote`, for offline local-mode tool calls. Its `tools/list` is
+DERIVED from the same `tool-catalog.ts` the hosted server renders from (via
+`src/surfaces.generated.mjs`), so the two advertise one contract — including `memory.list`'s
+OPTIONAL `scope`, which widens the listing across every scope in the store rather than narrowing it
+to none.
 
 ### `completion`
 
