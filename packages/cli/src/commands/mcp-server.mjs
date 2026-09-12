@@ -53,6 +53,15 @@ const LIST_VIEWS = ['full', 'summary'];
 const MEMORY_KINDS = ['lesson', 'bus', 'signal'];
 
 /**
+ * `memory.list`'s `limit` schema, read from the catalog this server renders
+ * `tools/list` from rather than restated — a hand-copied `50`/`100` here would
+ * be a second declaration of numbers the schema already publishes to every
+ * client, free to drift from the ones those clients were handed.
+ */
+const LIST_LIMIT_SCHEMA = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+  ?.inputSchema?.properties?.limit ?? {};
+
+/**
  * Validate the taxonomy/projection arguments of a `memory.list` call.
  *
  * Every other surface REJECTS an out-of-vocabulary value — the edge throws
@@ -70,6 +79,27 @@ function validateListArgs(a = {}) {
   }
   if (a.host !== undefined && (typeof a.host !== 'string' || a.host.length === 0 || a.host.length > 64)) {
     throw new Error('Invalid host: expected a non-empty string of at most 64 characters');
+  }
+  // `limit` is held to the SAME schema, for the same reason and with one extra:
+  // an out-of-range value here is not merely un-narrowed, it inverts the bound.
+  // Both stores read a falsy `limit` as "no cap" (`if (limit)`), so `limit: 0`
+  // returned the WHOLE store and reported `hasMore: false` — a complete-looking
+  // page containing every lesson, which is the exact outcome the default below
+  // exists to prevent. `0` also survives `??`, so no default can catch it.
+  //
+  // Rejecting an over-MAXIMUM value is the same rule at the other end. An
+  // earlier pass let those through on the grounds that the remote route answers
+  // them with a 400 — but this server also serves the LOCAL store, where there
+  // is no route and nothing to reject them, so the argument only covered one of
+  // its two modes. Refusing here covers both and matches every other surface.
+  const { minimum, maximum } = LIST_LIMIT_SCHEMA;
+  const badLimit =
+    a.limit !== undefined &&
+    (!Number.isInteger(a.limit) || a.limit < minimum || a.limit > maximum);
+  if (badLimit) {
+    throw new Error(
+      `Invalid limit "${a.limit}": expected an integer between ${minimum} and ${maximum}`,
+    );
   }
 }
 
@@ -150,14 +180,6 @@ export function projectListView(result, view) {
 const TAXONOMY_FETCH_LIMIT = 100;
 
 /**
- * `memory.list`'s `limit` bound, read from the catalog this server renders
- * `tools/list` from rather than restated — a hand-copied `50` here would be a
- * second declaration of a number the schema already publishes to every client.
- */
-const LIST_LIMIT_SCHEMA = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
-  ?.inputSchema?.properties?.limit ?? {};
-
-/**
  * The page size a `memory.list` call actually gets.
  *
  * An ABSENT `limit` means the schema's `default`, not "unbounded". The hosted
@@ -169,11 +191,9 @@ const LIST_LIMIT_SCHEMA = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
  * the call now returns every lesson the store holds straight into a model's
  * context.
  *
- * A limit ABOVE the schema's `maximum` is left alone rather than clamped down:
- * the remote route answers those with a 400, and quietly serving 100 instead
- * would hide a caller's contract violation behind a short page that looks
- * complete. Honouring a default nobody stated and refusing to invent a cap
- * nobody asked for are the same rule, applied to the two ends of the range.
+ * `??` rather than `||` is deliberate but not sufficient on its own: it is
+ * `validateListArgs` that makes this total, by rejecting the out-of-range
+ * values — `0` above all — that no default can substitute for.
  */
 function listLimit(a) {
   return a.limit ?? LIST_LIMIT_SCHEMA.default;

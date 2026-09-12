@@ -52,22 +52,53 @@ class LocalStore {
   // a DIFFERENT scope. A scoped read is exact on every other surface (the hosted
   // handlers filter with `.eq('scope', scope)`), and it is exact here too.
   //
-  // An entry whose frontmatter carries no `scope` at all matches nothing: every
-  // write goes through `serializeEntry`, which always emits the column, so such
-  // a file is hand-edited or foreign and has no scope to be authoritative about.
-  // Inheriting the directory's would make the lossy index authoritative again in
-  // exactly the case it is least trustworthy.
+  // An entry whose frontmatter carries no `scope` at all matches nothing here:
+  // every write goes through `serializeEntry`, which always emits the column, so
+  // such a file is hand-edited or foreign and has no scope to be authoritative
+  // about. Inheriting the directory's would make the lossy index authoritative
+  // again in exactly the case it is least trustworthy. `_findFiled` below makes
+  // the one narrow exception, for removals, and says why it is safe there.
   _readAll(scope) {
+    return this._readDir(scope).filter((r) => r.entry.scope === scope);
+  }
+
+  // Every parsed entry in `scope`'s DIRECTORY, whatever scope each one claims.
+  // Only `_readAll` and the removal paths below consume this; nothing serves a
+  // row from it, because the directory does not establish what a row IS.
+  _readDir(scope) {
     const out = [];
     for (const file of this._files(scope)) {
       try {
         const entry = parseEntry(fs.readFileSync(file, 'utf8'));
-        if (entry && entry.scope === scope) out.push({ entry, file });
+        if (entry) out.push({ entry, file });
       } catch {
         // Skip an unreadable file rather than fail the whole listing.
       }
     }
     return out;
+  }
+
+  // The file a REMOVAL addressed to `scope`+`key` may act on: one claiming
+  // exactly `scope`, or one claiming no scope at all.
+  //
+  // The second case is the narrow exception to "the frontmatter is
+  // authoritative", and it is safe for the reason the general rule is not: a
+  // removal does not SERVE the row, it deletes or archives it. The danger the
+  // exact match exists to stop is a neighbour's lesson being returned as though
+  // it were the caller's — which cannot happen to a row nobody reads. A row
+  // claiming a DIFFERENT scope is still excluded here: that one belongs to
+  // someone, and deleting it on a lossy path match would be the same category
+  // of error, only destructive.
+  //
+  // Without this, applying the exact match to `_findByKey` made a hand-edited
+  // file with no `scope` unreachable through the store API entirely — invisible
+  // to `list`, `read`, `search`, `scopes` and `lint`, and no longer removable
+  // either. Being unlistable is a defensible consequence of a malformed file;
+  // being undeletable, with no surface that even reports it, is a trap.
+  _findFiled(scope, key) {
+    return this._readDir(scope).find(
+      (r) => r.entry.key === key && (r.entry.scope ?? scope) === scope,
+    ) || null;
   }
 
   _findByKey(scope, key) {
@@ -301,7 +332,7 @@ class LocalStore {
 
   // delete({ scope, key, force }) — force removes the file; soft-delete archives.
   async delete({ scope, key, force } = {}) {
-    const found = this._findByKey(scope, key);
+    const found = this._findFiled(scope, key);
     if (!found) return { ok: true, deleted: false };
     if (force) {
       try {
@@ -323,7 +354,7 @@ class LocalStore {
   }
 
   _setArchived(scope, key, ts) {
-    const found = this._findByKey(scope, key);
+    const found = this._findFiled(scope, key);
     if (!found) return { ok: true, archived: false };
     const entry = { ...found.entry, archived_at: ts, updated: new Date().toISOString() };
     fs.writeFileSync(found.file, serializeEntry(entry));

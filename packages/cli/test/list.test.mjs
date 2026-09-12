@@ -398,4 +398,32 @@ test('an entry with no scope in its frontmatter is listed by neither path', asyn
 
   assert.deepEqual((await store.list({ scope: 'global' })).entries.map((e) => e.key), ['kept']);
   assert.deepEqual((await store.list({})).entries.map((e) => e.key), ['kept']);
+
+  // …but it is still REMOVABLE where it is filed. Unlistable is a defensible
+  // consequence of a malformed file; unlistable AND undeletable, with no
+  // surface that even reports the file exists, is a trap.
+  assert.deepEqual(await store.delete({ scope: 'global', key: 'orphan', force: true }), {
+    ok: true,
+    deleted: true,
+  });
+  assert.equal(fs.existsSync(orphan), false);
+});
+
+// The removal exception is for a row claiming NO scope, never one claiming a
+// different one. A neighbour's lesson must not be deleted on a lossy path
+// match — that is the same category of error as serving it, only destructive.
+test('a removal does not reach a colliding neighbour scope\'s lesson', async () => {
+  const dir = tmp('lk-delete-collide-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'repo::acme/my widget', key: 'k', value: 'v' });
+  const file = path.join(dir, 'repo', 'acme', 'my-widget', 'k.md');
+
+  assert.deepEqual(await store.delete({ scope: 'repo::acme/my-widget', key: 'k', force: true }), {
+    ok: true,
+    deleted: false,
+  });
+  assert.equal(fs.existsSync(file), true);
+  // Its own scope still removes it.
+  await store.delete({ scope: 'repo::acme/my widget', key: 'k', force: true });
+  assert.equal(fs.existsSync(file), false);
 });

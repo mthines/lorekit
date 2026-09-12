@@ -632,13 +632,33 @@ describe('memory.list over-fetches before post-filtering', () => {
     assert.equal(r.entries.length, declared);
   });
 
-  // Deliberately NOT clamped down: the remote route answers an over-cap limit
-  // with a 400, and quietly serving a short page instead would hide a caller's
-  // contract violation behind something that looks complete.
-  test('passes an over-maximum limit through rather than clamping it', async () => {
+  // `limit: 0` is the sharp case and the reason a default alone is not enough:
+  // `0` survives `??`, and both stores read a falsy limit as "no cap", so it
+  // returned the WHOLE store AND reported `hasMore: false` — every lesson in a
+  // page that claims to be complete. Rejecting is what every other surface does
+  // with an out-of-schema value, and what this function already does for
+  // `view`/`kind`/`host`.
+  test('rejects a limit outside the schema range instead of substituting one', async () => {
     const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
-    await listWithFilters(store, { scope: 'global', limit: 500 });
-    assert.equal(store.seen.limit, 500);
+    for (const limit of [0, -1, 500, 1.5, '10']) {
+      await assert.rejects(
+        () => listWithFilters(store, { scope: 'global', limit }),
+        /Invalid limit/,
+        `limit ${JSON.stringify(limit)} should be refused`,
+      );
+    }
+    // The store is never reached, so nothing can read the bad value as "no cap".
+    assert.equal(store.seen.limit, undefined);
+  });
+
+  test('accepts the schema boundaries themselves', async () => {
+    const { minimum, maximum } = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+      .inputSchema.properties.limit;
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    for (const limit of [minimum, maximum]) {
+      const r = await listWithFilters(store, { scope: 'global', limit });
+      assert.equal(r.entries.length, limit);
+    }
   });
 });
 

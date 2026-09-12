@@ -409,12 +409,17 @@ point at the CLI instead of `mcp-remote`, for offline local-mode tool calls. Its
 DERIVED from the same `tool-catalog.ts` the hosted server renders from (via
 `src/surfaces.generated.mjs`), so the two advertise one contract — including `memory.list`'s
 OPTIONAL `scope`, which widens the listing across every scope in the store rather than narrowing it
-to none, and its `limit`, whose schema **default** applies when a call omits one. Nothing parses
-arguments on this path the way the hosted server's zod schema does, so the default is applied from
-the catalog explicitly; a limit above the schema maximum is passed through rather than clamped, so
-an out-of-contract request still fails loudly against the remote route instead of quietly returning
-a short page. A cut page is reported with `hasMore: true` and no `nextCursor` — the local store has
-no keyset, so the remedy is a larger `limit`, not pagination.
+to none, and its `limit`, which is read from the same catalog: an omitted `limit` gets the schema's
+**default**, and one outside `minimum`–`maximum` is **rejected**, the way `view`/`kind`/`host` on
+the same call already are. Nothing parses arguments on this path the way the hosted server's zod
+schema does, so both are applied explicitly. Rejecting matters most at the bottom of the range —
+both stores read a falsy `limit` as "no cap", so `limit: 0` would return the whole store and report
+it as a complete page. A cut page is reported with `hasMore: true` and no `nextCursor` — the local
+store has no keyset, so the remedy is a larger `limit`, not pagination.
+
+A hand-edited entry file whose frontmatter has no `scope` is not listed, read or searched (there is
+no scope for it to be filed under), but it is still removable through `delete`/`archive` addressed
+to the directory it sits in — a malformed file should not become unreachable.
 
 ### `completion`
 
