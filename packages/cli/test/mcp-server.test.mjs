@@ -727,3 +727,19 @@ describe('memory.list ignores an inbound cursor when a taxonomy filter is set', 
     assert.equal(seen.cursor, 'ABC');
   });
 });
+
+// The `limit` range check derives its bounds from the generated catalog. A
+// derivation that can quietly yield nothing is worse than a hand-copied
+// constant: with `minimum`/`maximum` undefined every comparison is false, so
+// `validateListArgs` would accept `0` and `500` alike and `listLimit` would
+// return `undefined` — "no cap" — silently restoring both bugs the check
+// exists to prevent. Loading the module must fail loudly instead.
+test('memory.list declares the limit schema the server derives its bounds from', () => {
+  const limit = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+    ?.inputSchema?.properties?.limit;
+  assert.ok(limit, 'memory.list has no `limit` property in the generated catalog');
+  assert.equal(typeof limit.default, 'number');
+  assert.equal(typeof limit.minimum, 'number');
+  assert.equal(typeof limit.maximum, 'number');
+  assert.ok(limit.minimum >= 1, 'a minimum below 1 would let `limit: 0` through as "no cap"');
+});

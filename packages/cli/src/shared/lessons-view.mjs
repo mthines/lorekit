@@ -640,7 +640,15 @@ export async function gatherStream(store, scopes, {
         scopeCount += entries.length;
         surveyed += entries.length;
       }
-      // hasMore absent (local store) or false → done with this scope.
+      // Done with this scope. `!res.nextCursor` is the disjunct that ends a
+      // LOCAL scope, and it has to be: `LocalStore.list` now reports
+      // `hasMore: true` on a page its `limit` cut, and this loop passes a
+      // `limit`, so the first disjunct is no longer reliably true there (it
+      // once was — the local store had no `hasMore` at all). The store has no
+      // keyset and so never returns a cursor to resume from; dropping the
+      // second disjunct would leave a cut local scope re-requesting the SAME
+      // page, with `surveyed` climbing on each pass until the `max` safety cap
+      // trips and reports a wildly inflated count.
       if (!res.hasMore || !res.nextCursor) break;
       cursor = res.nextCursor;
       // Safety: stop if we hit the cap after this page.

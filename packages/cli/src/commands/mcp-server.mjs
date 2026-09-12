@@ -57,9 +57,22 @@ const MEMORY_KINDS = ['lesson', 'bus', 'signal'];
  * `tools/list` from rather than restated — a hand-copied `50`/`100` here would
  * be a second declaration of numbers the schema already publishes to every
  * client, free to drift from the ones those clients were handed.
+ *
+ * It throws rather than falling back to `{}`, because an absent schema fails
+ * OPEN in a way that is invisible: with `minimum`/`maximum`/`default` all
+ * `undefined`, every `a.limit < undefined` comparison is false, so
+ * `validateListArgs` accepts `0`, `-1` and `500` alike, `listLimit` returns
+ * `undefined`, and the store reads that as "no cap" — silently restoring both
+ * of the bugs the range check exists to prevent, with an error string reading
+ * "between undefined and undefined" if one ever did fire. A derived constant
+ * whose derivation can quietly yield nothing is worse than a hand-copied one:
+ * it claims a guarantee it has stopped providing, without saying so.
  */
 const LIST_LIMIT_SCHEMA = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
-  ?.inputSchema?.properties?.limit ?? {};
+  ?.inputSchema?.properties?.limit;
+if (!LIST_LIMIT_SCHEMA || typeof LIST_LIMIT_SCHEMA.default !== 'number') {
+  throw new Error('memory.list is missing its `limit` schema in the generated tool catalog');
+}
 
 /**
  * Validate the taxonomy/projection arguments of a `memory.list` call.
