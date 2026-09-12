@@ -48,7 +48,13 @@ const NO_TAGS: string[] = [];
 interface LessonDetailSheetProps {
   lesson: LessonEntry | null;
   onClose: () => void;
-  /** Called after a successful archive, restore, or save so the parent can refresh its list. */
+  /**
+   * Called after a successful archive, restore, or save so the parent can
+   * refresh its list — and it OWNS the close on that path. The panel
+   * deliberately does NOT also call `onClose` after a mutation: the provider
+   * wires the two to different close reasons, so firing both reported a single
+   * archive as two `lore.memory_closed` events in the same tick.
+   */
   onMutated?: () => void;
   /**
    * Presentation: a right-side drawer (`drawer`) or a bottom sheet (`sheet`).
@@ -664,8 +670,10 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
           }
           track({ name: 'lore.memory_archive_toggled', action: 'restore', outcome: 'success' });
           toast.success('Memory restored', { description: key });
+          // `onMutated` closes the panel (see its docblock) — it is the one
+          // close on this path, and it is the one that carries the accurate
+          // `mutated` reason.
           onMutated?.();
-          onClose();
         },
         // A REJECTED mutation (offline, 5xx) never reaches `onSuccess`, so
         // without this the one failure mode that leaves no toast either also
@@ -683,8 +691,8 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
           }
           track({ name: 'lore.memory_archive_toggled', action: 'archive', outcome: 'success' });
           toast.success('Memory archived', { description: key });
+          // Same as the restore branch above: one close, one reason.
           onMutated?.();
-          onClose();
         },
         onError: () =>
           track({ name: 'lore.memory_archive_toggled', action: 'archive', outcome: 'error' }),
