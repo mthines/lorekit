@@ -318,31 +318,76 @@ test('within ONE scope the project tier still shadows home', async () => {
   assert.equal(entries[0].value, 'project wins');
 });
 
-// A SCOPED listing is not confined to one scope either, which is why keying on
-// `scope::key` is a change on that path too. `scopeToDir`'s `safeSeg` folds the
-// space in `acme/my widget` to `-`, so both scopes below resolve to the SAME
-// directory, while `parseEntry` recovers each row's scope from its frontmatter.
-// Under the bare key the two collapsed into one row; they are distinct lessons.
-test('a scoped listing keeps rows apart when two scopes share one directory', async () => {
-  const homeDir = tmp('lk-list-tier-collide-home-');
-  const projDir = tmp('lk-list-tier-collide-proj-');
-  await createLocalStore(homeDir)
-    .write({ scope: 'repo::acme/my widget', key: 'k', value: 'home' });
-  await createLocalStore(projDir)
-    .write({ scope: 'repo::acme/my-widget', key: 'k', value: 'project' });
+// ── a named scope is EXACT, because the directory index is lossy ─────────────
+// `scopeToDir`'s `safeSeg` folds the space in `acme/my widget` to `-`, so the
+// two scopes below share one directory while `parseEntry` recovers each row's
+// scope from its own frontmatter. `_readAll` reads a directory, so without an
+// equality check a named scope answers with a neighbour's rows — rows the
+// caller did not ask for, against a contract (and a `docs/cli.md` line) that
+// says a named scope narrows to that scope.
+test('a named scope excludes a colliding neighbour scope sharing its directory', async () => {
+  const dir = tmp('lk-list-collide-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'repo::acme/my widget', key: 'k', value: 'space variant' });
+  await store.write({ scope: 'repo::acme/my-widget', key: 'k2', value: 'dash variant' });
 
-  const two = createTwoTierStore({ home: homeDir, project: projDir });
-  const { entries } = await two.list({ scope: 'repo::acme/my-widget' });
+  // Same directory on disk — the collision is real, not hypothetical.
+  const collidedDir = path.join(dir, 'repo', 'acme', 'my-widget');
+  assert.deepEqual(fs.readdirSync(collidedDir).sort(), ['k.md', 'k2.md']);
+
   assert.deepEqual(
-    entries.map((e) => `${e.scope}::${e.key}`).sort(),
-    ['repo::acme/my widget::k', 'repo::acme/my-widget::k'],
+    (await store.list({ scope: 'repo::acme/my-widget' })).entries
+      .map((e) => `${e.scope}::${e.key}`),
+    ['repo::acme/my-widget::k2'],
+  );
+  assert.deepEqual(
+    (await store.list({ scope: 'repo::acme/my widget' })).entries
+      .map((e) => `${e.scope}::${e.key}`),
+    ['repo::acme/my widget::k'],
+  );
+  // The widened listing still sees both — it is exactness that is scoped, not
+  // visibility. A row excluded from one scope is not excluded from the store.
+  assert.deepEqual(
+    (await store.list({})).entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['repo::acme/my widget::k', 'repo::acme/my-widget::k2'],
   );
 });
 
-// The `e.scope` guard is applied to BOTH of `LocalStore.list`'s branches, so a
-// hand-edited file missing the column is absent from each. Filtering in only one
-// would leave the widened listing short of the scoped ones it must contain, and
-// hand `TwoTierStore.list` a literal `"undefined::k"` merge key.
+// The same exactness on the singular read path, which is the sharper failure:
+// a lesson belonging to one scope answering a read addressed to another.
+test('a scoped read does not answer with a colliding neighbour scope\'s lesson', async () => {
+  const store = createLocalStore(tmp('lk-read-collide-'));
+  await store.write({ scope: 'repo::acme/my widget', key: 'k', value: 'space variant' });
+
+  assert.equal((await store.read({ scope: 'repo::acme/my-widget', key: 'k' })).entry, null);
+  assert.equal(
+    (await store.read({ scope: 'repo::acme/my widget', key: 'k' })).entry.value,
+    'space variant',
+  );
+});
+
+// A cut page says so. Without this the store answered a limited listing with
+// the same shape as an exhausted one, so a caller could not tell "that is all
+// your lore" from "that is the first 50 of it" — and the widened listing is
+// where that distinction starts to matter.
+test('a limited listing reports hasMore, an exhausted one does not', async () => {
+  const store = createLocalStore(tmp('lk-list-hasmore-'));
+  for (let i = 0; i < 5; i += 1) await store.write({ scope: 'global', key: `k${i}`, value: 'v' });
+
+  const cut = await store.list({ scope: 'global', limit: 2 });
+  assert.equal(cut.entries.length, 2);
+  assert.equal(cut.hasMore, true);
+
+  // Exactly the page size is NOT "more" — an off-by-one here would report every
+  // full page as truncated forever.
+  assert.equal((await store.list({ scope: 'global', limit: 5 })).hasMore, false);
+  assert.equal((await store.list({ scope: 'global' })).hasMore, false);
+});
+
+// A hand-edited file missing the column is absent from BOTH of `list`'s
+// branches: `_readAll` requires an exact match, `_allLive` filters for one.
+// Filtering in only one would leave the widened listing short of the scoped
+// ones it must contain, and hand `TwoTierStore.list` a `"undefined::k"` key.
 test('an entry with no scope in its frontmatter is listed by neither path', async () => {
   const dir = tmp('lk-list-orphan-');
   const store = createLocalStore(dir);

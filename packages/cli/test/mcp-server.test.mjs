@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS, advertise } from '../src/commands/mcp-server.mjs';
+import { MCP_TOOL_DEFS } from '../src/surfaces.generated.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -606,6 +607,38 @@ describe('memory.list over-fetches before post-filtering', () => {
     const store = slicingStore(rows(10, 'loop::reviewer-lessons', 'rv'));
     await listWithFilters(store, { scope: 'global', limit: 5 });
     assert.equal(store.seen.limit, 5);
+  });
+
+  // An omitted `limit` is the SCHEMA's default, not "unbounded". The hosted
+  // server gets that from the zod parse; nothing parses arguments on this path,
+  // so an omitted limit used to reach the store as `undefined` — harmless while
+  // an unscoped `memory.list {}` answered `[]`, and a whole-store dump into a
+  // model's context once it answers account-wide.
+  test('applies the catalog default when no limit is given', async () => {
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    const declared = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+      .inputSchema.properties.limit.default;
+    await listWithFilters(store, {});
+    // Read from the catalog, not written out: a literal here would pass even if
+    // the schema the clients read moved out from under it.
+    assert.equal(store.seen.limit, declared);
+  });
+
+  test('applies the default on a taxonomy-filtered read too', async () => {
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    const declared = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+      .inputSchema.properties.limit.default;
+    const r = await listWithFilters(store, { host: 'reviewer' });
+    assert.equal(r.entries.length, declared);
+  });
+
+  // Deliberately NOT clamped down: the remote route answers an over-cap limit
+  // with a 400, and quietly serving a short page instead would hide a caller's
+  // contract violation behind something that looks complete.
+  test('passes an over-maximum limit through rather than clamping it', async () => {
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    await listWithFilters(store, { scope: 'global', limit: 500 });
+    assert.equal(store.seen.limit, 500);
   });
 });
 

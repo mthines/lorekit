@@ -63,7 +63,11 @@ on; the shared deny-wins block those five read commands all use is extracted int
 `resolveDenies(root,{env})` in `control.mjs`. At the STORE layer `list({scope})` takes an optional
 scope on the same rule the read tools use — omitting it widens across every scope, each entry
 naming its own, and the two-tier merge keys on `scope::key` so a key held in several scopes is not
-collapsed to whichever tier answered first
+collapsed to whichever tier answered first. A NAMED scope is exact: the frontmatter `scope` is
+authoritative and the on-disk directory is only a lossy index into it (`scopeToDir` folds every
+character outside `[A-Za-z0-9._-]` to `-`, so `repo::acme/my widget` and `repo::acme/my-widget`
+share one directory), so both `list({scope})` and a scoped read filter on the stored scope rather
+than answering with a colliding neighbour's rows
 
 ### `search`
 
@@ -405,7 +409,12 @@ point at the CLI instead of `mcp-remote`, for offline local-mode tool calls. Its
 DERIVED from the same `tool-catalog.ts` the hosted server renders from (via
 `src/surfaces.generated.mjs`), so the two advertise one contract — including `memory.list`'s
 OPTIONAL `scope`, which widens the listing across every scope in the store rather than narrowing it
-to none.
+to none, and its `limit`, whose schema **default** applies when a call omits one. Nothing parses
+arguments on this path the way the hosted server's zod schema does, so the default is applied from
+the catalog explicitly; a limit above the schema maximum is passed through rather than clamped, so
+an out-of-contract request still fails loudly against the remote route instead of quietly returning
+a short page. A cut page is reported with `hasMore: true` and no `nextCursor` — the local store has
+no keyset, so the remedy is a larger `limit`, not pagination.
 
 ### `completion`
 

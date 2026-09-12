@@ -150,6 +150,36 @@ export function projectListView(result, view) {
 const TAXONOMY_FETCH_LIMIT = 100;
 
 /**
+ * `memory.list`'s `limit` bound, read from the catalog this server renders
+ * `tools/list` from rather than restated — a hand-copied `50` here would be a
+ * second declaration of a number the schema already publishes to every client.
+ */
+const LIST_LIMIT_SCHEMA = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+  ?.inputSchema?.properties?.limit ?? {};
+
+/**
+ * The page size a `memory.list` call actually gets.
+ *
+ * An ABSENT `limit` means the schema's `default`, not "unbounded". The hosted
+ * server gets that for free — `ListMemoriesQuerySchema` applies the default
+ * during the parse — but nothing parses arguments on this path, so an omitted
+ * `limit` reached the store as `undefined` and every store treats that as "no
+ * cap". That was invisible while an unscoped `memory.list {}` answered `[]`;
+ * widening it to the whole store is what makes a default load-bearing, since
+ * the call now returns every lesson the store holds straight into a model's
+ * context.
+ *
+ * A limit ABOVE the schema's `maximum` is left alone rather than clamped down:
+ * the remote route answers those with a 400, and quietly serving 100 instead
+ * would hide a caller's contract violation behind a short page that looks
+ * complete. Honouring a default nobody stated and refusing to invent a cap
+ * nobody asked for are the same rule, applied to the two ends of the range.
+ */
+function listLimit(a) {
+  return a.limit ?? LIST_LIMIT_SCHEMA.default;
+}
+
+/**
  * The full `memory.list` post-processing chain: validate → fetch → filter →
  * slice → project.
  *
@@ -160,9 +190,11 @@ const TAXONOMY_FETCH_LIMIT = 100;
 export async function listWithFilters(store, a = {}) {
   validateListArgs(a);
   const filtering = Boolean(a.kind || a.host);
-  if (!filtering) return projectListView(await store.list(a), a.view);
+  if (!filtering) {
+    return projectListView(await store.list({ ...a, limit: listLimit(a) }), a.view);
+  }
 
-  const requested = a.limit ?? 50;
+  const requested = listLimit(a);
   const widened = TAXONOMY_FETCH_LIMIT;
   // Drop `cursor` as well as widening `limit`. A cursor is a keyset position in
   // the UNFILTERED row order; resuming a client-side-filtered read from one
