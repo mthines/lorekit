@@ -22,6 +22,7 @@
  */
 
 import { validateScope, UserInputError, parseMemoryRefs } from '../_shared/scope/scope.ts';
+import { pickScopeWinner, shadowedScopes } from '../_shared/scope/scope-precedence.ts';
 import { groupRefsByScope, missingRefs, unbatchableRefs } from '../_shared/memory/read-refs.ts';
 import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
@@ -305,29 +306,103 @@ export async function toolRead(
     }
     return toolReadRefs(db, refs, userId, span, keyScoping);
   }
-  if (!rawScope || !key) throw new UserInputError('scope and key are required');
-  const scope = validateScope(rawScope);
+  if (!key) throw new UserInputError('key is required');
+  // `scope` is OPTIONAL. Omitting it means "resolve this key across every scope
+  // the caller can see", and the winner is picked by the shared
+  // `scope-precedence` rule (project → branch → repo → global, then
+  // most-recently-updated, then scope ascending).
+  //
+  // It used to be required, which made the commonest agent call — `memory.read
+  // { key }`, no scope, because the agent has a key from a SessionStart
+  // injection and not the scope it came from — a hard `scope and key are
+  // required` error. `key` stays required: without it there is no read at all,
+  // only a list.
+  // `!== undefined && !== null`, never a truthiness test: `""` is falsy, so a
+  // truthy check reads an EXPLICIT empty scope as an omitted one and silently
+  // widens the read account-wide. `validateScope('')` already rejects it with
+  // a clear message, and a caller that sent a scope deserves that error rather
+  // than a different question quietly answered.
+  const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
 
-  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+  // `lorekit.read.unscoped` is known from the INPUT, so it is stamped here
+  // rather than after the fetch: a read that throws on PostgREST is still a
+  // read that was or was not scoped, and stamping it later left exactly those
+  // spans without it — the same asymmetry with the `mcp-core` twin (which sets
+  // it before its own `try`) that d38502c set out to close.
+  span.setAttributes({
+    'lorekit.key': key,
+    'lorekit.read.unscoped': scope === null,
+    ...(scope ? { 'lorekit.scope': scope } : {}),
+  });
 
   const tracedDb = createTracedClient(db, span);
   // `id` is selected purely to drive the per-memory read counter below — it is
-  // stripped before the tool's result is returned, so memory.read's wire
-  // contract is unchanged.
-  let query = tracedDb.from('memories').select('id,value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
+  // stripped before the tool's result is returned. `scope` IS returned: an
+  // unscoped read that did not say where it landed is ambiguous, and the caller
+  // has no other way to tell a `global` hit from a `repo::…` one.
+  let query = tracedDb.from('memories').select('id,scope,value,updated_at').eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
+  // A named scope still narrows in SQL — same single-row read as before, no
+  // extra rows fetched to be discarded client-side.
+  if (scope) query = query.eq('scope', scope);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
-  const { data, error } = await query.maybeSingle();
+  // The cap is a safety valve on a pathological key, not a correctness
+  // boundary: `scope`+`key` is unique, so the scoped path can only ever match
+  // one row, and an unscoped one matches once per scope holding that key.
+  // PostgREST cannot ORDER BY our precedence rank (it is a list, not a column),
+  // so the ranking happens below over whatever came back. It still has to come
+  // back in a DEFINED order: without one, a key held in more than
+  // UNSCOPED_READ_CANDIDATE_LIMIT scopes truncates to whichever rows Postgres
+  // happened to return, so the same call can answer differently on consecutive
+  // runs — the precise failure `pickScopeWinner`'s total order exists to
+  // prevent, reintroduced one layer above it. `updated_at desc` is the
+  // comparator's SECOND key, not its first: precedence ranks by scope TYPE
+  // first, so a truncating fetch can still drop a stale `project::` row in
+  // favour of fresher `global` ones. It is the best key PostgREST can sort on,
+  // and >50 scopes holding one key is pathological by the cap's own definition
+  // — deterministic beats correct-under-a-shape that does not occur.
+  const { data, error } = await query
+    .order('updated_at', { ascending: false })
+    .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
   if (error) throw new Error(error.message);
-  if (!data) return null;
+  const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string }[];
+  // Stamped BEFORE the miss return, not after: a miss is exactly the population
+  // this measure exists to size — how often an unscoped read fans out and still
+  // finds nothing. Stamping it after the return also made this surface disagree
+  // with the `mcp-core` twin, which stamps it before its own. A numeric measure,
+  // not a dimension — no cardinality added; paired with `lorekit.read.unscoped`
+  // above it is the only way to see how often an unscoped read was AMBIGUOUS,
+  // which is what would justify surfacing the fallback more loudly.
+  span.setAttributes({ 'lorekit.read.candidates': rows.length });
+  const winner = pickScopeWinner(rows);
+  if (!winner) return null;
+  // Stamp the RESOLVED scope, not the requested one — on an unscoped read the
+  // scope the caller cares about is the one that answered. `lorekit.scope.type`
+  // is left to the transport's own attribute pass, which reads `lorekit.scope`.
+  span.setAttributes({ 'lorekit.scope': winner.scope });
   // memory.read is a TARGETED read (one exact scope+key) for the per-memory
   // counter (migration 00077) — and, since the transport IS MCP, an agent
   // deliberately opening this lesson, so it also bumps last_opened_at
-  // (migration 00099).
-  recordMemoryReads(db, [data.id], 'targeted', 'mcp');
-  const { id: _id, ...rest } = data;
-  return rest;
+  // (migration 00099). Only the WINNER is counted: the rows precedence
+  // discarded were never shown to the caller, and counting them would inflate
+  // the `opened_count / read_count` ratio `/insights` is built on.
+  recordMemoryReads(db, [winner.id], 'targeted', 'mcp');
+  const { id: _id, ...rest } = winner;
+  // `other_scopes` appears ONLY when the key was genuinely ambiguous — an
+  // always-present empty array would be noise on every single-lesson read.
+  const others = shadowedScopes(rows, winner);
+  return others.length > 0 ? { ...rest, other_scopes: others } : rest;
 }
+
+/**
+ * How many same-key rows an unscoped `memory.read` will weigh before picking.
+ *
+ * A key living in more than this many DISTINCT scopes is pathological, not a
+ * shape to design for; the cap exists so a runaway key cannot turn one read
+ * into an unbounded fetch. A scoped read is unaffected — `scope`+`key` is
+ * unique, so it matches at most one row regardless.
+ */
+const UNSCOPED_READ_CANDIDATE_LIMIT = 50;
 
 /**
  * Batch mode behind `memory.read`'s `refs` field (R1, R4, R6, R7).
@@ -417,8 +492,17 @@ export async function toolList(
   const { scope: rawScope, tags: rawTags, limit = 50, cursor: cursorParam, kind, host } = params;
   // `params` is raw JSON-RPC, so `tags` can arrive as any shape — see toTagList.
   const tags = toTagList(rawTags);
-  if (!rawScope) throw new UserInputError('scope is required');
-  const scope = validateScope(rawScope);
+  // `scope` is OPTIONAL: an omitted one lists across every scope the caller can
+  // see, which is what `GET /memories` and `lorekit list` have always done.
+  // MCP was the odd one out, rejecting the call outright — so an agent that did
+  // not already know a scope name could not discover anything through this tool
+  // (`memory.scopes` existed precisely to work around that).
+  // `!== undefined && !== null`, never a truthiness test: `""` is falsy, so a
+  // truthy check reads an EXPLICIT empty scope as an omitted one and silently
+  // widens the read account-wide. `validateScope('')` already rejects it with
+  // a clear message, and a caller that sent a scope deserves that error rather
+  // than a different question quietly answered.
+  const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
   const pageLimit = Math.min(limit, 100);
   // Recorded BEFORE the clamp so a future cap decision has the caller's actual
   // ask, not just the truncated `result.count` — without this, every call
@@ -457,7 +541,10 @@ export async function toolList(
   }
   const ranked = params.order === 'rank';
 
-  span.setAttributes({ 'lorekit.scope': scope });
+  // `lorekit.scope` is OMITTED on an unscoped list — the operation genuinely
+  // carries no scope, and stamping a placeholder would make an account-wide
+  // read indistinguishable from one that named that scope.
+  span.setAttributes({ ...(scope ? { 'lorekit.scope': scope } : {}), 'lorekit.list.unscoped': scope === null });
 
   const tracedDb = createTracedClient(db, span);
 
@@ -469,13 +556,18 @@ export async function toolList(
     // seen_count is selected here and dropped from the wire response (D4).
     let rankQuery = tracedDb
       .from('memories')
-      .select('id,key,value,tags,updated_at,seen_count,origin_pr')
-      .eq('scope', scope)
+      // `scope` is selected (and returned on every entry) unconditionally: an
+      // unscoped list mixes scopes, so without it the caller cannot tell which
+      // lesson came from where — and a field that appears only on the unscoped
+      // shape would be one more conditional response for every consumer to
+      // dispatch on, which `memory.read`'s `refs` already cost us once.
+      .select('id,scope,key,value,tags,updated_at,seen_count,origin_pr')
       .is('archived_at', null)
       .or('expires_at.is.null,expires_at.gt.now()')
       .order('updated_at', { ascending: false })
       .order('id', { ascending: false })
       .limit(CANDIDATE_LIMIT);
+    if (scope) rankQuery = rankQuery.eq('scope', scope);
     if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId), keyScoping);
     if (tags.length) rankQuery = rankQuery.overlaps('tags', pgArrayLiteral(tags));
     // Taxonomy filters are applied BEFORE ranking, not after: the candidate
@@ -546,13 +638,14 @@ export async function toolList(
   // ── Recency path (default) — UNCHANGED ──────────────────────────────────
   let query = tracedDb
     .from('memories')
-    .select('id,key,value,tags,updated_at')
-    .eq('scope', scope)
+    // `scope` selected unconditionally — see the ranked path's note above.
+    .select('id,scope,key,value,tags,updated_at')
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(pageLimit + 1);
+  if (scope) query = query.eq('scope', scope);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   if (kind) query = query.eq('kind', kind);
@@ -796,29 +889,39 @@ export async function toolListArchived(
   keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, limit = 50 } = params;
-  if (!rawScope) throw new UserInputError('scope is required');
-  const scope = validateScope(rawScope);
+  // Optional for the same reason as `memory.list`, whose `?archived=true` form
+  // this is the MCP twin of — the two must not disagree about whether a scope
+  // is needed to look at the same rows.
+  // `!== undefined && !== null`, never a truthiness test: `""` is falsy, so a
+  // truthy check reads an EXPLICIT empty scope as an omitted one and silently
+  // widens the read account-wide. `validateScope('')` already rejects it with
+  // a clear message, and a caller that sent a scope deserves that error rather
+  // than a different question quietly answered.
+  const scope = rawScope !== undefined && rawScope !== null ? validateScope(rawScope) : null;
   const pageLimit = Math.min(limit, 100);
 
   // See toolList's identical comment: recorded pre-clamp so a capped call is
   // distinguishable from one that got everything it asked for.
   span.setAttributes({
-    'lorekit.scope': scope,
+    // Omitted when unscoped — see toolList.
+    ...(scope ? { 'lorekit.scope': scope } : {}),
+    'lorekit.list.unscoped': scope === null,
     'lorekit.requested_limit': limit,
     'lorekit.limit_capped': limit > pageLimit,
   });
 
   const tracedDb = createTracedClient(db, span);
   // `id` is selected purely to drive the per-memory read counter below — it is
-  // stripped from each entry before the tool's result is returned, so
-  // memory.list_archived's wire contract is unchanged.
+  // stripped from each entry before the tool's result is returned. `scope` is
+  // selected and kept, for the same reason as `memory.list`: an unscoped listing
+  // mixes scopes and is unreadable without it.
   let query = tracedDb
     .from('memories')
-    .select('id,key,value,tags,updated_at,archived_at')
-    .eq('scope', scope)
+    .select('id,scope,key,value,tags,updated_at,archived_at')
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
     .limit(pageLimit);
+  if (scope) query = query.eq('scope', scope);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query;
   if (error) throw new Error(error.message);

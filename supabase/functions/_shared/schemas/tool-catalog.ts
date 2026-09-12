@@ -152,6 +152,16 @@ export interface McpToolDoc {
 }
 
 const scope: JsonSchemaProperty = { type: 'string', description: 'Canonical scope string, e.g. `repo::mthines/lorekit`.' };
+/**
+ * `scope` as the READ tools take it — optional, with the fallback spelled out.
+ *
+ * A separate constant rather than a tweak to `scope` above because the two are
+ * genuinely different contracts: a WRITE has to be told where the lesson goes
+ * (there is no sane default for "where does this belong"), while a read can
+ * always widen to everything the caller can see. Sharing one description would
+ * make one of the two wrong.
+ */
+const readScope: JsonSchemaProperty = { type: 'string', description: 'Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see.' };
 const key: JsonSchemaProperty = { type: 'string', description: 'Lesson identifier, unique within the scope. Max 512 characters.' };
 const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum entries to return.' };
 
@@ -306,44 +316,50 @@ export const MCP_TOOLS = [
   {
     name: 'memory.read',
     description:
-      'Read one lesson by `scope` + `key`, or several at once by `refs`. Pass exactly one of those two shapes: `scope` and `key` together, or `refs` alone — a call carrying both, or neither, is rejected.',
+      'Read one lesson by `key`, or several at once by `refs`. Pass exactly one of those two shapes: `key` (optionally narrowed with `scope`), or `refs` alone — a call carrying both is rejected, and so is one carrying neither. `scope` is optional: omit it and the key is resolved across every scope you can see, preferring the most specific one.',
     permission: 'read',
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'show', rest: 'GET /:id', handler: 'toolRead' },
     inputSchema: {
       type: 'object',
       // NO top-level `required` and NO top-level union. `refs` is mutually
-      // exclusive with `scope`+`key`, so neither can be unconditionally
-      // required — `required: ['scope','key']` would advertise a schema under
-      // which no legal batch call exists. JSON Schema spells the alternative
-      // `oneOf`, and this entry did until Bedrock rejected it;
-      // `JsonSchemaObject` carries the why. The rule lives in `description`
-      // now, and `toolRead` enforces it either way: both shapes gets `refs
-      // cannot be combined with scope and key`, neither gets `scope and key
-      // are required`.
+      // exclusive with `key`, so neither can be unconditionally required —
+      // `required: ['key']` would advertise a schema under which no legal batch
+      // call exists. JSON Schema spells the alternative `oneOf`, and this entry
+      // did until Bedrock rejected it; `JsonSchemaObject` carries the why. The
+      // rule lives in `description` now, and `toolRead` enforces it either way:
+      // both shapes gets `refs cannot be combined with scope and key`, neither
+      // gets `key is required`.
+      //
+      // `scope` was never the thing that made this un-`required`-able, and as
+      // of the unscoped-read change it is not required in EITHER shape.
       properties: {
-        scope,
+        scope: readScope,
         key,
         refs: { type: 'array', items: { type: 'string' }, description: 'Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`\'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries.' },
       },
     },
-    returns: '`{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every well-formed reference within the first 32 that matched no lesson.',
+    returns: '`{ "value": "<markdown>", "updated_at": "<iso>", "scope": "<scope>" }` or `null` if not found. `scope` names the scope that ANSWERED — always present, so an unscoped read can tell a `global` hit from a `repo::…` one. When the key also existed in other scopes, an additional `other_scopes` array names them in precedence order; it is omitted entirely when the key was unambiguous. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every well-formed reference within the first 32 that matched no lesson.',
     notes: [
-      '**Exactly one of two argument shapes is required:** `scope` **and** `key` together (single read), **or** `refs` alone (batch read). They cannot be combined — a call carrying both is rejected, and so is one carrying neither. No argument is required on its own, which is why none is marked required above: the table cannot express "one of these two groups", so this rule is the whole of it. The schema deliberately does NOT advertise the alternatives as a top-level `oneOf` either — Amazon Bedrock rejects a tool whose `input_schema` carries one, and it fails the entire request rather than that one tool. Both shapes are validated by the server on every call regardless.',
+      '**Scope is optional.** `memory.read { key }` with no scope resolves that key across every scope you can see and returns the most specific match — `project` beats `branch` beats `repo` beats `global`, with ties broken by most-recently-updated then scope ascending. This is the shape to use when a key reached you through a session-start injection and you do not know which scope it came from. Pass `scope` when you DO know it: it is one indexed row instead of a fan-out, and it removes the ambiguity entirely. Either way the response names the scope that answered.',
+      '**Exactly one of two argument shapes is required:** `key` (optionally with `scope`) for a single read, **or** `refs` alone for a batch read. They cannot be combined — a call carrying both is rejected, and so is one carrying neither. No argument is required on its own, which is why none is marked required above: the table cannot express "one of these two groups", so this rule is the whole of it. The schema deliberately does NOT advertise the alternatives as a top-level `oneOf` either — Amazon Bedrock rejects a tool whose `input_schema` carries one, and it fails the entire request rather than that one tool. Both shapes are validated by the server on every call regardless.',
       '**Batch reads (`refs`):** name only the `scope::key` references you actually need for this run — fewer round trips than one `memory.read` per lesson, at the cost of one call reaching into more than one scope. Each ref resolves independently rather than failing the whole call: one that is well-formed but matches no lesson is named in `missing`, while one that is not valid `scope::key` at all — and every ref past the 32nd — is dropped silently and appears nowhere. So `missing` is a not-found list, never a malformed-input list and never a truncation report: if you send more than 32 refs, compare `entries` + `missing` against what you sent to see what was cut. A `refs` that is not a non-empty array is rejected outright.',
     ],
   },
   {
     name: 'memory.list',
-    description: 'List lessons for a scope',
+    description: 'List lessons, for one scope or across every scope you can see',
     permission: 'read',
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'list', cliAliases: ['ls'], rest: 'GET /', handler: 'toolList' },
     inputSchema: {
       type: 'object',
-      required: ['scope'],
+      // `scope` is deliberately NOT required. It used to be, which made MCP the
+      // one read surface an agent could not use without already knowing a scope
+      // name — `GET /memories` and `lorekit list` have always been account-wide
+      // by default, so this was a transport disagreeing with its own siblings.
       properties: {
-        scope,
+        scope: readScope,
         tags: { type: 'array', items: { type: 'string' }, description: 'Filter to entries carrying ANY of these labels (OR).' },
         limit,
         cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` (ranked mode returns a single bounded page; `hasMore` is always false and `nextCursor` always null).' },
@@ -353,7 +369,7 @@ export const MCP_TOOLS = [
         view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'full (default) returns each entry\'s complete `value`. summary omits `value` and returns `value_bytes` + a 200-character `preview` instead — the cheap discovery read for deciding WHICH lessons to then fetch with `memory.read`.' },
       },
     },
-    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or ranked by salience+recency then MMR-diversified (rank mode). Because rank mode diversifies, entries are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate. Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null. With `view: "summary"` each entry is `{ "key", "tags", "updated_at", "value_bytes", "preview" }` — `value` is omitted entirely.',
+    returns: '`{ "entries": [{ "scope", "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — every entry names its own `scope`, so an unscoped listing stays readable; newest-first (recency mode) or ranked by salience+recency then MMR-diversified (rank mode). Because rank mode diversifies, entries are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate. Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null. With `view: "summary"` each entry is `{ "scope", "key", "tags", "updated_at", "value_bytes", "preview" }` — `value` is omitted entirely.',
   },
   {
     name: 'memory.delete',
@@ -418,8 +434,9 @@ export const MCP_TOOLS = [
     description:
       'List every scope in the store with how many active memories it holds and when it was last '
       + 'written to — the inventory to consult when you do not already know which scope to read. '
-      + 'Takes no arguments and is store-wide, NOT limited to any working directory. Every other '
-      + 'read tool requires a scope up front, so this is the one that answers "what is there?".',
+      + 'Takes no arguments and is store-wide, NOT limited to any working directory. The other '
+      + 'read tools answer questions about lore; this one answers "what is there?" — reach for it '
+      + 'when you want to NAME a scope, to narrow a list or to decide where a write belongs.',
     permission: 'read',
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'scopes', rest: 'GET /scopes', handler: 'toolScopes' },
@@ -428,7 +445,7 @@ export const MCP_TOOLS = [
   },
   {
     name: 'memory.list_archived',
-    description: 'List archived (soft-deleted) lessons for a scope',
+    description: 'List archived (soft-deleted) lessons, for one scope or across every scope you can see',
     permission: 'read',
     auth: 'token-or-jwt',
     surfaces: {
@@ -439,8 +456,11 @@ export const MCP_TOOLS = [
       handler: 'toolListArchived',
       localMcpExempt: 'reachable through memory.list\'s archived filter on the offline store',
     },
-    inputSchema: { type: 'object', required: ['scope'], properties: { scope, limit } },
-    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`',
+    // `scope` optional for the same reason as `memory.list`, whose
+    // `?archived=true` form this is the MCP twin of — the two must not disagree
+    // about whether a scope is needed to look at the same rows.
+    inputSchema: { type: 'object', properties: { scope: readScope, limit } },
+    returns: '`{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "archived_at" }] }` — every entry names its own `scope`, so an unscoped listing stays readable.',
   },
   {
     name: 'memory.restore',

@@ -160,13 +160,13 @@ export const MCP_TOOL_DEFS = [
   },
   {
     "name": "memory.read",
-    "description": "Read one lesson by `scope` + `key`, or several at once by `refs`. Pass exactly one of those two shapes: `scope` and `key` together, or `refs` alone — a call carrying both, or neither, is rejected.",
+    "description": "Read one lesson by `key`, or several at once by `refs`. Pass exactly one of those two shapes: `key` (optionally narrowed with `scope`), or `refs` alone — a call carrying both is rejected, and so is one carrying neither. `scope` is optional: omit it and the key is resolved across every scope you can see, preferring the most specific one.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "scope": {
           "type": "string",
-          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see."
         },
         "key": {
           "type": "string",
@@ -184,16 +184,13 @@ export const MCP_TOOL_DEFS = [
   },
   {
     "name": "memory.list",
-    "description": "List lessons for a scope",
+    "description": "List lessons, for one scope or across every scope you can see",
     "inputSchema": {
       "type": "object",
-      "required": [
-        "scope"
-      ],
       "properties": {
         "scope": {
           "type": "string",
-          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see."
         },
         "tags": {
           "type": "array",
@@ -341,7 +338,7 @@ export const MCP_TOOL_DEFS = [
   },
   {
     "name": "memory.scopes",
-    "description": "List every scope in the store with how many active memories it holds and when it was last written to — the inventory to consult when you do not already know which scope to read. Takes no arguments and is store-wide, NOT limited to any working directory. Every other read tool requires a scope up front, so this is the one that answers \"what is there?\".",
+    "description": "List every scope in the store with how many active memories it holds and when it was last written to — the inventory to consult when you do not already know which scope to read. Takes no arguments and is store-wide, NOT limited to any working directory. The other read tools answer questions about lore; this one answers \"what is there?\" — reach for it when you want to NAME a scope, to narrow a list or to decide where a write belongs.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -349,16 +346,13 @@ export const MCP_TOOL_DEFS = [
   },
   {
     "name": "memory.list_archived",
-    "description": "List archived (soft-deleted) lessons for a scope",
+    "description": "List archived (soft-deleted) lessons, for one scope or across every scope you can see",
     "inputSchema": {
       "type": "object",
-      "required": [
-        "scope"
-      ],
       "properties": {
         "scope": {
           "type": "string",
-          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`."
+          "description": "Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see."
         },
         "limit": {
           "type": "integer",

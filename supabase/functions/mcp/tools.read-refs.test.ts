@@ -44,35 +44,56 @@ type Row = { id: string; scope: string; key: string; value: string; updated_at: 
 
 /**
  * A fake `db` covering both `toolRead` paths:
- *  - singular (`scope`+`key`): `.select(...).eq(...).eq(...).is(...).or(...).maybeSingle()`
- *  - batch (`refs`): one `.select(...).eq(...).in(...).is(...).or(...)` PER
- *    distinct scope group, awaited directly (no `.maybeSingle()`).
+ *  - singular (`key`, optionally `scope`): `.select(...).eq('key',…)[.eq('scope',…)].is(...).or(...).order(...).limit(n)`
+ *  - batch (`refs`): one `.select(...).eq('scope',…).in('key',…).is(...).or(...)` PER
+ *    distinct scope group, awaited directly.
+ *
+ * The singular path ends in `.limit()`, not `.maybeSingle()`: `scope` is
+ * optional, so the query can legitimately match one row per scope holding the
+ * key and the winner is picked in TypeScript by `scope-precedence`. The two
+ * paths are told apart by whether `.in()` was used, since both filter on `key`.
  *
  * `rowsByScope` keys the batch path's canned rows by the EXACT scope string
  * the handler queried with (byte-equal, never lowercased) — this is what lets
- * AC-4 assert the predicate saw the mixed-case scope verbatim. `singleRow`
- * feeds the singular path.
+ * AC-4 assert the predicate saw the mixed-case scope verbatim. `singleRows`
+ * feeds the singular path, as a LIST so the unscoped multi-scope case can be
+ * exercised.
  */
-function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRow?: Row | null } = {}) {
+function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRows?: Row[] } = {}) {
   const order: string[] = [];
-  const queries: { table: string; filters: [string, unknown][]; single: boolean }[] = [];
+  const queries: {
+    table: string;
+    filters: [string, unknown][];
+    single: boolean;
+    orderBy: [string, unknown][];
+  }[] = [];
   const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 
   function chain(table: string) {
-    const rec: { table: string; filters: [string, unknown][]; single: boolean } = {
+    const rec: {
+      table: string;
+      filters: [string, unknown][];
+      single: boolean;
+      batch: boolean;
+      orderBy: [string, unknown][];
+    } = {
       table,
       filters: [],
       single: false,
+      batch: false,
+      orderBy: [],
     };
     queries.push(rec);
     // deno-lint-ignore no-explicit-any
     const builder: any = {
       select(..._args: unknown[]) { return builder; },
       eq(col: string, val: unknown) { rec.filters.push([col, val]); return builder; },
-      in(col: string, vals: unknown) { rec.filters.push([col, vals]); return builder; },
+      in(col: string, vals: unknown) { rec.batch = true; rec.filters.push([col, vals]); return builder; },
       is(col: string, val: unknown) { rec.filters.push([col, val]); return builder; },
       or(_expr: string) { return builder; },
       maybeSingle() { rec.single = true; return builder; },
+      order(col: string, opts?: unknown) { rec.orderBy.push([col, opts]); return builder; },
+      limit(_n: number) { return builder; },
       // deno-lint-ignore no-explicit-any
       then(resolve: (v: unknown) => void, reject?: (e: unknown) => void) {
         const scopeEntry = rec.filters.find(([c]) => c === 'scope');
@@ -81,8 +102,11 @@ function fakeDb(opts: { rowsByScope?: Map<string, Row[]>; singleRow?: Row | null
         return Promise.resolve()
           .then(() => new Promise((res) => queueMicrotask(() => res(undefined))))
           .then(() => {
-            if (rec.single) {
-              return { data: opts.singleRow ?? null, error: null };
+            if (!rec.batch) {
+              // The singular path: `scope` may be absent, so the canned rows
+              // are filtered by it only when the query actually carried one.
+              const rows = (opts.singleRows ?? []).filter((r) => scope === undefined || r.scope === scope);
+              return { data: rows, error: null };
             }
             const rows = (scope !== undefined ? opts.rowsByScope?.get(scope) : undefined) ?? [];
             return { data: rows, error: null };
@@ -119,19 +143,21 @@ Deno.test('AC-1: refs branch returns entries and missing', async () => {
   assertEquals(Array.isArray((result as { missing: unknown[] }).missing), true);
 });
 
-Deno.test('AC-1: singular branch own keys are exactly value and updated_at', async () => {
+Deno.test('AC-1: singular branch own keys are exactly scope, value and updated_at', async () => {
   const { span } = newRootSpan();
-  // Only the columns the singular path actually selects (`id,value,updated_at`)
-  // — a real Postgres response would never carry `scope`/`key` here, so the
-  // fake must not either or this assertion would pass for the wrong reason.
+  // Only the columns the singular path actually selects (`id,scope,value,
+  // updated_at`) — a real Postgres response would never carry `key` here, so
+  // the fake must not either or this assertion would pass for the wrong reason.
+  // `scope` IS selected now and IS returned: an unscoped read that did not say
+  // where it landed is ambiguous, so every singular read names its scope.
   const { db } = fakeDb({
     // deno-lint-ignore no-explicit-any
-    singleRow: { id: '1', value: 'hello', updated_at: 't' } as any,
+    singleRows: [{ id: '1', scope: 'global', value: 'hello', updated_at: 't' } as any],
   });
 
   const result = await toolRead(db, { scope: 'global', key: 'a' }, null, span);
 
-  assertEquals(Object.keys(result as object).sort(), ['updated_at', 'value']);
+  assertEquals(Object.keys(result as object).sort(), ['scope', 'updated_at', 'value']);
 });
 
 Deno.test('AC-2: refs together with scope or key is rejected', async () => {
@@ -368,4 +394,142 @@ Deno.test('AC-15: a 40-ref list is truncated to 32', async () => {
   assertEquals(result.missing.length, 32, 'at most 32 references are ever considered');
   const inFilter = queries[0].filters.find(([c]) => c === 'key');
   assertEquals((inFilter?.[1] as string[]).length, 32);
+});
+
+// ── unscoped singular read: `scope` is optional ───────────────────────────────
+//
+// `memory.read { key }` with no scope used to throw `scope and key are
+// required`. It is the commonest agent shape — a key arrives through a
+// session-start injection without the scope it came from — so it now resolves
+// across every visible scope and picks by `scope-precedence`.
+
+Deno.test('unscoped: a key matching one scope resolves to it', async () => {
+  const { span } = newRootSpan();
+  const { db } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'repo::o/r', value: 'v', updated_at: 't' } as any],
+  });
+
+  const result = await toolRead(db, { key: 'a' }, null, span) as { scope: string; value: string };
+
+  assertEquals(result.scope, 'repo::o/r');
+  assertEquals(result.value, 'v');
+});
+
+Deno.test('unscoped: issues no scope predicate, so nothing is silently narrowed', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'global', value: 'v', updated_at: 't' } as any],
+  });
+
+  await toolRead(db, { key: 'a' }, null, span);
+
+  // The difference between "searched everywhere" and "quietly searched one
+  // scope" is invisible in the rows alone — assert on the predicate.
+  const read = queries.find((q) => q.table === 'memories');
+  assertEquals(read?.filters.some(([c]) => c === 'scope'), false);
+  assertEquals(read?.filters.some(([c, v]) => c === 'key' && v === 'a'), true);
+});
+
+// The candidate fetch is capped, so WHICH rows come back decides the winner
+// before `pickScopeWinner`'s total order ever runs. Without an ORDER BY, a key
+// held in more scopes than the cap truncates to whatever order Postgres
+// returned and the same call answers differently on consecutive runs. The
+// `mcp-core` twin asserts the identical tuple — this is the edge half.
+Deno.test('unscoped: the candidate fetch is ordered so the cap truncates deterministically', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'global', value: 'v', updated_at: 't' } as any],
+  });
+
+  await toolRead(db, { key: 'a' }, null, span);
+
+  const read = queries.find((q) => q.table === 'memories');
+  assertEquals(read?.orderBy, [['updated_at', { ascending: false }]]);
+});
+
+Deno.test('unscoped: the scoped path is ordered too', async () => {
+  const { span } = newRootSpan();
+  const { db, queries } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'global', value: 'v', updated_at: 't' } as any],
+  });
+
+  await toolRead(db, { scope: 'global', key: 'a' }, null, span);
+
+  const read = queries.find((q) => q.table === 'memories');
+  assertEquals(read?.orderBy, [['updated_at', { ascending: false }]]);
+});
+
+Deno.test('unscoped: the more specific scope wins and the rest are named', async () => {
+  const { span } = newRootSpan();
+  const { db } = fakeDb({
+    singleRows: [
+      // `global` is the FRESHER row and still loses — the precedence band is
+      // compared before the timestamp.
+      // deno-lint-ignore no-explicit-any
+      { id: '1', scope: 'global', value: 'broad', updated_at: '2026-09-01' } as any,
+      // deno-lint-ignore no-explicit-any
+      { id: '2', scope: 'repo::o/r', value: 'specific', updated_at: '2026-01-01' } as any,
+    ],
+  });
+
+  const result = await toolRead(db, { key: 'a' }, null, span) as {
+    scope: string;
+    value: string;
+    other_scopes: string[];
+  };
+
+  assertEquals(result.scope, 'repo::o/r');
+  assertEquals(result.value, 'specific');
+  assertEquals(result.other_scopes, ['global']);
+});
+
+Deno.test('unscoped: other_scopes is absent when the key was unambiguous', async () => {
+  const { span } = newRootSpan();
+  const { db } = fakeDb({
+    // deno-lint-ignore no-explicit-any
+    singleRows: [{ id: '1', scope: 'global', value: 'v', updated_at: 't' } as any],
+  });
+
+  const result = await toolRead(db, { key: 'a' }, null, span);
+
+  assertEquals(Object.keys(result as object).includes('other_scopes'), false);
+});
+
+Deno.test('unscoped: only the WINNER is recorded as opened', async () => {
+  const { span } = newRootSpan();
+  const { db, rpcCalls } = fakeDb({
+    singleRows: [
+      // deno-lint-ignore no-explicit-any
+      { id: 'loser', scope: 'global', value: 'broad', updated_at: 't' } as any,
+      // deno-lint-ignore no-explicit-any
+      { id: 'winner', scope: 'repo::o/r', value: 'specific', updated_at: 't' } as any,
+    ],
+  });
+
+  await toolRead(db, { key: 'a' }, null, span);
+  // recordMemoryReads is fire-and-forget (`void p`) — flush microtasks.
+  await Promise.resolve();
+  await Promise.resolve();
+
+  // The rows precedence discarded were never shown to the caller; counting them
+  // would inflate the opened/read ratio `/insights` is built on.
+  const recordCalls = rpcCalls.filter((c) => c.fn === 'lorekit_record_memory_reads');
+  assertEquals(recordCalls.length, 1);
+  assertEquals(recordCalls[0].args.p_memory_ids as string[], ['winner']);
+});
+
+Deno.test('unscoped: a missing key is still null, not an error', async () => {
+  const { span } = newRootSpan();
+  const { db } = fakeDb({ singleRows: [] });
+  assertEquals(await toolRead(db, { key: 'nope' }, null, span), null);
+});
+
+Deno.test('a read with neither key nor refs is still rejected', async () => {
+  const { span } = newRootSpan();
+  const { db } = fakeDb();
+  await assertRejects(() => toolRead(db, {}, null, span), Error, 'key is required');
 });

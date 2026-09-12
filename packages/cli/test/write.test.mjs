@@ -672,3 +672,89 @@ test('write still accepts the forms the guard must not reject', () => {
     assert.equal(res.status, 0, `${args.join(' ')}: ${res.stderr}`);
   }
 });
+
+// ── `show <key>`: scope is optional and resolves by precedence ────────────────
+//
+// The shape this exists for is `lorekit show <key>` with no scope at all — the
+// CLI twin of `memory.read { key }`. Both used to be a hard error ("Both a
+// scope and a key are required"), which is the wrong answer when the key came
+// from a session-start injection and the caller never saw the scope it lived in.
+//
+// Local store only (LOREKIT_HOME + --local), per the sandbox note in CLAUDE.md:
+// these assert the resolution rule, which is store-independent, so there is no
+// reason to stand up a mock REST server to exercise it.
+
+test('show <key> with no scope finds the lesson', () => {
+  const { root, home } = seedProject();
+  assert.equal(runWrite(root, home, ['global', 'lone-key', 'the body', '--local']).status, 0);
+
+  const res = runShow(root, home, ['lone-key', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.key, 'lone-key');
+  assert.equal(out.offline.record.value, 'the body');
+});
+
+test('show <key> prefers the more specific scope over the broader one', () => {
+  const { root, home } = seedProject();
+  // Written global-first so the repo row is also the more recent one; the next
+  // test covers the case where recency points the other way.
+  assert.equal(runWrite(root, home, ['global', 'shared-key', 'broad', '--local']).status, 0);
+  assert.equal(runWrite(root, home, ['repo::acme/widget', 'shared-key', 'specific', '--local']).status, 0);
+
+  const res = runShow(root, home, ['shared-key', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).offline.record.value, 'specific');
+});
+
+test('show <key> lets scope specificity beat recency', () => {
+  const { root, home } = seedProject();
+  // repo written FIRST, global SECOND — so `global` is the freshest row. It
+  // still loses: the precedence band is compared before the timestamp, which is
+  // the whole point of resolving by scope rather than by "most recent match".
+  assert.equal(runWrite(root, home, ['repo::acme/widget', 'ordered-key', 'specific', '--local']).status, 0);
+  assert.equal(runWrite(root, home, ['global', 'ordered-key', 'broad', '--local']).status, 0);
+
+  const res = runShow(root, home, ['ordered-key', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).offline.record.value, 'specific');
+});
+
+test('show <key> reads a key containing `::` as a key, not a malformed scope', () => {
+  // The reported case: a key whose own namespace prefix contains `::` but whose
+  // left half is not a scope type. Splitting it would look for scope
+  // `pre-exec-lessons`, find nothing, and report an invalid scope.
+  const { root, home } = seedProject();
+  const key = 'pre-exec-lessons::automation-network';
+  assert.equal(runWrite(root, home, ['--scope', 'global', '--key', key, 'body', '--local']).status, 0);
+
+  const res = runShow(root, home, [key, '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).key, key);
+});
+
+test('show <key> still reports a genuine miss rather than an invalid scope', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['no-such-key-anywhere', '--json']);
+  // A miss still exits 1 — that is `show`'s long-standing contract and this
+  // change does not touch it. What DID change is the reason: the store looked
+  // across every scope and found nothing, rather than the argument being
+  // rejected as a malformed scope before any store was consulted.
+  assert.equal(res.status, 1);
+  assert.doesNotMatch(res.stderr, /invalid scope/);
+  assert.equal(JSON.parse(res.stdout).offline.record, null);
+});
+
+test('show with no arguments at all is still a usage error', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, []);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /A key is required/);
+});
+
+test('show --link without a scope refuses instead of emitting an empty-scope URL', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['some-key', '--link']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /--link needs a scope/);
+});

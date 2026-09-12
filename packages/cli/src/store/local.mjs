@@ -10,7 +10,8 @@ import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
-import { seenCountOf, withReadFields } from './entry-fields.mjs';
+import { seenCountOf, withReadFields, updatedAtOf } from './entry-fields.mjs';
+import { pickScopeWinner } from '../shared/scope-precedence.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -54,6 +55,20 @@ class LocalStore {
     return this._readAll(scope).find((r) => r.entry.key === key) || null;
   }
 
+  // Every LIVE entry carrying `key`, across every scope in this store — the
+  // candidate set for a read that named no scope.
+  //
+  // Walks the whole tree rather than one scope directory, because `_files`
+  // resolves a single scope→directory and there is no directory for "any".
+  // That is more IO than a scoped read, which is exactly why a caller that
+  // knows its scope should still pass it.
+  _findAllByKey(key) {
+    const now = new Date();
+    return this._walkEntries()
+      .map((r) => r.entry)
+      .filter((e) => e && e.key === key && e.scope && isLive(e, now));
+  }
+
   // Raw lookup by scope+key — returns the stored entry regardless of archived
   // state (unlike read(), which hides archived). Synchronous; used by migrate
   // to classify ADD / UPDATE / NOOP without reviving archived entries.
@@ -80,12 +95,26 @@ class LocalStore {
   }
 
   // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
+  //
+  // `scope` is OPTIONAL. Without one the key is resolved across every scope in
+  // this store and the winner picked by the shared `scope-precedence` rule —
+  // the SAME rule the hosted MCP and REST surfaces apply, so `lorekit show
+  // <key>` offline and `memory.read { key }` online cannot resolve the same key
+  // to different lessons.
   async read({ scope, key } = {}) {
+    if (!scope) return { ok: true, entry: this._readUnscoped(key) };
     const found = this._findByKey(scope, key);
     return {
       ok: true,
       entry: found && isLive(found.entry) ? withReadFields(found.entry) : null,
     };
+  }
+
+  // The unscoped half of `read`, split out so `TwoTierStore` can reuse the
+  // candidate gathering without re-deciding the precedence rule.
+  _readUnscoped(key) {
+    const winner = pickScopeWinner(this._findAllByKey(key).map(scopeCandidate));
+    return winner ? withReadFields(winner.entry) : null;
   }
 
   // readMany(refs) → { ok, entries, missing } — batch lookup for an array of
@@ -349,6 +378,19 @@ class LocalStore {
   }
 }
 
+/**
+ * Project a stored entry into the `{ scope, updated_at }` shape
+ * `scope-precedence` compares, keeping the entry itself alongside so the winner
+ * can be returned without a second lookup.
+ *
+ * `updatedAtOf` is what maps the local `updated` spelling onto the `updated_at`
+ * the shared rule expects — without it every local candidate would compare as
+ * having no timestamp and the tie-break would collapse to scope-ascending.
+ */
+function scopeCandidate(entry) {
+  return { scope: entry.scope, updated_at: updatedAtOf(entry), entry };
+}
+
 // A scope string is global when its type segment is `global`.
 function isGlobalScope(scope) {
   return String(scope).split('::')[0] === 'global';
@@ -415,6 +457,23 @@ class TwoTierStore {
   }
 
   async read({ scope, key } = {}) {
+    // Unscoped: precedence has to be decided over BOTH tiers at once, not tier
+    // by tier. Asking the project tier first and taking any hit would let a
+    // `global` lesson in the project tier beat a `repo::…` one in the home
+    // tier — tier order standing in for scope precedence, which is not what it
+    // means. Within ONE scope the project tier still shadows home, exactly as
+    // the scoped path below does.
+    if (!scope) {
+      const tiers = this.projectActive() ? [this.project, this.home] : [this.home];
+      const byScope = new Map();
+      for (const tier of tiers) {
+        for (const entry of tier._findAllByKey(key)) {
+          if (!byScope.has(entry.scope)) byScope.set(entry.scope, entry);
+        }
+      }
+      const winner = pickScopeWinner([...byScope.values()].map(scopeCandidate));
+      return { ok: true, entry: winner ? withReadFields(winner.entry) : null };
+    }
     if (this.projectActive()) {
       const r = await this.project.read({ scope, key });
       if (r.entry) return r;

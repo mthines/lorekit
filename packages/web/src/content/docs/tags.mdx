@@ -166,6 +166,12 @@ memory.list { scope: "project::gw-tools" }    // monorepo only
 memory.list { scope: "global" }
 ```
 
+If you only have a key and no scope, `memory.read { key }` does that resolution
+for you: it matches across every scope you can see and returns the most specific
+hit, naming the winning scope in the response's `scope` field (and any it
+shadowed in `other_scopes`). Omitting `scope` means **everywhere**, not
+`global`.
+
 </TutorialStep>
 
 <TutorialStep number={8} title="Inspect with the CLI">

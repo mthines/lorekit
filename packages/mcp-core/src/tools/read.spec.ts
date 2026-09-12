@@ -12,18 +12,27 @@ vi.mock('../telemetry.js', () => ({
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function makeDb(data: null | { value: string; updated_at: string }, error: null | { message: string } = null) {
-  const maybeSingle = vi.fn().mockResolvedValue({ data, error });
+type Row = { scope: string; value: string; updated_at: string };
+
+/**
+ * The read now terminates in `.limit()` rather than `.maybeSingle()`: a scope
+ * is optional, so the query can legitimately match one row per scope holding
+ * the key, and the winner is picked in TypeScript by `scope-precedence`.
+ * `rows` is therefore a LIST even in the single-hit cases below.
+ */
+function makeDb(rows: Row[] | null, error: null | { message: string } = null) {
   const chain = {
     eq: vi.fn(),
     is: vi.fn(),
     or: vi.fn(),
-    maybeSingle,
+    order: vi.fn(),
+    limit: vi.fn().mockResolvedValue({ data: rows, error }),
   };
   // Make every chained method return the chain itself for fluent chaining.
   chain.eq.mockReturnValue(chain);
   chain.is.mockReturnValue(chain);
   chain.or.mockReturnValue(chain);
+  chain.order.mockReturnValue(chain);
   return {
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue(chain),
@@ -34,36 +43,30 @@ function makeDb(data: null | { value: string; updated_at: string }, error: null 
 // ── read ──────────────────────────────────────────────────────────────────────
 
 describe('read', () => {
-  it('returns the value and updated_at when the key exists', async () => {
-    const row = { value: 'Always use worktree isolation', updated_at: '2026-01-01T00:00:00Z' };
-    const db = makeDb(row);
+  it('returns the value, updated_at and the scope that answered', async () => {
+    const row = { scope: 'global', value: 'Always use worktree isolation', updated_at: '2026-01-01T00:00:00Z' };
+    const db = makeDb([row]);
     const result = await read(db, { scope: 'global', key: 'lesson-a' });
+    // `scope` is on EVERY result, scoped read included — see ReadResult.
     expect(result).toEqual(row);
   });
 
   it('returns null when the key does not exist', async () => {
-    const db = makeDb(null);
+    const db = makeDb([]);
     const result = await read(db, { scope: 'global', key: 'missing-key' });
     expect(result).toBeNull();
   });
 
   it('works for a repo scope', async () => {
-    const row = { value: 'v', updated_at: '2026-01-01T00:00:00Z' };
-    const db = makeDb(row);
+    const db = makeDb([{ scope: 'repo::mthines/gw-tools', value: 'v', updated_at: '2026-01-01T00:00:00Z' }]);
     const result = await read(db, { scope: 'repo::mthines/gw-tools', key: 'k' });
     expect(result).toMatchObject({ value: 'v' });
   });
 
   it('works for a branch scope', async () => {
-    const row = { value: 'v', updated_at: '2026-01-01T00:00:00Z' };
-    const db = makeDb(row);
+    const db = makeDb([{ scope: 'branch::mthines/gw-tools::feat/x', value: 'v', updated_at: '2026-01-01T00:00:00Z' }]);
     const result = await read(db, { scope: 'branch::mthines/gw-tools::feat/x', key: 'k' });
     expect(result).toMatchObject({ value: 'v' });
-  });
-
-  it('throws ZodError when scope is missing', async () => {
-    const db = makeDb(null);
-    await expect(read(db, { key: 'k' })).rejects.toThrow();
   });
 
   it('throws ZodError when key is missing', async () => {
@@ -87,8 +90,7 @@ describe('read', () => {
   });
 
   it('normalises scope to lowercase before querying', async () => {
-    const row = { value: 'v', updated_at: '2026-01-01T00:00:00Z' };
-    const db = makeDb(row);
+    const db = makeDb([{ scope: 'repo::mthines/gw-tools', value: 'v', updated_at: '2026-01-01T00:00:00Z' }]);
     // Should not throw — scope normalisation happens inside the function
     const result = await read(db, { scope: 'REPO::Mthines/GW-Tools', key: 'k' });
     expect(result).toMatchObject({ value: 'v' });
@@ -102,9 +104,17 @@ describe('read', () => {
 // instead of silently surfacing hidden rows.
 
 function makeCapturingDb() {
-  const calls: { is: unknown[][]; or: unknown[][] } = { is: [], or: [] };
+  const calls: { is: unknown[][]; or: unknown[][]; eq: unknown[][]; order: unknown[][] } = {
+    is: [],
+    or: [],
+    eq: [],
+    order: [],
+  };
   const chain: Record<string, ReturnType<typeof vi.fn>> = {};
-  chain['eq'] = vi.fn(() => chain);
+  chain['eq'] = vi.fn((...args: unknown[]) => {
+    calls.eq.push(args);
+    return chain;
+  });
   chain['is'] = vi.fn((...args: unknown[]) => {
     calls.is.push(args);
     return chain;
@@ -113,8 +123,12 @@ function makeCapturingDb() {
     calls.or.push(args);
     return chain;
   });
-  chain['maybeSingle'] = vi.fn().mockResolvedValue({
-    data: { value: 'v', updated_at: '2026-01-01T00:00:00Z' },
+  chain['order'] = vi.fn((...args: unknown[]) => {
+    calls.order.push(args);
+    return chain;
+  });
+  chain['limit'] = vi.fn().mockResolvedValue({
+    data: [{ scope: 'global', value: 'v', updated_at: '2026-01-01T00:00:00Z' }],
     error: null,
   });
   const db = {
@@ -134,5 +148,80 @@ describe('read excludes archived and expired rows', () => {
     const { db, calls } = makeCapturingDb();
     await read(db, { scope: 'global', key: 'k' });
     expect(calls.or).toContainEqual(['expires_at.is.null,expires_at.gt.now()']);
+  });
+});
+
+// ── unscoped read: `scope` is optional and resolves by precedence ─────────────
+// The call this exists for is `read(db, { key })` with no scope — the commonest
+// agent shape, since a key arrives from a SessionStart injection without the
+// scope it came from. It used to be a hard ZodError.
+
+describe('read without a scope', () => {
+  const at = (iso: string) => `${iso}T00:00:00Z`;
+
+  it('resolves a key that matches exactly one scope', async () => {
+    const db = makeDb([{ scope: 'repo::o/r', value: 'v', updated_at: at('2026-01-01') }]);
+    expect(await read(db, { key: 'k' })).toEqual({
+      scope: 'repo::o/r',
+      value: 'v',
+      updated_at: at('2026-01-01'),
+    });
+  });
+
+  it('prefers the more specific scope and names the ones it shadowed', async () => {
+    const db = makeDb([
+      { scope: 'global', value: 'broad', updated_at: at('2026-09-01') },
+      { scope: 'repo::o/r', value: 'specific', updated_at: at('2026-01-01') },
+    ]);
+    // Recency does NOT beat specificity — the fresher `global` row loses to the
+    // older repo one, which is the whole point of resolving by scope band first.
+    expect(await read(db, { key: 'k' })).toEqual({
+      scope: 'repo::o/r',
+      value: 'specific',
+      updated_at: at('2026-01-01'),
+      other_scopes: ['global'],
+    });
+  });
+
+  it('omits other_scopes entirely when the key was unambiguous', async () => {
+    const db = makeDb([{ scope: 'global', value: 'v', updated_at: at('2026-01-01') }]);
+    expect(await read(db, { key: 'k' })).not.toHaveProperty('other_scopes');
+  });
+
+  it('returns null when nothing matched', async () => {
+    expect(await read(makeDb([]), { key: 'k' })).toBeNull();
+  });
+
+  it('still requires a key', async () => {
+    await expect(read(makeDb([]), {})).rejects.toThrow();
+  });
+
+  it('does not filter on scope when none was given', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { key: 'k' });
+    expect(calls.eq).toEqual([['key', 'k']]);
+  });
+
+  it('filters on scope when one was given', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { scope: 'global', key: 'k' });
+    expect(calls.eq).toContainEqual(['scope', 'global']);
+  });
+
+  // The candidate fetch is capped, so WHICH rows come back decides the winner
+  // before `pickScopeWinner`'s total order ever runs. Without an ORDER BY, a key
+  // held in more scopes than the cap truncates to whatever order Postgres
+  // returned and the same call can answer differently on consecutive runs — the
+  // determinism `scope-precedence` exists to provide, lost one layer above it.
+  it('orders the candidate fetch so the cap truncates deterministically', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { key: 'k' });
+    expect(calls.order).toEqual([['updated_at', { ascending: false }]]);
+  });
+
+  it('orders the candidate fetch on the scoped path too', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { scope: 'global', key: 'k' });
+    expect(calls.order).toEqual([['updated_at', { ascending: false }]]);
   });
 });

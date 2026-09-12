@@ -120,15 +120,25 @@ Full resolution rules: [references/scope-resolution.md](./references/scope-resol
 
 | Tool | Use | Token |
 |------|-----|-------|
-| `memory.list` | List lessons for one scope (newest first, tag filter) | read |
+| `memory.list` | List lessons for one scope (newest first, tag filter). `scope` is optional — omit it to list across every scope you can see | read |
 | `memory.search` | Full-text search across scopes (supports `repo::owner/*`) | read |
-| `memory.read` | Read one lesson by scope + key — or several at once via `refs: ["scope::key", …]` (one round trip, up to 32) | read |
+| `memory.read` | Read one lesson by key (`scope` optional — see below) — or several at once via `refs: ["scope::key", …]` (one round trip, up to 32) | read |
 | `memory.write` | Store or update a lesson (same scope+key updates in place) | read+write |
 
 Write tools need write permission (`lk_rw_*` or `lk_wo_*`); read tools need read
 permission (`lk_rw_*` or `lk_ro_*`). A read-only token cannot write and a
 write-only token cannot read — if a call fails with an authorization error,
 report it and move on; do not retry.
+
+Holding only a bare key, with no scope? Call `memory.read { key }` without a
+`scope`. It resolves across every scope you can see, preferring the most
+specific — `project`, then `branch`, then `repo`, then `global` — and the
+response's `scope` field names the one that answered. If the key also exists
+elsewhere, `other_scopes` lists those: that is your cue to pass an explicit
+`scope` next time, because only you know which one you meant. An omitted scope
+does NOT mean `global`. The same applies to `memory.list` and
+`memory.list_archived`, which simply list across everything instead of
+resolving to one winner.
 
 Already know the exact `scope::key` refs you need — from a prior `memory.list`
 or `memory.search`, or from citations another lesson names — and need more than

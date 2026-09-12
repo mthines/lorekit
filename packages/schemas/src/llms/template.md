@@ -57,7 +57,11 @@ reading `9 of 50 memories loaded` means the block was truncated — the trailing
 `More lore: …` line names which scopes hold the rest, and `memory.search` /
 `memory.read` reach them. Naming several of them by `scope::key`? Pass them all
 as `memory.read`'s `refs` array in one call instead of one `memory.read` per
-lesson — see the tool reference below. `hooks.sessionStart` picks the shape:
+lesson — see the tool reference below. Holding only a bare key, with no scope?
+`memory.read { key }` resolves it across every scope you can see, preferring the
+most specific type (`project` → `branch` → `repo` → `global`) and naming the
+scope that answered in the response. An omitted scope means EVERYWHERE, never
+`global`. `hooks.sessionStart` picks the shape:
 `hybrid` (default, list + that map), `index` (list only) or `map`
 (map + the three most salient).
 
