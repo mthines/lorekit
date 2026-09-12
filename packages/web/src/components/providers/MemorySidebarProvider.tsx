@@ -284,6 +284,19 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
     setDismissedMemoryId(urlMemoryId);
   }, [lessonRef, memoryId, setLessonRef, urlMemoryId]);
 
+  // Both handlers are wrapped rather than passed bare: `onClose` reaches JSX as
+  // `onClick={onClose}` inside the sheet, so passing `closeLesson` directly
+  // would hand React's `MouseEvent` to its `reason` parameter — and the two
+  // paths are genuinely different facts (a reader dismissing the panel vs. the
+  // panel folding itself after a mutation).
+  //
+  // Memoised, not inline arrows: the sheet lists `onClose` in the deps of its
+  // document keydown effect, so a new identity on every provider render tore
+  // the Escape listener down and re-added it each time. `closeLesson` only
+  // changes when what is open changes, so these do too.
+  const handleClose = useCallback(() => closeLesson('panel-close'), [closeLesson]);
+  const handleMutated = useCallback(() => closeLesson('mutated'), [closeLesson]);
+
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({
       openLesson,
@@ -301,17 +314,9 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   return (
     <MemorySidebarContext.Provider value={contextValue}>
       {children}
-      {/* Sheet renders at the top of the tree so it overlays every page. */}
-      {/* Both handlers are wrapped rather than passed bare: `onClose` reaches
-          JSX as `onClick={onClose}` inside the sheet, so passing `closeLesson`
-          directly would hand React's `MouseEvent` to its `reason` parameter —
-          and the two paths are genuinely different facts (a reader dismissing
-          the panel vs. the panel folding itself after a mutation). */}
-      <LessonDetailSheet
-        lesson={openLesson}
-        onClose={() => closeLesson('panel-close')}
-        onMutated={() => closeLesson('mutated')}
-      />
+      {/* Sheet renders at the top of the tree so it overlays every page.
+          `handleClose`/`handleMutated` are memoised above — see why there. */}
+      <LessonDetailSheet lesson={openLesson} onClose={handleClose} onMutated={handleMutated} />
     </MemorySidebarContext.Provider>
   );
 }
