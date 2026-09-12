@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.69.0](https://github.com/mthines/lorekit/compare/cli-v1.68.0...cli-v1.69.0) (2026-09-12)
+
+
+### Features
+
+* **read:** an omitted scope means EVERYWHERE, not an error ([#666](https://github.com/mthines/lorekit/issues/666)) ([d994350](https://github.com/mthines/lorekit/commit/d994350724b4c5bb1e68431853e8749b88d14249))
+
 ## [1.68.0](https://github.com/mthines/lorekit/compare/cli-v1.67.0...cli-v1.68.0) (2026-09-04)
 
 
