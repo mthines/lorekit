@@ -156,6 +156,19 @@ export interface CurrentExplorerParams {
    * `memoryId` would silently close a panel opened that way.
    */
   memoryId?: string | null;
+  /**
+   * The current `?q=` search term, ALREADY DESERIALISED (the bare string — it
+   * is JSON-encoded on the wire like `scope`, see that field's docblock), or
+   * `null`/`''` when the box is empty.
+   *
+   * Preserved for the same reason as `lesson`/`memoryId`: the apply is a full
+   * navigation that replaces the whole query string, so an unforwarded `q`
+   * silently cleared the reader's search. It also showed up in telemetry —
+   * `LoreExplorer`'s `search_committed` effect fires on any change to the
+   * committed term, so the drop to empty reported a cleared search nobody
+   * performed.
+   */
+  q?: string | null;
   /** Legacy shorthands, forwarded to {@link filtersParamValue} unchanged. */
   legacyTags?: unknown;
   legacyOwner?: unknown;
@@ -191,6 +204,9 @@ export function applyMetadataFilterHref(
 
   if (current.lesson !== null) params.set('lesson', current.lesson);
   if (current.memoryId) params.set('memoryId', current.memoryId);
+  // `useUrlState`'s wire format again — the Explorer reads `?q=` as a JSON
+  // string. An empty term is "no search", which is the absence of the param.
+  if (current.q) params.set('q', JSON.stringify(current.q));
 
   const qs = params.toString();
   return qs ? `/lore?${qs}` : '/lore';

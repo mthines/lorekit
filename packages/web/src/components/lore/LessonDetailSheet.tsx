@@ -356,6 +356,10 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   const [rawFilters] = useUrlState<Filter[] | null>('filters', null, { cleanOnPathname: '/lore' });
   const [legacyTags] = useUrlState<string[]>('tags', NO_TAGS, { cleanOnPathname: '/lore' });
   const [legacyOwner] = useUrlState<unknown>('owner', 'all', { cleanOnPathname: '/lore' });
+  // The COMMITTED search, mirroring `LoreExplorer`'s own non-debounced read of
+  // the same param — the apply is a full navigation, so an unforwarded `?q=`
+  // clears a search the reader never touched.
+  const [searchParam] = useUrlState<string>('q', '', { cleanOnPathname: '/lore' });
   const resolvedFilters = useMemo(
     () => resolveFilters(rawFilters, legacyTags, legacyOwner),
     [rawFilters, legacyTags, legacyOwner],
@@ -371,6 +375,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
         // `applyMetadataFilterHref` expects (see its own docblock).
         lesson: searchParams.get('lesson'),
         memoryId: searchParams.get('memoryId'),
+        q: searchParam,
       },
       target,
     );

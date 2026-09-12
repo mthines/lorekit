@@ -133,6 +133,29 @@ describe('applyMetadataFilterHref', () => {
     expect(params.get('memoryId')).toBe('abc-123');
   });
 
+  it('preserves the current ?q= search across the apply', () => {
+    const withSearch: CurrentExplorerParams = { ...baseParams, q: 'flaky test' };
+    const href = applyMetadataFilterHref(withSearch, {
+      kind: 'filter',
+      field: 'host',
+      value: 'reviewer',
+      label: 'Filter by host reviewer',
+    });
+    const params = new URLSearchParams(href.split('?')[1]);
+    // JSON-encoded on the wire, same as `?scope=`.
+    expect(JSON.parse(params.get('q') ?? 'null')).toBe('flaky test');
+  });
+
+  it('omits ?q= when the search box is empty', () => {
+    const href = applyMetadataFilterHref({ ...baseParams, q: '' }, {
+      kind: 'scope',
+      scope: 'global',
+      label: 'Filter by scope global',
+    });
+    const params = new URLSearchParams(href.split('?')[1]);
+    expect(params.has('q')).toBe(false);
+  });
+
   it('merges with existing filters rather than replacing them', () => {
     const withFilter: CurrentExplorerParams = {
       ...baseParams,
