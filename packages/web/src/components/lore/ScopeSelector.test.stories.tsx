@@ -42,14 +42,17 @@ export const SelectsAScope: Story = {
       const row = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
       // radios[0] is "All scopes"; radios[1] is the first (highest-count) scope.
       await userEvent.click(row.getAllByRole('radio')[1]);
-      await expect(args.onSelect).toHaveBeenCalledWith('repo::mthines/lorekit');
+      // The `strip` source is part of the contract, not incidental: the caller
+      // reports which of the two affordances found the scope, and the inline
+      // strip and the Browse-all list are different findings.
+      await expect(args.onSelect).toHaveBeenCalledWith('repo::mthines/lorekit', 'strip');
     });
   },
 };
 
 /** "Browse all" reveals the searchable list; typing narrows it to the match. */
 export const BrowseAllAndSearch: Story = {
-  play: async ({ canvasElement, step }) => {
+  play: async ({ canvasElement, args, step }) => {
     const canvas = within(canvasElement);
     await step('Browse all opens the searchable chip list', async () => {
       await userEvent.click(await canvas.findByRole('button', { name: /browse all/i }));
@@ -57,6 +60,16 @@ export const BrowseAllAndSearch: Story = {
       await userEvent.type(search, 'graft');
       const list = within(await canvas.findByRole('radiogroup', { name: 'All scopes' }));
       await expect(list.getAllByRole('radio')).toHaveLength(1);
+    });
+
+    // The other half of the source contract. A scope found by SEARCHING is a
+    // different finding from one that was already a chip in the strip — "people
+    // have to go looking" is the signal that the strip is too short — so the
+    // two must not both report `strip`.
+    await step('picking from that list reports the browse-all source', async () => {
+      const list = within(await canvas.findByRole('radiogroup', { name: 'All scopes' }));
+      await userEvent.click(list.getAllByRole('radio')[0]!);
+      await expect(args.onSelect).toHaveBeenCalledWith(expect.any(String), 'browse-all');
     });
   },
 };
@@ -69,7 +82,7 @@ export const AllScopesClears: Story = {
     await step('the All scopes chip reports null', async () => {
       const row = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
       await userEvent.click(row.getAllByRole('radio')[0]);
-      await expect(args.onSelect).toHaveBeenCalledWith(null);
+      await expect(args.onSelect).toHaveBeenCalledWith(null, 'strip');
     });
   },
 };

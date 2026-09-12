@@ -43,6 +43,13 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
+import { track } from '@/lib/analytics/track';
+import {
+  asMemoryCloseReason,
+  scopeSelectionType,
+  type MemoryCloseReason,
+  type MemoryOpenSurface,
+} from '@/lib/analytics/lore-events';
 import { useLoreData, useMemoryById, useLessonByRef } from '@/lib/queries/lore';
 import {
   activeMemoryId,
@@ -54,6 +61,33 @@ import {
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/**
+ * What an opener has to say about ITSELF.
+ *
+ * Required, not optional, and that is the point: this provider is the ONE seam
+ * every in-app open passes through, so making the surface a parameter turns
+ * "which affordance actually gets used" into a compile-time obligation for any
+ * future opener rather than a field someone remembers to fill in. Before this,
+ * a row click, an arrow-key walk, a cluster member, the palette and the header
+ * dropdown were indistinguishable — they emitted nothing at all.
+ */
+export interface MemoryOpenMeta {
+  surface: MemoryOpenSurface;
+  /** The row's position in the list it was opened from, where there is one. */
+  index?: number;
+}
+
+/**
+ * The opener's signature, exported so a module that PASSES it down (rather than
+ * calling `useMemorySidebar` itself) cannot restate it and drift — which is how
+ * `NavigationCommands` previously lost the third parameter's existence.
+ */
+export type OpenLessonById = (
+  ref: LessonRef,
+  lesson: LessonEntry | undefined,
+  meta: MemoryOpenMeta,
+) => void;
 
 interface MemorySidebarContextValue {
   /** The fully-resolved open lesson, or null while loading or when closed. */
@@ -74,10 +108,20 @@ interface MemorySidebarContextValue {
    * sources the ref from anywhere else (a URL, a search result, a webhook
    * payload) and omits the prefetch triggers a `useLessonByRef` fetch — which
    * is correct, and is the deep-link path, but it is a network round-trip.
+   *
+   * `meta` names the affordance the open came from — see {@link MemoryOpenMeta}.
    */
-  openLessonById: (ref: LessonRef, lesson?: LessonEntry) => void;
-  /** Close the sidebar. Reacts immediately (optimistic). */
-  closeLesson: () => void;
+  openLessonById: OpenLessonById;
+  /**
+   * Close the sidebar. Reacts immediately (optimistic).
+   *
+   * `reason` is bounded, and is validated rather than trusted: this function is
+   * handed straight to JSX as `onClick={onClose}` in the detail sheet, so React
+   * calls it with a `MouseEvent`. `asMemoryCloseReason` degrades anything
+   * unrecognised to `dismissed` instead of letting an event object become a
+   * telemetry attribute.
+   */
+  closeLesson: (reason?: MemoryCloseReason) => void;
   /**
    * True whenever a lesson ref is held — even while the lore query is still
    * resolving. Use this for opening animations and aria-expanded rather than
@@ -197,11 +241,19 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   );
 
   const openLessonById = useCallback(
-    (ref: LessonRef, lesson?: LessonEntry) => {
+    (ref: LessonRef, lesson: LessonEntry | undefined, meta: MemoryOpenMeta) => {
       const next = lesson ?? null;
       prefetchedRef.current = next;
       setPrefetched(next);
       setLessonRef(ref);
+      // The scope's TYPE, never the scope — `ref.scope` is `repo::acme/widgets`,
+      // which names someone's repository and is unbounded besides.
+      track({
+        name: 'lore.memory_opened',
+        surface: meta.surface,
+        scopeType: scopeSelectionType(ref.scope),
+        ...(meta.index === undefined ? {} : { index: meta.index }),
+      });
     },
     [setLessonRef],
   );
@@ -212,7 +264,14 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // router.replace built from the *pre-scope* search params, clobbering the
   // scope param that was set in the same tick. Guarding on lessonRef makes the
   // close a no-op navigation when nothing is open.
-  const closeLesson = useCallback(() => {
+  const closeLesson = useCallback((rawReason?: MemoryCloseReason) => {
+    // Only a close that closed SOMETHING is an event. `LoreExplorer` calls this
+    // on every filter/scope/status change whether or not a memory is open, so
+    // emitting unconditionally would report a dozen "closes" for a session that
+    // never opened anything.
+    if (lessonRef !== null || memoryId !== null) {
+      track({ name: 'lore.memory_closed', reason: asMemoryCloseReason(rawReason) });
+    }
     if (lessonRef !== null) {
       prefetchedRef.current = null;
       setPrefetched(null);
@@ -223,7 +282,20 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
     // A null id is a no-op; the pure `resolveOpenLesson` still gives `lesson`
     // strict precedence, so a lingering param never shows the wrong memory.
     setDismissedMemoryId(urlMemoryId);
-  }, [lessonRef, setLessonRef, urlMemoryId]);
+  }, [lessonRef, memoryId, setLessonRef, urlMemoryId]);
+
+  // Both handlers are wrapped rather than passed bare: `onClose` reaches JSX as
+  // `onClick={onClose}` inside the sheet, so passing `closeLesson` directly
+  // would hand React's `MouseEvent` to its `reason` parameter — and the two
+  // paths are genuinely different facts (a reader dismissing the panel vs. the
+  // panel folding itself after a mutation).
+  //
+  // Memoised, not inline arrows: the sheet lists `onClose` in the deps of its
+  // document keydown effect, so a new identity on every provider render tore
+  // the Escape listener down and re-added it each time. `closeLesson` only
+  // changes when what is open changes, so these do too.
+  const handleClose = useCallback(() => closeLesson('panel-close'), [closeLesson]);
+  const handleMutated = useCallback(() => closeLesson('mutated'), [closeLesson]);
 
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({
@@ -242,12 +314,9 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   return (
     <MemorySidebarContext.Provider value={contextValue}>
       {children}
-      {/* Sheet renders at the top of the tree so it overlays every page. */}
-      <LessonDetailSheet
-        lesson={openLesson}
-        onClose={closeLesson}
-        onMutated={closeLesson}
-      />
+      {/* Sheet renders at the top of the tree so it overlays every page.
+          `handleClose`/`handleMutated` are memoised above — see why there. */}
+      <LessonDetailSheet lesson={openLesson} onClose={handleClose} onMutated={handleMutated} />
     </MemorySidebarContext.Provider>
   );
 }

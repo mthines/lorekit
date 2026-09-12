@@ -64,7 +64,7 @@
  * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
-import { useCallback, useEffect, useMemo, useTransition, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useTransition, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Search, Loader2 } from 'lucide-react';
@@ -153,6 +153,17 @@ import {
   MATRIX_AXES,
   type Instrument,
 } from '@/lib/explorer-instruments';
+import { track } from '@/lib/analytics/track';
+import {
+  clusterSizeBucket,
+  rangeTelemetry,
+  retentionFilterChange,
+  scopeSelectionType,
+  type LoreRangeSource,
+  type LoreScopeSource,
+} from '@/lib/analytics/lore-events';
+import { isValueSelected } from '@/lib/filters';
+import { retentionConditionsCount } from '@/lib/retention-filter';
 import type { LessonEntry } from './LessonCard';
 
 
@@ -511,8 +522,25 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     [rawRetention, retentionPoliciesEnabled],
   );
   const setRetentionConditions = useCallback(
-    (next: RetentionConditions) => setRawRetention(retentionConditionsParamValue(next)),
-    [setRawRetention],
+    (next: RetentionConditions) => {
+      // The five thresholds share ONE setter across the menu rows, the pills'
+      // × and "Clear all", so what actually changed is recovered by diffing —
+      // see `retentionFilterChange`, which also returns null (and emits
+      // nothing) when a "Clear all" on a thresholds-free bar writes `{}` over
+      // `{}`.
+      const change = retentionFilterChange(retentionConditions, next);
+      if (change) {
+        track({
+          name: 'lore.filter_changed',
+          action: change.action,
+          ...(change.field ? { field: change.field } : {}),
+          filterCount: filters.length,
+          retentionCount: retentionConditionsCount(next),
+        });
+      }
+      setRawRetention(retentionConditionsParamValue(next));
+    },
+    [setRawRetention, retentionConditions, filters.length],
   );
   // Which threshold the menu should open at, set by a retention pill's value
   // segment — the `editingField` above, for the other half of the bar.
@@ -663,7 +691,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     setFilters(
       toggleFilterValue(toggleFilterValue(filters, row.field, row.value), col.field, col.value),
     );
-    closeLesson();
+    // ONE event, not two `lore.filter_changed`s: a cell click is a single act
+    // that happens to write two pills, and reporting it as two filter edits
+    // would double-count the gesture against the menu's one-pill-at-a-time.
+    // Neither value is recorded — a cell's coordinates are facet values.
+    track({ name: 'lore.instrument_used', instrument: 'matrix', action: 'select-cell' });
+    closeLesson('filter-change');
   }
 
   // ── Duplicate clusters ───────────────────────────────────────────────────
@@ -695,6 +728,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   function handleSelectCluster(cluster: DuplicateCluster | null) {
     setSelectedCluster(cluster);
+    track(
+      cluster
+        ? {
+            name: 'lore.cluster_selected',
+            action: 'select',
+            // Bucketed: a raw member count is close to a fingerprint for one
+            // specific cluster in one account.
+            sizeBucket: clusterSizeBucket(cluster.size),
+          }
+        : { name: 'lore.cluster_selected', action: 'clear' },
+    );
     if (cluster) {
       // Seed every member's cache slot with a stand-in built from what the
       // clusters response already carries (the `hook` line), so the list has
@@ -710,7 +754,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     }
     // A cluster selection describes a moment in a specific lesson's history —
     // it does not survive a lesson newly opened from elsewhere.
-    closeLesson();
+    closeLesson('cluster-change');
   }
 
   // Opening a member from the cluster view deliberately passes NO prefetch —
@@ -721,11 +765,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // never fetches). Omitting it lets `MemorySidebarProvider` read the SAME
   // `lesson-by-ref` cache slot instead, which keeps resolving as the
   // background fetch above completes.
-  function handleClusterMemberClick(lesson: LessonEntry) {
+  function handleClusterMemberClick(lesson: LessonEntry, index: number) {
     if (openLesson?.key === lesson.key && openLesson?.scope === lesson.scope) {
-      closeLesson();
+      closeLesson('toggle');
     } else {
-      openLessonById({ scope: lesson.scope, key: lesson.key });
+      openLessonById({ scope: lesson.scope, key: lesson.key }, undefined, {
+        surface: 'lore-cluster',
+        index,
+      });
     }
   }
 
@@ -734,8 +781,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       <MatrixInstrument
         row={matrixRow}
         col={matrixCol}
-        onRowChange={setMatrixRow}
-        onColChange={setMatrixCol}
+        onRowChange={(field) => {
+          track({ name: 'lore.instrument_used', instrument: 'matrix', action: 'row-axis', field });
+          setMatrixRow(field);
+        }}
+        onColChange={(field) => {
+          track({ name: 'lore.instrument_used', instrument: 'matrix', action: 'col-axis', field });
+          setMatrixCol(field);
+        }}
         cells={pivot?.cells ?? []}
         serverTruncated={pivot?.truncated ?? false}
         isLoading={pivotLoading}
@@ -749,8 +802,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         // time controls describe the same population rather than two.
         days={heatmapData}
         selected={highlightRange}
-        onSelectRange={(next) => setRange(next)}
-        onClear={() => setRange({ preset: 'all' })}
+        // The brush writes `?range=` like every other control, so it reports
+        // through `commitRange`; the extra `instrument_used` says the gesture
+        // itself was used, which is the only evidence the track earns its place
+        // beside the heatmap.
+        onSelectRange={(next) => {
+          track({
+            name: 'lore.instrument_used',
+            instrument: 'timeline',
+            action: 'select-range',
+          });
+          commitRange(next, 'timeline-brush');
+        }}
+        onClear={() => {
+          track({ name: 'lore.instrument_used', instrument: 'timeline', action: 'clear-range' });
+          commitRange({ preset: 'all' }, 'timeline-clear');
+        }}
       />
     );
 
@@ -816,66 +883,140 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // first, which would flash the plain total on every keystroke.
   useEffect(() => () => setResults(null), [setResults]);
 
+  // ── Search ────────────────────────────────────────────────────────────────
+  // Reported off the SETTLED value, not `setSearch`: the input is debounced, so
+  // instrumenting the keystroke handler would emit one event per character and
+  // bury the question ("does anyone search, and with how long a term") under
+  // its own noise. The length alone is sent — a search term is the most
+  // content-bearing thing anyone types on this page.
+  //
+  // Seeded with the mount-time value so arriving on a `?q=` deep link does not
+  // report a search nobody performed; only a CHANGE after mount is one.
+  const reportedSearchRef = useRef(committedSearch);
+  useEffect(() => {
+    if (reportedSearchRef.current === committedSearch) return;
+    reportedSearchRef.current = committedSearch;
+    track({ name: 'lore.search_committed', queryLength: committedSearch.length });
+  }, [committedSearch]);
+
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
   // memory that is no longer in the list behind it is a lie about what you are
   // looking at. A selected cluster is cleared for the same reason — its
   // members were computed for the PREVIOUS predicate.
+  /** The two measures every `lore.filter_changed` carries, read AFTER the change. */
+  function filterCounts(nextFilters: Filter[]) {
+    return {
+      filterCount: nextFilters.length,
+      retentionCount: retentionConditionsCount(retentionConditions),
+    };
+  }
+
   function handleToggleFilterValue(field: FilterField, value: string) {
-    setFilters(toggleFilterValue(filters, field, value));
-    closeLesson();
+    // `toggleValue` is one control for two acts, so which one happened is read
+    // from the PRE-change state. The value itself is never recorded — it is the
+    // reader's own label / host / repo name.
+    const wasSelected = isValueSelected(filters, field, value);
+    const next = toggleFilterValue(filters, field, value);
+    setFilters(next);
+    track({
+      name: 'lore.filter_changed',
+      action: wasSelected ? 'remove' : 'add',
+      field,
+      ...filterCounts(next),
+    });
+    closeLesson('filter-change');
     setSelectedCluster(null);
   }
 
   function handleOperatorChange(field: FilterField, operator: FilterOperator) {
-    setFilters(setFilterOperator(filters, field, operator));
-    closeLesson();
+    const next = setFilterOperator(filters, field, operator);
+    setFilters(next);
+    track({
+      name: 'lore.filter_changed',
+      action: 'operator',
+      field,
+      operator,
+      ...filterCounts(next),
+    });
+    closeLesson('filter-change');
     setSelectedCluster(null);
   }
 
   function handleRemoveFilter(field: FilterField) {
-    setFilters(removeFilter(filters, field));
-    closeLesson();
+    const next = removeFilter(filters, field);
+    setFilters(next);
+    track({ name: 'lore.filter_changed', action: 'remove', field, ...filterCounts(next) });
+    closeLesson('filter-change');
     setSelectedCluster(null);
   }
 
   function handleClearFilters() {
     setFilters(NO_FILTERS);
-    closeLesson();
+    // No `field`: "Clear all" touches every dimension at once, and naming one
+    // of them would be a guess.
+    track({ name: 'lore.filter_changed', action: 'clear-all', ...filterCounts(NO_FILTERS) });
+    closeLesson('filter-change');
     setSelectedCluster(null);
   }
 
   function handleStatusChange(next: MemoryStatus) {
+    track({ name: 'lore.status_changed', status: next });
     // `statusParamValue` decides whether the param is written or dropped — it
     // has to be written even for the default when a legacy `archived=true` is
     // still in the URL, or selecting Active would silently undo itself on the
     // next reload.
     setRawStatus(statusParamValue(next, legacyArchived));
     // Close the sidebar — the open lesson may not exist in the other population.
-    closeLesson();
+    closeLesson('status-change');
     setSelectedCluster(null);
   }
 
-  function handleScopeSelect(scope: string | null) {
+  function handleScopeSelect(scope: string | null, source: LoreScopeSource) {
+    // The scope's TYPE and which of the two affordances found it — never the
+    // scope string, which names the reader's own repo or project.
+    track({ name: 'lore.scope_selected', scopeType: scopeSelectionType(scope), source });
     startTransition(() => {
       setSelectedScope(scope);
       // Close the sidebar when switching scope — the previous lesson may not
       // be present in the new scope. A held cluster selection is cleared for
       // the same reason: it was computed for the previous scope's window.
-      closeLesson();
+      closeLesson('scope-change');
       setSelectedCluster(null);
     });
   }
 
-  function handleLessonClick(lesson: LessonEntry) {
+  function handleLessonClick(lesson: LessonEntry, index: number) {
     if (openLesson?.key === lesson.key && openLesson?.scope === lesson.scope) {
-      closeLesson();
+      closeLesson('toggle');
     } else {
       // Pass the full lesson object so the sidebar can render immediately
       // without a lookup — critical for archived lessons which aren't in the
       // active useLoreData cache.
-      openLessonById({ scope: lesson.scope, key: lesson.key }, lesson);
+      openLessonById({ scope: lesson.scope, key: lesson.key }, lesson, {
+        surface: 'lore-list',
+        index,
+      });
     }
+  }
+
+  /**
+   * The ONE seam every `?range=` write goes through, so each of the FIVE
+   * controls that can move the window (the preset rail, the calendar, its own
+   * presets, a heatmap cell, the timeline brush) is distinguishable in the
+   * data. Calling `setRange` directly from a handler is what made them
+   * indistinguishable before — the param moved and nothing said which
+   * affordance moved it.
+   */
+  function commitRange(next: TimeRange, source: LoreRangeSource) {
+    const { preset, spanDays } = rangeTelemetry(next, insightsNowIso);
+    track({
+      name: 'lore.range_changed',
+      preset,
+      source,
+      ...(spanDays === undefined ? {} : { spanDays }),
+    });
+    setRange(next);
   }
 
   // Heatmap day-click: two-click range anchor → extend → reset, matching the
@@ -887,9 +1028,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     // silently extending from a boundary the user never picked.
     const anchor = !isPresetRange(range) && range && range.from === range.to ? range.from : null;
     if (anchor !== null) {
-      setRange(day >= anchor ? { from: anchor, to: day } : { from: day, to: anchor });
+      commitRange(day >= anchor ? { from: anchor, to: day } : { from: day, to: anchor }, 'heatmap');
     } else {
-      setRange({ from: day, to: day });
+      commitRange({ from: day, to: day }, 'heatmap');
     }
   }
 
@@ -899,7 +1040,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // panel's 24h display default, so the control row would say "no dates" while
   // the panel above it started describing yesterday.
   function handleDatePickerChange(next: DateRange | null) {
-    setRange(next ?? { preset: 'all' });
+    // The clear arm gets its own source: "the reader widened back to all time"
+    // and "the reader picked a window" are different acts through one callback.
+    commitRange(next ?? { preset: 'all' }, next === null ? 'calendar-clear' : 'calendar');
   }
 
   // `scopes` is a TREE (branches nest under their repo — see `buildScopeTree`),
@@ -956,7 +1099,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     // an explicit guard reads honestly instead of asserting it away.
     const target = lessons[next];
     if (!target) return;
-    openLessonById({ scope: target.scope, key: target.key }, target);
+    openLessonById({ scope: target.scope, key: target.key }, target, {
+      surface: 'lore-keyboard',
+      index: next,
+    });
 
     // Move focus to the newly-selected card and keep it in view — the arrow
     // press is the input, so the resulting focus should land where the
@@ -975,7 +1121,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       {hasNextPage ? (
         <button
           type="button"
-          onClick={() => fetchNextPage()}
+          onClick={() => {
+            // `pages.length` is how many are already loaded, so it IS the index
+            // of the one about to arrive: 1 for the second page.
+            track({ name: 'lore.results_paged', page: data?.pages.length ?? 1 });
+            void fetchNextPage();
+          }}
           disabled={isFetchingNextPage}
           className="flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-60"
         >
@@ -1019,7 +1170,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             </p>
             <button
               type="button"
-              onClick={() => setSelectedCluster(null)}
+              onClick={() => {
+                track({ name: 'lore.cluster_selected', action: 'clear' });
+                setSelectedCluster(null);
+              }}
               className="ml-auto text-xs font-medium text-[var(--color-accent)] hover:underline"
             >
               Clear
@@ -1037,7 +1191,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
                   <LessonCard
                     lesson={lesson}
                     selected={isLessonSelected(lesson)}
-                    onClick={() => handleClusterMemberClick(lesson)}
+                    onClick={() => handleClusterMemberClick(lesson, i)}
                     index={i}
                   />
                 </div>
@@ -1083,7 +1237,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             ? {
                 action: {
                   label: 'View all time',
-                  onClick: () => setRange({ preset: 'all' }),
+                  onClick: () => commitRange({ preset: 'all' }, 'empty-state'),
                   analyticsId: 'lore.empty-state.view-all-time',
                 },
               }
@@ -1152,7 +1306,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             <LessonCard
               lesson={lesson}
               selected={isLessonSelected(lesson)}
-              onClick={() => handleLessonClick(lesson)}
+              onClick={() => handleLessonClick(lesson, i)}
               index={i}
               // Roving tabindex: exactly one card is a Tab stop at a time (the
               // open lesson, or the first row when nothing is open yet) — the
@@ -1219,7 +1373,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         scope={selectedScope}
         scopeLabel={selectedScopeLabel}
         range={range}
-        onRangeChange={setRange}
+        onRangeChange={(next) => commitRange(next, 'preset-picker')}
         filters={filters}
         retention={retentionConditions}
         heatmapData={heatmapData}
@@ -1266,7 +1420,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         scope={selectedScope}
         scopeLabel={selectedScopeLabel}
         open={clustersOpen}
-        onToggleOpen={() => clustersOpenPref.write(serializeBooleanPreference(!clustersOpen))}
+        onToggleOpen={() => {
+          track({
+            name: 'lore.panel_toggled',
+            panel: 'duplicate-clusters',
+            open: !clustersOpen,
+          });
+          clustersOpenPref.write(serializeBooleanPreference(!clustersOpen));
+        }}
       />
 
       {/* Scope consumption, hot/cold lore, operational health and "who's
@@ -1298,7 +1459,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           scopeLabel={selectedScopeLabel}
           selectedClusterId={selectedClusterId}
           onSelectCluster={handleSelectCluster}
-          onClose={() => clustersOpenPref.write(serializeBooleanPreference(false))}
+          onClose={() => {
+            track({ name: 'lore.panel_toggled', panel: 'duplicate-clusters', open: false });
+            clustersOpenPref.write(serializeBooleanPreference(false));
+          }}
         />
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">

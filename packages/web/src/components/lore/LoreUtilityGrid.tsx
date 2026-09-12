@@ -40,6 +40,8 @@ import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { useLoreUtility, useLoreUtilityRows } from '@/lib/queries/lore-utility';
 import { LESSON_UTILITY_META, formatPullThrough, type LessonUtility } from '@/lib/lesson-utility';
 import { groomPrompt } from '@/lib/lore-utility-prompt';
+import { track } from '@/lib/analytics/track';
+import { scopeSelectionType } from '@/lib/analytics/lore-events';
 import { scopeType } from '@/lib/scope';
 import type { LessonUtilityTone } from '@/lib/lesson-utility';
 import type { UtilityEntry, UtilityResponse } from '@lorekit/schemas/memory';
@@ -68,6 +70,19 @@ function formatCountingSince(iso: string): string {
 
 export function LoreUtilityGrid() {
   const [selected, setSelected] = useState<LessonUtility | null>(null);
+
+  // One control does select AND deselect, so the event carries which happened —
+  // counting only the clicks would report a reader who opened and immediately
+  // closed a quadrant identically to one who sat in it.
+  function chooseQuadrant(quadrant: LessonUtility) {
+    const next = selected === quadrant ? null : quadrant;
+    track({
+      name: 'insights.utility_quadrant_selected',
+      quadrant,
+      selected: next !== null,
+    });
+    setSelected(next);
+  }
   // Account-wide: the page it lives on has no scope filter, and the hooks take
   // one only because the route does.
   const census = useLoreUtility({});
@@ -108,7 +123,7 @@ export function LoreUtilityGrid() {
             count={counts[quadrant]}
             share={judged > 0 ? counts[quadrant] / judged : null}
             selected={selected === quadrant}
-            onSelect={() => setSelected(selected === quadrant ? null : quadrant)}
+            onSelect={() => chooseQuadrant(quadrant)}
           />
         ))}
       </div>
@@ -118,7 +133,7 @@ export function LoreUtilityGrid() {
         count={counts.unproven}
         share={null}
         selected={selected === 'unproven'}
-        onSelect={() => setSelected(selected === 'unproven' ? null : 'unproven')}
+        onSelect={() => chooseQuadrant('unproven')}
       />
 
       <p className="text-xs text-[var(--color-content-tertiary)]">
@@ -206,10 +221,24 @@ function QuadrantRows({
       await navigator.clipboard.writeText(
         groomPrompt({ quadrant, entries, thresholds, countingSince }),
       );
+      track({
+        name: 'insights.utility_prompt_copied',
+        quadrant,
+        entryCount: entries.length,
+        succeeded: true,
+      });
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard access denied/unavailable — no crash, just no confirmation.
+      // Recorded rather than swallowed, for `install_command.copied`'s reason:
+      // a button that silently does nothing must not read as one nobody wanted.
+      track({
+        name: 'insights.utility_prompt_copied',
+        quadrant,
+        entryCount: entries.length,
+        succeeded: false,
+      });
     }
   }
 
@@ -274,6 +303,15 @@ function UtilityRow({ entry }: { entry: UtilityEntry }) {
           first, and leaving the row inert made that a manual re-search. */}
       <Link
         href={explorerHref(entry)}
+        // The hand-off to the Explorer is the point of the whole grid, so
+        // whether anyone takes it is the measure of whether the grid works.
+        onClick={() =>
+          track({
+            name: 'insights.scope_opened',
+            scopeType: scopeSelectionType(entry.scope),
+            source: 'utility-row',
+          })
+        }
         className="flex min-h-8 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-xs transition-colors duration-150 hover:border-[var(--color-accent)]"
         title={`Open ${entry.scope}::${entry.key} in the Lore Explorer`}
       >

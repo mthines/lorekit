@@ -35,6 +35,7 @@ import { scopeRepoUrl } from '@/lib/scope';
 import { originLinks } from '@/lib/origin';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
+import { track } from '@/lib/analytics/track';
 import { toast } from 'sonner';
 
 // Module-scoped for reference stability across renders — `useUrlState`
@@ -47,7 +48,13 @@ const NO_TAGS: string[] = [];
 interface LessonDetailSheetProps {
   lesson: LessonEntry | null;
   onClose: () => void;
-  /** Called after a successful archive, restore, or save so the parent can refresh its list. */
+  /**
+   * Called after a successful archive, restore, or save so the parent can
+   * refresh its list — and it OWNS the close on that path. The panel
+   * deliberately does NOT also call `onClose` after a mutation: the provider
+   * wires the two to different close reasons, so firing both reported a single
+   * archive as two `lore.memory_closed` events in the same tick.
+   */
   onMutated?: () => void;
   /**
    * Presentation: a right-side drawer (`drawer`) or a bottom sheet (`sheet`).
@@ -85,6 +92,22 @@ interface LessonFormValues {
 // Kept as a named constant here (not re-derived) because the rules doc is the
 // authority; this only needs to match its number for the affordance to be honest.
 const PROMOTION_SEEN_COUNT_THRESHOLD = 3;
+
+/**
+ * Whether two tag sets are the same set.
+ *
+ * Order-insensitive, because `TagsField` appends and removes in place: a reader
+ * who deletes a tag and re-adds it has changed nothing, and a naive
+ * index-by-index comparison would report that as an edit. Used only to decide
+ * what a save's `changed_tags` telemetry says — the tags themselves are the
+ * reader's own labels and never leave the browser.
+ */
+function sameTags(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].sort();
+  const right = [...b].sort();
+  return left.every((tag, i) => tag === right[i]);
+}
 
 // ── TTL helpers ───────────────────────────────────────────────────────────────
 
@@ -333,6 +356,10 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   const [rawFilters] = useUrlState<Filter[] | null>('filters', null, { cleanOnPathname: '/lore' });
   const [legacyTags] = useUrlState<string[]>('tags', NO_TAGS, { cleanOnPathname: '/lore' });
   const [legacyOwner] = useUrlState<unknown>('owner', 'all', { cleanOnPathname: '/lore' });
+  // The COMMITTED search, mirroring `LoreExplorer`'s own non-debounced read of
+  // the same param — the apply is a full navigation, so an unforwarded `?q=`
+  // clears a search the reader never touched.
+  const [searchParam] = useUrlState<string>('q', '', { cleanOnPathname: '/lore' });
   const resolvedFilters = useMemo(
     () => resolveFilters(rawFilters, legacyTags, legacyOwner),
     [rawFilters, legacyTags, legacyOwner],
@@ -348,6 +375,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
         // `applyMetadataFilterHref` expects (see its own docblock).
         lesson: searchParams.get('lesson'),
         memoryId: searchParams.get('memoryId'),
+        q: searchParam,
       },
       target,
     );
@@ -468,11 +496,24 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
       // Only update the TTL when the user actually changed the input from its
       // initial value — avoids nudging the expiry timestamp on every save.
       const initialTtlInput = lesson.expires_at ? formatRemainingTtl(lesson.expires_at) : '';
+      // WHICH of the three editable fields moved. The panel saves all three in
+      // one form, so without this every save is the same undifferentiated
+      // event — and "people only ever re-tag" and "people rewrite bodies" ask
+      // for very different products. Computed against the loaded lesson, so it
+      // is the diff the user actually made; no field VALUE is recorded.
+      const changed = {
+        changedValue: data.value !== (lesson.value ?? ''),
+        changedTags: !sameTags(data.tags, lesson.tags ?? []),
+        changedTtl: data.ttlInput !== initialTtlInput,
+      };
       let ttlDays: number | null = null;
       let clearTtl = false;
       if (data.ttlInput !== initialTtlInput) {
         const parsed = parseTtlInput(data.ttlInput);
-        if (parsed.error) return parsed.error;
+        if (parsed.error) {
+          track({ name: 'lore.memory_edit', action: 'save', outcome: 'error', ...changed });
+          return parsed.error;
+        }
         ttlDays = parsed.ttlDays;
         clearTtl = parsed.clearTtl;
       }
@@ -482,7 +523,11 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
         ttl_days: ttlDays,
         clear_ttl: clearTtl,
       });
-      if (result.error) return result.error;
+      if (result.error) {
+        track({ name: 'lore.memory_edit', action: 'save', outcome: 'error', ...changed });
+        return result.error;
+      }
+      track({ name: 'lore.memory_edit', action: 'save', outcome: 'success', ...changed });
       // Keep the sidebar open — the user may want to keep reading or editing.
       // Invalidate the list caches so the updated value/tags appear behind the
       // panel without requiring a page refresh. `lore-facets` is included
@@ -494,8 +539,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
       void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       toast.success('Memory saved', { description: lesson.key });
     },
+    // Escape-while-dirty and the Discard button both land here (see
+    // `useEditableForm`), so one hook covers both ways of throwing an edit away.
+    onDiscard: () => track({ name: 'lore.memory_edit', action: 'discard' }),
     // After a successful save, return to the Preview tab so the user sees the
-    // freshly-rendered saved markdown.
+    // freshly-rendered saved markdown. Deliberately NOT reported as a tab
+    // change: it is the app moving the tab, not the reader.
     onSaveSuccess: () => setContentTab(tabAfterSave()),
   });
 
@@ -604,6 +653,9 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
       const next = shortcutTabForKey(e.key, { hasModifier, inFormField, canEdit: !isArchived });
       if (!next) return;
       e.preventDefault();
+      // `shortcut`, not `click`: whether the single-letter accelerators are
+      // discovered at all is the question this attribute exists to answer.
+      track({ name: 'lore.memory_content_tab', tab: next, source: 'shortcut' });
       setContentTab(next);
     }
     document.addEventListener('keydown', onKeyDown);
@@ -617,25 +669,38 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
       restoreMutation.mutate({ scope, key }, {
         onSuccess: (result) => {
           if (result.error) {
+            track({ name: 'lore.memory_archive_toggled', action: 'restore', outcome: 'error' });
             toast.error('Failed to restore', { description: result.error });
             return;
           }
+          track({ name: 'lore.memory_archive_toggled', action: 'restore', outcome: 'success' });
           toast.success('Memory restored', { description: key });
+          // `onMutated` closes the panel (see its docblock) — it is the one
+          // close on this path, and it is the one that carries the accurate
+          // `mutated` reason.
           onMutated?.();
-          onClose();
         },
+        // A REJECTED mutation (offline, 5xx) never reaches `onSuccess`, so
+        // without this the one failure mode that leaves no toast either also
+        // left no telemetry — the outcome was unobservable from both ends.
+        onError: () =>
+          track({ name: 'lore.memory_archive_toggled', action: 'restore', outcome: 'error' }),
       });
     } else {
       archiveMutation.mutate({ scope, key }, {
         onSuccess: (result) => {
           if (result.error) {
+            track({ name: 'lore.memory_archive_toggled', action: 'archive', outcome: 'error' });
             toast.error('Failed to archive', { description: result.error });
             return;
           }
+          track({ name: 'lore.memory_archive_toggled', action: 'archive', outcome: 'success' });
           toast.success('Memory archived', { description: key });
+          // Same as the restore branch above: one close, one reason.
           onMutated?.();
-          onClose();
         },
+        onError: () =>
+          track({ name: 'lore.memory_archive_toggled', action: 'archive', outcome: 'error' }),
       });
     }
   }
@@ -787,7 +852,13 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                   render={({ field, fieldState }) => (
                     <ContentSection
                       tab={contentTab}
-                      onTabChange={setContentTab}
+                      onTabChange={(next) => {
+                        // Direct manipulation of the tablist — a pointer click
+                        // or its arrow keys. The GLOBAL P/E accelerators report
+                        // `shortcut` from their own handler above.
+                        track({ name: 'lore.memory_content_tab', tab: next, source: 'click' });
+                        setContentTab(next);
+                      }}
                       canEdit={!isArchived}
                       value={field.value}
                       onChange={field.onChange}

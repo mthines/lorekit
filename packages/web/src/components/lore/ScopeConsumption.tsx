@@ -26,6 +26,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { track } from '@/lib/analytics/track';
+import { scopeSelectionType } from '@/lib/analytics/lore-events';
 import { Info } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -211,6 +213,15 @@ function ScopeConsumptionRow({
     <li className="text-xs">
       <Link
         href={`/lore?scope=${encodeURIComponent(scope)}`}
+        // "Pick a scope to open it in the Explorer" is what the section's own
+        // description promises; this is the only evidence anyone does.
+        onClick={() =>
+          track({
+            name: 'insights.scope_opened',
+            scopeType: scopeSelectionType(scope),
+            source: 'scope-consumption',
+          })
+        }
         className="-mx-1.5 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-1.5 py-1 transition-colors duration-150 hover:bg-[var(--color-accent-subtle)]"
         title={`Open ${scope} in the Lore Explorer`}
       >

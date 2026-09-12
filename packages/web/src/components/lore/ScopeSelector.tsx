@@ -35,6 +35,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, ChevronDown, LayoutList } from 'lucide-react';
 import { scopeIcon } from '@/components/memory/scope-meta';
+import { track } from '@/lib/analytics/track';
+import type { LoreScopeSource } from '@/lib/analytics/lore-events';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { FadeScroller } from '@/components/ui/FadeScroller';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
@@ -97,7 +99,14 @@ interface ScopeSelectorProps {
   nodes: ScopeNode[];
   /** The currently-selected scope, or null for "all scopes". */
   selected: string | null;
-  onSelect: (scope: string | null) => void;
+  /**
+   * `source` says which of the two affordances found the scope — the inline
+   * chip strip, or the searchable Browse-all list. They are different products
+   * (one is "the scopes I work in are right here", the other is "I had to go
+   * looking"), and one callback carrying both is what previously made them
+   * indistinguishable to the caller's telemetry.
+   */
+  onSelect: (scope: string | null, source: LoreScopeSource) => void;
   /** Total active memory count across all scopes (for the "All scopes" chip). */
   totalCount: number;
 }
@@ -161,14 +170,25 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   }, [selected]);
 
   // Selecting anything collapses the browse surface — the choice is made.
-  function choose(scope: string | null) {
-    onSelect(scope);
-    setOpen(false);
+  function choose(scope: string | null, source: LoreScopeSource) {
+    onSelect(scope, source);
+    // Through `setBrowseOpen`, so an auto-collapse reports like every other
+    // close — but ONLY when something was open to collapse: a strip chip is
+    // clicked with the browser shut far more often than not, and reporting
+    // those would invent a close for each one.
+    if (open) setBrowseOpen(false);
     setQuery('');
   }
 
+  // One place for the disclosure, so the chevron, the sheet's dismiss and a
+  // pick that auto-collapses cannot report the panel differently.
+  function setBrowseOpen(next: boolean) {
+    track({ name: 'lore.panel_toggled', panel: 'scope-browser', open: next });
+    setOpen(next);
+  }
+
   function closeBrowse() {
-    setOpen(false);
+    setBrowseOpen(false);
     setQuery('');
   }
 
@@ -204,7 +224,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
               label={node.label}
               count={node.count}
               selected={selected === node.scope}
-              onSelect={() => choose(node.scope)}
+              onSelect={() => choose(node.scope, 'browse-all')}
             />
           ))}
         </div>
@@ -239,7 +259,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
             type="button"
             role="radio"
             aria-checked={selected === null}
-            onClick={() => choose(null)}
+            onClick={() => choose(null, 'strip')}
             className={[
               'flex min-h-7 shrink-0 items-center gap-1.5 rounded-full border border-dashed py-0.5 pl-2 pr-1 text-xs transition-colors duration-150',
               selected === null
@@ -262,7 +282,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
               count={node.count}
               selected={selected === node.scope}
               chipRef={selected === node.scope ? selectedChipRef : undefined}
-              onSelect={() => choose(node.scope)}
+              onSelect={() => choose(node.scope, 'strip')}
             />
           ))}
         </FadeScroller>
@@ -270,7 +290,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
         {allScopes.length > 0 && (
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setBrowseOpen(!open)}
             aria-expanded={open}
             // Only the DESKTOP inline expander carries this id; on mobile the
             // same body renders in a `BottomSheet`, so the reference would dangle.
