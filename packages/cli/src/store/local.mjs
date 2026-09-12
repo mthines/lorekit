@@ -94,10 +94,17 @@ class LocalStore {
   // were promising one contract and keeping two.
   async list({ scope, tags, limit } = {}) {
     const now = new Date();
+    // Both branches drop an entry whose frontmatter carries no `scope`. That
+    // guard is not decoration: every write goes through `serializeEntry`, which
+    // always emits the column, so a scope-less file is hand-edited or foreign —
+    // and it has no identity in a scope-mixed listing (`TwoTierStore.list`
+    // merges on `scope::key`, which would become the literal `"undefined::…"`).
+    // Filtering in only ONE branch would be worse than filtering in neither:
+    // the widened listing would stop being a superset of the scoped ones.
     let rows = scope
       ? this._readAll(scope)
           .map((r) => r.entry)
-          .filter((e) => isLive(e, now))
+          .filter((e) => e && e.scope && isLive(e, now))
       : this._allLive(now);
     if (Array.isArray(tags) && tags.length) {
       rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
@@ -466,11 +473,18 @@ class TwoTierStore {
     const projRes = this.projectActive()
       ? await this.project.list({ scope, tags })
       : { entries: [] };
-    // Identity is `scope::key`, never the bare key. The two are equivalent
-    // while a listing is confined to ONE scope, which is why the bare key held
-    // for as long as `scope` was mandatory — but an unscoped listing mixes
-    // scopes, and there a bare key silently collapses `global::x`,
+    // Identity is `scope::key`, never the bare key. An unscoped listing mixes
+    // scopes outright, and there a bare key silently collapses `global::x`,
     // `repo::o/r::x` and `project::p::x` into whichever tier answered first.
+    //
+    // A SCOPED listing is not immune either, so this is a change on both paths
+    // rather than a no-op on one: `scopeToDir`'s `safeSeg` (format.mjs) folds
+    // every character outside `[A-Za-z0-9._-]` to `-`, so `repo::acme/my widget`
+    // and `repo::acme/my-widget` resolve to ONE directory, while `parseEntry`
+    // reads `scope` back from the frontmatter alone with no path-derived
+    // fallback. `_readAll(scope)` can therefore hand back rows from a colliding
+    // neighbour, and under the bare key the two tiers' copies of one key
+    // shadowed each other across scopes. Keeping them apart is the point.
     const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}::${e.key}`);
     merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     return { ok: true, entries: limit ? merged.slice(0, limit) : merged };

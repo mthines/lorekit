@@ -289,7 +289,8 @@ test('the two-tier store keeps same-key rows from different scopes apart', async
   const homeDir = tmp('lk-list-tier-home-');
   const projDir = tmp('lk-list-tier-proj-');
   await createLocalStore(homeDir).write({ scope: 'global', key: 'k', value: 'home / global' });
-  await createLocalStore(projDir).write({ scope: 'repo::acme/widget', key: 'k', value: 'project / repo' });
+  await createLocalStore(projDir)
+    .write({ scope: 'repo::acme/widget', key: 'k', value: 'project / repo' });
 
   const two = createTwoTierStore({ home: homeDir, project: projDir });
   const { entries } = await two.list({});
@@ -299,14 +300,57 @@ test('the two-tier store keeps same-key rows from different scopes apart', async
   );
 });
 
+// Deliberately SCOPED: the merge key changed on both of `TwoTierStore.list`'s
+// paths, and the widened one is the easy half to cover. Passing `{}` here would
+// exercise the same branch the test above already does and never reach the
+// scoped merge at all.
 test('within ONE scope the project tier still shadows home', async () => {
   const homeDir = tmp('lk-list-tier-shadow-home-');
   const projDir = tmp('lk-list-tier-shadow-proj-');
-  await createLocalStore(homeDir).write({ scope: 'global', key: 'k', value: 'home wins?' });
-  await createLocalStore(projDir).write({ scope: 'global', key: 'k', value: 'project wins' });
+  await createLocalStore(homeDir)
+    .write({ scope: 'repo::acme/widget', key: 'k', value: 'home wins?' });
+  await createLocalStore(projDir)
+    .write({ scope: 'repo::acme/widget', key: 'k', value: 'project wins' });
 
   const two = createTwoTierStore({ home: homeDir, project: projDir });
-  const { entries } = await two.list({});
+  const { entries } = await two.list({ scope: 'repo::acme/widget' });
   assert.equal(entries.length, 1);
   assert.equal(entries[0].value, 'project wins');
+});
+
+// A SCOPED listing is not confined to one scope either, which is why keying on
+// `scope::key` is a change on that path too. `scopeToDir`'s `safeSeg` folds the
+// space in `acme/my widget` to `-`, so both scopes below resolve to the SAME
+// directory, while `parseEntry` recovers each row's scope from its frontmatter.
+// Under the bare key the two collapsed into one row; they are distinct lessons.
+test('a scoped listing keeps rows apart when two scopes share one directory', async () => {
+  const homeDir = tmp('lk-list-tier-collide-home-');
+  const projDir = tmp('lk-list-tier-collide-proj-');
+  await createLocalStore(homeDir)
+    .write({ scope: 'repo::acme/my widget', key: 'k', value: 'home' });
+  await createLocalStore(projDir)
+    .write({ scope: 'repo::acme/my-widget', key: 'k', value: 'project' });
+
+  const two = createTwoTierStore({ home: homeDir, project: projDir });
+  const { entries } = await two.list({ scope: 'repo::acme/my-widget' });
+  assert.deepEqual(
+    entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['repo::acme/my widget::k', 'repo::acme/my-widget::k'],
+  );
+});
+
+// The `e.scope` guard is applied to BOTH of `LocalStore.list`'s branches, so a
+// hand-edited file missing the column is absent from each. Filtering in only one
+// would leave the widened listing short of the scoped ones it must contain, and
+// hand `TwoTierStore.list` a literal `"undefined::k"` merge key.
+test('an entry with no scope in its frontmatter is listed by neither path', async () => {
+  const dir = tmp('lk-list-orphan-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'global', key: 'kept', value: 'v' });
+  await store.write({ scope: 'global', key: 'orphan', value: 'v' });
+  const orphan = path.join(dir, 'global', 'orphan.md');
+  fs.writeFileSync(orphan, fs.readFileSync(orphan, 'utf8').replace(/^scope: .*$/m, 'scope: null'));
+
+  assert.deepEqual((await store.list({ scope: 'global' })).entries.map((e) => e.key), ['kept']);
+  assert.deepEqual((await store.list({})).entries.map((e) => e.key), ['kept']);
 });
