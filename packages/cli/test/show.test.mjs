@@ -203,8 +203,13 @@ function startMockRemote(byKey) {
       const url = new URL(req.url, 'http://localhost');
       const scope = url.searchParams.get('scope');
       const key = url.searchParams.get('key');
-      const found = byKey[`${scope}::${key}`] || null;
-      const entries = found ? [found] : [];
+      // An absent `scope` param is the unscoped read: the real route is
+      // account-wide and answers with every row carrying the key, leaving the
+      // precedence pick to the client. Narrowing to one here would hide exactly
+      // the case an unscoped `show` exists for.
+      const entries = scope
+        ? [byKey[`${scope}::${key}`]].filter(Boolean)
+        : Object.values(byKey).filter((e) => e.key === key);
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ entries, hasMore: false, nextCursor: null }));
     });
@@ -278,4 +283,98 @@ test('show flags a divergence when the same key differs between the two stores',
   } finally {
     server.close();
   }
+});
+
+// ── the resolved scope is REPORTED, not left blank ────────────────────────────
+// `show <key>` with no scope resolves across every scope by precedence. The
+// header slot echoes what the caller ASKED for, so with no scope it rendered
+// empty — the reader saw a value and had no way to tell which scope produced
+// it. The scope that answered is per-store (offline and remote can resolve
+// differently, which is why this command shows both), so it belongs in each
+// section rather than in the one header slot.
+
+test('show <key> with no scope names the scope that answered', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['shared-key']);
+  assert.equal(res.status, 0, res.stderr);
+  // Line-anchored: a loose `Offline[\s\S]*scope` would also match the header
+  // slot and pass with the section line absent.
+  assert.match(res.stdout, /^ {2}scope {3}global$/m);
+  // The header says the read was unscoped instead of rendering an empty slot.
+  assert.match(res.stdout, /scope:\s+any — resolved by precedence/);
+});
+
+// Both sections, against a live remote. The two tests above run with no remote
+// configured, so the Remote section never renders a record and could not have
+// caught a resolved-scope line that only ever appeared offline — yet the scope
+// that answered is PER-STORE, which is the whole reason it sits in each section
+// rather than in the header. Here the two stores deliberately resolve the key
+// differently: offline holds it at `global`, the remote at a `repo::` scope
+// that outranks it.
+test('show <key> with no scope names each store\'s own answering scope', async () => {
+  const { root, home } = seedProject();
+  const server = startMockRemote({
+    'repo::acme/widget::shared-key': {
+      scope: 'repo::acme/widget',
+      key: 'shared-key',
+      value: 'remote value',
+      tags: [],
+      updated_at: '2026-07-01T00:00:00Z',
+    },
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try {
+    const res = await runShowAsync(root, home, ['shared-key'], {
+      LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`,
+      LOREKIT_TOKEN: 'lk_ro_test',
+    });
+    assert.equal(res.status, 0, res.stderr);
+    // Line-anchored per section, and the two lines differ — a single shared
+    // header slot could not produce both.
+    assert.match(res.stdout, /^ {2}scope {3}global$/m);
+    assert.match(res.stdout, /^ {2}scope {3}repo::acme\/widget$/m);
+  } finally {
+    server.close();
+  }
+});
+
+test('show <scope> <key> does not repeat the scope in each section', async () => {
+  const { root, home } = seedProject();
+  const server = startMockRemote({
+    'global::shared-key': {
+      scope: 'global',
+      key: 'shared-key',
+      value: 'offline value',
+      tags: [],
+      updated_at: '2026-07-01T00:00:00Z',
+    },
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try {
+    // A configured remote, so BOTH sections render a record: the assertion
+    // below is a real both-sections constraint rather than one about the only
+    // section that could have rendered.
+    const res = await runShowAsync(root, home, ['global', 'shared-key'], {
+      LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`,
+      LOREKIT_TOKEN: 'lk_ro_test',
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /scope:\s+global/);
+    assert.doesNotMatch(res.stdout, /any — resolved by precedence/);
+    // No per-section scope line on either side — the caller named the scope,
+    // so echoing it twice more would be noise.
+    assert.doesNotMatch(res.stdout, /^ {2}scope {3}/m);
+  } finally {
+    server.close();
+  }
+});
+
+test('a missing unscoped key does not report a bare `::key` ref', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['no-such-key-anywhere']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /key "no-such-key-anywhere" in any scope/);
+  assert.doesNotMatch(res.stdout, /for ::/);
 });

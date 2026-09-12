@@ -53,6 +53,28 @@ const LIST_VIEWS = ['full', 'summary'];
 const MEMORY_KINDS = ['lesson', 'bus', 'signal'];
 
 /**
+ * `memory.list`'s `limit` schema, read from the catalog this server renders
+ * `tools/list` from rather than restated — a hand-copied `50`/`100` here would
+ * be a second declaration of numbers the schema already publishes to every
+ * client, free to drift from the ones those clients were handed.
+ *
+ * It throws rather than falling back to `{}`, because an absent schema fails
+ * OPEN in a way that is invisible: with `minimum`/`maximum`/`default` all
+ * `undefined`, every `a.limit < undefined` comparison is false, so
+ * `validateListArgs` accepts `0`, `-1` and `500` alike, `listLimit` returns
+ * `undefined`, and the store reads that as "no cap" — silently restoring both
+ * of the bugs the range check exists to prevent, with an error string reading
+ * "between undefined and undefined" if one ever did fire. A derived constant
+ * whose derivation can quietly yield nothing is worse than a hand-copied one:
+ * it claims a guarantee it has stopped providing, without saying so.
+ */
+const LIST_LIMIT_SCHEMA = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+  ?.inputSchema?.properties?.limit;
+if (!LIST_LIMIT_SCHEMA || typeof LIST_LIMIT_SCHEMA.default !== 'number') {
+  throw new Error('memory.list is missing its `limit` schema in the generated tool catalog');
+}
+
+/**
  * Validate the taxonomy/projection arguments of a `memory.list` call.
  *
  * Every other surface REJECTS an out-of-vocabulary value — the edge throws
@@ -70,6 +92,27 @@ function validateListArgs(a = {}) {
   }
   if (a.host !== undefined && (typeof a.host !== 'string' || a.host.length === 0 || a.host.length > 64)) {
     throw new Error('Invalid host: expected a non-empty string of at most 64 characters');
+  }
+  // `limit` is held to the SAME schema, for the same reason and with one extra:
+  // an out-of-range value here is not merely un-narrowed, it inverts the bound.
+  // Both stores read a falsy `limit` as "no cap" (`if (limit)`), so `limit: 0`
+  // returned the WHOLE store and reported `hasMore: false` — a complete-looking
+  // page containing every lesson, which is the exact outcome the default below
+  // exists to prevent. `0` also survives `??`, so no default can catch it.
+  //
+  // Rejecting an over-MAXIMUM value is the same rule at the other end. An
+  // earlier pass let those through on the grounds that the remote route answers
+  // them with a 400 — but this server also serves the LOCAL store, where there
+  // is no route and nothing to reject them, so the argument only covered one of
+  // its two modes. Refusing here covers both and matches every other surface.
+  const { minimum, maximum } = LIST_LIMIT_SCHEMA;
+  const badLimit =
+    a.limit !== undefined &&
+    (!Number.isInteger(a.limit) || a.limit < minimum || a.limit > maximum);
+  if (badLimit) {
+    throw new Error(
+      `Invalid limit "${a.limit}": expected an integer between ${minimum} and ${maximum}`,
+    );
   }
 }
 
@@ -150,6 +193,26 @@ export function projectListView(result, view) {
 const TAXONOMY_FETCH_LIMIT = 100;
 
 /**
+ * The page size a `memory.list` call actually gets.
+ *
+ * An ABSENT `limit` means the schema's `default`, not "unbounded". The hosted
+ * server gets that for free — `ListMemoriesQuerySchema` applies the default
+ * during the parse — but nothing parses arguments on this path, so an omitted
+ * `limit` reached the store as `undefined` and every store treats that as "no
+ * cap". That was invisible while an unscoped `memory.list {}` answered `[]`;
+ * widening it to the whole store is what makes a default load-bearing, since
+ * the call now returns every lesson the store holds straight into a model's
+ * context.
+ *
+ * `??` rather than `||` is deliberate but not sufficient on its own: it is
+ * `validateListArgs` that makes this total, by rejecting the out-of-range
+ * values — `0` above all — that no default can substitute for.
+ */
+function listLimit(a) {
+  return a.limit ?? LIST_LIMIT_SCHEMA.default;
+}
+
+/**
  * The full `memory.list` post-processing chain: validate → fetch → filter →
  * slice → project.
  *
@@ -160,9 +223,11 @@ const TAXONOMY_FETCH_LIMIT = 100;
 export async function listWithFilters(store, a = {}) {
   validateListArgs(a);
   const filtering = Boolean(a.kind || a.host);
-  if (!filtering) return projectListView(await store.list(a), a.view);
+  if (!filtering) {
+    return projectListView(await store.list({ ...a, limit: listLimit(a) }), a.view);
+  }
 
-  const requested = a.limit ?? 50;
+  const requested = listLimit(a);
   const widened = TAXONOMY_FETCH_LIMIT;
   // Drop `cursor` as well as widening `limit`. A cursor is a keyset position in
   // the UNFILTERED row order; resuming a client-side-filtered read from one

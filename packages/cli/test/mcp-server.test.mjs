@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS, advertise } from '../src/commands/mcp-server.mjs';
+import { MCP_TOOL_DEFS } from '../src/surfaces.generated.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -607,6 +608,58 @@ describe('memory.list over-fetches before post-filtering', () => {
     await listWithFilters(store, { scope: 'global', limit: 5 });
     assert.equal(store.seen.limit, 5);
   });
+
+  // An omitted `limit` is the SCHEMA's default, not "unbounded". The hosted
+  // server gets that from the zod parse; nothing parses arguments on this path,
+  // so an omitted limit used to reach the store as `undefined` — harmless while
+  // an unscoped `memory.list {}` answered `[]`, and a whole-store dump into a
+  // model's context once it answers account-wide.
+  test('applies the catalog default when no limit is given', async () => {
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    const declared = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+      .inputSchema.properties.limit.default;
+    await listWithFilters(store, {});
+    // Read from the catalog, not written out: a literal here would pass even if
+    // the schema the clients read moved out from under it.
+    assert.equal(store.seen.limit, declared);
+  });
+
+  test('applies the default on a taxonomy-filtered read too', async () => {
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    const declared = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+      .inputSchema.properties.limit.default;
+    const r = await listWithFilters(store, { host: 'reviewer' });
+    assert.equal(r.entries.length, declared);
+  });
+
+  // `limit: 0` is the sharp case and the reason a default alone is not enough:
+  // `0` survives `??`, and both stores read a falsy limit as "no cap", so it
+  // returned the WHOLE store AND reported `hasMore: false` — every lesson in a
+  // page that claims to be complete. Rejecting is what every other surface does
+  // with an out-of-schema value, and what this function already does for
+  // `view`/`kind`/`host`.
+  test('rejects a limit outside the schema range instead of substituting one', async () => {
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    for (const limit of [0, -1, 500, 1.5, '10']) {
+      await assert.rejects(
+        () => listWithFilters(store, { scope: 'global', limit }),
+        /Invalid limit/,
+        `limit ${JSON.stringify(limit)} should be refused`,
+      );
+    }
+    // The store is never reached, so nothing can read the bad value as "no cap".
+    assert.equal(store.seen.limit, undefined);
+  });
+
+  test('accepts the schema boundaries themselves', async () => {
+    const { minimum, maximum } = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+      .inputSchema.properties.limit;
+    const store = slicingStore(rows(150, 'loop::reviewer-lessons', 'rv'));
+    for (const limit of [minimum, maximum]) {
+      const r = await listWithFilters(store, { scope: 'global', limit });
+      assert.equal(r.entries.length, limit);
+    }
+  });
 });
 
 describe('memory.list taxonomy filter respects the remote limit cap and cursor contract', () => {
@@ -673,4 +726,20 @@ describe('memory.list ignores an inbound cursor when a taxonomy filter is set', 
     await listWithFilters(store, { scope: 'global', cursor: 'ABC' });
     assert.equal(seen.cursor, 'ABC');
   });
+});
+
+// The `limit` range check derives its bounds from the generated catalog. A
+// derivation that can quietly yield nothing is worse than a hand-copied
+// constant: with `minimum`/`maximum` undefined every comparison is false, so
+// `validateListArgs` would accept `0` and `500` alike and `listLimit` would
+// return `undefined` — "no cap" — silently restoring both bugs the check
+// exists to prevent. Loading the module must fail loudly instead.
+test('memory.list declares the limit schema the server derives its bounds from', () => {
+  const limit = MCP_TOOL_DEFS.find((t) => t.name === 'memory.list')
+    ?.inputSchema?.properties?.limit;
+  assert.ok(limit, 'memory.list has no `limit` property in the generated catalog');
+  assert.equal(typeof limit.default, 'number');
+  assert.equal(typeof limit.minimum, 'number');
+  assert.equal(typeof limit.maximum, 'number');
+  assert.ok(limit.minimum >= 1, 'a minimum below 1 would let `limit: 0` through as "no cap"');
 });

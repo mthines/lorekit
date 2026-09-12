@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/shared/lessons-view.mjs';
 import { remoteUnavailableReason } from '../src/shared/stores.mjs';
-import { createLocalStore } from '../src/store/local.mjs';
+import { createLocalStore, createTwoTierStore } from '../src/store/local.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -236,4 +236,194 @@ test('LOREKIT_DENY=local suppresses the offline section', () => {
   const out = JSON.parse(res.stdout);
   assert.equal(out.offline.available, false);
   assert.match(out.offline.reason, /deny constraint/);
+});
+
+// ── unit: an omitted scope WIDENS the local listing, it does not empty it ─────
+// `memory.list`'s scope became optional when an omitted scope started meaning
+// "everywhere" (see docs/decisions.md → "An omitted scope on a read means
+// EVERYWHERE"), and the local stdio MCP server advertises this tool from the
+// same catalog as the hosted one. The store was the half that never widened:
+// `_files` resolves a scope to one directory, so the omitted case read an
+// unresolvable path and returned `[]` — a silent empty listing against an
+// advertised account-wide contract.
+
+test('list without a scope returns every scope, each entry naming its own', async () => {
+  const store = createLocalStore(tmp('lk-list-unscoped-'));
+  await store.write({ scope: 'global', key: 'k', value: 'from global' });
+  await store.write({ scope: 'repo::acme/widget', key: 'k', value: 'from repo' });
+  await store.write({ scope: 'project::widget', key: 'other', value: 'from project' });
+
+  const { entries } = await store.list({});
+  assert.deepEqual(
+    entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['global::k', 'project::widget::other', 'repo::acme/widget::k'],
+  );
+});
+
+test('a named scope still narrows to exactly that scope', async () => {
+  const store = createLocalStore(tmp('lk-list-scoped-'));
+  await store.write({ scope: 'global', key: 'k', value: 'from global' });
+  await store.write({ scope: 'repo::acme/widget', key: 'k', value: 'from repo' });
+
+  const { entries } = await store.list({ scope: 'global' });
+  assert.deepEqual(entries.map((e) => `${e.scope}::${e.key}`), ['global::k']);
+});
+
+test('an unscoped listing still hides archived rows', async () => {
+  const store = createLocalStore(tmp('lk-list-unscoped-live-'));
+  await store.write({ scope: 'global', key: 'live', value: 'v' });
+  await store.write({ scope: 'repo::acme/widget', key: 'gone', value: 'v' });
+  await store.archive({ scope: 'repo::acme/widget', key: 'gone' });
+
+  const { entries } = await store.list({});
+  // Archived rows are hidden on the widened path exactly as on the scoped one —
+  // widening changes WHICH scopes are read, never which rows are live.
+  assert.deepEqual(entries.map((e) => `${e.scope}::${e.key}`), ['global::live']);
+});
+
+// The two-tier merge keys on `scope::key`, not the bare key. While a listing was
+// confined to one scope the two were equivalent; an unscoped listing mixes
+// scopes, and a bare key would collapse `global::k` and `repo::…::k` into
+// whichever tier answered first.
+test('the two-tier store keeps same-key rows from different scopes apart', async () => {
+  const homeDir = tmp('lk-list-tier-home-');
+  const projDir = tmp('lk-list-tier-proj-');
+  await createLocalStore(homeDir).write({ scope: 'global', key: 'k', value: 'home / global' });
+  await createLocalStore(projDir)
+    .write({ scope: 'repo::acme/widget', key: 'k', value: 'project / repo' });
+
+  const two = createTwoTierStore({ home: homeDir, project: projDir });
+  const { entries } = await two.list({});
+  assert.deepEqual(
+    entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['global::k', 'repo::acme/widget::k'],
+  );
+});
+
+// Deliberately SCOPED: the merge key changed on both of `TwoTierStore.list`'s
+// paths, and the widened one is the easy half to cover. Passing `{}` here would
+// exercise the same branch the test above already does and never reach the
+// scoped merge at all.
+test('within ONE scope the project tier still shadows home', async () => {
+  const homeDir = tmp('lk-list-tier-shadow-home-');
+  const projDir = tmp('lk-list-tier-shadow-proj-');
+  await createLocalStore(homeDir)
+    .write({ scope: 'repo::acme/widget', key: 'k', value: 'home wins?' });
+  await createLocalStore(projDir)
+    .write({ scope: 'repo::acme/widget', key: 'k', value: 'project wins' });
+
+  const two = createTwoTierStore({ home: homeDir, project: projDir });
+  const { entries } = await two.list({ scope: 'repo::acme/widget' });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].value, 'project wins');
+});
+
+// ── a named scope is EXACT, because the directory index is lossy ─────────────
+// `scopeToDir`'s `safeSeg` folds the space in `acme/my widget` to `-`, so the
+// two scopes below share one directory while `parseEntry` recovers each row's
+// scope from its own frontmatter. `_readAll` reads a directory, so without an
+// equality check a named scope answers with a neighbour's rows — rows the
+// caller did not ask for, against a contract (and a `docs/cli.md` line) that
+// says a named scope narrows to that scope.
+test('a named scope excludes a colliding neighbour scope sharing its directory', async () => {
+  const dir = tmp('lk-list-collide-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'repo::acme/my widget', key: 'k', value: 'space variant' });
+  await store.write({ scope: 'repo::acme/my-widget', key: 'k2', value: 'dash variant' });
+
+  // Same directory on disk — the collision is real, not hypothetical.
+  const collidedDir = path.join(dir, 'repo', 'acme', 'my-widget');
+  assert.deepEqual(fs.readdirSync(collidedDir).sort(), ['k.md', 'k2.md']);
+
+  assert.deepEqual(
+    (await store.list({ scope: 'repo::acme/my-widget' })).entries
+      .map((e) => `${e.scope}::${e.key}`),
+    ['repo::acme/my-widget::k2'],
+  );
+  assert.deepEqual(
+    (await store.list({ scope: 'repo::acme/my widget' })).entries
+      .map((e) => `${e.scope}::${e.key}`),
+    ['repo::acme/my widget::k'],
+  );
+  // The widened listing still sees both — it is exactness that is scoped, not
+  // visibility. A row excluded from one scope is not excluded from the store.
+  assert.deepEqual(
+    (await store.list({})).entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['repo::acme/my widget::k', 'repo::acme/my-widget::k2'],
+  );
+});
+
+// The same exactness on the singular read path, which is the sharper failure:
+// a lesson belonging to one scope answering a read addressed to another.
+test('a scoped read does not answer with a colliding neighbour scope\'s lesson', async () => {
+  const store = createLocalStore(tmp('lk-read-collide-'));
+  await store.write({ scope: 'repo::acme/my widget', key: 'k', value: 'space variant' });
+
+  assert.equal((await store.read({ scope: 'repo::acme/my-widget', key: 'k' })).entry, null);
+  assert.equal(
+    (await store.read({ scope: 'repo::acme/my widget', key: 'k' })).entry.value,
+    'space variant',
+  );
+});
+
+// A cut page says so. Without this the store answered a limited listing with
+// the same shape as an exhausted one, so a caller could not tell "that is all
+// your lore" from "that is the first 50 of it" — and the widened listing is
+// where that distinction starts to matter.
+test('a limited listing reports hasMore, an exhausted one does not', async () => {
+  const store = createLocalStore(tmp('lk-list-hasmore-'));
+  for (let i = 0; i < 5; i += 1) await store.write({ scope: 'global', key: `k${i}`, value: 'v' });
+
+  const cut = await store.list({ scope: 'global', limit: 2 });
+  assert.equal(cut.entries.length, 2);
+  assert.equal(cut.hasMore, true);
+
+  // Exactly the page size is NOT "more" — an off-by-one here would report every
+  // full page as truncated forever.
+  assert.equal((await store.list({ scope: 'global', limit: 5 })).hasMore, false);
+  assert.equal((await store.list({ scope: 'global' })).hasMore, false);
+});
+
+// A hand-edited file missing the column is absent from BOTH of `list`'s
+// branches: `_readAll` requires an exact match, `_allLive` filters for one.
+// Filtering in only one would leave the widened listing short of the scoped
+// ones it must contain, and hand `TwoTierStore.list` a `"undefined::k"` key.
+test('an entry with no scope in its frontmatter is listed by neither path', async () => {
+  const dir = tmp('lk-list-orphan-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'global', key: 'kept', value: 'v' });
+  await store.write({ scope: 'global', key: 'orphan', value: 'v' });
+  const orphan = path.join(dir, 'global', 'orphan.md');
+  fs.writeFileSync(orphan, fs.readFileSync(orphan, 'utf8').replace(/^scope: .*$/m, 'scope: null'));
+
+  assert.deepEqual((await store.list({ scope: 'global' })).entries.map((e) => e.key), ['kept']);
+  assert.deepEqual((await store.list({})).entries.map((e) => e.key), ['kept']);
+
+  // …but it is still REMOVABLE where it is filed. Unlistable is a defensible
+  // consequence of a malformed file; unlistable AND undeletable, with no
+  // surface that even reports the file exists, is a trap.
+  assert.deepEqual(await store.delete({ scope: 'global', key: 'orphan', force: true }), {
+    ok: true,
+    deleted: true,
+  });
+  assert.equal(fs.existsSync(orphan), false);
+});
+
+// The removal exception is for a row claiming NO scope, never one claiming a
+// different one. A neighbour's lesson must not be deleted on a lossy path
+// match — that is the same category of error as serving it, only destructive.
+test('a removal does not reach a colliding neighbour scope\'s lesson', async () => {
+  const dir = tmp('lk-delete-collide-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'repo::acme/my widget', key: 'k', value: 'v' });
+  const file = path.join(dir, 'repo', 'acme', 'my-widget', 'k.md');
+
+  assert.deepEqual(await store.delete({ scope: 'repo::acme/my-widget', key: 'k', force: true }), {
+    ok: true,
+    deleted: false,
+  });
+  assert.equal(fs.existsSync(file), true);
+  // Its own scope still removes it.
+  await store.delete({ scope: 'repo::acme/my widget', key: 'k', force: true });
+  assert.equal(fs.existsSync(file), false);
 });

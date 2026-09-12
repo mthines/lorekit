@@ -38,7 +38,34 @@ class LocalStore {
     return names.filter((n) => n.endsWith('.md')).map((n) => path.join(dir, n));
   }
 
+  // Every entry FILED UNDER `scope` — the frontmatter `scope` is authoritative,
+  // the directory is only an index into it.
+  //
+  // That distinction is load-bearing rather than pedantic, because the index is
+  // lossy: `scopeToDir`'s `safeSeg` (format.mjs) folds every character outside
+  // `[A-Za-z0-9._-]` to `-`, so `repo::acme/my widget` and `repo::acme/my-widget`
+  // resolve to ONE directory while `parseEntry` reads each row's scope back from
+  // its own frontmatter. Without the equality check below, `_readAll` hands a
+  // colliding neighbour's rows to both of its callers: `list({ scope })` returns
+  // rows the caller did not ask for, and `_findByKey` — hence `read`, `delete`,
+  // `archive` and `restore` — resolves a `scope`+`key` to a lesson belonging to
+  // a DIFFERENT scope. A scoped read is exact on every other surface (the hosted
+  // handlers filter with `.eq('scope', scope)`), and it is exact here too.
+  //
+  // An entry whose frontmatter carries no `scope` at all matches nothing here:
+  // every write goes through `serializeEntry`, which always emits the column, so
+  // such a file is hand-edited or foreign and has no scope to be authoritative
+  // about. Inheriting the directory's would make the lossy index authoritative
+  // again in exactly the case it is least trustworthy. `_findFiled` below makes
+  // the one narrow exception, for removals, and says why it is safe there.
   _readAll(scope) {
+    return this._readDir(scope).filter((r) => r.entry.scope === scope);
+  }
+
+  // Every parsed entry in `scope`'s DIRECTORY, whatever scope each one claims.
+  // Only `_readAll` and the removal paths below consume this; nothing serves a
+  // row from it, because the directory does not establish what a row IS.
+  _readDir(scope) {
     const out = [];
     for (const file of this._files(scope)) {
       try {
@@ -51,22 +78,50 @@ class LocalStore {
     return out;
   }
 
+  // The file a REMOVAL addressed to `scope`+`key` may act on: one claiming
+  // exactly `scope`, or one claiming no scope at all.
+  //
+  // The second case is the narrow exception to "the frontmatter is
+  // authoritative", and it is safe for the reason the general rule is not: a
+  // removal does not SERVE the row, it deletes or archives it. The danger the
+  // exact match exists to stop is a neighbour's lesson being returned as though
+  // it were the caller's — which cannot happen to a row nobody reads. A row
+  // claiming a DIFFERENT scope is still excluded here: that one belongs to
+  // someone, and deleting it on a lossy path match would be the same category
+  // of error, only destructive.
+  //
+  // Without this, applying the exact match to `_findByKey` made a hand-edited
+  // file with no `scope` unreachable through the store API entirely — invisible
+  // to `list`, `read`, `search`, `scopes` and `lint`, and no longer removable
+  // either. Being unlistable is a defensible consequence of a malformed file;
+  // being undeletable, with no surface that even reports it, is a trap.
+  _findFiled(scope, key) {
+    return this._readDir(scope).find(
+      (r) => r.entry.key === key && (r.entry.scope ?? scope) === scope,
+    ) || null;
+  }
+
   _findByKey(scope, key) {
     return this._readAll(scope).find((r) => r.entry.key === key) || null;
   }
 
-  // Every LIVE entry carrying `key`, across every scope in this store — the
-  // candidate set for a read that named no scope.
+  // Every LIVE entry in this store, across every scope — the candidate set for
+  // any read that named no scope.
   //
   // Walks the whole tree rather than one scope directory, because `_files`
   // resolves a single scope→directory and there is no directory for "any".
   // That is more IO than a scoped read, which is exactly why a caller that
   // knows its scope should still pass it.
-  _findAllByKey(key) {
-    const now = new Date();
+  _allLive(now = new Date()) {
     return this._walkEntries()
       .map((r) => r.entry)
-      .filter((e) => e && e.key === key && e.scope && isLive(e, now));
+      .filter((e) => e && e.scope && isLive(e, now));
+  }
+
+  // The `_allLive` subset carrying `key` — the candidate set a singular
+  // unscoped read ranks by precedence.
+  _findAllByKey(key) {
+    return this._allLive().filter((e) => e.key === key);
   }
 
   // Raw lookup by scope+key — returns the stored entry regardless of archived
@@ -79,19 +134,40 @@ class LocalStore {
 
   // list({ scope, tags, limit }) → { ok, entries } — newest-first, tag-filtered,
   // archived hidden, expired hidden (lazily, mirroring the remote read paths).
+  //
+  // `scope` is OPTIONAL, and omitting it WIDENS to every scope — it does not
+  // narrow to none. `_files` resolves a scope to one directory, so the omitted
+  // case used to read an unresolvable path, catch the ENOENT and return `[]`:
+  // a silent empty listing where the hosted `memory.list` (and `GET /memories`,
+  // and `lorekit list`) all answer account-wide. The local stdio MCP server
+  // advertises this tool from the same catalog as the hosted one, so the two
+  // were promising one contract and keeping two.
   async list({ scope, tags, limit } = {}) {
     const now = new Date();
-    let rows = this._readAll(scope)
-      .map((r) => r.entry)
-      .filter((e) => isLive(e, now));
+    // Neither branch can yield an entry whose frontmatter carries no `scope`:
+    // `_readAll` requires an exact match, `_allLive` filters for one. That has
+    // to hold on BOTH or the widened listing stops being a superset of the
+    // scoped ones, and `TwoTierStore.list` — which merges on `scope::key` —
+    // starts keying rows on the literal string `"undefined::…"`.
+    let rows = scope
+      ? this._readAll(scope)
+          .map((r) => r.entry)
+          .filter((e) => isLive(e, now))
+      : this._allLive(now);
     if (Array.isArray(tags) && tags.length) {
       rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
     }
     rows.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+    // `hasMore` reports that the page was CUT, not that it was exhausted — the
+    // same flag the remote store carries, so a caller reading either one can
+    // tell "that is everything" from "that is the first `limit` of it". There
+    // is no `nextCursor` to pair it with: this store has no keyset, so the
+    // remedy is a larger `limit`, exactly as on a taxonomy-filtered read.
+    const hasMore = Boolean(limit) && rows.length > limit;
     if (limit) rows = rows.slice(0, limit);
     // The same additive projection the remote store applies, so a caller that
     // ranks entries never has to ask which store produced them.
-    return { ok: true, entries: rows.map(withReadFields) };
+    return { ok: true, entries: rows.map(withReadFields), hasMore };
   }
 
   // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
@@ -256,7 +332,7 @@ class LocalStore {
 
   // delete({ scope, key, force }) — force removes the file; soft-delete archives.
   async delete({ scope, key, force } = {}) {
-    const found = this._findByKey(scope, key);
+    const found = this._findFiled(scope, key);
     if (!found) return { ok: true, deleted: false };
     if (force) {
       try {
@@ -278,7 +354,7 @@ class LocalStore {
   }
 
   _setArchived(scope, key, ts) {
-    const found = this._findByKey(scope, key);
+    const found = this._findFiled(scope, key);
     if (!found) return { ok: true, archived: false };
     const entry = { ...found.entry, archived_at: ts, updated: new Date().toISOString() };
     fs.writeFileSync(found.file, serializeEntry(entry));
@@ -451,9 +527,22 @@ class TwoTierStore {
     const projRes = this.projectActive()
       ? await this.project.list({ scope, tags })
       : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+    // Identity is `scope::key`, never the bare key. An unscoped listing mixes
+    // scopes outright, and there a bare key silently collapses `global::x`,
+    // `repo::o/r::x` and `project::p::x` into whichever tier answered first.
+    //
+    // A scoped listing IS confined to one scope, so on that path the two keys
+    // agree — but only because `_readAll` enforces the scope, not because the
+    // store's layout guarantees it. `scopeToDir` is a lossy index (see the note
+    // there), so dropping that enforcement would silently make this merge key
+    // load-bearing on the scoped path too.
+    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}::${e.key}`);
     merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
-    return { ok: true, entries: limit ? merged.slice(0, limit) : merged };
+    // The tiers are fetched UNLIMITED and cut here, so the cut is the only one
+    // that happened and `hasMore` is exact — see `LocalStore.list` for why the
+    // flag has no `nextCursor` beside it.
+    const hasMore = Boolean(limit) && merged.length > limit;
+    return { ok: true, entries: limit ? merged.slice(0, limit) : merged, hasMore };
   }
 
   async read({ scope, key } = {}) {

@@ -374,14 +374,20 @@ export async function show(args) {
     log(JSON.stringify(buildJson({ scope, key, offline, remote_, diverged }), null, 2));
   } else {
     heading('LoreKit memory');
-    log(`  scope:  ${c.dim(scope)}`);
+    // With no scope asked for, this line has nothing faithful to print: it used
+    // to render blank, so the reader saw a value with no way to tell which
+    // scope produced it. The scope that ANSWERED is per-store (the two can
+    // resolve differently, which is the whole reason this command shows both),
+    // so it belongs in each section below, not in one header slot.
+    log(`  scope:  ${c.dim(scope || 'any — resolved by precedence')}`);
     log(`  key:    ${c.dim(key)}`);
 
-    renderRecordSection('Offline', offline);
+    renderRecordSection('Offline', offline, undefined, !scope);
     renderRecordSection(
       'Remote',
       remote_,
       remoteAvailable ? connection.endpoint : undefined,
+      !scope,
     );
 
     if (diverged) {
@@ -390,7 +396,11 @@ export async function show(args) {
     }
     if (!found) {
       log('');
-      log(`  ${c.dim(`no memory found for ${scope}::${key} in the readable store(s)`)}`);
+      // `${scope}::${key}` renders as a bare `::key` when no scope was named —
+      // a ref that never existed, and one a reader could mistake for the thing
+      // they typed.
+      const subject = scope ? `${scope}::${key}` : `key "${key}" in any scope`;
+      log(`  ${c.dim(`no memory found for ${subject} in the readable store(s)`)}`);
     }
     log('');
   }
@@ -406,7 +416,7 @@ export async function show(args) {
 
 // Render one store's slot: an unavailable note, a "no such key here" line, or the
 // full record (untruncated value).
-function renderRecordSection(title, section, subtitle) {
+function renderRecordSection(title, section, subtitle, showResolvedScope = false) {
   heading(title);
   if (subtitle) log(`  ${c.dim(subtitle)}`);
 
@@ -424,6 +434,9 @@ function renderRecordSection(title, section, subtitle) {
   }
 
   const e = section.record;
+  // Only when the caller named no scope: with one, this would just echo the
+  // header back on every section.
+  if (showResolvedScope && e.scope) log(`  ${c.dim('scope')}   ${e.scope}`);
   if (e.updated) log(`  ${c.dim('updated')} ${shortDate(e.updated)}`);
   if (e.tags && e.tags.length) log(`  ${c.dim('tags')}    ${e.tags.join(', ')}`);
   log(`  ${c.dim('value')}`);
