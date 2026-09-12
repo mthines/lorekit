@@ -78,6 +78,7 @@ import type { ButtonSize, ButtonVariant } from '@/lib/button-styles';
 import type { FilterField, FilterOperator } from '@/lib/filters';
 import type { LessonUtility } from '@/lib/lesson-utility';
 import type { MemoryStatus } from '@/lib/status-filter';
+import type { RetentionField } from '@/lib/retention-filter';
 
 import { dwellBucket, type ContentType, type ScrollMilestone } from './reading';
 import type {
@@ -230,8 +231,13 @@ export type AnalyticsEvent =
        * The dimension or threshold touched — a bounded field name, NEVER the
        * value, which is the reader's own label / host / repo. Absent on
        * `clear-all`, which touches every dimension at once.
+       *
+       * Both vocabularies are named explicitly rather than widened to `string`:
+       * the union IS the guard, and collapsing it lets a call site pass a facet
+       * VALUE here — the exact leak every attribute on this event is bounded to
+       * prevent.
        */
-      field?: FilterField | string;
+      field?: FilterField | RetentionField;
       operator?: FilterOperator;
       /** How many dimension pills the bar carries AFTER the change. A measure. */
       filterCount: number;
