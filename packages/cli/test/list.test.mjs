@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/shared/lessons-view.mjs';
 import { remoteUnavailableReason } from '../src/shared/stores.mjs';
-import { createLocalStore } from '../src/store/local.mjs';
+import { createLocalStore, createTwoTierStore } from '../src/store/local.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -236,4 +236,77 @@ test('LOREKIT_DENY=local suppresses the offline section', () => {
   const out = JSON.parse(res.stdout);
   assert.equal(out.offline.available, false);
   assert.match(out.offline.reason, /deny constraint/);
+});
+
+// ── unit: an omitted scope WIDENS the local listing, it does not empty it ─────
+// `memory.list`'s scope became optional when an omitted scope started meaning
+// "everywhere" (see docs/decisions.md → "An omitted scope on a read means
+// EVERYWHERE"), and the local stdio MCP server advertises this tool from the
+// same catalog as the hosted one. The store was the half that never widened:
+// `_files` resolves a scope to one directory, so the omitted case read an
+// unresolvable path and returned `[]` — a silent empty listing against an
+// advertised account-wide contract.
+
+test('list without a scope returns every scope, each entry naming its own', async () => {
+  const store = createLocalStore(tmp('lk-list-unscoped-'));
+  await store.write({ scope: 'global', key: 'k', value: 'from global' });
+  await store.write({ scope: 'repo::acme/widget', key: 'k', value: 'from repo' });
+  await store.write({ scope: 'project::widget', key: 'other', value: 'from project' });
+
+  const { entries } = await store.list({});
+  assert.deepEqual(
+    entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['global::k', 'project::widget::other', 'repo::acme/widget::k'],
+  );
+});
+
+test('a named scope still narrows to exactly that scope', async () => {
+  const store = createLocalStore(tmp('lk-list-scoped-'));
+  await store.write({ scope: 'global', key: 'k', value: 'from global' });
+  await store.write({ scope: 'repo::acme/widget', key: 'k', value: 'from repo' });
+
+  const { entries } = await store.list({ scope: 'global' });
+  assert.deepEqual(entries.map((e) => `${e.scope}::${e.key}`), ['global::k']);
+});
+
+test('an unscoped listing still hides archived rows', async () => {
+  const store = createLocalStore(tmp('lk-list-unscoped-live-'));
+  await store.write({ scope: 'global', key: 'live', value: 'v' });
+  await store.write({ scope: 'repo::acme/widget', key: 'gone', value: 'v' });
+  await store.archive({ scope: 'repo::acme/widget', key: 'gone' });
+
+  const { entries } = await store.list({});
+  // Archived rows are hidden on the widened path exactly as on the scoped one —
+  // widening changes WHICH scopes are read, never which rows are live.
+  assert.deepEqual(entries.map((e) => `${e.scope}::${e.key}`), ['global::live']);
+});
+
+// The two-tier merge keys on `scope::key`, not the bare key. While a listing was
+// confined to one scope the two were equivalent; an unscoped listing mixes
+// scopes, and a bare key would collapse `global::k` and `repo::…::k` into
+// whichever tier answered first.
+test('the two-tier store keeps same-key rows from different scopes apart', async () => {
+  const homeDir = tmp('lk-list-tier-home-');
+  const projDir = tmp('lk-list-tier-proj-');
+  await createLocalStore(homeDir).write({ scope: 'global', key: 'k', value: 'home / global' });
+  await createLocalStore(projDir).write({ scope: 'repo::acme/widget', key: 'k', value: 'project / repo' });
+
+  const two = createTwoTierStore({ home: homeDir, project: projDir });
+  const { entries } = await two.list({});
+  assert.deepEqual(
+    entries.map((e) => `${e.scope}::${e.key}`).sort(),
+    ['global::k', 'repo::acme/widget::k'],
+  );
+});
+
+test('within ONE scope the project tier still shadows home', async () => {
+  const homeDir = tmp('lk-list-tier-shadow-home-');
+  const projDir = tmp('lk-list-tier-shadow-proj-');
+  await createLocalStore(homeDir).write({ scope: 'global', key: 'k', value: 'home wins?' });
+  await createLocalStore(projDir).write({ scope: 'global', key: 'k', value: 'project wins' });
+
+  const two = createTwoTierStore({ home: homeDir, project: projDir });
+  const { entries } = await two.list({});
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].value, 'project wins');
 });

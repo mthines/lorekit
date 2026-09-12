@@ -55,18 +55,23 @@ class LocalStore {
     return this._readAll(scope).find((r) => r.entry.key === key) || null;
   }
 
-  // Every LIVE entry carrying `key`, across every scope in this store — the
-  // candidate set for a read that named no scope.
+  // Every LIVE entry in this store, across every scope — the candidate set for
+  // any read that named no scope.
   //
   // Walks the whole tree rather than one scope directory, because `_files`
   // resolves a single scope→directory and there is no directory for "any".
   // That is more IO than a scoped read, which is exactly why a caller that
   // knows its scope should still pass it.
-  _findAllByKey(key) {
-    const now = new Date();
+  _allLive(now = new Date()) {
     return this._walkEntries()
       .map((r) => r.entry)
-      .filter((e) => e && e.key === key && e.scope && isLive(e, now));
+      .filter((e) => e && e.scope && isLive(e, now));
+  }
+
+  // The `_allLive` subset carrying `key` — the candidate set a singular
+  // unscoped read ranks by precedence.
+  _findAllByKey(key) {
+    return this._allLive().filter((e) => e.key === key);
   }
 
   // Raw lookup by scope+key — returns the stored entry regardless of archived
@@ -79,11 +84,21 @@ class LocalStore {
 
   // list({ scope, tags, limit }) → { ok, entries } — newest-first, tag-filtered,
   // archived hidden, expired hidden (lazily, mirroring the remote read paths).
+  //
+  // `scope` is OPTIONAL, and omitting it WIDENS to every scope — it does not
+  // narrow to none. `_files` resolves a scope to one directory, so the omitted
+  // case used to read an unresolvable path, catch the ENOENT and return `[]`:
+  // a silent empty listing where the hosted `memory.list` (and `GET /memories`,
+  // and `lorekit list`) all answer account-wide. The local stdio MCP server
+  // advertises this tool from the same catalog as the hosted one, so the two
+  // were promising one contract and keeping two.
   async list({ scope, tags, limit } = {}) {
     const now = new Date();
-    let rows = this._readAll(scope)
-      .map((r) => r.entry)
-      .filter((e) => isLive(e, now));
+    let rows = scope
+      ? this._readAll(scope)
+          .map((r) => r.entry)
+          .filter((e) => isLive(e, now))
+      : this._allLive(now);
     if (Array.isArray(tags) && tags.length) {
       rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
     }
@@ -451,7 +466,12 @@ class TwoTierStore {
     const projRes = this.projectActive()
       ? await this.project.list({ scope, tags })
       : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+    // Identity is `scope::key`, never the bare key. The two are equivalent
+    // while a listing is confined to ONE scope, which is why the bare key held
+    // for as long as `scope` was mandatory — but an unscoped listing mixes
+    // scopes, and there a bare key silently collapses `global::x`,
+    // `repo::o/r::x` and `project::p::x` into whichever tier answered first.
+    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}::${e.key}`);
     merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     return { ok: true, entries: limit ? merged.slice(0, limit) : merged };
   }
