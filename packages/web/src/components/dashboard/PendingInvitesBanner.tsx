@@ -10,18 +10,14 @@
  * also drives the Organization nav badge (plan.md Decision D6).
  */
 
-import { useState, useTransition } from 'react';
+import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useRouter } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
 import { Mail, X } from 'lucide-react';
-import { acceptInvite, declineInvite, type OrgInvite } from '@/lib/org-invites';
-import { usePendingInvitesForMe, PENDING_INVITES_QUERY_KEY } from '@/lib/queries/pending-invites';
+import { type OrgInvite } from '@/lib/org-invites';
+import { usePendingInvitesForMe } from '@/lib/queries/pending-invites';
 import { useDismissedInviteIds } from '@/lib/hooks/useDismissedInviteIds';
+import { useInviteActions } from '@/lib/hooks/useInviteActions';
 import { visibleInvites } from '@/lib/org-ui';
-import { serialise } from '@/lib/hooks/useUrlState';
-import type { Filter } from '@/lib/filters';
-import { showToast } from '@/lib/toast';
 import { InviteDetailsDialog } from '@/components/dashboard/InviteDetailsDialog';
 import { Button, IconButton } from '@/components/ui/Button';
 
@@ -30,60 +26,21 @@ interface PendingInvitesBannerProps {
 }
 
 export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerProps) {
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion();
   const { data: invites = initialInvites } = usePendingInvitesForMe(initialInvites);
   const [dismissedIds, dismiss, hasHydrated] = useDismissedInviteIds();
-  const [pending, startTransition] = useTransition();
   const [viewingInvite, setViewingInvite] = useState<OrgInvite | null>(null);
+  // The single accept/decline path, shared with the settings list and
+  // InviteDetailsDialog (AC-7) — closing the dialog on settle so a resolved
+  // invite never lingers under it.
+  const { pending, accept, decline } = useInviteActions({
+    onSettled: () => setViewingInvite(null),
+  });
 
   const shown = visibleInvites(invites, dismissedIds);
   // Gate on hasHydrated: nothing invite-related renders on the server or first
   // client paint, so a banner this browser already dismissed never flashes.
   const invite = hasHydrated ? shown[0] : undefined;
-
-  // Shared by both the banner's quick actions AND InviteDetailsDialog's
-  // Accept/Decline (AC-7) — a single accept/decline path, never a second,
-  // divergent one wired to the modal.
-  function handleAccept(target: OrgInvite) {
-    startTransition(async () => {
-      const result = await acceptInvite(target.id);
-      if (result.error) {
-        showToast(result.error, 'error');
-        return;
-      }
-      setViewingInvite(null);
-      await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
-      const orgName = target.org?.name ?? 'the organization';
-      showToast(`You joined ${orgName}. Their shared lore now appears in your Explorer.`, 'success');
-      // Ownership is a server-side filter DIMENSION now (migration 00064), keyed
-      // by the org SLUG. Deep-link straight into the Explorer's `?filters=` bar
-      // with an owner filter, so the freshly-joined org is pre-selected. The
-      // legacy `?owner=` param is gone: the Explorer still READS it for old
-      // links, but writing a slug-keyed filter here lands exactly, where the old
-      // uuid form could not be resolved to a slug on arrival.
-      const slug = target.org?.slug;
-      if (slug) {
-        const ownerFilter: Filter[] = [{ field: 'owner', operator: 'in', values: [slug] }];
-        router.push(`/lore?filters=${encodeURIComponent(serialise(ownerFilter))}`);
-      } else {
-        router.push('/lore');
-      }
-    });
-  }
-
-  function handleDecline(target: OrgInvite) {
-    startTransition(async () => {
-      const result = await declineInvite(target.id);
-      if (result.error) {
-        showToast(result.error, 'error');
-        return;
-      }
-      setViewingInvite(null);
-      await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
-    });
-  }
 
   return (
     <AnimatePresence>
@@ -109,7 +66,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
                 <Button
                   variant="primary"
                   analyticsId="invite.accept"
-                  onClick={() => handleAccept(invite)}
+                  onClick={() => accept(invite)}
                   disabled={pending}
                 >
                   Accept
@@ -117,7 +74,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
                 <Button
                   variant="outline"
                   analyticsId="invite.decline"
-                  onClick={() => handleDecline(invite)}
+                  onClick={() => decline(invite)}
                   disabled={pending}
                 >
                   Decline
@@ -145,8 +102,8 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
         invite={viewingInvite}
         pending={pending}
         onClose={() => setViewingInvite(null)}
-        onAccept={handleAccept}
-        onDecline={handleDecline}
+        onAccept={accept}
+        onDecline={decline}
       />
     </AnimatePresence>
   );

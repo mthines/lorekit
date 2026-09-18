@@ -7,6 +7,7 @@ import { SignOutButton } from '@/components/auth/SignOutButton';
 import { MemoryExpandButton } from '@/components/lore/MemoryExpandButton';
 import { CommandPaletteButton } from '@/components/command/CommandPaletteButton';
 import { ActivityIndicator } from '@/components/layout/ActivityIndicator';
+import { PendingInvitesIndicator } from '@/components/layout/PendingInvitesIndicator';
 
 interface TopBarProps {
   user: User;
@@ -54,6 +55,9 @@ export function TopBar({ user: _ }: TopBarProps) {
         </span>
         {/* Memory expand button: always visible, opens the global lesson sidebar */}
         <MemoryExpandButton />
+        {/* Pending org invitations — self-hides when there are none. Always
+            visible (not desktop-only) so an invite is never missed on mobile. */}
+        <PendingInvitesIndicator />
         <SignOutButton />
       </div>
 
