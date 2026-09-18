@@ -673,7 +673,9 @@ check('purge and purge_expired answer with a count', async () => {
 
 check('a missing required argument is refused', async () => {
   ok(!(await call('memory.write', { scope: SCOPE, value: 'no key' })).ok, 'write without key');
-  ok(!(await call('memory.read', { key: 'no scope' })).ok, 'read without scope');
+  // An omitted scope is EVERYWHERE now (#666), not an error — key is the one
+  // required argument left, so THAT is the read refusal we pin.
+  ok(!(await call('memory.read', { scope: SCOPE })).ok, 'read without key');
   ok(!(await call('memory.search', { q: '' })).ok, 'search with an empty q');
 });
 
