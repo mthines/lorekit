@@ -56,6 +56,21 @@
 -- wildcards reuse the existing `scope.bind` / `scope.unbind` audit actions.
 -- ═════════════════════════════════════════════════════════════════════════
 
+-- 0. `org_scope_bindings.scope` gets the SAME shape gate at the table level,
+--    not only inside `lorekit_scope_bind`. Without this, a row inserted
+--    before this migration under the old (non-empty-only) validation — or by
+--    any future direct INSERT that bypasses the RPC — could hold a scope
+--    string ending in `*` with no charset guarantee, and the LIKE-escaping in
+--    `memory_write`'s matcher below is only injection-safe because it relies
+--    on this exact shape (no `%`/`\` in a valid pattern). A CHECK makes any
+--    such row fail this migration LOUDLY at deploy time instead of silently
+--    starting to behave as a live wildcard the moment 00111 ships.
+alter table org_scope_bindings
+  drop constraint if exists org_scope_bindings_scope_shape;
+alter table org_scope_bindings
+  add constraint org_scope_bindings_scope_shape
+  check (lorekit_api_token_scopes_valid(array[scope]));
+
 -- 1. `lorekit_scope_bind` — add the grammar gate after the auth gate.
 create or replace function lorekit_scope_bind(p_org_id uuid, p_scope text)
 returns uuid

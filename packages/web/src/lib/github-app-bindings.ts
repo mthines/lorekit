@@ -17,8 +17,45 @@
 import { roleCapabilities } from './org-ui';
 import type { OrgMembership } from './orgs';
 
-/** Scope → the org it is bound to. The Integrations page builds this from `listScopeBindings`. */
+/**
+ * Binding pattern (exact or owner wildcard, `repo::owner/*`) → the org it is
+ * bound to. The Integrations page builds this from `listScopeBindings`,
+ * keyed by the LITERAL pattern string exactly as `org_scope_bindings` stores
+ * it — this UI only ever binds an exact repo scope (`doBind` in
+ * `GithubAppManager.tsx` always passes `repoScope(fullName)`), so a wildcard
+ * key can only get here via a Settings → Organization binding made outside
+ * this page.
+ */
 export type BindingsByScope = Record<string, { orgId: string; orgSlug: string }>;
+
+/**
+ * Resolve which binding covers `scope`, mirroring `memory_write`'s
+ * most-specific-wins precedence (migration 00111): an exact match always
+ * wins; otherwise the longest matching wildcard prefix wins. Without this, a
+ * repo covered only by an org-wide wildcard (bound elsewhere, e.g.
+ * `repo::acme/*`) reads as unbound here — `bindingsByScope[scope]` is an
+ * exact-key lookup and cannot see it — and `bindingSuggestion` would offer to
+ * bind it again, silently outranking the wildcard if bound to a different org.
+ */
+function matchBinding(
+  scope: string,
+  bindingsByScope: BindingsByScope,
+): { orgId: string; orgSlug: string } | undefined {
+  const exact = bindingsByScope[scope];
+  if (exact) return exact;
+
+  let best: { orgId: string; orgSlug: string } | undefined;
+  let bestPrefixLength = -1;
+  for (const [pattern, binding] of Object.entries(bindingsByScope)) {
+    if (!pattern.endsWith('*')) continue;
+    const prefix = pattern.slice(0, -1);
+    if (scope.startsWith(prefix) && prefix.length > bestPrefixLength) {
+      best = binding;
+      bestPrefixLength = prefix.length;
+    }
+  }
+  return best;
+}
 
 /** The canonical LoreKit scope string for a GitHub repo `full_name` (`owner/name`). */
 export function repoScope(fullName: string): string {
@@ -54,7 +91,7 @@ export function partitionRepos(
   const unbound: UnboundRepo[] = [];
   for (const repo of repos) {
     const scope = repoScope(repo.full_name);
-    const binding = bindingsByScope[scope];
+    const binding = matchBinding(scope, bindingsByScope);
     if (binding) {
       bound.push({ fullName: repo.full_name, scope, orgId: binding.orgId, orgSlug: binding.orgSlug });
     } else {
