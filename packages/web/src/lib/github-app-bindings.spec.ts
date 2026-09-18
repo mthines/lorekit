@@ -67,13 +67,13 @@ describe('partitionRepos', () => {
 
   it('prefers the longer of two matching wildcard prefixes', () => {
     const nested: BindingsByScope = {
-      'repo::acme/*': { orgId: 'o1', orgSlug: 'shallow' },
-      'repo::acme/team-*': { orgId: 'o2', orgSlug: 'deep' },
+      'repo::*': { orgId: 'o1', orgSlug: 'shallow' },
+      'repo::acme/*': { orgId: 'o2', orgSlug: 'deep' },
     };
-    const state = partitionRepos([{ full_name: 'acme/team-api' }, { full_name: 'acme/other' }], nested);
+    const state = partitionRepos([{ full_name: 'acme/api' }, { full_name: 'other/thing' }], nested);
     expect(state.bound).toEqual([
-      { fullName: 'acme/team-api', scope: 'repo::acme/team-api', orgId: 'o2', orgSlug: 'deep' },
-      { fullName: 'acme/other', scope: 'repo::acme/other', orgId: 'o1', orgSlug: 'shallow' },
+      { fullName: 'acme/api', scope: 'repo::acme/api', orgId: 'o2', orgSlug: 'deep' },
+      { fullName: 'other/thing', scope: 'repo::other/thing', orgId: 'o1', orgSlug: 'shallow' },
     ]);
   });
 });
