@@ -233,7 +233,7 @@ Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires
 
 **Citations (`cited`):** the one signal read counts cannot produce. A lesson injected at session start is already in your context and is applied without ever being fetched, so LoreKit can measure whether lore was *looked up* but not whether it *worked* — `cited` is where you say so. Each entry is a `scope::key` you were shown; they raise the cited lesson’s `cited_count` and are grouped by the run’s correlation id. Recorded once per run, so a retried write does not inflate anything, and every failure mode is silent: an unknown reference, a self-citation, and anything past 32 entries are dropped and the write still succeeds.
 
-**Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member’s write falls back to personal (never rejected) with a `notice`.
+**Scope→org binding:** An org admin can bind a scope (e.g. a repo) — or a WILDCARD prefix such as `repo::owner/*` or `branch::owner/repo::*`, matching every scope under it — to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members, resolved MOST-SPECIFIC-WINS when several bindings match (an exact scope beats any wildcard; a longer wildcard prefix beats a shorter one). A non-member’s write falls back to personal (never rejected) with a `notice`.
 
 ---
 

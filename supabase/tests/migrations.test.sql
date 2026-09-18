@@ -10090,6 +10090,193 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Wildcard scope → org bindings — most-specific-wins write routing (00111)
+--
+-- Every assertion below is phrased mutation-style: it asserts the WINNER's
+-- identity AND that the loser was NOT chosen, so a swapped precedence key
+-- (e.g. shorter-prefix-wins, or wildcard-beats-exact) fails loudly rather
+-- than passing by coincidence. Fresh orgs 'wild-a' (fd) / 'wild-b' (fe),
+-- reusing the shared users a1 (owner of both, admin actor for binds), b2
+-- (write-capable member of both) and d4 (member of neither — the
+-- non-member fallback case).
+-- ═════════════════════════════════════════════════════════════════════════
+
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000fd', 'wild-a', 'Wildcard Org A', '00000000-0000-0000-0000-0000000000a1'),
+  ('00000000-0000-0000-0000-0000000000fe', 'wild-b', 'Wildcard Org B', '00000000-0000-0000-0000-0000000000a1');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000fd', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000fd', '00000000-0000-0000-0000-0000000000b2', 'member'),
+  ('00000000-0000-0000-0000-0000000000fe', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000fe', '00000000-0000-0000-0000-0000000000b2', 'member');
+
+-- ── AC-1: overlapping bindings coexist; an identical pattern bound to a
+--          different org still raises scope_bound_elsewhere ─────────────────
+do $$
+declare
+  v_bind_id uuid;
+  v_conflict boolean := false;
+  v_row_count int;
+  v_orgs_distinct int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  -- Exact 'repo::wild/exact' → wild-a (fd); wildcard 'repo::wild/*' → wild-b (fe).
+  select lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::wild/exact') into v_bind_id;
+  assert v_bind_id is not null, 'wildcard-bind: setup — exact bind to wild-a must succeed';
+  select lorekit_scope_bind('00000000-0000-0000-0000-0000000000fe', 'repo::wild/*') into v_bind_id;
+  assert v_bind_id is not null, 'wildcard-bind: setup — wildcard bind to wild-b must succeed';
+
+  -- Deeper wildcard pair for AC-3: 'repo::deep/*' → wild-a, 'repo::deep/sub/*' → wild-b.
+  select lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::deep/*') into v_bind_id;
+  assert v_bind_id is not null, 'wildcard-bind: setup — shallow wildcard bind to wild-a must succeed';
+  select lorekit_scope_bind('00000000-0000-0000-0000-0000000000fe', 'repo::deep/sub/*') into v_bind_id;
+  assert v_bind_id is not null, 'wildcard-bind: setup — deep wildcard bind to wild-b must succeed';
+
+  select count(*), count(distinct org_id) into v_row_count, v_orgs_distinct
+    from org_scope_bindings where scope in ('repo::wild/exact', 'repo::wild/*');
+  assert (v_row_count = 2 and v_orgs_distinct = 2),
+    format('wildcard-bind: exact and wildcard strings coexist (expected 2 rows across 2 distinct orgs, got %s rows / %s orgs)',
+           v_row_count, v_orgs_distinct);
+
+  -- The SAME pattern string ('repo::wild/*', already bound to wild-b) bound
+  -- to a DIFFERENT org (wild-a) must still be refused.
+  begin
+    perform lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::wild/*');
+  exception when sqlstate 'P0001' then
+    if sqlerrm like 'scope_bound_elsewhere%' then v_conflict := true; end if;
+  end;
+  reset role;
+  assert v_conflict,
+    'wildcard-bind: identical pattern to a different org must raise scope_bound_elsewhere';
+end;
+$$;
+
+-- ── AC-2: exact match beats a wildcard that also matches ────────────────────
+do $$
+declare
+  v_slug_exact text;
+  v_slug_other text;
+begin
+  select binding_org_slug into v_slug_exact
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::wild/exact', 'w-exact', 'v1');
+  select binding_org_slug into v_slug_other
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::wild/other', 'w-other', 'v1');
+
+  assert (v_slug_exact = 'wild-a' and v_slug_exact <> 'wild-b'
+          and v_slug_other = 'wild-b' and v_slug_other <> 'wild-a'),
+    format('wildcard-bind: exact match beats wildcard (repo::wild/exact -> %s, expected wild-a not wild-b; repo::wild/other -> %s, expected wild-b not wild-a)',
+           v_slug_exact, v_slug_other);
+end;
+$$;
+
+-- ── AC-3: longer wildcard prefix beats a shorter one ─────────────────────────
+do $$
+declare
+  v_slug_deep_sub text;
+  v_slug_deep_top text;
+begin
+  select binding_org_slug into v_slug_deep_sub
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::deep/sub/x', 'w-deep-sub', 'v1');
+  select binding_org_slug into v_slug_deep_top
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::deep/top', 'w-deep-top', 'v1');
+
+  assert (v_slug_deep_sub = 'wild-b' and v_slug_deep_sub <> 'wild-a'
+          and v_slug_deep_top = 'wild-a' and v_slug_deep_top <> 'wild-b'),
+    format('wildcard-bind: longer wildcard prefix beats shorter (repo::deep/sub/x -> %s, expected wild-b not wild-a; repo::deep/top -> %s, expected wild-a not wild-b)',
+           v_slug_deep_sub, v_slug_deep_top);
+end;
+$$;
+
+-- ── AC-4: a wildcard routes a write-capable member's write; repeats resolve
+--          the SAME org (deterministic) ────────────────────────────────────
+do $$
+declare
+  v_org_routed_1 boolean;
+  v_slug_1 text;
+  v_org_routed_2 boolean;
+  v_slug_2 text;
+begin
+  select org_routed, binding_org_slug into v_org_routed_1, v_slug_1
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::wild/again', 'w-repeat', 'v1');
+  assert (v_org_routed_1 and v_slug_1 = 'wild-b'),
+    format('wildcard-bind: a wildcard routes a matching write (org_routed=%s, slug=%s, expected true/wild-b)',
+           v_org_routed_1, v_slug_1);
+
+  -- Repeat the identical write (same scope/key) — resolution must be stable.
+  select org_routed, binding_org_slug into v_org_routed_2, v_slug_2
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::wild/again', 'w-repeat', 'v2');
+  assert (v_org_routed_2 = v_org_routed_1 and v_slug_2 = v_slug_1 and v_slug_2 = 'wild-b'),
+    format('wildcard-bind: resolution is deterministic (first slug=%s, repeat slug=%s, must match and both be wild-b)',
+           v_slug_1, v_slug_2);
+end;
+$$;
+
+-- ── AC-5: a non-member under a wildcard falls back to personal, but the
+--          bound slug is still reported ────────────────────────────────────
+do $$
+declare
+  v_org_routed boolean;
+  v_slug text;
+  v_row memories%rowtype;
+  v_id uuid;
+begin
+  select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
+    from memory_write('00000000-0000-0000-0000-0000000000d4', 'repo::wild/nonmember', 'w-nonmember', 'v1');
+  assert ((not v_org_routed) and v_slug = 'wild-b'),
+    format('wildcard-bind: non-member under a wildcard falls back to personal but reports the bound slug (org_routed=%s, slug=%s, expected false/wild-b)',
+           v_org_routed, v_slug);
+  select * into v_row from memories where id = v_id;
+  assert (v_row.org_id is null and v_row.user_id = '00000000-0000-0000-0000-0000000000d4'),
+    'wildcard-bind: the fallback row must be personal (user_id set, org_id null)';
+end;
+$$;
+
+-- ── AC-6: lorekit_scope_bind rejects a malformed pattern directly (bypassing
+--          the web layer); a valid wildcard still binds ────────────────────
+do $$
+declare
+  v_bad_star_position boolean := false;
+  v_bad_uppercase boolean := false;
+  v_bad_bare_star boolean := false;
+  v_good_id uuid;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  -- Star not directly after '/' or '::'.
+  begin
+    perform lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::bad*');
+  exception when sqlstate 'P0001' then
+    if sqlerrm like 'invalid_scope_pattern%' then v_bad_star_position := true; end if;
+  end;
+
+  -- Uppercase characters are outside the allowed charset.
+  begin
+    perform lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::UPPER/*');
+  exception when sqlstate 'P0001' then
+    if sqlerrm like 'invalid_scope_pattern%' then v_bad_uppercase := true; end if;
+  end;
+
+  -- A bare trailing '*' with no '/' or '::' immediately before it.
+  begin
+    perform lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::wild3*');
+  exception when sqlstate 'P0001' then
+    if sqlerrm like 'invalid_scope_pattern%' then v_bad_bare_star := true; end if;
+  end;
+
+  -- A VALID wildcard must still bind successfully past the same gate.
+  select lorekit_scope_bind('00000000-0000-0000-0000-0000000000fd', 'repo::wild3/*') into v_good_id;
+
+  reset role;
+  assert (v_bad_star_position and v_bad_uppercase and v_bad_bare_star and v_good_id is not null),
+    format('wildcard-bind: a malformed pattern is rejected by lorekit_scope_bind (star-position=%s, uppercase=%s, bare-star=%s rejected; valid wildcard bound=%s)',
+           v_bad_star_position, v_bad_uppercase, v_bad_bare_star, v_good_id is not null);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

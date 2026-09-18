@@ -35,6 +35,7 @@ import {
 import { inviteMember, listInvites, revokeInvite, type OrgInvite } from '@/lib/org-invites';
 import { listMemberIdentities, type OrgMemberIdentity } from '@/lib/org-members';
 import { listScopeBindings, listAvailableScopes, bindScope, unbindScope, type ScopeBinding } from '@/lib/scope-bindings';
+import { validateScopeBindingPattern } from '@/lib/scope-bindings-validate';
 import { normalizeSlug } from '@/lib/org-slug';
 import {
   roleCapabilities,
@@ -376,12 +377,12 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: B
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = scope.trim().toLowerCase();
-    if (!trimmed) {
-      setError('Scope is required');
+    const validated = validateScopeBindingPattern(scope);
+    if (!validated.ok) {
+      setError(validated.error);
       return;
     }
-    doBindScope(trimmed);
+    doBindScope(validated.normalized);
   }
 
   // Filter suggestions by what the user has typed so far (substring match).
@@ -397,18 +398,21 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: B
     >
       <p className="text-xs font-medium text-[var(--color-content-secondary)]">Bind a scope</p>
       <p className="text-[10px] text-[var(--color-content-tertiary)]">
-        Memories written under this scope are automatically shared with {orgName} for write-capable members.
+        Memories written under this scope are automatically shared with {orgName} for write-capable members. Use a
+        wildcard (e.g. <code className="font-mono">repo::dash0hq/*</code>) to bind every scope under a prefix at
+        once.
       </p>
 
       <div className="flex flex-col gap-1">
         <label htmlFor="bind-scope" className="text-xs text-[var(--color-content-secondary)]">
-          Scope (e.g. <code className="font-mono">repo::owner/name</code>)
+          Scope (e.g. <code className="font-mono">repo::owner/name</code> or{' '}
+          <code className="font-mono">repo::owner/*</code>)
         </label>
         <input
           id="bind-scope"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
-          placeholder="repo::owner/name"
+          placeholder="repo::owner/name or repo::owner/*"
           maxLength={500}
           className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-content-primary)] placeholder:font-mono placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
         />

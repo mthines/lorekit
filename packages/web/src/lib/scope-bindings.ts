@@ -16,12 +16,18 @@
  *    "This scope is already bound to another organization."
  *  - SQLSTATE LK002 (org_permission_denied) → "Only admins and owners can
  *    manage shared scopes."
+ *  - SQLSTATE P0001, message starting with `invalid_scope_pattern:` → friendly
+ *    scope-pattern hint (migration 00111's SQL-side grammar gate — a
+ *    defense-in-depth backstop behind `validateScopeBindingPattern` below, so
+ *    a malformed pattern that somehow reaches the RPC directly still gets a
+ *    readable message instead of a raw constraint string).
  */
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getVerifiedUser } from '@/lib/auth/verified-user';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
+import { validateScopeBindingPattern } from '@/lib/scope-bindings-validate';
 
 export interface ScopeBinding {
   id: string;
@@ -129,20 +135,24 @@ function translateScopeError(message: string, code: string | undefined): string 
   if (code === 'LK002' || message.startsWith('org_permission_denied:')) {
     return 'Only admins and owners can manage shared scopes.';
   }
+  if (message.startsWith('invalid_scope_pattern:')) {
+    return 'Invalid scope pattern. Use a canonical scope (repo::owner/name) or an owner wildcard ending in "/*" or "::*".';
+  }
   return message;
 }
 
 /**
- * Bind a scope to the org. Admin/owner only (`manage_scopes` capability via
- * lorekit_scope_bind).
+ * Bind a scope (exact or owner wildcard, e.g. `repo::owner/*`) to the org.
+ * Admin/owner only (`manage_scopes` capability via lorekit_scope_bind).
  */
 export async function bindScope(orgId: string, scope: string): Promise<{ id: string } | { error: string }> {
   const supabase = await createServerClient();
   const user = await getVerifiedUser();
   if (!user) return { error: 'Not authenticated' };
 
-  const trimmed = scope.trim().toLowerCase();
-  if (!trimmed) return { error: 'Scope is required' };
+  const validated = validateScopeBindingPattern(scope);
+  if (!validated.ok) return { error: validated.error };
+  const trimmed = validated.normalized;
 
   const { data: id, error } = await supabase.rpc('lorekit_scope_bind', {
     p_org_id: orgId,

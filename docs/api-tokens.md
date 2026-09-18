@@ -86,6 +86,12 @@ refuses it as a search filter: an "any trailing star" rule would let it
 allowlist `repo::mthines/lorekit-private`, so the allowlist grammar and the
 search grammar would disagree while wearing the same syntax.
 
+This is the SAME wildcard grammar a
+[scope→org binding](./decisions.md#scopeorg-binding) pattern is validated
+against (`lorekit_api_token_scopes_valid`, reused verbatim rather than
+forked) — a wildcard that is valid to allowlist on a token is valid to bind to
+an org, and vice versa.
+
 ### Tenancy
 
 | `org_access` | Personal memories | Org memories |

@@ -37,14 +37,16 @@ memory.write {
 
 <TutorialStep number={2} title="Understand what happens at a bound scope">
 
-If an admin has bound a scope (e.g. `repo::myteam/api`) to an org (see [Settings → Organization → Shared scopes](/settings/organization)):
+If an admin has bound a scope (e.g. `repo::myteam/api`) — or a **wildcard prefix** such as `repo::myteam/*` covering every repo under that owner — to an org (see [Settings → Organization → Shared scopes](/settings/organization)):
 
-- **You are a write-capable member** → write auto-routes to the org. Use a more-specific scope (e.g. a branch scope) to write personal instead.
-- **You are not a write-capable member** → the write falls back to personal, never rejected. You receive a `notice` in the response.
+- **You are a write-capable member** → write auto-routes to the org. Use a more-specific scope (e.g. a branch scope) that no binding covers to write personal instead.
+- **You are not a write-capable member** → the write falls back to personal, never rejected. You receive a `notice` in the response naming the org whose binding matched.
+
+When more than one binding could match your scope, the most specific one decides: an exact scope binding always wins over a wildcard, and a longer wildcard prefix wins over a shorter one.
 
 <TutorialCallout variant="tip">
 
-To intentionally write personal lore under a bound scope, use a more-specific scope that is not bound (e.g. `branch::myteam/api::feat/my-branch`).
+To intentionally write personal lore under a bound scope, use a more-specific scope that no current binding covers — check with an admin if you're unsure whether a wildcard (e.g. `repo::myteam/*`) already reaches it, since a wildcard binding matches every scope under its prefix, not just the exact one you'd expect.
 
 </TutorialCallout>
 

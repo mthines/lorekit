@@ -64,6 +64,8 @@ Go to [Settings → Organization → Shared scopes](/settings/organization) → 
 
 After binding, any write under `repo::myteam/api` by a write-capable member routes to the org automatically. A non-member writing under a bound scope gets a graceful fallback to personal lore (never rejected) with a `notice` in the response.
 
+**Binding a whole owner at once.** Instead of binding each repo one at a time, enter a **wildcard** pattern, e.g. `repo::myteam/*`, to bind every repo scope under that owner in one step (or `branch::myteam/api::*` for every branch of one repo). When a write's scope matches more than one binding, the most specific one wins: an exact scope beats any wildcard, and a longer wildcard prefix beats a shorter one.
+
 </TutorialStep>
 
 <TutorialStep number={5} title="Browse team lore in the Explorer">

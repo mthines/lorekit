@@ -97,16 +97,42 @@ is routed to the org automatically:
   and to ask an admin to add them. Never silent, never a hard failure.
 - An **explicit `org`** parameter always takes precedence over the binding.
 
-Binding is server-side truth (an `org_scope_bindings` row, globally unique per
-scope — a scope maps to at most one org), not the advisory
+Binding is server-side truth (an `org_scope_bindings` row), not the advisory
 `.lorekit/config.json`. Authorization to *create* a binding requires an
 admin/owner role (`manage_scopes`).
 
+**Wildcard bindings.** A binding can also be a **wildcard prefix** — a scope
+pattern ending in a trailing `*` directly after a `/` or a `::`, e.g.
+`repo::dash0hq/*` (every repo under the `dash0hq` owner) or
+`branch::dash0hq/dash0::*` (every branch of that one repo). This reuses the
+SAME wildcard grammar an API token's scope allowlist already accepts — one
+wildcard authority, never two — so binding a whole owner no longer means
+maintaining one row per repo by hand.
+
+The unique index is still per literal PATTERN STRING (the same pattern cannot
+be bound to two different orgs — that still raises `scope_bound_elsewhere`),
+but an exact scope and a wildcard that also covers it, or two wildcards of
+different depth, may coexist — even bound to different orgs. When more than
+one binding matches a write's scope, resolution is **most-specific-wins**:
+
+1. An **exact** binding always beats **any** wildcard.
+2. Among matching wildcards, the **longer literal prefix** wins (more
+   specific): `repo::dash0hq/dash0::*` beats `repo::dash0hq/*` for a write
+   under `repo::dash0hq/dash0::feat/x`.
+3. Resolution is deterministic — the same scope always resolves to the same
+   winning binding.
+
+Everything else about routing is unchanged: the winner still needs the writer
+to be a write-capable member of ITS org to actually route there (otherwise the
+personal fallback applies, still reporting the winning org's slug in
+`notice`), and an explicit `org` parameter still bypasses binding resolution
+entirely.
+
 **Settings → Shared scopes** (admin/owner): the dashboard lists the org's bound
 scopes and lets you add or remove them. To bind a new scope, enter the scope
-string (e.g. `repo::owner/name`) and click **Bind scope**. To remove one, click
-**Unbind** and confirm. The Explorer's per-scope "shared with {org}" badge is a
-planned fast-follow.
+string (e.g. `repo::owner/name`) — or a wildcard (e.g. `repo::owner/*`) — and
+click **Bind scope**. To remove one, click **Unbind** and confirm. The
+Explorer's per-scope "shared with {org}" badge is a planned fast-follow.
 
 ---
 

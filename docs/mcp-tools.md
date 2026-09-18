@@ -116,7 +116,7 @@ you omit them the server infers them from a `loop::<host>-lessons` tag
 `signal`/`reviewer`), so a tagged write records them without extra arguments. On
 an update the last KNOWN value wins, exactly like `origin_*`.
 
-**Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
+**Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. A binding can also be a **wildcard prefix** (`repo::owner/*`), and when several bindings match, resolution is **most-specific-wins** (an exact scope beats any wildcard; a longer wildcard prefix beats a shorter one). If you're *not* a member of the winning org, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides binding resolution entirely.
 
 **Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
