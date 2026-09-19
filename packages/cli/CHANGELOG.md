@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.1](https://github.com/mthines/lorekit/compare/cli-v1.71.0...cli-v1.71.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **mcp:** register policy.*/groom.* retention tools + full CLI dimension filters ([#676](https://github.com/mthines/lorekit/issues/676)) ([1fc0d8f](https://github.com/mthines/lorekit/commit/1fc0d8f1e6981daab7d3376f47c4bf5c18ea0e78))
+
 ## [1.71.0](https://github.com/mthines/lorekit/compare/cli-v1.70.0...cli-v1.71.0) (2026-09-19)
 
 
