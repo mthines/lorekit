@@ -169,7 +169,12 @@ export async function update(args) {
   log('');
 
   return {
-    exitCode: 0,
+    // Non-zero only for a `--check` run that found drift — a real run always
+    // finishes at 0 (it just fixed whatever it found), matching `doctor`'s own
+    // deliberate warn-never-fail posture. This is what lets `--check` gate a
+    // CI step or pre-commit hook on "everything is current" instead of only
+    // ever reporting drift for a human to notice.
+    exitCode: dryRun && outdatedCount > 0 ? 1 : 0,
     'lorekit.cli.update.scopes': scopes.length,
     'lorekit.cli.update.outdated': outdatedCount,
     'lorekit.cli.update.check': dryRun,

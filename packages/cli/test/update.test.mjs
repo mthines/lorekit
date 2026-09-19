@@ -273,3 +273,24 @@ test('update --check previews the file a real run would prune', async () => {
   // `--check` still writes nothing — the preview must be read-only.
   assert.equal(fs.existsSync(staleFile), true, '--check must not actually prune');
 });
+
+test('update --check exits non-zero when it finds drift, and 0 when everything is current', async () => {
+  // Regression: `--check` always returned exitCode 0, so nothing could gate a
+  // pipeline on "every installed skill is current" — a stale install and a
+  // healthy one were indistinguishable to a calling script. Negative-
+  // assertion proof: hardcoding `exitCode: 0` in `update.mjs`'s return makes
+  // the first assertion below fail. Verified by hand.
+  const root = tmp('lk-upd-check-exit-root-');
+  const home = tmp('lk-upd-check-exit-home-');
+  await installProject(root, home);
+  downgrade(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md'), '1.0.0', '0.1.0');
+
+  await withHome(home, async () => {
+    const drifted = await update({ dir: root, project: true, check: true });
+    assert.equal(drifted.exitCode, 1, '--check must exit non-zero when it finds drift');
+
+    await update({ dir: root, project: true }); // real run — brings it current
+    const clean = await update({ dir: root, project: true, check: true });
+    assert.equal(clean.exitCode, 0, '--check must exit 0 once every skill is current');
+  });
+});
