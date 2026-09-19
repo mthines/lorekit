@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { install } from '../src/commands/install.mjs';
 import { update } from '../src/commands/update.mjs';
 import { checkSkillVersions } from '../src/shared/skill-versions.mjs';
+import { withHome } from './helpers.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
@@ -30,24 +31,9 @@ function runDoctor(dir, home) {
 const skillLineFor = (stdout, name) =>
   stdout.split('\n').find((l) => l.includes(`skill ${name}`)) ?? '';
 
-// Run `fn` (sync or async) with HOME/USERPROFILE pinned to `home`, restoring
-// afterward. `install`/`update` resolve the global scope through `homeDir()`,
-// which reads the env at call time — an in-process call (unlike the spawned
-// `runDoctor` above, which passes `env` directly) needs this wrapper instead.
-async function withHome(home, fn) {
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
-    return await fn();
-  } finally {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  }
-}
+// `install`/`update` resolve the global scope through `homeDir()`, which reads
+// the env at call time — an in-process call (unlike the spawned `runDoctor`
+// above, which passes `env` directly) needs the `withHome` wrapper instead.
 
 async function installProject(root, home) {
   return withHome(home, () =>

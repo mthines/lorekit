@@ -21,6 +21,7 @@ import {
   readUpdateState,
 } from '../src/core/update-notify.mjs';
 import { normalizeUpdateNotifyMode } from '../src/shared/control.mjs';
+import { withHome } from './helpers.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
@@ -28,21 +29,6 @@ const TOKEN = 'lk_rw_test';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-
-async function withHome(home, fn) {
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
-    return await fn();
-  } finally {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  }
-}
 
 // A project with an OUTDATED lorekit-memory install (project-scoped) and an
 // empty `home` — no global install to add noise to the drift signature.
