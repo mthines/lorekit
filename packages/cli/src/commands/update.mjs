@@ -66,7 +66,11 @@ function targetScopes(args, results) {
 // DOES still exist in `src` anyway (`--force`), so nothing reachable from the
 // shipped skill is ever at risk — only content the shipped skill no longer
 // ships is removed.
-function pruneRemoved(src, dest) {
+// `dryRun: true` counts what WOULD be removed without touching disk — the
+// preview `--check` shows for the one destructive step `update` takes, so a
+// dry run never has to say "outdated" and stay silent about a file the real
+// run is about to delete.
+function pruneRemoved(src, dest, { dryRun = false } = {}) {
   if (!fs.existsSync(dest)) return 0;
   let removed = 0;
   for (const entry of fs.readdirSync(dest, { withFileTypes: true })) {
@@ -74,13 +78,13 @@ function pruneRemoved(src, dest) {
     const srcPath = path.join(src, entry.name);
     if (entry.isDirectory()) {
       if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
-        removed += pruneRemoved(srcPath, destPath);
+        removed += pruneRemoved(srcPath, destPath, { dryRun });
       } else {
-        fs.rmSync(destPath, { recursive: true, force: true });
+        if (!dryRun) fs.rmSync(destPath, { recursive: true, force: true });
         removed++;
       }
     } else if (!fs.existsSync(srcPath)) {
-      fs.rmSync(destPath, { force: true });
+      if (!dryRun) fs.rmSync(destPath, { force: true });
       removed++;
     }
   }
@@ -124,12 +128,14 @@ export async function update(args) {
       outdatedCount++;
       const before = versionLabel(entry.installed);
       const after = versionLabel(entry.shipped);
+      const dest = skillInstallDir(root, scope, skill.name);
       if (dryRun) {
-        status('warn', label, `${before} → ${after} available — run \`lorekit update\` to refresh`);
+        const wouldRemove = pruneRemoved(skill.source, dest, { dryRun: true });
+        const removedNote = wouldRemove > 0 ? `, ${wouldRemove} to remove` : '';
+        status('warn', label, `${before} → ${after} available${removedNote} — run \`lorekit update\` to refresh`);
         continue;
       }
 
-      const dest = skillInstallDir(root, scope, skill.name);
       const removed = pruneRemoved(skill.source, dest);
       const written = copyDir(skill.source, dest, { force: true });
       filesWritten += written;

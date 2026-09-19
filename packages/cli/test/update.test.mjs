@@ -13,7 +13,22 @@ import { fileURLToPath } from 'node:url';
 import { install } from '../src/commands/install.mjs';
 import { update } from '../src/commands/update.mjs';
 import { checkSkillVersions } from '../src/shared/skill-versions.mjs';
+import { setWriters } from '../src/shared/util.mjs';
 import { withHome } from './helpers.mjs';
+
+// Capture `log`/`status`/`heading` output around one call, restoring the real
+// writers afterward even on throw — the same pattern `obligations.test.mjs`
+// uses, since `node --test` runs each file in a child process sharing the
+// runner's own stdout (a global `process.stdout.write` hijack would swallow
+// the runner's result lines).
+function capture(run) {
+  let out = '';
+  const restore = setWriters({ out: (s) => { out += s; } });
+  return Promise.resolve(run()).then(
+    (result) => { restore(); return { result, out }; },
+    (e) => { restore(); throw e; },
+  );
+}
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
@@ -230,4 +245,31 @@ test('update removes a file the shipped skill no longer ships', async () => {
   });
 
   assert.equal(fs.existsSync(staleFile), false, 'update must prune content the shipped skill no longer ships');
+});
+
+test('update --check previews the file a real run would prune', async () => {
+  // Regression: `--check` skipped `pruneRemoved` entirely, so the dry run
+  // never named the one destructive step the real run takes. Negative-
+  // assertion proof: passing `{ dryRun: false }` (or omitting the option) to
+  // the `pruneRemoved` call in the dry-run branch makes this assertion fail —
+  // the count would come back 0 AND the stale file would be deleted despite
+  // `--check`. Verified by hand.
+  const root = tmp('lk-upd-check-prune-root-');
+  const home = tmp('lk-upd-check-prune-home-');
+  await installProject(root, home);
+
+  const skillDir = path.join(root, '.claude', 'skills', 'lorekit-memory');
+  const staleFile = path.join(skillDir, 'rules', 'removed-in-newer-version.md');
+  fs.mkdirSync(path.dirname(staleFile), { recursive: true });
+  fs.writeFileSync(staleFile, '# stale content the shipped skill no longer has\n');
+  downgrade(path.join(skillDir, 'SKILL.md'), '1.0.0', '0.1.0');
+
+  await withHome(home, async () => {
+    const { result, out } = await capture(() => update({ dir: root, project: true, check: true }));
+    assert.ok(result['lorekit.cli.update.outdated'] >= 1);
+    assert.match(out, /1 to remove/, `expected the preview count in the check output, got: ${out}`);
+  });
+
+  // `--check` still writes nothing — the preview must be read-only.
+  assert.equal(fs.existsSync(staleFile), true, '--check must not actually prune');
 });
