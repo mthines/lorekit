@@ -1,6 +1,7 @@
 # MCP Tools Reference
 
-LoreKit exposes eleven `memory.*` tools and four `org.*` tools via the MCP protocol.
+LoreKit exposes twelve `memory.*` tools, four `org.*` tools, and six retention
+tools (`policy.*`, `groom.*`) via the MCP protocol — 22 tools total.
 
 Every tool requires a valid API token or a dashboard session (see
 [api-tokens.md](./api-tokens.md)), and every tool is gated by **token
@@ -567,6 +568,151 @@ call periodically — it only removes rows the caller wrote and whose TTL has el
 No arguments required.
 
 **Returns:** `{ purged: <count> }` — number of expired rows permanently deleted.
+
+---
+
+## memory.protect
+
+Mark or unmark a lesson as protected — excluded from every grooming candidate set regardless of policy. Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
+
+```json
+{
+  "params": {
+    "name": "memory.protect",
+    "arguments": {
+      "scope": "repo::mthines/lorekit",
+      "key": "aw-lessons::worktree-naming",
+      "protected": true
+    }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `scope` | ✓ | Canonical scope string |
+| `key` | ✓ | Lesson identifier |
+| `protected` | ✓ | `true` to protect, `false` to unprotect |
+
+**Returns:** `{ "protected": boolean }`
+
+---
+
+## Retention policies (`policy.*`, `groom.*`)
+
+Six tools automate grooming: `policy.*` manages **saved** rules, `groom.*` **previews or runs** a sweep (either a saved policy or an inline condition set). All six require a token with the matching permission (read for `policy.list`/`groom.preview`, write for the rest) and are server-side only — the local two-tier store has no equivalent (`retention_policies` is a Postgres table), matching `memory.purge`/`purge_expired`.
+
+A policy or an inline groom call can carry the same **eight dimension filters** the Lore Explorer's filter bar offers, each paired with a `*_mode` that controls how it combines — every condition (age/count AND every named dimension) is **AND-ed together**; a policy with no conditions at all matches every non-protected lesson in scope:
+
+| Filter | `*_mode` values (default) | Matches lessons whose… |
+|--------|---------------------------|------------------------|
+| `tags` | `any` \| `all` \| `none` (`any`) | tags satisfy the mode against the given list |
+| `kind` | `in` \| `nin` (`in`) | `kind` is one of (or, with `nin`, none of) the given values |
+| `host` | `in` \| `nin` (`in`) | `host` is one of / none of the given values |
+| `trigger` | `in` \| `nin` (`in`) | write `trigger` is one of / none of the given values |
+| `source_agent` | `in` \| `nin` (`in`) | `source_agent` is one of / none of the given values |
+| `origin_repo` | `in` \| `nin` (`in`) | `origin_repo` is one of / none of the given values |
+| `origin_branch` | `in` \| `nin` (`in`) | `origin_branch` is one of / none of the given values |
+| `origin_pr` | `in` \| `nin` (`in`) | `origin_pr` (as digit strings, e.g. `"482"`) is one of / none of the given values |
+
+On `policy.update`, every field (the age/count conditions and all eight dimensions) is **optional and independently clearable**: omit a field to leave it unchanged, or pass an explicit `null` to clear a previously-set condition.
+
+### policy.list
+
+List every retention policy you own. No arguments.
+
+**Returns:** `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "max_opened_count", ...dimension filters, "created_at", "updated_at" }] }`
+
+### policy.create
+
+Create a scoped retention policy that auto-archives (never hard-deletes) matching lessons.
+
+```json
+{
+  "params": {
+    "name": "policy.create",
+    "arguments": {
+      "scope": "repo::mthines/lorekit",
+      "name": "stale ci bus events",
+      "kind": ["bus"],
+      "kind_mode": "in",
+      "tags": ["ci::pr-review-state"],
+      "tags_mode": "all",
+      "min_age_days": 30
+    }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `scope` | ✓ | Scope the policy matches |
+| `name` | ✓ | Human-readable name |
+| `mode` | | `review` (default) — surfaced for a human to run manually via `groom.preview`/`groom.run --policy-id`. `auto` — swept nightly, but only once also `enabled` |
+| `enabled` | | Whether `auto` mode is active. Always starts `false`, even when `mode` is `auto` — a saved rule never archives anything unattended |
+| `min_age_days`, `unseen_days`, `max_seen_count`, `max_read_count`, `max_opened_count` | | Age/count conditions — see `memory.list`'s equivalents above |
+| the eight dimension filters + `*_mode` | | See the table above |
+
+**Returns:** The created policy object.
+
+### policy.update
+
+Update a retention policy. Every field but `id` is optional; an explicit `null` clears that condition.
+
+```json
+{
+  "params": {
+    "name": "policy.update",
+    "arguments": { "id": "…", "kind": null, "host": ["reviewer", "aw"] }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `id` | ✓ | The policy id to update |
+| everything else | | Same fields as `policy.create`, all optional; omit to leave unchanged, pass `null` to clear |
+
+**Returns:** The updated policy object.
+
+### policy.delete
+
+Delete a retention policy. Deletes the **rule only** — never touches the lessons it matched.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `id` | ✓ | The policy id to delete |
+
+**Returns:** `{ "deleted": boolean }`
+
+### groom.preview
+
+Preview the lessons a saved policy or an inline condition set would archive, without changing anything.
+
+```json
+{
+  "params": {
+    "name": "groom.preview",
+    "arguments": { "scope": "repo::mthines/lorekit", "kind": ["bus"], "min_age_days": 30 }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `policy_id` | | Preview an existing saved policy. Mutually exclusive with `scope`/conditions |
+| `scope` | | Inline scope to match. Mutually exclusive with `policy_id` |
+| the age/count conditions + the eight dimension filters | | Same as `policy.create`, all optional |
+
+Pass either `policy_id` or `scope` (with optional conditions), never both.
+
+**Returns:** `{ "count": <number>, "keys": [{ "scope", "key" }] }` — the SAME candidates `groom.run` would archive.
+
+### groom.run
+
+Archive every lesson a saved policy or an inline condition set matches. Soft-archive only — never hard-deletes; recoverable via `memory.restore`. Same arguments as `groom.preview`.
+
+**Returns:** `{ "archived": <number>, "keys": [{ "scope", "key" }] }`
 
 ---
 

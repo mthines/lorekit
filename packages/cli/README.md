@@ -646,6 +646,75 @@ The server's refusal is printed verbatim with a one-line next step; the CLI make
 exactly one request and never retries, splits the sweep, or re-scopes around it.
 Use an unscoped `lk_rw_*` / `lk_wo_*` token for maintenance.
 
+### `lorekit groom` / `lorekit policy` / `lorekit protect` (aliases: `pin` / `unpin`)
+
+Retention automation — the CLI counterpart to the MCP `groom.*`/`policy.*`/
+`memory.protect` tools and the REST `/groom/*`/`/policies*`/`/protect` routes.
+**Remote only**, matching `purge`: `retention_policies` has no local-store
+equivalent.
+
+```bash
+# Preview what a rule would catch, without changing anything
+lorekit groom --scope repo::acme/app --unseen-days 90
+
+# Archive the matches (soft-archive, recoverable via `lorekit restore`)
+lorekit groom --scope repo::acme/app --unseen-days 90 --run --yes
+
+# Save it as a policy you can re-run by name, or let it sweep nightly
+lorekit policy create --scope repo::acme/app --name "stale repo lore" \
+  --unseen-days 90 --mode review
+lorekit policy list
+lorekit policy update <id> --mode auto --enabled
+lorekit policy delete <id>
+
+# Exempt one lesson from every rule and every manual sweep
+lorekit pin repo::acme/app::the-load-bearing-lesson
+lorekit unpin repo::acme/app::the-load-bearing-lesson
+```
+
+`groom [--policy-id <id> | --scope <s> [conditions…]] [--run] [--yes]` previews
+by default; `--run` archives. Exactly one of `--policy-id`/`--scope` is
+required. `policy <list|create|update|delete>` manages the SAVED rules
+`--policy-id` runs; `delete` removes the rule only, never the lessons it
+matched.
+
+Every condition ANDs together: the five age/activity fields
+(`--min-age-days`/`--unseen-days`/`--max-seen-count`/`--max-read-count`/
+`--max-opened-count`) plus the same **eight dimension filters** the Lore
+Explorer's filter bar offers —
+
+| Flag | `--<dim>-mode` values (default) |
+|------|----------------------------------|
+| `--tags <a,b>` | `any` \| `all` \| `none` (`any`) |
+| `--kind <a,b>` | `in` \| `nin` (`in`) |
+| `--host <a,b>` | `in` \| `nin` (`in`) |
+| `--trigger <a,b>` | `in` \| `nin` (`in`) |
+| `--source-agent <a,b>` | `in` \| `nin` (`in`) |
+| `--origin-repo <a,b>` | `in` \| `nin` (`in`) |
+| `--origin-branch <a,b>` | `in` \| `nin` (`in`) |
+| `--origin-pr <a,b>` | `in` \| `nin` (`in`) |
+
+— all comma-separated, same convention as `write --tags a,b,c`:
+
+```bash
+lorekit policy create --scope repo::acme/app --name "stale ci review events" \
+  --kind bus --kind-mode in --tags ci::pr-review-state --tags-mode all \
+  --min-age-days 30
+```
+
+`policy update` pairs every condition — age/count AND every dimension — with
+a `--clear-<field>` boolean (e.g. `--clear-kind`, `--clear-min-age-days`) that
+sends an explicit `null` rather than omitting the field: omitting a field on
+update leaves it unchanged, `null` clears it.
+
+```bash
+lorekit policy update <id> --clear-kind --host reviewer,aw
+```
+
+`protect <scope::key> [--off]` (or the shorter `pin`/`unpin`) marks a lesson as
+excluded from every policy and every `groom --run`, regardless of which rule
+would otherwise match it — persists until explicitly cleared.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.

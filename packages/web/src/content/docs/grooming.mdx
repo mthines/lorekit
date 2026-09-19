@@ -158,9 +158,12 @@ lorekit policy create --scope repo::acme/app --name "stale repo lore" \
 ```
 
 Each condition has its own flag — `--min-age-days`, `--unseen-days`,
-`--max-seen-count`, `--max-read-count`, `--max-opened-count` — and
-`lorekit policy update` pairs each with a `--clear-*` form for removing one
-from a saved policy:
+`--max-seen-count`, `--max-read-count`, `--max-opened-count`, and the eight
+dimension filters (`--tags`, `--kind`, `--host`, `--trigger`,
+`--source-agent`, `--origin-repo`, `--origin-branch`, `--origin-pr` —
+comma-separated, each paired with its own `--<dim>-mode`) — and
+`lorekit policy update` pairs every one of them with a `--clear-*` form for
+removing it from a saved policy:
 
 ```bash
 # old, and no agent has ever deliberately fetched it — the "noise tax" rule
@@ -168,6 +171,14 @@ lorekit policy create --scope repo::acme/app --name "unused lore" \
   --min-age-days 90 --max-opened-count 0 --mode review
 
 lorekit policy update <id> --clear-max-opened-count
+
+# precise, dimension-scoped: only bus-kind CI review-state events, tagged
+# with the exact label
+lorekit policy create --scope repo::acme/app --name "stale ci review events" \
+  --kind bus --kind-mode in --tags ci::pr-review-state --tags-mode all \
+  --min-age-days 30
+
+lorekit policy update <id> --clear-kind --host reviewer,aw
 ```
 
 `mode: review` is the default — the policy is saved and shows up in the
@@ -188,9 +199,11 @@ matched.
 
 The eight dimension filters (`tags`, `source_agent`, `trigger`, `kind`, `host`,
 `origin_repo`, `origin_branch`, `origin_pr` and their `*_mode` pairs) are
-reachable today through the dashboard, `POST /policies`/`PATCH /policies/:id`,
-and the MCP `policy.create`/`policy.update`/`groom.preview`/`groom.run` tools
-— `lorekit policy`/`lorekit groom` have no CLI flags for them yet.
+reachable everywhere: the dashboard, `POST /policies`/`PATCH /policies/:id`,
+the MCP `policy.create`/`policy.update`/`groom.preview`/`groom.run` tools,
+and `lorekit policy`/`lorekit groom`'s own flags (`--tags`, `--kind`,
+`--host`, `--trigger`, `--source-agent`, `--origin-repo`, `--origin-branch`,
+`--origin-pr`, each with a `--<dim>-mode`).
 
 **A policy does not have to name one scope.** `--scope global` matches *every*
 lesson in the account, in every scope — that is what the dashboard's dialog

@@ -357,6 +357,35 @@ coerced. A token carrying a scope allowlist is refused by the server (`ACCOUNT_W
 to narrow), and that 403 is printed **verbatim** plus a one-line next step; the CLI makes exactly
 one request and never retries, splits the sweep or re-scopes to work around it
 
+### `groom`/`policy`/`protect` (aliases: `pin`/`unpin` → `protect`)
+
+Retention automation, mapping onto the MCP `groom.*`/`policy.*`/`memory.protect` tools and the REST
+`/groom/*`/`/policies*`/`/protect` routes — **remote-only**, matching `purge`, since `retention_policies`
+has no local-store equivalent. `groom [--policy-id <id> | --scope <s> [conditions…]] [--run] [--yes]`
+previews (default) or, with `--run`, archives (soft, recoverable via `restore`) every lesson a saved
+policy or an inline condition set matches; exactly one of `--policy-id`/`--scope` is required, and
+`--run` without `--yes` in a non-interactive context is refused rather than guessed at. `policy
+<list|create|update|delete>` manages the SAVED rules `--policy-id` runs — `create --scope <s> --name
+<n>` and `update <id>` both accept the same condition set, `delete <id>` removes the rule only (never
+the lessons it matched). `protect <scope::key> [--off]` (or the shorter `pin`/`unpin`) excludes a
+lesson from every policy and every `groom --run` regardless of which rule would otherwise catch it.
+
+Every condition is the AND of five age/activity fields (`--min-age-days`/`--unseen-days`/
+`--max-seen-count`/`--max-read-count`/`--max-opened-count`) plus the same **eight dimension filters**
+the Lore Explorer's filter bar offers — `--tags`/`--kind`/`--host`/`--trigger`/`--source-agent`/
+`--origin-repo`/`--origin-branch`/`--origin-pr`, each accepting a comma-separated value list (the same
+convention `write --tags a,b,c` already uses) and each paired with its own `--<dim>-mode` (`--tags-mode
+any|all|none`, every other dimension `in|nin`). One shared parser, `parseDimensionConditions` in
+`shared/flags.mjs`, backs `policy create`/`policy update`/`groom` so the three cannot describe the
+dimensions differently — mirroring the edge's own single source, `GROOM_DIMENSION_FIELDS` in
+`supabase/functions/mcp/tools.ts`. `policy update` pairs every condition (age/count AND every
+dimension) with a `--clear-<field>` boolean that sends an explicit `null` rather than omitting the
+field — the two are NOT the same request: omitting a field on update leaves it unchanged, `null`
+clears it. `RemoteStore.policyUpdate` forwards the whole patch verbatim (including an explicit
+`null`) via a PATCH-only `stripUndefinedKeepNull` that drops `undefined` but keeps `null` — deliberately
+NOT the `stripUndefined` every other remote write uses, where a `null` and an omitted field mean the
+same "not filtered" and both should be dropped.
+
 ### `hook`
 
 The shared hook engine behind the plugins — injects the

@@ -271,6 +271,7 @@ async function call(name, args = {}) {
 const writtenKeys = new Map(); // JSON([scope, key]) → { scope, key }
 const writtenIds = new Set(); // row ids — cleared by DELETE /memories/:id
 const createdOrgs = new Set();
+const createdPolicies = new Set(); // policy ids — cleared by policy.delete
 const residue = [];
 
 /** Record a write so the `finally` can undo it, whatever the assertion did. */
@@ -325,6 +326,15 @@ async function cleanup() {
         ? `org ${slug} (soft-deleted — no purge exists on MCP or REST)`
         : `org ${slug} (delete failed: ${r.error?.message ?? JSON.stringify(r.value)})`,
     );
+  }
+  for (const id of createdPolicies) {
+    const r = await call('policy.delete', { id });
+    // `deleted: false` also covers "a check already removed it" — same as the
+    // memory-row cleanup above, confirm via policy.list rather than trust the
+    // delete's own answer.
+    if (r.ok && r.value?.deleted === true) continue;
+    const list = await call('policy.list');
+    if (list.ok && list.value?.entries?.some((p) => p.id === id)) residue.push(`policy id=${id}`);
   }
 }
 
@@ -782,6 +792,60 @@ check('a soft-deleted org stops accepting writes, renames and deletes', async ()
   ok(!(await call('org.rename', { slug, name: 'zombie' })).ok, 'rename after delete');
   ok(!(await call('org.delete', { slug })).ok, 'delete after delete');
   ok(!(await call('memory.write', { scope: SCOPE, key: 'dead-org', value: 'v', org: slug })).ok, 'write after delete');
+});
+
+// ── 4b. policy.*/groom.* over an API token (#R1/#R10 — the -32601 fix) ───────
+//
+// Regression coverage for the exact defect this smoke was extended for:
+// `gen-surfaces.mjs`'s edge dispatch grouping used to be prefix-only
+// (`memory.`/`org.`), so `policy.*`/`groom.*` were advertised by `tools/list`
+// but rejected with `-32601 Unknown tool` by `tools/call`. `known()` exists
+// for defects that ARE still there; this is the opposite shape — a
+// conformance check that proves the fix holds on the deploy path, with the
+// same `lk_*` credential `mcp-handler.ts`'s `analyticsUserId` resolution
+// needs (`policy.*`/`groom.*` RPCs take `p_user_id` explicitly and have no
+// `auth.uid()` fallback the way the org RPCs do — a JWT-null `toolUserId`
+// would throw here, which is exactly what made this the load-bearing check).
+check('policy.create → policy.list → groom.preview(policy_id) → policy.delete', async () => {
+  // `policy.*`/`groom.*` resolve `analyticsUserId` and throw
+  // `UserInputError` when it is null (no `auth.uid()` fallback, unlike the
+  // org RPCs) — a service-role credential has no owner to attribute the
+  // policy to, so skip rather than fail loudly on a credential this check
+  // was never meant to exercise.
+  requireUserScoped('a retention-policy owner');
+  const create = await call('policy.create', {
+    scope: SCOPE,
+    name: `smoke ${RUN_ID}`,
+    kind: ['bus'],
+    kind_mode: 'in',
+  });
+  ok(create.ok, `policy.create failed: ${JSON.stringify(create.error ?? create.value)}`);
+  const policyId = create.value?.id;
+  ok(policyId, 'policy.create did not return an id');
+  createdPolicies.add(policyId);
+
+  const list = await call('policy.list');
+  ok(list.ok, `policy.list failed: ${JSON.stringify(list.error)}`);
+  const mine = list.value?.entries?.find((p) => p.id === policyId);
+  ok(mine, 'the new policy is missing from policy.list');
+  eq(mine.scope, SCOPE, 'policy.list scope');
+  eq(mine.kind, ['bus'], 'policy.list kind');
+
+  // Read-only — previews via the saved policy, never mutates. Asserted before
+  // the group-mode assumption `--policy-id` vs inline conditions rests on.
+  const preview = await call('groom.preview', { policy_id: policyId });
+  ok(preview.ok, `groom.preview failed: ${JSON.stringify(preview.error)}`);
+  ok(typeof preview.value?.count === 'number', 'groom.preview.count is not a number');
+  ok(Array.isArray(preview.value?.keys), 'groom.preview.keys is not an array');
+
+  const del = await call('policy.delete', { id: policyId });
+  ok(del.ok && del.value?.deleted === true, `policy.delete failed: ${JSON.stringify(del.error ?? del.value)}`);
+  createdPolicies.delete(policyId); // cleaned up here — nothing left for `finally`
+  const afterDelete = await call('policy.list');
+  ok(
+    !afterDelete.value?.entries?.some((p) => p.id === policyId),
+    'policy.delete succeeded but the policy is still listed',
+  );
 });
 
 // ── 5. known defects, observed live (run with --probe) ───────────────────────
