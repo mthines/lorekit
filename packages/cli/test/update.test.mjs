@@ -12,9 +12,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { install } from '../src/commands/install.mjs';
 import { update } from '../src/commands/update.mjs';
-import { checkSkillVersions } from '../src/shared/skill-versions.mjs';
+import { SKILLS } from '../src/shared/config.mjs';
+import { checkSkillVersions, parseSkillVersion } from '../src/shared/skill-versions.mjs';
 import { setWriters } from '../src/shared/util.mjs';
 import { withHome } from './helpers.mjs';
+
+// Read the REAL shipped version rather than hardcoding it — the guard added in
+// scripts/ci/skill-version-guard.mjs means this bumps on every content change
+// to lorekit-memory, and a hardcoded string here would silently stop matching
+// the drift signal these tests downgrade FROM.
+const SHIPPED_MEMORY_VERSION = parseSkillVersion(
+  fs.readFileSync(path.join(SKILLS.find((s) => s.name === 'lorekit-memory').source, 'SKILL.md'), 'utf8'),
+);
 
 // Capture `log`/`status`/`heading` output around one call, restoring the real
 // writers afterward even on throw — the same pattern `obligations.test.mjs`
@@ -71,13 +80,13 @@ test('doctor warns (not fails) when an installed skill is outdated', async () =>
   await installProject(root, home);
 
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  downgrade(skillMd, '1.0.0', '0.1.0');
+  downgrade(skillMd, SHIPPED_MEMORY_VERSION, '0.1.0');
 
   const res = runDoctor(root, home);
   const line = skillLineFor(res.stdout, 'lorekit-memory');
   assert.match(line, /WARN/, `expected WARN, got: ${line}`);
   assert.match(line, /v0\.1\.0/, `expected the installed version quoted, got: ${line}`);
-  assert.match(line, /v1\.0\.0/, `expected the shipped version quoted, got: ${line}`);
+  assert.match(line, new RegExp(`v${SHIPPED_MEMORY_VERSION.replace(/\./g, '\\.')}`), `expected the shipped version quoted, got: ${line}`);
   assert.match(line, /lorekit update/, `expected the fix pointer, got: ${line}`);
   // A warn must not flip doctor's exit code — only a fail does.
   assert.equal(res.status, 0, `outdated skill must warn, not fail doctor: ${res.stdout}`);
@@ -100,7 +109,7 @@ test('update refreshes an outdated skill install back to the shipped version', a
   await installProject(root, home);
 
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  downgrade(skillMd, '1.0.0', '0.1.0');
+  downgrade(skillMd, SHIPPED_MEMORY_VERSION, '0.1.0');
 
   await withHome(home, async () => {
     // sanity — genuinely outdated before update runs.
@@ -123,7 +132,7 @@ test('update is idempotent once every installed skill is current', async () => {
   await installProject(root, home);
 
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  downgrade(skillMd, '1.0.0', '0.1.0');
+  downgrade(skillMd, SHIPPED_MEMORY_VERSION, '0.1.0');
 
   await withHome(home, async () => {
     const first = await update({ dir: root, project: true });
@@ -141,7 +150,7 @@ test('update --check reports drift without writing anything', async () => {
   await installProject(root, home);
 
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  downgrade(skillMd, '1.0.0', '0.1.0');
+  downgrade(skillMd, SHIPPED_MEMORY_VERSION, '0.1.0');
   const beforeBody = fs.readFileSync(skillMd, 'utf8');
 
   await withHome(home, async () => {
@@ -154,7 +163,7 @@ test('update --check reports drift without writing anything', async () => {
   // untouched — removing the `if (dryRun) { ...; continue; }` guard in
   // update.mjs (so a --check run still calls copyDir) makes this assertion
   // fail, since the downgraded version stamp would be overwritten back to
-  // 1.0.0. Verified by hand while authoring.
+  // the shipped version. Verified by hand while authoring.
   const afterBody = fs.readFileSync(skillMd, 'utf8');
   assert.equal(afterBody, beforeBody, '--check must never write to disk');
 });
@@ -165,7 +174,7 @@ test('update with no --project/--global targets only scopes with an existing ins
   await installProject(root, home); // project-only install
 
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  downgrade(skillMd, '1.0.0', '0.1.0');
+  downgrade(skillMd, SHIPPED_MEMORY_VERSION, '0.1.0');
 
   await withHome(home, async () => {
     const res = await update({ dir: root }); // neither flag passed
@@ -238,7 +247,7 @@ test('update removes a file the shipped skill no longer ships', async () => {
   fs.writeFileSync(staleFile, '# stale content the shipped skill no longer has\n');
 
   const skillMd = path.join(skillDir, 'SKILL.md');
-  downgrade(skillMd, '1.0.0', '0.1.0'); // force `update` to actually touch this skill
+  downgrade(skillMd, SHIPPED_MEMORY_VERSION, '0.1.0'); // force `update` to actually touch this skill
 
   await withHome(home, async () => {
     await update({ dir: root, project: true });
@@ -262,7 +271,7 @@ test('update --check previews the file a real run would prune', async () => {
   const staleFile = path.join(skillDir, 'rules', 'removed-in-newer-version.md');
   fs.mkdirSync(path.dirname(staleFile), { recursive: true });
   fs.writeFileSync(staleFile, '# stale content the shipped skill no longer has\n');
-  downgrade(path.join(skillDir, 'SKILL.md'), '1.0.0', '0.1.0');
+  downgrade(path.join(skillDir, 'SKILL.md'), SHIPPED_MEMORY_VERSION, '0.1.0');
 
   await withHome(home, async () => {
     const { result, out } = await capture(() => update({ dir: root, project: true, check: true }));
@@ -283,7 +292,7 @@ test('update --check exits non-zero when it finds drift, and 0 when everything i
   const root = tmp('lk-upd-check-exit-root-');
   const home = tmp('lk-upd-check-exit-home-');
   await installProject(root, home);
-  downgrade(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md'), '1.0.0', '0.1.0');
+  downgrade(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md'), SHIPPED_MEMORY_VERSION, '0.1.0');
 
   await withHome(home, async () => {
     const drifted = await update({ dir: root, project: true, check: true });

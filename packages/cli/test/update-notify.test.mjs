@@ -15,12 +15,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { install } from '../src/commands/install.mjs';
+import { SKILLS } from '../src/shared/config.mjs';
 import {
   resolveUpdateNudge,
   updateStatePath,
   readUpdateState,
 } from '../src/core/update-notify.mjs';
 import { normalizeUpdateNotifyMode } from '../src/shared/control.mjs';
+import { parseSkillVersion } from '../src/shared/skill-versions.mjs';
 import { withHome } from './helpers.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
@@ -30,6 +32,15 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
+// Read the REAL shipped version rather than hardcoding it — the guard added in
+// scripts/ci/skill-version-guard.mjs means this bumps on every content change
+// to lorekit-memory, and a hardcoded string here would silently stop matching
+// the very drift signal these tests exist to exercise.
+const SHIPPED_MEMORY_VERSION = parseSkillVersion(
+  fs.readFileSync(path.join(SKILLS.find((s) => s.name === 'lorekit-memory').source, 'SKILL.md'), 'utf8'),
+);
+const shippedVersionRe = () => new RegExp(`v${SHIPPED_MEMORY_VERSION.replace(/\./g, '\\.')}`);
+
 // A project with an OUTDATED lorekit-memory install (project-scoped) and an
 // empty `home` — no global install to add noise to the drift signature.
 async function outdatedProject() {
@@ -37,7 +48,9 @@ async function outdatedProject() {
   const home = tmp('lk-notify-installhome-');
   await withHome(home, () => install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }));
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  const body = fs.readFileSync(skillMd, 'utf8').replace(/version: '1\.0\.0'/, "version: '0.1.0'");
+  const body = fs
+    .readFileSync(skillMd, 'utf8')
+    .replace(`version: '${SHIPPED_MEMORY_VERSION}'`, "version: '0.1.0'");
   assert.notEqual(body, fs.readFileSync(skillMd, 'utf8'), 'precondition — downgrade must actually change the file');
   fs.writeFileSync(skillMd, body);
   return { root, home };
@@ -51,7 +64,8 @@ async function unknownVersionProject() {
   const home = tmp('lk-notify-unknown-installhome-');
   await withHome(home, () => install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }));
   const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
-  const body = fs.readFileSync(skillMd, 'utf8').replace(/^[ \t]*version: '1\.0\.0'\n/m, '');
+  const versionLineRe = new RegExp(`^[ \\t]*version: '${SHIPPED_MEMORY_VERSION.replace(/\./g, '\\.')}'\\n`, 'm');
+  const body = fs.readFileSync(skillMd, 'utf8').replace(versionLineRe, '');
   assert.notEqual(body, fs.readFileSync(skillMd, 'utf8'), 'precondition — the version line must actually be removed');
   fs.writeFileSync(skillMd, body);
   return { root, home };
@@ -75,12 +89,12 @@ test('resolveUpdateNudge fires once for a genuinely outdated install', async () 
     assert.match(nudge, /outdated/i);
     assert.match(nudge, /lorekit-memory/);
     assert.match(nudge, /v0\.1\.0/);
-    assert.match(nudge, /v1\.0\.0/);
+    assert.match(nudge, shippedVersionRe());
     assert.match(nudge, /lorekit update/);
 
     // The throttle state was actually recorded, not just the return value.
     const state = readUpdateState(updateStatePath({ LOREKIT_HOME: notifyHome }));
-    assert.equal(state.lastNotifiedVersion, 'lorekit-memory@1.0.0');
+    assert.equal(state.lastNotifiedVersion, `lorekit-memory@${SHIPPED_MEMORY_VERSION}`);
     assert.equal(state.lastNotifiedAt, 1_000);
   });
 });
@@ -106,7 +120,7 @@ test('resolveUpdateNudge still fires (and records the throttle) for an `unknown`
     // fails without the fix, since the old code returned null before reaching
     // writeUpdateState at all.
     const state = readUpdateState(updateStatePath({ LOREKIT_HOME: notifyHome }));
-    assert.equal(state.lastNotifiedVersion, 'lorekit-memory@1.0.0');
+    assert.equal(state.lastNotifiedVersion, `lorekit-memory@${SHIPPED_MEMORY_VERSION}`);
     assert.equal(state.lastNotifiedAt, 1_000);
   });
 });
