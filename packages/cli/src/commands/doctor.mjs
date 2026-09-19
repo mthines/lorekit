@@ -7,7 +7,6 @@ import { execFileSync } from 'node:child_process';
 import {
   SKILLS,
   resolveProjectRoot,
-  skillInstallDir,
   CLAUDE_HOOK_EVENTS,
   installedHookEvents,
   hookModeFromEvents,
@@ -17,6 +16,7 @@ import {
   tokenKind,
   readLorekitJson,
 } from '../shared/config.mjs';
+import { checkSkillVersions } from '../shared/skill-versions.mjs';
 import { splitEndpoint } from '../shared/mcp.mjs';
 import {
   resolveTelemetryConfig,
@@ -71,18 +71,48 @@ export async function doctor(args) {
   // skill under home, not the repo, so a project-only check reports a healthy
   // global install as "not found" (exactly the false FAIL a --global setup would
   // hit).
+  //
+  // Beyond existence, each installed scope now reports its VERSION against the
+  // one this CLI ships (`checkSkillVersions` — an offline compare of
+  // `metadata.version` in SKILL.md's frontmatter, see `shared/skill-versions.mjs`).
+  // An `outdated` or `unknown` (legacy, unparseable) install is a `warn`, never a
+  // `fail` — the skill still works, it just has no signal to update without this
+  // line — and names the fix scope-aware, mirroring the hooks-upgrade wording
+  // above: `lorekit update` is what a stale install is missing, the same way
+  // `lorekit install --hooks <mode>` is what a stale hook wiring is missing.
+  const skillVersions = checkSkillVersions(root);
   for (const skill of SKILLS) {
-    const skillMd = [
-      skillInstallDir(root, 'project', skill.name),
-      skillInstallDir(root, 'global', skill.name),
-    ]
-      .map((dir) => path.join(dir, 'SKILL.md'))
-      .find((p) => fs.existsSync(p));
-    if (skillMd) {
-      const rel = path.relative(root, skillMd);
-      record('pass', `skill ${skill.name}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
-    } else {
+    const installedEntries = skillVersions.filter(
+      (r) => r.name === skill.name && r.state !== 'not-installed',
+    );
+    if (installedEntries.length === 0) {
       record('fail', `skill ${skill.name}`, 'not found — run `lorekit install`');
+      continue;
+    }
+    for (const entry of installedEntries) {
+      const rel = path.relative(root, entry.installedPath);
+      const displayPath = rel && !rel.startsWith('..') ? rel : prettyPath(entry.installedPath);
+      // Only distinguish the scope in the label when the skill is installed in
+      // more than one — the common single-scope case keeps the pre-existing
+      // `skill <name>` label so it doesn't churn every doctor transcript.
+      const label = installedEntries.length > 1 ? `skill ${skill.name} (${entry.scope})` : `skill ${skill.name}`;
+      if (entry.state === 'current') {
+        record('pass', label, `${displayPath} — v${entry.installed}`);
+      } else if (entry.state === 'outdated') {
+        record(
+          'warn',
+          label,
+          `${displayPath} — v${entry.installed}, shipped v${entry.shipped} — ` +
+            `run \`lorekit update --${entry.scope}\` to refresh`,
+        );
+      } else {
+        record(
+          'warn',
+          label,
+          `${displayPath} — version unknown (legacy install predates version stamping) — ` +
+            `run \`lorekit update --${entry.scope}\` to refresh`,
+        );
+      }
     }
   }
 

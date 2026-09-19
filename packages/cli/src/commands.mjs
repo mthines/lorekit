@@ -36,6 +36,7 @@
 import { install } from './commands/install.mjs';
 import { uninstall } from './commands/uninstall.mjs';
 import { doctor } from './commands/doctor.mjs';
+import { update } from './commands/update.mjs';
 import { list } from './commands/list.mjs';
 import { search } from './commands/search.mjs';
 import { show } from './commands/show.mjs';
@@ -74,6 +75,7 @@ export const COMMANDS = [
   { name: 'install', run: install, traced: true, strictFlags: true, native: 'scaffolds skills, hooks and MCP config on disk' },
   { name: 'uninstall', run: uninstall, traced: true, strictFlags: true, native: 'removes what install wrote' },
   { name: 'doctor', run: doctor, traced: true, strictFlags: true, native: 'connectivity / token / scope health check' },
+  { name: 'update', run: update, traced: true, strictFlags: true, native: 'offline refresh of the bundled skills + hook wiring' },
   { name: 'list', run: list, traced: true, strictFlags: true, tool: 'memory.list', aliases: ['ls'] },
   { name: 'search', run: search, traced: true, strictFlags: true, tool: 'memory.search', aliases: ['grep'] },
   { name: 'show', run: show, traced: true, strictFlags: true, tool: 'memory.read' },

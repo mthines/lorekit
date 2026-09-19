@@ -1,36 +1,54 @@
-# aw-target for aw-tester — LoreKit dashboard, VERCEL PREVIEW deployment.
+# aw-target for aw-tester / ui-verify — LoreKit dashboard, VERCEL PREVIEW deployment.
 #
-# Use this target when the change CANNOT be verified locally — e.g. aw-tester is
-# running in the Claude Web environment, where there is no local dev server. Each
-# PR gets a Vercel preview deployment; verify against that live URL instead.
+# Use this target when the change CANNOT be verified locally — e.g. running in
+# the Claude Web environment with no local dev server, or `ui-verify run`/`verify`
+# against a PR's live preview. Each PR gets a Vercel preview deployment; verify
+# against that live URL.
 #
-# ── How the executor uses this target ────────────────────────────────────────
-# 1. Resolve the PR's Vercel preview origin (e.g. from the Vercel bot's PR
-#    comment, `gh pr view --json`, or the Vercel deployment API). It looks like
-#    https://lorekit-web-<hash>-<scope>.vercel.app
-# 2. Export it once and substitute it into base_url below (they must match):
-#       export AW_PREVIEW_URL="https://lorekit-web-<hash>-<scope>.vercel.app"
-#    Then set this file's `base_url:` to the same origin (a one-line edit or sed).
-#    aw-tester reads base_url LITERALLY — it does not expand env vars — so the
-#    real origin must be written here; the refresh command below reads the env
-#    var so the two stay in step.
-# 3. Run aw-tester with `aw-target: preview`.
+# ── base_url is resolved at RUNTIME, do not edit it ──────────────────────────
+# `ui-verify run` resolves the PR's STABLE branch-alias preview URL from the
+# GitHub deployments API (falling back to the Vercel bot comment) and writes it
+# into an EPHEMERAL overlay at .agent/{branch}/.ui-verify/aw-target.yml — the
+# committed file below stays `RESOLVED_AT_RUNTIME` as a loud-failure marker.
+# Pass `--url <origin>` to override resolution. The runner also exports that
+# resolved origin as PREVIEW_URL for the refresh command to read (see below).
 #
 # ── Auth is PER-HOST (the load-bearing gotcha) ───────────────────────────────
 # The localhost session in ./.auth/local.json will NOT authenticate a
-# *.vercel.app host — the Supabase session cookie is host-scoped. aw-tester must
-# capture a FRESH session against the exact preview origin. The refresh command
-# does exactly that with the same test credentials, writing ./.auth/preview.json.
+# *.vercel.app host — the Supabase session cookie is host-scoped. A FRESH session
+# must be captured against the exact preview origin every run. The refresh
+# command does that with the test credentials, writing ./.auth/preview.json.
+#
+# ── TWO walls: Vercel SSO protection (outer) + app login (inner) ─────────────
+# VERIFIED 2026-09-19: the preview origin is behind Vercel Deployment Protection
+# — every request 302-redirects to vercel.com/sso-api BEFORE the app loads. So a
+# bypass header must ride on EVERY request (login capture + each spec nav). The
+# secret comes from Vercel ▸ Project ▸ Settings ▸ Deployment Protection ▸
+# "Protection Bypass for Automation", exposed as VERCEL_AUTOMATION_BYPASS_SECRET
+# (an env var / CI secret — never written here). Without it, aw-tester never
+# reaches the app and all authed specs fail at the SSO wall.
 name: preview
 
-# Set to the PR's Vercel preview origin before running (see step 2 above).
-base_url: https://REPLACE-WITH-PR-VERCEL-PREVIEW-ORIGIN
+# Overridden at runtime by ui-verify's URL resolution. The literal value here is
+# never used; keep it as a marker so a misconfigured run fails loudly.
+base_url: RESOLVED_AT_RUNTIME
 
 auth:
   strategy: storage-state
   # A SEPARATE file from local.json — the preview session is host-specific and
-  # must never be confused with the localhost one.
+  # must never be confused with the localhost one. Gitignored via `.auth/`.
   storage_state: ./.auth/preview.json
+  # Present ONLY when signed in (the Sidebar's user-settings link) — the positive
+  # signal that the captured session is valid. Absent → refresh, don't trust the
+  # file. Written in the spec locator grammar.
+  authed_check: '{role: "link", name: "User settings for"}'
+  # OUTER WALL: sent on EVERY request so login capture AND every spec navigation
+  # reach the app past Vercel Deployment Protection. Value is a reference to an
+  # env var (CI secret), never a literal. aw-tester applies it to its own run
+  # context; the refresh command's login script reads the same env var.
+  bypass_header:
+    name: x-vercel-protection-bypass
+    env: VERCEL_AUTOMATION_BYPASS_SECRET
   identity:
     # Same test account as local; email supplied via LOREKIT_TESTING_USER_NAME.
     email: env:LOREKIT_TESTING_USER_NAME
@@ -38,18 +56,25 @@ auth:
   refresh:
     # A preview session cannot be reused across hosts, so always re-capture.
     when: always
-    # Headless email + password login against the PREVIEW origin. AW_PREVIEW_URL
-    # must be exported to the same value as base_url above. Creds come from
-    # .env.local locally, or the shell on Claude Web (a no-op source either way).
+    # Credentials/secrets the runner checks for presence — NAMES only, never
+    # values. PREVIEW_URL is provided by the runner, so it is not listed.
+    # VERCEL_AUTOMATION_BYPASS_SECRET is required to pass the outer SSO wall.
+    env: [LOREKIT_TESTING_USER_NAME, LOREKIT_TESTING_USER_PW, VERCEL_AUTOMATION_BYPASS_SECRET]
+    # Headless email + password login against the PREVIEW origin. The runner
+    # exports PREVIEW_URL to the resolved preview origin (same as base_url in the
+    # overlay). Creds come from .env.local locally, or the shell on Claude Web
+    # (a no-op source either way). Reuses the repo's existing bootstrap script.
     command: |
       set -a
       [ -f .env.local ] && . ./.env.local
       [ -f packages/web/.env.local ] && . ./packages/web/.env.local
       set +a
-      : "${AW_PREVIEW_URL:?export AW_PREVIEW_URL to the PR preview origin (match base_url)}"
-      AUTH_LOGIN_URL="$AW_PREVIEW_URL/login" \
+      : "${PREVIEW_URL:?PREVIEW_URL is set by the ui-verify runner to the resolved preview origin}"
+      AUTH_LOGIN_URL="$PREVIEW_URL/login" \
         AUTH_STORAGE_STATE=./.auth/preview.json \
         AUTH_POST_LOGIN_URL_PATTERN='/lore' \
+        AUTH_AUTHED_ROLE='link' \
+        AUTH_AUTHED_NAME='User settings for' \
         node scripts/auth-bootstrap-credentials.mjs
     timeout_seconds: 120
 

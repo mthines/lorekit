@@ -30,6 +30,9 @@ jobs:
   #               `web-preview`. Two filters, not one, because the test job is
   #               free CI compute and the preview is a metered deployment.
   #    `deploy` — the deploy pipeline + its scope resolver → gates `deploy-scope`.
+  #    `skill_version` — shipped skill source (`packages/cli/skill/**`) → gates
+  #               `skill-version-guard`, which fails a PR that changes a skill's
+  #               content without bumping its `metadata.version`.
   #
   #    A skipped required check is treated as passing by branch protection, so
   #    docs- or web-only PRs sail through without booting any toolchain.
@@ -49,6 +52,7 @@ jobs:
       bench: ${{ steps.filter.outputs.bench }}
       deploy: ${{ steps.filter.outputs.deploy }}
       seed: ${{ steps.filter.outputs.seed }}
+      skill_version: ${{ steps.filter.outputs.skill_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -168,6 +172,19 @@ jobs:
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Skill-version gate: the shipped skill source the guard reads
+          # (`packages/cli/skill/`), the guard/test themselves, and this
+          # workflow (so the guard is exercised on its own PR). `scripts/**` is
+          # outside `nx affected`, so without this job the guard's own unit
+          # tests would never run. Deliberately narrower than the `plugin`
+          # filter above (which also fires on `plugins/`, `packages/cli/src/`,
+          # etc.) — this job only cares about the SOURCE skill directories the
+          # guard actually diffs.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/cli/skill/|scripts/ci/skill-version-guard(\.test)?\.mjs|\.github/workflows/ci\.yml)'; then
+            echo "skill_version=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skill_version=false" >> "$GITHUB_OUTPUT"
           fi
           # Preview-seed gate: the pure dataset/SQL builders `/preview --seed`
           # runs against the shared preview project. `scripts/**` is outside
@@ -511,6 +528,44 @@ jobs:
       # node's built-in runner, zero deps — no install step needed.
       - name: Unit-test the deploy-scope resolver
         run: node --test scripts/ci/resolve-deploy-scope.test.mjs
+
+  # ── Skill-version guard — no drift-invisible skill edit ──────────────────────
+  #    `doctor` / `lorekit update` / the SessionStart nudge all decide "is this
+  #    installed skill outdated" by comparing the stamped `metadata.version`
+  #    against the shipped one — a comparison that is a no-op if the stamp never
+  #    moves. All three shipped skills sat at `1.0.0` through four content PRs
+  #    before this guard existed. Same treatment as `migration-order` above: a
+  #    real per-PR check against the base branch, backed by a unit-tested pure
+  #    core, gated on its own filter because `scripts/**` is outside
+  #    `nx affected`.
+  skill-version-guard:
+    name: Skill version bump (no drift-invisible edit)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.skill_version == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0 # need base + HEAD history to diff each skill's SKILL.md
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Self-test the guard's pure logic first (node's built-in runner, zero
+      # deps) so a regression here is caught before it lets a real omission
+      # through or blocks a good PR.
+      - name: Unit-test the guard
+        run: node --test scripts/ci/skill-version-guard.test.mjs
+
+      - name: Check every touched skill bumped its version
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci/skill-version-guard.mjs "$BASE"
 
   seed-tests:
     name: Preview-seed dataset/SQL builders (unit)
@@ -869,7 +924,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, seed-tests, preview-filter, bench-tests, edge-typecheck]
+    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, skill-version-guard, seed-tests, preview-filter, bench-tests, edge-typecheck]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate

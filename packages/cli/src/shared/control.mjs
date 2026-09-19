@@ -61,6 +61,21 @@ export function normalizeStopMode(v) {
   return null;
 }
 
+// `updates.notify` — whether the SessionStart hook may append a terse
+// skill-update nudge when an installed skill has drifted behind the version
+// this CLI ships. `auto` (default) | `off`. Same forgiving-vocabulary /
+// repo-wins model as `hooks.stop`: a plain boolean, `false`/`none`/`disabled`
+// all mean `off`, so a hand-edited JSON file reads naturally either way.
+export const UPDATE_NOTIFY_MODES = ['auto', 'off'];
+export function normalizeUpdateNotifyMode(v) {
+  if (typeof v === 'boolean') return v ? 'auto' : 'off';
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (['off', 'none', 'false', 'disabled', 'never', 'no'].includes(s)) return 'off';
+  if (['auto', 'on', 'true', 'enabled', 'always', 'yes'].includes(s)) return 'auto';
+  return null;
+}
+
 // `hooks.userPrompt` — the per-turn relevance pull, on or off.
 //
 // A BOOLEAN, not a mode, and that is a deliberate limit on the surface. The
@@ -454,6 +469,12 @@ export function resolveControl({
     normalizeUserPromptMode(userConfig['hooks.sessionStart.branchHint']) ||
     'on';
 
+  // `updates.notify` — repo layer wins over user layer, default `auto`.
+  const updatesNotify =
+    normalizeUpdateNotifyMode(repoConfig['updates.notify']) ||
+    normalizeUpdateNotifyMode(userConfig['updates.notify']) ||
+    'auto';
+
   // `hooks.adapter` — repo layer wins over user layer (explicit project override).
   const hooksAdapter =
     (typeof repoConfig['hooks.adapter'] === 'string' && repoConfig['hooks.adapter'].trim()) ||
@@ -499,6 +520,7 @@ export function resolveControl({
     hooksSessionStartBranchHint,
     hooksAdapter,
     hooksInstructions,
+    updatesNotify,
   };
 }
 

@@ -30,6 +30,7 @@ import {
   recordShownLessons,
 } from '../core/state.mjs';
 import { recordFixture } from '../core/record.mjs';
+import { resolveUpdateNudge } from '../core/update-notify.mjs';
 import { claude } from '../adapters/claude.mjs';
 import { cursor } from '../adapters/cursor.mjs';
 import { codex } from '../adapters/codex.mjs';
@@ -60,6 +61,20 @@ function hookMeterAttrs(meter) {
   const attrs = { 'lorekit.hook.outcome': meter.outcome };
   if (meter.event) attrs['lorekit.hook.event'] = meter.event;
   return attrs;
+}
+
+// Append the offline skill-update nudge to the SessionStart block, when the
+// throttle allows it. Best-effort by design — a broken drift check or a
+// throttle-file write failure must never cost the reader their lessons block,
+// so any error here silently falls back to `text` unmodified.
+function appendUpdateNudge(text, root, control) {
+  try {
+    const nudge = resolveUpdateNudge(root, { notify: control.updatesNotify });
+    if (!nudge) return text;
+    return text ? `${text}\n\n${nudge}` : nudge;
+  } catch {
+    return text;
+  }
 }
 
 function readStdin() {
@@ -164,9 +179,10 @@ async function run(args, meter) {
       // No store: emit a minimal header + instruction when present, then return.
       // A SessionStart that cannot read lore is the highest-value failure to see.
       meter.outcome = HOOK_OUTCOME.STORE_UNAVAILABLE;
-      if (sessionInstruction) {
-        emit(formatLessons(null, { repoScope: null }, { instruction: sessionInstruction }));
-      }
+      const base = sessionInstruction
+        ? formatLessons(null, { repoScope: null }, { instruction: sessionInstruction })
+        : null;
+      emit(appendUpdateNudge(base, root, control));
       return 0;
     }
     const { scope: readScope, lessons, scopeCounts, applicable } = await fetchLessons(store, root, {
@@ -174,7 +190,7 @@ async function run(args, meter) {
       branchHint: control.hooksSessionStartBranchHint !== 'off',
       maxLessons: control.hooksSessionStartMaxLessons,
     });
-    emit(formatLessons(lessons, readScope, {
+    const lessonsBlock = formatLessons(lessons, readScope, {
       instruction: sessionInstruction,
       mode: control.hooksSessionStart,
       maxChars: control.hooksSessionStartMaxChars,
@@ -192,7 +208,8 @@ async function run(args, meter) {
       // `recordShownLessons` never throws, and a failure costs at most one
       // repeated lesson later in the session.
       onShown: (rendered) => recordShownLessons(parsed.sessionId, rendered.map(lessonId)),
-    }));
+    });
+    emit(appendUpdateNudge(lessonsBlock, root, control));
     return 0;
   }
 

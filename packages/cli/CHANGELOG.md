@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.0](https://github.com/mthines/lorekit/compare/cli-v1.70.0...cli-v1.71.0) (2026-09-19)
+
+
+### Features
+
+* **cli:** make bundled skills self-aware of being outdated ([#675](https://github.com/mthines/lorekit/issues/675)) ([e277b88](https://github.com/mthines/lorekit/commit/e277b88e3c812119ef327fea97034315f393b36e))
+
 ## [1.70.0](https://github.com/mthines/lorekit/compare/cli-v1.69.0...cli-v1.70.0) (2026-09-19)
 
 

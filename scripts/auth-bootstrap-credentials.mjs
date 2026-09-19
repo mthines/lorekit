@@ -95,6 +95,13 @@ const POST_LOGIN_PATTERN = process.env.AUTH_POST_LOGIN_URL_PATTERN;
 const EMAIL = process.env.LOREKIT_TESTING_USER_NAME;
 const PASSWORD = process.env.LOREKIT_TESTING_USER_PW;
 const TIMEOUT_MS = Number(process.env.AUTH_TIMEOUT_MS ?? 30_000);
+// Optional STRONG post-login signal (role + accessible-name substring). When set,
+// the script waits for this authenticated-only element to be visible BEFORE
+// capturing storage state — a URL match alone can be satisfied by a route that
+// also renders for anonymous users, yielding a logged-out session (a false green).
+// Mirror the aw-target's `auth.authed_check`, e.g. ROLE=link NAME='User settings for'.
+const AUTHED_ROLE = process.env.AUTH_AUTHED_ROLE;
+const AUTHED_NAME = process.env.AUTH_AUTHED_NAME;
 
 const missing = [];
 if (!LOGIN_URL) missing.push('AUTH_LOGIN_URL');
@@ -112,7 +119,14 @@ if (missing.length) {
 await mkdir(path.dirname(OUTPUT), { recursive: true });
 
 const browser = await launchBrowser();
-const context = await browser.newContext();
+// Optional OUTER WALL: host deployment-protection bypass (Vercel SSO/etc.). When
+// VERCEL_AUTOMATION_BYPASS_SECRET is set (preview target), send it on every request
+// so this script can reach the app's OWN login page through the protection layer.
+// Unset (local target) → no header, behaviour unchanged.
+const BYPASS = process.env.VERCEL_AUTOMATION_BYPASS_SECRET || '';
+const context = await browser.newContext(
+  BYPASS ? { extraHTTPHeaders: { 'x-vercel-protection-bypass': BYPASS } } : {},
+);
 const page = await context.newPage();
 
 try {
@@ -130,6 +144,14 @@ try {
   // >>> CUSTOMIZE END <<<
 
   await page.waitForURL(new RegExp(POST_LOGIN_PATTERN), { timeout: TIMEOUT_MS });
+  // Strong signal (opt-in): an authenticated-only element must be visible before
+  // capture, so a route that also renders for anon can't produce a false session.
+  if (AUTHED_ROLE && AUTHED_NAME) {
+    await page
+      .getByRole(AUTHED_ROLE, { name: new RegExp(AUTHED_NAME, 'i') })
+      .first()
+      .waitFor({ state: 'visible', timeout: TIMEOUT_MS });
+  }
   await context.storageState({ path: OUTPUT });
   console.error(`✓ Saved storage state to ${OUTPUT}`);
   process.exitCode = 0;

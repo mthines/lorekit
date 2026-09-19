@@ -26,17 +26,46 @@ function freshStateDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-hook-'));
 }
 
+// A fresh, isolated $HOME for the spawned hook. Before the SessionStart
+// skill-update drift nudge (`core/update-notify.mjs`, via `hook.mjs`'s
+// `appendUpdateNudge`), nothing in the `hook` command ever read the OS home
+// directory — the local store's home tier reads `LOREKIT_HOME`
+// (`shared/control.mjs`'s `homeRoot`), a SEPARATE env var this file already
+// isolates per-test where it matters (see the `LOREKIT_HOME: tmpHome` test
+// below). But `checkSkillVersions` also checks the GLOBAL skill scope via
+// `skillInstallDir(root, 'global', …)`, which resolves through
+// `shared/config.mjs`'s `homeDir()` — `$HOME`/`$USERPROFILE`, independent of
+// `LOREKIT_HOME` by design (that's what makes `lorekit install --global`
+// work without a project). Left at the real `process.env.HOME`, every
+// SessionStart fire in this file would consult the machine's ACTUAL global
+// skill install and, on real drift, write the developer's ACTUAL
+// `~/.lorekit/update-state.json` — a destructive side effect on a plain test
+// run. Isolating both here (still overridable via a test's own `env`, since
+// object-spread order puts `...env` last) keeps every hook fire hermetic,
+// matching what was already implicitly true before this nudge existed.
+function freshIsolatedHome() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-hook-home-'));
+}
+
 // Run the hook binary. Always returns { stdout, code } — the hook must exit 0.
 function runHook({ adapter, event, input = {}, dir = REPO, env = {} }) {
   const args = [BIN, 'hook', '--adapter', adapter, '--dir', dir];
   if (event) args.push('--event', event);
+  const isolatedHome = freshIsolatedHome();
   let stdout = '';
   let code = 0;
   try {
     stdout = execFileSync('node', args, {
       input: JSON.stringify(input),
       encoding: 'utf8',
-      env: { CLAUDE_PLUGIN_DATA: freshStateDir(), ...process.env, ...env },
+      env: {
+        CLAUDE_PLUGIN_DATA: freshStateDir(),
+        ...process.env,
+        HOME: isolatedHome,
+        USERPROFILE: isolatedHome,
+        LOREKIT_HOME: path.join(isolatedHome, '.lorekit'),
+        ...env,
+      },
     });
   } catch (e) {
     code = e.status ?? 1;
@@ -51,8 +80,16 @@ function runHookAsync({ adapter, event, input = {}, dir = REPO, env = {} }) {
   return new Promise((resolve) => {
     const args = [BIN, 'hook', '--adapter', adapter, '--dir', dir];
     if (event) args.push('--event', event);
+    const isolatedHome = freshIsolatedHome();
     const child = spawn('node', args, {
-      env: { CLAUDE_PLUGIN_DATA: freshStateDir(), ...process.env, ...env },
+      env: {
+        CLAUDE_PLUGIN_DATA: freshStateDir(),
+        ...process.env,
+        HOME: isolatedHome,
+        USERPROFILE: isolatedHome,
+        LOREKIT_HOME: path.join(isolatedHome, '.lorekit'),
+        ...env,
+      },
     });
     let stdout = '';
     child.stdout.on('data', (d) => (stdout += d));
