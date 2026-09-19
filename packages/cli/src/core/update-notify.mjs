@@ -88,19 +88,31 @@ export function driftSignature(results) {
 }
 
 /**
- * Render the one-line nudge, or `null` when nothing needs an update or none
- * of the drifted skills carry both an installed AND a shipped version to
- * quote (an `unknown` row with no readable installed version has nothing
- * concrete to show — it still counts toward the drift signature/throttle, it
- * just doesn't get named in the headline).
+ * Render the one-line nudge, or `null` when nothing needs an update. De-duped
+ * by skill name (the same `name -> shipped` Map `driftSignature` builds) —
+ * `skillsNeedingUpdate` returns one row per (skill, scope), and without the
+ * dedupe a skill outdated in BOTH the project and global install would count
+ * itself twice in the "(+N more)" tail. An `unknown` row (no readable
+ * installed version — the drift signature counts it too, see
+ * `driftSignature`) still gets named, just without a "vX →" on its left side,
+ * so the nudge is never silently dropped for the one state that most needs a
+ * "go look" — a legacy install with no parseable version at all.
  */
 export function formatUpdateNudge(results) {
-  const needing = skillsNeedingUpdate(results).filter((r) => r.installed && r.shipped);
+  const bySkill = new Map();
+  for (const r of skillsNeedingUpdate(results)) {
+    if (!r.shipped || bySkill.has(r.name)) continue;
+    bySkill.set(r.name, r);
+  }
+  const needing = [...bySkill.values()];
   if (needing.length === 0) return null;
   const [first, ...rest] = needing;
   const extra = rest.length > 0 ? ` (+${rest.length} more)` : '';
+  const headline = first.installed
+    ? `${first.name} v${first.installed} → v${first.shipped}`
+    : `${first.name} → v${first.shipped}`;
   return (
-    `LoreKit skills are outdated (${first.name} v${first.installed} → v${first.shipped}${extra}). ` +
+    `LoreKit skills are outdated (${headline}${extra}). ` +
     'Run `lorekit update` to refresh.'
   );
 }

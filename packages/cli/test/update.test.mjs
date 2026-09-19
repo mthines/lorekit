@@ -172,3 +172,62 @@ test('update reports nothing to do when no skill is installed anywhere', async (
     assert.equal(res['lorekit.cli.update.outdated'], 0);
   });
 });
+
+test('update --project reports nothing to do when the project scope is empty', async () => {
+  // Regression: `targetScopes` used to return `['project']` for an explicit
+  // --project flag WITHOUT checking whether anything was actually installed
+  // there, so an empty project scope fell through to the "every skill already
+  // up to date" green message instead of the "nothing to update" report.
+  // Negative-assertion proof: reverting `targetScopes` to `if (args.project)
+  // return ['project'];` makes this assertion fail. Verified by hand.
+  const home = tmp('lk-upd-empty-project-home-'); // nothing installed anywhere
+  const emptyRoot = tmp('lk-upd-empty-project-root-');
+
+  await withHome(home, async () => {
+    const res = await update({ dir: emptyRoot, project: true });
+    assert.equal(res['lorekit.cli.update.scopes'], 0, 'an empty --project scope must report nothing to update');
+    assert.equal(res['lorekit.cli.update.outdated'], 0);
+  });
+});
+
+test('update --global prefers the global scope over --project when both are passed', async () => {
+  // Regression: `targetScopes` checked `args.project` before `args.global`,
+  // the opposite order from `install`/`uninstall`, so `--project --global`
+  // picked project — the one flag combination where the two commands could
+  // disagree about which scope wins.
+  const root = tmp('lk-upd-precedence-root-');
+  const home = tmp('lk-upd-precedence-home-');
+  await withHome(home, () =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true }),
+  );
+
+  await withHome(home, async () => {
+    const res = await update({ dir: root, project: true, global: true });
+    assert.equal(res['lorekit.cli.update.scopes'], 1, 'global has an install, project does not');
+  });
+});
+
+test('update removes a file the shipped skill no longer ships', async () => {
+  // Regression: `copyDir` only ever writes, so a rule/reference file dropped
+  // from a newer skill version survived every future `update` forever while
+  // `update` still reported a clean refresh. Negative-assertion proof:
+  // removing the `pruneRemoved` call before `copyDir` makes this assertion
+  // fail. Verified by hand.
+  const root = tmp('lk-upd-prune-root-');
+  const home = tmp('lk-upd-prune-home-');
+  await installProject(root, home);
+
+  const skillDir = path.join(root, '.claude', 'skills', 'lorekit-memory');
+  const staleFile = path.join(skillDir, 'rules', 'removed-in-newer-version.md');
+  fs.mkdirSync(path.dirname(staleFile), { recursive: true });
+  fs.writeFileSync(staleFile, '# stale content the shipped skill no longer has\n');
+
+  const skillMd = path.join(skillDir, 'SKILL.md');
+  downgrade(skillMd, '1.0.0', '0.1.0'); // force `update` to actually touch this skill
+
+  await withHome(home, async () => {
+    await update({ dir: root, project: true });
+  });
+
+  assert.equal(fs.existsSync(staleFile), false, 'update must prune content the shipped skill no longer ships');
+});

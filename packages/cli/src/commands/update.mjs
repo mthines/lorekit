@@ -9,10 +9,13 @@
 // agree on what counts as outdated.
 //
 // `--check` is a dry run: report drift, write nothing. Without it, `update`
-// re-copies (force) every skill into whichever scope(s) already have an
-// install — reusing `copyDir`, the exact same skill-copy path `install` uses,
-// so the two can never drift on what "installing a skill" means — and
-// refreshes that scope's hook command string via `upsertClaudeHooks`, the
+// first PRUNES any file present in the install that the shipped skill no
+// longer ships (`pruneRemoved` — `copyDir` only ever writes, so without this
+// a rule file a newer version dropped would survive every future refresh
+// forever), then re-copies (force) every skill into whichever scope(s)
+// already have an install — reusing `copyDir`, the exact same skill-copy path
+// `install` uses, so the two can never drift on what "installing a skill"
+// means — and refreshes that scope's hook command string via `upsertClaudeHooks`, the
 // same call `install --force` makes. That refresh is deliberately in scope:
 // a stale `npx -y @lorekit/cli@1.2.3 hook …` pin or an old runner path is the
 // same class of drift this command exists to fix, the call is idempotent
@@ -22,6 +25,8 @@
 // with neither, every scope that currently has an existing skill install is
 // refreshed — `update` never CREATES a fresh install, that stays `install`'s
 // job.
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   SKILLS,
   resolveProjectRoot,
@@ -35,12 +40,51 @@ import { checkSkillVersions, SKILL_SCOPES } from '../shared/skill-versions.mjs';
 import { log, heading, status, c } from '../shared/util.mjs';
 
 // Which scopes `update` should touch. Explicit `--project`/`--global` narrow
-// to exactly one; with neither, every scope holding at least one installed
-// skill (any state other than `not-installed`) is refreshed.
+// to exactly one — but only when that scope actually has something installed;
+// naming a scope with nothing in it must still fall through to the "nothing
+// to update" report below, never silently report health on an empty scope.
+// `--global` is checked first, matching `install`/`uninstall`'s own
+// scope-flag precedence, so `--project --global` never picks the opposite
+// scope from its sibling commands.
+// With neither flag, every scope holding at least one installed skill (any
+// state other than `not-installed`) is refreshed.
 function targetScopes(args, results) {
-  if (args.project) return ['project'];
-  if (args.global) return ['global'];
-  return SKILL_SCOPES.filter((scope) => results.some((r) => r.scope === scope && r.state !== 'not-installed'));
+  const hasInstall = (scope) => results.some((r) => r.scope === scope && r.state !== 'not-installed');
+  if (args.global) return hasInstall('global') ? ['global'] : [];
+  if (args.project) return hasInstall('project') ? ['project'] : [];
+  return SKILL_SCOPES.filter(hasInstall);
+}
+
+// Remove any file under `dest` that no longer exists in `src` before the
+// refresh copy. `copyDir` only ever WRITES — it has no delete path — so a
+// rule/reference file a newer skill version dropped would otherwise survive
+// every future `update` forever, still sitting on disk and still read by the
+// agent alongside the content that superseded it, while `update` reports a
+// clean "already up to date" or a green "refreshed". Safe to prune
+// unconditionally: `update` never touches a scope the caller didn't already
+// have installed, and the refresh that follows overwrites everything that
+// DOES still exist in `src` anyway (`--force`), so nothing reachable from the
+// shipped skill is ever at risk — only content the shipped skill no longer
+// ships is removed.
+function pruneRemoved(src, dest) {
+  if (!fs.existsSync(dest)) return 0;
+  let removed = 0;
+  for (const entry of fs.readdirSync(dest, { withFileTypes: true })) {
+    const destPath = path.join(dest, entry.name);
+    const srcPath = path.join(src, entry.name);
+    if (entry.isDirectory()) {
+      if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
+        removed += pruneRemoved(srcPath, destPath);
+      } else {
+        fs.rmSync(destPath, { recursive: true, force: true });
+        removed++;
+      }
+    } else if (!fs.existsSync(srcPath)) {
+      fs.rmSync(destPath, { force: true });
+      removed++;
+    }
+  }
+  return removed;
 }
 
 const versionLabel = (v) => (v ? `v${v}` : 'unknown');
@@ -65,6 +109,7 @@ export async function update(args) {
   heading('Skills');
   let outdatedCount = 0;
   let filesWritten = 0;
+  let filesRemoved = 0;
   for (const scope of scopes) {
     for (const skill of SKILLS) {
       const entry = results.find((r) => r.scope === scope && r.name === skill.name);
@@ -85,9 +130,12 @@ export async function update(args) {
       }
 
       const dest = skillInstallDir(root, scope, skill.name);
+      const removed = pruneRemoved(skill.source, dest);
       const written = copyDir(skill.source, dest, { force: true });
       filesWritten += written;
-      status('pass', label, `${before} → ${after} (${written} file(s) written)`);
+      filesRemoved += removed;
+      const removedNote = removed > 0 ? `, ${removed} removed` : '';
+      status('pass', label, `${before} → ${after} (${written} file(s) written${removedNote})`);
     }
   }
 
@@ -109,7 +157,8 @@ export async function update(args) {
     log(`  ${c.yellow('!')} ${outdatedCount} skill install${plural} outdated — run \`lorekit update\` to apply.`);
   } else {
     const plural = outdatedCount === 1 ? '' : 's';
-    log(`  ${c.green('✓')} refreshed ${outdatedCount} skill install${plural} (${filesWritten} file(s) written).`);
+    const removedNote = filesRemoved > 0 ? `, ${filesRemoved} removed` : '';
+    log(`  ${c.green('✓')} refreshed ${outdatedCount} skill install${plural} (${filesWritten} file(s) written${removedNote}).`);
   }
   log('');
 

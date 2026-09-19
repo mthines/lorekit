@@ -43,6 +43,20 @@ async function outdatedProject() {
   return { root, home };
 }
 
+// A project with a LEGACY lorekit-memory install whose SKILL.md frontmatter
+// has no parseable `version:` line at all — `checkSkillVersions` classifies
+// this as `unknown`, not `outdated` (see `shared/skill-versions.mjs`).
+async function unknownVersionProject() {
+  const root = tmp('lk-notify-unknown-root-');
+  const home = tmp('lk-notify-unknown-installhome-');
+  await withHome(home, () => install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }));
+  const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
+  const body = fs.readFileSync(skillMd, 'utf8').replace(/^[ \t]*version: '1\.0\.0'\n/m, '');
+  assert.notEqual(body, fs.readFileSync(skillMd, 'utf8'), 'precondition — the version line must actually be removed');
+  fs.writeFileSync(skillMd, body);
+  return { root, home };
+}
+
 test('normalizeUpdateNotifyMode accepts the forgiving vocabulary', () => {
   assert.equal(normalizeUpdateNotifyMode('auto'), 'auto');
   assert.equal(normalizeUpdateNotifyMode('on'), 'auto');
@@ -65,6 +79,32 @@ test('resolveUpdateNudge fires once for a genuinely outdated install', async () 
     assert.match(nudge, /lorekit update/);
 
     // The throttle state was actually recorded, not just the return value.
+    const state = readUpdateState(updateStatePath({ LOREKIT_HOME: notifyHome }));
+    assert.equal(state.lastNotifiedVersion, 'lorekit-memory@1.0.0');
+    assert.equal(state.lastNotifiedAt, 1_000);
+  });
+});
+
+test('resolveUpdateNudge still fires (and records the throttle) for an `unknown` legacy install', async () => {
+  // Regression: `formatUpdateNudge` used to filter to rows carrying BOTH an
+  // installed AND a shipped version, so a legacy install with no parseable
+  // version at all (`unknown` state — installed=null) was silently dropped
+  // from the headline. When it was the ONLY drifted skill, formatUpdateNudge
+  // returned null, which made `resolveUpdateNudge` bail out BEFORE writing
+  // the throttle state — contradicting the very state this install most needs
+  // surfaced.
+  const { root, home } = await unknownVersionProject();
+  const notifyHome = tmp('lk-notify-unknown-state-');
+  await withHome(home, () => {
+    const nudge = resolveUpdateNudge(root, { notify: 'auto', now: 1_000, env: { LOREKIT_HOME: notifyHome } });
+    assert.match(nudge, /outdated/i);
+    assert.match(nudge, /lorekit-memory/);
+    assert.match(nudge, /lorekit update/);
+    assert.doesNotMatch(nudge, /v\d.*→/, 'no installed version is known, so no "vX →" should be printed');
+
+    // The throttle state was actually recorded — this is the assertion that
+    // fails without the fix, since the old code returned null before reaching
+    // writeUpdateState at all.
     const state = readUpdateState(updateStatePath({ LOREKIT_HOME: notifyHome }));
     assert.equal(state.lastNotifiedVersion, 'lorekit-memory@1.0.0');
     assert.equal(state.lastNotifiedAt, 1_000);
