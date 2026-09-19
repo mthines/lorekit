@@ -6,6 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from '../src/store/format.mjs';
 import { createLocalStore, createTwoTierStore } from '../src/store/local.mjs';
+import { createRemoteStore } from '../src/store/remote.mjs';
+import { withRemote } from './helpers.mjs';
+
+const REMOTE_URL = 'https://ref.supabase.co/functions/v1/mcp';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-store-'));
@@ -478,4 +482,75 @@ test('local write leaves kind/host null when neither is supplied', async () => {
   const { entry } = await store.write({ scope: 'global', key: 'k', value: 'v' });
   assert.equal(entry.kind, null);
   assert.equal(entry.host, null);
+});
+
+// ── RemoteStore retention dimension forwarding ───────────────────────────────
+//
+// A real RemoteStore over a stubbed fetch (see withRemote in helpers.mjs),
+// not a hand-written double — the contract under test is what
+// policyCreate/groomPreview/groomRun put ON THE WIRE, which is exactly what a
+// double would let drift silently from the actual method bodies.
+
+test('RemoteStore.policyCreate forwards all eight dimension filters', async () => {
+  const store = createRemoteStore({ endpoint: REMOTE_URL, token: 'lk_rw_test' });
+  const { calls } = await withRemote(
+    () =>
+      store.policyCreate({
+        scope: 'global',
+        name: 'n',
+        tags: ['a', 'b'],
+        tags_mode: 'all',
+        source_agent: ['aw'],
+        source_agent_mode: 'nin',
+        trigger: ['stuck-loop'],
+        kind: ['bus'],
+        host: ['reviewer'],
+        origin_repo: ['o/r'],
+        origin_branch: ['main'],
+        origin_pr: ['482'],
+      }),
+    { respond: () => ({ status: 201, body: { id: 'p1' } }) },
+  );
+  const [call] = calls;
+  assert.equal(call.method, 'POST');
+  assert.deepEqual(call.body.tags, ['a', 'b']);
+  assert.equal(call.body.tags_mode, 'all');
+  assert.deepEqual(call.body.source_agent, ['aw']);
+  assert.equal(call.body.source_agent_mode, 'nin');
+  assert.deepEqual(call.body.trigger, ['stuck-loop']);
+  assert.deepEqual(call.body.kind, ['bus']);
+  assert.deepEqual(call.body.host, ['reviewer']);
+  assert.deepEqual(call.body.origin_repo, ['o/r']);
+  assert.deepEqual(call.body.origin_branch, ['main']);
+  assert.deepEqual(call.body.origin_pr, ['482']);
+});
+
+test('RemoteStore.groomPreview and groomRun both forward dimension filters, never policy_id together with scope', async () => {
+  const store = createRemoteStore({ endpoint: REMOTE_URL, token: 'lk_rw_test' });
+  const { calls } = await withRemote(
+    async () => {
+      await store.groomPreview({ scope: 'global', kind: ['bus'], kind_mode: 'in' });
+      await store.groomRun({ scope: 'global', kind: ['bus'], kind_mode: 'in' });
+    },
+    { respond: () => ({ status: 200, body: { count: 0, keys: [] } }) },
+  );
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.body.scope, 'global');
+    assert.deepEqual(call.body.kind, ['bus']);
+    assert.equal(call.body.kind_mode, 'in');
+    assert.equal('policy_id' in call.body, false);
+  }
+});
+
+test('RemoteStore.policyUpdate forwards a dimension-clearing patch verbatim, keeping explicit null', async () => {
+  const store = createRemoteStore({ endpoint: REMOTE_URL, token: 'lk_rw_test' });
+  const { calls } = await withRemote(
+    () => store.policyUpdate('p1', { kind: null, host: ['reviewer', 'aw'] }),
+    { respond: () => ({ status: 200, body: { id: 'p1' } }) },
+  );
+  const [call] = calls;
+  assert.equal(call.method, 'PATCH');
+  assert.equal(call.body.kind, null);
+  assert.deepEqual(call.body.host, ['reviewer', 'aw']);
 });

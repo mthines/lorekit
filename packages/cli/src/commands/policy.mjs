@@ -15,7 +15,19 @@ import { resolveProjectRoot } from '../shared/config.mjs';
 import { loadControl, resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import { log, err, c, select } from '../shared/util.mjs';
-import { parseIntFlag } from '../shared/flags.mjs';
+import { parseIntFlag, parseDimensionConditions } from '../shared/flags.mjs';
+
+/** `field` → display label for `formatPolicy`'s dimension summary. */
+const DIMENSION_DISPLAY = [
+  ['tags', 'tags_mode', 'tags'],
+  ['source_agent', 'source_agent_mode', 'source_agent'],
+  ['trigger', 'trigger_mode', 'trigger'],
+  ['kind', 'kind_mode', 'kind'],
+  ['host', 'host_mode', 'host'],
+  ['origin_repo', 'origin_repo_mode', 'origin_repo'],
+  ['origin_branch', 'origin_branch_mode', 'origin_branch'],
+  ['origin_pr', 'origin_pr_mode', 'origin_pr'],
+];
 
 function pickRemote({ root, env, args }) {
   const { remoteDenied } = resolveDenies(root, { env });
@@ -32,6 +44,12 @@ function formatPolicy(p) {
   if (p.max_seen_count != null) conditions.push(`max_seen_count=${p.max_seen_count}`);
   if (p.max_read_count != null) conditions.push(`max_read_count=${p.max_read_count}`);
   if (p.max_opened_count != null) conditions.push(`max_opened_count=${p.max_opened_count}`);
+  for (const [field, modeField, label] of DIMENSION_DISPLAY) {
+    const values = p[field];
+    if (!Array.isArray(values) || values.length === 0) continue;
+    const mode = p[modeField];
+    conditions.push(`${label}${mode ? `:${mode}` : ''}=[${values.join(',')}]`);
+  }
   const mode = p.mode === 'auto' ? (p.enabled ? c.green('auto (enabled)') : c.dim('auto (disabled)')) : c.dim('review');
   return `${c.cyan(p.id)}  ${c.bold(p.name)}  ${c.dim(p.scope)}  ${mode}${conditions.length ? `  ${c.dim(conditions.join(', '))}` : ''}`;
 }
@@ -52,7 +70,7 @@ async function list(args, store) {
 
 async function create(args, store) {
   if (!args.scope || !args.name) {
-    err(`${c.red('Usage:')} lorekit policy create --scope <scope> --name <name> [--mode review|auto] [--enabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N] [--max-read-count N] [--max-opened-count N]`);
+    err(`${c.red('Usage:')} lorekit policy create --scope <scope> --name <name> [--mode review|auto] [--enabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N] [--max-read-count N] [--max-opened-count N] [--tags a,b --tags-mode any|all|none] [--kind|--host|--trigger|--source-agent|--origin-repo|--origin-branch|--origin-pr a,b [--<dim>-mode in|nin]]`);
     return 1;
   }
   const minAge = parseIntFlag(args['min-age-days'], 'min-age-days');
@@ -69,6 +87,8 @@ async function create(args, store) {
     err(`${c.red('Error:')} --mode must be "review" or "auto"`);
     return 1;
   }
+  const dims = parseDimensionConditions(args, { clearable: false });
+  if (dims.error) { err(`${c.red('Error:')} ${dims.error}`); return 1; }
 
   const res = await store.policyCreate({
     scope: args.scope,
@@ -80,6 +100,7 @@ async function create(args, store) {
     max_seen_count: maxSeen.value,
     max_read_count: maxRead.value,
     max_opened_count: maxOpened.value,
+    ...dims.conditions,
   });
   if (!res.ok) {
     const msg = res.error?.message ?? res.error ?? res.networkError ?? 'the server rejected the request';
@@ -95,7 +116,7 @@ async function create(args, store) {
 async function update(args, store) {
   const id = args._[2];
   if (!id) {
-    err(`${c.red('Usage:')} lorekit policy update <id> [--name N] [--mode review|auto] [--enabled|--disabled] [--min-age-days N] [--unseen-days N] [--max-seen-count N] [--max-read-count N] [--max-opened-count N]`);
+    err(`${c.red('Usage:')} lorekit policy update <id> [--name N] [--mode review|auto] [--enabled|--disabled] [--min-age-days N|--clear-min-age-days] [...] [--tags a,b|--clear-tags] [--kind|--host|--trigger|--source-agent|--origin-repo|--origin-branch|--origin-pr a,b|--clear-<dim>] [--<dim>-mode ...]`);
     return 1;
   }
   if (args.mode !== undefined && args.mode !== 'review' && args.mode !== 'auto') {
@@ -121,6 +142,9 @@ async function update(args, store) {
     if (parsed.error) { err(`${c.red('Error:')} ${parsed.error}`); return 1; }
     patch[field] = parsed.value;
   }
+  const dims = parseDimensionConditions(args, { clearable: true });
+  if (dims.error) { err(`${c.red('Error:')} ${dims.error}`); return 1; }
+  Object.assign(patch, dims.conditions);
   if (Object.keys(patch).length === 0) {
     err(`${c.red('Error:')} at least one field to update is required`);
     return 1;

@@ -11,7 +11,7 @@ import { resolveProjectRoot } from '../shared/config.mjs';
 import { loadControl, resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import { log, err, c, select } from '../shared/util.mjs';
-import { parseIntFlag } from '../shared/flags.mjs';
+import { parseIntFlag, parseDimensionConditions } from '../shared/flags.mjs';
 
 /** Resolve the groom.preview/groom.run request from CLI args. */
 export function parseGroomRequest(args) {
@@ -33,6 +33,8 @@ export function parseGroomRequest(args) {
   if (maxRead.error) return { error: maxRead.error };
   const maxOpened = parseIntFlag(args['max-opened-count'], 'max-opened-count');
   if (maxOpened.error) return { error: maxOpened.error };
+  const dims = parseDimensionConditions(args, { clearable: false });
+  if (dims.error) return { error: dims.error };
 
   return {
     request: {
@@ -42,6 +44,7 @@ export function parseGroomRequest(args) {
       max_seen_count: maxSeen.value,
       max_read_count: maxRead.value,
       max_opened_count: maxOpened.value,
+      ...dims.conditions,
     },
   };
 }

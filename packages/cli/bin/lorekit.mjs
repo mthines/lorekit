@@ -902,7 +902,10 @@ ${c.bold('Options')}
 ${c.bold('Usage')}
   lorekit groom --policy-id <id> [--run] [--yes] [--json]
   lorekit groom --scope <s> [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>]
-                            [--max-read-count <n>] [--max-opened-count <n>] [--run] [--yes] [--json]
+                            [--max-read-count <n>] [--max-opened-count <n>]
+                            [--tags a,b --tags-mode any|all|none]
+                            [--kind|--host|--trigger|--source-agent|--origin-repo|--origin-branch|--origin-pr a,b [--<dim>-mode in|nin]]
+                            [--run] [--yes] [--json]
 
 Resolves the SAME candidates a saved policy or an inline condition set would
 catch, via the retention-policy candidate query — a previewed count always
@@ -927,6 +930,12 @@ ${c.bold('Options')}
                              the hundreds — a small value matches nothing
       --max-opened-count <n> Match only lessons an agent DELIBERATELY fetched at most n
                              times. Bulk reads do NOT count, so 0 means never chosen
+      --tags <a,b>, --tags-mode <any|all|none>
+                             Match lessons carrying these labels (default: any)
+      --kind, --host, --trigger, --source-agent,
+      --origin-repo, --origin-branch, --origin-pr <a,b>
+      --<dim>-mode <in|nin>  Match lessons whose dimension is one of these
+                             values (default: in); comma-separated
       --run                  Archive the matches instead of previewing
   -y, --yes                  Confirm --run; required when non-interactive
       --json                 Machine-readable result
@@ -941,12 +950,17 @@ ${c.bold('Usage')}
   lorekit policy create --scope <s> --name <n> [--mode review|auto] [--enabled]
                          [--min-age-days <n>] [--unseen-days <n>] [--max-seen-count <n>]
                          [--max-read-count <n>] [--max-opened-count <n>]
+                         [--tags a,b --tags-mode any|all|none]
+                         [--kind|--host|--trigger|--source-agent|--origin-repo|--origin-branch|--origin-pr a,b [--<dim>-mode in|nin]]
   lorekit policy update <id> [--name <n>] [--mode review|auto] [--enabled|--disabled]
-                         [--min-age-days <n>|--clear-min-age-days] [...] [--json]
+                         [--min-age-days <n>|--clear-min-age-days] [...]
+                         [--tags a,b|--clear-tags] [--<dim> a,b|--clear-<dim>] [--<dim>-mode in|nin] [--json]
   lorekit policy delete <id> [--yes] [--json]
 
 A policy is a saved retention rule: a scope plus AND-ed conditions
-(min-age-days / unseen-days / max-seen-count / max-read-count / max-opened-count).
+(min-age-days / unseen-days / max-seen-count / max-read-count / max-opened-count,
+plus the eight dimension filters — tags/kind/host/trigger/source-agent/
+origin-repo/origin-branch/origin-pr).
 \`mode: review\` surfaces it for
 you to run by hand with ${c.cyan('lorekit groom --policy-id')}; \`mode: auto\` gets swept
 nightly, but ONLY once you also pass --enabled — auto starts disabled on
@@ -962,8 +976,14 @@ ${c.bold('Options')}
       --min-age-days <n>, --unseen-days <n>, --max-seen-count <n>, --max-read-count <n>,
       --max-opened-count <n>
                              Conditions (create/update)
+      --tags <a,b>, --tags-mode <any|all|none>
+      --kind, --host, --trigger, --source-agent,
+      --origin-repo, --origin-branch, --origin-pr <a,b>
+      --<dim>-mode <in|nin>  Dimension conditions (create/update); comma-separated
       --clear-min-age-days, --clear-unseen-days, --clear-max-seen-count,
-      --clear-max-read-count, --clear-max-opened-count
+      --clear-max-read-count, --clear-max-opened-count,
+      --clear-tags, --clear-kind, --clear-host, --clear-trigger,
+      --clear-source-agent, --clear-origin-repo, --clear-origin-branch, --clear-origin-pr
                              Remove a condition (update only)
   -y, --yes                  Confirm delete; required when non-interactive
       --json                 Machine-readable result
@@ -1088,6 +1108,16 @@ const KNOWN_FLAGS = [
   'name', 'mode', 'enabled', 'disabled',
   'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count',
   'clear-max-opened-count', 'off',
+  // The eight retention dimension filters' `*-mode` value flags (the value
+  // flags themselves — tags/source-agent/trigger/kind/host/origin-repo/
+  // origin-branch/origin-pr — are already listed above for `write`) plus
+  // their `clear-*` booleans (policy update only). See
+  // `shared/flags.mjs`'s `parseDimensionConditions`, the one place that
+  // owns the flag-name ↔ field-name ↔ mode-enum table these mirror.
+  'tags-mode', 'source-agent-mode', 'trigger-mode', 'kind-mode', 'host-mode',
+  'origin-repo-mode', 'origin-branch-mode', 'origin-pr-mode',
+  'clear-tags', 'clear-source-agent', 'clear-trigger', 'clear-kind', 'clear-host',
+  'clear-origin-repo', 'clear-origin-branch', 'clear-origin-pr',
   // `obligations`
   'files', 'strict', 'strict-all',
 ];
@@ -1102,7 +1132,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all', 'clear-tags', 'clear-source-agent', 'clear-trigger', 'clear-kind', 'clear-host', 'clear-origin-repo', 'clear-origin-branch', 'clear-origin-pr'],
     known: KNOWN_FLAGS,
   });
 

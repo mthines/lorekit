@@ -42,6 +42,20 @@ function stripUndefined(obj) {
   return out;
 }
 
+// Drop only `undefined` — keeps an explicit `null`. Bare `stripUndefined`
+// above is right for a CREATE body, where an omitted dimension and an
+// explicit `null` mean the same "not filtered". It is wrong for a PATCH,
+// where `null` is the caller's explicit instruction to CLEAR a
+// previously-set condition (`policy update --clear-kind`) — dropping it
+// there means the field silently stays whatever it already was, which is
+// the opposite of what was asked. Named for what it keeps, not what it
+// drops, since "strip" alone reads as "strip everything falsy-ish".
+function stripUndefinedKeepNull(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {})) if (v !== undefined) out[k] = v;
+  return out;
+}
+
 /**
  * A read that could not be answered — a transport failure or a non-2xx status,
  * as opposed to "the lesson is not there".
@@ -768,9 +782,20 @@ class RemoteStore {
     return { ok: true, entries: Array.isArray(res.data?.entries) ? res.data.entries : [] };
   }
 
-  // POST /policies → the created policy object.
-  async policyCreate({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
-    const body = stripUndefined({ scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
+  // POST /policies → the created policy object. `...dims` carries whichever
+  // of the eight dimension filters (+ their `_mode` companions) the caller
+  // named — see `parseDimensionConditions` in `shared/flags.mjs`, the shared
+  // parser policy create/update and groom all go through.
+  async policyCreate({
+    scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count,
+    tags, tags_mode, source_agent, source_agent_mode, trigger, trigger_mode, kind, kind_mode, host, host_mode,
+    origin_repo, origin_repo_mode, origin_branch, origin_branch_mode, origin_pr, origin_pr_mode,
+  } = {}) {
+    const body = stripUndefined({
+      scope, name, mode, enabled, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count,
+      tags, tags_mode, source_agent, source_agent_mode, trigger, trigger_mode, kind, kind_mode, host, host_mode,
+      origin_repo, origin_repo_mode, origin_branch, origin_branch_mode, origin_pr, origin_pr_mode,
+    });
     const res = await this._rest('/memories/policies', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, policy: res.data };
@@ -778,10 +803,11 @@ class RemoteStore {
 
   // PATCH /policies/:id → the updated policy object. An omitted field is left
   // unchanged; pass an explicit `null` in the patch to clear a condition —
-  // this method does not strip nulls, only `undefined` (stripUndefined keeps
-  // that distinction, which is the whole point of the RPC's JSONB-patch design).
+  // this method does not strip nulls, only `undefined` (stripUndefinedKeepNull
+  // keeps that distinction, which is the whole point of the RPC's JSONB-patch
+  // design and of `policy update --clear-*`).
   async policyUpdate(id, patch = {}) {
-    const body = stripUndefined(patch);
+    const body = stripUndefinedKeepNull(patch);
     const res = await this._rest(`/memories/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, policy: res.data };
@@ -796,9 +822,18 @@ class RemoteStore {
 
   // POST /groom/preview → { count, keys: [{ scope, key }] } — the SAME
   // candidates a groom() run would archive. Pass either `policy_id` or
-  // `scope` (+ optional conditions), never both.
-  async groomPreview({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
-    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
+  // `scope` (+ optional conditions, including the eight dimension filters —
+  // see policyCreate's comment), never both.
+  async groomPreview({
+    policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count,
+    tags, tags_mode, source_agent, source_agent_mode, trigger, trigger_mode, kind, kind_mode, host, host_mode,
+    origin_repo, origin_repo_mode, origin_branch, origin_branch_mode, origin_pr, origin_pr_mode,
+  } = {}) {
+    const body = stripUndefined({
+      policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count,
+      tags, tags_mode, source_agent, source_agent_mode, trigger, trigger_mode, kind, kind_mode, host, host_mode,
+      origin_repo, origin_repo_mode, origin_branch, origin_branch_mode, origin_pr, origin_pr_mode,
+    });
     const res = await this._rest('/memories/groom/preview', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, count: res.data?.count ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
@@ -806,8 +841,16 @@ class RemoteStore {
 
   // POST /groom/run → archives every previewed candidate, in one transaction.
   // Soft-archive only (recoverable via restore); never hard-deletes.
-  async groomRun({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count } = {}) {
-    const body = stripUndefined({ policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
+  async groomRun({
+    policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count,
+    tags, tags_mode, source_agent, source_agent_mode, trigger, trigger_mode, kind, kind_mode, host, host_mode,
+    origin_repo, origin_repo_mode, origin_branch, origin_branch_mode, origin_pr, origin_pr_mode,
+  } = {}) {
+    const body = stripUndefined({
+      policy_id, scope, min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count,
+      tags, tags_mode, source_agent, source_agent_mode, trigger, trigger_mode, kind, kind_mode, host, host_mode,
+      origin_repo, origin_repo_mode, origin_branch, origin_branch_mode, origin_pr, origin_pr_mode,
+    });
     const res = await this._rest('/memories/groom/run', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, httpStatus: res.httpStatus, networkError: res.networkError };
     return { ok: true, archived: res.data?.archived ?? 0, keys: Array.isArray(res.data?.keys) ? res.data.keys : [] };
