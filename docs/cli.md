@@ -48,7 +48,29 @@ Connectivity/token/scope health checks; `connectivity` probes the PUBLIC `/healt
 therefore proves only the network path, so a separate `authentication` check calls
 `RemoteStore.verifyAuth()` — one authenticated `GET /memories?limit=1` — and FAILS on a 401
 revoked/deleted token, PASSES a 403 as accepted-but-unpermitted [a healthy `lk_wo_*`], and never
-turns a 429/5xx/network error into a revoked verdict
+turns a 429/5xx/network error into a revoked verdict. Every installed skill also reports its
+**version** against the one this running CLI ships (`checkSkillVersions` in
+`shared/skill-versions.mjs` — an offline compare of `metadata.version` in each SKILL.md's
+frontmatter, checked in BOTH the project and global install locations): a `current` install is a
+`pass` naming its version, an `outdated` or `unknown` (legacy, predates version stamping) install is
+a `warn` — never a `fail`, the skill still works — naming the installed and shipped versions and
+pointing at `lorekit update --<scope>`, the same scope-aware wording the hooks-upgrade line above it
+uses.
+
+### `update`
+
+Offline refresh of the bundled skills (and their hook command string) to the version shipped with
+the running CLI — the fix `doctor`'s outdated-skill warning and the SessionStart drift nudge (below)
+both point at. Fully offline: shipped skill source travels in the same npm tarball as the running
+CLI, so "installed vs shipped" is a filesystem compare through the same `shared/skill-versions.mjs`
+module all three surfaces share — no network probe, no npm-registry lookup. Re-copies (force) every
+skill into whichever scope(s) already have an install, reusing `copyDir` (the same skill-copy path
+`install` uses) and refreshing that scope's hook command string via `upsertClaudeHooks` (the same
+call `install --force` makes, so a stale pinned runner or `npx` path is repaired too). `--project` /
+`--global` narrow to one scope; with neither, every scope holding at least one existing skill install
+is refreshed. `update` never CREATES a fresh install — that stays `install`'s job, so a scope with
+nothing installed is left alone and reported as such. `--check` is a dry run: reports drift (current
+vs shipped version per skill) and writes nothing.
 
 ### `list`
 
@@ -389,7 +411,15 @@ critical path], **relevant lessons + a write-nudge on a tool failure** [`failure
 scope hierarchy, deduped/capped by the pure `dedupeRelevant` — not a post-filter of the injected
 set], and a **friction-gated** retrospective nudge on Stop [`hooks.stop`: `friction` default |
 `always` | `off`; `core/friction.mjs`'s `detectFriction`/`shouldRetrospect` read the transcript and
-stay silent on a clean session]; always exit 0, best-effort, never blocks the host
+stay silent on a clean session]. SessionStart also carries a **skill-update nudge** [gated by
+`updates.notify`: `auto` default | `off`; when a shipped skill has drifted past what is installed
+(`checkSkillVersions`, the same offline compare `doctor` and `update` use), `core/update-notify.mjs`
+appends one terse line — `LoreKit skills are outdated (<skill> v<installed> → v<shipped>). Run
+\`lorekit update\` to refresh.` — after the lessons block. Throttled to at most once per NEW shipped
+version plus a 7-day cooldown on repeating the same version, tracked in
+`$LOREKIT_HOME/update-state.json` (never created when `updates.notify` is `off`); any error is
+swallowed and nothing but that state file is ever written]; always exit 0, best-effort, never blocks
+the host
 
 ### `mcp`
 
