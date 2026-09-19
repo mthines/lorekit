@@ -29,7 +29,7 @@ import {
   toolGroomRun,
   toolProtect,
 } from './tools.ts';
-import type { MemoryToolName, OrgToolName } from '../_shared/schemas/tool-catalog.ts';
+import type { MemoryToolName, OrgToolName, RetentionToolName } from '../_shared/schemas/tool-catalog.ts';
 
 // memory.* tools — dispatched with (db, args, userId, span, keyScoping).
 export const MEMORY_TOOLS = {
@@ -56,8 +56,22 @@ export const ORG_TOOLS = {
   'org.delete': toolOrgDelete,
 } as const satisfies Record<OrgToolName, unknown>;
 
+// policy.*/groom.* tools — dispatched with (db, args, userId, span), where
+// userId is the RESOLVED owner (analyticsUserId), never the JWT-null
+// toolUserId: the underlying lorekit_policy_*/lorekit_groom_* RPCs take
+// p_user_id explicitly and have no auth.uid() fallback.
+export const RETENTION_TOOLS = {
+  'policy.list': toolPolicyList,
+  'policy.create': toolPolicyCreate,
+  'policy.update': toolPolicyUpdate,
+  'policy.delete': toolPolicyDelete,
+  'groom.preview': toolGroomPreview,
+  'groom.run': toolGroomRun,
+} as const satisfies Record<RetentionToolName, unknown>;
+
 /** Every dispatchable name — the unknown-tool guard in `tools/call`. */
 export const ALL_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...Object.keys(MEMORY_TOOLS),
   ...Object.keys(ORG_TOOLS),
+  ...Object.keys(RETENTION_TOOLS),
 ]);

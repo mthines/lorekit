@@ -179,6 +179,7 @@ export function renderEdgeDispatch(catalog) {
   const { MCP_TOOLS } = catalog;
   const memory = MCP_TOOLS.filter((t) => t.name.startsWith('memory.'));
   const org = MCP_TOOLS.filter((t) => t.name.startsWith('org.'));
+  const retention = MCP_TOOLS.filter((t) => t.name.startsWith('policy.') || t.name.startsWith('groom.'));
 
   const imports = MCP_TOOLS.map((t) => `  ${t.surfaces.handler},`).join('\n');
   const entry = (t) => `  '${t.name}': ${t.surfaces.handler},`;
@@ -187,7 +188,7 @@ export function renderEdgeDispatch(catalog) {
 import {
 ${imports}
 } from './tools.ts';
-import type { MemoryToolName, OrgToolName } from '../_shared/schemas/tool-catalog.ts';
+import type { MemoryToolName, OrgToolName, RetentionToolName } from '../_shared/schemas/tool-catalog.ts';
 
 // memory.* tools — dispatched with (db, args, userId, span, keyScoping).
 export const MEMORY_TOOLS = {
@@ -200,10 +201,19 @@ export const ORG_TOOLS = {
 ${org.map(entry).join('\n')}
 } as const satisfies Record<OrgToolName, unknown>;
 
+// policy.*/groom.* tools — dispatched with (db, args, userId, span), where
+// userId is the RESOLVED owner (analyticsUserId), never the JWT-null
+// toolUserId: the underlying lorekit_policy_*/lorekit_groom_* RPCs take
+// p_user_id explicitly and have no auth.uid() fallback.
+export const RETENTION_TOOLS = {
+${retention.map(entry).join('\n')}
+} as const satisfies Record<RetentionToolName, unknown>;
+
 /** Every dispatchable name — the unknown-tool guard in \`tools/call\`. */
 export const ALL_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...Object.keys(MEMORY_TOOLS),
   ...Object.keys(ORG_TOOLS),
+  ...Object.keys(RETENTION_TOOLS),
 ]);
 `;
 }

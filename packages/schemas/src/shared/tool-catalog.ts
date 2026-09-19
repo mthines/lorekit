@@ -747,6 +747,15 @@ export const MCP_TOOLS = [
 export type McpToolName = (typeof MCP_TOOLS)[number]['name'];
 export type MemoryToolName = Extract<McpToolName, `memory.${string}`>;
 export type OrgToolName = Extract<McpToolName, `org.${string}`>;
+/**
+ * `policy.*` + `groom.*` — the retention family. Split out from `memory.*`
+ * because `gen-surfaces.mjs`'s dispatch grouping used to be prefix-only and
+ * silently dropped these two prefixes from every dispatch map (see the edge
+ * `-32601` bug this type was added to fix); kept as its own union so a THIRD
+ * missed prefix in the future fails the same way — a compile error, not a
+ * silent gap.
+ */
+export type RetentionToolName = Extract<McpToolName, `policy.${string}` | `groom.${string}`>;
 
 /** Every tool name the catalog declares, in wire order. */
 export const MCP_TOOL_NAMES: readonly string[] = MCP_TOOLS.map((t) => t.name);

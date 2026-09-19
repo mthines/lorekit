@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * Freshness and portability guard for `scripts/codegen/gen-surfaces.mjs`.
@@ -215,5 +215,57 @@ describe('the published CLI artifact stays publishable', () => {
   it('is pure data — no imports, no require', () => {
     expect(artifact()).not.toMatch(/^\s*import\s/m);
     expect(artifact()).not.toMatch(/require\s*\(/);
+  });
+});
+
+describe('edge dispatch coverage', () => {
+  /**
+   * `renderEdgeDispatch` used to group dispatch by prefix ONLY (`memory.` /
+   * `org.`), so `policy.*`/`groom.*` were imported into the generated module
+   * but never placed in a dispatch map — advertised by `tools/list`, rejected
+   * with `-32601` by `tools/call`. Nothing above caught it: the freshness
+   * cases only prove the committed file matches what the generator emits
+   * TODAY, and idempotence/perturbation say nothing about COVERAGE. This is
+   * the guard for that specific shape of bug — every `mcp:true` op reachable —
+   * so a future op landing under a third unrecognised prefix fails HERE
+   * instead of shipping a silent `-32601`.
+   *
+   * Reads the catalog directly (never the edge artifact) for the "which ops
+   * should be dispatchable" side, so the assertion cannot be satisfied by a
+   * generated file that merely agrees with itself.
+   */
+  it('every mcp:true catalog op is a dispatch key in the generated edge module', async () => {
+    const generatorModule = await import(pathToFileURL(path.join(repoRoot, generator)).href);
+    const catalog = await generatorModule.loadCatalog();
+    const dispatchable = catalog.MCP_TOOLS.filter((t: { surfaces: { mcp?: boolean } }) => t.surfaces.mcp === true).map(
+      (t: { name: string }) => t.name,
+    );
+    // Anti-vacuity: a catalog the import failed to parse would make every
+    // assertion below trivially pass on an empty list.
+    expect(dispatchable.length).toBeGreaterThan(0);
+
+    const generated = readFileSync(path.join(repoRoot, edgeArtifact), 'utf8');
+    for (const name of dispatchable) {
+      const key = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(generated, `${name} is mcp:true but has no dispatch key in ${edgeArtifact}`).toMatch(
+        new RegExp(`'${key}':`),
+      );
+    }
+  });
+
+  it('ALL_TOOL_NAMES spreads every dispatch map the module declares — not a hardcoded subset', () => {
+    // Removing this test's exact bug: `RETENTION_TOOLS` existing as a map is
+    // not the same as `ALL_TOOL_NAMES` actually including it. Checked
+    // structurally (every `export const *_TOOLS` must appear as
+    // `...Object.keys(<name>)` inside the `ALL_TOOL_NAMES` block) so a fourth
+    // map added later fails here too, without executing Deno-only TS.
+    const generated = readFileSync(path.join(repoRoot, edgeArtifact), 'utf8');
+    const declaredMaps = [...generated.matchAll(/^export const (\w+_TOOLS) = \{/gm)].map((m) => m[1] as string);
+    expect(declaredMaps.length).toBeGreaterThan(0);
+
+    const allToolNamesBlock = generated.slice(generated.indexOf('export const ALL_TOOL_NAMES'));
+    const spreadMaps = [...allToolNamesBlock.matchAll(/\.\.\.Object\.keys\((\w+)\)/g)].map((m) => m[1] as string);
+
+    expect([...spreadMaps].sort()).toEqual([...declaredMaps].sort());
   });
 });

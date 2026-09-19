@@ -20,7 +20,7 @@ import { type Params } from './tools.ts';
 //
 // Only the maps moved. Every decision below — the auth gate, the span bracket,
 // the try/catch, the usage events — stays here and stays hand-written.
-import { MEMORY_TOOLS, ORG_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
+import { MEMORY_TOOLS, ORG_TOOLS, RETENTION_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
 import { type Span } from '../_shared/telemetry/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
@@ -147,6 +147,12 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     span.setAttributes({ 'mcp.tool.name': toolName });
 
     const isOrgTool = toolName in ORG_TOOLS;
+    // policy.*/groom.* — the retention family (00093+; previously -32601'd
+    // because gen-surfaces.mjs's dispatch grouping was prefix-only and never
+    // placed them in a map). Dispatched with the SAME (db, args, userId, span)
+    // shape as org tools, but the userId passed is `analyticsUserId` (resolved
+    // below), never `toolUserId` — see the dispatch branch and its comment.
+    const isRetentionTool = toolName in RETENTION_TOOLS;
 
     // Permission gate, now shared by BOTH families. Org tools used to be
     // refused here outright unless the caller held a dashboard JWT, because
@@ -183,7 +189,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // inert for them. Skipped EXPLICITLY rather than left to that inertness: a
     // future org tool that happened to take a `scope`-named argument would
     // otherwise start silently obeying a memory-shaped rule.
-    if (!isOrgTool) {
+    //
+    // Retention tools DO carry a `scope` (policy.create/update, groom's inline
+    // conditions) but are skipped here too, matching the already-shipped REST
+    // `/policies` routes: those only `requireUserId` and do not token-scope-gate
+    // a policy's scope against the key allowlist. This is REST↔MCP parity, not
+    // a new hole — see plan.md's Decisions table. Enforcing key-scope gating on
+    // a policy's scope is a separate, deliberately out-of-scope change.
+    if (!isOrgTool && !isRetentionTool) {
       // Scope allowlist (migration 00068). Same class of denial as the two
       // above — authenticated, insufficient scope — so the same
       // JSONRPC_FORBIDDEN (HTTP 200), never -32001.
@@ -378,6 +391,18 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // `p_actor_user_id` and honoured only on a verified service_role
         // connection.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolUserId, toolSpan);
+      } else if (isRetentionTool) {
+        // policy.*/groom.* tools: (db, args, userId, span) — but unlike org
+        // AND memory tools, the userId passed here is `analyticsUserId` (the
+        // RESOLVED owner), never `toolUserId`. The underlying
+        // lorekit_policy_*/lorekit_groom_* RPCs take `p_user_id` explicitly
+        // and throw a UserInputError on null — there is no `auth.uid()`
+        // fallback the way the org RPCs have. `toolUserId` is null for every
+        // JWT caller, so passing it here would break policy/groom over MCP
+        // for exactly the dashboard-JWT path the REST `requireUserId(auth)`
+        // helper already resolves correctly. `analyticsUserId` is that same
+        // resolved owner for both JWT and api_key auth.
+        result = await RETENTION_TOOLS[toolName as keyof typeof RETENTION_TOOLS](db, toolArgs, analyticsUserId, toolSpan);
       } else {
         // memory.* tools: (db, args, toolUserId, span, keyScoping, correlationId)
         // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
