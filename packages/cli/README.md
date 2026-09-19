@@ -210,6 +210,27 @@ itself:
 A revoked token is a **failure**, not a warning: fix it by creating a new token
 and running `lorekit install --force`, which offers to replace the stored one.
 
+### `lorekit update`
+
+Offline refresh of the bundled skills (and their hook command string) to the
+version shipped with the running CLI — the fix `doctor`'s outdated-skill
+warning and the SessionStart drift nudge (`updates.notify`) both point at.
+Fully offline: the shipped skill source travels in the same npm tarball as
+this CLI, so "installed vs shipped" is a filesystem version compare, never a
+network call.
+
+```bash
+lorekit update            # refresh every scope that already has an install
+lorekit update --check    # dry run: report drift, write nothing
+lorekit update --project  # only the project (.claude/skills) install
+lorekit update --global   # only the global (~/.claude/skills) install
+```
+
+`update` never CREATES a fresh install — that stays `install`'s job, so a
+scope with nothing installed is reported and left alone. Refreshing prunes
+any file the shipped skill no longer ships before re-copying, so a
+dropped rule file doesn't silently outlive the version that removed it.
+
 ### `lorekit list` (alias `ls`)
 
 Shows the lessons that apply to **where you are** — the scopes `deriveScope`
@@ -1110,8 +1131,8 @@ also returns their headroom against the plan's memory cap.
 | Flag | Meaning |
 |------|---------|
 | `-d, --dir <path>` | Target project root (default: cwd) |
-| `--project` | Install into this repo: `.claude/skills` + `.mcp.json` (`install`; default) |
-| `--global` | Install for every project: `~/.claude/skills` + `~/.claude.json` (`install`) |
+| `--project` | Install into this repo: `.claude/skills` + `.mcp.json` (`install`; default). Narrows to the project scope (`update`) |
+| `--global` | Install for every project: `~/.claude/skills` + `~/.claude.json` (`install`). Narrows to the global scope (`update`) |
 | `-e, --endpoint <url>` | LoreKit MCP endpoint |
 | `-t, --token <token>` | LoreKit token |
 | `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
@@ -1125,6 +1146,7 @@ also returns their headroom against the plan's memory cap.
 | `--mcp-json` | Also write a committable project `.mcp.json` (auth via `${LOREKIT_TOKEN}`, no embedded token) for Claude Code on the web (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
+| `--check` | Dry run: report skill-install drift without writing anything (`update`) |
 | `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `invariants candidates` / `link` / `purge` / `purge-expired`) |
 | `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. On `show` / `write` it **names** the scope, overriding the positional |
 | `--key <key>` | Name the key outright (`show` / `write` / `link`) — the way to address a key that itself contains `::` |
