@@ -25,7 +25,7 @@ argument-hint: '[host-name]'
 license: MIT
 metadata:
   author: mthines
-  version: '1.0.0'
+  version: '1.1.0'
   workflow_type: memory-loop-authoring
   tags:
     - lorekit

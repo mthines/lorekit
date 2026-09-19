@@ -18,7 +18,7 @@ argument-hint: '[scope-hint]'
 license: MIT
 metadata:
   author: mthines
-  version: '1.0.0'
+  version: '1.1.0'
   workflow_type: shared-memory-grooming-and-consolidation
   tags:
     - lorekit

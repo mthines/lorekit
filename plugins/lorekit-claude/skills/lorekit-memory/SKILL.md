@@ -17,7 +17,7 @@ argument-hint: '[read|write] [scope-hint or lesson]'
 license: MIT
 metadata:
   author: mthines
-  version: '1.0.0'
+  version: '1.1.0'
   workflow_type: shared-memory-intake-and-retrospective
   tags:
     - lorekit
