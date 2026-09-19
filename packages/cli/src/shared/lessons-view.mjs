@@ -253,6 +253,36 @@ export function diffGroups(offline = {}, remote = {}) {
 // too terse to carry a durable observation (e.g. "yes", "fixed", "todo").
 export const MIN_VALUE_LEN = 12;
 
+// Blank the INTERIOR of fenced code blocks (``` or ~~~ fences) so example content
+// — a lesson documenting an `<!-- MARKER -->` or pasting a ```yaml front-matter
+// sample — is never mistaken for hidden metadata. Such content renders as VISIBLE
+// fenced text, the opposite of the digest-hidden block `hidden-metadata` targets,
+// and `lint` is a CI gate, so a false positive there fails a legitimate lesson.
+// Line positions are preserved (interiors and fence lines become empty) so the
+// heading-anchored checks still see the real document structure. A closing fence
+// is ≥3 of the SAME character as the opener with no trailing info string
+// (CommonMark); an opener may carry an info string (```yaml). Pure.
+function stripFencedCode(value) {
+  let fence = null; // the active fence character (` or ~), or null when outside a block
+  return String(value)
+    .split('\n')
+    .map((line) => {
+      const m = line.match(/^\s*(`{3,}|~{3,})/);
+      if (fence === null) {
+        if (m) {
+          fence = m[1][0];
+          return '';
+        }
+        return line;
+      }
+      if (m && m[1][0] === fence && line.trim().replace(/[`~\s]/g, '') === '') {
+        fence = null;
+      }
+      return '';
+    })
+    .join('\n');
+}
+
 // The lint rule set: each a pure predicate over a normalized entry returning a
 // short reason string when it FIRES, or null when the entry is clean. Kept as
 // discrete named functions so each rule is independently unit-testable and the
@@ -334,6 +364,47 @@ export const LINT_RULES = {
     }
     if (parsed === null || typeof parsed !== 'object') return null; // a bare scalar — short-value's to catch when short, otherwise unjudged.
     return 'value is a JSON object/array with no kind set — it renders as a raw JSON blob in every SessionStart digest; set --kind bus or --kind signal';
+  },
+  // A lesson body is markdown for humans — no HTML comment, no front-matter, no
+  // `key=value` header. The `<!-- meta: seen_count=… status=… trigger-context=… -->`
+  // block is a REPUDIATED legacy convention this repo's lorekit-setup skill once
+  // prescribed (still parsed as a read-fallback in `candidates-pure.mjs` /
+  // `commands/invariants.mjs`, and skipped by the digest preview in `core/lessons.mjs`).
+  // It is wrong on the merits: an HTML comment renders to nothing, so a human sees a
+  // lesson starting mid-sentence, while a baked-in `seen_count`/`status`/`trigger`
+  // silently disagrees with the store's own column/tag/field. Conservative like the
+  // other rules — three concrete shapes only, never a fuzzy "looks like metadata":
+  //   1. any HTML comment (`<!--`), the strongest and most common offender;
+  //   2. a body that OPENS with a YAML front-matter block (`---` as the first line);
+  //   3. a machine-metadata header (`meta:`, `seen_count`, `status=`, `expires`,
+  //      `ttl(_days)`, `trigger-context`) appearing BEFORE the first `#` title, so a
+  //      legitimate prose line mid-body never trips it.
+  // All three run against a fence-stripped copy (`stripFencedCode`) so a lesson that
+  // DOCUMENTS one of these shapes inside a code block is never flagged.
+  'hidden-metadata': (e) => {
+    const raw = String(e.value ?? '');
+    if (!raw.trim()) return null; // an empty value is `empty-value`'s to report.
+    const v = stripFencedCode(raw);
+    if (!v.trim()) return null; // nothing outside code fences — no prose metadata to flag.
+    if (v.includes('<!--')) {
+      return "value contains an HTML comment — lesson bodies are pure markdown; move seen_count → the column, status → a status:: tag, trigger → the trigger field";
+    }
+    const lines = v.split('\n');
+    const firstNonEmpty = lines.find((l) => l.trim() !== '');
+    if (firstNonEmpty !== undefined && firstNonEmpty.trim() === '---') {
+      return 'value opens with a front-matter block — lesson bodies carry no front-matter; every stored fact belongs in its own write field';
+    }
+    const headingIdx = lines.findIndex((l) => /^\s*#/.test(l));
+    if (headingIdx > 0) {
+      const metaHeader = lines
+        .slice(0, headingIdx)
+        .filter((l) => l.trim() !== '')
+        .find((l) => /^\s*(meta\b|seen_count\b|status\s*=|expires\b|ttl(?:_days)?\b|trigger[-_]context\b)/i.test(l));
+      if (metaHeader) {
+        return `value has a machine-metadata header before the title ('${metaHeader.trim().slice(0, 40)}') — move it to the store's own fields`;
+      }
+    }
+    return null;
   },
 };
 

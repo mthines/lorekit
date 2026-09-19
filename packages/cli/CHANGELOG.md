@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.0](https://github.com/mthines/lorekit/compare/cli-v1.69.0...cli-v1.70.0) (2026-09-19)
+
+
+### Features
+
+* **skill:** make lorekit-setup teach effective, provable self-improving workflows ([#673](https://github.com/mthines/lorekit/issues/673)) ([afd4a16](https://github.com/mthines/lorekit/commit/afd4a16c3214de2a18b23ccc9b1d182b6127d6bd))
+
 ## [1.69.0](https://github.com/mthines/lorekit/compare/cli-v1.68.0...cli-v1.69.0) (2026-09-12)
 
 

@@ -15,6 +15,7 @@ The design has two tiers connected by a recurrence gate. Both run on LoreKit.
 
 ## Contents
 
+- [Find where a loop pays off](#find-where-a-loop-pays-off)
 - [When to add a loop (and when not to)](#when-to-add-a-loop-and-when-not-to)
 - [The two tiers](#the-two-tiers)
 - [Conventions](#conventions)
@@ -27,6 +28,41 @@ The design has two tiers connected by a recurrence gate. Both run on LoreKit.
 - [Entrenchment guards (do not skip these)](#entrenchment-guards-do-not-skip-these)
 - [Wiring checklist](#wiring-checklist)
 - [Interactive setup](#interactive-setup)
+
+---
+
+## Find where a loop pays off
+
+Do not ask a newcomer to *guess* where memory helps — the best place for a loop is a
+statistical property of the codebase's own history, and the data already knows it. Answer
+"where?" before "how?".
+
+**Start from recurring pain, not from a host you happen to be looking at.** A loop earns
+its keep only where the same class of failure happens more than once. Two ways to surface
+that:
+
+- **From the store, if loops already exist:** `lorekit dedupe` clusters near-duplicate
+  lessons, and `lorekit invariants candidates` ranks clusters by summed `seen_count` ×
+  distinct scopes — literally "how often, in how many places, did this recur." A high-
+  ranked cluster with no dedicated host is a loop waiting to be wired.
+- **From history, on a cold repo:** the same pattern fixed the same way 3+ times, a
+  revert-then-refix chain, a review note left across many PRs, or an existing CI guard —
+  each is a lesson someone already learned. `git log`, `git log --grep=revert`, and the
+  `obligations-map` are the seams. These double as seed sources —
+  [cold-start-seeding.md](./cold-start-seeding.md).
+
+**Then match the host to an archetype** and copy its recipe card rather than wiring from
+scratch:
+
+| The host… | Card |
+| --------- | ---- |
+| edits code, fails in recurring ways | [code-changing-agent](../templates/code-changing-agent.md) |
+| posts durable outputs at a target it revisits | [reviewer-reconcile-host](../templates/reviewer-reconcile-host.md) |
+| is a pipeline that fails in classifiable ways | [multi-step-orchestrator](../templates/multi-step-orchestrator.md) |
+| is a deterministic CI job needing last-run state | [ci-job](../templates/ci-job.md) |
+
+The abstract test in the next section is the fallback when no recurrence data exists yet —
+apply it, but prefer the evidence above when you have it.
 
 ---
 
@@ -220,13 +256,17 @@ readable start to finish.
 
 ## Read step (start of every run)
 
-Read narrow-to-broad, filtered by the bucket tag, and merge:
+Read narrow-to-broad, filtered by the bucket tag, and merge — but **capped**. A loop
+injects at most a small N (`limit: 5` per scope by default) into a run. This is a wiring
+precondition, not a tuning knob: many uncapped loops on the same scopes tax every
+session's context until agents learn to ignore injected lore entirely. Raise N only with
+a reason.
 
 ```text
-memory.list { scope: "repo::{owner}/{repo}", tags: ["loop::<host>-lessons"], limit: 50 }   # skips silently if memory.* not connected
-memory.list { scope: "global",               tags: ["loop::<host>-lessons"], limit: 50 }
+memory.list { scope: "repo::{owner}/{repo}", tags: ["loop::<host>-lessons"], limit: 5 }   # skips silently if memory.* not connected
+memory.list { scope: "global",               tags: ["loop::<host>-lessons"], limit: 5 }
 # when the run names a subsystem / error, add a search:
-memory.search { q: "<keywords>", scopes: ["repo::{owner}/*", "global"], limit: 10 }
+memory.search { q: "<keywords>", scopes: ["repo::{owner}/*", "global"], limit: 5 }
 ```
 
 Then:
@@ -557,6 +597,14 @@ To add a loop to a host called `<host>`:
       read** at its plan/apply seam (match `hotspot::<path>` /
       `knowledge::<symbol>@<path>` to the files it will change). If it **verifies**
       a structural fact, wire the **write** behind that section's contract.
+- [ ] Set the **injection cap** (`limit: 5` per scope by default) on the read step —
+      a wiring precondition, not a tuning knob.
+- [ ] Decide **seeding**: value on run one ([cold-start-seeding.md](./cold-start-seeding.md),
+      a handful, curated) **or** provable lift (leave it cold) — never both.
+- [ ] Declare the **proof** — the immunity re-challenge whose failure signature you will
+      watch after promotion ([proving-improvement.md](./proving-improvement.md)).
+- [ ] Add the **health checks** — a canary, the write-time matchability check, and the
+      quarantine-not-delete rollback ([loop-health.md](./loop-health.md)).
 
 ---
 

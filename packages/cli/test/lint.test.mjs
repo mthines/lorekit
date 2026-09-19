@@ -170,6 +170,56 @@ test('lintEntry surfaces unkinded-state-record alongside the other rules', () =>
   );
 });
 
+test('hidden-metadata fires on an HTML comment, front-matter, or a meta header before the title', () => {
+  // The repudiated legacy `<!-- meta: ... -->` block the lorekit-setup skill once prescribed.
+  assert.match(
+    LINT_RULES['hidden-metadata']({
+      value: '<!-- meta: seen_count=1 status=active trigger-context="x" -->\n# A real takeaway\n\nbody',
+    }),
+    /HTML comment/,
+  );
+  // Any HTML comment, not only the meta one.
+  assert.ok(LINT_RULES['hidden-metadata']({ value: '<!-- note -->\n# Title\nbody' }));
+  // A body that opens with a YAML front-matter block.
+  assert.match(LINT_RULES['hidden-metadata']({ value: '---\nstatus: active\n---\n# Title\nbody' }), /front-matter/);
+  // A bare machine-metadata header before the first heading (the shape seen in the wild).
+  assert.match(
+    LINT_RULES['hidden-metadata']({ value: 'meta: seen_count=2; last_seen=2026-08-24\n\n# Title\nbody' }),
+    /machine-metadata header/,
+  );
+  assert.ok(LINT_RULES['hidden-metadata']({ value: 'seen_count=3\n# Title\nbody' }));
+});
+
+test('hidden-metadata does NOT fire on a clean lesson body', () => {
+  const clean =
+    '# Pass --node-modules-dir=none to deno check\n\n**Applies when:** running deno check\n\n**Do this instead:** pass the flag.';
+  assert.equal(LINT_RULES['hidden-metadata']({ value: clean }), null);
+  // A `---` used as a horizontal rule MID-body is not front-matter.
+  assert.equal(LINT_RULES['hidden-metadata']({ value: '# Title\n\nsome text\n\n---\n\nmore text' }), null);
+  // A prose line containing `status =` AFTER the title is not a header.
+  assert.equal(LINT_RULES['hidden-metadata']({ value: '# Title\n\nThe status = green case is fine.' }), null);
+  // Empty is empty-value's job.
+  assert.equal(LINT_RULES['hidden-metadata']({ value: '' }), null);
+});
+
+test('hidden-metadata exempts content inside fenced code blocks', () => {
+  // A lesson DOCUMENTING an HTML-comment marker is visible example text, not a
+  // hidden block — it must not trip the rule (which gates CI).
+  const documentsMarker =
+    '# The sticky report uses an HTML-comment anchor\n\n**Do this instead:** match on\n\n```md\n<!-- PR_REVIEWER_REPORT -->\n```\n\nso a re-run rewrites it in place.';
+  assert.equal(LINT_RULES['hidden-metadata']({ value: documentsMarker }), null);
+  // A fenced ```yaml front-matter SAMPLE is example content, not real front-matter.
+  const documentsFrontMatter =
+    '# Front-matter is stored in fields, not the body\n\nThe repudiated shape looked like:\n\n```yaml\n---\nstatus: active\nseen_count: 2\n---\n```\n\nMove each fact to its own write field instead.';
+  assert.equal(LINT_RULES['hidden-metadata']({ value: documentsFrontMatter }), null);
+  // But a REAL leading HTML comment still fires even when the body also has a fence.
+  assert.ok(
+    LINT_RULES['hidden-metadata']({
+      value: '<!-- meta: seen_count=1 -->\n# Title\n\n```md\nexample\n```\n',
+    }),
+  );
+});
+
 test('lintEntry aggregates every triggered rule; a clean lesson yields none', () => {
   const bad = lintEntry({ scope: 'repo:acme/widget', key: '', value: '  ' });
   const rules = bad.map((f) => f.rule).sort();
