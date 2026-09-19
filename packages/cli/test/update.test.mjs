@@ -294,3 +294,33 @@ test('update --check exits non-zero when it finds drift, and 0 when everything i
     assert.equal(clean.exitCode, 0, '--check must exit 0 once every skill is current');
   });
 });
+
+test('update reports a hook-wiring refresh even when no skill was outdated', async () => {
+  // Regression: `upsertClaudeHooks` rewrites `.claude/settings.json`
+  // unconditionally on every non-dry-run `update` (even reformatting it), but
+  // the no-skills-outdated report said only "already at the shipped version"
+  // — silent about the one file it just touched. Negative-assertion proof:
+  // discarding `upsertClaudeHooks`'s return value instead of summing its
+  // counts makes the `/hook wiring refreshed/` match below fail even though
+  // the settings file is still rewritten underneath. Verified by hand.
+  const root = tmp('lk-upd-hooks-root-');
+  const home = tmp('lk-upd-hooks-home-');
+  await installProject(root, home); // installs with hooks wired
+
+  const settingsPath = path.join(root, '.claude', 'settings.json');
+  // Perturb the hook command to a stale-but-still-recognized pin (bypassing
+  // `install`) so a no-op-on-skills `update` still has real hook drift to
+  // repair — it must still match `LOREKIT_HOOK_RE` (a bare `stale-runner …`
+  // would not, and `installedHookEvents` would then treat the event as
+  // unwired rather than drifted).
+  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  settings.hooks.SessionStart[0].hooks[0].command =
+    'npx -y @lorekit/cli@1.2.3 hook --adapter claude --event SessionStart --dir "${CLAUDE_PROJECT_DIR}"';
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+
+  await withHome(home, async () => {
+    const { result, out } = await capture(() => update({ dir: root, project: true }));
+    assert.equal(result['lorekit.cli.update.outdated'], 0, 'no skill content was changed, only the hook command');
+    assert.match(out, /hook wiring refreshed/, `expected the hook refresh to be reported, got: ${out}`);
+  });
+});

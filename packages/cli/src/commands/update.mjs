@@ -148,16 +148,24 @@ export async function update(args) {
   // Hook command strings — refreshed for real, never on a dry run. Only a
   // scope that already has hooks wired has anything to refresh; a scope with
   // none stays untouched (matching `install`'s own "nothing to wire" no-op).
+  // `upsertClaudeHooks` rewrites `.claude/settings.json` unconditionally
+  // (formatting included) even when every entry was already `unchanged` —
+  // tallying its returned counts is what lets the no-skills-outdated report
+  // below say so instead of silently rewriting the file underneath the user.
+  let hooksChanged = 0;
   if (!dryRun) {
     for (const scope of scopes) {
       const wired = installedHookEvents(root, scope);
-      if (wired.length > 0) upsertClaudeHooks(root, scope, resolveHookRunner(), wired);
+      if (wired.length === 0) continue;
+      const stats = upsertClaudeHooks(root, scope, resolveHookRunner(), wired);
+      hooksChanged += stats.added + stats.updated + stats.removed + stats.deduped;
     }
   }
 
   log('');
   if (outdatedCount === 0) {
-    log(`  ${c.green('✓')} every installed skill is already at the shipped version.`);
+    const hooksNote = hooksChanged > 0 ? ` (hook wiring refreshed: ${hooksChanged} change${hooksChanged === 1 ? '' : 's'})` : '';
+    log(`  ${c.green('✓')} every installed skill is already at the shipped version${hooksNote}.`);
   } else if (dryRun) {
     const plural = outdatedCount === 1 ? '' : 's';
     log(`  ${c.yellow('!')} ${outdatedCount} skill install${plural} outdated — run \`lorekit update\` to apply.`);
