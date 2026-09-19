@@ -1,0 +1,188 @@
+// `lorekit update` + doctor's version-aware skill reporting.
+//
+// Covers: doctor warning (not failing) on an outdated skill install, `update`
+// refreshing an outdated install back to the shipped version, `update` being
+// idempotent once current, and `--check` reporting drift without writing.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { install } from '../src/commands/install.mjs';
+import { update } from '../src/commands/update.mjs';
+import { checkSkillVersions } from '../src/shared/skill-versions.mjs';
+
+const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
+const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
+const TOKEN = 'lk_rw_test';
+
+const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+
+function runDoctor(dir, home) {
+  return spawnSync(process.execPath, [BIN, 'doctor', '--mode', 'off', '--dir', dir], {
+    encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home },
+  });
+}
+
+const skillLineFor = (stdout, name) =>
+  stdout.split('\n').find((l) => l.includes(`skill ${name}`)) ?? '';
+
+// Run `fn` (sync or async) with HOME/USERPROFILE pinned to `home`, restoring
+// afterward. `install`/`update` resolve the global scope through `homeDir()`,
+// which reads the env at call time — an in-process call (unlike the spawned
+// `runDoctor` above, which passes `env` directly) needs this wrapper instead.
+async function withHome(home, fn) {
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn();
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
+  }
+}
+
+async function installProject(root, home) {
+  return withHome(home, () =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }),
+  );
+}
+
+// Downgrade an already-installed skill's version stamp, simulating an install
+// that predates the CLI's current shipped version.
+function downgrade(skillMdPath, from, to) {
+  const body = fs.readFileSync(skillMdPath, 'utf8');
+  const patched = body.replace(new RegExp(`version: '${from}'`), `version: '${to}'`);
+  assert.notEqual(patched, body, `expected to find version: '${from}' in ${skillMdPath}`);
+  fs.writeFileSync(skillMdPath, patched);
+}
+
+test('doctor warns (not fails) when an installed skill is outdated', async () => {
+  const root = tmp('lk-upd-doc-root-');
+  const home = tmp('lk-upd-doc-home-');
+  await installProject(root, home);
+
+  const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
+  downgrade(skillMd, '1.0.0', '0.1.0');
+
+  const res = runDoctor(root, home);
+  const line = skillLineFor(res.stdout, 'lorekit-memory');
+  assert.match(line, /WARN/, `expected WARN, got: ${line}`);
+  assert.match(line, /v0\.1\.0/, `expected the installed version quoted, got: ${line}`);
+  assert.match(line, /v1\.0\.0/, `expected the shipped version quoted, got: ${line}`);
+  assert.match(line, /lorekit update/, `expected the fix pointer, got: ${line}`);
+  // A warn must not flip doctor's exit code — only a fail does.
+  assert.equal(res.status, 0, `outdated skill must warn, not fail doctor: ${res.stdout}`);
+});
+
+test('doctor still passes a current, up-to-date skill install', async () => {
+  const root = tmp('lk-upd-doc-current-root-');
+  const home = tmp('lk-upd-doc-current-home-');
+  await installProject(root, home);
+
+  const res = runDoctor(root, home);
+  const line = skillLineFor(res.stdout, 'lorekit-memory');
+  assert.match(line, /PASS/, `expected PASS on a fresh install, got: ${line}`);
+  assert.doesNotMatch(line, /outdated/);
+});
+
+test('update refreshes an outdated skill install back to the shipped version', async () => {
+  const root = tmp('lk-upd-root-');
+  const home = tmp('lk-upd-home-');
+  await installProject(root, home);
+
+  const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
+  downgrade(skillMd, '1.0.0', '0.1.0');
+
+  await withHome(home, async () => {
+    // sanity — genuinely outdated before update runs.
+    const before = checkSkillVersions(root).find((r) => r.scope === 'project' && r.name === 'lorekit-memory');
+    assert.equal(before.state, 'outdated');
+
+    const res = await update({ dir: root, project: true });
+    assert.equal(res.exitCode, 0);
+    assert.ok(res['lorekit.cli.update.outdated'] >= 1, 'expected at least the downgraded skill to be reported');
+
+    const after = checkSkillVersions(root).find((r) => r.scope === 'project' && r.name === 'lorekit-memory');
+    assert.equal(after.state, 'current');
+    assert.equal(after.installed, after.shipped);
+  });
+});
+
+test('update is idempotent once every installed skill is current', async () => {
+  const root = tmp('lk-upd-idem-root-');
+  const home = tmp('lk-upd-idem-home-');
+  await installProject(root, home);
+
+  const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
+  downgrade(skillMd, '1.0.0', '0.1.0');
+
+  await withHome(home, async () => {
+    const first = await update({ dir: root, project: true });
+    assert.ok(first['lorekit.cli.update.outdated'] >= 1);
+
+    // Second run against an already-current install: nothing left to refresh.
+    const second = await update({ dir: root, project: true });
+    assert.equal(second['lorekit.cli.update.outdated'], 0, 'a second run must find nothing outdated');
+  });
+});
+
+test('update --check reports drift without writing anything', async () => {
+  const root = tmp('lk-upd-check-root-');
+  const home = tmp('lk-upd-check-home-');
+  await installProject(root, home);
+
+  const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
+  downgrade(skillMd, '1.0.0', '0.1.0');
+  const beforeBody = fs.readFileSync(skillMd, 'utf8');
+
+  await withHome(home, async () => {
+    const res = await update({ dir: root, project: true, check: true });
+    assert.ok(res['lorekit.cli.update.outdated'] >= 1, 'expected --check to report the drift');
+    assert.equal(res['lorekit.cli.update.check'], true);
+  });
+
+  // Negative-assertion proof: the whole point of --check is that this file is
+  // untouched — removing the `if (dryRun) { ...; continue; }` guard in
+  // update.mjs (so a --check run still calls copyDir) makes this assertion
+  // fail, since the downgraded version stamp would be overwritten back to
+  // 1.0.0. Verified by hand while authoring.
+  const afterBody = fs.readFileSync(skillMd, 'utf8');
+  assert.equal(afterBody, beforeBody, '--check must never write to disk');
+});
+
+test('update with no --project/--global targets only scopes with an existing install', async () => {
+  const root = tmp('lk-upd-scope-root-');
+  const home = tmp('lk-upd-scope-home-'); // nothing installed globally
+  await installProject(root, home); // project-only install
+
+  const skillMd = path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md');
+  downgrade(skillMd, '1.0.0', '0.1.0');
+
+  await withHome(home, async () => {
+    const res = await update({ dir: root }); // neither flag passed
+    assert.equal(res['lorekit.cli.update.scopes'], 1, 'only the project scope has an install to refresh');
+    assert.ok(res['lorekit.cli.update.outdated'] >= 1);
+  });
+
+  // Global scope was never touched — no skills directory should exist there.
+  assert.equal(fs.existsSync(path.join(home, '.claude', 'skills', 'lorekit-memory')), false);
+});
+
+test('update reports nothing to do when no skill is installed anywhere', async () => {
+  const root = tmp('lk-upd-none-root-');
+  const home = tmp('lk-upd-none-home-');
+
+  await withHome(home, async () => {
+    const res = await update({ dir: root });
+    assert.equal(res['lorekit.cli.update.scopes'], 0);
+    assert.equal(res['lorekit.cli.update.outdated'], 0);
+  });
+});

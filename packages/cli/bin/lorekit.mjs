@@ -39,6 +39,11 @@ ${c.bold('Commands')}
               other servers, hooks, and settings are left untouched. Prompts
               project vs global; --project / --global choose non-interactively.
   doctor      Verify the skill install, remote connectivity, token, and scope.
+  update      Offline refresh of the bundled skills (and their hook command
+              string) to the version shipped with the running CLI — the fix
+              for doctor's outdated-skill warning. Never creates a fresh
+              install (that's \`install\`'s job); --project / --global narrow
+              to one scope; --check reports drift without writing anything.
   list (ls)   List the memories that apply to the current directory, split into
               an Offline section (local .lorekit/ + ~/.lorekit/) and a Remote
               section (the hosted LoreKit API). Groups by scope (project/branch/repo/global).
@@ -169,6 +174,7 @@ ${c.bold('Options')}
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor)
       --telemetry         Verify the OTLP export credential works (doctor)
+      --check             Report drift without writing anything (update)
       --adapter <name>    Host framework for hook: claude | cursor | codex
       --event <name>      Host hook event (else read from stdin payload)
   -h, --help              Show this help
@@ -193,6 +199,7 @@ ${c.bold('Examples')}
   npx @lorekit/cli install --global    # set up memory for every project (~/.claude)
   npx @lorekit/cli uninstall --global  # tear that global setup back down
   npx @lorekit/cli doctor --deep
+  npx @lorekit/cli update --check      # report outdated skills without writing
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
   npx @lorekit/cli migrate --from .lorekit --to remote --yes  # push local lore up
@@ -302,6 +309,32 @@ ${c.bold('Examples')}
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli doctor --telemetry
   npx @lorekit/cli doctor --mode local
+`,
+  update: `${c.bold('lorekit update')} — offline refresh of the bundled skills to the shipped version
+
+${c.bold('Usage')}
+  npx @lorekit/cli update [options]
+
+Re-copies every bundled skill (force) into whichever scope(s) already have an
+install, and refreshes that scope's hook command string — the same skill-copy
+path and hook-command call \`install --force\` uses, so the two can never
+disagree on what "installing a skill" means. Fully offline: the shipped skill
+source travels in the same npm tarball as this running CLI, so "installed vs
+shipped" is a filesystem version compare, not a network call. Never creates a
+fresh install — that's \`install\`'s job — so a scope with nothing installed is
+reported and left alone.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --project           Only refresh this project's install (.claude/skills)
+      --global            Only refresh the global install (~/.claude/skills)
+      --check             Dry run: report drift (installed vs shipped version
+                          per skill) and write nothing
+
+${c.bold('Examples')}
+  npx @lorekit/cli update
+  npx @lorekit/cli update --check
+  npx @lorekit/cli update --global
 `,
   list: `${c.bold('lorekit list')} — list the memories that apply to the current directory ${c.dim('(alias: ls)')}
 
@@ -1090,6 +1123,8 @@ const KNOWN_FLAGS = [
   'clear-max-opened-count', 'off',
   // `obligations`
   'files', 'strict', 'strict-all',
+  // `update`
+  'check',
 ];
 
 async function main() {
@@ -1102,7 +1137,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'run', 'enabled', 'disabled', 'off', 'clear-min-age-days', 'clear-unseen-days', 'clear-max-seen-count', 'clear-max-read-count', 'clear-max-opened-count', 'strict', 'strict-all', 'check'],
     known: KNOWN_FLAGS,
   });
 
