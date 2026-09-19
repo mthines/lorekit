@@ -63,7 +63,7 @@ resolution**: if a re-run did not re-scan the region a prior output covers, it i
 
 ## Write step (lessons) — on friction, as usual
 
-Same as any lessons loop — see [code-changing-agent.md](./code-changing-agent.md#write-step--on-failure--end-of-run)
+Same as any lessons loop — see [code-changing-agent.md](./code-changing-agent.md#write-step--on-failure--at-end-of-run)
 for the write shape.
 
 ## Fire-once check

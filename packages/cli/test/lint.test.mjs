@@ -202,6 +202,24 @@ test('hidden-metadata does NOT fire on a clean lesson body', () => {
   assert.equal(LINT_RULES['hidden-metadata']({ value: '' }), null);
 });
 
+test('hidden-metadata exempts content inside fenced code blocks', () => {
+  // A lesson DOCUMENTING an HTML-comment marker is visible example text, not a
+  // hidden block — it must not trip the rule (which gates CI).
+  const documentsMarker =
+    '# The sticky report uses an HTML-comment anchor\n\n**Do this instead:** match on\n\n```md\n<!-- PR_REVIEWER_REPORT -->\n```\n\nso a re-run rewrites it in place.';
+  assert.equal(LINT_RULES['hidden-metadata']({ value: documentsMarker }), null);
+  // A fenced ```yaml front-matter SAMPLE is example content, not real front-matter.
+  const documentsFrontMatter =
+    '# Front-matter is stored in fields, not the body\n\nThe repudiated shape looked like:\n\n```yaml\n---\nstatus: active\nseen_count: 2\n---\n```\n\nMove each fact to its own write field instead.';
+  assert.equal(LINT_RULES['hidden-metadata']({ value: documentsFrontMatter }), null);
+  // But a REAL leading HTML comment still fires even when the body also has a fence.
+  assert.ok(
+    LINT_RULES['hidden-metadata']({
+      value: '<!-- meta: seen_count=1 -->\n# Title\n\n```md\nexample\n```\n',
+    }),
+  );
+});
+
 test('lintEntry aggregates every triggered rule; a clean lesson yields none', () => {
   const bad = lintEntry({ scope: 'repo:acme/widget', key: '', value: '  ' });
   const rules = bad.map((f) => f.rule).sort();
