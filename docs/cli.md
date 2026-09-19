@@ -78,7 +78,7 @@ so a maintainer decides whether a change is worth nudging every installed agent 
 must be bumped by hand on any content change to a shipped skill (`packages/cli/skill/*`); a repo CI
 job (`scripts/ci/skill-version-guard.mjs`) enforces it, failing a PR that edits a skill's files
 without moving its version. See
-[Key decisions](../CLAUDE.md#a-skills-metadataversion-must-be-bumped-on-any-content-change-and-ci-enforces-it).
+[Key decisions](./decisions.md#a-skills-metadataversion-must-be-bumped-on-any-content-change-and-ci-enforces-it).
 
 ### `list`
 
