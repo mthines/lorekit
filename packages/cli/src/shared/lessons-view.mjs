@@ -335,6 +335,43 @@ export const LINT_RULES = {
     if (parsed === null || typeof parsed !== 'object') return null; // a bare scalar — short-value's to catch when short, otherwise unjudged.
     return 'value is a JSON object/array with no kind set — it renders as a raw JSON blob in every SessionStart digest; set --kind bus or --kind signal';
   },
+  // A lesson body is markdown for humans — no HTML comment, no front-matter, no
+  // `key=value` header. The `<!-- meta: seen_count=… status=… trigger-context=… -->`
+  // block is a REPUDIATED legacy convention this repo's lorekit-setup skill once
+  // prescribed (still parsed as a read-fallback in `candidates-pure.mjs` /
+  // `commands/invariants.mjs`, and skipped by the digest preview in `core/lessons.mjs`).
+  // It is wrong on the merits: an HTML comment renders to nothing, so a human sees a
+  // lesson starting mid-sentence, while a baked-in `seen_count`/`status`/`trigger`
+  // silently disagrees with the store's own column/tag/field. Conservative like the
+  // other rules — three concrete shapes only, never a fuzzy "looks like metadata":
+  //   1. any HTML comment (`<!--`), the strongest and most common offender;
+  //   2. a body that OPENS with a YAML front-matter block (`---` as the first line);
+  //   3. a machine-metadata header (`meta:`, `seen_count`, `status=`, `expires`,
+  //      `ttl(_days)`, `trigger-context`) appearing BEFORE the first `#` title, so a
+  //      legitimate prose line mid-body never trips it.
+  'hidden-metadata': (e) => {
+    const v = String(e.value ?? '');
+    if (!v.trim()) return null; // an empty value is `empty-value`'s to report.
+    if (v.includes('<!--')) {
+      return "value contains an HTML comment — lesson bodies are pure markdown; move seen_count → the column, status → a status:: tag, trigger → the trigger field";
+    }
+    const lines = v.split('\n');
+    const firstNonEmpty = lines.find((l) => l.trim() !== '');
+    if (firstNonEmpty !== undefined && firstNonEmpty.trim() === '---') {
+      return 'value opens with a front-matter block — lesson bodies carry no front-matter; every stored fact belongs in its own write field';
+    }
+    const headingIdx = lines.findIndex((l) => /^\s*#/.test(l));
+    if (headingIdx > 0) {
+      const metaHeader = lines
+        .slice(0, headingIdx)
+        .filter((l) => l.trim() !== '')
+        .find((l) => /^\s*(meta\b|seen_count\b|status\s*=|expires\b|ttl(?:_days)?\b|trigger[-_]context\b)/i.test(l));
+      if (metaHeader) {
+        return `value has a machine-metadata header before the title ('${metaHeader.trim().slice(0, 40)}') — move it to the store's own fields`;
+      }
+    }
+    return null;
+  },
 };
 
 // Run every lint rule against one normalized entry, returning the findings it

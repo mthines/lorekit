@@ -60,6 +60,14 @@ Findings are structural, not semantic — each names its rule:
   entry has no `kind`, so it renders as a raw JSON blob in every SessionStart
   digest instead of being excluded by `isGeneralLesson`. Set `--kind bus` or
   `--kind signal` on the record.
+- **hidden-metadata** — the body carries an HTML comment, a leading front-matter
+  block, or a `key=value` header before the `#` title. This is the **repudiated
+  legacy `<!-- meta: seen_count=… status=… trigger-context=… -->` convention** the
+  `lorekit-setup` skill once prescribed and now forbids: an HTML comment renders to
+  nothing (so a human sees a lesson starting mid-sentence) while a baked-in
+  `seen_count` / `status` / `trigger` silently disagrees with the store's own
+  column / tag / field. **This is grooming's job to clean, not just report** — see
+  the cleanup step below.
 
 These are the cheapest wins and the least controversial, so clear them first.
 For each: either **fix it in place** (rewrite a too-short value into a real
@@ -67,6 +75,32 @@ observation, trim whitespace — a `memory.write` to the same `scope`+`key`
 updates in place) or, if the lesson is genuinely empty of meaning, **queue it for
 removal** in the plan. `lint` exits non-zero while findings remain, which also
 makes it a clean CI gate — a passing `lint` is your Phase 6 proof.
+
+### Cleaning a `hidden-metadata` finding (fold, then strip)
+
+A hidden-metadata lesson is **fixed in place**, never deleted for it (the prose is
+usually a real lesson wearing a bad header). Recover the facts into their proper
+homes, then strip the block:
+
+1. **Read the whole record** (`lorekit show <scope::key> --json`) so you see the raw
+   body, including the `<!--` block the SessionStart digest hides.
+2. **Fold each buried fact into its first-class home**, never back into prose:
+   - `seen_count=N` → **drop it entirely.** The column is the only true copy; a
+     baked number is stale. Do not try to "restore" it — the store's counter is
+     authoritative.
+   - `status=structural` / `status=promoted` → a `status::<value>` **tag** on the write.
+     (`status=active` is the default — drop it.)
+   - `trigger-context="…"` → the visible **`Applies when:`** line at the top of the
+     body, and/or the `trigger` **field** for the category.
+   - `expires=…` / `ttl=…` → a `ttl_days` on the write.
+3. **Rewrite the body as pure markdown** to the lesson shape (takeaway title →
+   `Applies when` → bold-labelled paragraphs), with the `<!--`/front-matter/header
+   gone, via a `memory.write` to the same `scope`+`key` (updates in place, carrying
+   the recovered tags/fields).
+4. **Re-lint** the record to confirm `hidden-metadata` no longer fires.
+
+Do this whenever a pass surfaces the finding — that is how the store stops
+re-teaching the pattern to the next agent that reads a neighbouring lesson.
 
 ## Phase 3 — Dedupe (read-only)
 

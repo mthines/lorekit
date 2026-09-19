@@ -151,8 +151,14 @@ hatch mirroring `short-value`'s `minValueLen`, no config key]/**malformed-scope*
 `kind` left unset — excludes bare scalars, which `short-value` catches only below its length
 threshold (a longer bare scalar is judged by no rule) — because `fetchLessons`'s `isGeneralLesson`
 filter excludes non-lesson kinds by KIND, not by shape, so an un-kinded record renders as a raw JSON
-blob in every SessionStart digest], each rule independently tested; **exits non-zero when any
-finding exists** so it's a CI gate; `--json`/`--scope`
+blob in every SessionStart digest]/**hidden-metadata** [a body carrying an HTML comment, a leading
+front-matter block, or a `key=value` header before the `#` title — the repudiated legacy
+`<!-- meta: seen_count=… status=… trigger-context=… -->` convention the `lorekit-setup` skill once
+prescribed and now forbids; every buried fact has a first-class home (the `seen_count` column, a
+`status::` tag, the `trigger` field), and the `lorekit-groom` skill folds-and-strips legacy offenders;
+conservative by design so a `---` horizontal rule or a `status =` line mid-body never fires], each
+rule independently tested; **exits non-zero when any finding exists** so it's a CI gate;
+`--json`/`--scope`
 
 ### `dedupe`
 
