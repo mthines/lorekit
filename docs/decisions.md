@@ -715,3 +715,36 @@ Telemetry follows the existing rule that `lorekit.scope.type` is OMITTED when an
 no scope, never stamped with a placeholder. Unscoped reads are distinguishable by
 `lorekit.read.unscoped` / `lorekit.read.candidates` (and `lorekit.list.unscoped` on the two list
 tools) — numeric and boolean measures, adding no dimension cardinality.
+
+## A skill's `metadata.version` must be bumped on any content change, and CI enforces it
+
+`doctor` / `lorekit update` / the SessionStart drift nudge (`packages/cli/src/shared/skill-versions.mjs`)
+all decide "is this installed skill outdated" by comparing the installed `SKILL.md`'s stamped
+`metadata.version` against the shipped one — a filesystem compare with zero network calls, chosen
+specifically because it needs no server round-trip and every shipped skill already carries the field
+in its frontmatter. That comparison is only as honest as the stamp. All three shipped skills
+(`lorekit-memory`, `lorekit-setup`, `lorekit-groom`) sat at `1.0.0` through four content-changing PRs
+before this guard existed — the drift-detection feature was comparing a number that never moved, so
+every installed copy reported perpetually current no matter how far its content had actually drifted.
+
+**The fix stays version-based, not content-hash-based, and not tied to the CLI package version.** A
+content hash would make drift detection self-enforcing (no human step to forget) but destroys the
+one thing a hand-authored version buys: a human decides whether a change is worth nudging users about
+— a typo fix and a new capability both hash-differ, but only one should interrupt every installed
+agent's session with "update available." Tying the stamp to `@lorekit/cli`'s own package version
+would falsely couple skill content to release cadence — a CLI patch release with zero skill changes
+would claim every skill as outdated, and a skill-only content PR that doesn't also cut a CLI release
+would report no drift at all. `metadata.version` is deliberately its own independent, hand-authored
+axis.
+
+**Enforcement is `scripts/ci/skill-version-guard.mjs`, wired into `ci.yml` as its own gated job**
+(`skill-version-guard`, filtered on `packages/cli/skill/**` so it only runs when relevant, and a real
+member of the `summary` job's required-check aggregation — not advisory). For every skill directory
+touched by a PR, it diffs that skill's `SKILL.md` version string between the PR base and head; a
+skill whose files changed but whose version did not move fails the check with the skill named and an
+actionable message. A version-only change passes (that IS the bump); a brand-new skill or one removed
+entirely both pass trivially (nothing to compare against). It deliberately checks only the SOURCE
+directories (`packages/cli/skill/*`) — the Claude-plugin-vendored mirror under
+`plugins/lorekit-claude/skills/*` is already guarded byte-for-byte by
+`scripts/codegen/sync-plugin-skill.mjs --check` (run inside the `plugin` CI job), so the two guards
+compose instead of duplicating each other's job.

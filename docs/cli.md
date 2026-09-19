@@ -70,7 +70,15 @@ call `install --force` makes, so a stale pinned runner or `npx` path is repaired
 `--global` narrow to one scope; with neither, every scope holding at least one existing skill install
 is refreshed. `update` never CREATES a fresh install — that stays `install`'s job, so a scope with
 nothing installed is left alone and reported as such. `--check` is a dry run: reports drift (current
-vs shipped version per skill) and writes nothing.
+vs shipped version per skill), previews the file count a real run would prune, writes nothing, and
+exits non-zero when it finds drift (0 once every skill is current), so it can gate a CI step or
+pre-commit hook. Drift detection is deliberately **version-based** — the hand-authored
+`metadata.version` in each shipped `SKILL.md`, not a content hash and not the CLI package version —
+so a maintainer decides whether a change is worth nudging every installed agent about. That stamp
+must be bumped by hand on any content change to a shipped skill (`packages/cli/skill/*`); a repo CI
+job (`scripts/ci/skill-version-guard.mjs`) enforces it, failing a PR that edits a skill's files
+without moving its version. See
+[Key decisions](../CLAUDE.md#a-skills-metadataversion-must-be-bumped-on-any-content-change-and-ci-enforces-it).
 
 ### `list`
 
