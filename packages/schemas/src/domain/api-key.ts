@@ -174,6 +174,68 @@ export function orgAllowedByKey(
 }
 
 /**
+ * Narrow `rows` to the ones this key's scope allowlist reaches.
+ *
+ * The read-side counterpart to `scopeAllowedByKey`'s refusal: a LIST of rows
+ * (each carrying its own `scope`) has nothing to name-and-refuse against, so
+ * the honest answer is to drop the ones outside the allowlist rather than
+ * error the whole call — exactly how `applyTenantScope`/`applyRestTenantScope`
+ * narrow a memories query instead of refusing it. `policy.list` is the first
+ * caller: a scope-restricted key must never see a fenced-scope policy, saved
+ * or not.
+ *
+ * An empty allowlist (unrestricted key) is a no-op, matching
+ * `scopeAllowedByKey([], …) === true` for every row.
+ */
+export function narrowByKeyScope<T extends { scope: string }>(
+  patterns: readonly string[],
+  rows: readonly T[],
+): T[] {
+  if (patterns.length === 0) return [...rows];
+  return rows.filter((row) => scopeAllowedByKey(patterns, row.scope));
+}
+
+/**
+ * The canonical message for a scope outside a key's allowlist.
+ *
+ * Byte-identical to the wording the MCP dispatcher's pre-dispatch memory gate
+ * already uses (`mcp-handler.ts`'s early refusal) — colocating it here lets a
+ * new caller (the retention/groom gate) phrase the SAME denial instead of
+ * drifting to a second wording, per the "one canonical denial message"
+ * decision.
+ */
+export function keyScopeDeniedMessage(scope: string): string {
+  return (
+    `This token is not allowed to use the scope "${scope}". `
+    + 'It is restricted to specific scopes — widen it in the dashboard under Settings → API keys.'
+  );
+}
+
+/**
+ * Thrown when the RESOLVED scope of an operation falls outside the calling
+ * key's allowlist.
+ *
+ * Introduced for the retention/groom gate (`policy.*`/`groom.*`), whose scope
+ * is not always known until after a DB round trip (`policy.update`/`delete`
+ * gate the STORED scope; `groom.*` gate the scope a `policy_id` resolves to) —
+ * unlike the memory family's early, pre-dispatch refusal, this is thrown from
+ * INSIDE a handler, so it needs a distinct type the caller can catch and map,
+ * rather than a bespoke early `return`.
+ *
+ * Deliberately NOT one of the transports' generic "client error" classes: it
+ * must map to an authenticated-but-forbidden response (MCP `JSONRPC_FORBIDDEN`,
+ * REST `403`), never the in-band `isError` shape a tool-originated failure
+ * gets on MCP — see `mcp-authz-status.spec.ts` and the plan's error-shape-parity
+ * risk note. Kept OUT of any `isClientError` set for that reason.
+ */
+export class KeyScopeDeniedError extends Error {
+  constructor(public readonly scope: string) {
+    super(keyScopeDeniedMessage(scope));
+    this.name = 'KeyScopeDeniedError';
+  }
+}
+
+/**
  * Is this key restricted at all?
  *
  * Still spec-only, and NOT because the management surface is pending — it

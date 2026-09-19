@@ -602,6 +602,8 @@ Mark or unmark a lesson as protected — excluded from every grooming candidate 
 
 Six tools automate grooming: `policy.*` manages **saved** rules, `groom.*` **previews or runs** a sweep (either a saved policy or an inline condition set). All six require a token with the matching permission (read for `policy.list`/`groom.preview`, write for the rest) and are server-side only — the local two-tier store has no equivalent (`retention_policies` is a Postgres table), matching `memory.purge`/`purge_expired`.
 
+**All six also obey the key-scope allowlist (00068), the same as `memory.*`.** `policy.create` refuses a target `scope` outside the allowlist; `policy.update`/`policy.delete` refuse on the policy's STORED scope (fetched before the mutation — a policy's scope is not itself an updatable field); `policy.list` NARROWS rather than refuses, dropping a fenced-scope policy from the result; `groom.preview`/`groom.run` refuse on the resolved scope, whether it came from an inline `scope` or from the `policy_id` they resolved. See [api-tokens.md](./api-tokens.md#what-a-scoped-token-sees) for the full table.
+
 A policy or an inline groom call can carry the same **eight dimension filters** the Lore Explorer's filter bar offers, each paired with a `*_mode` that controls how it combines — every condition (age/count AND every named dimension) is **AND-ed together**; a policy with no conditions at all matches every non-protected lesson in scope:
 
 | Filter | `*_mode` values (default) | Matches lessons whose… |
@@ -754,11 +756,10 @@ no `error` member. The `lorekit` CLI's own client checks `result.isError`
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, or expired token |
-| `-32001` | Read-only token attempted a write operation, or a write-only token attempted a read operation |
 | `-32603` | Server fault — a DB outage or an unexpected exception. Not something the model can self-correct from, and safe for a client to retry |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown method or tool name |
-| `-32000` | Forbidden — an account-wide tool on a scoped key, or a scope outside the key's allowlist |
+| `-32003` | Forbidden (authenticated, but not permitted) — a read-only token attempted a write (or vice versa), an account-wide tool on a scoped key, or a scope outside the key's allowlist. The last one covers `memory.*` and, as of this change, `policy.*`/`groom.*` too: `policy.create`/`groom.*`'s target-or-resolved scope, and `policy.update`/`policy.delete`'s STORED scope. |
 
 These are the spec's "errors in *finding* the tool […] or any other exceptional
 conditions". **Auth-family errors always travel in-band** — HTTP `200` with a

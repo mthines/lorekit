@@ -4,8 +4,11 @@ import {
   API_KEY_MAX_ORGS,
   API_KEY_MAX_SCOPES,
   ApiKeyScopingSchema,
+  KeyScopeDeniedError,
   UNSCOPED_API_KEY,
   isScopedKey,
+  keyScopeDeniedMessage,
+  narrowByKeyScope,
   orgAllowedByKey,
   scopeAllowedByKey,
 } from './api-key.ts';
@@ -74,6 +77,47 @@ describe('scopeAllowedByKey', () => {
   it('still allows a scopeless operation on an UNRESTRICTED key', () => {
     // Otherwise scoping would change behaviour for keys nobody scoped.
     expect(scopeAllowedByKey([], null)).toBe(true);
+  });
+});
+
+describe('narrowByKeyScope', () => {
+  const rows = [
+    { id: '1', scope: 'repo::mthines/lorekit' },
+    { id: '2', scope: 'repo::other/b' },
+    { id: '3', scope: 'global' },
+  ];
+
+  it('is a no-op for an unrestricted key', () => {
+    expect(narrowByKeyScope([], rows)).toEqual(rows);
+  });
+
+  it('drops fenced-scope rows and keeps allowed ones', () => {
+    const result = narrowByKeyScope(['repo::mthines/lorekit'], rows);
+    expect(result.map((r) => r.id)).toEqual(['1']);
+  });
+
+  it('reaches a wildcard-allowed row', () => {
+    const result = narrowByKeyScope(['repo::mthines/*'], rows);
+    expect(result.map((r) => r.id)).toEqual(['1']);
+  });
+
+  it('returns a NEW array rather than mutating the input', () => {
+    const result = narrowByKeyScope([], rows);
+    expect(result).not.toBe(rows);
+  });
+});
+
+describe('keyScopeDeniedMessage / KeyScopeDeniedError', () => {
+  it('names the offending scope in the message', () => {
+    expect(keyScopeDeniedMessage('repo::other/b')).toContain('"repo::other/b"');
+  });
+
+  it('KeyScopeDeniedError carries the scope and the canonical message', () => {
+    const err = new KeyScopeDeniedError('repo::other/b');
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('KeyScopeDeniedError');
+    expect(err.scope).toBe('repo::other/b');
+    expect(err.message).toBe(keyScopeDeniedMessage('repo::other/b'));
   });
 });
 

@@ -1,5 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit/audit.ts';
 import { ok, notFound, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
@@ -8,6 +8,7 @@ import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { Span } from '../../_shared/telemetry/otel.ts';
 import { PolicyCreateBodySchema, PolicyUpdateBodySchema } from '../../_shared/schemas/retention.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
+import { scopeAllowedByKey, narrowByKeyScope, keyScopeDeniedMessage } from '../../_shared/schemas/api-key.ts';
 
 /**
  * `retention_policies` REST resource: `GET/POST /policies`,
@@ -18,6 +19,13 @@ import type { DbClient } from '../../_shared/api/auth.ts';
  * `lorekit_policy_*` SECURITY DEFINER RPCs (00088) rather than a raw
  * `.from('retention_policies')` call — see `mcp/tools.ts`'s policy handlers
  * for the full rationale (shared by both surfaces).
+ *
+ * Every route also gates the calling key's scope allowlist (00068) against
+ * the scope it resolves — `create` its target scope, `update`/`delete` the
+ * pre-fetched STORED scope, `list` narrows its results — mirroring the MCP
+ * `policy.*` tools' `assertScopeAllowed` gate via the SAME shared predicate
+ * (`scopeAllowedByKey`/`narrowByKeyScope`), so a scope-restricted `lk_*` token
+ * is refused/narrowed identically on both surfaces.
  */
 function requireUserId(auth: AuthContext, cors: Record<string, string>): string | Response {
   if (!auth.userId) {
@@ -63,6 +71,25 @@ function toWire(row: RetentionPolicyDbRow) {
   return rest;
 }
 
+/**
+ * Fetch a single retention policy by id, owner-scoped, via the existing
+ * `lorekit_policy_list` RPC (no per-id fetch RPC exists — mirrors `mcp/
+ * tools.ts`'s `findPolicyRow`). Returns `null` when no such policy exists for
+ * this owner.
+ *
+ * The pre-fetch behind `handlePolicyUpdate`/`handlePolicyDelete`'s gate on the
+ * STORED scope: the mutation RPCs commit before returning the row, so gating
+ * on the RETURNED row would be post-commit — a mutation leak, not fail-closed.
+ */
+async function findPolicyRow(
+  db: DbClient, span: Span, userId: string, id: string,
+): Promise<RetentionPolicyDbRow | null> {
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
+  if (error) { span.error(`DB: ${error.message}`); throw error; }
+  return ((data ?? []) as unknown as RetentionPolicyDbRow[]).find((r) => r.id === id) ?? null;
+}
+
 /** GET /policies — list every retention policy the caller owns. */
 export async function handlePolicyList(
   _req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -77,7 +104,9 @@ export async function handlePolicyList(
   const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const entries = ((data ?? []) as unknown as RetentionPolicyDbRow[]).map(toWire);
+  const restriction = keyRestriction(auth);
+  const rows = narrowByKeyScope(restriction?.scopes ?? [], (data ?? []) as unknown as RetentionPolicyDbRow[]);
+  const entries = rows.map(toWire);
   span.setAttributes({ 'lorekit.result.count': entries.length });
   return ok({ entries }, cors);
 }
@@ -95,6 +124,12 @@ export async function handlePolicyCreate(
   const body = v.data;
 
   span.setAttributes({ 'lorekit.scope': body.scope, 'lorekit.policy.mode': body.mode });
+
+  const restriction = keyRestriction(auth);
+  if (restriction && restriction.scopes.length > 0 && !scopeAllowedByKey(restriction.scopes, body.scope)) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(keyScopeDeniedMessage(body.scope), cors);
+  }
 
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
@@ -158,6 +193,18 @@ export async function handlePolicyUpdate(
 
   span.setAttributes({ 'lorekit.policy.id': params.id });
 
+  // Fail-closed: pre-fetch the STORED scope (immutable — not a patch field)
+  // and gate it BEFORE the mutation RPC. A missing id is left to the RPC's
+  // own not-found path below — unchanged by this gate.
+  const existing = await findPolicyRow(db, span, userId, params.id);
+  if (existing) {
+    const restriction = keyRestriction(auth);
+    if (restriction && restriction.scopes.length > 0 && !scopeAllowedByKey(restriction.scopes, existing.scope)) {
+      span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+      return forbidden(keyScopeDeniedMessage(existing.scope), cors);
+    }
+  }
+
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   const tracedDb = createTracedClient(db, span);
@@ -185,6 +232,18 @@ export async function handlePolicyDelete(
   if (typeof userId !== 'string') return userId;
 
   span.setAttributes({ 'lorekit.policy.id': params.id });
+
+  // Fail-closed: pre-fetch the STORED scope and gate BEFORE the mutation RPC
+  // (see handlePolicyUpdate). A missing id is left to the RPC's own
+  // `notFound` path below — unchanged by this gate.
+  const existing = await findPolicyRow(db, span, userId, params.id);
+  if (existing) {
+    const restriction = keyRestriction(auth);
+    if (restriction && restriction.scopes.length > 0 && !scopeAllowedByKey(restriction.scopes, existing.scope)) {
+      span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+      return forbidden(keyScopeDeniedMessage(existing.scope), cors);
+    }
+  }
 
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 

@@ -54,18 +54,22 @@ describe('mcp-handler auth status guard', () => {
   it('returns JSONRPC_FORBIDDEN (not -32001) for every authz denial in tools/call', () => {
     const block = blockAfter(handler, "method === 'tools/call'", 'tools/call block');
     const forbidden = block.match(/jsonrpcError\(\s*id,\s*JSONRPC_FORBIDDEN/g) ?? [];
-    // write-missing, read-missing, key-scope-denied, and
-    // account-wide-sweep-on-a-scoped-key (00068).
+    // write-missing, read-missing, key-scope-denied (memory, pre-dispatch),
+    // account-wide-sweep-on-a-scoped-key (00068), and key-scope-denied
+    // (retention/groom, in-handler — a `KeyScopeDeniedError` thrown by
+    // `policy.*`/`groom.*`'s scope gate, caught here and mapped the same way).
     //
-    // Was 5. The removed one was the `org.*` JWT-only refusal: those tools now
-    // go through the same read/write permission gate as the memory family, so
-    // the denial they used to hit is one of the two above rather than a fifth
-    // of its own. Bumped with the reason named, never loosened.
+    // Was 4, then 5. The v1→v2 bump added the retention denial: `tools.ts`'s
+    // `assertScopeAllowed` throws `KeyScopeDeniedError` for a fenced-scope
+    // policy/groom call, and this catch block maps it to JSONRPC_FORBIDDEN
+    // rather than the in-band `isError` shape every other client error gets —
+    // see the plan's error-shape-parity risk note. Bumped with the reason
+    // named, never loosened.
     //
     // Pinned deliberately: a new denial must be a conscious edit here, because
     // the failure mode this guard exists for is a denial added as -32001, which
     // hangs the client instead of surfacing.
-    expect(forbidden.length).toBe(4);
+    expect(forbidden.length).toBe(5);
     expect(block).not.toMatch(/jsonrpcError\(\s*id,\s*-32001/);
   });
 

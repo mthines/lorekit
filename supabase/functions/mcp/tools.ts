@@ -42,6 +42,7 @@ import { recordMemoryReads } from '../_shared/telemetry/memory-reads.ts';
 import { recordCitations } from '../_shared/telemetry/citations.ts';
 import { resolveGroomConditions } from '../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../_shared/retention/groom.ts';
+import { scopeAllowedByKey, narrowByKeyScope, KeyScopeDeniedError } from '../_shared/schemas/api-key.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -1497,18 +1498,60 @@ function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
   };
 }
 
-/** List every retention policy the caller owns. */
+/**
+ * Throw `KeyScopeDeniedError` when `scope` falls outside a restricted key's
+ * allowlist. A no-op for an unrestricted key or a JWT/service caller
+ * (`restriction` undefined or carrying an empty `scopes` list) — scoping must
+ * never change behaviour for a token nobody scoped.
+ *
+ * The single gate every retention/groom handler below calls, so "gate the
+ * scope" means exactly one thing across create/update/delete/list/groom —
+ * see `retention-scope-gate.spec.ts`, which fails RED if any one call site
+ * drops it.
+ */
+function assertScopeAllowed(restriction: KeyRestriction | undefined, scope: string): void {
+  if (restriction && restriction.scopes.length > 0 && !scopeAllowedByKey(restriction.scopes, scope)) {
+    throw new KeyScopeDeniedError(scope);
+  }
+}
+
+/**
+ * Fetch a single retention policy by id, owner-scoped. There is no per-id
+ * fetch RPC — the owner's policy list is small (a handful of saved rules), so
+ * this reuses the already owner-scoped `lorekit_policy_list` rather than
+ * adding a fifth RPC for one lookup. Returns `null` when no such policy
+ * exists for this owner (never leaks whether it exists for someone else's).
+ *
+ * The shared by-id lookup behind `policy.update`/`policy.delete`'s
+ * pre-fetch-then-gate (the mutation RPCs commit before returning the row, so
+ * gating on the RETURNED row would be post-commit — a mutation leak, not
+ * fail-closed) and `resolveGroomRequest`'s `policy_id` resolution.
+ */
+async function findPolicyRow(
+  db: DbClient,
+  userId: string,
+  id: string,
+  span: Span,
+): Promise<RetentionPolicyDbRow | null> {
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
+  if (error) throw new Error((error as { message: string }).message);
+  return ((data ?? []) as unknown as RetentionPolicyDbRow[]).find((r) => r.id === id) ?? null;
+}
+
+/** List every retention policy the caller owns, narrowed to the key's allowlist. */
 export async function toolPolicyList(
   db: DbClient,
   _params: Params,
   userId: string | null,
   span: Span,
+  restriction?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('policy.list requires a user_id');
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
   if (error) throw new Error((error as { message: string }).message);
-  const entries = (data ?? []) as unknown as RetentionPolicyDbRow[];
+  const entries = narrowByKeyScope(restriction?.scopes ?? [], (data ?? []) as unknown as RetentionPolicyDbRow[]);
   span.setAttributes({ 'lorekit.result.count': entries.length });
   return { entries };
 }
@@ -1519,6 +1562,7 @@ export async function toolPolicyCreate(
   params: Params,
   userId: string | null,
   span: Span,
+  restriction?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('policy.create requires a user_id');
   const { scope: rawScope, name, mode = 'review', enabled = false, min_age_days = null, unseen_days = null, max_seen_count = null, max_read_count = null, max_opened_count = null } = params;
@@ -1526,6 +1570,7 @@ export async function toolPolicyCreate(
   if (mode !== 'review' && mode !== 'auto') throw new UserInputError('mode must be "review" or "auto"');
   assertGroomConditionsInBounds({ min_age_days, unseen_days, max_seen_count, max_read_count, max_opened_count });
   const scope = validateScope(rawScope);
+  assertScopeAllowed(restriction, scope);
 
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.policy.mode': mode });
 
@@ -1580,6 +1625,7 @@ export async function toolPolicyUpdate(
   params: Params,
   userId: string | null,
   span: Span,
+  restriction?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('policy.update requires a user_id');
   const { id } = params;
@@ -1600,6 +1646,14 @@ export async function toolPolicyUpdate(
     if (params[field] !== undefined) patch[field] = params[field];
   }
   if (Object.keys(patch).length === 0) throw new UserInputError('at least one field to update is required');
+
+  // Fail-closed: pre-fetch the STORED scope (immutable — not a patch field)
+  // and gate it BEFORE the mutation RPC. Gating on the RPC's returned row
+  // would be post-commit; a missing id is left to the RPC's own not-found
+  // path below rather than throwing here, so behaviour for a genuinely
+  // missing policy is unchanged by this gate.
+  const existing = await findPolicyRow(db, userId, id, span);
+  if (existing) assertScopeAllowed(restriction, existing.scope);
 
   span.setAttributes({ 'lorekit.policy.id': id });
 
@@ -1625,10 +1679,17 @@ export async function toolPolicyDelete(
   params: Params,
   userId: string | null,
   span: Span,
+  restriction?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('policy.delete requires a user_id');
   const { id } = params;
   if (!id) throw new UserInputError('id is required');
+
+  // Fail-closed: pre-fetch the STORED scope and gate BEFORE the mutation RPC
+  // (see toolPolicyUpdate). A missing id is left to the RPC's own `{ deleted:
+  // false }` path below — unchanged by this gate.
+  const existing = await findPolicyRow(db, userId, id, span);
+  if (existing) assertScopeAllowed(restriction, existing.scope);
 
   span.setAttributes({ 'lorekit.policy.id': id });
 
@@ -1653,12 +1714,19 @@ export async function toolPolicyDelete(
  * conditions) into the concrete conditions struct `lorekit_groom_candidates`
  * takes — fetching the named policy (owner-scoped) when policy_id is given,
  * then delegating to the pure `resolveGroomConditions`.
+ *
+ * Gates the RESOLVED `conditions.scope` against the key's allowlist HERE,
+ * after resolution — one call covers both forms: an inline `scope` and a
+ * `policy_id`'s stored scope, since `resolveGroomConditions` always produces
+ * the same `conditions.scope` field regardless of which one was given. Both
+ * `toolGroomPreview` and `toolGroomRun` inherit the gate by calling this.
  */
 async function resolveGroomRequest(
   db: DbClient,
   params: Params,
   userId: string,
   span: Span,
+  restriction?: KeyRestriction,
 ): Promise<GroomConditions> {
   const request: GroomRequestInput = params.policy_id
     ? { policy_id: params.policy_id as string }
@@ -1680,18 +1748,14 @@ async function resolveGroomRequest(
 
   let policy: RetentionPolicyRow | null = null;
   if ('policy_id' in request) {
-    // No per-id fetch RPC — the owner's policy list is small (a handful of
-    // saved rules), so reuse lorekit_policy_list (already owner-scoped) and
-    // find the one requested rather than adding a fifth RPC for one lookup.
-    const tracedDb = createTracedClient(db, span);
-    const { data, error } = await tracedDb.rpc('lorekit_policy_list', { p_user_id: userId });
-    if (error) throw new Error((error as { message: string }).message);
-    const row = ((data ?? []) as unknown as RetentionPolicyDbRow[]).find((r) => r.id === request.policy_id) ?? null;
+    const row = await findPolicyRow(db, userId, request.policy_id, span);
     if (!row) throw new UserInputError(`no retention policy found for policy_id=${request.policy_id}`);
     policy = toPolicyRow(row);
   }
 
-  return resolveGroomConditions(request, policy);
+  const conditions = resolveGroomConditions(request, policy);
+  assertScopeAllowed(restriction, conditions.scope);
+  return conditions;
 }
 
 /**
@@ -1734,11 +1798,12 @@ export async function toolGroomPreview(
   params: Params,
   userId: string | null,
   span: Span,
+  restriction?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('groom.preview requires a user_id');
   if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
 
-  const conditions = await resolveGroomRequest(db, params, userId, span);
+  const conditions = await resolveGroomRequest(db, params, userId, span, restriction);
   span.setAttributes({ 'lorekit.scope': conditions.scope });
 
   const tracedDb = createTracedClient(db, span);
@@ -1762,11 +1827,12 @@ export async function toolGroomRun(
   params: Params,
   userId: string | null,
   span: Span,
+  restriction?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('groom.run requires a user_id');
   if (!params.policy_id && !params.scope) throw new UserInputError('policy_id or scope is required');
 
-  const conditions = await resolveGroomRequest(db, params, userId, span);
+  const conditions = await resolveGroomRequest(db, params, userId, span, restriction);
   span.setAttributes({ 'lorekit.scope': conditions.scope });
 
   const tracedDb = createTracedClient(db, span);

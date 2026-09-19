@@ -56,10 +56,14 @@ export const ORG_TOOLS = {
   'org.delete': toolOrgDelete,
 } as const satisfies Record<OrgToolName, unknown>;
 
-// policy.*/groom.* tools — dispatched with (db, args, userId, span), where
-// userId is the RESOLVED owner (analyticsUserId), never the JWT-null
-// toolUserId: the underlying lorekit_policy_*/lorekit_groom_* RPCs take
-// p_user_id explicitly and have no auth.uid() fallback.
+// policy.*/groom.* tools — dispatched with (db, args, userId, span,
+// keyScoping), where userId is the RESOLVED owner (analyticsUserId), never
+// the JWT-null toolUserId: the underlying lorekit_policy_*/lorekit_groom_*
+// RPCs take p_user_id explicitly and have no auth.uid() fallback. keyScoping
+// is the calling key's restriction (00068) — each handler gates the scope it
+// resolves (create's target scope; update/delete's pre-fetched STORED scope;
+// list's narrowing; groom's resolved conditions.scope) against it, mirroring
+// how the memory family threads the same argument.
 export const RETENTION_TOOLS = {
   'policy.list': toolPolicyList,
   'policy.create': toolPolicyCreate,

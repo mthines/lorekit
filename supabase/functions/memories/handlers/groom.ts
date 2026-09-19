@@ -1,5 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit/audit.ts';
 import { forbidden, ok, dryRun } from '../../_shared/api/respond.ts';
 import { badRequest } from '../../_shared/api/respond.ts';
@@ -11,6 +11,7 @@ import { GroomRequestSchema } from '../../_shared/schemas/retention.ts';
 import { resolveGroomConditions } from '../../_shared/retention/groom.ts';
 import type { RetentionPolicyRow, GroomRequestInput, GroomConditions } from '../../_shared/retention/groom.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
+import { scopeAllowedByKey, keyScopeDeniedMessage } from '../../_shared/schemas/api-key.ts';
 
 /**
  * `POST /groom/preview` and `POST /groom/run` — the REST twins of the MCP
@@ -19,6 +20,12 @@ import type { DbClient } from '../../_shared/api/auth.ts';
  * `resolveGroomConditions` pure module the MCP handlers use, then call the
  * SAME candidate SQL (`lorekit_groom_candidates` / `lorekit_groom_run`) — so
  * a previewed count always equals what a run archives, on either surface.
+ *
+ * `resolveConditions` also gates the RESOLVED `conditions.scope` against the
+ * calling key's allowlist (00068) — one gate covers both an inline `scope`
+ * and a `policy_id`'s stored scope, since `resolveGroomConditions` always
+ * produces the same `conditions.scope` field either way. Mirrors the MCP
+ * `resolveGroomRequest`'s `assertScopeAllowed` via the SAME shared predicate.
  */
 function requireUserId(auth: AuthContext, cors: Record<string, string>): string | Response {
   if (!auth.userId) {
@@ -74,6 +81,7 @@ function toPolicyRow(row: RetentionPolicyDbRow): RetentionPolicyRow {
 
 async function resolveConditions(
   db: DbClient, span: Span, userId: string, request: GroomRequestInput,
+  auth: AuthContext, cors: Record<string, string>,
 ): Promise<GroomConditions | { error: Response }> {
   let policy: RetentionPolicyRow | null = null;
   if ('policy_id' in request) {
@@ -84,7 +92,15 @@ async function resolveConditions(
     if (!row) return { error: badRequest(`no retention policy found for policy_id=${request.policy_id}`, undefined, {}) };
     policy = toPolicyRow(row);
   }
-  return resolveGroomConditions(request, policy);
+  const conditions = resolveGroomConditions(request, policy);
+
+  const restriction = keyRestriction(auth);
+  if (restriction && restriction.scopes.length > 0 && !scopeAllowedByKey(restriction.scopes, conditions.scope)) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return { error: forbidden(keyScopeDeniedMessage(conditions.scope), cors) };
+  }
+
+  return conditions;
 }
 
 /**
@@ -132,7 +148,7 @@ export async function handleGroomPreview(
   const v = await validateBody(req, GroomRequestSchema, cors);
   if (!v.ok) return v.response;
 
-  const resolved = await resolveConditions(db, span, userId, v.data as GroomRequestInput);
+  const resolved = await resolveConditions(db, span, userId, v.data as GroomRequestInput, auth, cors);
   if ('error' in resolved) return resolved.error;
   const conditions = resolved;
   span.setAttributes({ 'lorekit.operation': 'memories.groom_preview', 'lorekit.scope': conditions.scope });
@@ -163,7 +179,7 @@ export async function handleGroomRun(
   const v = await validateBody(req, GroomRequestSchema, cors);
   if (!v.ok) return v.response;
 
-  const resolved = await resolveConditions(db, span, userId, v.data as GroomRequestInput);
+  const resolved = await resolveConditions(db, span, userId, v.data as GroomRequestInput, auth, cors);
   if ('error' in resolved) return resolved.error;
   const conditions = resolved;
   span.setAttributes({ 'lorekit.operation': 'memories.groom_run', 'lorekit.scope': conditions.scope });

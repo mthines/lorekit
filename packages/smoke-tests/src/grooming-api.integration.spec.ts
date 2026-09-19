@@ -14,6 +14,28 @@
  * Run standalone:
  *   LOREKIT_SMOKE_TOKEN=<token> LOREKIT_REST_BASE_URL=<url> \
  *     pnpm nx test smoke-tests -- --reporter=verbose --testPathPattern=grooming-api.integration
+ *
+ * NOT ADDED HERE (plan.md v2 Slice E.6, deliberately): a live scope-refusal
+ * assertion for the `/policies` + `/groom` key-scope allowlist gate (00068).
+ * This suite carries exactly ONE bearer token via `LOREKIT_SMOKE_TOKEN` — a
+ * service-role key, an `lk_*` API token, or a user JWT — and has no facility
+ * to MINT a second, scope-restricted `lk_*` token against a live instance
+ * (that requires the token-management RPCs this package makes no REST calls
+ * to, and this suite is REST-only by design, matching every other spec
+ * here). Fabricating a "scoped-looking" request without a real DB-issued
+ * restricted key would not exercise the actual gate — `keyRestriction(auth)`
+ * reads the restriction off the resolved `api_tokens` row, not off anything
+ * the request itself can carry — so faking one here would be evidence
+ * theatre, not a real assertion, which the executor was explicitly told not
+ * to do. The gate is proven instead by two REAL tests that do not need a
+ * live token: `packages/mcp-core/src/auth/retention-scope-gate.spec.ts`
+ * (CI-gated source-scan, asserts the shape of the gate on every op on both
+ * surfaces — the recurrence guard for a half-restored predicate) and
+ * `supabase/functions/mcp/tools.policy-scope-gate.test.ts` (local-only Deno
+ * test, behavioral: a restricted `KeyRestriction` object drives the real
+ * handlers against a mock DB and asserts the mutation RPC is never reached
+ * on denial). Revisit this note if a future scoped-token-minting helper
+ * lands in `smoke-cleanup.ts` or similar.
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
