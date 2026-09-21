@@ -109,6 +109,50 @@ body:has([data-app-shell]) {
   border-radius: 4px;
 }
 
+/* ── Landing motion ──────────────────────────────────────────────────────── */
+/* Two entrances for the public pages, both animating `opacity` + `transform`
+   only, so they run on the compositor and never cost a layout or paint frame.
+
+   `lk-rise` is the hero's own choreography: it runs once, off the clock,
+   staggered by `--lk-delay` so the eye lands on the headline and the supporting
+   lines catch up (the delay between steps is ~30–70 % of the duration, past
+   which a stagger stops reading as one gesture and starts reading as a queue).
+
+   `lk-reveal` is the same shape driven by SCROLL POSITION instead of time, via
+   a `view()` timeline — no IntersectionObserver, no client component, nothing
+   to hydrate for what is decoration on a static marketing page.
+
+   The load-bearing detail in both is that THE RESTING STATE IS THE FINISHED
+   STATE: the offset lives inside the keyframe's `from`, never on the element's
+   base class. The usual `opacity: 0` + observer pattern leaves the page blank
+   whenever the reveal never runs, which is exactly what happens in a browser
+   without `animation-timeline` (Safari and Firefox at the time of writing) and
+   for a visitor who asked for reduced motion. Here those visitors get the
+   content, just without the motion.
+
+   `animation-range` deliberately ends at `cover 15%` rather than `entry 100%`:
+   a section taller than the viewport never completes its `entry` range, so an
+   entry-scoped reveal would strand it permanently half-faded. */
+@media (prefers-reduced-motion: no-preference) {
+  .lk-rise {
+    animation: lk-rise-in 360ms var(--ease-out-smooth) both;
+    animation-delay: var(--lk-delay, 0ms);
+  }
+
+  @supports (animation-timeline: view()) {
+    .lk-reveal {
+      animation: lk-rise-in linear both;
+      animation-timeline: view();
+      animation-range: cover 0% cover 15%;
+    }
+  }
+}
+
+@keyframes lk-rise-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Reduced motion ──────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
