@@ -10277,6 +10277,350 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- §112 — lorekit_memory_relevant_candidates: graded lexical relevance and a
+--        rank-cut candidate window (00112)
+--
+-- `GET /memories/relevant` now selects its candidates through this function.
+-- Before it, relevance was BINARY (a row matched or it did not, because
+-- ts_rank_cd is not projectable through PostgREST's query grammar) and the
+-- candidate window was cut in `updated_at desc` order, so the best-matching
+-- lesson in a large store could fall outside the window entirely. Both are
+-- properties of the SELECT, so both are asserted here rather than in a handler
+-- spec that can only mock what the SELECT returned.
+--
+-- Fresh users and a fresh org, so every assertion is an exact set rather than a
+-- `like` filter over whatever earlier sections left behind.
+--
+-- THE ASSERTIONS ARE RELATIVE, NOT ABSOLUTE, wherever a `ts_rank_cd` magnitude
+-- would otherwise be hard-coded. What this migration promises is an ORDER —
+-- "better matches rank higher, and the window keeps the better matches" — not
+-- particular numbers, and a test that pinned the numbers would fail on a
+-- Postgres ranking-internals change that broke nothing anybody relies on. The
+-- one exception is AC-4, which pins a magnitude on purpose because a TypeScript
+-- constant is derived from it.
+--
+-- AC-1: relevance is GRADED — a row matching two terms of an OR query outranks
+--       one matching a single term, and the returned order IS rank order.
+-- AC-2: relevance is graded by density too — repeating the query term ranks
+--       above a single occurrence of it.
+-- AC-3: the candidate window is cut by RANK, not recency. A 1-row window holds
+--       the best match, not the most recently updated match. This is the
+--       "recency-windowed, not global" caveat the handler used to document.
+-- AC-4: the saturation anchor the TypeScript normalizer is pinned to is real —
+--       one occurrence of one default-weight lexeme is a ts_rank_cd of ≈ 0.1.
+-- AC-5: p_q null is the no-query path — relevance is NULL on every row and the
+--       order is `updated_at desc`, byte-for-byte the pre-00112 behaviour. An
+--       empty string is the same "no query", matching the handler's falsiness.
+-- AC-6: an all-stopword query is NOT rescued into the no-query path — an empty
+--       tsquery matches nothing, exactly as the PostgREST `.textSearch` form
+--       behaved. Silently answering a different question would be worse.
+-- AC-7: archived and expired rows are never candidates.
+-- AC-8: tenancy — another user's rows are invisible however well they match; an
+--       org-shared row is visible to a member.
+-- AC-9: the calling key's own restrictions narrow further — `personal` tenancy
+--       drops org rows the OWNER can otherwise see, `selected` admits the named
+--       org, and a scope allowlist narrows a call that names no scope.
+-- AC-10: determinism — two identical calls return the identical order.
+-- ═════════════════════════════════════════════════════════════════════════
+
+insert into auth.users (id) values
+  ('11200000-0000-0000-0000-000000000001'),
+  ('11200000-0000-0000-0000-000000000002')
+  on conflict do nothing;
+
+insert into orgs (id, slug, name, created_by) values
+  ('11200000-0000-0000-0000-0000000000f1', 'relv-org', 'Relevance Org',
+   '11200000-0000-0000-0000-000000000001')
+  on conflict do nothing;
+insert into org_members (org_id, user_id, role) values
+  ('11200000-0000-0000-0000-0000000000f1', '11200000-0000-0000-0000-000000000001', 'owner')
+  on conflict do nothing;
+
+do $$
+declare
+  v_owner    uuid := '11200000-0000-0000-0000-000000000001';
+  v_other    uuid := '11200000-0000-0000-0000-000000000002';
+  v_org      uuid := '11200000-0000-0000-0000-0000000000f1';
+  v_keys     text[];
+  v_ranks    double precision[];
+  v_rank     double precision;
+  v_rank_one double precision;
+  v_rank_two double precision;
+  v_best     double precision;
+  v_nulls    bigint;
+  v_rows     bigint;
+  v_first    text;
+  v_run_a    text[];
+  v_run_b    text[];
+  i          integer;
+begin
+  -- ── Fixtures ────────────────────────────────────────────────────────────
+  -- `both` carries BOTH query terms, `one` carries a single one, `dense`
+  -- repeats its single term, `single` holds exactly one occurrence of it (the
+  -- AC-4 probe). `fresh` is the recency decoy: a weak single-term match that is
+  -- the most recently updated MATCHING row, so a recency-cut window would keep
+  -- it and drop the better matches — which is precisely what AC-3 rejects.
+  --
+  -- Every `updated_at` is explicit. The no-query path orders by it, so leaving
+  -- any of them to `now()` would make AC-5c depend on the wall clock.
+  insert into memories (user_id, scope, key, value, updated_at) values
+    (v_owner, 'project::relv', '112-both',
+     'migration backfill order matters here', timestamptz '2026-01-01'),
+    (v_owner, 'project::relv', '112-one',
+     'migration order matters here and nothing else does', timestamptz '2026-01-02'),
+    (v_owner, 'project::relv', '112-dense',
+     'migration migration migration', timestamptz '2026-01-03'),
+    (v_owner, 'project::relv', '112-single',
+     'migration', timestamptz '2026-01-04'),
+    (v_owner, 'project::relv', '112-fresh',
+     'backfill', timestamptz '2026-06-01');
+  -- Never candidates: archived, and expired.
+  insert into memories (user_id, scope, key, value, updated_at, archived_at) values
+    (v_owner, 'project::relv', '112-archived', 'migration backfill',
+     timestamptz '2026-01-05', now());
+  insert into memories (user_id, scope, key, value, updated_at, expires_at) values
+    (v_owner, 'project::relv', '112-expired', 'migration backfill',
+     timestamptz '2026-01-06', now() - interval '1 day');
+  -- A different tenant's row, lexically identical to the best match — the only
+  -- honest way to prove the tenancy predicate is doing the work rather than the
+  -- ranking accidentally burying it.
+  insert into memories (user_id, scope, key, value, updated_at) values
+    (v_other, 'project::relv', '112-foreign',
+     'migration backfill order matters here', timestamptz '2026-01-07');
+  -- An org-shared row the owner reaches through MEMBERSHIP, not ownership.
+  -- Deliberately a single-term match so it cannot tie with `112-both` for the
+  -- top rank and make AC-1c's ordering assertion depend on a tiebreak.
+  insert into memories (user_id, org_id, scope, key, value, updated_at) values
+    (v_other, v_org, 'project::relv', '112-org', 'org shared migration note',
+     timestamptz '2026-07-01');
+
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"11200000-0000-0000-0000-000000000001","role":"service_role"}', true);
+
+  -- ── AC-1: graded — two matched terms outrank one ────────────────────────
+  select relevance into v_rank_two from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration or backfill',
+      p_scopes => array['project::relv'])
+   where key = '112-both';
+  select relevance into v_rank_one from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration or backfill',
+      p_scopes => array['project::relv'])
+   where key = '112-one';
+  assert v_rank_two is not null and v_rank_one is not null,
+    '112 AC-1a: a matched row must carry a relevance, not NULL, when p_q is set';
+  assert v_rank_two > v_rank_one,
+    format('112 AC-1b: a row matching BOTH query terms must outrank one matching a '
+           'single term (both=%s, one=%s) — a binary relevance scored these equal, '
+           'which is the regression 00112 exists to fix', v_rank_two, v_rank_one);
+
+  -- The returned order must BE rank order, or the window the handler caps would
+  -- not be the best-matching window. Asserted as "non-increasing down the
+  -- result" rather than a hard-coded key sequence: the contract is the ordering
+  -- rule, not one particular permutation of these fixtures.
+  select array_agg(relevance order by ord) into v_ranks from (
+    select relevance, row_number() over () as ord
+      from lorekit_memory_relevant_candidates(
+        p_user_id => v_owner, p_q => 'migration or backfill',
+        p_scopes => array['project::relv'])
+  ) t;
+  assert array_length(v_ranks, 1) >= 2,
+    format('112 AC-1c: the ordering assertion needs at least two matched rows, got %s',
+           coalesce(array_length(v_ranks, 1), 0));
+  for i in 2 .. array_length(v_ranks, 1) loop
+    assert v_ranks[i] <= v_ranks[i - 1],
+      format('112 AC-1c: candidates must be returned in ts_rank_cd desc order — '
+             'position %s (%s) outranks position %s (%s); full sequence %s',
+             i, v_ranks[i], i - 1, v_ranks[i - 1], v_ranks);
+  end loop;
+
+  -- ── AC-2: graded by density — repetition outranks a single occurrence ───
+  select relevance into v_rank_two from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'])
+   where key = '112-dense';
+  select relevance into v_rank_one from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'])
+   where key = '112-single';
+  assert v_rank_two > v_rank_one,
+    format('112 AC-2: three occurrences of the query term must outrank one '
+           '(dense=%s, single=%s)', v_rank_two, v_rank_one);
+
+  -- ── AC-3: the window is cut by RANK, not recency ────────────────────────
+  -- `112-fresh` is the most recently updated MATCHING row and a weak match.
+  -- Under the pre-00112 `updated_at desc` window with a cap of 1 it was the
+  -- only candidate; under a rank-cut window it is among the first to fall off.
+  select max(relevance) into v_best from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration or backfill',
+      p_scopes => array['project::relv']);
+  select key, relevance into v_first, v_rank from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration or backfill',
+      p_scopes => array['project::relv'], p_limit => 1);
+  assert v_rank = v_best,
+    format('112 AC-3a: a 1-row window must hold the BEST-matching row (kept %s at %s, '
+           'best in the full set is %s)', v_first, v_rank, v_best);
+  assert v_first <> '112-fresh',
+    '112 AC-3b: a 1-row window must not simply keep the most recently updated match — '
+    'that is the recency-windowed behaviour 00112 replaces';
+
+  -- ── AC-4: the saturation anchor the TS normalizer is pinned to ──────────
+  -- `memories.fts` applies no setweight (00001), so every lexeme carries
+  -- Postgres's default D weight of 0.1, and one occurrence of one query lexeme
+  -- is a ts_rank_cd of 0.1. `LEXICAL_RANK_SATURATION` in `lesson-rank.ts` IS
+  -- that number — this is the assertion that keeps its docblock's claim true,
+  -- and the one place in this section where pinning a magnitude is the point.
+  select relevance into v_rank from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'])
+   where key = '112-single';
+  assert v_rank between 0.09 and 0.11,
+    format('112 AC-4: one occurrence of one default-weight lexeme must rank ≈ 0.1 — '
+           'the value LEXICAL_RANK_SATURATION is anchored to — got %s', v_rank);
+
+  -- ── AC-5: the no-query path is unchanged ────────────────────────────────
+  select count(*) filter (where relevance is null), count(*)
+    into v_nulls, v_rows
+    from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => null, p_scopes => array['project::relv']);
+  assert v_rows = 6,
+    format('112 AC-5a: with no query every ACTIVE visible row is a candidate '
+           '(5 own + 1 org-shared), got %s', v_rows);
+  assert v_nulls = v_rows,
+    format('112 AC-5b: with no query relevance must be NULL on every row, got %s of %s',
+           v_nulls, v_rows);
+
+  select array_agg(key order by ord) into v_keys from (
+    select key, row_number() over () as ord
+      from lorekit_memory_relevant_candidates(
+        p_user_id => v_owner, p_q => null, p_scopes => array['project::relv'], p_limit => 2)
+  ) t;
+  assert v_keys = array['112-org', '112-fresh'],
+    format('112 AC-5c: with no query the window is updated_at desc — 112-org (2026-07-01) '
+           'then 112-fresh (2026-06-01); got %s', v_keys);
+
+  select count(*) filter (where relevance is null) into v_nulls
+    from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => '', p_scopes => array['project::relv']);
+  assert v_nulls = 6,
+    format('112 AC-5d: an empty p_q is "no query", not a query that matches nothing, '
+           'got %s rows with a null relevance', v_nulls);
+
+  -- ── AC-6: an all-stopword query matches nothing, and is NOT rescued ─────
+  select count(*) into v_rows from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'the', p_scopes => array['project::relv']);
+  assert v_rows = 0,
+    format('112 AC-6: an all-stopword query yields an empty tsquery and must match '
+           'nothing — folding it into the no-query path would answer a different '
+           'question than the one asked; got %s rows', v_rows);
+
+  -- ── AC-7: archived and expired rows are never candidates ────────────────
+  assert not exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'])
+     where key in ('112-archived', '112-expired')
+  ), '112 AC-7: an archived or expired row must never be a candidate';
+
+  -- ── AC-8: tenancy — foreign rows out, org-shared rows in ────────────────
+  assert not exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'])
+     where key = '112-foreign'
+  ), '112 AC-8a: another user''s row must never be a candidate, however well it matches';
+  assert exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'])
+     where key = '112-org'
+  ), '112 AC-8b: an org-shared row must be a candidate for a member of that org';
+
+  -- ── AC-9: the calling key's own restrictions narrow further ─────────────
+  -- `personal` tenancy drops every org row — including ones the OWNER reaches
+  -- through membership. This is the half a bare `user_id = actor` disjunct
+  -- would get wrong, and the half `ownRowsFragment` encodes on the TS side.
+  assert not exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'],
+      p_key_org_access => 'personal')
+     where key = '112-org'
+  ), '112 AC-9a: a personal-tenancy key must not reach an org-shared row';
+  assert exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'],
+      p_key_org_access => 'personal')
+     where key = '112-both'
+  ), '112 AC-9b: a personal-tenancy key must still reach the owner''s own personal rows';
+  assert exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration', p_scopes => array['project::relv'],
+      p_key_org_access => 'selected', p_key_org_ids => array[v_org])
+     where key = '112-org'
+  ), '112 AC-9c: a selected-tenancy key naming the org must reach that org''s rows';
+
+  assert not exists (
+    select 1 from lorekit_memory_relevant_candidates(
+      p_user_id => v_owner, p_q => 'migration',
+      p_key_scopes => array['repo::acme/other'])
+     where key like '112-%'
+  ), '112 AC-9d: an out-of-allowlist key_scopes must narrow the candidate set to nothing, '
+     'even on a call that names no scope at all';
+
+  -- ── AC-10: determinism ──────────────────────────────────────────────────
+  select array_agg(key order by ord) into v_run_a from (
+    select key, row_number() over () as ord
+      from lorekit_memory_relevant_candidates(
+        p_user_id => v_owner, p_q => 'migration or backfill',
+        p_scopes => array['project::relv'])
+  ) t;
+  select array_agg(key order by ord) into v_run_b from (
+    select key, row_number() over () as ord
+      from lorekit_memory_relevant_candidates(
+        p_user_id => v_owner, p_q => 'migration or backfill',
+        p_scopes => array['project::relv'])
+  ) t;
+  assert v_run_a = v_run_b,
+    format('112 AC-10: two identical calls must return the identical order (%s vs %s)',
+           v_run_a, v_run_b);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 112b: the function's own shape ──────────────────────────────────────────
+-- STABLE (not VOLATILE) so the planner may fold it, and SECURITY DEFINER with a
+-- pinned `search_path` — the shape every sibling analytics RPC carries. A
+-- definer function whose search_path is NOT pinned is a privilege-escalation
+-- surface, so this is asserted rather than assumed, and `anon` must not reach
+-- a function that reads memories at all.
+do $$
+declare
+  v_sig      text := 'lorekit_memory_relevant_candidates(uuid, text, text[], text[], text, uuid[], integer)';
+  v_volatile "char";
+  v_secdef   boolean;
+  v_config   text[];
+begin
+  select provolatile, prosecdef, proconfig
+    into v_volatile, v_secdef, v_config
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_relevant_candidates';
+
+  assert v_volatile = 's',
+    format('112b: lorekit_memory_relevant_candidates must be STABLE, got provolatile=%s',
+           v_volatile);
+  assert v_secdef,
+    '112b: the function must be SECURITY DEFINER — the api_key tier calls it on the '
+    'service-role client, where an invoker function would apply no RLS and no '
+    'predicate at all';
+  assert v_config @> array['search_path=public'],
+    format('112b: a SECURITY DEFINER function must pin its search_path, got %s', v_config);
+
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    '112b: authenticated must be able to execute the candidate RPC (the JWT tier)';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    '112b: service_role must be able to execute the candidate RPC (the api_key tier)';
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    '112b: anon must not be able to execute a function that reads memories';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
