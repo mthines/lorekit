@@ -100,6 +100,12 @@ export const mirrorPairs = [
   // guard, and the found/missing set difference shared by MCP's `toolRead`
   // and REST's `handleRead`. Import-free, so the byte comparison applies.
   { core: 'packages/mcp-core/src/memory/read-refs.ts', edge: 'supabase/functions/_shared/memory/read-refs.ts', driftChecked: true },
+  // TypeSafe (Jev) BYOK judgment wire format and caps — the third provider
+  // split after `embedding.ts`. Import-free on both sides, so the byte
+  // comparison applies. Has a SECOND, cross-LANGUAGE twin no byte comparison
+  // can cover — `packages/cli/src/shared/judgment-pure.mjs`, the CLI failure
+  // hook's copy — guarded behaviourally by `judgment-parity.spec.ts` instead.
+  { core: 'packages/mcp-core/src/judgment/judgment.ts', edge: 'supabase/functions/_shared/judgment/judgment.ts', driftChecked: true },
   // Excluded from the byte-comparison drift check: the edge copy types the
   // client as `ReturnType<typeof createClient>` off an `npm:` specifier where
   // mcp-core imports a typed `SupabaseClient`, and additionally carries
