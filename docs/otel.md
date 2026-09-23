@@ -130,6 +130,47 @@ Useful queries:
 
 ---
 
+## Judgment reranking (BYOK)
+
+`GET /memories/relevant` optionally reranks its shortlist with TypeSafe (Jev),
+using the caller's OWN API key (see
+[decisions.md](./decisions.md#judgment-is-byok-best-effort-never-on-the-correctness-path)
+and [judgment.md](./judgment.md)). The call chain, when a key is configured and
+`q` is set:
+
+```
+lorekit.memories.get.relevant           (root request span)
+  └── lorekit.judgment.key_store        (INTERNAL — Vault read, no key value on it)
+  └── lorekit.judgment.rerank           (CLIENT — fetch to api.typesafe.ai)
+  └── lorekit.judgment.key_store        (INTERNAL — record_call outcome)
+```
+
+Attributes stamped on `lorekit.memories.get.relevant` (the root span, so a
+judged read is filterable without joining to a child):
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `lorekit.judgment.provider` | `typesafe` | Bounded — the one provider this ships with |
+| `lorekit.judgment.outcome` | `applied` | The closed vocabulary: `applied`, `timeout`, `rejected`, `rate_limited`, `error`, `malformed`, `skipped_no_key`, `skipped_key_unavailable`, `skipped_disabled`, `skipped_no_query`, `skipped_no_candidates` |
+| `lorekit.judgment.candidate_count` | `18` | How many eligible (non-org-owned) candidates were sent, capped at `JUDGMENT_TOP_N` (25) |
+| `lorekit.judgment.duration_ms` | `340` | The `lorekit.judgment.rerank` CLIENT span's own duration, also stamped on the root for a filterable p95 |
+
+**Never stamped anywhere: the key itself, in any form.** No span, log line, or
+audit-row metadata field on the judgment path carries the raw or decrypted
+value — the `lorekit.judgment.key_store` spans set only `operation`,
+`provider`, `version`, `found`/`deleted`, and (on `set`) `last4`, which is the
+one intentionally-displayable fragment.
+
+**Every non-`applied` outcome means the read fell back to the pre-judgment
+baseline**, not that it failed — `timeout`/`rejected`/`rate_limited`/`error`/
+`malformed` are all "TypeSafe didn't produce a usable answer this time",
+handled the same as `skipped_*` (see the BYOK decision's identity-preservation
+rule). A dashboard alerting on judgment health should watch the RATIO of
+non-`skipped_*` failure outcomes to `applied`, not raw counts — a user with no
+key configured legitimately reports `skipped_no_key` on every request forever.
+
+---
+
 ## Query-level profiling
 
 ### Why there is no CPU profiler

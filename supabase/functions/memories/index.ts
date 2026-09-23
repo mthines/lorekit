@@ -28,6 +28,7 @@ import { handleClusters } from './handlers/clusters.ts';
 import { handlePolicyList, handlePolicyCreate, handlePolicyUpdate, handlePolicyDelete } from './handlers/policies.ts';
 import { handleGroomPreview, handleGroomRun } from './handlers/groom.ts';
 import { handleProtect } from './handlers/protect.ts';
+import { handleJudgmentKeyStatus, handleJudgmentKeySet, handleJudgmentKeyDelete } from './handlers/judgment-key.ts';
 
 // ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
 // segment COUNT plus literal equality, collects EVERY path match, then picks the
@@ -90,6 +91,13 @@ const router = createRouter([
   { method: 'POST',   path: '/groom/preview',  handler: handleGroomPreview, requires: 'read'  },
   { method: 'POST',   path: '/groom/run',      handler: handleGroomRun,     requires: 'write' },
   { method: 'POST',   path: '/protect',        handler: handleProtect,      requires: 'write' },
+  // TypeSafe (Jev) judgment BYOK key — a personal secret, so `requires: 'jwt'`
+  // rather than 'read'/'write': an `lk_*` API token must never reach it, only
+  // an interactive Supabase JWT session (the dashboard settings panel). See
+  // handlers/judgment-key.ts.
+  { method: 'GET',    path: '/judgment-key',   handler: handleJudgmentKeyStatus, requires: 'read' },
+  { method: 'POST',   path: '/judgment-key',   handler: handleJudgmentKeySet,    requires: 'jwt'  },
+  { method: 'DELETE', path: '/judgment-key',   handler: handleJudgmentKeyDelete, requires: 'jwt'  },
   // ── parameterised routes ───────────────────────────────────────────────────
   { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },
   { method: 'PATCH',  path: '/:id',            handler: handleUpdate,       requires: 'write' },

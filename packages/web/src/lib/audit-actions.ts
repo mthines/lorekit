@@ -73,6 +73,8 @@ export const AUDIT_ACTIONS = [
   'policy.update',
   'policy.delete',
   'memory.protect',
+  'judgment_key.set',
+  'judgment_key.delete',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -116,4 +118,6 @@ export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'policy.update': { label: 'Retention policy updated', badgeColor: 'blue', icon: ListChecks },
   'policy.delete': { label: 'Retention policy deleted', badgeColor: 'red', icon: ListChecks },
   'memory.protect': { label: 'Memory protection changed', badgeColor: 'purple', icon: ShieldPlus },
+  'judgment_key.set': { label: 'TypeSafe key configured', badgeColor: 'green', icon: KeyRound },
+  'judgment_key.delete': { label: 'TypeSafe key removed', badgeColor: 'red', icon: KeySquare },
 };

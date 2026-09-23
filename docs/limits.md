@@ -216,6 +216,18 @@ limit hardcoded in app code" rule two sections up. `/settings/plan` renders
 it as a small caption ("Peaked at N memories in the last 30 days") beside
 the existing live `PlanUsageBar`, not as a replacement for it.
 
+## Judgment (TypeSafe BYOK) is a SEPARATE budget, not this one
+
+`GET /memories/relevant`'s optional TypeSafe reranking (see
+[judgment.md](./judgment.md)) deliberately does **not** call
+`lorekit_check_rate_limit` — the shared 120 req/min/user window above. A
+judgment call already carries its own hard cap (`JUDGMENT_TIMEOUT_MS = 1500`,
+no retries, `JUDGMENT_TOP_N = 25` candidates per request) against the
+CALLER'S OWN TypeSafe account, not LoreKit's infrastructure. Folding it into
+the shared window would let a burst of judged `/relevant` reads exhaust a
+user's general rate budget for every OTHER endpoint over spend that isn't
+even LoreKit's to meter.
+
 ## Where the code lives
 
 | Concern | Deno edge function (production) | Tested/shared logic |

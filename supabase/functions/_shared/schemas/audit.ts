@@ -81,6 +81,8 @@ export const AUDIT_ACTIONS = [
   'policy.update',
   'policy.delete',
   'memory.protect',
+  'judgment_key.set',
+  'judgment_key.delete',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
