@@ -25,10 +25,13 @@ import path from 'node:path';
  *    path that matters, so the guard requires the `finally` form.
  *
  * 3. THE TOKEN LOOKUP IS NOT TRACED THROUGH `createTracedClient`. That wrapper
- *    interpolates filter VALUES into the span name and `db.query.text`
- *    (`buildSql` over `eq()` arguments), and the filter on this query is the
- *    token hash — the stored credential. This is the security half of the
- *    guard: it must stay a hand-rolled span over the raw client.
+ *    no longer puts filter VALUES in the span name or `db.query.text` (they
+ *    are `$n` placeholders — see `_shared/telemetry/span-semconv.ts`), but its
+ *    rejection arm still records the thrown error's message, and a Deno fetch
+ *    failure renders the request URL — filter values included — into it. The
+ *    filter on this query is the token hash, the stored credential, so this is
+ *    still the security half of the guard: it must stay a hand-rolled span
+ *    over the raw client.
  *
  * 4. THE GOTRUE CALL'S SPAN CARRIES NO CLAIM OR TOKEN DATA. Only a boolean
  *    `db.success` — never the JWT, the resolved user id, or the raw error

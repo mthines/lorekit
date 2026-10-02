@@ -6,7 +6,7 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 
 | Layer | SDK | Signals |
 |-------|-----|---------|
-| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
+| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by `db.query.summary` (`SELECT memories`) with a parameterised `db.query.text`; `http.route` + `error.type` on root spans; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
 | Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
 | CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `migrate`) |
@@ -33,7 +33,7 @@ Every `tools/call` invocation produces a trace tree:
 
 ```
 lorekit.memory.write   (INTERNAL — tool dispatch)
-  └── UPSERT INTO memories WHERE ...  (CLIENT — Postgres, db.query.text set)
+  └── CALL memory_write               (CLIENT — Postgres; parameterised db.query.text)
 ```
 
 Attributes on `lorekit.memory.*` spans:
@@ -585,15 +585,55 @@ Users can read their own rows (self-service "my usage" view via RLS).
 
 ---
 
-DB child spans carry OTel database semconv:
+DB child spans carry OTel database semconv. The span is NAMED by
+`db.query.summary`, and no filter value reaches the name or any attribute:
 
 | Attribute | Example |
 |-----------|---------|
+| span name = `db.query.summary` | `SELECT memories` / `CALL memory_write` — bounded: one per operation × table/function |
 | `db.system` | `postgresql` |
-| `db.operation.name` | `SELECT` / `INSERT` |
-| `db.collection.name` | `memories` |
-| `db.query.text` | `SELECT key,value FROM memories WHERE scope = '...' LIMIT 50` |
+| `db.operation.name` | `SELECT` / `INSERT` / `RPC` |
+| `db.collection.name` | `memories` (the function name for an RPC) |
+| `db.query.text` | `SELECT key,value FROM memories WHERE scope = $1 AND archived_at IS NULL LIMIT $2` — values are `$n` placeholders, `LIMIT` included |
+| `server.address` | `pqokxlhvnosogizsjztg.supabase.co` — omitted for a BYOD client, whose host is the user's own project |
 | `db.response.rows` | `7` |
+| `db.response.status_code` | `23505` — the SQLSTATE / PostgREST code, on failure only; also the span's `error.type` |
+
+**Why the values are gone.** The span used to be named after the statement with
+every filter value interpolated (`… WHERE key = 'reviewer-lessons::…'`,
+`… to_tsquery('zsh glob no matches …')`, `… user_id = '6e05…'`). In the week
+before the change that produced **511 distinct span names** on `api` — 287
+carrying full-text search terms (which the CLI hook distils from an agent's
+tool-failure text and keeps out of its own telemetry), 133 memory keys, 4 user
+ids. A span name is a grouping key; and `db.query.text` is defined as the
+sanitised statement. The rendering lives in the pure
+`_shared/telemetry/span-semconv.ts`: identifiers from our code are kept, every
+value is a placeholder, and a `.or()` logic string it cannot parse collapses to
+`(?)` rather than being guessed at. `span-semconv.spec.ts` runs a real
+`createTracedClient` chain with sentinel values and asserts none reaches the
+exported span.
+
+**One residual path.** The rejection arm (a thrown fetch, not a PostgREST error)
+still records the thrown message in `error.message`, and a Deno fetch failure
+renders the request URL into it. That is why the token lookups in
+`mcp/auth.ts` / `_shared/api/auth.ts` stay off `createTracedClient`
+(`mcp-auth-tracing.spec.ts`, `rest-auth-tracing.spec.ts`).
+
+### Root request spans: `http.route` and `error.type`
+
+| Attribute | Example | Set by |
+|-----------|---------|--------|
+| `http.route` | `/memories/:id`, `/mcp`, `/health` | `createRouter` once a route MATCHES (so a 403 carries it; a 404/405 does not), and each single-route function at the top of its `traceRequest` callback. Same shape as `url.path`, template not value. The router's handler child span keeps its function-relative `http.route` (`/:id`) |
+| `error.type` | `UserInputError`, `MethodNotFound`, `missing_token`, `TypeError`, `503` | Every `span.error()` / `span.clientError()` — an explicit type, else the `Name:` prefix of the message (`errorTypeFrom`), else `_OTHER`. A 5xx response with nothing more specific records the status code. Never the message itself — that stays on `error.message` |
+
+Dash0 keeps naming the edge operations by `faas.name` (`memories`, `mcp`): its
+FaaS rule is evaluated before its HTTP-route rule, so adding `http.route` does
+not rename the operations existing check rules filter on. Per-endpoint RED is a
+grouping over the root spans instead:
+
+```promql
+sum by (http_route, http_response_status_code) (increase({otel_metric_name="dash0.spans", service_name="api", otel_span_kind="SERVER"}[1h]))
+```
 
 ---
 

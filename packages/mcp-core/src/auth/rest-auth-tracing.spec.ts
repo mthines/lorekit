@@ -65,9 +65,11 @@ describe('REST auth resolution telemetry (supabase/functions/_shared/api/auth.ts
   });
 
   it('never routes the token lookup through createTracedClient', () => {
-    // createTracedClient interpolates `eq()` values into the span name and
-    // db.query.text. The value here is the token hash, so tracing this query
-    // that way would publish a credential into telemetry.
+    // createTracedClient keeps `eq()` values out of the span name and
+    // db.query.text, but its rejection arm records the thrown message, which a
+    // Deno fetch failure fills with the request URL — filter values included.
+    // The value here is the token hash, so tracing this query that way could
+    // still publish a credential into telemetry.
     expect(executable).not.toContain('createTracedClient');
   });
 
