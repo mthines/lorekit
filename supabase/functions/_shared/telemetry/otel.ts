@@ -10,7 +10,8 @@
  *  - createTracedClient(): wraps @supabase/supabase-js so every .from()
  *    chain gets an automatic CLIENT span named `SELECT memories` (the
  *    `db.query.summary`) with the parameterised statement in `db.query.text`
- *    — filter values never reach telemetry (see span-semconv.ts)
+ *    — filter values never reach the name or the statement, and URLs are
+ *    redacted from a failure's error.message (see span-semconv.ts)
  *  - traceRequest(): root entry point — extracts incoming traceparent,
  *    builds the root span, flushes the batch
  *

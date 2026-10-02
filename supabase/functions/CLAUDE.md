@@ -35,8 +35,11 @@ Auth resolution creates a `lorekit.rest.auth` child span automatically.
 Router creates a child span per handler call named `lorekit.{function}.{method}.{path}`.
 DB operations get child spans automatically via `createTracedClient`, named by
 `db.query.summary` (`SELECT memories`, `CALL memory_write`) with a
-parameterised `db.query.text` — filter values never reach telemetry
-(`_shared/telemetry/span-semconv.ts`).
+parameterised `db.query.text` — filter values never reach the span name or the
+statement, and URLs are redacted from a failure's `error.message`
+(`_shared/telemetry/span-semconv.ts`). Postgres's own error wording can still
+echo a value, so keep credential lookups off the traced client (see
+docs/otel.md → "Error messages").
 Set `http.route` on the root span: `createRouter` does it for routed functions;
 a single-route function does it at the top of its `traceRequest` callback.
 `span.error()` / `span.clientError()` record a bounded `error.type` from the
