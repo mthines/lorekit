@@ -1,4 +1,5 @@
 import { traceRequest } from '../_shared/telemetry/otel.ts';
+import { errorTypeOf } from '../_shared/telemetry/span-semconv.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { internalError } from '../_shared/api/respond.ts';
 import { generateSpec } from '../_shared/schemas/openapi/spec.ts';
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
       const spec = getSpec();
       return new Response(JSON.stringify(spec), { headers: { 'Content-Type': 'application/json', ...cors } });
     } catch (e) {
-      span.error(`spec generation failed: ${(e as Error).message}`, (e as Error).name);
+      span.error(`spec generation failed: ${(e as Error).message}`, errorTypeOf(e));
       return internalError(cors);
     }
   });

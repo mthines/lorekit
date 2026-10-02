@@ -33,7 +33,8 @@ const semconv = (await load('span-semconv.ts')) as {
   }): string;
   textSearchSql(column: string, type?: string): string;
   resolveServerAddress(clientUrl: unknown, hostedUrl: unknown): string | undefined;
-  errorTypeFrom(message: string): string;
+  errorTypeFrom(message: unknown): string;
+  errorTypeOf(err: unknown): string;
   httpRouteFor(functionName: string, routePath: string): string;
   redactUrls(message: string): string;
 };
@@ -194,6 +195,11 @@ describe('errorTypeFrom', () => {
     expect(semconv.errorTypeFrom('missing_token')).toBe('missing_token');
   });
 
+  it('is _OTHER for an `undefined: …` placeholder (a plain error object has no name)', () => {
+    expect(semconv.errorTypeFrom('undefined: connection refused')).toBe('_OTHER');
+    expect(semconv.errorTypeFrom(undefined)).toBe('_OTHER');
+  });
+
   it('is _OTHER — never the message — for prose', () => {
     expect(semconv.errorTypeFrom('spec generation failed: boom')).toBe('_OTHER');
     expect(semconv.errorTypeFrom('')).toBe('_OTHER');
@@ -209,6 +215,22 @@ describe('redactUrls', () => {
 
   it('leaves a message without a URL alone', () => {
     expect(semconv.redactUrls('duplicate key value violates unique constraint')).toBe('duplicate key value violates unique constraint');
+  });
+});
+
+describe('errorTypeOf', () => {
+  it('uses an Error\'s class name', () => {
+    expect(semconv.errorTypeOf(new TypeError('x'))).toBe('TypeError');
+  });
+
+  it('uses a PostgREST error object\'s code when there is no name (pr-reviewer on #682)', () => {
+    expect(semconv.errorTypeOf({ message: 'duplicate key', code: '23505' })).toBe('23505');
+  });
+
+  it('is _OTHER for anything else', () => {
+    expect(semconv.errorTypeOf('boom')).toBe('_OTHER');
+    expect(semconv.errorTypeOf(null)).toBe('_OTHER');
+    expect(semconv.errorTypeOf({ message: 'no code' })).toBe('_OTHER');
   });
 });
 
@@ -401,6 +423,25 @@ describe('Span.error / clientError — error.type', () => {
     expect(client.status).toBe('ok'); // a client error does not flip the status
     expect(server.attributes['error.type']).toBe('TypeError');
     expect(server.status).toBe('error');
+  });
+});
+
+describe('Span.error — every span redacts URLs and never throws', () => {
+  it('redacts a request URL from a handler span\'s message (pr-reviewer on #682)', () => {
+    const { root, batch } = newRoot();
+    root.error('Unhandled: TypeError: error sending request for url (https://h.test/rest/v1/memories?fts=wfts.secret%20search)', '_OTHER');
+    root.end();
+    const [span] = batch.drain();
+    expect(span.attributes['error.message']).toBe('Unhandled: TypeError: error sending request for url (<url>)');
+    expect(JSON.stringify(span)).not.toContain('secret');
+  });
+
+  it('tolerates an undefined message — callers pass `e.name`, which can be undefined', () => {
+    const { root, batch } = newRoot();
+    expect(() => root.error(undefined as unknown as string)).not.toThrow();
+    expect(() => root.clientError(undefined as unknown as string)).not.toThrow();
+    root.end();
+    expect(batch.drain()[0].attributes['error.type']).toBe('_OTHER');
   });
 });
 

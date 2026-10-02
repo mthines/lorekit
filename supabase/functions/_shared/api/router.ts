@@ -14,7 +14,7 @@ import {
   parseScopeTypeAttribute,
 } from '../scope/scope-type-attribute.ts';
 import type { Span } from '../telemetry/otel.ts';
-import { httpRouteFor } from '../telemetry/span-semconv.ts';
+import { errorTypeOf, httpRouteFor } from '../telemetry/span-semconv.ts';
 
 /**
  * Request header carrying a client-supplied grouping key (a PR ref, session id,
@@ -402,7 +402,7 @@ export function createRouter(routes: Route[], functionName: string) {
         return res;
       } catch (e) {
         const durationMs = Date.now() - startedMs;
-        hs.error(`${(e as Error).name}: ${(e as Error).message}`).end();
+        hs.error(`${(e as Error).name}: ${(e as Error).message}`, errorTypeOf(e)).end();
         if (usageUserId !== null) {
           recordUsageEvent(resolved.db, {
             userId: usageUserId,

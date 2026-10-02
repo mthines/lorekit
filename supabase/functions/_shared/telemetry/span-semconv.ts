@@ -365,9 +365,28 @@ export const ERROR_TYPE_OTHER = '_OTHER';
  * `_OTHER`, never the message itself: `error.type` is a grouping key, and the
  * free text already rides on `error.message`.
  */
-export function errorTypeFrom(message: string): string {
-  const m = /^([A-Za-z_][A-Za-z0-9_.]{0,63})(?::|$)/.exec(message.trim());
-  return m ? m[1] : ERROR_TYPE_OTHER;
+export function errorTypeFrom(message: unknown): string {
+  const m = /^([A-Za-z_][A-Za-z0-9_.]{0,63})(?::|$)/.exec(String(message ?? '').trim());
+  // `${e.name}: …` over a value with no `name` (a PostgREST error object is a
+  // plain object) renders `undefined: …` — a placeholder, not a class.
+  if (!m || m[1] === 'undefined' || m[1] === 'null') return ERROR_TYPE_OTHER;
+  return m[1];
+}
+
+/**
+ * A bounded `error.type` for a caught value: an `Error`'s class name, else the
+ * `code` a PostgREST / Postgres error object carries (`23505`, `PGRST301`),
+ * else `_OTHER`. Use it wherever a catch block names the type, instead of
+ * `(e as Error).name`, which is `undefined` for those plain error objects.
+ */
+export function errorTypeOf(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const { name, code } = err as { name?: unknown; code?: unknown };
+    if (typeof name === 'string' && name) return errorTypeFrom(name);
+    // SQLSTATEs start with a digit (`23505`), so not `errorTypeFrom`'s grammar.
+    if (typeof code === 'string' && /^[A-Za-z0-9_.]{1,64}$/.test(code)) return code;
+  }
+  return ERROR_TYPE_OTHER;
 }
 
 // ── http.route ─────────────────────────────────────────────────────────────

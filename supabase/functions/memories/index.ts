@@ -1,4 +1,5 @@
 import { traceRequest } from '../_shared/telemetry/otel.ts';
+import { errorTypeOf } from '../_shared/telemetry/span-semconv.ts';
 import { resolveRestAuth } from '../_shared/api/auth.ts';
 import { createRouter } from '../_shared/api/router.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
@@ -115,7 +116,7 @@ Deno.serve(async (req) => {
       if (e instanceof RestError) return e.toResponse(cors);
       const mapped = translateDbError(e);
       if (mapped) return mapped.toResponse(cors);
-      span.error(`Unhandled: ${(e as Error).message}`, (e as Error).name);
+      span.error(`Unhandled: ${(e as Error).message}`, errorTypeOf(e));
       return internalError(cors);
     }
   });

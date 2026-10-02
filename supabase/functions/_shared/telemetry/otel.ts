@@ -33,6 +33,7 @@ import { attributeIoTime, type IoInterval } from './io-ledger.ts';
 import {
   conditionSql,
   errorTypeFrom,
+  errorTypeOf,
   postgrestLogicToSql,
   querySummary,
   redactUrls,
@@ -514,10 +515,15 @@ export class Span {
    * writes; a message without one records `_OTHER`, never the message.
    */
   error(message: string, type?: string): this {
+    // Every span, not only DB spans: a handler or root span that records a
+    // failed request's message would otherwise carry its URL — and the filter
+    // values in its query string. Coerced, because callers pass `e.name` and
+    // the like, which can be undefined; a throw here would break the request.
+    const text = redactUrls(String(message ?? ''));
     this.status = 'error';
-    this.statusMessage = message;
-    this.attributes['error.message'] = message;
-    this.attributes['error.type'] = type ?? errorTypeFrom(message);
+    this.statusMessage = text;
+    this.attributes['error.message'] = text;
+    this.attributes['error.type'] = type || errorTypeFrom(text);
     return this;
   }
 
@@ -533,11 +539,12 @@ export class Span {
    * faults, not for client errors.
    */
   clientError(message: string, type?: string): this {
-    this.attributes['error.message'] = message;
+    const text = redactUrls(String(message ?? ''));
+    this.attributes['error.message'] = text;
     // Same bounded key as `error()`, so client errors are countable by class
     // (`UserInputError`, `MethodNotFound`, `missing_token`) without the span
     // status changing — the request was still handled correctly.
-    this.attributes['error.type'] = type ?? errorTypeFrom(message);
+    this.attributes['error.type'] = type || errorTypeFrom(text);
     return this;
   }
 
@@ -717,8 +724,7 @@ export async function traceRequest<T extends Response>(
     if (response.status >= 500) span.setErrorTypeIfAbsent(String(response.status));
     return withTraceparent(response, ctx);
   } catch (err) {
-    // `error.type` is derived from the `Name:` prefix — the thrown class.
-    span.error(`${(err as Error).name}: ${(err as Error).message}`);
+    span.error(`${(err as Error).name}: ${(err as Error).message}`, errorTypeOf(err));
     throw err;
   } finally {
     // Stamped BEFORE end() — attributes set after a span is added to the batch

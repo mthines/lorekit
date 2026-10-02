@@ -614,8 +614,10 @@ value is a placeholder, and a `.or()` logic string it cannot parse collapses to
 `createTracedClient` chain with sentinel values and asserts none reaches the
 exported span.
 
-**Error messages.** A failed DB span records PostgREST's error text as
-`error.message`. A failed *request* is the dangerous case: postgrest-js does not
+**Error messages.** Every span's `error()` / `clientError()` runs its message
+through `redactUrls`, so a handler or root span that records a failed request's
+message cannot carry its URL either. A failed DB span records PostgREST's error
+text as `error.message`. A failed *request* is the dangerous case: postgrest-js does not
 reject on a network failure, it **resolves** with `status: 0` and the request URL
 — every filter value in its query string — in the message. That case records
 `PostgrestError: fetch failed`; every other message (including a thrown error on
@@ -631,7 +633,7 @@ is why the token lookups in `mcp/auth.ts` / `_shared/api/auth.ts` stay off
 | Attribute | Example | Set by |
 |-----------|---------|--------|
 | `http.route` | `/memories/:id`, `/mcp`, `/health` | `createRouter` once a route MATCHES (so a 403 carries it; a 404/405 does not), and each single-route function at the top of its `traceRequest` callback. Same shape as `url.path`, template not value. The router's handler child span keeps its function-relative `http.route` (`/:id`) |
-| `error.type` | `UserInputError`, `MethodNotFound`, `missing_token`, `TypeError`, `503` | Every `span.error()` / `span.clientError()` — an explicit type, else the `Name:` prefix of the message (`errorTypeFrom`), else `_OTHER`. A 5xx response with nothing more specific records the status code. Never the message itself — that stays on `error.message` |
+| `error.type` | `UserInputError`, `MethodNotFound`, `missing_token`, `TypeError`, `23505`, `503` | Every `span.error()` / `span.clientError()` — an explicit type, else the `Name:` prefix of the message (`errorTypeFrom`), else `_OTHER`. Catch blocks pass `errorTypeOf(e)`: an `Error`'s name, else a PostgREST error object's `code` (those objects have no `name`, so `` `${e.name}: …` `` would read `undefined`). A 5xx response with nothing more specific records the status code. Never the message itself — that stays on `error.message`, with URLs redacted on every span |
 
 **`http.route` renames the Dash0 operation.** With it present, Dash0 names a
 root span's operation `{method} {route}` — `POST /mcp`, `GET /memories/:id` —
