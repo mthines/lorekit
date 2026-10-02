@@ -6,9 +6,11 @@
  *  - ExportBatch: collects spans request-scoped, flushes fire-and-forget
  *    after the response via EdgeRuntime.waitUntil (guarantees export before
  *    the Deno isolate shuts down)
- *  - Span: child spans, db.statement naming for Postgres, W3C traceparent
+ *  - Span: child spans, W3C traceparent, bounded `error.type`
  *  - createTracedClient(): wraps @supabase/supabase-js so every .from()
- *    chain gets an automatic child span with the SQL-like statement
+ *    chain gets an automatic CLIENT span named `SELECT memories` (the
+ *    `db.query.summary`) with the parameterised statement in `db.query.text`
+ *    — filter values never reach telemetry (see span-semconv.ts)
  *  - traceRequest(): root entry point — extracts incoming traceparent,
  *    builds the root span, flushes the batch
  *
@@ -27,6 +29,16 @@ import type { Database } from '../db/database.types.ts';
 import type { DbClient } from '../db/db-client.ts';
 import { formatTraceparent, parseTraceparent } from './trace-context.ts';
 import { attributeIoTime, type IoInterval } from './io-ledger.ts';
+import {
+  conditionSql,
+  errorTypeFrom,
+  postgrestLogicToSql,
+  querySummary,
+  renderStatement,
+  resolveServerAddress,
+  textSearchSql,
+  type DbOperation,
+} from './span-semconv.ts';
 import { translateDbError } from '../api/errors.ts';
 
 /** PostgREST error shape returned by @supabase/supabase-js. */
@@ -487,10 +499,21 @@ export class Span {
     return this;
   }
 
-  error(message: string): this {
+  /**
+   * Mark the span ERROR (a server-side fault).
+   *
+   * `type` becomes `error.type` — the bounded grouping key the OTel
+   * conventions pair with a failure, so "how many requests failed, by class"
+   * is a `sum by (error_type)` rather than a regex over the free-text
+   * `error.message`. Omit it and it is derived from the message's
+   * `ClassName: …` prefix (`errorTypeFrom`), which every call site already
+   * writes; a message without one records `_OTHER`, never the message.
+   */
+  error(message: string, type?: string): this {
     this.status = 'error';
     this.statusMessage = message;
     this.attributes['error.message'] = message;
+    this.attributes['error.type'] = type ?? errorTypeFrom(message);
     return this;
   }
 
@@ -505,8 +528,22 @@ export class Span {
    * conventions, server spans should only carry status=ERROR for server-side
    * faults, not for client errors.
    */
-  clientError(message: string): this {
+  clientError(message: string, type?: string): this {
     this.attributes['error.message'] = message;
+    // Same bounded key as `error()`, so client errors are countable by class
+    // (`UserInputError`, `MethodNotFound`, `missing_token`) without the span
+    // status changing — the request was still handled correctly.
+    this.attributes['error.type'] = type ?? errorTypeFrom(message);
+    return this;
+  }
+
+  /**
+   * Set `error.type` only when nothing more specific has been recorded.
+   * Used for the HTTP-status fallback on a 5xx response, which must never
+   * overwrite the class a handler already named.
+   */
+  setErrorTypeIfAbsent(type: string): this {
+    if (!('error.type' in this.attributes)) this.attributes['error.type'] = type;
     return this;
   }
 
@@ -631,6 +668,13 @@ function withTraceparent<T extends Response>(response: T, ctx: TraceContext): T 
  *   });
  * });
  * ```
+ *
+ * `http.route` is NOT set here: only the caller knows which route matched.
+ * `createRouter` stamps it on this span once a route matches, and each
+ * single-route function sets it at the top of its callback. Dash0 still names
+ * the operation by `faas.name` (its FaaS rule outranks its HTTP-route rule), so
+ * the attribute adds a per-endpoint grouping key without renaming the
+ * `memories` / `mcp` operations existing check rules filter on.
  */
 export async function traceRequest<T extends Response>(
   req: Request,
@@ -658,8 +702,13 @@ export async function traceRequest<T extends Response>(
   try {
     response = await fn(span);
     span.setAttributes({ 'http.response.status_code': response.status });
+    // OTel HTTP server conventions: a 5xx with no more specific cause records
+    // the status code as `error.type`. A handler that already named the class
+    // (`span.error('Unhandled: …', e.name)`) keeps it.
+    if (response.status >= 500) span.setErrorTypeIfAbsent(String(response.status));
     return withTraceparent(response, ctx);
   } catch (err) {
+    // `error.type` is derived from the `Name:` prefix — the thrown class.
     span.error(`${(err as Error).name}: ${(err as Error).message}`);
     throw err;
   } finally {
@@ -724,15 +773,23 @@ function isExpectedDbError(error: { code?: string; message?: string }): boolean 
   return typeof error.message === 'string' && error.message.includes('unknown_org');
 }
 
-type Op = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'UPSERT' | 'RPC';
+type Op = DbOperation;
 
 interface QueryState {
   table: string;
   op: Op;
   columns: string;
+  /**
+   * WHERE fragments with `?` placeholders — NEVER the filter values. Built by
+   * `span-semconv.ts` and numbered `$1…$n` by `renderStatement`. See that
+   * module's header for why values must stay out of span names and
+   * `db.query.text`.
+   */
   filters: string[];
   orderBy?: string;
   lim?: number;
+  /** `server.address` for the DB span, resolved once per traced client. */
+  serverAddress?: string;
   /**
    * The postgrest builder being accumulated. Deliberately untyped, because the
    * real type CHANGES ALONG THE CHAIN and no single annotation describes it:
@@ -756,25 +813,32 @@ interface QueryState {
   qb: any;
 }
 
+/** The parameterised `db.query.text` for a query — placeholders, never values. */
 function buildSql(s: QueryState): string {
-  const parts: string[] = [];
-  switch (s.op) {
-    case 'SELECT': parts.push(`SELECT ${s.columns || '*'} FROM ${s.table}`); break;
-    case 'INSERT': parts.push(`INSERT INTO ${s.table}${s.columns ? ` (${s.columns})` : ''}`); break;
-    case 'UPDATE': parts.push(`UPDATE ${s.table} SET ...`); break;
-    case 'DELETE': parts.push(`DELETE FROM ${s.table}`); break;
-    case 'UPSERT': parts.push(`UPSERT INTO ${s.table}${s.columns ? ` (${s.columns})` : ''}`); break;
-    case 'RPC': parts.push(`CALL ${s.table}(...)`); break;
+  return renderStatement({
+    op: s.op,
+    table: s.table,
+    columns: s.columns,
+    filters: s.filters,
+    orderBy: s.orderBy,
+    hasLimit: s.lim !== undefined,
+  });
+}
+
+/** Read an env var without throwing where `Deno` (or env permission) is absent. */
+function readEnv(name: string): string | undefined {
+  try {
+    return typeof Deno === 'undefined' ? undefined : Deno.env.get(name);
+  } catch {
+    return undefined;
   }
-  if (s.filters.length) parts.push(`WHERE ${s.filters.join(' AND ')}`);
-  if (s.orderBy) parts.push(`ORDER BY ${s.orderBy}`);
-  if (s.lim !== undefined) parts.push(`LIMIT ${s.lim}`);
-  return parts.join(' ');
 }
 
 /**
  * Fluent traced query builder — mirrors the Supabase query builder API
- * but wraps execution in a child span named after the SQL-like statement.
+ * but wraps execution in a CLIENT child span named by `db.query.summary`
+ * (`SELECT memories`, `CALL memory_write`) with the parameterised statement in
+ * `db.query.text`.
  */
 /**
  * A query narrowed to at most one row by `.single()` / `.maybeSingle()`.
@@ -825,14 +889,22 @@ export class TracedQuery<T = Record<string, unknown>> {
   }
 
   // ── filters ───────────────────────────────────────────────────────────────
-  eq(col: string, val: unknown): this   { this.state.filters.push(`${col} = '${val}'`);  this.state.qb = this.state.qb.eq(col, val); return this; }
-  neq(col: string, val: unknown): this  { this.state.filters.push(`${col} != '${val}'`); this.state.qb = this.state.qb.neq(col, val); return this; }
-  gt(col: string, val: unknown): this   { this.state.filters.push(`${col} > '${val}'`);  this.state.qb = this.state.qb.gt(col, val); return this; }
-  gte(col: string, val: unknown): this  { this.state.filters.push(`${col} >= '${val}'`); this.state.qb = this.state.qb.gte(col, val); return this; }
-  lt(col: string, val: unknown): this   { this.state.filters.push(`${col} < '${val}'`);  this.state.qb = this.state.qb.lt(col, val); return this; }
-  lte(col: string, val: unknown): this  { this.state.filters.push(`${col} <= '${val}'`); this.state.qb = this.state.qb.lte(col, val); return this; }
-  is(col: string, val: unknown): this   { this.state.filters.push(`${col} IS ${val}`);   this.state.qb = this.state.qb.is(col, val); return this; }
-  in<V = unknown>(col: string, vals: V[]): this    { this.state.filters.push(`${col} IN (${vals.map((v) => `'${v}'`).join(', ')})`); this.state.qb = this.state.qb.in(col, vals); return this; }
+  //
+  // Each filter records a fragment with a PLACEHOLDER for its value — the
+  // value itself goes to postgrest only. `conditionSql` returns null solely
+  // for an operator it does not know; every operator below is known, so the
+  // `?? '?'` is a redaction backstop, not a path that runs.
+  private where(col: string, op: string, val: unknown, negate = false): void {
+    this.state.filters.push(conditionSql(col, op, val, negate) ?? '?');
+  }
+  eq(col: string, val: unknown): this   { this.where(col, 'eq', val);  this.state.qb = this.state.qb.eq(col, val); return this; }
+  neq(col: string, val: unknown): this  { this.where(col, 'neq', val); this.state.qb = this.state.qb.neq(col, val); return this; }
+  gt(col: string, val: unknown): this   { this.where(col, 'gt', val);  this.state.qb = this.state.qb.gt(col, val); return this; }
+  gte(col: string, val: unknown): this  { this.where(col, 'gte', val); this.state.qb = this.state.qb.gte(col, val); return this; }
+  lt(col: string, val: unknown): this   { this.where(col, 'lt', val);  this.state.qb = this.state.qb.lt(col, val); return this; }
+  lte(col: string, val: unknown): this  { this.where(col, 'lte', val); this.state.qb = this.state.qb.lte(col, val); return this; }
+  is(col: string, val: unknown): this   { this.where(col, 'is', val);  this.state.qb = this.state.qb.is(col, val); return this; }
+  in<V = unknown>(col: string, vals: V[]): this    { this.where(col, 'in', vals); this.state.qb = this.state.qb.in(col, vals); return this; }
   // `val` may be a STRING array literal (`{"a","b,c"}`) as well as an array.
   // postgrest-js forwards a string verbatim as `ov.<val>` / `cs.<val>`
   // (PostgrestFilterBuilder 2.110.8) — that overload is what lets
@@ -841,33 +913,34 @@ export class TracedQuery<T = Record<string, unknown>> {
   // comma/brace/quote into several labels, so do NOT narrow these back to
   // `V[]`: `memories.tags` is free text with no CHECK constraint.
   overlaps<V = unknown>(col: string, val: V[] | string): this {
-    this.state.filters.push(`${col} && '${typeof val === 'string' ? val : `{${val.join(',')}}`}'`);
+    this.where(col, 'ov', val);
     // deno-lint-ignore no-explicit-any -- the string|array overload isn't in the narrowed public type
     this.state.qb = (this.state.qb as any).overlaps(col, val);
     return this;
   }
   contains<V = unknown>(col: string, val: V[] | string | Record<string, unknown>): this {
-    const rendered = typeof val === 'string'
-      ? val
-      : Array.isArray(val) ? `{${val.join(',')}}` : JSON.stringify(val);
-    this.state.filters.push(`${col} @> '${rendered}'`);
+    this.where(col, 'cs', val);
     // deno-lint-ignore no-explicit-any -- PostgREST builder's .contains() overloads vary by version
     this.state.qb = (this.state.qb as any).contains(col, val);
     return this;
   }
   textSearch(col: string, query: string, opts?: { type?: string; config?: string }): this {
-    this.state.filters.push(`${col} @@ to_tsquery('${query}')`);
+    // The search text is the caller's — often an agent's own error output via
+    // the CLI hook — so it is the one value most worth keeping out.
+    this.state.filters.push(textSearchSql(col, opts?.type));
     // deno-lint-ignore no-explicit-any -- PostgREST builder lacks textSearch overload in its public type
     this.state.qb = (this.state.qb as any).textSearch(col, query, opts);
     return this;
   }
   or(filters: string, opts?: { referencedTable?: string }): this {
-    this.state.filters.push(`(${filters})`);
+    // A PostgREST logic string carries values inline (keyset cursors, label
+    // filters); parsed down to columns + operators, or `(?)` if unparseable.
+    this.state.filters.push(postgrestLogicToSql(filters));
     this.state.qb = this.state.qb.or(filters, opts);
     return this;
   }
   not(col: string, operator: string, val: unknown): this {
-    this.state.filters.push(`${col} NOT ${operator} '${val}'`);
+    this.where(col, operator, val, true);
     // deno-lint-ignore no-explicit-any -- PostgREST builder's .not() types vary by version
     this.state.qb = (this.state.qb as any).not(col, operator, val);
     return this;
@@ -952,12 +1025,20 @@ export class TracedQuery<T = Record<string, unknown>> {
     resolve?: ((v: PostgrestResponse<T[]>) => R1 | PromiseLike<R1>) | null,
     reject?: ((r: unknown) => R2 | PromiseLike<R2>) | null,
   ): Promise<R1 | R2> {
-    const sql = buildSql(this.state);
-    const dbSpan = this.parent.child(sql, {
+    // Named by the bounded summary, NOT the statement: a span name is a
+    // grouping key, and the statement used to carry filter values (511
+    // distinct api span names in a week). `db.query.text` keeps the full
+    // shape, parameterised.
+    const summary = querySummary(this.state.op, this.state.table);
+    const dbSpan = this.parent.child(summary, {
       'db.system': 'postgresql',
       'db.operation.name': this.state.op,
       'db.collection.name': this.state.table,
-      'db.query.text': sql,
+      'db.query.summary': summary,
+      'db.query.text': buildSql(this.state),
+      // The peer, so the service map draws api → Supabase. Omitted for a BYOD
+      // client — see `resolveServerAddress`.
+      ...(this.state.serverAddress ? { 'server.address': this.state.serverAddress } : {}),
     }, SPAN_KIND_CLIENT);
 
     // deno-lint-ignore no-explicit-any -- PostgREST builder is awaited as opaque; result is cast below
@@ -969,6 +1050,11 @@ export class TracedQuery<T = Record<string, unknown>> {
         dbSpan.setAttributes({ 'db.response.rows': rows, 'db.success': !result.error });
 
         if (result.error) {
+          // The SQLSTATE / PostgREST code is OTel's `db.response.status_code`
+          // and the most specific bounded `error.type` a DB failure has —
+          // `23505`, `LK001`, `P0001` say more than `PostgrestError` does.
+          const code = result.error.code || undefined;
+          if (code) dbSpan.setAttributes({ 'db.response.status_code': code });
           if (result.error.code === 'PGRST116') {
             // .single() no rows — expected, not an error
             dbSpan.setAttributes({ 'db.no_rows': true });
@@ -982,9 +1068,9 @@ export class TracedQuery<T = Record<string, unknown>> {
             // input. Marking these ERROR inflated error-rate alerts with
             // requests the API was handling correctly (e.g. DELETE on a
             // nonexistent org resolving to a clean 404).
-            dbSpan.clientError(`PostgrestError: ${result.error.message}`);
+            dbSpan.clientError(`PostgrestError: ${result.error.message}`, code);
           } else {
-            dbSpan.error(`PostgrestError: ${result.error.message}`);
+            dbSpan.error(`PostgrestError: ${result.error.message}`, code);
           }
         }
 
@@ -1012,7 +1098,8 @@ export class TracedQuery<T = Record<string, unknown>> {
  *   .select('key,value')
  *   .eq('scope', scope)
  *   .limit(50);
- * // → child span: "SELECT key,value FROM memories WHERE scope = '...' LIMIT 50"
+ * // → CLIENT span "SELECT memories"
+ * //   db.query.text = "SELECT key,value FROM memories WHERE scope = $1 LIMIT $2"
  * ```
  */
 /**
@@ -1042,17 +1129,23 @@ type PublicTables = Database['public']['Tables'];
 type RowOf<K extends keyof PublicTables> = PublicTables[K]['Row'];
 
 export function createTracedClient(supabase: DbClient, parentSpan: Span) {
+  // `supabaseUrl` is a protected field on SupabaseClient — read defensively,
+  // since a test double will not carry it (then the hosted URL is used).
+  const serverAddress = resolveServerAddress(
+    (supabase as unknown as { supabaseUrl?: unknown }).supabaseUrl,
+    readEnv('SUPABASE_URL'),
+  );
   return {
     from<K extends keyof PublicTables, T = RowOf<K>>(table: K): TracedQuery<T> {
       return new TracedQuery<T>(
-        { table: table as string, op: 'SELECT', columns: '*', filters: [], qb: supabase.from(table) },
+        { table: table as string, op: 'SELECT', columns: '*', filters: [], serverAddress, qb: supabase.from(table) },
         parentSpan,
       );
     },
     rpc<T = Record<string, unknown>[]>(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedRpcQuery<T> {
       return new TracedQuery<T>(
         // deno-lint-ignore no-explicit-any -- SupabaseClient.rpc() generic overload isn't publicly typed; cast is safe
-        { table: fn, op: 'RPC', columns: '', filters: [], qb: (supabase as any).rpc(fn, args, opts) },
+        { table: fn, op: 'RPC', columns: '', filters: [], serverAddress, qb: (supabase as any).rpc(fn, args, opts) },
         parentSpan,
         // Same object, narrower promise: `TracedQuery.then` yields `T[]`, and an
         // RPC yields `T`. Only the result shape differs, which the class's own

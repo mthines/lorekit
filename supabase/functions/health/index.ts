@@ -19,6 +19,7 @@ Deno.serve(async (req: Request) => {
   const ts = new Date().toISOString();
 
   return traceRequest(req, 'lorekit.health', async (span) => {
+    span.setAttributes({ 'http.route': '/health' });
     let dbStatus: 'ok' | 'error' = 'ok';
     let dbError: string | undefined;
 

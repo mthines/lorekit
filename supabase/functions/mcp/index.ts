@@ -72,6 +72,11 @@ Deno.serve(async (req: Request) => {
   // request produces at least one span. resolveAuth is intentionally inside
   // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
+    // The MCP endpoint is the function root. Discovery probes for other paths
+    // (`/mcp/.well-known/openid-configuration`) land here too but are not
+    // that route, so they are left without one rather than mislabelled.
+    if (/\/mcp\/?$/.test(url.pathname)) span.setAttributes({ 'http.route': '/mcp' });
+
     // POST-only, checked BEFORE authentication.
     //
     // A request's method is knowable from the request line alone — nothing

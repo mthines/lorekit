@@ -44,6 +44,7 @@ function json(body: unknown, status: number): Response {
 
 Deno.serve((req: Request) =>
   traceRequest(req, 'lorekit.groom_sweep', async (span) => {
+    span.setAttributes({ 'http.route': '/groom-sweep' });
     if (req.method !== 'POST') {
       return json({ error: 'method_not_allowed', allow: 'POST' }, 405);
     }

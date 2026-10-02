@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
       if (e instanceof RestError) return e.toResponse(cors);
       const mapped = translateDbError(e);
       if (mapped) return mapped.toResponse(cors);
-      span.error(`Unhandled: ${(e as Error).message}`);
+      span.error(`Unhandled: ${(e as Error).message}`, (e as Error).name);
       return internalError(cors);
     }
   });

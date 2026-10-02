@@ -14,6 +14,7 @@ import {
   parseScopeTypeAttribute,
 } from '../scope/scope-type-attribute.ts';
 import type { Span } from '../telemetry/otel.ts';
+import { httpRouteFor } from '../telemetry/span-semconv.ts';
 
 /**
  * Request header carrying a client-supplied grouping key (a PR ref, session id,
@@ -212,6 +213,14 @@ export function createRouter(routes: Route[], functionName: string) {
       if (!m) return methodNotAllowed(cors);
 
       const { route, params } = m;
+      // `http.route` belongs on the SERVER span — that is where the OTel HTTP
+      // conventions put it and where a per-endpoint `sum by (http_route)` over
+      // the root spans reads it. The handler child span below keeps its
+      // function-relative value for existing queries; the root gets the full template in
+      // `url.path`'s shape (`/memories/:id`). Stamped as soon as a route MATCHES,
+      // so a 403 from the permission gate below still carries it; a 404/405
+      // matched no route, and inventing one would be a lie.
+      span.setAttributes({ 'http.route': httpRouteFor(functionName, route.path) });
       if (route.requires === 'jwt' && !isJwtAuth(resolved.auth)) return forbidden('This endpoint requires a Supabase JWT (not an API token)', cors);
       if (route.requires === 'read' && !hasPermission(resolved.auth, 'read')) return forbidden('Read permission required', cors);
       if (route.requires === 'write' && !hasPermission(resolved.auth, 'write')) return forbidden('Write permission required', cors);
