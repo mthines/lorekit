@@ -8,8 +8,9 @@ import path from 'node:path';
  * it — DB span naming, parameterised `db.query.text`, `server.address`,
  * `error.type`, and the 5xx `error.type` fallback on the root span.
  *
- * The property that matters is a NEGATIVE one — no filter value reaches any
- * exported attribute or span name — so the DB tests below run a real
+ * The property that matters is a NEGATIVE one — no filter value reaches the
+ * span name or an attribute on success, and no request URL (with the values in
+ * its query string) reaches `error.message` on failure — so the DB tests run a real
  * `createTracedClient` chain with recognisable sentinel values and scan the
  * whole exported OTLP payload for them. A source-scan could not prove that.
  *
