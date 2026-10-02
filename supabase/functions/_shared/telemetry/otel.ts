@@ -720,7 +720,7 @@ export async function traceRequest<T extends Response>(
     span.setAttributes({ 'http.response.status_code': response.status });
     // OTel HTTP server conventions: a 5xx with no more specific cause records
     // the status code as `error.type`. A handler that already named the class
-    // (`span.error('Unhandled: …', e.name)`) keeps it.
+    // (`span.error('Unhandled: …', errorTypeOf(e))`) keeps it.
     if (response.status >= 500) span.setErrorTypeIfAbsent(String(response.status));
     return withTraceparent(response, ctx);
   } catch (err) {

@@ -43,7 +43,10 @@ docs/otel.md → "Error messages").
 Set `http.route` on the root span: `createRouter` does it for routed functions;
 a single-route function does it at the top of its `traceRequest` callback.
 `span.error()` / `span.clientError()` record a bounded `error.type` from the
-message's `Name:` prefix — keep that prefix, or pass the type explicitly.
+message's `Name:` prefix — keep that prefix, or pass the type explicitly. In a
+catch block pass `errorTypeOf(e)` (`_shared/telemetry/span-semconv.ts`), never
+`(e as Error).name`: a PostgREST error is a plain object with no `name`, and
+`errorTypeOf` falls back to its `code`.
 Add `span.child('lorekit.{resource}.{operation}')` for any significant sub-operation.
 
 **Self-time attribution is automatic.** `traceRequest` stamps
