@@ -282,7 +282,15 @@ test("a prepared arm carries its own launch options", async () => {
     assert.equal(arm.settingsPath.startsWith(sandbox.cwd), false);
 
     const settings = JSON.parse(await fsp.readFile(arm.settingsPath, "utf8"));
-    assert.deepEqual(settings.enabledPlugins, {});
+    // Every entry switches a plugin OFF; nothing is switched on.
+    assert.ok(Object.keys(settings.enabledPlugins).length > 0);
+    assert.ok(
+      Object.values(settings.enabledPlugins).every((on) => on === false),
+    );
+    // The two built-ins that loaded on a clean CI runner when the override was
+    // `{}`, which sets nothing and so left every default-on built-in running.
+    assert.equal(settings.enabledPlugins["agents-md@builtin"], false);
+    assert.equal(settings.enabledPlugins["plugin-authoring@builtin"], false);
     // Crucially NOT `hooks: {}` — `--settings` overrides every scope, so that
     // would switch off the harness's own SessionStart hook and silently turn
     // arm B into arm A.
