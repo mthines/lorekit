@@ -671,10 +671,15 @@ function withTraceparent<T extends Response>(response: T, ctx: TraceContext): T 
  *
  * `http.route` is NOT set here: only the caller knows which route matched.
  * `createRouter` stamps it on this span once a route matches, and each
- * single-route function sets it at the top of its callback. Dash0 still names
- * the operation by `faas.name` (its FaaS rule outranks its HTTP-route rule), so
- * the attribute adds a per-endpoint grouping key without renaming the
- * `memories` / `mcp` operations existing check rules filter on.
+ * single-route function sets it at the top of its callback.
+ *
+ * NOTE: it renames the Dash0 operation. With `http.route` present Dash0 names
+ * the operation `{method} {route}` (`POST /mcp`, `GET /memories/:id`) instead
+ * of by `faas.name` (`mcp`, `memories`) — observed on this change's own CI
+ * smoke trace. Alerts and panels that must address a whole function filter on
+ * `faas_name`, which is stable across both namings; `dash0_operation_name` is
+ * now per endpoint. A request that matches no route keeps the `faas.name`
+ * operation.
  */
 export async function traceRequest<T extends Response>(
   req: Request,
@@ -791,6 +796,13 @@ interface QueryState {
   /** `server.address` for the DB span, resolved once per traced client. */
   serverAddress?: string;
   /**
+   * A mutation's `.select(...)` — the RETURNING list. Kept apart from
+   * `columns` so `UPDATE … .select('id,scope,key')` renders as
+   * `SET archived_at = $1 … RETURNING id,scope,key`, not as a SET list of the
+   * returned columns (which the CI smoke trace showed it doing).
+   */
+  returning?: string;
+  /**
    * The postgrest builder being accumulated. Deliberately untyped, because the
    * real type CHANGES ALONG THE CHAIN and no single annotation describes it:
    * `.from()` yields a `PostgrestQueryBuilder` (select / insert / update /
@@ -822,6 +834,7 @@ function buildSql(s: QueryState): string {
     filters: s.filters,
     orderBy: s.orderBy,
     hasLimit: s.lim !== undefined,
+    returning: s.returning,
   });
 }
 
@@ -883,7 +896,9 @@ export class TracedQuery<T = Record<string, unknown>> {
 
   // ── column selection ──────────────────────────────────────────────────────
   select(cols = '*', opts?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' }): this {
-    this.state.columns = cols;
+    // On a mutation, `.select()` is the RETURNING list, not the column list.
+    if (this.state.op === 'SELECT') this.state.columns = cols;
+    else this.state.returning = cols;
     this.state.qb = this.state.qb.select(cols, opts);
     return this;
   }

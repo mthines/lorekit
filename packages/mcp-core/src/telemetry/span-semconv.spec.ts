@@ -28,7 +28,7 @@ const semconv = (await load('span-semconv.ts')) as {
   conditionSql(column: string, operator: string, value: unknown, negate?: boolean): string | null;
   postgrestLogicToSql(expression: string): string;
   renderStatement(s: {
-    op: string; table: string; columns: string; filters: string[]; orderBy?: string; hasLimit: boolean;
+    op: string; table: string; columns: string; filters: string[]; orderBy?: string; hasLimit: boolean; returning?: string;
   }): string;
   textSearchSql(column: string, type?: string): string;
   resolveServerAddress(clientUrl: unknown, hostedUrl: unknown): string | undefined;
@@ -149,6 +149,13 @@ describe('renderStatement (db.query.text)', () => {
     expect(sql).toBe(
       'SELECT id,scope,value FROM memories WHERE key = $1 AND archived_at IS NULL AND (expires_at IS NULL OR expires_at > $2) ORDER BY updated_at DESC LIMIT $3',
     );
+  });
+
+  it('renders RETURNING for mutations only', () => {
+    expect(semconv.renderStatement({ op: 'INSERT', table: 'audit_log', columns: 'action, user_id', filters: [], hasLimit: false, returning: 'id' }))
+      .toBe('INSERT INTO audit_log (action, user_id) RETURNING id');
+    expect(semconv.renderStatement({ op: 'RPC', table: 'f', columns: '', filters: [], hasLimit: false, returning: 'id' }))
+      .toBe('CALL f(...)');
   });
 
   it('lists UPDATE columns as assignments and keeps the CALL shape for RPCs', () => {
@@ -283,6 +290,19 @@ describe('createTracedClient — no filter value reaches telemetry', () => {
     for (const [what, value] of Object.entries({ ...SECRETS, scope: 'repo::secret' })) {
       expect(exported, `${what} leaked into the DB span`).not.toContain(value);
     }
+  });
+
+  it('keeps a mutation\'s .select() as RETURNING, not as its SET list', async () => {
+    // Regression from the PR's own CI smoke trace: `update({ archived_at })`
+    // followed by `.select('id,scope,key')` rendered `SET id = $1, scope = $2, key = $3`.
+    const { root, batch } = newRoot();
+    const db = otel.createTracedClient(fakeClient({ data: [], error: null }), root);
+    await db.from('memories').update({ archived_at: 'now' }).eq('id', SECRETS.userId).is('archived_at', null).select('id,scope,key');
+    const [span] = batch.drain();
+    expect(span.name).toBe('UPDATE memories');
+    expect(span.attributes['db.query.text']).toBe(
+      'UPDATE memories SET archived_at = $1 WHERE id = $2 AND archived_at IS NULL RETURNING id,scope,key',
+    );
   });
 
   it('names an RPC `CALL <fn>`', async () => {

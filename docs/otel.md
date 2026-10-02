@@ -626,14 +626,28 @@ renders the request URL into it. That is why the token lookups in
 | `http.route` | `/memories/:id`, `/mcp`, `/health` | `createRouter` once a route MATCHES (so a 403 carries it; a 404/405 does not), and each single-route function at the top of its `traceRequest` callback. Same shape as `url.path`, template not value. The router's handler child span keeps its function-relative `http.route` (`/:id`) |
 | `error.type` | `UserInputError`, `MethodNotFound`, `missing_token`, `TypeError`, `503` | Every `span.error()` / `span.clientError()` — an explicit type, else the `Name:` prefix of the message (`errorTypeFrom`), else `_OTHER`. A 5xx response with nothing more specific records the status code. Never the message itself — that stays on `error.message` |
 
-Dash0 keeps naming the edge operations by `faas.name` (`memories`, `mcp`): its
-FaaS rule is evaluated before its HTTP-route rule, so adding `http.route` does
-not rename the operations existing check rules filter on. Per-endpoint RED is a
-grouping over the root spans instead:
+**`http.route` renames the Dash0 operation.** With it present, Dash0 names a
+root span's operation `{method} {route}` — `POST /mcp`, `GET /memories/:id` —
+where it used to be the function (`mcp`, `memories`, from `faas.name`). That was
+observed on this change's own CI smoke trace, against what the operation-rule
+docs' table order suggests. A request that matches no route (a 404, a discovery
+probe) keeps the function-named operation.
+
+So: per-endpoint RED now comes for free in Dash0's operation views, and anything
+that must address a whole **function** filters on `faas_name`, which is the same
+under both namings — never on `dash0_operation_name="mcp"`:
 
 ```promql
-sum by (http_route, http_response_status_code) (increase({otel_metric_name="dash0.spans", service_name="api", otel_span_kind="SERVER"}[1h]))
+sum by (faas_name, http_route) (increase({otel_metric_name="dash0.spans", service_name="api", service_namespace="lorekit", otel_span_kind="SERVER"}[1h]))
 ```
+
+The two check rules that filtered `dash0_operation_name="mcp"` ("API — mcp
+operation has stopped sending spans", "API — mcp operation elevated error rate")
+must move to `faas_name="mcp", otel_span_kind="SERVER"` **before** this deploys,
+or the absence rule fires two hours after the deploy and the error-rate rule
+silently stops matching. The `api-health-red` and `error-hotspot-triage`
+dashboards group by `dash0_operation_name` and will show routes instead of
+functions.
 
 ---
 

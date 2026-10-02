@@ -265,6 +265,8 @@ export interface StatementShape {
   filters: readonly string[];
   orderBy?: string;
   hasLimit: boolean;
+  /** A mutation's `.select(...)` columns, rendered as `RETURNING …`. */
+  returning?: string;
 }
 
 /**
@@ -289,6 +291,8 @@ export function renderStatement(s: StatementShape): string {
   if (s.filters.length) parts.push(`WHERE ${s.filters.join(' AND ')}`);
   if (s.orderBy) parts.push(`ORDER BY ${s.orderBy}`);
   if (s.hasLimit) parts.push(`LIMIT ${PARAM}`);
+  const mutates = s.op === 'INSERT' || s.op === 'UPDATE' || s.op === 'UPSERT' || s.op === 'DELETE';
+  if (mutates && s.returning?.trim()) parts.push(`RETURNING ${s.returning.trim()}`);
 
   let n = 0;
   return parts.join(' ').replace(/\?/g, () => `$${++n}`);
