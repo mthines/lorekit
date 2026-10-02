@@ -141,7 +141,7 @@ resource attributes only.
 
 ---
 
-## Recommendations (not applied — design/judgment calls)
+## Recommendations (design/judgment calls — status noted per item)
 
 1. **`db.query.text` and DB span names inline literal filter values** —
    **applied** (2026-10): spans are named by `db.query.summary`, the statement

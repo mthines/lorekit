@@ -34,6 +34,7 @@ import {
   errorTypeFrom,
   postgrestLogicToSql,
   querySummary,
+  redactUrls,
   renderStatement,
   resolveServerAddress,
   textSearchSql,
@@ -49,6 +50,8 @@ type PostgrestResponse<T> = {
   data: T | null;
   error: PostgrestError | null;
   count?: number | null;
+  /** HTTP status; `0` when the request never got a response (postgrest-js resolves a failed fetch, it does not reject). */
+  status?: number;
 };
 
 // ── Supabase Edge Runtime global ──────────────────────────────────────────────
@@ -1070,6 +1073,11 @@ export class TracedQuery<T = Record<string, unknown>> {
           // `23505`, `LK001`, `P0001` say more than `PostgrestError` does.
           const code = result.error.code || undefined;
           if (code) dbSpan.setAttributes({ 'db.response.status_code': code });
+          // postgrest-js RESOLVES a failed fetch as `status: 0`, with the
+          // request URL — every filter value in its query string — in the
+          // message. Name the failure instead of copying it; any other message
+          // keeps its text with URLs redacted.
+          const detail = result.status === 0 ? 'fetch failed' : redactUrls(result.error.message);
           if (result.error.code === 'PGRST116') {
             // .single() no rows — expected, not an error
             dbSpan.setAttributes({ 'db.no_rows': true });
@@ -1083,9 +1091,9 @@ export class TracedQuery<T = Record<string, unknown>> {
             // input. Marking these ERROR inflated error-rate alerts with
             // requests the API was handling correctly (e.g. DELETE on a
             // nonexistent org resolving to a clean 404).
-            dbSpan.clientError(`PostgrestError: ${result.error.message}`, code);
+            dbSpan.clientError(`PostgrestError: ${detail}`, code);
           } else {
-            dbSpan.error(`PostgrestError: ${result.error.message}`, code);
+            dbSpan.error(`PostgrestError: ${detail}`, code);
           }
         }
 
@@ -1093,7 +1101,7 @@ export class TracedQuery<T = Record<string, unknown>> {
         return resolve ? resolve(result) : result as unknown as R1;
       },
       (err: unknown) => {
-        dbSpan.error(`${(err as Error).name}: ${(err as Error).message}`);
+        dbSpan.error(`${(err as Error).name}: ${redactUrls(String((err as Error)?.message))}`);
         dbSpan.end();
         return reject ? reject(err) : Promise.reject(err) as Promise<R2>;
       },

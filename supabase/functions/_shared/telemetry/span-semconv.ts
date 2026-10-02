@@ -335,6 +335,22 @@ export function resolveServerAddress(clientUrl: unknown, hostedUrl: unknown): st
   return client === hosted ? client : undefined;
 }
 
+// ── error.message ──────────────────────────────────────────────────────────
+
+/**
+ * Replace every URL in an error message with `<url>`.
+ *
+ * A transport failure's message carries the request URL, and a PostgREST URL
+ * carries every filter value in its query string (`?key=eq.<lesson key>`). The
+ * DB span records the message as `error.message`, so without this the values
+ * the statement rendering keeps out of `db.query.text` arrive through the
+ * error instead. The rest of the message — the part that says what failed — is
+ * kept.
+ */
+export function redactUrls(message: string): string {
+  return message.replace(/\bhttps?:\/\/[^\s"'<>)]+/gi, '<url>');
+}
+
 // ── error.type ─────────────────────────────────────────────────────────────
 
 /** The `error.type` fallback when nothing more specific is known (OTel's own). */

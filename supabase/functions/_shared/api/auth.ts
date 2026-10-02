@@ -73,12 +73,12 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     // unattributable (`api — elevated p95 latency`).
     //
     // Deliberately NOT `createTracedClient`. Its span name and `db.query.text`
-    // no longer carry filter values (`$n` placeholders — span-semconv.ts), but
-    // its rejection arm records the thrown message, and a Deno fetch failure
-    // renders the request URL — this filter's value included — into it. The
-    // filter here is the token hash, the stored credential, so the query runs
-    // on the raw client and only the timing is spanned, same as the MCP
-    // counterpart.
+    // carry no filter values (`$n` placeholders), and a failed request's
+    // message is recorded with URLs redacted (span-semconv.ts) — but a DB
+    // error message can still echo a value in some other form, and the filter
+    // here is the token hash, the stored credential. Defence in depth: the
+    // query runs on the raw client and only the timing is spanned, same as the
+    // MCP counterpart.
     const lookupSpan = span.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',

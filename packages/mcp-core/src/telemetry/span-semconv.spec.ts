@@ -34,6 +34,7 @@ const semconv = (await load('span-semconv.ts')) as {
   resolveServerAddress(clientUrl: unknown, hostedUrl: unknown): string | undefined;
   errorTypeFrom(message: string): string;
   httpRouteFor(functionName: string, routePath: string): string;
+  redactUrls(message: string): string;
 };
 
 type Attrs = Record<string, string | number | boolean>;
@@ -199,6 +200,17 @@ describe('errorTypeFrom', () => {
   });
 });
 
+describe('redactUrls', () => {
+  it('replaces every URL, query string included, and keeps the rest', () => {
+    const msg = 'TypeError: error sending request for url (https://x.supabase.co/rest/v1/memories?key=eq.secret-key&scope=eq.repo::a/b): connection refused';
+    expect(semconv.redactUrls(msg)).toBe('TypeError: error sending request for url (<url>): connection refused');
+  });
+
+  it('leaves a message without a URL alone', () => {
+    expect(semconv.redactUrls('duplicate key value violates unique constraint')).toBe('duplicate key value violates unique constraint');
+  });
+});
+
 describe('httpRouteFor', () => {
   it('joins the mount point and the template in url.path shape', () => {
     expect(semconv.httpRouteFor('memories', '/:id')).toBe('/memories/:id');
@@ -210,7 +222,7 @@ describe('httpRouteFor', () => {
 // ── otel.ts, executed ───────────────────────────────────────────────────────
 
 /** A postgrest-js stand-in: every builder method chains, awaiting resolves. */
-function fakeClient(result: { data: unknown; error: unknown }, supabaseUrl?: string) {
+function fakeClient(result: { data: unknown; error: unknown; status?: number }, supabaseUrl?: string) {
   const builder: Record<string, unknown> = new Proxy({}, {
     get(_t, prop) {
       if (prop === 'then') {
@@ -323,6 +335,41 @@ describe('createTracedClient — no filter value reaches telemetry', () => {
     // Array form: a dotted string would be read as a nested path and pass vacuously.
     expect(span.attributes).not.toHaveProperty(['server.address']);
     expect(JSON.stringify(span.attributes)).not.toContain('byod-project');
+  });
+
+  it('names a resolved fetch failure (status 0) instead of copying its URL-bearing message', async () => {
+    // postgrest-js RESOLVES a failed fetch — it does not reject — with the
+    // request URL, filter values included, in the message (pr-reviewer on #682).
+    const { root, batch } = newRoot();
+    const url = `https://pqokxlhvnosogizsjztg.supabase.co/rest/v1/memories?key=eq.${encodeURIComponent(SECRETS.key)}`;
+    const db = otel.createTracedClient(
+      fakeClient({ data: null, error: { message: `TypeError: error sending request for url (${url})`, code: '' }, status: 0 }),
+      root,
+    );
+    await db.from('memories').select('id').eq('key', SECRETS.key);
+    const [span] = batch.drain();
+    expect(span.status).toBe('error');
+    expect(span.attributes['error.message']).toBe('PostgrestError: fetch failed');
+    expect(JSON.stringify(span.attributes)).not.toContain('sentinel-key');
+  });
+
+  it('redacts URLs from a thrown error on the rejection arm', async () => {
+    const { root, batch } = newRoot();
+    const rejecting = {
+      from: () => new Proxy({}, {
+        get(_t, prop) {
+          if (prop === 'then') {
+            return (_f: unknown, onR: (e: unknown) => unknown) =>
+              Promise.reject(new TypeError(`error sending request for url (https://h.test/rest/v1/m?key=eq.${SECRETS.key})`)).catch(onR);
+          }
+          return () => rejecting.from();
+        },
+      }),
+    };
+    const db = otel.createTracedClient(rejecting, root);
+    await db.from('memories').select('id').eq('key', SECRETS.key).then(undefined, () => undefined);
+    const [span] = batch.drain();
+    expect(span.attributes['error.message']).toBe('TypeError: error sending request for url (<url>)');
   });
 
   it('records the SQLSTATE as db.response.status_code and error.type', async () => {

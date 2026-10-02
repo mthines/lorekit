@@ -586,7 +586,8 @@ Users can read their own rows (self-service "my usage" view via RLS).
 ---
 
 DB child spans carry OTel database semconv. The span is NAMED by
-`db.query.summary`, and no filter value reaches the name or any attribute:
+`db.query.summary`; no filter value reaches the name or the statement, and a
+failure's `error.message` has URLs redacted (see "Error messages" below):
 
 | Attribute | Example |
 |-----------|---------|
@@ -597,7 +598,7 @@ DB child spans carry OTel database semconv. The span is NAMED by
 | `db.query.text` | `SELECT key,value FROM memories WHERE scope = $1 AND archived_at IS NULL LIMIT $2` — values are `$n` placeholders, `LIMIT` included |
 | `server.address` | `pqokxlhvnosogizsjztg.supabase.co` — omitted for a BYOD client, whose host is the user's own project |
 | `db.response.rows` | `7` |
-| `db.response.status_code` | `23505` — the SQLSTATE / PostgREST code, on failure only; also the span's `error.type` |
+| `db.response.status_code` | `23505` — the SQLSTATE / PostgREST code whenever PostgREST returns an error object, including `PGRST116` (a `.single()` with no row, which is not marked as an error); the span's `error.type` when it is one |
 
 **Why the values are gone.** The span used to be named after the statement with
 every filter value interpolated (`… WHERE key = 'reviewer-lessons::…'`,
@@ -613,11 +614,17 @@ value is a placeholder, and a `.or()` logic string it cannot parse collapses to
 `createTracedClient` chain with sentinel values and asserts none reaches the
 exported span.
 
-**One residual path.** The rejection arm (a thrown fetch, not a PostgREST error)
-still records the thrown message in `error.message`, and a Deno fetch failure
-renders the request URL into it. That is why the token lookups in
-`mcp/auth.ts` / `_shared/api/auth.ts` stay off `createTracedClient`
-(`mcp-auth-tracing.spec.ts`, `rest-auth-tracing.spec.ts`).
+**Error messages.** A failed DB span records PostgREST's error text as
+`error.message`. A failed *request* is the dangerous case: postgrest-js does not
+reject on a network failure, it **resolves** with `status: 0` and the request URL
+— every filter value in its query string — in the message. That case records
+`PostgrestError: fetch failed`; every other message (including a thrown error on
+the rejection arm) is kept with URLs replaced by `<url>` (`redactUrls`). What is
+left is Postgres's own wording, which can still echo a value (e.g. `invalid input
+syntax for type uuid: "…"`, or the slug in `unknown_org: <slug>`). That residue
+is why the token lookups in `mcp/auth.ts` / `_shared/api/auth.ts` stay off
+`createTracedClient` as defence in depth (`mcp-auth-tracing.spec.ts`,
+`rest-auth-tracing.spec.ts`).
 
 ### Root request spans: `http.route` and `error.type`
 
