@@ -231,11 +231,11 @@ let env: Record<string, string | undefined>;
 beforeEach(() => {
   hadDeno = 'Deno' in globalThis;
   env = { SUPABASE_URL: HOSTED_URL };
-  (globalThis as Record<string, unknown>).Deno = { env: { get: (k: string) => env[k] } };
+  (globalThis as Record<string, unknown>)['Deno'] = { env: { get: (k: string) => env[k] } };
 });
 
 afterEach(() => {
-  if (!hadDeno) delete (globalThis as Record<string, unknown>).Deno;
+  if (!hadDeno) delete (globalThis as Record<string, unknown>)['Deno'];
 });
 
 describe('createTracedClient — no filter value reaches telemetry', () => {
@@ -343,7 +343,7 @@ describe('traceRequest — 5xx error.type fallback', () => {
   beforeEach(() => {
     posted = [];
     realFetch = globalThis.fetch;
-    env.OTEL_EXPORTER_OTLP_ENDPOINT = ENDPOINT;
+    env['OTEL_EXPORTER_OTLP_ENDPOINT'] = ENDPOINT;
     globalThis.fetch = ((_url: string, init?: { body?: string }) => {
       posted.push(String(init?.body ?? ''));
       return Promise.resolve({ ok: true, status: 200 });
