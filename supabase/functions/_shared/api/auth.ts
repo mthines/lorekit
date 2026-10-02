@@ -72,11 +72,13 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     // That is exactly what made a p95 latency spike on the api_key tier
     // unattributable (`api — elevated p95 latency`).
     //
-    // Deliberately NOT `createTracedClient`: it interpolates filter VALUES into
-    // the span name and `db.query.text` (`buildSql` over `eq()` arguments), and
-    // the filter here is the token hash — the stored credential. The query
-    // therefore runs on the raw client and only the timing is spanned, same as
-    // the MCP counterpart.
+    // Deliberately NOT `createTracedClient`. Its span name and `db.query.text`
+    // no longer carry filter values (`$n` placeholders — span-semconv.ts), but
+    // its rejection arm records the thrown message, and a Deno fetch failure
+    // renders the request URL — this filter's value included — into it. The
+    // filter here is the token hash, the stored credential, so the query runs
+    // on the raw client and only the timing is spanned, same as the MCP
+    // counterpart.
     const lookupSpan = span.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',

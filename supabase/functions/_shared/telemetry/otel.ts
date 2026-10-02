@@ -1102,8 +1102,9 @@ export class TracedQuery<T = Record<string, unknown>> {
 }
 
 /**
- * Wrap a Supabase client so every `.from()` call returns a TracedQuery
- * that auto-spans with the SQL-like statement name.
+ * Wrap a Supabase client so every `.from()` / `.rpc()` call returns a
+ * TracedQuery that auto-spans as a CLIENT span named by `db.query.summary`
+ * (`SELECT memories`), with the parameterised statement in `db.query.text`.
  *
  * @example
  * ```ts
