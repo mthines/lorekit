@@ -156,6 +156,59 @@ export function normalizeRelevance(value: unknown): number {
 }
 
 /**
+ * The `ts_rank_cd` value at which the lexical relevance factor reads 0.5.
+ *
+ * NOT an arbitrary tuning knob — it is anchored to a fact about the schema.
+ * `memories.fts` is `to_tsvector('english', key || ' ' || value)` with no
+ * `setweight` call anywhere (migration 00001), so every lexeme in it carries
+ * Postgres's default D weight, which is `0.1`. A cover containing exactly one
+ * query lexeme therefore contributes `0.1` to `ts_rank_cd`, and that is the
+ * weakest thing a real match can be. Putting the saturation point THERE makes
+ * "matched about as well as a single term does" read as the midpoint of the
+ * factor, with denser and multi-term covers ranging above it.
+ *
+ * The obvious alternative — saturating at `1` — is monotone and bounded too,
+ * but it maps the entire plausible `ts_rank_cd` range (roughly 0.1 to 1) into
+ * `[0.09, 0.5]`, so a graded signal would arrive squashed into the bottom half
+ * of its own scale and lose most of its say in the weighted average. Both
+ * choices are deterministic; this one spends the range on values that occur.
+ *
+ * Changing it changes every `score` this endpoint reports, so it is pinned by
+ * `lexical-rank.spec.ts` rather than left to drift.
+ */
+export const LEXICAL_RANK_SATURATION = 0.1;
+
+/**
+ * Map a raw Postgres `ts_rank_cd` value onto the `[0,1)` relevance factor
+ * `scoreLesson` consumes.
+ *
+ * `ts_rank_cd` is UNBOUNDED above — it grows with how many query terms a cover
+ * holds and how tightly they sit — so it cannot be handed to the scorer as-is
+ * without letting one dense match swamp every other factor. `r / (r + s)` is
+ * the saturating map: strictly increasing in `r` (so it never reorders what
+ * Postgres ranked), `0` at `0`, asymptotic to `1`, and with no discontinuity to
+ * land on.
+ *
+ * Absent, negative or unreadable input is `0` — the same answer
+ * `normalizeRelevance` gives, and for the same reason: no evidence of a lexical
+ * match is not the same claim as a weak one. A no-query request therefore keeps
+ * scoring exactly as it did before relevance was graded.
+ *
+ * The RANGE IS `[0,1)`, never `1`: no finite `ts_rank_cd` saturates it. That is
+ * deliberate — reaching 1 would claim a perfect match exists, and cover density
+ * has no such maximum to certify.
+ */
+export function normalizeLexicalRank(
+  value: unknown,
+  saturation: number = LEXICAL_RANK_SATURATION,
+): number {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return 0;
+  const s = Number.isFinite(saturation) && saturation > 0 ? saturation : LEXICAL_RANK_SATURATION;
+  return n / (n + s);
+}
+
+/**
  * Normalize an outcome value into [0,1]. Absent or unreadable input returns
  * `COLD_START_OUTCOME_PRIOR` — the deliberate asymmetry vs `normalizeRelevance`
  * (which returns 0 for absent input). A present value is clamped to [0,1].

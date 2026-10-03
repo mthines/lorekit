@@ -2,22 +2,18 @@ import type { AuthContext } from '../../_shared/api/auth.ts';
 import { forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
-import type { TracedQuery, Span } from '../../_shared/telemetry/otel.ts';
+import type { Span } from '../../_shared/telemetry/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
-import type { Tables } from '../../_shared/db/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
-import {
-  RelevantQuerySchema,
-  RELEVANT_SELECT,
-  lessonHook,
-} from '../../_shared/schemas/relevant.ts';
+import { RelevantQuerySchema, lessonHook } from '../../_shared/schemas/relevant.ts';
 import { parseTagsParam } from '../../_shared/schemas/tags.ts';
 import {
   rankLessons,
   selectDiverse,
   recencyFactor,
   salienceFactor,
+  normalizeLexicalRank,
   normalizeRelevance,
   normalizeOutcome,
   seenCountFrom,
@@ -26,26 +22,48 @@ import {
 import type { RankableLesson } from '../../_shared/ranking/lesson-rank.ts';
 import { outcomeFromTags } from '../../_shared/ranking/outcome-signal.ts';
 
-type MemoryRow = Tables<'memories'>;
+/**
+ * One row of `lorekit_memory_relevant_candidates` (migration 00112) — the
+ * `RELEVANT_SELECT` projection plus the graded `relevance`.
+ *
+ * `relevance` is the RAW, unbounded `ts_rank_cd` value, and `null` when the
+ * request carried no `q`. Normalising it is this handler's job, not the RPC's:
+ * the factor the scorer consumes has to be in [0,1], and where that mapping
+ * lives has to be somewhere a unit test can pin it.
+ */
+interface RawRelevantCandidate {
+  scope: string;
+  key: string;
+  value: string;
+  seen_count: number | null;
+  updated_at: string;
+  tags: string[] | null;
+  origin_pr: number | null;
+  relevance: number | null;
+}
 
 /**
- * How many rows the FTS may return before ranking. The ranking is set-relative
- * — salience normalises against the most-recurring candidate — so it needs a
- * population, not just the page it will return, or a genuinely recurring lesson
- * ranked 30th by FTS never gets the chance to come first.
+ * How many rows the candidate RPC may return before ranking. The ranking is
+ * set-relative — salience normalises against the most-recurring candidate — so
+ * it needs a population, not just the page it will return, or a genuinely
+ * recurring lesson ranked 30th by relevance never gets the chance to come
+ * first.
  *
  * Bounded because the cost is real: every candidate is fetched, scored and
  * mostly discarded. 200 is comfortably more than any `limit` this route accepts
  * (50) while staying one cheap indexed read.
  *
- * AND THE HONEST LIMIT THE BOUND BUYS: the window is cut in `updated_at desc`
- * order, NOT by rank. On a store with more than `CANDIDATE_LIMIT` active rows
- * matching the filters — most acutely with no `q`, where the filters are just
- * "active" — an old lesson with a high `seen_count` never enters the set, so
- * salience cannot surface the very row it exists for. It is a recency-windowed
- * ranking, not a global one. Widening the cap only moves the cliff; removing it
- * needs the candidates chosen by rank in Postgres, which is the same `ts_rank`
- * RPC graded relevance needs (see the relevance note below) and belongs there.
+ * WHAT THE BOUND COSTS, now that migration 00112 cuts the window by rank. WITH
+ * a `q` the cap is no longer an honesty problem: the RPC orders by
+ * `ts_rank_cd` desc, so the rows that fall off the end are the ones that
+ * matched WORST, which is the one population it is safe to discard. WITHOUT a
+ * `q` there is no rank to order by and the window is still `updated_at desc`,
+ * so on a store with more than `CANDIDATE_LIMIT` active rows an old lesson with
+ * a high `seen_count` can still miss the set and salience cannot surface the
+ * very row it exists for. That residue is real and deliberate: a global
+ * salience order would need its own indexed ordering in the RPC, and the
+ * no-`q` call is the SessionStart question, where recency is a defensible
+ * window rather than an arbitrary one.
  */
 const CANDIDATE_LIMIT = 200;
 
@@ -60,10 +78,14 @@ const CANDIDATE_LIMIT = 200;
  *
  * TWO PHASES, and the split is the design:
  *
- *   1. POSTGRES SELECTS the candidates. FTS decides what could possibly be
- *      relevant, and it is the one part that must run in the database — an
- *      index scan over `fts` is the difference between reading 40 rows and
- *      reading the tenant's entire store.
+ *   1. POSTGRES SELECTS AND GRADES the candidates, through
+ *      `lorekit_memory_relevant_candidates` (migration 00112). FTS decides
+ *      what could possibly be relevant, and it is the one part that must run in
+ *      the database — an index scan over `fts` is the difference between
+ *      reading 40 rows and reading the tenant's entire store. The RPC also
+ *      returns HOW WELL each row matched (`ts_rank_cd`) and, when a `q` is
+ *      present, cuts the candidate window in rank order rather than recency
+ *      order.
  *   2. THE SHARED SCORER ORDERS them, in TypeScript, over the fetched set.
  *      Not SQL: the ranking is set-relative (salience is normalised against the
  *      most-recurring candidate) and it must agree exactly with the CLI hook's
@@ -71,9 +93,21 @@ const CANDIDATE_LIMIT = 200;
  *      agreement by any test, whereas `lesson-rank-parity.spec.ts` holds this
  *      one to the CLI's `lessons-pure.mjs` behaviourally.
  *
+ * WHY AN RPC RATHER THAN THE POSTGREST QUERY IT REPLACES: `ts_rank_cd` is not
+ * projectable through PostgREST's query grammar, so from the PostgREST side a
+ * matched row could only ever score 1 and a non-matched row was never returned
+ * — relevance was binary, and the candidate window was cut by recency, so the
+ * best-matching lesson in a large store could fall outside it entirely. Both
+ * are properties of the SELECT, so both are fixed in the SELECT.
+ *
  * Relevance comes from the FTS side, so a query with no `q` legitimately ranks
  * on recency + salience alone — which is exactly the SessionStart question, and
  * why `q` is optional.
+ *
+ * DETERMINISTIC END TO END: `ts_rank_cd` is a pure Postgres function, the
+ * candidate order is a total order (rank, then `updated_at`, then `id`), and
+ * the scorer is pure. Identical request, identical rows, identical response —
+ * no model and no vector index anywhere on the path.
  */
 export async function handleRelevant(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -99,9 +133,11 @@ export async function handleRelevant(
 
   // Early refusal for a NAMED scope outside the key's allowlist (00068/00069),
   // identical to `POST /memories/search`, which takes the same list shape.
-  // Without it `applyRestTenantScope` narrows the candidate set to empty, which
-  // reads as "there is nothing relevant there" rather than "you may not ask
-  // about that scope". EVERY named scope must be allowed, not just one:
+  // Without it the RPC's `lorekit_api_token_scope_allowed` predicate narrows
+  // the candidate set to empty, which reads as "there is nothing relevant
+  // there" rather than "you may not ask about that scope". The refusal is not
+  // redundant with that predicate — it is the difference between a 403 and a
+  // misleading 200. EVERY named scope must be allowed, not just one:
   // answering over the allowed subset would answer a different question than
   // the one asked, and the precedence order the caller expressed would silently
   // lose a rank. `firstDeniedScope` returns null for a JWT/service caller and
@@ -117,57 +153,56 @@ export async function handleRelevant(
 
   const tracedDb = createTracedClient(db, span);
 
-  let q: TracedQuery<MemoryRow> = tracedDb
-    .from('memories')
-    .select(RELEVANT_SELECT)
-    // Active lore only — the same partition every read path applies. An
-    // archived or expired lesson is not a candidate for "what should I read".
-    .is('archived_at', null)
-    .or('expires_at.is.null,expires_at.gt.now()')
-    // A deterministic order over the CANDIDATE fetch. It is not the answer's
-    // order (the scorer decides that), but without it the set of rows that
-    // survives the cap would vary between identical requests, which would make
-    // the endpoint non-deterministic in a way no caller could see.
-    .order('updated_at', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(CANDIDATE_LIMIT);
-
-  // api_key auth uses the service-role client (bypasses RLS) — apply the tenant
-  // filter. JWT auth is RLS-scoped and needs none. Identical to every sibling
-  // read route; there is no second predicate here to drift from them.
-  if (auth.type === 'api_key' && auth.userId) {
-    const orgIds = await getMemberOrgIds(db, auth.userId, span);
-    q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
-  }
-
-  if (params.q) q = q.textSearch('fts', params.q, { type: 'websearch', config: 'english' });
-  if (scopes.length) q = q.in('scope', scopes);
-
-  const { data, error } = await q;
+  // TENANCY IS RESOLVED INSIDE THE RPC, not layered on outside it. The
+  // PostgREST form needed `getMemberOrgIds` + `applyRestTenantScope` here
+  // because a service-role client bypasses RLS; the RPC composes the SAME three
+  // functions those helpers mirror — `lorekit_member_org_ids` (00014),
+  // `lorekit_api_token_org_allowed` and `lorekit_api_token_scope_allowed`
+  // (00068/00069) — so the predicate is asked once, in SQL, for both auth
+  // tiers. What travels from here is only the calling key's own restriction,
+  // which lives on the token and nowhere else. That also drops a round trip:
+  // the membership lookup is now a join inside the one query instead of a
+  // separate RPC before it.
+  const { data, error } = await tracedDb.rpc<RawRelevantCandidate>(
+    'lorekit_memory_relevant_candidates',
+    {
+      p_user_id: auth.userId ?? null,
+      // `|| null` rather than `?? null`: an EMPTY `q` is "no query", exactly as
+      // the `if (params.q)` guard this replaces treated it. A non-empty query
+      // whose every term is a stopword still goes through the FTS predicate and
+      // still matches nothing — the RPC deliberately does not rescue it into
+      // the unfiltered list.
+      p_q: params.q || null,
+      p_scopes: scopes,
+      // The calling key's restriction (00068/00069), spelled exactly as every
+      // other RPC-backed handler spells it. All THREE are required: `p_scopes`
+      // narrows which scopes, `p_key_org_access`/`p_key_org_ids` narrow which
+      // ORGS, and each defaults to the UNRESTRICTED value in SQL — so omitting
+      // one does not fail, it fails OPEN.
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
+      p_limit: CANDIDATE_LIMIT,
+    },
+  );
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const rows = (data ?? []) as MemoryRow[];
+  const rows = (data ?? []) as RawRelevantCandidate[];
 
-  // RELEVANCE IS BINARY HERE, AND THAT IS AN HONEST LIMIT RATHER THAN AN
-  // OVERSIGHT. `ts_rank` is not projectable through PostgREST's query grammar,
-  // so a row that matched the FTS predicate scores 1 and — since a non-matching
-  // row was never returned — nothing scores between. The ordering among matches
-  // is therefore decided by recency and salience, which is the useful half:
-  // "these all mention your terms, here are the ones that keep mattering". A
-  // graded relevance needs an RPC returning `ts_rank`, which is PR 11's
-  // territory (it has to happen there anyway for the semantic fusion).
-  const matched = Boolean(params.q);
+  // RELEVANCE IS GRADED (migration 00112). `relevance` off the RPC is the raw
+  // `ts_rank_cd` — unbounded above, and `null` when no `q` was asked — so it is
+  // mapped onto the [0,1) factor `scoreLesson` consumes by
+  // `normalizeLexicalRank`, a strictly increasing map that cannot reorder what
+  // Postgres ranked. A `null` normalises to 0, which is byte-for-byte what the
+  // no-`q` path scored before grading existed.
   const candidates: (RankableLesson & { scope: string; key: string; value: string })[] = rows.map((r) => ({
     scope: r.scope,
     key: r.key,
     value: r.value,
-    seen_count: (r as MemoryRow & { seen_count?: number }).seen_count ?? null,
+    seen_count: r.seen_count,
     updated_at: r.updated_at,
-    relevance: matched ? 1 : 0,
-    outcome: outcomeFromTags(
-      (r as MemoryRow & { tags?: string[] | null }).tags,
-      (r as MemoryRow & { origin_pr?: number | null }).origin_pr,
-    ),
+    relevance: normalizeLexicalRank(r.relevance),
+    outcome: outcomeFromTags(r.tags, r.origin_pr),
   }));
 
   const now = Date.now();

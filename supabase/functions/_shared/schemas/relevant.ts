@@ -39,6 +39,10 @@ export const RelevantQuerySchema = z.object({
    * Free-text query. Matched with Postgres `websearch` FTS over `key || value`,
    * the same index `POST /memories/search` uses — so a term that finds a lesson
    * there finds it here, and only the ORDER differs.
+   *
+   * With `q` set the candidate window is cut by lexical RANK (`ts_rank_cd`),
+   * not by recency, so the best matches are the ones that survive it. Without
+   * `q` there is no rank to cut by and the window stays `updated_at desc`.
    */
   q: z.string().max(1000).optional(),
   /**
@@ -60,15 +64,21 @@ export const RelevantQuerySchema = z.object({
    * something weak" — which is what a per-turn hook needs, since injecting an
    * irrelevant lesson on every prompt is worse than injecting nothing.
    *
-   * Mind the floor this reaches today. When `q` is set every matched candidate
-   * carries `relevance: 1` — relevance is binary here (see the handler's
-   * docblock) — and the outcome factor never sinks below its cold-start prior
-   * of `0.5` (it maps to `1`, `0.75`, or the prior — never `0`). So with the
-   * endpoint's four equal weights no matched score drops below
-   * `(1 + 0.5) / 4 = 0.375`, and a `min_score` at or under `0.375` is therefore
-   * a no-op. Above `0.375` it still discriminates, on recency and salience. A
-   * `min_score` that gates across the whole range needs graded FTS relevance,
-   * which lands with the ranked-relevance RPC (PR 11).
+   * IT NOW GATES ACROSS THE WHOLE RANGE, and that is a behaviour change worth
+   * knowing about if you set it before migration 00112. Relevance used to be
+   * BINARY — every matched candidate carried `relevance: 1` — so with the
+   * endpoint's four equal weights and an outcome factor that never sinks below
+   * its `0.5` cold-start prior, no matched score could drop under
+   * `(1 + 0.5) / 4 = 0.375`, and any `min_score` at or below that was a no-op.
+   *
+   * Relevance is now the graded lexical rank (`ts_rank_cd`, normalised into
+   * `[0,1)`), so a faint match scores a faint relevance and the old floor is
+   * gone: a weak, stale, unrecurring hit can now land below `0.375` and be
+   * filtered. That is the point of grading — but it means a `min_score` chosen
+   * against the binary behaviour is now stricter than it was, and a value that
+   * used to pass everything may start dropping real hits. Re-tune it against
+   * the `score` values you actually see rather than carrying the old number
+   * over.
    */
   min_score: z.coerce.number().min(0).max(1).optional().default(0),
 });
@@ -86,6 +96,14 @@ export const RelevantEntrySchema = z.object({
   factors: z.object({
     recency: z.number(),
     salience: z.number(),
+    /**
+     * Graded lexical relevance in `[0,1)` — Postgres `ts_rank_cd` over the
+     * `fts` column, saturated into the range (migration 00112). `0` means the
+     * request carried no `q` at all, never "matched, but badly": a row that did
+     * not match is not returned. It is a LEXICAL score — term overlap and
+     * proximity, deterministically computed — and never a semantic or
+     * embedding similarity.
+     */
     relevance: z.number(),
     outcome: z.number(),
   }),
