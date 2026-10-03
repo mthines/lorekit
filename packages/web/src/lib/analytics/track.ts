@@ -121,8 +121,24 @@ export type CommandSource = 'palette' | 'shortcut';
  */
 export type InstallCommandId = 'cli-install';
 
-/** Where the copy affordance was rendered. Bounded for the same reason. */
-export type CopySurface = 'login-get-started' | 'blog-cta';
+/**
+ * Where the copy affordance was rendered. Bounded for the same reason.
+ *
+ * `landing-hero` and `landing-get-started` are the two positions on the public
+ * home page, and they are kept apart because they answer different questions:
+ * the hero measures whether the command ALONE converts a first-time visitor,
+ * the card measures whether someone who read the whole page converts at the end
+ * of it. Collapsing them would hide which half of the page is doing the work.
+ *
+ * `login-get-started` is retained rather than deleted: the card it named moved
+ * from `/login` to `/`, but the value is already recorded against past events
+ * and dropping it from the union would make that history untypeable.
+ */
+export type CopySurface =
+  | 'landing-hero'
+  | 'landing-get-started'
+  | 'login-get-started'
+  | 'blog-cta';
 
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
