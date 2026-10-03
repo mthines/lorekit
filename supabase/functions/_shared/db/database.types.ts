@@ -807,6 +807,45 @@ export type Database = {
           },
         ]
       }
+      judgment_provider_keys: {
+        Row: {
+          calls_total: number
+          created_at: string
+          id: string
+          last4: string
+          provider: string
+          status: string
+          updated_at: string
+          user_id: string
+          vault_secret_id: string
+          version: number
+        }
+        Insert: {
+          calls_total?: number
+          created_at?: string
+          id?: string
+          last4: string
+          provider?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          vault_secret_id: string
+          version?: number
+        }
+        Update: {
+          calls_total?: number
+          created_at?: string
+          id?: string
+          last4?: string
+          provider?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          vault_secret_id?: string
+          version?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1246,6 +1285,26 @@ export type Database = {
       restore_memory: {
         Args: { p_key: string; p_scope: string; p_user_id: string }
         Returns: string
+      }
+      lorekit_judgment_key_set: {
+        Args: { p_api_key: string; p_last4: string; p_provider: string; p_user_id: string }
+        Returns: { version: number }[]
+      }
+      lorekit_judgment_key_get: {
+        Args: { p_provider: string; p_user_id: string }
+        Returns: { decrypted_secret: string; version: number }[]
+      }
+      lorekit_judgment_key_status: {
+        Args: { p_provider: string; p_user_id: string }
+        Returns: { calls_total: number; created_at: string; last4: string; status: string }[]
+      }
+      lorekit_judgment_key_delete: {
+        Args: { p_provider: string; p_user_id: string }
+        Returns: boolean
+      }
+      lorekit_judgment_key_record_call: {
+        Args: { p_outcome: string; p_provider: string; p_user_id: string; p_version: number }
+        Returns: undefined
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

@@ -91,6 +91,12 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories POST /groom/preview': 'groom.preview',
   'memories POST /groom/run': 'groom.run',
   'memories POST /protect': 'memory.protect',
+  // TypeSafe (Jev) judgment BYOK key management — its own vocabulary
+  // (`judgment_key.*`), matching the `audit_log` action names rather than the
+  // `memory.*` family: this is a personal-secret operation, not a lore read/write.
+  'memories GET /judgment-key': 'judgment_key.status',
+  'memories POST /judgment-key': 'judgment_key.set',
+  'memories DELETE /judgment-key': 'judgment_key.delete',
   'memories GET /:id': 'memory.read',
   'memories PATCH /:id': 'memory.write',
   'memories POST /:id/restore': 'memory.restore',

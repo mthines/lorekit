@@ -20,6 +20,7 @@
     "./invite": "./src/domain/invite.ts",
     "./usage": "./src/domain/usage.ts",
     "./relevant": "./src/shared/relevant.ts",
+    "./judgment": "./src/domain/judgment.ts",
     "./openapi/spec": "./src/openapi/spec.ts",
     "./tool-catalog": "./src/shared/tool-catalog.ts",
     "./llms/render": "./src/llms/render.ts"
