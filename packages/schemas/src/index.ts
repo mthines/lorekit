@@ -12,3 +12,4 @@ export * from './shared/tags.ts';
 export * from './shared/dimensions.ts';
 export * from './domain/usage.ts';
 export * from './shared/relevant.ts';
+export * from './domain/judgment.ts';

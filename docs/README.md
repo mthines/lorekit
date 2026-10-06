@@ -15,6 +15,7 @@
 | [byod.md](./byod.md) | Operators | Bring Your Own Database — pointing LoreKit at a Supabase project you control |
 | [embeddings.md](./embeddings.md) | Developers + operators | Semantic-search embeddings: the dormant schema, the opt-in pipeline, the manual backfill, cost measurement, rollback |
 | [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
+| [judgment.md](./judgment.md) | Developers + operators | TypeSafe (Jev) BYOK relevance reranking: configuring/rotating/removing a key, what a judged read does, storage, and known gaps |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
 | [feature-flags.md](./feature-flags.md) | Developers | `@lorekit/feature-flags`: OpenFeature evaluation, registry authoring, codegen (TS + cross-language manifest), deterministic A/B bucketing, and reading the experiment result back out of Dash0 via OTel span attributes |
 | [benchmarking.md](./benchmarking.md) | Developers + operators | The two experiments and when each applies: the row-scaling sweep (data shape — runbook, flags, how to read it) and the load test (traffic — surfaces, rate-limit constraints, workflow shape, method) |

@@ -775,3 +775,35 @@ is the whole point of 00105. The **Read** stat card stays scope-level: `usage_ev
 scope but nothing about the age or counters of the memories it returned, so a per-lesson threshold is
 unanswerable there. §108 pins the narrowing, the self-exclusion interaction, and that all-null params
 equal omitting them.
+
+## Judgment is BYOK, best-effort, never on the correctness path
+
+TypeSafe (Jev) relevance-grading reranks `GET /memories/relevant` (and, eventually, the CLI's
+failure hook) using **the caller's own** TypeSafe API key — never a LoreKit-operated credential.
+This is deliberate, and it decides most of the shape below:
+
+- **BYOK is the opt-in.** There is no separate "enable judgment" flag: a user who has not
+  configured a key gets exactly today's baseline ranking, with zero code-path difference beyond
+  a skipped network call. Storing a key IS the decision to spend the user's own TypeSafe account
+  on reranking their own lore. See [docs/judgment.md](./judgment.md) for the wire contract.
+- **Every non-`applied` outcome reproduces the pre-judgment baseline byte-for-byte** — not merely
+  "close enough". `withJudgedRelevance` returns the SAME array (true identity, not a deep-equal
+  copy) whenever judgment is skipped, disabled, timed out, rejected, rate-limited, or returned a
+  malformed body, so `rankLessons`/`selectDiverse` run the identical baseline composition. A
+  reranking feature is never allowed to make the underlying read less reliable than it was before
+  the feature existed.
+- **One request, one timeout, no retries.** `JUDGMENT_TIMEOUT_MS = 1500` with `AbortSignal.timeout`
+  and no retry loop — retrying a `429`/`529` risks exceeding the bound this decision exists to
+  guarantee: judgment can only ever add up to 1.5s to a read's latency, never more, regardless of
+  how TypeSafe is behaving.
+- **Org-owned lore is excluded from every judgment request.** A member's own key is not the
+  org's consent to send org-owned lore to a third party; an org-owned row gets the neutral
+  `UNJUDGED_RELEVANCE` prior instead of a real score.
+- **The key is never observable outside the one call that needs it.** It is Vault-encrypted at
+  rest (`supabase/migrations/00112_judgment_provider_keys.sql`), decrypted only by
+  `_shared/judgment/judgment-keys.ts`, and never appears in a span, a log line, or an audit
+  row's metadata — `docs/judgment.md` and that migration's own comments carry the enforcement
+  detail.
+- **`LOREKIT_JUDGMENT_DISABLED` is the one operator kill switch**, checked before any per-user key
+  lookup — an operator who has decided TypeSafe is unhealthy should not also need to know whether
+  any particular caller has a key configured.
