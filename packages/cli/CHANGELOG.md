@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.2](https://github.com/mthines/lorekit/compare/cli-v1.71.1...cli-v1.71.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **mcp:** advertise MCP tool annotations so clients stop treating every tool as destructive ([#683](https://github.com/mthines/lorekit/issues/683)) ([12e933a](https://github.com/mthines/lorekit/commit/12e933abe4fad4b0753faf25ded1556df05823c7))
+
 ## [1.71.1](https://github.com/mthines/lorekit/compare/cli-v1.71.0...cli-v1.71.1) (2026-09-19)
 
 
