@@ -252,11 +252,11 @@ function TypewriterLine({
   // layout shift. With the loop restarting forever, the login page accumulated
   // thousands of CLS entries per visit (p75 0.21, worst 0.58).
   //
-  // The theater does NOT sit above the sign-in CTA: `(auth)/login/page.tsx`
-  // renders the primary `LoginButton` at L155 and `<TerminalTheater />` at
-  // L165, so the shifting text is below it — only the header's compact sign-in
-  // button (L111) is above. The cost is the accrued shift entries themselves,
-  // which CLS sums for the whole session; it is not a CTA moving under a cursor.
+  // The theater does NOT sit above any call to action: `app/page.tsx` renders
+  // the hero — install command, sign-in and docs links — and only reaches this
+  // several sections further down, so the shifting text is always below every
+  // control. The cost is the accrued shift entries themselves, which CLS sums
+  // for the whole session; it is not a CTA moving under a cursor.
   //
   // So: a full, invisible copy of the text reserves the space, and the typed
   // prefix is painted over it. The overlay is out of flow, so the number of
@@ -551,10 +551,10 @@ export function TerminalTheater() {
       {/* Heading */}
       <div className="mb-6 text-center">
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-1">
-          Watch memories form and persist
+          Session A writes. Session B already knows.
         </h2>
         <p className="text-sm text-[var(--color-content-secondary)]">
-          Session A writes. Session B loads. No re-explaining.
+          Two sessions, one store, no re-explaining.
         </p>
       </div>
 
