@@ -475,6 +475,9 @@ check('every advertised description and schema matches the catalog', async () =>
     ok(live, `${expected.name} is missing from tools/list`);
     eq(live.description, expected.description, `${expected.name} description`);
     eq(live.inputSchema, expected.inputSchema, `${expected.name} inputSchema`);
+    // Without annotations a client applies the MCP defaults and shows every
+    // tool, reads included, as write + destructive.
+    eq(live.annotations, expected.annotations, `${expected.name} annotations`);
   }
 });
 

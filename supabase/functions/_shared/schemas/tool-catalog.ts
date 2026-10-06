@@ -10,7 +10,8 @@
  * Two consumers, deliberately:
  *
  *   1. `supabase/functions/mcp/mcp-handler.ts` renders `tools/list` from it
- *      (via `toWireTool`, which drops the docs-only fields). Before this
+ *      (via `toWireTool`, which drops the docs-only fields and keeps the
+ *      name, description, inputSchema and MCP annotations). Before this
  *      module the tool list was an inline literal in that handler.
  *   2. `packages/schemas/src/llms/render.ts` renders the "MCP tools" and
  *      "Permission matrix" sections of `packages/web/public/llms.txt`. Before
@@ -132,6 +133,45 @@ export interface JsonSchemaObject {
   readonly properties?: Readonly<Record<string, JsonSchemaProperty>>;
 }
 
+/**
+ * The MCP `ToolAnnotations` a tool is advertised with — the behaviour hints a
+ * client reads to decide how to present and gate a tool (spec 2025-03-26 and
+ * later: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
+ *
+ * All four are REQUIRED here even though the spec makes them optional, because
+ * an absent hint takes the spec's default — `readOnlyHint: false`,
+ * `destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true` —
+ * which is the most dangerous reading of every tool. That is exactly what
+ * clients showed while the catalog sent no annotations at all: all 22 tools,
+ * `memory.read` and `memory.search` included, rendered as write + destructive.
+ * Stating every hint means no tool's classification rests on a default, and a
+ * new tool cannot be added without deciding.
+ *
+ * How each hint is decided:
+ *
+ *   - `readOnlyHint` — true exactly when `permission === 'read'`
+ *     (`tool-catalog-parity.spec.ts` pins the equivalence). Read tools do bump
+ *     LoreKit's own read counters (`read_count`, `last_opened_at`); that is
+ *     bookkeeping ABOUT the call, not a change to the lore the caller works
+ *     with, so it does not make them writes.
+ *   - `destructiveHint` — true when the call can delete data or overwrite
+ *     existing data in place. Soft-archive (restorable with `memory.restore`),
+ *     restore, protect and creating a new record are non-destructive. The spec
+ *     calls this hint meaningful only for writes; read tools still state
+ *     `false` so a client that reads it unconditionally never sees the default.
+ *   - `idempotentHint` — true when repeating the same call with the same
+ *     arguments has no further effect. Read tools state `true`.
+ *   - `openWorldHint` — false on every tool. Each one acts on LoreKit's own
+ *     store and nothing outside it; the spec's own example of a closed-world
+ *     tool is a memory tool.
+ */
+export interface McpToolAnnotations {
+  readonly readOnlyHint: boolean;
+  readonly destructiveHint: boolean;
+  readonly idempotentHint: boolean;
+  readonly openWorldHint: boolean;
+}
+
 export interface McpToolDoc {
   /** Wire name, e.g. `memory.write`. */
   readonly name: string;
@@ -139,6 +179,8 @@ export interface McpToolDoc {
   readonly description: string;
   /** Sent verbatim as the MCP `inputSchema`. */
   readonly inputSchema: JsonSchemaObject;
+  /** Sent verbatim as the MCP `annotations`. See `McpToolAnnotations`. */
+  readonly annotations: McpToolAnnotations;
   /** Token permission family. `null` only if not token-gated at all. */
   readonly permission: McpToolPermission;
   /** Auth tiers accepted. */
@@ -164,6 +206,17 @@ const scope: JsonSchemaProperty = { type: 'string', description: 'Canonical scop
 const readScope: JsonSchemaProperty = { type: 'string', description: 'Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see.' };
 const key: JsonSchemaProperty = { type: 'string', description: 'Lesson identifier, unique within the scope. Max 512 characters.' };
 const limit: JsonSchemaProperty = { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum entries to return.' };
+
+/** Annotations for every `permission: 'read'` tool. See `McpToolAnnotations`. */
+const READ_ONLY: McpToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+
+/**
+ * Annotations for a `permission: 'write'` tool. Named arguments rather than two
+ * positional booleans, so each catalog entry reads as the decision it records.
+ */
+function writeHints({ destructive, idempotent }: { destructive: boolean; idempotent: boolean }): McpToolAnnotations {
+  return { readOnlyHint: false, destructiveHint: destructive, idempotentHint: idempotent, openWorldHint: false };
+}
 
 /**
  * The EIGHT dimension filters a retention policy (or an inline groom call)
@@ -231,6 +284,9 @@ export const MCP_TOOLS = [
     name: 'memory.write',
     description: 'Store or update a lesson',
     permission: 'write',
+    // Destructive: an upsert onto an existing scope+key overwrites its value in
+    // place. Not idempotent: every write bumps the lesson's `seen_count`.
+    annotations: writeHints({ destructive: true, idempotent: false }),
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'write', rest: 'POST /', handler: 'toolWrite' },
     inputSchema: {
@@ -318,6 +374,7 @@ export const MCP_TOOLS = [
     description:
       'Read one lesson by `key`, or several at once by `refs`. Pass exactly one of those two shapes: `key` (optionally narrowed with `scope`), or `refs` alone — a call carrying both is rejected, and so is one carrying neither. `scope` is optional: omit it and the key is resolved across every scope you can see, preferring the most specific one.',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'show', rest: 'GET /:id', handler: 'toolRead' },
     inputSchema: {
@@ -350,6 +407,7 @@ export const MCP_TOOLS = [
     name: 'memory.list',
     description: 'List lessons, for one scope or across every scope you can see',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'list', cliAliases: ['ls'], rest: 'GET /', handler: 'toolList' },
     inputSchema: {
@@ -376,6 +434,8 @@ export const MCP_TOOLS = [
     description:
       'Soft-archive a lesson (default) or hard-delete it (force: true). Archived lessons are hidden from reads but can be restored.',
     permission: 'write',
+    // Destructive: `force: true` hard-deletes, unrecoverably.
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     // `?force=true` is what tells this apart from `memory.archive` on the same route.
     surfaces: { mcp: true, cli: 'delete', cliAliases: ['rm'], rest: 'DELETE /?force=true', handler: 'toolDelete' },
@@ -400,6 +460,7 @@ export const MCP_TOOLS = [
     name: 'memory.search',
     description: 'Full-text search across lessons',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'search', cliAliases: ['grep'], rest: 'POST /search', handler: 'toolSearch' },
     inputSchema: {
@@ -423,6 +484,8 @@ export const MCP_TOOLS = [
     name: 'memory.archive',
     description: 'Soft-archive a lesson. Archived lessons are hidden from reads but can be restored via memory.restore.',
     permission: 'write',
+    // Not destructive: a soft-archive loses nothing and `memory.restore` undoes it.
+    annotations: writeHints({ destructive: false, idempotent: true }),
     auth: 'token-or-jwt',
     // Same route as `memory.delete`, distinguished by the ABSENCE of `?force=true`.
     surfaces: { mcp: true, cli: 'archive', rest: 'DELETE /', handler: 'toolArchive' },
@@ -438,6 +501,7 @@ export const MCP_TOOLS = [
       + 'read tools answer questions about lore; this one answers "what is there?" — reach for it '
       + 'when you want to NAME a scope, to narrow a list or to decide where a write belongs.',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'scopes', rest: 'GET /scopes', handler: 'toolScopes' },
     inputSchema: { type: 'object', properties: {} },
@@ -447,6 +511,7 @@ export const MCP_TOOLS = [
     name: 'memory.list_archived',
     description: 'List archived (soft-deleted) lessons, for one scope or across every scope you can see',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -466,6 +531,7 @@ export const MCP_TOOLS = [
     name: 'memory.restore',
     description: 'Restore an archived lesson back to active',
     permission: 'write',
+    annotations: writeHints({ destructive: false, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: 'restore', rest: 'POST /restore', handler: 'toolRestore' },
     inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
@@ -475,6 +541,8 @@ export const MCP_TOOLS = [
     name: 'memory.purge',
     description: `Permanently delete archived lessons older than retention_days (default ${PURGE_RETENTION_DAYS_DEFAULT}). Unrecoverable.`,
     permission: 'write',
+    // Destructive: permanently deletes archived lessons.
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -501,6 +569,8 @@ export const MCP_TOOLS = [
     name: 'memory.purge_expired',
     description: 'Permanently delete all TTL-expired memories for the current user. Unrecoverable.',
     permission: 'write',
+    // Destructive: permanently deletes TTL-expired lessons.
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -517,6 +587,8 @@ export const MCP_TOOLS = [
     description:
       'Create a new organization. You become its owner automatically. The slug must be globally unique and lowercase.',
     permission: 'write',
+    // Not idempotent: a repeated call is refused on the now-taken slug.
+    annotations: writeHints({ destructive: false, idempotent: false }),
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'POST /orgs', handler: 'toolOrgCreate' },
     inputSchema: {
@@ -533,6 +605,7 @@ export const MCP_TOOLS = [
     name: 'org.list',
     description: 'List all organizations you are a member of, with your role in each.',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'GET /orgs', handler: 'toolOrgList' },
     inputSchema: { type: 'object', properties: {} },
@@ -542,6 +615,8 @@ export const MCP_TOOLS = [
     name: 'org.rename',
     description: "Rename an organization's display name. Requires admin or owner role.",
     permission: 'write',
+    // Destructive: overwrites the display name in place.
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'PATCH /orgs/:slug', handler: 'toolOrgRename' },
     inputSchema: {
@@ -559,6 +634,8 @@ export const MCP_TOOLS = [
     description:
       'Delete an organization. Requires owner role. Soft-deletes the org — all org lore is immediately hidden from reads. Unrecoverable via MCP.',
     permission: 'write',
+    // Destructive: the org and its lore are gone from reads, unrecoverably via MCP.
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: { mcp: true, cli: null, cliExempt: ORG_CLI_EXEMPT, rest: 'DELETE /orgs/:slug', handler: 'toolOrgDelete' },
     inputSchema: {
@@ -572,6 +649,7 @@ export const MCP_TOOLS = [
     name: 'policy.list',
     description: 'List every retention policy you own',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -587,6 +665,8 @@ export const MCP_TOOLS = [
     name: 'policy.create',
     description: 'Create a scoped retention policy that auto-archives (never hard-deletes) matching lessons',
     permission: 'write',
+    // Not idempotent: policies have no natural key, so a repeat creates a duplicate.
+    annotations: writeHints({ destructive: false, idempotent: false }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -619,6 +699,8 @@ export const MCP_TOOLS = [
     name: 'policy.update',
     description: 'Update a retention policy. Every field but id is optional',
     permission: 'write',
+    // Destructive: overwrites the policy's conditions in place.
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -651,6 +733,8 @@ export const MCP_TOOLS = [
     name: 'policy.delete',
     description: 'Delete a retention policy. Deletes the rule only — never touches the lessons it matched',
     permission: 'write',
+    // Destructive: hard-deletes the rule (never the lessons it matched).
+    annotations: writeHints({ destructive: true, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -667,6 +751,7 @@ export const MCP_TOOLS = [
     name: 'groom.preview',
     description: 'Preview the lessons a saved policy or an inline condition set would archive, without changing anything',
     permission: 'read',
+    annotations: READ_ONLY,
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -695,6 +780,9 @@ export const MCP_TOOLS = [
     name: 'groom.run',
     description: 'Archive every lesson a saved policy or an inline condition set matches. Soft-archive only — never hard-deletes',
     permission: 'write',
+    // Not destructive: soft-archive only, and every archived key is returned for
+    // `memory.restore`. Same reasoning as `memory.archive`.
+    annotations: writeHints({ destructive: false, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -724,6 +812,7 @@ export const MCP_TOOLS = [
     name: 'memory.protect',
     description: 'Mark or unmark a lesson as protected — excluded from every grooming candidate set regardless of policy',
     permission: 'write',
+    annotations: writeHints({ destructive: false, idempotent: true }),
     auth: 'token-or-jwt',
     surfaces: {
       mcp: true,
@@ -770,11 +859,17 @@ export interface WireTool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: JsonSchemaObject;
+  readonly annotations: McpToolAnnotations;
 }
 
 /** Project a catalog entry onto the MCP wire shape. */
 export function toWireTool(tool: McpToolDoc): WireTool {
-  return { name: tool.name, description: tool.description, inputSchema: tool.inputSchema };
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    annotations: tool.annotations,
+  };
 }
 
 /** The full `tools/list` payload. */

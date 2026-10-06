@@ -20,7 +20,7 @@
  * tested directly.
  */
 
-import { MCP_TOOLS, type McpToolDoc, type JsonSchemaProperty } from '../shared/tool-catalog.ts';
+import { MCP_TOOLS, type McpToolDoc, type McpToolAnnotations, type JsonSchemaProperty } from '../shared/tool-catalog.ts';
 
 /** One entry in the generated docs index, read from an MDX file's frontmatter. */
 export interface DocsIndexEntry {
@@ -66,6 +66,24 @@ function argumentRow(name: string, property: JsonSchemaProperty, required: boole
   return `| \`${name}\` | ${required ? '✓' : ''} | ${property.type} | ${bits.join(' ') || '—'} |`;
 }
 
+/**
+ * Spell a tool's MCP annotations out in words, e.g. `write, destructive, not
+ * idempotent`. Words rather than the raw `readOnlyHint=…` flags because this
+ * line is read by people and models deciding whether a call is safe to make,
+ * and the spec's defaults make a raw flag that happens to be absent misleading.
+ */
+export function describeAnnotations(annotations: McpToolAnnotations): string {
+  const parts = annotations.readOnlyHint
+    ? ['read-only']
+    : [
+        'write',
+        annotations.destructiveHint ? 'destructive' : 'non-destructive',
+        annotations.idempotentHint ? 'idempotent' : 'not idempotent',
+      ];
+  parts.push(annotations.openWorldHint ? 'open-world' : 'closed-world');
+  return parts.join(', ');
+}
+
 /** Render the full reference block for one tool. */
 export function renderTool(tool: McpToolDoc): string {
   const lines: string[] = [`### ${tool.name}`, '', tool.description.replace(/\.?$/, '.'), ''];
@@ -91,6 +109,8 @@ export function renderTool(tool: McpToolDoc): string {
   } else if (tool.auth === 'jwt-only') {
     lines.push('Requires a dashboard session JWT — not available via `lk_*` tokens.', '');
   }
+
+  lines.push(`MCP annotations: ${describeAnnotations(tool.annotations)}.`, '');
 
   if (tool.returns) lines.push(`Returns: ${tool.returns}`, '');
   for (const note of tool.notes ?? []) lines.push(note, '');
