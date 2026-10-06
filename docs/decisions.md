@@ -775,3 +775,61 @@ is the whole point of 00105. The **Read** stat card stays scope-level: `usage_ev
 scope but nothing about the age or counters of the memories it returned, so a per-lesson threshold is
 unanswerable there. §108 pins the narrowing, the self-exclusion interaction, and that all-null params
 equal omitting them.
+
+## Graded relevance is lexical `ts_rank_cd`, never a vector score
+
+`GET /memories/relevant` ranks on four factors, and the relevance one used to be BINARY: a row
+that matched the FTS predicate scored `1`, a row that did not was never returned, and nothing
+scored between. That was not an oversight — `ts_rank`/`ts_rank_cd` is not projectable through
+PostgREST's query grammar, so from the PostgREST side there was no graded value to be had. The
+same limitation cut the candidate window in `updated_at desc` order rather than by rank, so on a
+store with more matching rows than `CANDIDATE_LIMIT` the BEST-matching lesson could fall outside
+the window and never be scored at all.
+
+Migration 00112 moves the candidate fetch into `lorekit_memory_relevant_candidates`, which
+returns `ts_rank_cd(fts, websearch_to_tsquery('english', q))` alongside the row and — when a
+query is present — orders the window by it. Two things follow: ordering among matches now
+reflects *how well* each row matched, and the rows the cap discards are the ones that matched
+worst rather than the ones that happened to be older.
+
+**The decision worth not relitigating is what relevance IS.** It is a lexical score: term
+overlap and proximity, computed by a pure Postgres function over the same `fts` column
+`POST /memories/search` already matches on. It is NOT an embedding similarity, and the obvious
+"upgrade" — fusing a vector score into the same factor — is out of scope by choice, not by
+backlog order. Retrieval here is deterministic and embedding-free: identical inputs produce
+identical output, run to run, with no model inference on read or on write, no vector index to
+keep warm, and no external call on the request path. A ranking a user cannot reproduce is a
+ranking they cannot debug, and for a store whose whole job is telling an agent which of its own
+past lessons to re-read, reproducibility is worth more than semantic recall. The
+`memories.embedding` column and its dormant opt-in pipeline
+([embeddings.md](./embeddings.md)) stay exactly that — dormant, and off this path.
+
+`ts_rank_cd` rather than `ts_rank` because cover density rewards query terms that appear close
+together, which is the difference between a lesson actually about "migration backfill" and one
+that mentions migrations in its first paragraph and backfills in its last.
+
+**The normalization is a named constant, not an inline expression.** `ts_rank_cd` is unbounded
+above and the scorer needs `[0,1]`, so `normalizeLexicalRank` maps `r → r / (r + s)`: strictly
+increasing (it can never reorder what Postgres ranked), `0` at `0`, asymptotic to `1`.
+`s = LEXICAL_RANK_SATURATION = 0.1` is anchored to a schema fact rather than taste —
+`memories.fts` applies no `setweight`, so every lexeme carries Postgres's default D weight of
+`0.1`, and one occurrence of one query lexeme is therefore a `ts_rank_cd` of `0.1`. Saturating
+there makes "matched about as well as a single term does" read as the midpoint of the factor.
+Saturating at `1` instead would squash the whole plausible range into the bottom half of the
+scale, so a graded signal would arrive with most of its say already spent. Every `score` the
+endpoint reports depends on this constant and nothing else in the repo would notice it moving,
+so it is pinned by value in `lexical-rank.spec.ts` and its anchor is pinned in
+`migrations.test.sql` §112 AC-4.
+
+**What this changes for callers.** `min_score` now gates across the whole range. Under binary
+relevance no matched score could drop below `(1 + 0.5) / 4 = 0.375` — relevance at `1`, outcome
+never below its `0.5` cold-start prior — so any `min_score` at or under `0.375` was a no-op.
+Grading removes that floor, which is the point, but it means a threshold chosen against the old
+behaviour is now stricter than it was. The `factors` block still reports the four raw values so
+a caller can see exactly which one moved.
+
+**The scorer did NOT move into SQL, and must not.** Postgres selects and grades; the composite
+score stays in `lesson-rank.ts` / `lessons-pure.mjs`. The ranking is set-relative (salience
+normalises against the most-recurring candidate) and it has to agree exactly with the CLI hook's
+ordering — an agreement `lesson-rank-parity.spec.ts` can hold two TypeScript-family
+implementations to and could not hold a plpgsql third copy to at all.

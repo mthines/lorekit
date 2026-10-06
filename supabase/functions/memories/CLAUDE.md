@@ -502,7 +502,7 @@ The one verb that **ranks**. Returns the top-K lessons for a query as a compact 
       "key": "migration-order",
       "hook": "Always add the column before the backfill runs.",
       "score": 0.74,
-      "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1, "outcome": 0.5 },
+      "factors": { "recency": 0.61, "salience": 0.85, "relevance": 0.8, "outcome": 0.5 },
       "seen_count": 9,
       "updated_at": "2026-07-30T09:12:00.000Z"
     }
@@ -513,10 +513,10 @@ The one verb that **ranks**. Returns the top-K lessons for a query as a compact 
 
 | Param | Default | Meaning |
 |-------|---------|---------|
-| `q` | — | Free-text query, `websearch` FTS over `key \|\| value`. **Optional.** |
+| `q` | — | Free-text query, `websearch` FTS over `key \|\| value`. **Optional.** With `q` the candidate window is cut by `ts_rank_cd` desc; without it, by `updated_at` desc. |
 | `scopes` | all visible | Comma-separated, **most-specific first** — the order breaks ties. |
 | `limit` | `10` | 1–50. A shortlist for a context window, not a page. |
-| `min_score` | `0` | Drop hits below this — how a caller says "stay silent rather than show me something weak". Note: with `q` set, matched hits floor at `(1 + 0.5) / 4 = 0.375` (relevance is binary and outcome never sinks below its `0.5` prior today), so `min_score ≤ 0.375` is a no-op until graded relevance. |
+| `min_score` | `0` | Drop hits below this — how a caller says "stay silent rather than show me something weak". It gates across the whole range since 00112: binary relevance floored every matched hit at `(1 + 0.5) / 4 = 0.375`, and grading removed that floor, so a value tuned against the old behaviour is now stricter than it was. |
 
 **Why it exists.** Every other read hands the caller a single-signal ordering — `GET /memories`
 is `updated_at` desc, `POST /memories/search` is FTS rank — and neither knows that a lesson
@@ -524,9 +524,10 @@ written twelve times is worth more than one written once. Each client that wante
 shortlist fetched a page and re-sorted it locally, which is three copies of a ranking and
 three chances to disagree about what matters.
 
-**Two phases, and the split is the design.** Postgres SELECTS the candidates (an index scan
-over `fts` is the difference between reading 40 rows and reading the whole store); the shared
-scorer ORDERS them in TypeScript. The ranking is deliberately *not* SQL: it is set-relative
+**Two phases, and the split is the design.** Postgres SELECTS AND GRADES the candidates,
+through `lorekit_memory_relevant_candidates` (migration 00112) — an index scan over `fts` is
+the difference between reading 40 rows and reading the whole store; the shared scorer ORDERS
+them in TypeScript. The ranking is deliberately *not* SQL: it is set-relative
 (salience normalises against the most-recurring candidate) and it must agree exactly with the
 CLI hook's ordering. A plpgsql copy could not be held to that agreement by any test, whereas
 `lesson-rank-parity.spec.ts` holds `_shared/ranking/lesson-rank.ts` to the CLI's `lessons-pure.mjs`
@@ -537,17 +538,30 @@ matters for this task". Without it, the ranking is recency + salience, which is 
 generally" — the SessionStart question. Requiring `q` would have forced the hook to invent a
 query for a session that has not asked anything yet.
 
-**Relevance is currently binary, and that is an honest limit.** `ts_rank` is not projectable
-through PostgREST's query grammar, so a row that matched scores 1 and — since a non-matching
-row is never returned — nothing scores between. Ordering among matches is therefore decided by
-recency and salience, which is the useful half: *these all mention your terms; here are the
-ones that keep mattering.* A graded relevance needs an RPC returning `ts_rank`, which is where
-the semantic-search work has to go anyway.
+**Relevance is GRADED, and it is lexical.** `ts_rank` is not projectable through PostgREST's
+query grammar, which is why relevance used to be binary — a row that matched scored 1, and
+since a non-matching row is never returned, nothing scored between. Migration 00112 moves the
+candidate fetch into an RPC that returns `ts_rank_cd`, so ordering among matches now reflects
+*how well* each row matched: cover density, which rewards query terms sitting close together
+over a lesson that merely mentions them in different paragraphs. The handler saturates the raw
+(unbounded) value into `[0,1)` with `normalizeLexicalRank`, a strictly increasing map that
+cannot reorder what Postgres ranked; `LEXICAL_RANK_SATURATION` is anchored to the default D
+weight every lexeme in `memories.fts` carries, and both the constant and the anchor are pinned
+(`lexical-rank.spec.ts`, `migrations.test.sql` §112 AC-4).
+
+It is a LEXICAL score and never a semantic one. Nothing on this path calls a model, there is no
+vector index, and identical inputs produce identical output — see
+[decisions.md](../../../docs/decisions.md#graded-relevance-is-lexical-ts_rank_cd-never-a-vector-score).
 
 **`CANDIDATE_LIMIT = 200`** bounds the pre-ranking fetch. The ranking needs a population, not
 just the page it returns — salience is normalised across candidates, so a genuinely recurring
-lesson ranked 30th by FTS must still get the chance to come first. 200 is comfortably above
-the route's own `limit` cap of 50 while staying one cheap indexed read.
+lesson ranked 30th by relevance must still get the chance to come first. 200 is comfortably
+above the route's own `limit` cap of 50 while staying one cheap indexed read. WITH a `q` the
+cap is no longer an honesty problem — the RPC cuts the window in rank order, so the rows that
+fall off matched worst. WITHOUT a `q` there is no rank to order by and the window is still
+`updated_at desc`, so a high-`seen_count` old lesson can still miss the set; that residue is
+deliberate, and the no-`q` call is the SessionStart question where recency is a defensible
+window.
 
 The response carries `candidates` (how many the FTS matched before ranking) so a caller can
 say "3 of 47" instead of implying it saw everything — the same reason the SessionStart block

@@ -124,8 +124,15 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
  * kept its tests, and quietly stopped being covered by the predicate that made
  * it safe. Removing a name from this list is only ever correct alongside adding
  * it to another one.
+ *
+ * `relevant` left for the SAME reason, one migration later: 00112 moved its
+ * candidate fetch into `lorekit_memory_relevant_candidates` so Postgres could
+ * grade it with `ts_rank_cd`, which took the query out of
+ * `applyRestTenantScope`'s reach exactly as 00067 did for `list`. It is pinned
+ * by `RPC_BACKED_ROW_READS` below — AND by the tenancy guard after it, because
+ * unlike `list` it is a read whose visibility WIDENS to org rows.
  */
-const REST_READ_HANDLERS = ['get', 'relevant', 'search'] as const;
+const REST_READ_HANDLERS = ['get', 'search'] as const;
 
 const readHandlerSource = (name: string) =>
   readFileSync(path.resolve(here, `../../../../supabase/functions/memories/handlers/${name}.ts`), 'utf8');
@@ -222,7 +229,7 @@ const RPC_BACKED_SCOPE_READS = ['scopes', 'tags', 'activity', 'read-activity', '
  * same pin — but the two are not one list, because a future aggregate and a
  * future row read are added for different reasons.
  */
-const RPC_BACKED_ROW_READS = ['list', 'utility'] as const;
+const RPC_BACKED_ROW_READS = ['list', 'utility', 'relevant'] as const;
 
 /**
  * The allowlist expression, spelled either inline at the call site or bound
@@ -295,6 +302,44 @@ describe('key-scope usage guard (RPC-backed row reads)', () => {
     // The RPC narrows; the handler refuses. Both, for the same reason every
     // other named-scope path does both: an empty page is not a denial.
     expect(readHandlerSource(name)).toContain('firstDeniedScope(auth,');
+  });
+});
+
+/**
+ * Drift guard: an RPC-backed read whose visibility WIDENS to org rows must pass
+ * the key's TENANCY, not only its scope allowlist.
+ *
+ * `p_key_scopes` is the half the guards above cover. It is not the whole
+ * boundary: a key can also be narrowed to `personal` or to a chosen set of orgs
+ * (00068), and in SQL that half is `lorekit_api_token_org_allowed`, which the
+ * RPCs default to `'all'` / `'{}'` — the UNRESTRICTED values. A handler that
+ * sends `p_key_scopes` and forgets the other two compiles, runs, passes every
+ * guard above, and hands a `personal` key every org row its OWNER can see.
+ *
+ * Why this is a separate list from `RPC_BACKED_ROW_READS`: not every RPC-backed
+ * read widens. `utility` is account-wide by construction, and the aggregates
+ * emit counts rather than rows. What earns a name here is reading rows whose
+ * visibility comes from ORG MEMBERSHIP rather than ownership — `list` and
+ * `relevant` — because that is the visibility the key's tenancy exists to
+ * narrow back down.
+ */
+const ORG_WIDENING_RPC_READS = ['list', 'relevant'] as const;
+
+describe('key-tenancy usage guard (org-widening RPC reads)', () => {
+  it.each(ORG_WIDENING_RPC_READS)('%s passes the key tenancy to its RPC', (name) => {
+    const src = readHandlerSource(name);
+    // The expressions, not merely the parameter names: `p_key_org_access: 'all'`
+    // would satisfy a name-only check while being precisely the fail-open value
+    // this guard exists to catch.
+    expect(src).toMatch(/p_key_org_access:\s*keyRestriction\(auth\)\?\.orgAccess\s*\?\?\s*'all'/);
+    expect(src).toMatch(/p_key_org_ids:\s*keyRestriction\(auth\)\?\.orgIds\s*\?\?\s*\[\]/);
+  });
+
+  it.each(ORG_WIDENING_RPC_READS)('%s sends the tenancy alongside the scope allowlist', (name) => {
+    // All three travel together or the boundary has a hole; a handler carrying
+    // one and not the others is the shape this pins against.
+    const src = readHandlerSource(name);
+    expect(passesKeyScopes(src)).toBe(true);
   });
 });
 
