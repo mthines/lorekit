@@ -125,11 +125,77 @@ describe('tool catalog ↔ the generated dispatch maps', () => {
 });
 
 describe('wire projection', () => {
-  it('exposes only name, description and inputSchema', () => {
+  it('exposes only name, description, inputSchema and annotations', () => {
     for (const tool of MCP_TOOLS) {
-      expect(Object.keys(toWireTool(tool)).sort()).toEqual(['description', 'inputSchema', 'name']);
+      expect(Object.keys(toWireTool(tool)).sort()).toEqual(['annotations', 'description', 'inputSchema', 'name']);
     }
   });
+});
+
+/**
+ * MCP tool annotations. With none on the wire, every client applied the spec's
+ * defaults — `readOnlyHint: false`, `destructiveHint: true` — and showed all 22
+ * tools, `memory.read` included, as write + destructive. These pin the
+ * classification so it cannot slide back onto a default, and so changing which
+ * tools count as destructive is a reviewed decision rather than a side effect.
+ */
+describe('tool annotations', () => {
+  const HINTS = ['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint'];
+
+  it('states all four hints on every tool, so none falls back to the spec default', () => {
+    for (const tool of MCP_TOOLS) {
+      const annotations = toWireTool(tool).annotations as unknown as Record<string, unknown>;
+      expect(Object.keys(annotations).sort(), `${tool.name} annotation keys`).toEqual(HINTS);
+      for (const hint of HINTS) {
+        expect(typeof annotations[hint], `${tool.name}.${hint}`).toBe('boolean');
+      }
+    }
+  });
+
+  it('marks a tool read-only exactly when it needs read permission', () => {
+    // `permissions.ts` is what the server gates on, so it — not a second
+    // hand-kept list — decides which tools a client may treat as read-only.
+    for (const tool of MCP_TOOLS) {
+      expect(tool.annotations.readOnlyHint, tool.name).toBe(toolRequires(tool.name) === 'read');
+    }
+  });
+
+  it('never calls a read-only tool destructive', () => {
+    for (const tool of MCP_TOOLS.filter((t) => t.annotations.readOnlyHint)) {
+      expect(tool.annotations.destructiveHint, tool.name).toBe(false);
+    }
+  });
+
+  it('marks exactly the tools that delete or overwrite in place as destructive', () => {
+    const destructive = MCP_TOOLS.filter((t) => t.annotations.destructiveHint).map((t) => t.name).sort();
+    expect(destructive).toEqual([
+      'memory.delete',
+      'memory.purge',
+      'memory.purge_expired',
+      'memory.write',
+      'org.delete',
+      'org.rename',
+      'policy.delete',
+      'policy.update',
+    ]);
+  });
+
+  it('treats a soft-archive as non-destructive, because memory.restore undoes it', () => {
+    for (const name of ['memory.archive', 'groom.run', 'memory.restore']) {
+      const tool = MCP_TOOLS.find((t) => t.name === name);
+      expect(tool?.annotations.readOnlyHint, name).toBe(false);
+      expect(tool?.annotations.destructiveHint, name).toBe(false);
+    }
+  });
+
+  it('declares every tool closed-world — each acts on the LoreKit store only', () => {
+    for (const tool of MCP_TOOLS) {
+      expect(tool.annotations.openWorldHint, tool.name).toBe(false);
+    }
+  });
+});
+
+describe('wire projection (input schemas)', () => {
 
   it('gives every tool a described, object-typed input schema', () => {
     for (const tool of MCP_TOOLS) {

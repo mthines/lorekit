@@ -33,6 +33,37 @@ already covered — `memory.list order=rank` answers the same question.
 
 **Endpoint:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
 
+### Tool annotations
+
+Every `tools/list` entry carries the MCP `annotations` object (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint`), declared per tool in
+`packages/schemas/src/shared/tool-catalog.ts`. All four hints are always sent:
+a hint that is left out takes the spec default (`readOnlyHint: false`,
+`destructiveHint: true`), which is how every tool — `memory.read` included —
+used to show up as write + destructive in MCP clients.
+
+| Class | Tools |
+|-------|-------|
+| Read-only | `memory.read`, `memory.list`, `memory.search`, `memory.scopes`, `memory.list_archived`, `org.list`, `policy.list`, `groom.preview` |
+| Write, non-destructive | `memory.archive`, `memory.restore`, `memory.protect`, `groom.run`, `org.create`, `policy.create` |
+| Write, destructive | `memory.write`, `memory.delete`, `memory.purge`, `memory.purge_expired`, `org.rename`, `org.delete`, `policy.update`, `policy.delete` |
+
+The rules behind the split:
+
+- **Read-only** is exactly the tools that need read token permission.
+  `tool-catalog-parity.spec.ts` holds the two together. Reads still bump the
+  read counters (`read_count`, `last_opened_at`), which records the call and
+  leaves the lore unchanged.
+- **Destructive** means the call can delete data or overwrite existing data in
+  place. `memory.write` counts because an upsert onto an existing key replaces
+  its value. A soft-archive (`memory.archive`, `groom.run`) is non-destructive
+  because nothing is lost and `memory.restore` undoes it.
+- **Idempotent** means repeating the same call has no further effect. The
+  exceptions are `memory.write` (each write bumps `seen_count`), `org.create`,
+  and `policy.create`.
+- **Closed-world** applies to every tool, because each one acts only on the
+  LoreKit store.
+
 ---
 
 ## memory.write

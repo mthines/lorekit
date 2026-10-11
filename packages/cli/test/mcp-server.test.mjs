@@ -90,6 +90,15 @@ test('initialize → tools/list → write/read/list round-trip over stdio', asyn
   assert.ok(list.result.tools.some((t) => t.name === 'org.rename'));
   assert.ok(list.result.tools.some((t) => t.name === 'org.delete'));
 
+  // MCP annotations reach the local server too. Without them a client applies
+  // the spec defaults and shows every tool, reads included, as destructive.
+  const toolNamed = (name) => list.result.tools.find((t) => t.name === name);
+  assert.equal(toolNamed('memory.read').annotations.readOnlyHint, true);
+  assert.equal(toolNamed('memory.read').annotations.destructiveHint, false);
+  assert.equal(toolNamed('memory.archive').annotations.readOnlyHint, false);
+  assert.equal(toolNamed('memory.archive').annotations.destructiveHint, false);
+  assert.equal(toolNamed('memory.delete').annotations.destructiveHint, true);
+
   // The notification produced no response — only ids 1..5 came back.
   assert.deepEqual([...m.keys()].sort((a, b) => a - b), [1, 2, 3, 4, 5]);
 

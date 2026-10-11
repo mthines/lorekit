@@ -65,6 +65,7 @@ function parseLimit(url: URL): number {
 
 Deno.serve((req: Request) =>
   traceRequest(req, 'lorekit.profiling', async (span) => {
+    span.setAttributes({ 'http.route': '/profiling' });
     if (req.method !== 'POST') {
       return json({ error: 'method_not_allowed', allow: 'POST' }, 405);
     }

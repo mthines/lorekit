@@ -1,4 +1,5 @@
 import { traceRequest } from '../_shared/telemetry/otel.ts';
+import { errorTypeOf } from '../_shared/telemetry/span-semconv.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { internalError } from '../_shared/api/respond.ts';
 import { generateSpec } from '../_shared/schemas/openapi/spec.ts';
@@ -32,14 +33,16 @@ Deno.serve(async (req) => {
     // never render (see DOCS_URL note). Redirect to the real docs so old
     // bookmarks keep working. A 302 has no HTML body, so the sandbox is moot.
     if (url.pathname.endsWith('/ui')) {
+      span.setAttributes({ 'http.route': '/openapi/ui' });
       return new Response(null, { status: 302, headers: { Location: DOCS_URL, ...cors } });
     }
+    span.setAttributes({ 'http.route': '/openapi' });
 
     try {
       const spec = getSpec();
       return new Response(JSON.stringify(spec), { headers: { 'Content-Type': 'application/json', ...cors } });
     } catch (e) {
-      span.error(`spec generation failed: ${(e as Error).message}`);
+      span.error(`spec generation failed: ${(e as Error).message}`, errorTypeOf(e));
       return internalError(cors);
     }
   });

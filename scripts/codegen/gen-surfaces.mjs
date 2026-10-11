@@ -127,7 +127,8 @@ export const MEMORY_TOOL_NAMES = ${literal(memory)};
 export const ORG_TOOL_NAMES = ${literal(org)};
 
 /**
- * The \`tools/list\` payload: name, description and inputSchema per op.
+ * The \`tools/list\` payload: name, description, inputSchema and MCP
+ * annotations per op.
  * Identical projection to the edge server's, from the same declaration, so the
  * local stdio server and the hosted server advertise the same contract.
  */

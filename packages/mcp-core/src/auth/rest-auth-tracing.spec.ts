@@ -65,9 +65,10 @@ describe('REST auth resolution telemetry (supabase/functions/_shared/api/auth.ts
   });
 
   it('never routes the token lookup through createTracedClient', () => {
-    // createTracedClient interpolates `eq()` values into the span name and
-    // db.query.text. The value here is the token hash, so tracing this query
-    // that way would publish a credential into telemetry.
+    // createTracedClient keeps `eq()` values out of the span name and
+    // db.query.text, and redacts URLs from a failed request's message — but it
+    // records DB error messages, which can echo a value in another form. The
+    // value here is the token hash, so this guard stays as defence in depth.
     expect(executable).not.toContain('createTracedClient');
   });
 

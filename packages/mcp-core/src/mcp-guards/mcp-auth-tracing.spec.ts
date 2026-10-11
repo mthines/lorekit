@@ -25,10 +25,13 @@ import path from 'node:path';
  *    path that matters, so the guard requires the `finally` form.
  *
  * 3. THE TOKEN LOOKUP IS NOT TRACED THROUGH `createTracedClient`. That wrapper
- *    interpolates filter VALUES into the span name and `db.query.text`
- *    (`buildSql` over `eq()` arguments), and the filter on this query is the
- *    token hash — the stored credential. This is the security half of the
- *    guard: it must stay a hand-rolled span over the raw client.
+ *    no longer puts filter VALUES in the span name or `db.query.text` (they
+ *    are `$n` placeholders — see `_shared/telemetry/span-semconv.ts`) and it
+ *    redacts URLs from a failed request's message, but it still records DB
+ *    error messages, which can echo a value in another form. The filter on
+ *    this query is the token hash, the stored credential, so this stays the
+ *    security half of the guard, as defence in depth: a hand-rolled span over
+ *    the raw client.
  *
  * 4. THE GOTRUE CALL'S SPAN CARRIES NO CLAIM OR TOKEN DATA. Only a boolean
  *    `db.success` — never the JWT, the resolved user id, or the raw error
@@ -105,9 +108,9 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
   });
 
   it('never routes the token lookup through createTracedClient', () => {
-    // createTracedClient interpolates `eq()` values into the span name and
-    // db.query.text. The value here is the token hash, so tracing this query
-    // that way would publish a credential into telemetry.
+    // createTracedClient keeps `eq()` values out of the span name and
+    // db.query.text and redacts URLs from error messages, but still records DB
+    // error text. The value here is the token hash — defence in depth.
     expect(executable).not.toContain('createTracedClient');
   });
 

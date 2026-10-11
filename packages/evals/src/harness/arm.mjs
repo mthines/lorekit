@@ -222,10 +222,43 @@ export async function prepareArm(
 }
 
 /**
+ * Claude Code's BUILT-IN plugins, by the name their `<name>@builtin` id uses.
+ *
+ * WHY AN EMPTY `enabledPlugins` STOPPED BEING ENOUGH.
+ * A built-in ships inside the `claude` binary rather than being installed, and
+ * some are on by default: `{}` sets nothing, so a default-on built-in still
+ * loads. The unpinned `npm install -g` in evals.yml picked up a release that
+ * does exactly that (reproduced on 2.1.287; 2.1.280 ships no built-ins), and
+ * on a GitHub runner with no `~/.claude` at all the session loaded
+ * `cc-plugin-agents-md` and `cc-plugin-plugin-authoring`, so preflight rightly
+ * reported the clean room CONTAMINATED. Only an explicit
+ * `"<name>@builtin": false` switches one off.
+ *
+ * The list is every built-in 2.1.287 ships except `sec-default`, which is
+ * enabled from managed policy only, so a session setting cannot switch it
+ * either way. It is a request, like every flag here, so a built-in a later
+ * release adds is not silently trusted: preflight names it in a
+ * `plugins-loaded` finding, and the fix is to add it below.
+ */
+export const BUILTIN_PLUGINS = Object.freeze([
+  "agents-md",
+  "claude-test",
+  "diff",
+  "mermaid",
+  "mods-guide",
+  "plugin-authoring",
+  "responsive-mode",
+  "telemetry",
+  "tips",
+  "you-should-know",
+]);
+
+/**
  * A session-scoped settings override that switches OFF the developer's enabled
  * plugins. Plugins are auto-discovered from user settings and carry skills,
  * agents and hooks of their own, so they are a second route by which the
- * machine's configuration leaks into a measurement.
+ * machine's configuration leaks into a measurement. Claude Code's own
+ * built-ins (`BUILTIN_PLUGINS` above) are a third, and are switched off by name.
  *
  * `--disable-slash-commands` covers skills and commands; this covers plugins.
  * Neither is trusted — `environment.mjs` verifies the result from the run's own
@@ -243,10 +276,10 @@ export async function prepareArm(
  */
 export async function writeSettingsOverride(sandbox) {
   const file = path.join(sandbox.root, "claude-settings.json");
-  await fsp.writeFile(
-    file,
-    JSON.stringify({ enabledPlugins: {} }, null, 2) + "\n",
+  const enabledPlugins = Object.fromEntries(
+    BUILTIN_PLUGINS.map((name) => [`${name}@builtin`, false]),
   );
+  await fsp.writeFile(file, JSON.stringify({ enabledPlugins }, null, 2) + "\n");
   return file;
 }
 

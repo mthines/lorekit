@@ -6,7 +6,7 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 
 | Layer | SDK | Signals |
 |-------|-----|---------|
-| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
+| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by `db.query.summary` (`SELECT memories`) with a parameterised `db.query.text`; `http.route` + `error.type` on root spans; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
 | Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
 | CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `migrate`) |
@@ -33,7 +33,7 @@ Every `tools/call` invocation produces a trace tree:
 
 ```
 lorekit.memory.write   (INTERNAL — tool dispatch)
-  └── UPSERT INTO memories WHERE ...  (CLIENT — Postgres, db.query.text set)
+  └── CALL memory_write               (CLIENT — Postgres; parameterised db.query.text)
 ```
 
 Attributes on `lorekit.memory.*` spans:
@@ -585,15 +585,78 @@ Users can read their own rows (self-service "my usage" view via RLS).
 
 ---
 
-DB child spans carry OTel database semconv:
+DB child spans carry OTel database semconv. The span is NAMED by
+`db.query.summary`; no filter value reaches the name or the statement, and a
+failure's `error.message` has URLs redacted (see "Error messages" below):
 
 | Attribute | Example |
 |-----------|---------|
+| span name = `db.query.summary` | `SELECT memories` / `CALL memory_write` — bounded: one per operation × table/function |
 | `db.system` | `postgresql` |
-| `db.operation.name` | `SELECT` / `INSERT` |
-| `db.collection.name` | `memories` |
-| `db.query.text` | `SELECT key,value FROM memories WHERE scope = '...' LIMIT 50` |
+| `db.operation.name` | `SELECT` / `INSERT` / `RPC` |
+| `db.collection.name` | `memories` (the function name for an RPC) |
+| `db.query.text` | `SELECT key,value FROM memories WHERE scope = $1 AND archived_at IS NULL LIMIT $2` — values are `$n` placeholders, `LIMIT` included |
+| `server.address` | `pqokxlhvnosogizsjztg.supabase.co` — omitted for a BYOD client, whose host is the user's own project |
 | `db.response.rows` | `7` |
+| `db.response.status_code` | `23505` — the SQLSTATE / PostgREST code whenever PostgREST returns an error object, including `PGRST116` (a `.single()` with no row, which is not marked as an error); the span's `error.type` when it is one |
+
+**Why the values are gone.** The span used to be named after the statement with
+every filter value interpolated (`… WHERE key = 'reviewer-lessons::…'`,
+`… to_tsquery('zsh glob no matches …')`, `… user_id = '6e05…'`). In the week
+before the change that produced **511 distinct span names** on `api` — 287
+carrying full-text search terms (which the CLI hook distils from an agent's
+tool-failure text and keeps out of its own telemetry), 133 memory keys, 4 user
+ids. A span name is a grouping key; and `db.query.text` is defined as the
+sanitised statement. The rendering lives in the pure
+`_shared/telemetry/span-semconv.ts`: identifiers from our code are kept, every
+value is a placeholder, and a `.or()` logic string it cannot parse collapses to
+`(?)` rather than being guessed at. `span-semconv.spec.ts` runs a real
+`createTracedClient` chain with sentinel values and asserts none reaches the
+exported span.
+
+**Error messages.** Every span's `error()` / `clientError()` runs its message
+through `redactUrls`, so a handler or root span that records a failed request's
+message cannot carry its URL either. A failed DB span records PostgREST's error
+text as `error.message`. A failed *request* is the dangerous case: postgrest-js does not
+reject on a network failure, it **resolves** with `status: 0` and the request URL
+— every filter value in its query string — in the message. That case records
+`PostgrestError: fetch failed`; every other message (including a thrown error on
+the rejection arm) is kept with URLs replaced by `<url>` (`redactUrls`). What is
+left is Postgres's own wording, which can still echo a value (e.g. `invalid input
+syntax for type uuid: "…"`, or the slug in `unknown_org: <slug>`). That residue
+is why the token lookups in `mcp/auth.ts` / `_shared/api/auth.ts` stay off
+`createTracedClient` as defence in depth (`mcp-auth-tracing.spec.ts`,
+`rest-auth-tracing.spec.ts`).
+
+### Root request spans: `http.route` and `error.type`
+
+| Attribute | Example | Set by |
+|-----------|---------|--------|
+| `http.route` | `/memories/:id`, `/mcp`, `/health` | `createRouter` once a route MATCHES (so a 403 carries it; a 404/405 does not), and each single-route function at the top of its `traceRequest` callback. Same shape as `url.path`, template not value. The router's handler child span keeps its function-relative `http.route` (`/:id`) |
+| `error.type` | `UserInputError`, `MethodNotFound`, `missing_token`, `TypeError`, `23505`, `503` | Every `span.error()` / `span.clientError()` — an explicit type, else the `Name:` prefix of the message (`errorTypeFrom`), else `_OTHER`. Catch blocks pass `errorTypeOf(e)`: an `Error`'s name, else a PostgREST error object's `code` (those objects have no `name`, so `` `${e.name}: …` `` would read `undefined`). A 5xx response with nothing more specific records the status code. Never the message itself — that stays on `error.message`, with URLs redacted on every span |
+
+**`http.route` renames the Dash0 operation.** With it present, Dash0 names a
+root span's operation `{method} {route}` — `POST /mcp`, `GET /memories/:id` —
+where it used to be the function (`mcp`, `memories`, from `faas.name`). That was
+observed on this change's own CI smoke trace, against what the operation-rule
+docs' table order suggests. A request that matches no route (a 404, a discovery
+probe) keeps the function-named operation.
+
+So: per-endpoint RED now comes for free in Dash0's operation views, and anything
+that must address a whole **function** filters on `faas_name`, which is the same
+under both namings — never on `dash0_operation_name="mcp"`:
+
+```promql
+sum by (faas_name, http_route) (increase({otel_metric_name="dash0.spans", service_name="api", service_namespace="lorekit", otel_span_kind="SERVER"}[1h]))
+```
+
+The two check rules that filtered `dash0_operation_name="mcp"` ("API — mcp
+operation has stopped sending spans", "API — mcp operation elevated error rate")
+must move to `faas_name="mcp", otel_span_kind="SERVER"` **before** this deploys,
+or the absence rule fires two hours after the deploy and the error-rate rule
+silently stops matching. The `api-health-red` and `error-hotspot-triage`
+dashboards group by `dash0_operation_name` and will show routes instead of
+functions.
 
 ---
 

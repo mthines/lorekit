@@ -56,7 +56,8 @@ export const ORG_TOOL_NAMES = [
 ];
 
 /**
- * The `tools/list` payload: name, description and inputSchema per op.
+ * The `tools/list` payload: name, description, inputSchema and MCP
+ * annotations per op.
  * Identical projection to the edge server's, from the same declaration, so the
  * local stdio server and the hosted server advertise the same contract.
  */
@@ -156,6 +157,12 @@ export const MCP_TOOL_DEFS = [
           "description": "The lessons that actually shaped this run, as `scope::key` strings — exactly the labels they were injected under. Name only the ones you applied; an empty or omitted list is the honest answer when none were. Silently ignored where a reference names nothing you can see, so a wrong guess costs nothing and the write always succeeds."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -180,6 +187,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -242,6 +255,12 @@ export const MCP_TOOL_DEFS = [
           "description": "full (default) returns each entry's complete `value`. summary omits `value` and returns `value_bytes` + a 200-character `preview` instead — the cheap discovery read for deciding WHICH lessons to then fetch with `memory.read`."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -272,6 +291,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Org slug to delete under (org-owned delete). Omit for a personal memory. Soft-archive requires a member/admin/owner role; hard-delete (force: true) requires admin/owner — verified server-side."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -313,6 +338,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -334,6 +365,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Lesson identifier, unique within the scope. Max 512 characters."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -342,6 +379,12 @@ export const MCP_TOOL_DEFS = [
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -362,6 +405,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Maximum entries to return."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -383,6 +432,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Lesson identifier, unique within the scope. Max 512 characters."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -399,6 +454,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Only purge archived lessons older than this many days."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -407,6 +468,12 @@ export const MCP_TOOL_DEFS = [
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -428,6 +495,12 @@ export const MCP_TOOL_DEFS = [
           "description": "Human-readable display name"
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -436,6 +509,12 @@ export const MCP_TOOL_DEFS = [
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -457,6 +536,12 @@ export const MCP_TOOL_DEFS = [
           "description": "New display name"
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -473,6 +558,12 @@ export const MCP_TOOL_DEFS = [
           "description": "The org slug to delete"
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -481,6 +572,12 @@ export const MCP_TOOL_DEFS = [
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -675,6 +772,12 @@ export const MCP_TOOL_DEFS = [
           "description": "How the origin_pr filter combines."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -866,6 +969,12 @@ export const MCP_TOOL_DEFS = [
           "description": "How the origin_pr filter combines. Omit to leave unchanged; pass explicit null to clear."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -882,6 +991,12 @@ export const MCP_TOOL_DEFS = [
           "description": "The policy id to delete."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -1058,6 +1173,12 @@ export const MCP_TOOL_DEFS = [
           "description": "How the origin_pr filter combines."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -1234,6 +1355,12 @@ export const MCP_TOOL_DEFS = [
           "description": "How the origin_pr filter combines."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -1260,6 +1387,12 @@ export const MCP_TOOL_DEFS = [
           "description": "true to protect, false to unprotect."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
     }
   }
 ];

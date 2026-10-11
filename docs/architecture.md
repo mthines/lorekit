@@ -284,7 +284,7 @@ See [otel.md](./otel.md) for the full setup. Every layer emits telemetry to Dash
 
 | Signal source | What's emitted |
 |---------------|----------------|
-| Edge Function (Deno) | `lorekit.memory.*` spans, `lorekit.webhook.github` spans, DB child spans named by SQL statement |
+| Edge Function (Deno) | `lorekit.memory.*` spans, `lorekit.webhook.github` spans, DB child spans named by `db.query.summary` (`SELECT memories`) with a parameterised `db.query.text` |
 | Next.js server | HTTP server spans via `@vercel/otel` |
 | Browser (RUM) | Page loads, navigation, fetch traces, errors via `@dash0/sdk-web` |
 

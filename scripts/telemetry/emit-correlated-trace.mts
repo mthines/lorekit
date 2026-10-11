@@ -140,15 +140,21 @@ export function buildCorrelatedTrace(
     apiServer1.setAttributes({
       'http.request.method': 'POST',
       'url.path': '/memories',
+      'http.route': '/memories',
       'faas.name': 'memories',
       'lorekit.tool.name': 'memory.write',
       'http.response.status_code': 200,
     });
     apiServer1
-      .child('INSERT INTO memories (scope, key, value)', {
+      // Named by db.query.summary, values as placeholders — the shape
+      // `createTracedClient` emits (see _shared/telemetry/span-semconv.ts).
+      .child('INSERT memories', {
         'db.system': 'postgresql',
         'db.operation.name': 'INSERT',
         'db.collection.name': 'memories',
+        'db.query.summary': 'INSERT memories',
+        'db.query.text': 'INSERT INTO memories (scope, key, value)',
+        'server.address': 'pqokxlhvnosogizsjztg.supabase.co',
       }, SPAN_KIND_CLIENT)
       .end();
     apiServer1.end();
@@ -167,15 +173,19 @@ export function buildCorrelatedTrace(
     apiServer2.setAttributes({
       'http.request.method': 'GET',
       'url.path': '/memories',
+      'http.route': '/memories',
       'faas.name': 'memories',
       'lorekit.tool.name': 'memory.read',
       'http.response.status_code': 200,
     });
     apiServer2
-      .child('SELECT scope, key, value FROM memories', {
+      .child('SELECT memories', {
         'db.system': 'postgresql',
         'db.operation.name': 'SELECT',
         'db.collection.name': 'memories',
+        'db.query.summary': 'SELECT memories',
+        'db.query.text': 'SELECT scope, key, value FROM memories WHERE scope = $1 LIMIT $2',
+        'server.address': 'pqokxlhvnosogizsjztg.supabase.co',
       }, SPAN_KIND_CLIENT)
       .end();
     apiServer2.end();

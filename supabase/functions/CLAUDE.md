@@ -33,7 +33,20 @@ All Zod schemas live in `packages/schemas/` (@lorekit/schemas). Import via the i
 Every function calls `traceRequest(req, 'lorekit.{resource}', ...)` as the root span.
 Auth resolution creates a `lorekit.rest.auth` child span automatically.
 Router creates a child span per handler call named `lorekit.{function}.{method}.{path}`.
-DB operations get child spans automatically via `createTracedClient`.
+DB operations get child spans automatically via `createTracedClient`, named by
+`db.query.summary` (`SELECT memories`, `CALL memory_write`) with a
+parameterised `db.query.text` — filter values never reach the span name or the
+statement, and URLs are redacted from a failure's `error.message`
+(`_shared/telemetry/span-semconv.ts`). Postgres's own error wording can still
+echo a value, so keep credential lookups off the traced client (see
+docs/otel.md → "Error messages").
+Set `http.route` on the root span: `createRouter` does it for routed functions;
+a single-route function does it at the top of its `traceRequest` callback.
+`span.error()` / `span.clientError()` record a bounded `error.type` from the
+message's `Name:` prefix — keep that prefix, or pass the type explicitly. In a
+catch block pass `errorTypeOf(e)` (`_shared/telemetry/span-semconv.ts`), never
+`(e as Error).name`: a PostgREST error is a plain object with no `name`, and
+`errorTypeOf` falls back to its `code`.
 Add `span.child('lorekit.{resource}.{operation}')` for any significant sub-operation.
 
 **Self-time attribution is automatic.** `traceRequest` stamps

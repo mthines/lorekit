@@ -144,5 +144,8 @@ async function processSync(req: Request, span: Span): Promise<Response> {
 }
 
 export function handleInstallationSync(req: Request): Promise<Response> {
-  return traceRequest(req, 'lorekit.installation.sync', (span) => processSync(req, span));
+  return traceRequest(req, 'lorekit.installation.sync', (span) => {
+    span.setAttributes({ 'http.route': '/mcp/installations/sync' });
+    return processSync(req, span);
+  });
 }

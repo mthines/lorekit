@@ -526,7 +526,12 @@ Two mechanisms now stand against that, and only the second is trusted:
 
 1. **Ask.** `--disable-slash-commands` drops skills and commands,
    `--strict-mcp-config` admits only the harness's own server, and a
-   session-scoped `--settings` file sets `enabledPlugins: {}`.
+   session-scoped `--settings` file sets `"<name>@builtin": false` in
+   `enabledPlugins` for each of Claude Code's built-in plugins
+   (`BUILTIN_PLUGINS` in `src/harness/arm.mjs`). An empty `enabledPlugins: {}`
+   is not enough: it sets nothing, so a default-on built-in still loads —
+   on a clean CI runner that was `cc-plugin-agents-md` and
+   `cc-plugin-plugin-authoring`.
 2. **Verify.** `src/grading/environment.mjs` reads the run's own
    `{"type":"system","subtype":"init"}` event and its `hook_started` events, and
    reports what _actually_ loaded. A rep whose environment is dirty is

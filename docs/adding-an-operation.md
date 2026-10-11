@@ -47,11 +47,17 @@ catch a mistake at that step.
 
 1. **Catalog** — add the operation to `MCP_TOOLS` in
    `packages/schemas/src/shared/tool-catalog.ts`: `name`, `description`,
-   `inputSchema`, `permission` (`'read' | 'write' | null`), `auth`
+   `inputSchema`, `annotations`, `permission` (`'read' | 'write' | null`), `auth`
    (`'token-or-jwt' | 'jwt-only'`), `surfaces` (with `cliExempt`/`localMcpExempt`
    as needed per step 1), `returns`, `notes`. This file is zero-import by
    construction (mirrored into the self-contained Deno edge runtime and read by
    a generator on a bare checkout) — never add an import to it.
+   `annotations` is the MCP tool annotations object and is required: use
+   `READ_ONLY` for a read tool, otherwise
+   `writeHints({ destructive, idempotent })`. The rules for each hint live in
+   the `McpToolAnnotations` doc comment in the same file. A tool marked
+   destructive must also be added to the pinned list in
+   `tool-catalog-parity.spec.ts`, which fails until it is.
 2. **Regenerate the surface projections** — the catalog cannot be imported by
    two consumers, so a generator projects it for them:
    ```bash
@@ -152,6 +158,7 @@ Adding a hypothetical `memory.pin` (write) that has no CLI verb of its own
 {
   name: 'memory.protect',
   description: 'Mark or unmark a lesson as protected from automated grooming',
+  annotations: writeHints({ destructive: false, idempotent: true }),
   permission: 'write',
   auth: 'token-or-jwt',
   surfaces: { mcp: true, cli: 'protect', rest: 'POST /protect', handler: 'toolProtect' },

@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { traceRequest } from '../_shared/telemetry/otel.ts';
+import { errorTypeOf } from '../_shared/telemetry/span-semconv.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { notFound, methodNotAllowed, internalError } from '../_shared/api/respond.ts';
 import { relativePath } from '../_shared/api/router.ts';
@@ -37,6 +38,7 @@ Deno.serve(async (req) => {
 
     const rel = relativePath(new URL(req.url).pathname, 'blog');
     if (rel !== '/likes') return notFound('Route', cors);
+    span.setAttributes({ 'http.route': '/blog/likes' });
 
     const db = createClient<Database>(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -47,7 +49,7 @@ Deno.serve(async (req) => {
       if (req.method === 'POST') return await handleAddLike(req, db, span, cors);
       return methodNotAllowed(cors);
     } catch (e) {
-      span.error(`Unhandled: ${(e as Error).message}`);
+      span.error(`Unhandled: ${(e as Error).message}`, errorTypeOf(e));
       return internalError(cors);
     }
   });

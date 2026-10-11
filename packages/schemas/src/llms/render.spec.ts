@@ -32,6 +32,16 @@ describe('renderTool', () => {
     expect(out).toContain('default `30`');
   });
 
+  it('states the MCP annotations a tool is advertised with', () => {
+    expect(renderTool(toolNamed('memory.read'))).toContain('MCP annotations: read-only, closed-world.');
+    expect(renderTool(toolNamed('memory.write'))).toContain(
+      'MCP annotations: write, destructive, not idempotent, closed-world.',
+    );
+    expect(renderTool(toolNamed('memory.archive'))).toContain(
+      'MCP annotations: write, non-destructive, idempotent, closed-world.',
+    );
+  });
+
   it('states the permission a tool requires', () => {
     expect(renderTool(toolNamed('memory.read'))).toContain('Requires **read** permission.');
     expect(renderTool(toolNamed('memory.write'))).toContain('Requires **write** permission.');

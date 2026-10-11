@@ -141,9 +141,12 @@ resource attributes only.
 
 ---
 
-## Recommendations (not applied — design/judgment calls)
+## Recommendations (design/judgment calls — status noted per item)
 
-1. **`db.query.text` and DB span names inline literal filter values**
+1. **`db.query.text` and DB span names inline literal filter values** —
+   **applied** (2026-10): spans are named by `db.query.summary`, the statement
+   is parameterised, see [otel.md](./otel.md) → DB child spans. Original
+   finding kept below for the record.
    (`_shared/telemetry/otel.ts` `buildSql`). Span names like
    `SELECT ... FROM memories WHERE scope = 'repo::acme/x' AND key = '...'` are
    **high-cardinality** (an anti-pattern for span names, which should group) and
@@ -155,7 +158,9 @@ resource attributes only.
    the span. This is a deliberate design change to all edge DB spans, so it is
    left for maintainer sign-off rather than auto-applied.
 
-2. **`error.message` is a non-registry attribute.** `Span.error()` /
+2. **`error.message` is a non-registry attribute.** — **partly applied**
+   (2026-10): every `error()` / `clientError()` now also records a bounded
+   `error.type`; `error.message` is kept so existing queries keep working. `Span.error()` /
    `clientError()` set `error.message`; the conventions use `exception.message`
    (with `exception.type`) or `error.type`. Also, PostgREST error strings placed
    there can carry incidental detail. Recommend migrating to `error.type` +

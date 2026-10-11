@@ -115,7 +115,16 @@ describe('edge span-kind assignment (SERVER root / CLIENT db / INTERNAL child)',
   it('makes every DB query a CLIENT span', () => {
     // The CLIENT span is the outbound edge to Postgres.
     expect(otel).toMatch(/SPAN_KIND_CLIENT\)/);
-    expect(otel).toMatch(/this\.parent\.child\(sql,[\s\S]*?SPAN_KIND_CLIENT\)/);
+    expect(otel).toMatch(/this\.parent\.child\(summary,[\s\S]*?SPAN_KIND_CLIENT\)/);
+  });
+
+  it('names DB spans by the bounded summary, never by the statement', () => {
+    // The statement used to be the span name, with filter values interpolated:
+    // 511 distinct api span names in a week. The name must be the
+    // `querySummary` result; the statement only ever reaches `db.query.text`.
+    expect(otel).toMatch(/const summary = querySummary\(this\.state\.op, this\.state\.table\)/);
+    expect(otel).not.toMatch(/this\.parent\.child\(sql,/);
+    expect(otel).not.toMatch(/this\.parent\.child\(buildSql\(/);
   });
 
   it('defaults child spans to INTERNAL', () => {

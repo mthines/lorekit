@@ -169,10 +169,12 @@ async function resolveAuthTiers(
     // so a slow `api_tokens` read is distinguishable from a slow hash or a slow
     // GoTrue call rather than being one undifferentiated auth cost.
     //
-    // Deliberately NOT `createTracedClient`: it renders filter VALUES into the
-    // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
-    // and the filter here is the token hash — the stored credential. The query
-    // therefore runs on the raw client and only the timing is spanned.
+    // Deliberately NOT `createTracedClient`. Its span name and `db.query.text`
+    // carry no filter values (`$n` placeholders), and a failed request's
+    // message is recorded with URLs redacted (span-semconv.ts) — but a DB
+    // error message can still echo a value in some other form, and the filter
+    // here is the token hash, the stored credential. Defence in depth: the
+    // query runs on the raw client and only the timing is spanned.
     const lookupSpan = authSpan?.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',

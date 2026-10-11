@@ -227,6 +227,8 @@ Store or update a lesson.
 
 Requires **write** permission.
 
+MCP annotations: write, destructive, not idempotent, closed-world.
+
 Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).
 
 **Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.
@@ -248,6 +250,8 @@ Read one lesson by `key`, or several at once by `refs`. Pass exactly one of thos
 | `refs` |  | array | Batch mode: one or more `scope::key` references, fetched in a single call. Cannot be combined with `scope`/`key`. Each entry is parsed by the same reference grammar `memory.write`'s `cited` field uses (`scope::key`, verbatim scope — never lowercased). Silently truncated past 32 entries. _(array of string)_ |
 
 Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
 
 Returns: `{ "value": "<markdown>", "updated_at": "<iso>", "scope": "<scope>" }` or `null` if not found. `scope` names the scope that ANSWERED — always present, so an unscoped read can tell a `global` hit from a `repo::…` one. When the key also existed in other scopes, an additional `other_scopes` array names them in precedence order; it is omitted entirely when the key was unambiguous. With `refs`, instead returns `{ "entries": [{ "scope", "key", "value", "updated_at" }], "missing": ["scope::key", …] }` — `missing` names every well-formed reference within the first 32 that matched no lesson.
 
@@ -276,6 +280,8 @@ List lessons, for one scope or across every scope you can see.
 
 Requires **read** permission.
 
+MCP annotations: read-only, closed-world.
+
 Returns: `{ "entries": [{ "scope", "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — every entry names its own `scope`, so an unscoped listing stays readable; newest-first (recency mode) or ranked by salience+recency then MMR-diversified (rank mode). Because rank mode diversifies, entries are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate. Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null. With `view: "summary"` each entry is `{ "scope", "key", "tags", "updated_at", "value_bytes", "preview" }` — `value` is omitted entirely.
 
 ---
@@ -292,6 +298,8 @@ Soft-archive a lesson (default) or hard-delete it (force: true). Archived lesson
 | `org` |  | string | Org slug to delete under (org-owned delete). Omit for a personal memory. Soft-archive requires a member/admin/owner role; hard-delete (force: true) requires admin/owner — verified server-side. |
 
 Requires **write** permission.
+
+MCP annotations: write, destructive, idempotent, closed-world.
 
 Returns: `{ "deleted": boolean, "archived": boolean }` — soft-archive returns `{ deleted: false, archived: true }`, hard-delete returns `{ deleted: true, archived: false }`, both `false` when the lesson was not found.
 
@@ -311,6 +319,8 @@ Full-text search across lessons.
 
 Requires **read** permission.
 
+MCP annotations: read-only, closed-world.
+
 Returns: `{ "entries": [{ "key", "value", "scope", "tags", "rank" }], "hasMore": boolean, "nextCursor": string | null }`. Pass `nextCursor` back as `cursor` to retrieve the next page.
 
 ---
@@ -326,6 +336,8 @@ Soft-archive a lesson. Archived lessons are hidden from reads but can be restore
 
 Requires **write** permission.
 
+MCP annotations: write, non-destructive, idempotent, closed-world.
+
 Returns: `{ "archived": true }` if found and archived, `{ "archived": false }` if already archived or not found.
 
 ---
@@ -337,6 +349,8 @@ List every scope in the store with how many active memories it holds and when it
 No arguments.
 
 Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
 
 Returns: `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first). `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.
 
@@ -353,6 +367,8 @@ List archived (soft-deleted) lessons, for one scope or across every scope you ca
 
 Requires **read** permission.
 
+MCP annotations: read-only, closed-world.
+
 Returns: `{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "archived_at" }] }` — every entry names its own `scope`, so an unscoped listing stays readable.
 
 ---
@@ -368,6 +384,8 @@ Restore an archived lesson back to active.
 
 Requires **write** permission.
 
+MCP annotations: write, non-destructive, idempotent, closed-world.
+
 Returns: `{ "restored": true }` if restored, `{ "restored": false }` if already active or not found.
 
 ---
@@ -382,6 +400,8 @@ Permanently delete archived lessons older than retention_days (default 30). Unre
 
 Requires **write** permission.
 
+MCP annotations: write, destructive, idempotent, closed-world.
+
 Returns: `{ "purged": <count> }`
 
 ---
@@ -393,6 +413,8 @@ Permanently delete all TTL-expired memories for the current user. Unrecoverable.
 No arguments.
 
 Requires **write** permission.
+
+MCP annotations: write, destructive, idempotent, closed-world.
 
 Returns: `{ "purged": <count> }`
 
@@ -409,6 +431,8 @@ Create a new organization. You become its owner automatically. The slug must be 
 
 Requires **write** permission.
 
+MCP annotations: write, non-destructive, not idempotent, closed-world.
+
 Returns: `{ "id", "slug", "name" }`
 
 ---
@@ -420,6 +444,8 @@ List all organizations you are a member of, with your role in each.
 No arguments.
 
 Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
 
 Returns: `{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — roles: `owner`, `admin`, `member`, `viewer`.
 
@@ -436,6 +462,8 @@ Rename an organization's display name. Requires admin or owner role.
 
 Requires **write** permission.
 
+MCP annotations: write, destructive, idempotent, closed-world.
+
 Returns: `{ "id", "slug", "name" }`
 
 ---
@@ -450,6 +478,8 @@ Delete an organization. Requires owner role. Soft-deletes the org — all org lo
 
 Requires **write** permission.
 
+MCP annotations: write, destructive, idempotent, closed-world.
+
 Returns: `{ "deleted": true, "slug": "<slug>" }`
 
 ---
@@ -461,6 +491,8 @@ List every retention policy you own.
 No arguments.
 
 Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
 
 Returns: `{ "entries": [{ "id", "scope", "name", "mode", "enabled", "min_age_days", "unseen_days", "max_seen_count", "max_read_count", "max_opened_count", "created_at", "updated_at" }] }`
 
@@ -499,6 +531,8 @@ Create a scoped retention policy that auto-archives (never hard-deletes) matchin
 | `origin_pr_mode` |  | string | How the origin_pr filter combines. _(default `in`)_ |
 
 Requires **write** permission.
+
+MCP annotations: write, non-destructive, not idempotent, closed-world.
 
 Returns: The created policy object.
 
@@ -540,6 +574,8 @@ Update a retention policy. Every field but id is optional.
 
 Requires **write** permission.
 
+MCP annotations: write, destructive, idempotent, closed-world.
+
 Returns: The updated policy object.
 
 An omitted field is left unchanged; an explicit `null` clears that condition.
@@ -555,6 +591,8 @@ Delete a retention policy. Deletes the rule only — never touches the lessons i
 | `id` | ✓ | string | The policy id to delete. |
 
 Requires **write** permission.
+
+MCP annotations: write, destructive, idempotent, closed-world.
 
 Returns: `{ "deleted": boolean }`
 
@@ -591,6 +629,8 @@ Preview the lessons a saved policy or an inline condition set would archive, wit
 | `origin_pr_mode` |  | string | How the origin_pr filter combines. _(default `in`)_ |
 
 Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
 
 Returns: `{ "count": <number>, "keys": [{ "scope", "key" }] }` — the SAME candidates `groom.run` would archive.
 
@@ -630,6 +670,8 @@ Archive every lesson a saved policy or an inline condition set matches. Soft-arc
 
 Requires **write** permission.
 
+MCP annotations: write, non-destructive, idempotent, closed-world.
+
 Returns: `{ "archived": <count>, "keys": [{ "scope", "key" }] }`
 
 Resolves and archives the SAME candidates `groom.preview` shows, in one transaction. Archived lessons are recoverable via `memory.restore`.
@@ -647,6 +689,8 @@ Mark or unmark a lesson as protected — excluded from every grooming candidate 
 | `protected` | ✓ | boolean | true to protect, false to unprotect. |
 
 Requires **write** permission.
+
+MCP annotations: write, non-destructive, idempotent, closed-world.
 
 Returns: `{ "protected": boolean }`
 
