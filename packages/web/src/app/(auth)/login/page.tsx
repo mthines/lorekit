@@ -42,6 +42,11 @@ const FEATURES = [
   },
 ] as const;
 
+// Docs and Blog share one style and one breakpoint: hidden below `sm` so the
+// mobile header keeps room for the GitHub icon and the Sign in button.
+const HEADER_TEXT_LINK_CLASS =
+  'hidden items-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:inline-flex';
+
 export default function LoginPage() {
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
@@ -84,11 +89,11 @@ export default function LoginPage() {
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
         <div className="flex items-center gap-1 sm:gap-3">
-          <Link
-            href="/docs"
-            className="hidden items-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:inline-flex"
-          >
+          <Link href="/docs" className={HEADER_TEXT_LINK_CLASS}>
             Docs
+          </Link>
+          <Link href="/blog" className={HEADER_TEXT_LINK_CLASS}>
+            Blog
           </Link>
           <a
             href="https://github.com/mthines/lorekit"
