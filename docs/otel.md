@@ -870,7 +870,7 @@ Emitted by `components/content/ReadingTelemetry.tsx` (the pure model is
 `lib/analytics/reading.ts`). The home page mounts the same component with
 `lorekit.content.type=landing` and `lorekit.content.slug=home`, measured against
 the hero-to-closing-card wrapper, with the section heading ids from
-`components/landing/sections.ts` (`hero-title`, `live-demo`, `the-problem`,
+`components/landing/sections.ts` (`hero-title`, `live-demo`, `learning-loop`,
 `how-it-works`, `what-you-get`, `where-lore-lives`, `limitations`,
 `get-started`). Blog and home page therefore share one schema: split them with a
 group-by on `lorekit.content.type`. `docs` and `learn` exist in the type but are
@@ -887,7 +887,7 @@ not mounted yet.
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
 | `landing.cta_clicked` | A link on the home page was followed (click or middle-click), via `components/landing/LandingLink.tsx` | `lorekit.landing.cta` (`get-token`/`offline-guide`/`sign-in`/`docs`/`blog`/`github`), `lorekit.landing.placement` (`header`/`hero`/`get-started`) |
-| `landing.demo_tab_selected` | A visitor picked a use case in the live demo (the auto-playing first tab is not counted) | `lorekit.landing.demo_tab` (`self-healing`/`code-conventions`/`pr-review`) |
+| `landing.demo_tab_selected` | A visitor picked a use case in the live demo (the auto-playing first tab is not counted) | `lorekit.landing.demo_tab` (`self-healing`/`promotion`/`pr-review`) |
 
 `cta` is the visitor's INTENT, not the link text: the hero asks "hosted or
 offline?" right under the install command, so `get-token` vs `offline-guide`

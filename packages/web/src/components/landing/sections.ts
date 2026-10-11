@@ -15,7 +15,7 @@
 export const LANDING_SECTION_ID = {
   hero: 'hero-title',
   liveDemo: 'live-demo',
-  problem: 'the-problem',
+  learningLoop: 'learning-loop',
   howItWorks: 'how-it-works',
   whatYouGet: 'what-you-get',
   whereLoreLives: 'where-lore-lives',
@@ -35,7 +35,7 @@ export const LANDING_SECTION_ID = {
 export const LANDING_SECTION_ORDER = [
   LANDING_SECTION_ID.hero,
   LANDING_SECTION_ID.liveDemo,
-  LANDING_SECTION_ID.problem,
+  LANDING_SECTION_ID.learningLoop,
   LANDING_SECTION_ID.howItWorks,
   LANDING_SECTION_ID.whatYouGet,
   LANDING_SECTION_ID.whereLoreLives,

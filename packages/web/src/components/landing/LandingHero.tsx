@@ -67,9 +67,12 @@ const NEXT_STEPS: readonly {
  * an account actually buys — sharing lore across machines and teammates.
  *
  * The headline leads with the problem the visitor already has ("your agents
- * forget") and resolves it in the same breath, so the page's whole argument is
- * readable in one fixation. It is the README's own framing — "every coding
- * agent starts each session with total amnesia" — not a new claim.
+ * forget") and resolves it with the differentiator rather than with storage:
+ * "remembers" is what a CLAUDE.md line also does, while "learn" names the loop
+ * a rules file cannot run — lessons the agent writes itself on friction, handed
+ * back when the same error recurs, promoted when they keep recurring, archived
+ * when nobody uses them. The lede says exactly those four things, each of
+ * which is a shipped mechanic (see `LearningLoop.tsx`).
  *
  * The trust points sit UNDER the command rather than above the headline: they
  * answer "is this safe to try?", which is a question asked at the moment of the
@@ -109,16 +112,17 @@ export function LandingHero() {
       >
         <span className="block">Your coding agents forget.</span>
         {/* `pb-1` keeps the descenders inside the clipped gradient box. */}
-        <span className="lk-gradient-text block pb-1">LoreKit remembers.</span>
+        <span className="lk-gradient-text block pb-1">LoreKit makes them learn.</span>
       </h1>
 
       <p
         className="lk-rise mb-10 max-w-2xl text-pretty text-center text-base leading-relaxed text-[var(--color-content-secondary)] sm:text-lg"
         style={{ '--lk-delay': '120ms' } as React.CSSProperties}
       >
-        Your agent works something out — why the build only breaks in CI, which migration
-        needs the flag — and forgets it when the session ends. LoreKit writes it down and
-        reads it back in every session after, on every machine, in every tool.
+        When your agent hits a wall and works its way out, it writes down what it
+        learned — and the next agent to hit that wall gets the lesson with the error, on
+        any machine, in any tool. What keeps recurring becomes a rule. What nobody uses
+        gets archived.
       </p>
 
       <div

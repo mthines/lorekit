@@ -3,13 +3,13 @@ import { redirect } from 'next/navigation';
 
 import { AuthHashCatcher } from '@/components/auth/AuthHashCatcher';
 import { ReadingTelemetry } from '@/components/content/ReadingTelemetry';
-import { BeforeAfter } from '@/components/landing/BeforeAfter';
 import { FeatureBento } from '@/components/landing/FeatureBento';
 import { GetStartedCard } from '@/components/landing/GetStartedCard';
 import { HowItWorks } from '@/components/landing/HowItWorks';
 import { LandingBackdrop } from '@/components/landing/LandingBackdrop';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingHero } from '@/components/landing/LandingHero';
+import { LearningLoop } from '@/components/landing/LearningLoop';
 import { Limitations } from '@/components/landing/Limitations';
 import { LANDING_SECTION_ORDER } from '@/components/landing/sections';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
@@ -83,8 +83,9 @@ export default async function RootPage({
 
   // Reading order is an argument, not a feature list:
   //   promise (hero) → proof (the live demo, peeking above the fold as the
-  //   hero's product shot) → the pain it removes → how → what you get → where
-  //   your data sits → what it won't do → the same action again.
+  //   hero's product shot) → why it is not just a rules file (the learning
+  //   loop) → how → what you get → where your data sits → what it won't do →
+  //   the same action again.
   // The demo sits directly under the hero because a visitor decides within the
   // first screen whether to keep reading, and "session B already knows" lands
   // faster as a picture than as any sentence above it.
@@ -117,7 +118,7 @@ export default async function RootPage({
 
         <div className="flex flex-col items-center gap-28 px-6 pb-16 sm:gap-36">
           <TerminalTheater />
-          <BeforeAfter />
+          <LearningLoop />
           <HowItWorks />
           <FeatureBento />
           <WhereLoreLives />

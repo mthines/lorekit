@@ -230,7 +230,7 @@ describe('track — content.* on the home page', () => {
       name: 'content.section_read',
       contentType: 'landing',
       slug: 'home',
-      sectionId: 'the-problem',
+      sectionId: 'learning-loop',
       sectionIndex: 2,
       dwellMs: 7_200,
     });
@@ -238,7 +238,7 @@ describe('track — content.* on the home page', () => {
     expect(lastCall().attributes).toEqual({
       'lorekit.content.type': 'landing',
       'lorekit.content.slug': 'home',
-      'lorekit.content.section.id': 'the-problem',
+      'lorekit.content.section.id': 'learning-loop',
       'lorekit.content.section.index': 2,
       'lorekit.content.section.dwell_ms': 7_200,
       'lorekit.content.section.dwell_bucket': '2_5_15s',

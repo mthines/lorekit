@@ -121,41 +121,55 @@ const USE_CASES: UseCase[] = [
     ],
   },
   {
-    id: 'code-conventions',
-    label: 'Code conventions',
+    // A rules file can hold a convention someone already knew. What it cannot
+    // do is notice that the same failure keeps coming back and decide it has
+    // earned a rule — that is this tab. The recurrence count is what a
+    // re-written lesson accrues (`seen_count`); the promotion is the agent
+    // acting on it, as the `lorekit-setup` loop wires it to.
+    id: 'promotion',
+    label: 'Promotion',
     act1: [
+      { type: 'command', text: 'pnpm test:e2e', pauseAfter: 240 },
+      {
+        type: 'error',
+        text: '✗ Timeout: #checkout-button not visible  (CI only)',
+        pauseAfter: 320,
+      },
+      {
+        type: 'agent',
+        text: '> Agent: Same flake as Monday and Wednesday — CSS animations\n         still run in CI. Turned them off in the e2e config.',
+        pauseAfter: 260,
+      },
       {
         type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "style/indent", value: "2 spaces" }',
+        text: 'memory.write { scope: "repo::lorekit", key: "ci/e2e-animations", value: "disable CSS animations in e2e config" }',
         pauseAfter: 60,
-        card: { id: 'indent', key: 'style/indent', value: '2 spaces', store: 'local' },
+        card: {
+          id: 'e2e',
+          key: 'ci/e2e-animations',
+          value: 'disable CSS animations in e2e config',
+          source: 'seen 3×',
+          store: 'remote',
+        },
       },
-      { type: 'success', text: '✓ Saved', pauseAfter: 320 },
+      { type: 'success', text: '✓ Saved  (seen 3× — recurring)', pauseAfter: 400 },
       {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "style/exports", value: "no default exports" }',
-        pauseAfter: 60,
-        card: { id: 'exports', key: 'style/exports', value: 'no default exports', store: 'local' },
+        type: 'agent',
+        text: '> Agent: Third time in three sessions. Promoting it to a\n         permanent rule for the e2e suite.',
+        pauseAfter: 260,
       },
-      { type: 'success', text: '✓ Saved', pauseAfter: 320 },
-      {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "db/columns", value: "snake_case" }',
-        pauseAfter: 60,
-        card: { id: 'db', key: 'db/columns', value: 'snake_case', store: 'remote' },
-      },
-      { type: 'success', text: '✓ Saved', pauseAfter: 800 },
+      { type: 'success', text: '✓ Rule added: disable animations before e2e runs', pauseAfter: 800 },
     ],
     act2: [
       { type: 'separator', text: '— New session —', pauseAfter: 320 },
       { type: 'command', text: 'memory.list { scope: "repo::lorekit" }', pauseAfter: 60 },
-      { type: 'info', text: '  ↳ 3 memories loaded', pauseAfter: 400 },
+      { type: 'info', text: '  ↳ 1 memory loaded  (+1 rule)', pauseAfter: 400 },
       {
         type: 'agent',
-        text: '> Agent: I see snake_case for DB columns and 2-space indentation.\n         Continuing with those conventions.',
+        text: '> Agent: Rule on file: animations off in CI. Applying it\n         before the run, not after the timeout.',
         pauseAfter: 300,
       },
-      { type: 'success', text: '✓ No context re-establishment needed', pauseAfter: 2000 },
+      { type: 'success', text: '✓ Green on the first run', pauseAfter: 2000 },
     ],
   },
   {
@@ -494,7 +508,8 @@ export function TerminalTheater() {
         await wait(line.text.length * CHAR_DELAY + 80);
 
         // Stagger light-up one card at a time as each memory "loads"
-        if (line.type === 'info' && line.text.includes('memories loaded')) {
+        // `memory` OR `memories`: a one-lesson act prints "1 memory loaded".
+        if (line.type === 'info' && /memor(?:y|ies) loaded/.test(line.text)) {
           const cardCount = useCase.act1.filter((l) => l.card).length;
           for (let i = 0; i < cardCount; i++) {
             const cardIndex = i;

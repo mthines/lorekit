@@ -178,6 +178,36 @@ body:has([data-app-shell]) {
   to   { transform: none; }
 }
 
+/* `lk-step` is `lk-reveal` staggered BY SCROLL: each item's range starts 5 %
+   later than the one before (`--lk-step` = its index), so a row of cards that
+   enters the viewport together still rises one after another. A stagger by
+   `animation-delay` does nothing on a scroll timeline, which has no clock.
+
+   `lk-draw` draws a rule from its left end (scaleX 0 → 1), finishing as the
+   cards it connects finish rising. Both keep the contract: transform/opacity
+   only, and fully drawn / fully risen at rest. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .lk-step {
+      animation: lk-rise-in linear both;
+      animation-timeline: view();
+      animation-range: cover calc(var(--lk-step, 0) * 5%) cover calc(15% + var(--lk-step, 0) * 5%);
+    }
+
+    .lk-draw {
+      transform-origin: 0 50%;
+      animation: lk-draw-in linear both;
+      animation-timeline: view();
+      animation-range: cover 5% cover 35%;
+    }
+  }
+}
+
+@keyframes lk-draw-in {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
 /* ── Landing signature ───────────────────────────────────────────────────── */
 /* The public pages repeat exactly two moves, and nothing else decorates:
 

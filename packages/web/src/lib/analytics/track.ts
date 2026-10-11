@@ -173,7 +173,7 @@ export type LandingCta =
 export type LandingPlacement = 'header' | 'hero' | 'get-started';
 
 /** The live demo's use-case tabs, by stable id (never the visible label). */
-export type LandingDemoTab = 'self-healing' | 'code-conventions' | 'pr-review';
+export type LandingDemoTab = 'self-healing' | 'promotion' | 'pr-review';
 
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
