@@ -129,8 +129,8 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
  * candidate fetch into `lorekit_memory_relevant_candidates` so Postgres could
  * grade it with `ts_rank_cd`, which took the query out of
  * `applyRestTenantScope`'s reach exactly as 00067 did for `list`. It is pinned
- * by `RPC_BACKED_ROW_READS` below — AND by the tenancy guard after it, because
- * unlike `list` it is a read whose visibility WIDENS to org rows.
+ * by `RPC_BACKED_ROW_READS` below — AND, like `list`, by the tenancy guard
+ * after it, because it is a read whose visibility WIDENS to org rows.
  */
 const REST_READ_HANDLERS = ['get', 'search'] as const;
 
