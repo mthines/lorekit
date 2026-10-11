@@ -501,7 +501,7 @@ The one verb that **ranks**. Returns the top-K lessons for a query as a compact 
       "scope": "repo::acme/app",
       "key": "migration-order",
       "hook": "Always add the column before the backfill runs.",
-      "score": 0.74,
+      "score": 0.69,
       "factors": { "recency": 0.61, "salience": 0.85, "relevance": 0.8, "outcome": 0.5 },
       "seen_count": 9,
       "updated_at": "2026-07-30T09:12:00.000Z"
