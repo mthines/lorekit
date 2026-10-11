@@ -134,6 +134,25 @@ describe('retentionFilterChange', () => {
     });
   });
 
+  // 00112: setting one direction clears its opposite in the same write. That is
+  // one change to one row, so it must still name the field the reader picked.
+  it('names the field a direction switch set, though its opposite moved too', () => {
+    expect(retentionFilterChange({ maxOpenedCount: 5 }, { minOpenedCount: 10 })).toEqual({
+      action: 'retention-set',
+      field: 'minOpenedCount',
+    });
+    expect(retentionFilterChange({ openedWithinDays: 7 }, { unseenDays: 90 })).toEqual({
+      action: 'retention-set',
+      field: 'unseenDays',
+    });
+  });
+
+  it('still reports clearing BOTH directions of a row as a multi-field remove', () => {
+    expect(retentionFilterChange({ maxSeenCount: 5, minSeenCount: 2 }, {})).toEqual({
+      action: 'retention-remove',
+    });
+  });
+
   // The whole reason this returns null: "Clear all" calls the retention setter
   // with `{}` even on a bar that never had a threshold, and emitting there
   // would double-count every filter clear.

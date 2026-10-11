@@ -35,6 +35,7 @@
 
 import {
   RETENTION_FIELDS,
+  requireRetentionField,
   type RetentionConditions,
   type RetentionField,
 } from '@/lib/retention-filter';
@@ -232,6 +233,8 @@ export function rangeTelemetry(range: TimeRange, nowIso: string): RangeTelemetry
  *
  * A multi-field change reports no `field`: naming one of several would be a
  * guess, and an omitted attribute is the honest encoding of "more than one".
+ * The exception is one row's direction switch (00112), which moves a field and
+ * its opposite together and is reported as setting the one now held.
  */
 export function retentionFilterChange(
   prev: RetentionConditions,
@@ -248,6 +251,14 @@ export function retentionFilterChange(
       action: next[first] === undefined ? 'retention-remove' : 'retention-set',
       field: first,
     };
+  }
+  // One row's direction switch is ONE change: setting `minOpenedCount` clears
+  // `maxOpenedCount` in the same write (setRetentionCondition), so two fields
+  // move. Name the one now set. Both cleared stays a plain multi-field remove.
+  const [a, b] = changed;
+  if (changed.length === 2 && a !== undefined && b !== undefined && requireRetentionField(a).opposite === b) {
+    const set = [a, b].filter((field) => next[field] !== undefined);
+    if (set.length === 1 && set[0] !== undefined) return { action: 'retention-set', field: set[0] };
   }
   const anySet = changed.some((field) => next[field] !== undefined);
   return { action: anySet ? 'retention-set' : 'retention-remove' };
