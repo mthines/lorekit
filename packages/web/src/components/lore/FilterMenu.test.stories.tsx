@@ -753,8 +753,8 @@ export const AgeAndActivityRowsSitBelowTheDimensions: StoryObj<typeof RetentionH
     const canvas = await openMenu(canvasElement);
 
     await step('the five thresholds follow the nine dimensions, in order', async () => {
-      // Five ROWS, not nine conditions: a reverse direction (00112) lives on its
-      // row's value list behind a toggle, never as a row of its own.
+      // Five ROWS, not nine conditions: a reverse direction (00112) lives inside
+      // its row's value list, never as a row of its own.
       const rows = canvas.getAllByRole('option');
       await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_MENU_FIELDS.length);
       const retentionRows = rows.slice(FILTER_FIELDS.length);
