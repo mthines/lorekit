@@ -60,7 +60,7 @@ interface ListParams {
   max_read_count?: number | undefined;
   max_opened_count?: number | undefined;
   /**
-   * The reverse directions (00112) — read conditions only, see
+   * The reverse directions (00113) — read conditions only, see
    * `_shared/api/retention.ts`.
    */
   opened_within_days?: number | undefined;
@@ -182,7 +182,7 @@ async function respondWithPage(
   // so it is ignored (→ first page) rather than silently mis-paging. Unchanged
   // contract; only the place the two halves are applied has moved.
   //
-  // Two cursor FORMATS since 00112: the date sorts keep `paginate.ts`'s
+  // Two cursor FORMATS since 00113: the date sorts keep `paginate.ts`'s
   // timestamp cursor, and `opened_count` uses `count-cursor.ts`'s integer one.
   // Each decoder rejects the other's format, so the same "wrong sort → first
   // page" rule holds across the two families as well as within the dates.
@@ -252,7 +252,7 @@ async function respondWithPage(
     p_sort: params.sort,
     p_cursor_ts: usableCursor?.ts ?? null,
     p_cursor_id: usableCursor?.id ?? countCursor?.id ?? null,
-    // 00112: the count sort's keyset bound. The RPC reads it only when
+    // 00113: the count sort's keyset bound. The RPC reads it only when
     // `p_sort` is `opened_count`, and `p_cursor_ts` only otherwise.
     p_cursor_count: countCursor?.count ?? null,
     // limit + 1: the overflow row is what `buildPage` reads `hasMore` from.

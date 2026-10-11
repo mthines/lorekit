@@ -47,10 +47,10 @@ export const LORE_PARAM_DEFAULTS = {
   filters: null,
   tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Still READ by the app, superseded by `filters`
   // RetentionConditions | null — the Explorer's age/activity conditions (the
-  // five retention thresholds plus, since 00112, their four reverse directions).
+  // five retention thresholds plus, since 00113, their four reverse directions).
   // `null` means no narrowing; absent from the URL when unset.
   retention: null,
-  // 'created_at' | 'opened_count' | null — the list order (00112). `null` is
+  // 'created_at' | 'opened_count' | null — the list order (00113). `null` is
   // Newest, the default, so an unsorted link carries no `sort` param.
   sort: null,
   // 'active' | 'archived' | 'expiring' | null — the Explorer's Status control.

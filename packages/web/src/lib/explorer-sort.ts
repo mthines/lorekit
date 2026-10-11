@@ -6,7 +6,7 @@
  * - `created_at` — **Newest**, the default and the order the list has always
  *   had (`listMemories` used to hard-code it so a backdated migration lands at
  *   its original position).
- * - `opened_count` — **Most chosen**, migration 00112: the lessons agents
+ * - `opened_count` — **Most chosen**, migration 00113: the lessons agents
  *   deliberately fetched the most, first. It is the direct answer to "which
  *   lore is actually used?", where a `Chosen: N times or more` threshold makes
  *   the reader guess an N first.

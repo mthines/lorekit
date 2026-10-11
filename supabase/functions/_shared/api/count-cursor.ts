@@ -1,6 +1,6 @@
 /**
  * The keyset cursor for the `sort=opened_count` list — "most chosen first"
- * (migration 00112).
+ * (migration 00113).
  *
  * Pure and shared (mirrored into `supabase/functions/_shared/api/count-cursor.ts`,
  * guarded by `edge-parity.spec.ts`) so the codec is unit-tested here and the

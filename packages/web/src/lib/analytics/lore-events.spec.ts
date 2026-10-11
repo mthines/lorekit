@@ -134,7 +134,7 @@ describe('retentionFilterChange', () => {
     });
   });
 
-  // 00112: setting one direction clears its opposite in the same write. That is
+  // 00113: setting one direction clears its opposite in the same write. That is
   // one change to one row, so it must still name the field the reader picked.
   it('names the field a direction switch set, though its opposite moved too', () => {
     expect(retentionFilterChange({ maxOpenedCount: 5 }, { minOpenedCount: 10 })).toEqual({

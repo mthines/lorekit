@@ -24,7 +24,7 @@
  * decision here is unit-tested without a browser, and the impure shells are
  * `components/lore/FilterMenu.tsx` and `components/lore/RetentionPill.tsx`.
  *
- * ## Both directions (migration 00112)
+ * ## Both directions (migration 00113)
  *
  * The five conditions above all point the retention way — "N or fewer", "not
  * opened for N days" — which is what a groomer asks before archiving, and
@@ -86,18 +86,18 @@ export interface RetentionConditions {
    */
   maxOpenedCount?: number;
   /**
-   * Last deliberately fetched within N days — `opened_within_days` (00112), the
+   * Last deliberately fetched within N days — `opened_within_days` (00113), the
    * reverse of `unseenDays`. A lesson NEVER opened does not match, however new:
    * "opened recently" is a claim about an agent that no agent made.
    * Explorer-only, like the three floors below.
    */
   openedWithinDays?: number;
-  /** Written at least N times — `min_seen_count` (00112), the reverse of `maxSeenCount`. */
+  /** Written at least N times — `min_seen_count` (00113), the reverse of `maxSeenCount`. */
   minSeenCount?: number;
-  /** Delivered at least N times — `min_read_count` (00112), the reverse of `maxReadCount`. */
+  /** Delivered at least N times — `min_read_count` (00113), the reverse of `maxReadCount`. */
   minReadCount?: number;
   /**
-   * Deliberately fetched at least N times — `min_opened_count` (00112), the
+   * Deliberately fetched at least N times — `min_opened_count` (00113), the
    * reverse of `maxOpenedCount`: the lore agents actually reach for.
    */
   minOpenedCount?: number;
@@ -325,7 +325,7 @@ export function retentionConditionsToAggregateBody(
  * exactly handing this struct (plus a scope) to `policy.create`.
  *
  * Only the five policy-expressible conditions cross. The reverse directions
- * (00112) are dropped rather than forwarded, because `GroomConditionsSchema`
+ * (00113) are dropped rather than forwarded, because `GroomConditionsSchema`
  * has no field for them — and a policy is the one place a condition must never
  * silently mean something other than what the reader set.
  */
@@ -522,7 +522,7 @@ export interface RetentionFieldDescriptor {
    * place whichever way they want to read it.
    */
   entry: PolicyRetentionField;
-  /** The same metadata row read the other way, when one exists (00112). */
+  /** The same metadata row read the other way, when one exists (00113). */
   opposite?: RetentionField;
   /** This direction's group heading in its row's value list — `At most`, `Within`. */
   directionLabel?: string;
@@ -552,7 +552,7 @@ const atLeastTimes = (n: number) => (n === 1 ? 'At least once' : `${plural(n, 't
 
 /**
  * Every condition, in display order — each menu row's retention direction
- * followed by its reverse (00112), so pills and summary phrases read in the
+ * followed by its reverse (00113), so pills and summary phrases read in the
  * menu's own order. The menu lists only the five rows ({@link RETENTION_MENU_FIELDS}):
  * the two dates first, then the three counters weakest-signal-first, so
  * `Chosen` — the one whose `0` answers "nothing ever used this" — sits closest

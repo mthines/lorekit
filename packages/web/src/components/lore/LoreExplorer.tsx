@@ -50,11 +50,11 @@
  *   narrowing. Resolves to no conditions while the `retention-policies` flag is
  *   off — the whole feature is gated together with its Settings → Retention
  *   Policies destination, which 404s while the flag is off.
- *   Four of the five also read the other way (migration 00112 — "chosen at
+ *   Four of the five also read the other way (migration 00113 — "chosen at
  *   least N times", "opened within N days"); those reverse directions are
  *   Explorer-only, so "Create retention policy" is hidden while one is set.
  * - `sort` param:     the list order (`lib/explorer-sort.ts`) — Newest (absent,
- *   the default) or Most chosen (`opened_count`, migration 00112). Shareable;
+ *   the default) or Most chosen (`opened_count`, migration 00113). Shareable;
  *   an unknown value falls back to Newest.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
@@ -1545,7 +1545,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onEditRetentionField={setEditingRetentionField}
               // Omitted while the flag is off, which hides the action rather
               // than offering a hand-off to a page that 404s — and while a
-              // reverse direction (00112) is set, because a policy cannot
+              // reverse direction (00113) is set, because a policy cannot
               // carry one and would archive a different set from this view.
               onCreatePolicy={canCreatePolicy ? handleCreatePolicy : undefined}
             />

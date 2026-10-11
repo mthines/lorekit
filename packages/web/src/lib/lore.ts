@@ -196,7 +196,7 @@ export interface MemoryFilters {
   retentionConditions?: RetentionConditions;
   /**
    * The list order (`lib/explorer-sort.ts`) — `created_at` (Newest, the
-   * default) or `opened_count` (Most chosen, migration 00112). A cursor is only
+   * default) or `opened_count` (Most chosen, migration 00113). A cursor is only
    * valid for the order that minted it; the route restarts at page one if the
    * two disagree, and the Explorer's query key changes with the sort anyway.
    */

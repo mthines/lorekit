@@ -76,8 +76,8 @@ describe('normalizeRetentionConditions', () => {
     expect(normalizeRetentionConditions({ minAgeDays: 90, bogus: 1 })).toEqual({ minAgeDays: 90 });
   });
 
-  it('keeps the reverse directions (00112), bounded from 1', () => {
-    // Additive keys, so every pre-00112 `?retention=` link still resolves to
+  it('keeps the reverse directions (00113), bounded from 1', () => {
+    // Additive keys, so every pre-00113 `?retention=` link still resolves to
     // exactly what it meant before.
     expect(
       normalizeRetentionConditions({ openedWithinDays: 7, minSeenCount: 2, minReadCount: 100, minOpenedCount: 10 }),
@@ -377,7 +377,7 @@ describe('retentionConditionsToAggregateBody', () => {
     });
   });
 
-  it('carries the reverse directions to all three aggregates, so the counts describe the list (00112)', () => {
+  it('carries the reverse directions to all three aggregates, so the counts describe the list (00113)', () => {
     const body = retentionConditionsToAggregateBody({ openedWithinDays: 7, minOpenedCount: 10 });
     expect(body).toEqual({ opened_within_days: 7, min_opened_count: 10 });
     for (const parsed of [
@@ -554,7 +554,7 @@ describe('retentionFieldMatches', () => {
   });
 
   it('finds a row by the reverse question too', () => {
-    // "most used" is the question 00112 exists for; it must land on the row
+    // "most used" is the question 00113 exists for; it must land on the row
     // that answers it, never on a second row per direction.
     expect(retentionFieldMatches('most')).toEqual(['maxOpenedCount']);
     expect(retentionFieldMatches('recent')).toEqual(['unseenDays']);

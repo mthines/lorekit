@@ -233,7 +233,7 @@ export function rangeTelemetry(range: TimeRange, nowIso: string): RangeTelemetry
  *
  * A multi-field change reports no `field`: naming one of several would be a
  * guess, and an omitted attribute is the honest encoding of "more than one".
- * The exception is one row's direction switch (00112), which moves a field and
+ * The exception is one row's direction switch (00113), which moves a field and
  * its opposite together and is reported as setting the one now held.
  */
 export function retentionFilterChange(

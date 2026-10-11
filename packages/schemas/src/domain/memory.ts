@@ -126,7 +126,7 @@ export const TimestampFilterSchema = z
 /**
  * Sort column for `GET /memories`. The cursor encodes whichever is chosen.
  *
- * `opened_count` (migration 00112) is "most chosen first": descending on the
+ * `opened_count` (migration 00113) is "most chosen first": descending on the
  * deliberate-fetch counter, `id` breaking ties. It pages through a cursor of
  * its own (`count-cursor.ts`), because a keyset bound on an integer column
  * cannot ride in the timestamp cursor the two date sorts share.
@@ -194,7 +194,7 @@ const ValueListSchema = z.string().min(1).max(2048);
  * its own domain file for the reason its header states, and `memory.spec.ts`
  * pins the two in step.
  *
- * ## The reverse directions (migration 00112) are READ-ONLY conditions
+ * ## The reverse directions (migration 00113) are READ-ONLY conditions
  *
  * The five above all point the retention way — "N or fewer", "not opened for
  * N days" — because they are what a groomer asks before archiving. The last

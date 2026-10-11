@@ -27,7 +27,7 @@
  * require a real number, and by the time either reaches here it is a `number`
  * or absent.
  *
- * Migration 00112 added four more, the reverse direction of four of the five:
+ * Migration 00113 added four more, the reverse direction of four of the five:
  * `opened_within_days` and the `min_seen_count` / `min_read_count` /
  * `min_opened_count` floors. They are READ conditions — the Explorer's "what is
  * used the most?" — and `GroomConditionsSchema` deliberately does not carry

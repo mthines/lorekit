@@ -753,7 +753,7 @@ export const AgeAndActivityRowsSitBelowTheDimensions: StoryObj<typeof RetentionH
     const canvas = await openMenu(canvasElement);
 
     await step('the five thresholds follow the nine dimensions, in order', async () => {
-      // Five ROWS, not nine conditions: a reverse direction (00112) lives inside
+      // Five ROWS, not nine conditions: a reverse direction (00113) lives inside
       // its row's value list, never as a row of its own.
       const rows = canvas.getAllByRole('option');
       await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_MENU_FIELDS.length);
@@ -898,7 +898,7 @@ export const TypingAValueOffersItAsACustomThreshold: StoryObj<typeof RetentionHa
 };
 
 /**
- * Four rows read both ways (migration 00112), in ONE list.
+ * Four rows read both ways (migration 00113), in ONE list.
  *
  * `Chosen` answers "what is nothing using?" as `5 times or fewer` and "what do
  * agents actually reach for?" as `10 times or more`. Both directions are

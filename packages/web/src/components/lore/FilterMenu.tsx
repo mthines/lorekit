@@ -99,7 +99,7 @@
  * Both props are optional together: a caller that passes neither gets the menu
  * without the section, exactly like `status`/`onStatusChange`.
  *
- * ### Either direction, in the same list (migration 00112)
+ * ### Either direction, in the same list (migration 00113)
  * Four of the five rows can be read both ways — `Chosen` as "5 times or fewer"
  * (what a groomer asks) or "10 times or more" (what a reader looking for the
  * lore that is actually used asks). Their value list holds BOTH directions as
@@ -216,7 +216,7 @@ export const FIELD_ICONS: Record<FilterField, LucideIcon> = {
  * Each names its DATA rather than its condition: a calendar-plus for when a
  * lesson was written, a clock-history for when one was last opened, a repeat
  * for how often it recurred, a download for how often it was delivered, a
- * pointer for how often something chose it. A reverse direction (00112) reads
+ * pointer for how often something chose it. A reverse direction (00113) reads
  * the same data, so it wears the same icon as its row.
  */
 export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {

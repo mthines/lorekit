@@ -42,7 +42,7 @@ values
   -- shared account every row an earlier section left behind would be counted
   -- too, and the numbers would drift as sections are added.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a6', 'authenticated', 'authenticated', 'lk-mig-a6@test.local', now(), now()),
-  -- §112's own account, for §108's reason: exact counts out of four readers.
+  -- §113's own account, for §108's reason: exact counts out of four readers.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a7', 'authenticated', 'authenticated', 'lk-mig-a7@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
@@ -9963,7 +9963,7 @@ begin
   -- NEW function starts from EXECUTE-to-public, so this is the line that keeps
   -- it from being the one `lorekit_match_*` reachable by anon.
   --
-  -- The signature is DERIVED from the catalog (§70's reason): 00112 widened the
+  -- The signature is DERIVED from the catalog (§70's reason): 00113 widened the
   -- helper from 10 to 14 arguments, and a hardcoded list would either break on
   -- the next widening or keep passing against a stale overload. The loop above
   -- has already proved there is exactly one.
@@ -10284,11 +10284,11 @@ begin
 end;
 $$;
 
--- ── 112. the Explorer's reverse directions and the "most chosen" sort (00112) ──
+-- ── 113. the Explorer's reverse directions and the "most chosen" sort (00113) ──
 -- 00108 made the five retention thresholds reach all four readers. Every one of
 -- them points the retention way — "N or fewer", "not opened for N days" — so
 -- the Explorer could show the dead weight and never the load-bearing lore.
--- 00112 adds the mirror of each (min_seen_count / min_read_count /
+-- 00113 adds the mirror of each (min_seen_count / min_read_count /
 -- min_opened_count / opened_within_days) through the SAME widened helper, and
 -- an `opened_count` sort on the list.
 --
@@ -10310,7 +10310,7 @@ $$;
 --       unknown sort still falls back to updated_at.
 -- AC-5: the new params all-null are identical to omitting them.
 -- AC-6: one overload per reader, the 10-argument helper is gone, and every
---       reader is off the anonymous surface (00112 restores the list's revoke).
+--       reader is off the anonymous surface (00113 restores the list's revoke).
 do $$
 declare
   v_user     uuid := '00000000-0000-0000-0000-0000000000a7';
@@ -10330,15 +10330,15 @@ begin
 
   insert into memories (user_id, scope, key, value, kind, host, created_at,
                         seen_count, read_count, opened_count, last_opened_at) values
-    (v_user, 'global', '112-hot',  'v', 'lesson', 'h1', now() - interval '100 days', 5, 300, 12, now() - interval '1 day'),
-    (v_user, 'global', '112-warm', 'v', 'lesson', 'h1', now() - interval '100 days', 2, 120, 3,  now() - interval '40 days'),
-    (v_user, 'global', '112-tie',  'v', 'lesson', 'h2', now() - interval '100 days', 1, 50,  3,  now() - interval '2 days'),
-    (v_user, 'global', '112-cold', 'v', 'lesson', 'h2', now() - interval '1 day',    1, 10,  0,  null);
+    (v_user, 'global', '113-hot',  'v', 'lesson', 'h1', now() - interval '100 days', 5, 300, 12, now() - interval '1 day'),
+    (v_user, 'global', '113-warm', 'v', 'lesson', 'h1', now() - interval '100 days', 2, 120, 3,  now() - interval '40 days'),
+    (v_user, 'global', '113-tie',  'v', 'lesson', 'h2', now() - interval '100 days', 1, 50,  3,  now() - interval '2 days'),
+    (v_user, 'global', '113-cold', 'v', 'lesson', 'h2', now() - interval '1 day',    1, 10,  0,  null);
 
   -- ── AC-1: each floor, on all four readers ───────────────────────────────
   select count(*) into v_n from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global', p_min_opened_count => 3, p_limit => 100);
-  assert v_n = 3, format('112 AC-1a: min_opened_count => 3 must list hot, warm and tie, got %s', v_n);
+  assert v_n = 3, format('113 AC-1a: min_opened_count => 3 must list hot, warm and tie, got %s', v_n);
 
   select count into v_h1 from lorekit_memory_facets(
       p_user_id => v_user, p_scope => 'global', p_min_opened_count => 3)
@@ -10347,50 +10347,50 @@ begin
       p_user_id => v_user, p_scope => 'global', p_min_opened_count => 3)
    where facet = 'host' and value = 'h2';
   assert v_h1 = 2 and v_h2 = 1,
-    format('112 AC-1b: the host facet must count the rows the list returns (h1=2, h2=1), '
+    format('113 AC-1b: the host facet must count the rows the list returns (h1=2, h2=1), '
            'got h1=%s h2=%s', v_h1, v_h2);
 
   select coalesce(sum(count), 0) into v_n
     from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global', p_min_opened_count => 3);
-  assert v_n = 3, format('112 AC-1c: activity must count the same 3 rows, got %s', v_n);
+  assert v_n = 3, format('113 AC-1c: activity must count the same 3 rows, got %s', v_n);
 
   select coalesce(sum(count), 0) into v_n
     from lorekit_memory_pivot('host', 'kind', p_user_id => v_user, p_scope => 'global',
                               p_min_opened_count => 3);
-  assert v_n = 3, format('112 AC-1d: the pivot must count the same 3 rows, got %s', v_n);
+  assert v_n = 3, format('113 AC-1d: the pivot must count the same 3 rows, got %s', v_n);
 
   -- Delivered: only hot and warm reach 100, so every h2 row falls below the
   -- floor and the VALUE disappears (retention-style conditions narrow `base`).
   select count(*) into v_n from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global', p_min_read_count => 100, p_limit => 100);
-  assert v_n = 2, format('112 AC-1e: min_read_count => 100 must list hot and warm, got %s', v_n);
+  assert v_n = 2, format('113 AC-1e: min_read_count => 100 must list hot and warm, got %s', v_n);
 
   select count(*) into v_n from lorekit_memory_facets(
       p_user_id => v_user, p_scope => 'global', p_min_read_count => 100)
    where facet = 'host' and value = 'h2';
   assert v_n = 0,
-    '112 AC-1f: a host whose every row is below the floor must DISAPPEAR from the catalog';
+    '113 AC-1f: a host whose every row is below the floor must DISAPPEAR from the catalog';
 
   -- Recurrence.
   select count(*) into v_n from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global', p_min_seen_count => 2, p_limit => 100);
-  assert v_n = 2, format('112 AC-1g: min_seen_count => 2 must list hot and warm, got %s', v_n);
+  assert v_n = 2, format('113 AC-1g: min_seen_count => 2 must list hot and warm, got %s', v_n);
 
   select coalesce(sum(count), 0) into v_n
     from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global', p_min_seen_count => 2);
-  assert v_n = 2, format('112 AC-1h: activity must agree on min_seen_count, got %s', v_n);
+  assert v_n = 2, format('113 AC-1h: activity must agree on min_seen_count, got %s', v_n);
 
   -- ── AC-2: a floor and a ceiling compose ─────────────────────────────────
   select count(*) into v_n from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global',
       p_min_opened_count => 1, p_max_opened_count => 5, p_limit => 100);
-  assert v_n = 2, format('112 AC-2: chosen 1..5 must list warm and tie, got %s', v_n);
+  assert v_n = 2, format('113 AC-2: chosen 1..5 must list warm and tie, got %s', v_n);
 
   -- ── AC-3: opened_within_days ────────────────────────────────────────────
   select array_agg(key order by key) into v_got from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global', p_opened_within_days => 7, p_limit => 100);
-  assert v_got = array['112-hot', '112-tie'],
-    format('112 AC-3a: opened_within_days => 7 must keep exactly hot and tie (cold was '
+  assert v_got = array['113-hot', '113-tie'],
+    format('113 AC-3a: opened_within_days => 7 must keep exactly hot and tie (cold was '
            'never opened, warm 40 days ago), got %s', v_got);
 
   select count into v_h1 from lorekit_memory_facets(
@@ -10400,24 +10400,24 @@ begin
       p_user_id => v_user, p_scope => 'global', p_opened_within_days => 7)
    where facet = 'host' and value = 'h2';
   assert v_h1 = 1 and v_h2 = 1,
-    format('112 AC-3b: facets must apply opened_within_days, got h1=%s h2=%s', v_h1, v_h2);
+    format('113 AC-3b: facets must apply opened_within_days, got h1=%s h2=%s', v_h1, v_h2);
 
   select coalesce(sum(count), 0) into v_n
     from lorekit_memory_activity(p_user_id => v_user, p_scope => 'global', p_opened_within_days => 7);
-  assert v_n = 2, format('112 AC-3c: activity must apply opened_within_days, got %s', v_n);
+  assert v_n = 2, format('113 AC-3c: activity must apply opened_within_days, got %s', v_n);
 
   select coalesce(sum(count), 0) into v_n
     from lorekit_memory_pivot('host', 'kind', p_user_id => v_user, p_scope => 'global',
                               p_opened_within_days => 7);
-  assert v_n = 2, format('112 AC-3d: the pivot must apply opened_within_days, got %s', v_n);
+  assert v_n = 2, format('113 AC-3d: the pivot must apply opened_within_days, got %s', v_n);
 
   -- The contrast with unseen_days, whose never-opened fallback ages cold from
   -- its creation one day ago: cold matches NEITHER direction at 7 days, which
   -- is the honest answer for a lesson nothing has ever opened.
   select array_agg(key order by key) into v_got from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global', p_unseen_days => 7, p_limit => 100);
-  assert v_got = array['112-warm'],
-    format('112 AC-3e: unseen_days => 7 must match only warm, got %s', v_got);
+  assert v_got = array['113-warm'],
+    format('113 AC-3e: unseen_days => 7 must match only warm, got %s', v_got);
 
   -- ── AC-4: the opened_count sort ─────────────────────────────────────────
   select array_agg(key order by opened_count desc, id desc) into v_expected
@@ -10433,10 +10433,10 @@ begin
                               last_read_at, last_opened_at, org_id, created_by,
                               updated_by, org_name, org_slug, total_count, ord);
   assert v_got = v_expected,
-    format('112 AC-4a: sort => opened_count must order by opened_count desc, id desc. '
+    format('113 AC-4a: sort => opened_count must order by opened_count desc, id desc. '
            'expected %s, got %s', v_expected, v_got);
-  assert v_got[1] = '112-hot' and v_got[4] = '112-cold',
-    format('112 AC-4b: the most-chosen lesson leads and the never-chosen one trails, got %s', v_got);
+  assert v_got[1] = '113-hot' and v_got[4] = '113-cold',
+    format('113 AC-4b: the most-chosen lesson leads and the never-chosen one trails, got %s', v_got);
 
   -- Page 1 of 2, then the cursor built from page 1's last row.
   select array_agg(l.key order by l.ord) into v_page1
@@ -10462,7 +10462,7 @@ begin
                               last_read_at, last_opened_at, org_id, created_by,
                               updated_by, org_name, org_slug, total_count, ord);
   assert v_page1 || v_page2 = v_expected,
-    format('112 AC-4c: page 2 must continue page 1 exactly — no gap, no overlap — '
+    format('113 AC-4c: page 2 must continue page 1 exactly — no gap, no overlap — '
            'including inside the run of equal counts. page1=%s page2=%s expected=%s',
            v_page1, v_page2, v_expected);
 
@@ -10471,26 +10471,26 @@ begin
       p_user_id => v_user, p_scope => 'global', p_sort => 'opened_count',
       p_cursor_ts => now() - interval '1000 days', p_cursor_id => v_last_id, p_limit => 100);
   assert v_n = 4,
-    format('112 AC-4d: p_cursor_ts must be ignored under the opened_count sort, got %s rows', v_n);
+    format('113 AC-4d: p_cursor_ts must be ignored under the opened_count sort, got %s rows', v_n);
 
   -- An unknown sort still falls back to updated_at rather than erroring.
   select count(*) into v_n from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global', p_sort => 'bogus', p_limit => 100);
-  assert v_n = 4, format('112 AC-4e: an unknown sort must fall back, not fail, got %s', v_n);
+  assert v_n = 4, format('113 AC-4e: an unknown sort must fall back, not fail, got %s', v_n);
 
   -- ── AC-5: all-null is a no-op ───────────────────────────────────────────
   select count(*) into v_n from lorekit_memory_list(
       p_user_id => v_user, p_scope => 'global',
       p_opened_within_days => null, p_min_seen_count => null, p_min_read_count => null,
       p_min_opened_count => null, p_cursor_count => null, p_limit => 100);
-  assert v_n = 4, format('112 AC-5a: all-null new list params must change nothing, got %s', v_n);
+  assert v_n = 4, format('113 AC-5a: all-null new list params must change nothing, got %s', v_n);
 
   select count into v_h1 from lorekit_memory_facets(
       p_user_id => v_user, p_scope => 'global',
       p_opened_within_days => null, p_min_seen_count => null, p_min_read_count => null,
       p_min_opened_count => null)
    where facet = 'host' and value = 'h1';
-  assert v_h1 = 2, format('112 AC-5b: all-null new facet params must change nothing, got %s', v_h1);
+  assert v_h1 = 2, format('113 AC-5b: all-null new facet params must change nothing, got %s', v_h1);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
@@ -10505,7 +10505,7 @@ begin
   assert to_regprocedure(
       'lorekit_match_retention(timestamptz, timestamptz, integer, integer, integer, '
       'timestamptz, timestamptz, integer, integer, integer)') is null,
-    '112 AC-6a: the 10-argument lorekit_match_retention must be dropped — a second '
+    '113 AC-6a: the 10-argument lorekit_match_retention must be dropped — a second '
     'predicate is somewhere for a caller to drift to';
 
   for r in
@@ -10517,16 +10517,16 @@ begin
                          'lorekit_match_retention')
   loop
     assert not has_function_privilege('anon', r.sig, 'EXECUTE'),
-      format('112 AC-6b: anon must NOT have EXECUTE on %s', r.sig);
+      format('113 AC-6b: anon must NOT have EXECUTE on %s', r.sig);
     assert has_function_privilege('authenticated', r.sig, 'EXECUTE'),
-      format('112 AC-6c: authenticated MUST have EXECUTE on %s', r.sig);
+      format('113 AC-6c: authenticated MUST have EXECUTE on %s', r.sig);
     assert has_function_privilege('service_role', r.sig, 'EXECUTE'),
-      format('112 AC-6d: service_role MUST have EXECUTE on %s', r.sig);
+      format('113 AC-6d: service_role MUST have EXECUTE on %s', r.sig);
   end loop;
 
   assert (select pronargs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
            where n.nspname = 'public' and p.proname = 'lorekit_match_retention') = 14,
-    '112 AC-6e: lorekit_match_retention must take the 14 arguments 00112 gave it';
+    '113 AC-6e: lorekit_match_retention must take the 14 arguments 00113 gave it';
 end;
 $$;
 

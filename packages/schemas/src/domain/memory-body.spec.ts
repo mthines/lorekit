@@ -41,7 +41,7 @@ describe('ListMemoriesBodySchema', () => {
     expect(r.host_mode).toBe('in');
   });
 
-  it('accepts the opened_count sort and the reverse directions (00112)', () => {
+  it('accepts the opened_count sort and the reverse directions (00113)', () => {
     const r = ListMemoriesBodySchema.parse({
       sort: 'opened_count',
       min_opened_count: 10,
@@ -162,7 +162,7 @@ describe('retention thresholds on the aggregate body schemas', () => {
     ['max_seen_count', 1],
     ['max_read_count', 200],
     ['max_opened_count', 0],
-    // 00112 — the reverse directions ride the same spread.
+    // 00113 — the reverse directions ride the same spread.
     ['opened_within_days', 7],
     ['min_seen_count', 2],
     ['min_read_count', 100],

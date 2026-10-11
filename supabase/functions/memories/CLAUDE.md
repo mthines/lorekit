@@ -339,7 +339,7 @@ self-exclusion under OR, and that a cross-group filter still narrows the label c
 `max_opened_count` narrowed the rows and left every number describing those rows — the
 Explorer's facet counts, its stat cards and its matrix — counting the un-narrowed population.
 
-**Their four reverse directions ride the same path, as of 00112** — `opened_within_days`,
+**Their four reverse directions ride the same path, as of 00113** — `opened_within_days`,
 `min_seen_count`, `min_read_count`, `min_opened_count` — on `GET /`, `POST /list` and all three
 aggregates, through the same widened `lorekit_match_retention`. They are READ conditions only:
 `GroomConditionsSchema` does not carry them, so no policy can archive "the most chosen lore".
@@ -350,7 +350,7 @@ table constraint). The list also takes `sort=opened_count` (most chosen first,
 `id desc` breaking ties); it pages through `_shared/api/count-cursor.ts`'s integer cursor
 (mirrored from `mcp-core/src/rest/count-cursor.ts`) rather than `paginate.ts`'s timestamp one,
 so `paginate.ts` and its MCP byte-mirror stay untouched, and each decoder rejects the other's
-format so a sort flip restarts at page one. §112 pins all of it.
+format so a sort flip restarts at page one. §113 pins all of it.
 
 They differ from a dimension in one way that matters when reading a count: a threshold is
 applied in the RPC's `base` CTE rather than as a per-dimension `ok_*` flag, so it narrows

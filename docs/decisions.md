@@ -752,7 +752,7 @@ compose instead of duplicating each other's job.
 ## The age/activity conditions read both ways, but only one way reaches a policy
 
 The five retention conditions all point the archive way ("N or fewer", "not opened for N days"), so the
-Explorer could show the dead weight and never the load-bearing lore. 00112 adds the mirror of four of them
+Explorer could show the dead weight and never the load-bearing lore. 00113 adds the mirror of four of them
 — `opened_within_days`, `min_seen_count`, `min_read_count`, `min_opened_count` — plus `sort=opened_count`.
 
 They are **read conditions only**: they reach the list and the three aggregates (the rule below), and are

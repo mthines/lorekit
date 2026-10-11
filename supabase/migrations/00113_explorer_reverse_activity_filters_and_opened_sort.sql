@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- 00112 — the Explorer's reverse directions, and a "most chosen" sort.
+-- 00113 — the Explorer's reverse directions, and a "most chosen" sort.
 --
 -- THE GAP. Every age/activity condition the four readers accept points ONE
 -- way, because they were built for retention policies: `max_seen_count`,
@@ -59,10 +59,10 @@
 -- Appended, null-defaulted parameters on all four readers, so every existing
 -- named-argument caller is unaffected. `create or replace` cannot change a
 -- signature (00108's header), so each reader is dropped at its EXACT previous
--- argument list first — §108's AC-7 and §112 assert that exactly one overload
+-- argument list first — §108's AC-7 and §113 assert that exactly one overload
 -- of each survives.
 --
--- §112 in `migrations.test.sql` is the executable proof.
+-- §113 in `migrations.test.sql` is the executable proof.
 -- ═════════════════════════════════════════════════════════════════════════
 
 -- ── 1. The predicate, widened ───────────────────────────────────────────────
@@ -89,7 +89,7 @@ create or replace function lorekit_match_retention(
   p_max_seen_count    integer,
   p_max_read_count    integer,
   p_max_opened_count  integer,
-  -- 00112: the Explorer's reverse directions. Never carried by a policy.
+  -- 00113: the Explorer's reverse directions. Never carried by a policy.
   p_opened_since      timestamptz,
   p_min_seen_count    integer,
   p_min_read_count    integer,
@@ -109,7 +109,7 @@ as $$
     and (p_max_seen_count   is null or p_seen_count   <= p_max_seen_count)
     and (p_max_read_count   is null or p_read_count   <= p_max_read_count)
     and (p_max_opened_count is null or p_opened_count <= p_max_opened_count)
-    -- 00112: deliberately WITHOUT 00100's fallback — a never-opened lesson was
+    -- 00113: deliberately WITHOUT 00100's fallback — a never-opened lesson was
     -- not "opened within N days", however recently it was written. Spelled out
     -- rather than left to the null comparison so the exclusion is visibly the
     -- intent and not an accident of three-valued logic.
@@ -128,7 +128,7 @@ comment on function lorekit_match_retention(
 ) is
   'Does a memory satisfy an age/activity condition set? The five thresholds of
    GroomConditionsSchema (00108) plus the Explorer''s four reverse directions
-   (00112: opened-since cutoff, min seen/read/opened counts), as one inlinable
+   (00113: opened-since cutoff, min seen/read/opened counts), as one inlinable
    row test shared by lorekit_memory_list, _facets, _activity and _pivot so a
    count cannot disagree with the list it describes. Takes CUTOFF INSTANTS
    rather than day counts so it stays immutable and reads no clock. A null
@@ -195,7 +195,7 @@ create or replace function lorekit_memory_facets(
   p_max_seen_count     integer default null,
   p_max_read_count     integer default null,
   p_max_opened_count   integer default null,
-  -- 00112: the Explorer's reverse directions — "opened within N days" and the
+  -- 00113: the Explorer's reverse directions — "opened within N days" and the
   -- three "at least N" floors. Appended, null-defaulted. Read routes only: a
   -- retention policy cannot carry them.
   p_opened_within_days integer default null,
@@ -226,7 +226,7 @@ declare
   v_unseen_cutoff timestamptz := case
     when p_unseen_days is null then null else now() - (p_unseen_days * interval '1 day')
   end;
-  -- 00112: the "opened within N days" lower bound, resolved once per call for
+  -- 00113: the "opened within N days" lower bound, resolved once per call for
   -- the same reason as the two cutoffs above.
   v_opened_since timestamptz := case
     when p_opened_within_days is null then null else now() - (p_opened_within_days * interval '1 day')
@@ -409,7 +409,7 @@ comment on function lorekit_memory_facets(
    for label/tag in `all` (AND) mode (00110). Every dimension enumerates its
    FULL value set so a value with zero matches still returns `count = 0`
    (00110). The created_at window, the five retention thresholds (00108) and
-   the Explorer''s reverse directions (00112: opened_within_days and the three
+   the Explorer''s reverse directions (00113: opened_within_days and the three
    min_* floors) are NOT self-excluded: they narrow the population every facet
    value is drawn from, so a count matches the list under the same parameters.
    q/key/expiring_within_days remain unmirrored, so with those active a count
@@ -459,7 +459,7 @@ create or replace function lorekit_memory_activity(
   p_max_seen_count     integer default null,
   p_max_read_count     integer default null,
   p_max_opened_count   integer default null,
-  -- 00112: the Explorer's reverse directions — "opened within N days" and the
+  -- 00113: the Explorer's reverse directions — "opened within N days" and the
   -- three "at least N" floors. Appended, null-defaulted. Read routes only: a
   -- retention policy cannot carry them.
   p_opened_within_days integer default null,
@@ -493,7 +493,7 @@ declare
   v_unseen_cutoff timestamptz := case
     when p_unseen_days is null then null else now() - (p_unseen_days * interval '1 day')
   end;
-  -- 00112: the "opened within N days" lower bound, resolved once per call for
+  -- 00113: the "opened within N days" lower bound, resolved once per call for
   -- the same reason as the two cutoffs above.
   v_opened_since timestamptz := case
     when p_opened_within_days is null then null else now() - (p_opened_within_days * interval '1 day')
@@ -583,7 +583,7 @@ comment on function lorekit_memory_activity(
    and narrowed by the calling key''s own scope/org restriction. Applies every
    dimension filter directly (no self-exclusion — this is a straight count),
    the five retention thresholds (00108) and the Explorer''s reverse directions
-   (00112), so the Explorer''s stat cards describe the list beneath them.
+   (00113), so the Explorer''s stat cards describe the list beneath them.
    p_since/p_until already bound created_at, so no separate window parameter
    exists.';
 
@@ -633,7 +633,7 @@ create or replace function lorekit_memory_pivot(
   p_max_seen_count     integer default null,
   p_max_read_count     integer default null,
   p_max_opened_count   integer default null,
-  -- 00112: the Explorer's reverse directions — "opened within N days" and the
+  -- 00113: the Explorer's reverse directions — "opened within N days" and the
   -- three "at least N" floors. Appended, null-defaulted. Read routes only: a
   -- retention policy cannot carry them.
   p_opened_within_days integer default null,
@@ -664,7 +664,7 @@ declare
   v_unseen_cutoff timestamptz := case
     when p_unseen_days is null then null else now() - (p_unseen_days * interval '1 day')
   end;
-  -- 00112: the "opened within N days" lower bound, resolved once per call for
+  -- 00113: the "opened within N days" lower bound, resolved once per call for
   -- the same reason as the two cutoffs above.
   v_opened_since timestamptz := case
     when p_opened_within_days is null then null else now() - (p_opened_within_days * interval '1 day')
@@ -781,7 +781,7 @@ comment on function lorekit_memory_pivot(
    the EFFECTIVE caller and narrowed by the calling key''s own scope/org
    restriction. BOTH axes are self-excluded from the dimension filters. The
    created_at window, the five retention thresholds (00108) and the Explorer''s
-   reverse directions (00112) are not self-excluded — they narrow the
+   reverse directions (00113) are not self-excluded — they narrow the
    population, matching lorekit_memory_facets.';
 
 -- ── 5. lorekit_memory_list (00108 body) ───────────────────────────────────
@@ -844,12 +844,12 @@ create or replace function lorekit_memory_list(
   p_max_seen_count       integer     default null,
   p_max_read_count       integer     default null,
   p_max_opened_count     integer     default null,
-  -- 00112: the Explorer's reverse directions, appended and null-defaulted.
+  -- 00113: the Explorer's reverse directions, appended and null-defaulted.
   p_opened_within_days   integer     default null,
   p_min_seen_count       integer     default null,
   p_min_read_count       integer     default null,
   p_min_opened_count     integer     default null,
-  -- 00112: the keyset cursor for `p_sort => 'opened_count'`. An integer sort
+  -- 00113: the keyset cursor for `p_sort => 'opened_count'`. An integer sort
   -- needs an integer cursor; `p_cursor_ts` keeps serving the two date sorts.
   p_cursor_count         integer     default null
 )
@@ -899,7 +899,7 @@ declare
       from unnest(coalesce(p_origin_pr, '{}'::text[])) as x
      where x ~ '^0*[0-9]{1,9}$'
   );
-  -- 00112: `opened_count` joins the two date sorts. Anything else still falls
+  -- 00113: `opened_count` joins the two date sorts. Anything else still falls
   -- back to `updated_at`, so an unknown value cannot reach the format() below.
   v_sort text := case
     when p_sort in ('created_at', 'opened_count') then p_sort else 'updated_at'
@@ -915,7 +915,7 @@ declare
   v_unseen_cutoff timestamptz := case
     when p_unseen_days is null then null else now() - (p_unseen_days * interval '1 day')
   end;
-  -- 00112: the "opened within N days" lower bound, resolved once per call for
+  -- 00113: the "opened within N days" lower bound, resolved once per call for
   -- the same reason as the two cutoffs above.
   v_opened_since timestamptz := case
     when p_opened_within_days is null then null else now() - (p_opened_within_days * interval '1 day')
@@ -1036,7 +1036,7 @@ comment on function lorekit_memory_list(
   integer, integer, integer, integer, integer
 ) is
   'The keyset-paginated memory list behind GET /memories and POST /memories/list.
-   Sorts by updated_at (default), created_at, or opened_count (00112) — each
+   Sorts by updated_at (default), created_at, or opened_count (00113) — each
    descending with id as the tie-break; p_cursor_ts carries the date sorts''
    keyset value and p_cursor_count the count sort''s. Applies the five retention
    thresholds and the Explorer''s reverse directions through the shared
