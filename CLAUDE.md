@@ -446,3 +446,4 @@ their rationale inline. **Do not relitigate these.**
 - **An omitted scope on a read means EVERYWHERE, not `global`** — [rationale](./docs/decisions.md#an-omitted-scope-means-everywhere-not-global)
 - **A tool's `inputSchema` carries NO top-level `oneOf`/`anyOf`/`allOf`** — [rationale](./docs/decisions.md#a-tools-inputschema-carries-no-top-level-oneofanyofallof)
 - **A skill's `metadata.version` must be bumped on any content change, and CI enforces it** — [rationale](./docs/decisions.md#a-skills-metadataversion-must-be-bumped-on-any-content-change-and-ci-enforces-it)
+- **Graded relevance is lexical `ts_rank_cd`, never a vector score** — [rationale](./docs/decisions.md#graded-relevance-is-lexical-ts_rank_cd-never-a-vector-score)
