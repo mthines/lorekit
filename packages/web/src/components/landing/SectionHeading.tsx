@@ -16,6 +16,11 @@ import { cn } from '@/lib/cn';
  * The title runs at 30–36px against 16px body copy (≥ 2× contrast). The
  * sections used to open with 20px headings over 14px text, which made every
  * section look like a sidebar card rather than a chapter.
+ *
+ * A two-sentence title puts its gradient payoff on its own line (`block` on the
+ * payoff span) rather than trusting `text-balance`: balancing splits by width,
+ * so "Every session starts from zero. Yours don't have to." broke as "…starts
+ * from / zero. Yours…", stranding a word of the first sentence with the second.
  */
 export function SectionHeading({
   id,

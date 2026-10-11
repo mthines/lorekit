@@ -13,16 +13,19 @@ type TranscriptLine = {
 };
 
 const WITHOUT: TranscriptLine[] = [
-  { day: 'mon', who: 'you', text: 'we validate with Zod here, not Yup' },
+  { day: 'mon', who: 'you', text: 'we use Zod here, not Yup' },
   { day: 'tue', who: 'you', text: 'reminder: Zod, not Yup' },
   { day: 'wed', who: 'you', text: 'again — Zod.' },
   { day: 'thu', who: 'agent', text: 'pnpm add yup', emphasis: true },
 ];
 
+// Kept short enough to stay on ONE line per row at the side-by-side width, so
+// the two transcripts line up day for day — the comparison is the point, and a
+// wrapped row pushes every later day out of step with the other card.
 const WITH: TranscriptLine[] = [
-  { day: 'mon', who: 'agent', text: 'memory.write  conventions/validation  "Zod, not Yup"' },
-  { day: 'tue', who: 'agent', text: 'memory.list   ↳ 1 lesson loaded' },
-  { day: 'wed', who: 'agent', text: 'memory.list   ↳ 1 lesson loaded' },
+  { day: 'mon', who: 'agent', text: 'memory.write validation "Zod, not Yup"' },
+  { day: 'tue', who: 'agent', text: 'memory.list ↳ 1 lesson loaded' },
+  { day: 'wed', who: 'agent', text: 'memory.list ↳ 1 lesson loaded' },
   { day: 'thu', who: 'agent', text: 'import { z } from "zod"', emphasis: true },
 ];
 
@@ -54,13 +57,15 @@ export function BeforeAfter() {
         title={
           <>
             Every session starts from zero.{' '}
-            <span className="lk-gradient-text">Yours don’t have to.</span>
+            <span className="lk-gradient-text block">Yours don’t have to.</span>
           </>
         }
         lede="The agent that untangled your build an hour ago has no memory of it now. So you re-explain — and it still gets it wrong on Thursday."
       />
 
-      <div className="grid gap-5 md:grid-cols-2">
+      {/* Side by side only from `lg`: at `md` each card is ~340px wide, the rows
+          wrap, and the day-for-day alignment between the two cards is lost. */}
+      <div className="grid gap-5 lg:grid-cols-2">
         <TranscriptCard
           variant="without"
           title="Without LoreKit"
@@ -117,13 +122,16 @@ function TranscriptCard({
         <h3 className="text-sm font-semibold text-[var(--color-content-primary)]">{title}</h3>
       </header>
 
-      <ol aria-hidden className="flex flex-1 flex-col gap-2.5 px-5 py-5 font-mono text-xs leading-relaxed sm:text-[13px]">
+      {/* Columns are sized in `ch`, not px: "agent ›" is 7 characters in any
+          monospace font, so the speaker column can never wrap its `›` onto a
+          second line the way a fixed 44px column did. */}
+      <ol aria-hidden className="flex flex-1 flex-col gap-3 px-5 py-5 font-mono text-xs leading-relaxed sm:text-[13px]">
         {lines.map((line) => (
-          <li key={`${line.day}-${line.text}`} className="flex gap-3">
-            <span className="w-7 shrink-0 text-[var(--color-content-secondary)]">{line.day}</span>
+          <li key={`${line.day}-${line.text}`} className="flex items-baseline gap-3">
+            <span className="w-[3ch] shrink-0 text-[var(--color-content-secondary)]">{line.day}</span>
             <span
               className={cn(
-                'w-11 shrink-0',
+                'w-[7ch] shrink-0 whitespace-nowrap',
                 line.who === 'you'
                   ? 'text-[var(--color-scope-repo)]'
                   : 'text-[var(--color-accent)]',

@@ -32,7 +32,8 @@ export function FeatureBento() {
         eyebrow="03 / what you get"
         title={
           <>
-            Memory that earns its place <span className="lk-gradient-text">in your context.</span>
+            Memory that earns its place{' '}
+            <span className="lk-gradient-text block">in your context.</span>
           </>
         }
         lede="A store that learns from the work you already do, and tells you when a lesson has stopped paying for itself."

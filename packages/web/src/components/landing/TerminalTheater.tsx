@@ -554,7 +554,8 @@ export function TerminalTheater() {
         eyebrow="live demo"
         title={
           <>
-            Session A writes. <span className="lk-gradient-text">Session B already knows.</span>
+            Session A writes.{' '}
+            <span className="lk-gradient-text block">Session B already knows.</span>
           </>
         }
         lede="Two sessions, one store, no re-explaining."
