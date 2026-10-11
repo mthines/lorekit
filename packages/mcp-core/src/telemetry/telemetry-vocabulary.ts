@@ -152,6 +152,18 @@ export const NON_CATALOG_OPS: Readonly<Record<string, NonCatalogOp>> = {
   'member.invite_list': { reason: 'Invites are administered in the dashboard, not by agents.' },
   'member.invite': { reason: 'Invites are administered in the dashboard, not by agents.' },
   'member.revoke': { reason: 'Invites are administered in the dashboard, not by agents.' },
+  'judgment_key.status': {
+    reason:
+      'BYOK secret management for the settings dashboard. A personal credential, not lore or '
+      + 'tenant data — an lk_* API token has no business reading it on a user\u2019s behalf, and no '
+      + 'agent loop needs to check whether one is configured.',
+  },
+  'judgment_key.set': {
+    reason: 'BYOK secret management — see judgment_key.status. Setting a personal API key is a settings-page action.',
+  },
+  'judgment_key.delete': {
+    reason: 'BYOK secret management — see judgment_key.status. Removing a personal API key is a settings-page action.',
+  },
 };
 
 /**

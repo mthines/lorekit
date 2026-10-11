@@ -25,6 +25,9 @@ import {
 } from '../../_shared/ranking/lesson-rank.ts';
 import type { RankableLesson } from '../../_shared/ranking/lesson-rank.ts';
 import { outcomeFromTags } from '../../_shared/ranking/outcome-signal.ts';
+import { withJudgedRelevance, JUDGMENT_PROVIDER } from '../../_shared/judgment/judgment.ts';
+import { loadJudgmentKey } from '../../_shared/judgment/judgment-keys.ts';
+import { judgeCandidates } from '../../_shared/judgment/judgment-client.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -170,8 +173,32 @@ export async function handleRelevant(
     ),
   }));
 
+  // ── TypeSafe (Jev) judgment (BYOK) ─────────────────────────────────────────
+  // Composition is withJudgedRelevance → rankLessons → selectDiverse (AC-10/12).
+  // `judged` is `null` for every non-`applied` outcome (no key, disabled, no
+  // query, timeout, rejected, malformed, …), and `withJudgedRelevance` returns
+  // the SAME array (true identity) in that case — so a keyless or failed
+  // request runs the byte-identical baseline all the way through (R8/R15).
+  // `auth.userId` gates both calls: a service-role caller has no personal key
+  // to look up. The user id comes from the verified auth context ONLY, never
+  // from a request param (AC-6).
+  const judgmentRef = (c: { scope: string; key: string }) => `${c.scope}::${c.key}`;
+  let judged: Map<string, number> | null = null;
+  if (auth.userId) {
+    const loadedKey = await loadJudgmentKey(auth.userId, JUDGMENT_PROVIDER, span);
+    judged = await judgeCandidates(
+      auth.userId,
+      loadedKey?.apiKey ?? null,
+      loadedKey?.version ?? null,
+      params.q ?? '',
+      candidates.map((c, i) => ({ ref: judgmentRef(c), key: c.key, value: c.value, org_id: rows[i]?.org_id ?? null })),
+      span,
+    );
+  }
+  const judgedCandidates = withJudgedRelevance(candidates, judged, judgmentRef);
+
   const now = Date.now();
-  const ranked = rankLessons(candidates, { now, scopeOrder: scopes.length ? scopes : null });
+  const ranked = rankLessons(judgedCandidates, { now, scopeOrder: scopes.length ? scopes : null });
 
   // The factors are recomputed for the response rather than threaded out of the
   // scorer, so the scorer's return shape stays minimal. `maxSeenCount` must be

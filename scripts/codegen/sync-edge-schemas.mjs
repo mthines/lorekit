@@ -71,6 +71,7 @@ export const MIRRORED_SCHEMA_FILES = [
   ['domain/invite.ts', 'invite.ts'],
   ['domain/usage.ts', 'usage.ts'],
   ['shared/relevant.ts', 'relevant.ts'],
+  ['domain/judgment.ts', 'judgment.ts'],
   ['openapi/spec.ts', 'openapi/spec.ts'],
 ];
 

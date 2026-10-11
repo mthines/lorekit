@@ -149,6 +149,57 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
   assert.ok(!/\brequire\s*\(/.test(code), 'lessons-pure.mjs must not use require()');
 });
 
+// ── judgment-pure.mjs stays dependency-free ───────────────────────────────────
+// The TypeSafe (Jev) BYOK judgment twin — same rationale as `lessons-pure.mjs`
+// above: it is the failure hook's copy of `packages/mcp-core/src/judgment/judgment.ts`
+// (`judgment-parity.spec.ts` holds the two to behavioural agreement), and the
+// hook is contractually obliged to exit 0, so nothing it loads on that path may
+// throw or drag in a dependency stack.
+const JUDGMENT_PURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared', 'judgment-pure.mjs');
+
+test('judgment-pure imports nothing — not a package, not even a node builtin', () => {
+  const src = readFileSync(JUDGMENT_PURE, 'utf8');
+
+  // Anti-vacuity: prove we are reading the real module before asserting on it.
+  for (const fn of [
+    'resolveJudgmentConfig', 'isJudgmentEligible', 'buildJudgmentRequest',
+    'parseJudgmentResponse', 'classifyHttpStatus', 'classifyThrown', 'withJudgedRelevance',
+  ]) {
+    assert.match(src, new RegExp(`export function ${fn}\\b`), `judgment-pure.mjs is missing ${fn}() — guard would be vacuous`);
+  }
+
+  // Same quote-aware line-comment stripper as the lessons-pure guard above —
+  // see its comment for why a naive whole-line or regex truncation is wrong.
+  const stripLineComment = (line) => {
+    let quote = null;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (quote) {
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+      if (ch === '/' && line[i + 1] === '/') return line.slice(0, i);
+    }
+    return line;
+  };
+
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(stripLineComment)
+    .join('\n');
+
+  const statics = code.match(
+    /^\s*(?:import\b[\s\S]*?$|export\b[^\n]*\bfrom\s*['"][^\n]*$|\}[^\n]*\bfrom\s*['"][^\n]*$)/gm,
+  ) || [];
+  assert.deepEqual(statics, [], 'judgment-pure.mjs must have no static imports or re-exports');
+
+  assert.ok(!/\bimport\s*\(/.test(code), 'judgment-pure.mjs must not use a dynamic import()');
+  assert.ok(!/\brequire\s*\(/.test(code), 'judgment-pure.mjs must not use require()');
+});
+
 // ── The SessionStart set is bounded by a budget, not by a magic count ─────────
 // `MAX_LESSONS = 15` was a number with no derivation that acted as a floor as
 // well as a ceiling — a six-lesson workspace and a six-hundred-lesson one both
