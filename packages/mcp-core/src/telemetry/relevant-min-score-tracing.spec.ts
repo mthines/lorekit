@@ -57,8 +57,12 @@ describe('GET /memories/relevant min_score telemetry (supabase/functions/memorie
   it('sets the filtered count in the same call as result_count and candidate_count', () => {
     // The three are read together to tell "nothing matched" from "min_score
     // dropped them" from "limit cut the list", so they land on the span at once.
-    expect(executable).toMatch(
-      /span\.setAttributes\(\{[^}]*'lorekit\.result_count'[^}]*'lorekit\.candidate_count'[^}]*'lorekit\.min_score_filtered_count'[^}]*\}\)/,
-    );
+    // Find the call by the filtered count, then check membership: key order
+    // inside the object literal carries no meaning, so the test must not pin it.
+    const call =
+      executable.match(/span\.setAttributes\(\{[^}]*'lorekit\.min_score_filtered_count'[^}]*\}\)/)?.[0] ?? '';
+    expect(call).not.toBe('');
+    expect(call).toContain("'lorekit.result_count'");
+    expect(call).toContain("'lorekit.candidate_count'");
   });
 });
