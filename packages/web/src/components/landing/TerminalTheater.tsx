@@ -4,8 +4,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Cloud, HardDrive } from 'lucide-react';
 
+import { track, type LandingDemoTab } from '@/lib/analytics/track';
 import { useAmbientAnimation } from '@/lib/hooks/useAmbientAnimation';
 import { createPausableTimers, type PausableTimers } from '@/lib/pausable-timers';
+
+import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,6 +48,8 @@ type ScriptLine = {
 };
 
 type UseCase = {
+  /** Stable telemetry id — the label is copy and may change; this may not. */
+  id: LandingDemoTab;
   label: string;
   act1: ScriptLine[];
   act2: ScriptLine[];
@@ -53,6 +59,7 @@ type UseCase = {
 
 const USE_CASES: UseCase[] = [
   {
+    id: 'self-healing',
     label: 'Self-healing',
     act1: [
       { type: 'command', text: 'pnpm build', pauseAfter: 240 },
@@ -114,43 +121,59 @@ const USE_CASES: UseCase[] = [
     ],
   },
   {
-    label: 'Code conventions',
+    // A rules file can hold a convention someone already knew. What it cannot
+    // do is notice that the same failure keeps coming back and decide it has
+    // earned a rule — that is this tab. The recurrence count is what a
+    // re-written lesson accrues (`seen_count`); the promotion is the agent
+    // acting on it, as the `lorekit-setup` loop wires it to.
+    id: 'promotion',
+    label: 'Promotion',
     act1: [
+      { type: 'command', text: 'pnpm test:e2e', pauseAfter: 240 },
+      {
+        type: 'error',
+        text: '✗ Timeout: #checkout-button not visible  (CI only)',
+        pauseAfter: 320,
+      },
+      {
+        type: 'agent',
+        text: '> Agent: Same flake as Monday and Wednesday — CSS animations\n         still run in CI. Turned them off in the e2e config.',
+        pauseAfter: 260,
+      },
       {
         type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "style/indent", value: "2 spaces" }',
+        text: 'memory.write { scope: "repo::lorekit", key: "ci/e2e-animations", value: "disable CSS animations in e2e config" }',
         pauseAfter: 60,
-        card: { id: 'indent', key: 'style/indent', value: '2 spaces', store: 'local' },
+        card: {
+          id: 'e2e',
+          key: 'ci/e2e-animations',
+          value: 'disable CSS animations in e2e config',
+          source: 'seen 3×',
+          store: 'remote',
+        },
       },
-      { type: 'success', text: '✓ Saved', pauseAfter: 320 },
+      { type: 'success', text: '✓ Saved  (seen 3× — recurring)', pauseAfter: 400 },
       {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "style/exports", value: "no default exports" }',
-        pauseAfter: 60,
-        card: { id: 'exports', key: 'style/exports', value: 'no default exports', store: 'local' },
+        type: 'agent',
+        text: '> Agent: Third time in three sessions. Promoting it to a\n         permanent rule for the e2e suite.',
+        pauseAfter: 260,
       },
-      { type: 'success', text: '✓ Saved', pauseAfter: 320 },
-      {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "db/columns", value: "snake_case" }',
-        pauseAfter: 60,
-        card: { id: 'db', key: 'db/columns', value: 'snake_case', store: 'remote' },
-      },
-      { type: 'success', text: '✓ Saved', pauseAfter: 800 },
+      { type: 'success', text: '✓ Rule added: disable animations before e2e runs', pauseAfter: 800 },
     ],
     act2: [
       { type: 'separator', text: '— New session —', pauseAfter: 320 },
       { type: 'command', text: 'memory.list { scope: "repo::lorekit" }', pauseAfter: 60 },
-      { type: 'info', text: '  ↳ 3 memories loaded', pauseAfter: 400 },
+      { type: 'info', text: '  ↳ 1 memory loaded  (+1 rule)', pauseAfter: 400 },
       {
         type: 'agent',
-        text: '> Agent: I see snake_case for DB columns and 2-space indentation.\n         Continuing with those conventions.',
+        text: '> Agent: Rule on file: animations off in CI. Applying it\n         before the run, not after the timeout.',
         pauseAfter: 300,
       },
-      { type: 'success', text: '✓ No context re-establishment needed', pauseAfter: 2000 },
+      { type: 'success', text: '✓ Green on the first run', pauseAfter: 2000 },
     ],
   },
   {
+    id: 'pr-review',
     label: 'PR review',
     act1: [
       {
@@ -252,11 +275,10 @@ function TypewriterLine({
   // layout shift. With the loop restarting forever, the login page accumulated
   // thousands of CLS entries per visit (p75 0.21, worst 0.58).
   //
-  // The theater does NOT sit above the sign-in CTA: `(auth)/login/page.tsx`
-  // renders the primary `LoginButton` at L155 and `<TerminalTheater />` at
-  // L165, so the shifting text is below it — only the header's compact sign-in
-  // button (L111) is above. The cost is the accrued shift entries themselves,
-  // which CLS sums for the whole session; it is not a CTA moving under a cursor.
+  // This matters more now that the theater is the home page's product shot,
+  // rendered directly under the hero: every section and the closing call to
+  // action sit BELOW it, so a line that grew mid-type would push live controls
+  // around under the visitor's cursor, on top of the CLS entries it books.
   //
   // So: a full, invisible copy of the text reserves the space, and the typed
   // prefix is painted over it. The overlay is out of flow, so the number of
@@ -486,7 +508,8 @@ export function TerminalTheater() {
         await wait(line.text.length * CHAR_DELAY + 80);
 
         // Stagger light-up one card at a time as each memory "loads"
-        if (line.type === 'info' && line.text.includes('memories loaded')) {
+        // `memory` OR `memories`: a one-lesson act prints "1 memory loaded".
+        if (line.type === 'info' && /memor(?:y|ies) loaded/.test(line.text)) {
           const cardCount = useCase.act1.filter((l) => l.card).length;
           for (let i = 0; i < cardCount; i++) {
             const cardIndex = i;
@@ -545,21 +568,25 @@ export function TerminalTheater() {
   return (
     <section
       ref={theaterRef}
-      aria-label="Terminal demo: how LoreKit persists agent memory"
-      className="w-full max-w-2xl mx-auto"
+      aria-labelledby={LANDING_SECTION_ID.liveDemo}
+      className="w-full max-w-3xl mx-auto"
     >
-      {/* Heading */}
-      <div className="mb-6 text-center">
-        <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-1">
-          Watch memories form and persist
-        </h2>
-        <p className="text-sm text-[var(--color-content-secondary)]">
-          Session A writes. Session B loads. No re-explaining.
-        </p>
-      </div>
+      <SectionHeading
+        id={LANDING_SECTION_ID.liveDemo}
+        eyebrow="live demo"
+        title={
+          <>
+            Session A writes.{' '}
+            <span className="lk-gradient-text block">Session B already knows.</span>
+          </>
+        }
+        lede="Two sessions, one store, no re-explaining."
+      />
 
-      {/* Terminal window */}
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden shadow-[0_0_40px_var(--color-accent-glow)]">
+      {/* Terminal window — the page's product shot. `lk-tilt` lays it back and
+          lifts it flat as it scrolls in; `lk-glow-frame` is the amber edge the
+          page reserves for the product and its actions. */}
+      <div className="lk-glow-frame lk-tilt rounded-2xl overflow-hidden">
 
         {/* Title bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
@@ -578,7 +605,14 @@ export function TerminalTheater() {
           {USE_CASES.map((uc, i) => (
             <button
               key={uc.label}
-              onClick={() => { if (i !== activeTab) setActiveTab(i); }}
+              onClick={() => {
+                if (i === activeTab) return;
+                // Only a visitor's own pick is reported — the auto-playing first
+                // tab is not a choice — so this counts which use case people
+                // went looking for, not which one happened to be on screen.
+                track({ name: 'landing.demo_tab_selected', tab: uc.id });
+                setActiveTab(i);
+              }}
               className={[
                 'relative px-3 py-1.5 rounded-md font-mono text-xs',
                 'transition-colors duration-150',
@@ -688,8 +722,8 @@ export function TerminalTheater() {
       </div>
 
       {/* Caption */}
-      <p className="mt-4 text-center font-mono text-xs text-[var(--color-content-tertiary)]">
-        Memories survive session ends · Shared across Claude Code, Cursor &amp; Codex
+      <p className="mt-4 text-center font-mono text-xs text-[var(--color-content-secondary)]">
+        Memories survive session ends · Shared across Claude Code, Cursor &amp; any MCP client
       </p>
     </section>
   );

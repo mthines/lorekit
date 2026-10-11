@@ -864,13 +864,39 @@ wrapper. Attributes use the `lorekit.*` namespace.
 | `install_command.copied` | A visitor copied a shell command | `lorekit.install_command.id`, `lorekit.install_command.surface`, `lorekit.install_command.succeeded` |
 | `ui.button_click` | A `Button`/`IconButton` carrying an `analyticsId` was clicked | `lorekit.ui.button_id`, `lorekit.ui.button_variant`, `lorekit.ui.button_size` (both optional) |
 
-### Content (`/docs`, `/blog`)
+### Content (`/blog`, and the home page `/`)
+
+Emitted by `components/content/ReadingTelemetry.tsx` (the pure model is
+`lib/analytics/reading.ts`). The home page mounts the same component with
+`lorekit.content.type=landing` and `lorekit.content.slug=home`, measured against
+the hero-to-closing-card wrapper, with the section heading ids from
+`components/landing/sections.ts` (`hero-title`, `live-demo`, `learning-loop`,
+`how-it-works`, `what-you-get`, `where-lore-lives`, `limitations`,
+`get-started`). Blog and home page therefore share one schema: split them with a
+group-by on `lorekit.content.type`. `docs` and `learn` exist in the type but are
+not mounted yet.
 
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
 | `content.scroll_depth` | A reader crossed 25/50/75/100 % of an article | `lorekit.content.type`, `lorekit.content.slug`, `lorekit.content.depth_percent` |
 | `content.section_read` | A reader left a section after dwelling in it | `lorekit.content.type`, `lorekit.content.slug`, `lorekit.content.section.id`, `.section.dwell_ms`, `.section.dwell_bucket`, `.section.index` (omitted when the heading is not in the TOC) |
 | `content.read` | End-of-page-view reading summary (one per view) | `lorekit.content.type`, `lorekit.content.slug`, `.max_depth_percent`, `.engaged_ms`, `.engaged_bucket`, `.sections_read`, `.completed`, `.top_section.id` (optional) |
+
+### Home page (`landing.*`)
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `landing.cta_clicked` | A link on the home page was followed (click or middle-click), via `components/landing/LandingLink.tsx` | `lorekit.landing.cta` (`get-token`/`offline-guide`/`sign-in`/`docs`/`blog`/`github`), `lorekit.landing.placement` (`header`/`hero`/`get-started`) |
+| `landing.demo_tab_selected` | A visitor picked a use case in the live demo (the auto-playing first tab is not counted) | `lorekit.landing.demo_tab` (`self-healing`/`promotion`/`pr-review`) |
+
+`cta` is the visitor's INTENT, not the link text: the hero asks "hosted or
+offline?" right under the install command, so `get-token` vs `offline-guide`
+from `placement=hero` is the page's direct read on which path people want — read
+it next to `install_command.copied` (`landing-hero` / `landing-get-started`).
+The header is shared with `/login`; filter on `page.url.path` to keep only the
+home page. The home-page funnel is therefore: page view → `content.scroll_depth`
+milestones → `content.section_read` per section → `install_command.copied` /
+`landing.cta_clicked`.
 
 ### Lore Explorer (`lore.*`)
 

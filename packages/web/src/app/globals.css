@@ -16,6 +16,7 @@
   --color-content-tertiary:  #4f5668;
 
   --color-accent:        #f5a623;   /* amber — the LoreKit signature colour */
+  --color-accent-bright: #ffd27a;   /* the light end of the amber — gradient highlights only, never text on its own */
   --color-accent-subtle: #2a2010;   /* dark amber tint for backgrounds */
   --color-accent-glow:   #f5a62340; /* glow rings */
 
@@ -107,6 +108,140 @@ body:has([data-app-shell]) {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* ── Landing motion ──────────────────────────────────────────────────────── */
+/* Two entrances for the public pages, both animating `opacity` + `transform`
+   only, so they run on the compositor and never cost a layout or paint frame.
+
+   `lk-rise` is the hero's own choreography: it runs once, off the clock,
+   staggered by `--lk-delay` so the eye lands on the headline and the supporting
+   lines catch up (the delay between steps is ~30–70 % of the duration, past
+   which a stagger stops reading as one gesture and starts reading as a queue).
+
+   `lk-reveal` is the same shape driven by SCROLL POSITION instead of time, via
+   a `view()` timeline — no IntersectionObserver, no client component, nothing
+   to hydrate for what is decoration on a static marketing page.
+
+   The load-bearing detail in both is that THE RESTING STATE IS THE FINISHED
+   STATE: the offset lives inside the keyframe's `from`, never on the element's
+   base class. The usual `opacity: 0` + observer pattern leaves the page blank
+   whenever the reveal never runs, which is exactly what happens in a browser
+   without `animation-timeline` (Safari and Firefox at the time of writing) and
+   for a visitor who asked for reduced motion. Here those visitors get the
+   content, just without the motion.
+
+   `animation-range` deliberately ends at `cover 15%` rather than `entry 100%`:
+   a section taller than the viewport never completes its `entry` range, so an
+   entry-scoped reveal would strand it permanently half-faded. */
+@media (prefers-reduced-motion: no-preference) {
+  .lk-rise {
+    animation: lk-rise-in 360ms var(--ease-out-smooth) both;
+    animation-delay: var(--lk-delay, 0ms);
+  }
+
+  @supports (animation-timeline: view()) {
+    .lk-reveal {
+      animation: lk-rise-in linear both;
+      animation-timeline: view();
+      animation-range: cover 0% cover 15%;
+    }
+  }
+}
+
+@keyframes lk-rise-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* `lk-tilt` lays the product window back and lifts it flat as it scrolls into
+   view — the demo arrives like a screen being raised to face you. Same contract
+   as above: transform only, and the resting state is FLAT, so Safari/Firefox
+   and reduced-motion visitors get an ordinary upright window.
+
+   The range ends at `cover 35%`, well before the window is centred, so by the
+   time anyone is reading the terminal it has stopped moving and its text
+   renders crisp rather than through a 3D transform. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .lk-tilt {
+      transform-origin: 50% 0%;
+      animation: lk-tilt-in linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 35%;
+    }
+  }
+}
+
+@keyframes lk-tilt-in {
+  from { transform: perspective(1400px) rotateX(18deg) scale(0.92); }
+  to   { transform: none; }
+}
+
+/* `lk-step` is `lk-reveal` staggered BY SCROLL: each item's range starts 5 %
+   later than the one before (`--lk-step` = its index), so a row of cards that
+   enters the viewport together still rises one after another. A stagger by
+   `animation-delay` does nothing on a scroll timeline, which has no clock.
+
+   `lk-draw` draws a rule from its left end (scaleX 0 → 1), finishing as the
+   cards it connects finish rising. Both keep the contract: transform/opacity
+   only, and fully drawn / fully risen at rest. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .lk-step {
+      animation: lk-rise-in linear both;
+      animation-timeline: view();
+      animation-range: cover calc(var(--lk-step, 0) * 5%) cover calc(15% + var(--lk-step, 0) * 5%);
+    }
+
+    .lk-draw {
+      transform-origin: 0 50%;
+      animation: lk-draw-in linear both;
+      animation-timeline: view();
+      animation-range: cover 5% cover 35%;
+    }
+  }
+}
+
+@keyframes lk-draw-in {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ── Landing signature ───────────────────────────────────────────────────── */
+/* The public pages repeat exactly two moves, and nothing else decorates:
+
+   1. `lk-glow-frame` — an amber hairline that is brightest at one corner and
+      fades out, plus the brand's amber glow. Reserved for the surfaces that
+      carry an ACTION or the product itself (the hero command, the demo window,
+      the closing call to action, the one highlighted card per section), so the
+      eye learns that amber edge = "this is the thing to look at".
+   2. `lk-gradient-text` — the amber ramp on the single phrase per heading that
+      is the payoff. Never on body copy: it is a highlight, not a colour.
+
+   The frame is a two-layer background (padding-box fill over a border-box
+   gradient) rather than a pseudo-element, so it needs no extra DOM and never
+   sits on top of the content. Set `--lk-frame-fill` to change the fill. */
+.lk-glow-frame {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--lk-frame-fill, var(--color-bg-raised)), var(--lk-frame-fill, var(--color-bg-raised))) padding-box,
+    linear-gradient(135deg, var(--color-accent) 0%, var(--color-border) 35%, var(--color-border) 70%, var(--color-accent-glow) 100%) border-box;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.4), 0 24px 80px -24px var(--color-accent-glow);
+}
+
+/* Text fallback first: a browser without `background-clip: text` shows solid
+   amber, never transparent text. */
+.lk-gradient-text {
+  color: var(--color-accent);
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .lk-gradient-text {
+    background-image: linear-gradient(180deg, var(--color-accent-bright) 0%, var(--color-accent) 70%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 /* ── Reduced motion ──────────────────────────────────────────────────────── */

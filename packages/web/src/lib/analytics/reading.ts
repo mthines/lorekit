@@ -13,8 +13,12 @@
  * can never disagree about what "skimmed" means.
  */
 
-/** Which public surface the content lives on. Bounded — one value per route family. */
-export type ContentType = 'blog' | 'docs' | 'learn';
+/**
+ * Which public surface the content lives on. Bounded — one value per route family.
+ * `landing` is the public home page (`/`), whose sections are read with exactly
+ * the blog's model so the two can share one dashboard.
+ */
+export type ContentType = 'blog' | 'docs' | 'learn' | 'landing';
 
 /**
  * The scroll-depth milestones we report, in percent of the content element.

@@ -6,10 +6,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { safeNextPath, boundedReturnTo } from '@/lib/auth-redirect';
 import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
 import { ensureFlagAnonIdCookie } from '@/lib/feature-flags/anon-id';
-
-/** 24 hours — matches the Supabase project jwt_expiry so the cookie
- *  outlives the access token and the refresh token can be used. */
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
+import { sessionCookieMaxAge } from '@/lib/auth/session-cookie';
 
 export async function middleware(request: NextRequest) {
   // Short-circuit OPTIONS preflights before hitting any auth logic.
@@ -90,8 +87,9 @@ export async function middleware(request: NextRequest) {
             response.cookies.set(name, value, {
               ...options,
               // Persist the session cookie across browser restarts so the
-              // refresh token survives and the user stays logged in for the day.
-              maxAge: SESSION_MAX_AGE_SECONDS,
+              // refresh token survives and the user stays signed in for the
+              // session window (7 days, sliding with each refresh).
+              maxAge: sessionCookieMaxAge(options?.maxAge),
             }),
           );
         },
