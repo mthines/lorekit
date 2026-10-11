@@ -134,6 +134,10 @@ export async function handleRelevant(
     ...(params.q ? { 'lorekit.query': params.q } : {}),
     'lorekit.limit': params.limit,
     'lorekit.scope_count': scopes.length,
+    // Recorded even at its default of 0, so "the caller set no threshold" is a
+    // value a query can select rather than an absent attribute. Bounded to
+    // [0,1] by `RelevantQuerySchema`, so it adds no cardinality worth naming.
+    'lorekit.min_score': params.min_score,
   });
 
   // Early refusal for a NAMED scope outside the key's allowlist (00068/00069),
@@ -246,9 +250,19 @@ export async function handleRelevant(
       updated_at: entry.updated_at ?? null,
     }));
 
+  // `min_score_filtered_count` is how many RANKED candidates `min_score` removed
+  // before diversification — `ranked`, not `candidates`, because it counts what
+  // the `filtered` step (`ranked.filter` by `min_score`) dropped and nothing
+  // else. With the other two it separates the three reasons a response comes
+  // back short: nothing matched (`candidate_count` 0), the threshold dropped
+  // hits (this > 0), or `limit` cut the shortlist (`result_count` equal to
+  // `lorekit.limit`). Since 00112 graded relevance, a `min_score` tuned against
+  // the old 0.375 floor can drop hits it used to keep, and without this count
+  // that change is invisible.
   span.setAttributes({
     'lorekit.result_count': entries.length,
     'lorekit.candidate_count': candidates.length,
+    'lorekit.min_score_filtered_count': ranked.length - filtered.length,
   });
 
   // `candidates` is the RANKED population, so it saturates at CANDIDATE_LIMIT —
