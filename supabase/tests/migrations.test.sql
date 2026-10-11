@@ -10322,6 +10322,8 @@ $$;
 --       drops org rows the OWNER can otherwise see, `selected` admits the named
 --       org, and a scope allowlist narrows a call that names no scope.
 -- AC-10: determinism — two identical calls return the identical order.
+-- AC-11: off service_role p_user_id is ignored — auth.uid() is the actor, so a
+--        spoofed id reaches neither another user's rows nor loses the caller's own.
 -- ═════════════════════════════════════════════════════════════════════════
 
 insert into auth.users (id) values
