@@ -22,6 +22,7 @@ import {
   FILTER_VALUE_MAX_CHARS,
   ListFacetsBodySchema,
   ListMemoriesBodySchema,
+  ListMemoriesQuerySchema,
   PivotBodySchema,
 } from './memory.ts';
 
@@ -38,6 +39,28 @@ describe('ListMemoriesBodySchema', () => {
     expect(r.limit).toBe(50);
     expect(r.tags_mode).toBe('any');
     expect(r.host_mode).toBe('in');
+  });
+
+  it('accepts the opened_count sort and the reverse directions (00112)', () => {
+    const r = ListMemoriesBodySchema.parse({
+      sort: 'opened_count',
+      min_opened_count: 10,
+      min_read_count: 100,
+      min_seen_count: 2,
+      opened_within_days: 7,
+    });
+    expect(r.sort).toBe('opened_count');
+    expect(r.min_opened_count).toBe(10);
+    expect(r.opened_within_days).toBe(7);
+    expect(ListMemoriesBodySchema.safeParse({ sort: 'read_count' }).success).toBe(false);
+  });
+
+  it('coerces the reverse directions on the query transport like every other threshold', () => {
+    const r = ListMemoriesQuerySchema.parse({ sort: 'opened_count', min_opened_count: '10', opened_within_days: '7' });
+    expect(r.sort).toBe('opened_count');
+    expect(r.min_opened_count).toBe(10);
+    expect(r.opened_within_days).toBe(7);
+    expect(ListMemoriesQuerySchema.safeParse({ min_opened_count: '0' }).success).toBe(false);
   });
 
   it('accepts a dimension at the documented bound', () => {
@@ -139,6 +162,11 @@ describe('retention thresholds on the aggregate body schemas', () => {
     ['max_seen_count', 1],
     ['max_read_count', 200],
     ['max_opened_count', 0],
+    // 00112 — the reverse directions ride the same spread.
+    ['opened_within_days', 7],
+    ['min_seen_count', 2],
+    ['min_read_count', 100],
+    ['min_opened_count', 10],
   ] as const;
 
   for (const name of Object.keys(AGGREGATES) as (keyof typeof AGGREGATES)[]) {
@@ -165,6 +193,17 @@ describe('retention thresholds on the aggregate body schemas', () => {
         // Real JSON types over a body — a numeric string is a 400 here, and is
         // only coerced on the query transport.
         expect(AGGREGATES[name].safeParse({ ...base(name), min_age_days: '7' }).success).toBe(false);
+      });
+
+      it('starts the reverse directions at 1, so no accepted value narrows nothing', () => {
+        // A floor of 0 matches every row; "opened within 0 days" matches none
+        // the caller could mean. Both are 400s rather than silent no-ops.
+        for (const field of ['opened_within_days', 'min_seen_count', 'min_read_count', 'min_opened_count']) {
+          expect(AGGREGATES[name].safeParse({ ...base(name), [field]: 0 }).success, field).toBe(false);
+          expect(AGGREGATES[name].safeParse({ ...base(name), [field]: 1 }).success, field).toBe(true);
+        }
+        expect(AGGREGATES[name].safeParse({ ...base(name), opened_within_days: 3651 }).success).toBe(false);
+        expect(AGGREGATES[name].safeParse({ ...base(name), min_opened_count: 100_001 }).success).toBe(false);
       });
     });
   }
