@@ -10579,6 +10579,28 @@ begin
     format('112 AC-10: two identical calls must return the identical order (%s vs %s)',
            v_run_a, v_run_b);
 
+  -- ── AC-11: off service_role, p_user_id is ignored — auth.uid() is the actor
+  -- An authenticated caller that names ANOTHER user's id must still see only
+  -- what its own JWT can see. The negative (AC-11a) alone would pass on a call
+  -- that returned nothing at all, so AC-11b pins the positive twin: the
+  -- caller's own row stays reachable under the same spoofed call.
+  reset role;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_owner), true);
+  assert not exists (
+    select 1 from lorekit_memory_relevant_candidates(
+        p_user_id => v_other, p_q => 'migration', p_scopes => array['project::relv'])
+     where key = '112-foreign'
+  ), '112 AC-11a: off service_role a spoofed p_user_id must be ignored — '
+     'another user''s row must not become reachable';
+  assert exists (
+    select 1 from lorekit_memory_relevant_candidates(
+        p_user_id => v_other, p_q => 'migration', p_scopes => array['project::relv'])
+     where key = '112-both'
+  ), '112 AC-11b: off service_role the actor is auth.uid(), so the caller''s own '
+     'rows must stay reachable under a spoofed p_user_id';
+
   reset role;
   perform set_config('request.jwt.claims', '', true);
 end;
