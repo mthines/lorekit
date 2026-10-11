@@ -16,7 +16,8 @@ import {
   type FilterField,
 } from '@/lib/filters';
 import {
-  RETENTION_FIELDS,
+  RETENTION_MENU_FIELDS,
+  requireRetentionField,
   type RetentionConditions,
   type RetentionField,
 } from '@/lib/retention-filter';
@@ -752,11 +753,13 @@ export const AgeAndActivityRowsSitBelowTheDimensions: StoryObj<typeof RetentionH
     const canvas = await openMenu(canvasElement);
 
     await step('the five thresholds follow the nine dimensions, in order', async () => {
+      // Five ROWS, not nine conditions: a reverse direction (00112) lives on its
+      // row's value list behind a toggle, never as a row of its own.
       const rows = canvas.getAllByRole('option');
-      await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_FIELDS.length);
+      await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_MENU_FIELDS.length);
       const retentionRows = rows.slice(FILTER_FIELDS.length);
       await expect(retentionRows.map((r) => r.textContent?.trim())).toEqual(
-        RETENTION_FIELDS.map((d) => d.label),
+        RETENTION_MENU_FIELDS.map((f) => requireRetentionField(f).label),
       );
     });
 
@@ -891,6 +894,94 @@ export const TypingAValueOffersItAsACustomThreshold: StoryObj<typeof RetentionHa
       );
       await expect(await canvas.findByText(/is not a value here/i)).toHaveTextContent(/3650/);
     });
+  },
+};
+
+/**
+ * Four rows read both ways (migration 00112).
+ *
+ * `Chosen` answers "what is nothing using?" as `5 times or fewer` and "what do
+ * agents actually reach for?" as `10 times or more`. The value list opens with
+ * a direction toggle; flipping it swaps the presets in place, a TYPED value
+ * applies in whichever direction is selected, the row reopens on the direction
+ * that is applied, and picking the other direction replaces the condition
+ * rather than narrowing to an empty range.
+ */
+export const ADirectionToggleReadsARowTheOtherWay: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = await openMenu(canvasElement);
+    await userEvent.click(canvas.getByRole('option', { name: /^chosen$/i }));
+    const toggle = await canvas.findByRole('radiogroup', { name: /chosen direction/i });
+
+    await step('the list opens on the retention direction', async () => {
+      await expect(within(toggle).getByRole('radio', { name: 'At most' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      await expect(
+        within(await canvas.findByRole('listbox', { name: /chosen values/i })).getByRole('option', {
+          name: /never chosen/i,
+        }),
+      ).toBeInTheDocument();
+    });
+
+    await step('flipping to At least swaps the presets in place', async () => {
+      await userEvent.click(within(toggle).getByRole('radio', { name: 'At least' }));
+      const list = within(await canvas.findByRole('listbox', { name: /chosen values/i }));
+      await expect(list.getByRole('option', { name: /10 times or more/i })).toBeInTheDocument();
+      await expect(list.queryByRole('option', { name: /never chosen/i })).not.toBeInTheDocument();
+    });
+
+    await step('a typed value applies in the selected direction', async () => {
+      await userEvent.type(
+        await canvas.findByRole('combobox', { name: /search chosen values/i }),
+        '40',
+      );
+      await userEvent.keyboard('{Enter}');
+      await waitFor(async () => {
+        await expect(
+          within(canvasElement).getByLabelText('Chosen: 40 times or more'),
+        ).toBeInTheDocument();
+      });
+    });
+
+    await step('the row reopens on the applied direction, and the other one replaces it', async () => {
+      await userEvent.click(
+        await canvas.findByRole('option', { name: /^chosen, 40 times or more$/i }),
+      );
+      const reopened = await canvas.findByRole('radiogroup', { name: /chosen direction/i });
+      await expect(within(reopened).getByRole('radio', { name: 'At least' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      await userEvent.click(within(reopened).getByRole('radio', { name: 'At most' }));
+      await userEvent.click(
+        within(await canvas.findByRole('listbox', { name: /chosen values/i })).getByRole('option', {
+          name: /never chosen/i,
+        }),
+      );
+      await waitFor(async () => {
+        await expect(within(canvasElement).getByLabelText('Chosen: Never chosen')).toBeInTheDocument();
+        await expect(
+          within(canvasElement).queryByLabelText('Chosen: 40 times or more'),
+        ).not.toBeInTheDocument();
+      });
+    });
+  },
+};
+
+/**
+ * A row with no reverse shows no toggle: `Created` has the date-range picker for
+ * "created within", so a second spelling of it would be two controls for one fact.
+ */
+export const CreatedHasNoDirectionToggle: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = await openMenu(canvasElement);
+    await userEvent.click(canvas.getByRole('option', { name: /^created$/i }));
+    await canvas.findByRole('listbox', { name: /created values/i });
+    await expect(canvas.queryByRole('radiogroup', { name: /direction/i })).not.toBeInTheDocument();
   },
 };
 

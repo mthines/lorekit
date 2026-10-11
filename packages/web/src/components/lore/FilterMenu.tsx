@@ -99,6 +99,18 @@
  * Both props are optional together: a caller that passes neither gets the menu
  * without the section, exactly like `status`/`onStatusChange`.
  *
+ * ### Either direction, from the same row (migration 00112)
+ * Four of the five rows can be read both ways — `Chosen` as "5 times or fewer"
+ * (what a groomer asks) or "10 times or more" (what a reader looking for the
+ * lore that is actually used asks). Their value list opens with a
+ * {@link SegmentedControl} — `At most | At least`, `More than | Within` — and
+ * switching it swaps the preset list in place without leaving the level or
+ * clearing what was typed, so a custom value works in either direction. One row
+ * holds one direction at a time: picking a value clears the other (see
+ * `setRetentionCondition`). The toggle sits OUTSIDE the listbox, because a
+ * radiogroup is not a legal child of one and the rows' positional ids would
+ * shift under it.
+ *
  * ## Status lives here too, but it is NOT a dimension
  * A pinned "Status" row group sits above the search box at level 1, built
  * from `MEMORY_STATUSES`/`STATUS_LABELS`/`STATUS_ICONS` (`lib/status-filter.ts`
@@ -140,6 +152,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
+import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/SegmentedControl';
 import {
   anchoredPosition,
   type AnchoredPosition,
@@ -161,9 +174,11 @@ import {
   RETENTION_CONDITION_BOUNDS,
   requireRetentionField,
   retentionConditionsCount,
+  retentionEntryValue,
   retentionFieldMatches,
   retentionValueRows,
   setRetentionCondition,
+  type PolicyRetentionField,
   type RetentionConditions,
   type RetentionField,
 } from '@/lib/retention-filter';
@@ -201,15 +216,35 @@ export const FIELD_ICONS: Record<FilterField, LucideIcon> = {
  * Each names its DATA rather than its condition: a calendar-plus for when a
  * lesson was written, a clock-history for when one was last opened, a repeat
  * for how often it recurred, a download for how often it was delivered, a
- * pointer for how often something chose it.
+ * pointer for how often something chose it. A reverse direction (00112) reads
+ * the same data, so it wears the same icon as its row.
  */
 export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {
   minAgeDays: CalendarPlus,
   unseenDays: History,
+  openedWithinDays: History,
   maxSeenCount: Repeat,
+  minSeenCount: Repeat,
   maxReadCount: Download,
+  minReadCount: Download,
   maxOpenedCount: MousePointerClick,
+  minOpenedCount: MousePointerClick,
 };
+
+/**
+ * The two segments of a row's direction toggle, the row's own (retention)
+ * direction first — `At most | At least`, `More than | Within` — whichever of
+ * the two is showing. A fixed order, so the segments never trade places under
+ * the pointer when the reader flips between them.
+ */
+function directionItems(field: RetentionField): SegmentedControlItem<RetentionField>[] {
+  const own = requireRetentionField(requireRetentionField(field).entry);
+  const reverse = own.opposite === undefined ? null : requireRetentionField(own.opposite);
+  return [own, ...(reverse ? [reverse] : [])].map((d) => ({
+    value: d.field,
+    label: d.directionLabel ?? d.label,
+  }));
+}
 
 /**
  * A level-1 row: one of `rootSuggestions`' dimension/value rows, or one of the
@@ -217,7 +252,7 @@ export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {
  * addresses ONE array — splitting them would mean two index spaces and an
  * arrow key that has to know which half it is in.
  */
-type MenuRootRow = RootSuggestion | { kind: 'retention'; field: RetentionField };
+type MenuRootRow = RootSuggestion | { kind: 'retention'; field: PolicyRetentionField };
 
 /**
  * Which value list is showing, or `null` for the level-1 row list. A
@@ -226,6 +261,8 @@ type MenuRootRow = RootSuggestion | { kind: 'retention'; field: RetentionField }
  */
 type MenuLevel =
   | { kind: 'filter'; field: FilterField }
+  // `field` is the DIRECTION being shown — `minOpenedCount` for Chosen's
+  // `At least` list — so the toggle is just a level change to the opposite.
   | { kind: 'retention'; field: RetentionField };
 
 /**
@@ -547,7 +584,7 @@ export function FilterMenu({
       return;
     }
     if (row.kind === 'retention') {
-      pushLevel({ kind: 'retention', field: row.field });
+      pushLevel({ kind: 'retention', field: openingDirection(row.field) });
       return;
     }
     // A `Dimension → value` row is a whole condition in one keystroke.
@@ -560,6 +597,27 @@ export function FilterMenu({
     if (!row || !field) return;
     onToggleValue(field, row.value);
     if (close) closeMenu();
+  }
+
+  /**
+   * Which direction a row's value list opens on: the one already applied, so
+   * reopening `Chosen` while `10 times or more` is set shows the `At least`
+   * list with 10 selected — otherwise the row's own (retention) direction.
+   */
+  function openingDirection(entry: PolicyRetentionField): RetentionField {
+    return (retention && retentionEntryValue(retention, entry)?.field) ?? entry;
+  }
+
+  /**
+   * Swap the value list to the other direction of the same row. Stays on the
+   * level and KEEPS the query: a typed number is the custom-value input, so
+   * typing `40` and then flipping to `At least` should offer 40 there.
+   */
+  function switchDirection(next: RetentionField) {
+    setLevel({ kind: 'retention', field: next });
+    setActiveIndex(0);
+    // Popover only — see `pushLevel` for why the sheet must not grab focus.
+    if (!useSheet) inputRef.current?.focus();
   }
 
   /**
@@ -619,7 +677,7 @@ export function FilterMenu({
         pushLevel({ kind: 'filter', field: row.field });
       } else if (row?.kind === 'retention') {
         e.preventDefault();
-        pushLevel({ kind: 'retention', field: row.field });
+        pushLevel({ kind: 'retention', field: openingDirection(row.field) });
       }
       return;
     }
@@ -875,7 +933,13 @@ export function FilterMenu({
           if (row.kind === 'retention') {
             const entry = requireRetentionField(row.field);
             const Icon = RETENTION_FIELD_ICONS[row.field];
-            const value = retention?.[row.field];
+            // Either direction — the badge has to name what is applied, and
+            // `Chosen: 10 times or more` is just as applied as `Never chosen`.
+            const applied = retention ? retentionEntryValue(retention, row.field) : null;
+            const value = applied?.value;
+            const appliedLabel = applied
+              ? requireRetentionField(applied.field).formatValue(applied.value)
+              : undefined;
             // The heading is rendered BETWEEN rows rather than as an entry in
             // `rootRows`, because `activeIndex` and the `role="option"` ids are
             // positional — a non-selectable element in the array would shift
@@ -903,11 +967,7 @@ export function FilterMenu({
                   // The chosen value is a badge, and a badge is aria-hidden
                   // decoration — fold it into the name so a screen reader hears
                   // "Chosen, never chosen" rather than just "Chosen".
-                  aria-label={
-                    value !== undefined
-                      ? `${entry.label}, ${entry.formatValue(value)}`
-                      : undefined
-                  }
+                  aria-label={appliedLabel !== undefined ? `${entry.label}, ${appliedLabel}` : undefined}
                   onClick={() => commitRootRow(i)}
                   onMouseEnter={() => setActiveIndex(i)}
                   className={[
@@ -936,7 +996,7 @@ export function FilterMenu({
                       // the phrase that carries no information.
                       className="max-w-36 truncate rounded-full bg-[var(--color-accent-subtle)] px-1.5 text-[10px] font-semibold text-[var(--color-accent)]"
                     >
-                      {entry.formatValue(value)}
+                      {appliedLabel}
                     </span>
                   )}
                   <ChevronRight
@@ -1137,12 +1197,35 @@ export function FilterMenu({
         />
       </div>
 
+      {/* The direction toggle (00112) — only for a threshold with a reverse.
+          Between the search box and the list rather than inside it: the list
+          is a listbox, and a radiogroup is not a legal child of one. */}
+      {retentionDescriptor?.opposite !== undefined && retentionField && (
+        <div className="px-2.5 pb-2">
+          <SegmentedControl<RetentionField>
+            label={`${retentionDescriptor.label} direction`}
+            items={directionItems(retentionField)}
+            value={retentionField}
+            onChange={switchDirection}
+          />
+        </div>
+      )}
+
       {/* The level transition: a short slide in the direction of travel plus a
           height morph, so the surface reads as one menu changing contents. */}
       <div className="relative overflow-hidden">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={level ? `${level.kind}:${level.field}` : '__root__'}
+            // Keyed by the ROW for a threshold, not the direction, so flipping
+            // the toggle swaps the values in place instead of sliding the whole
+            // level out and back in as if the reader had navigated.
+            key={
+              level
+                ? level.kind === 'retention'
+                  ? `retention:${requireRetentionField(level.field).entry}`
+                  : `filter:${level.field}`
+                : '__root__'
+            }
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: level ? 12 : -12 }}
             animate={{ opacity: 1, x: 0 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: level ? -12 : 12 }}

@@ -768,6 +768,28 @@ These work on the aggregate reads too — `/memories/facets`, `/memories/pivot` 
 `/memories/activity` all take the same five, so a facet count describes the same set the list
 returns rather than the un-narrowed population.
 
+### Finding lore that IS used
+
+Four more thresholds read the same rows the other way. They are READ-only — a retention policy
+cannot carry them — and they reach the same four routes:
+
+| Parameter | Range | Keeps a memory when |
+|-----------|-------|---------------------|
+| `opened_within_days` | 1–3650 | an agent deliberately opened it within N days (one NEVER opened does not match) |
+| `min_seen_count` | 1–100000 | it has been written at least N times |
+| `min_read_count` | 1–100000 | it has been DELIVERED at least N times |
+| `min_opened_count` | 1–100000 | an agent CHOSE to fetch it at least N times |
+
+`sort=opened_count` on `GET /memories` / `POST /memories/list` orders by that same counter, most
+chosen first (ties by id); its `nextCursor` is only valid for that sort.
+
+```bash
+# The lore agents reach for most, top first
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?\
+min_opened_count=5&sort=opened_count"
+```
+
 ### Finding lore that is about to expire
 
 `?expiring_within_days=N` (1–365) narrows the list to memories whose TTL runs out soon — those

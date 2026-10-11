@@ -16,6 +16,7 @@ import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
+import { DEFAULT_EXPLORER_SORT, type ExplorerSort } from '@/lib/explorer-sort';
 import {
   NO_RETENTION_CONDITIONS,
   retentionConditionsToAggregateBody,
@@ -565,6 +566,8 @@ export interface UseMemoriesFilters {
    * no narrowing.
    */
   retentionConditions?: RetentionConditions;
+  /** The list order — see `lib/explorer-sort.ts`. Absent means Newest. */
+  sort?: ExplorerSort;
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
   /**
@@ -625,6 +628,10 @@ export function useMemories(filters: UseMemoriesFilters) {
       // APPENDED at the end, per the rule above — a NEW segment, not a
       // reordering of the fixed five before it.
       filters.retentionConditions ?? NO_RETENTION_CONDITIONS,
+      // APPENDED at the end, per the rule above. A different order is a
+      // different first page, and a cursor minted under one order is not valid
+      // under another — so the sort must split the cache, not share it.
+      filters.sort ?? DEFAULT_EXPLORER_SORT,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
@@ -633,6 +640,7 @@ export function useMemories(filters: UseMemoriesFilters) {
         range: filters.range,
         filters: bar,
         retentionConditions: filters.retentionConditions,
+        sort: filters.sort,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
         expiringWithinDays: filters.expiringWithinDays,

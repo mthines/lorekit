@@ -16,9 +16,12 @@
  * The **operator segment is absent, not empty**. A dimension can include or
  * exclude, so its middle segment is a real choice; a threshold's comparison is
  * baked into the condition itself (`min_age_days` is always "at least",
- * `max_opened_count` always "at most"), and the value's own wording carries it —
- * "More than 30 days ago", "Never chosen". Rendering an inert `is` segment would
- * put a third of the pill's width into a word that answers nothing.
+ * `max_opened_count` always "at most", `min_opened_count` always "at least"),
+ * and the value's own wording carries it — "More than 30 days ago", "Never
+ * chosen", "10 times or more". Rendering an inert `is` segment would put a
+ * third of the pill's width into a word that answers nothing. Flipping a
+ * direction happens in the menu's value list, which the value segment opens on
+ * the applied direction.
  *
  * The type segment stays inert for the same reason it is in `FilterPill`:
  * changing a threshold's field would invalidate the value it holds, so the

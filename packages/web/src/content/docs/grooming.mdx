@@ -148,6 +148,35 @@ conditions AND filter bar to Settings → Retention Policies, which opens the Ne
 policy dialog pre-filled with all of it, using the identical filter control to
 edit it further.
 
+### Reading the other way: the lore that IS used
+
+Four of the entries also answer the opposite question. Their value list opens
+with a toggle — **At most / At least** for the three counters, **More than /
+Within** for Last agent open — and both the presets and a typed custom value
+apply in whichever direction is selected:
+
+| Menu entry | Reverse condition | What it tests |
+|---|---|---|
+| Last agent open → Within | `opened_within_days` | Last deliberately fetched within N days. A lesson never opened does **not** match, however new |
+| Recurrence → At least | `min_seen_count` | Written N times or more |
+| Delivered → At least | `min_read_count` | Handed to an agent N times or more |
+| Chosen → At least | `min_opened_count` | Deliberately fetched N times or more — the lore agents actually reach for |
+
+A row holds one direction at a time: picking `Chosen → At least → 10` replaces
+`Chosen: 5 times or fewer` rather than combining into an empty range. The pill
+carries the direction in its wording (`Chosen: 10 times or more`), and the
+counts, stat cards and matrix narrow exactly as they do for the retention side.
+
+These reverse directions are for **exploring**, not for policies — a retention
+policy cannot carry them, so **Create retention policy** is hidden while one is
+set rather than saving a policy that would archive a different set from the one
+on screen.
+
+To see the most-used lore first without picking a threshold at all, set the
+**Sort** control next to the date picker to **Most chosen**: the list orders by
+deliberate fetches, highest first (`?sort=opened_count`). **Newest** is the
+default.
+
 </TutorialStep>
 
 <TutorialStep number={2} title="Save it as a policy">

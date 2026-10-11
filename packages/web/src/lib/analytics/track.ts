@@ -38,6 +38,7 @@
  * - `lore.memory_archive_toggled`      — a memory was archived or restored.
  * - `lore.filter_changed`              — any filter-bar mutation, thresholds included.
  * - `lore.status_changed`              — Active / Archived / Expiring.
+ * - `lore.sort_changed`                — the list order (Newest / Most chosen).
  * - `lore.search_committed`            — the debounced search settled.
  * - `lore.scope_selected`              — a scope chip (or Browse-all row) was picked.
  * - `lore.range_changed`               — any of the FIVE controls that write `?range=`.
@@ -78,6 +79,7 @@ import type { ButtonSize, ButtonVariant } from '@/lib/button-styles';
 import type { FilterField, FilterOperator } from '@/lib/filters';
 import type { LessonUtility } from '@/lib/lesson-utility';
 import type { MemoryStatus } from '@/lib/status-filter';
+import type { ExplorerSort } from '@/lib/explorer-sort';
 import type { RetentionField } from '@/lib/retention-filter';
 
 import { dwellBucket, type ContentType, type ScrollMilestone } from './reading';
@@ -245,6 +247,8 @@ export type AnalyticsEvent =
       retentionCount: number;
     }
   | { name: 'lore.status_changed'; status: MemoryStatus }
+  /** The list order picked — a closed set (`lib/explorer-sort.ts`), never free text. */
+  | { name: 'lore.sort_changed'; sort: ExplorerSort }
   | {
       name: 'lore.search_committed';
       /**
@@ -449,6 +453,8 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
     }
     case 'lore.status_changed':
       return { 'lorekit.lore.status': event.status };
+    case 'lore.sort_changed':
+      return { 'lorekit.lore.sort': event.sort };
     case 'lore.search_committed':
       // A measure, and unconditional: a 0 is the reader CLEARING the box, which
       // is as much a fact as typing into it.
