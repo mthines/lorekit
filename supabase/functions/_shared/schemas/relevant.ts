@@ -99,7 +99,8 @@ export const RelevantEntrySchema = z.object({
     /**
      * Graded lexical relevance in `[0,1)` — Postgres `ts_rank_cd` over the
      * `fts` column, saturated into the range (migration 00112). `0` means the
-     * request carried no `q` at all, never "matched, but badly": a row that did
+     * request carried no `q`, or a `q` of negated terms only (e.g.
+     * `-deprecated`), which matches rows without scoring them. A row that did
      * not match is not returned. It is a LEXICAL score — term overlap and
      * proximity, deterministically computed — and never a semantic or
      * embedding similarity.
