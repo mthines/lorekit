@@ -252,12 +252,13 @@ export async function handleRelevant(
 
   // `min_score_filtered_count` is how many RANKED candidates `min_score` removed
   // before diversification — `ranked`, not `candidates`, because it counts what
-  // the filter on the line above dropped and nothing else. With the other two it
-  // separates the three reasons a response comes back short: nothing matched
-  // (`candidate_count` 0), the threshold dropped hits (this > 0), or `limit` cut
-  // the shortlist (`result_count` equal to `lorekit.limit`). Since 00112 graded
-  // relevance, a `min_score` tuned against the old 0.375 floor can drop hits it
-  // used to keep, and without this count that change is invisible.
+  // the `filtered` step (`ranked.filter` by `min_score`) dropped and nothing
+  // else. With the other two it separates the three reasons a response comes
+  // back short: nothing matched (`candidate_count` 0), the threshold dropped
+  // hits (this > 0), or `limit` cut the shortlist (`result_count` equal to
+  // `lorekit.limit`). Since 00112 graded relevance, a `min_score` tuned against
+  // the old 0.375 floor can drop hits it used to keep, and without this count
+  // that change is invisible.
   span.setAttributes({
     'lorekit.result_count': entries.length,
     'lorekit.candidate_count': candidates.length,
