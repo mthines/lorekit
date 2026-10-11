@@ -3,6 +3,7 @@ import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 
 type TranscriptLine = {
   day: string;
@@ -50,9 +51,9 @@ const WITH: TranscriptLine[] = [
  */
 export function BeforeAfter() {
   return (
-    <section aria-labelledby="the-problem" className="lk-reveal w-full max-w-5xl">
+    <section aria-labelledby={LANDING_SECTION_ID.problem} className="lk-reveal w-full max-w-5xl">
       <SectionHeading
-        id="the-problem"
+        id={LANDING_SECTION_ID.problem}
         eyebrow="01 / the problem"
         title={
           <>

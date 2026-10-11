@@ -171,6 +171,81 @@ describe('track — ui.button_click', () => {
   });
 });
 
+describe('track — landing.cta_clicked', () => {
+  it('maps the intent and the placement onto lorekit.landing.*', () => {
+    track({ name: 'landing.cta_clicked', cta: 'get-token', placement: 'hero' });
+
+    expect(lastCall().name).toBe('landing.cta_clicked');
+    expect(lastCall().attributes).toEqual({
+      'lorekit.landing.cta': 'get-token',
+      'lorekit.landing.placement': 'hero',
+    });
+  });
+
+  it('keeps the two answers to "hosted or offline?" apart', () => {
+    track({ name: 'landing.cta_clicked', cta: 'get-token', placement: 'hero' });
+    track({ name: 'landing.cta_clicked', cta: 'offline-guide', placement: 'hero' });
+
+    expect(calls.map((c) => c.attributes['lorekit.landing.cta'])).toEqual([
+      'get-token',
+      'offline-guide',
+    ]);
+  });
+
+  it('sends only the two bounded ids — never a label or a URL', () => {
+    track({ name: 'landing.cta_clicked', cta: 'github', placement: 'header' });
+
+    expect(Object.keys(lastCall().attributes).sort()).toEqual([
+      'lorekit.landing.cta',
+      'lorekit.landing.placement',
+    ]);
+  });
+});
+
+describe('track — landing.demo_tab_selected', () => {
+  it('records the tab by its stable id', () => {
+    track({ name: 'landing.demo_tab_selected', tab: 'pr-review' });
+
+    expect(lastCall().name).toBe('landing.demo_tab_selected');
+    expect(lastCall().attributes).toEqual({ 'lorekit.landing.demo_tab': 'pr-review' });
+  });
+});
+
+describe('track — content.* on the home page', () => {
+  // The home page reuses the blog's reading model; what has to hold is that it
+  // arrives on the SAME attributes, told apart only by the content type, so one
+  // dashboard can split the two surfaces with a single group-by.
+  it('reports landing scroll depth on the blog attributes with type=landing', () => {
+    track({ name: 'content.scroll_depth', contentType: 'landing', slug: 'home', depthPercent: 50 });
+
+    expect(lastCall().attributes).toEqual({
+      'lorekit.content.type': 'landing',
+      'lorekit.content.slug': 'home',
+      'lorekit.content.depth_percent': 50,
+    });
+  });
+
+  it('reports a landing section dwell with its index and bucket', () => {
+    track({
+      name: 'content.section_read',
+      contentType: 'landing',
+      slug: 'home',
+      sectionId: 'the-problem',
+      sectionIndex: 2,
+      dwellMs: 7_200,
+    });
+
+    expect(lastCall().attributes).toEqual({
+      'lorekit.content.type': 'landing',
+      'lorekit.content.slug': 'home',
+      'lorekit.content.section.id': 'the-problem',
+      'lorekit.content.section.index': 2,
+      'lorekit.content.section.dwell_ms': 7_200,
+      'lorekit.content.section.dwell_bucket': '2_5_15s',
+    });
+  });
+});
+
 describe('track — best effort', () => {
   it('swallows an SDK failure instead of breaking the caller', () => {
     state.throwNext = true;

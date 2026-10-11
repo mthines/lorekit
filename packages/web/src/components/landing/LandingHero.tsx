@@ -1,9 +1,11 @@
-import Link from 'next/link';
 import { ArrowRight, Check } from 'lucide-react';
 
 import { GitHubMark } from '@/components/ui/GitHubMark';
+import type { LandingCta } from '@/lib/analytics/track';
 
 import { CopyCommand } from './CopyCommand';
+import { LandingLink } from './LandingLink';
+import { LANDING_SECTION_ID } from './sections';
 
 /** Each claim is checkable: the plan limit is the free-plan memory cap
  *  (`docs/limits.md`), the tool list names the integration level rather than
@@ -26,21 +28,33 @@ const TRUST_POINTS = [
  * as "this one command gives me an offline setup" — and then meets an agent
  * pointed at a server it has no token for. Naming both paths, at equal weight,
  * costs one line and removes that first-run failure.
+ *
+ * Each path reports its own `landing.cta_clicked` intent, so the ratio of
+ * `get-token` to `offline-guide` from `placement: 'hero'` is the direct answer
+ * to "which path do visitors want?" — read it next to `install_command.copied`.
  */
-const NEXT_STEPS = [
+const NEXT_STEPS: readonly {
+  label: string;
+  body: string;
+  href: string;
+  linkText: string;
+  cta: LandingCta;
+}[] = [
   {
     label: 'Hosted',
     body: 'Sign in for a free token and paste it when the installer asks.',
     href: '/login',
-    cta: 'Get a token',
+    linkText: 'Get a token',
+    cta: 'get-token',
   },
   {
     label: 'Offline',
     body: 'No account: skip the token, then switch the store to local mode.',
     href: '/docs/offline',
-    cta: 'Offline guide',
+    linkText: 'Offline guide',
+    cta: 'offline-guide',
   },
-] as const;
+];
 
 /**
  * The home page's first screen.
@@ -68,13 +82,13 @@ const NEXT_STEPS = [
 export function LandingHero() {
   return (
     <section
-      aria-labelledby="hero-title"
+      aria-labelledby={LANDING_SECTION_ID.hero}
       className="relative z-10 flex flex-col items-center px-6 pb-14 pt-14 sm:pt-20"
     >
-      <a
+      <LandingLink
         href="https://github.com/mthines/lorekit"
-        target="_blank"
-        rel="noopener noreferrer"
+        cta="github"
+        placement="hero"
         className="lk-rise group mb-8 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)]/80 py-1 pl-1 pr-3 text-xs text-[var(--color-content-secondary)] backdrop-blur-sm transition-colors duration-200 hover:border-[var(--color-accent)]/50 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
       >
         <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent-subtle)] px-2 py-0.5 font-mono font-semibold text-[var(--color-accent)]">
@@ -86,10 +100,10 @@ export function LandingHero() {
           aria-hidden
           className="size-3 transition-transform duration-200 group-hover:translate-x-0.5"
         />
-      </a>
+      </LandingLink>
 
       <h1
-        id="hero-title"
+        id={LANDING_SECTION_ID.hero}
         className="lk-rise mb-6 max-w-4xl text-center text-4xl font-bold leading-[1.05] tracking-tight text-[var(--color-content-primary)] sm:text-5xl lg:text-6xl"
         style={{ '--lk-delay': '60ms' } as React.CSSProperties}
       >
@@ -130,16 +144,18 @@ export function LandingHero() {
                 {step.label}
               </span>
               <span className="text-sm text-[var(--color-content-primary)]">{step.body}</span>
-              <Link
+              <LandingLink
                 href={step.href}
+                cta={step.cta}
+                placement="hero"
                 className="group mt-1 inline-flex w-fit items-center gap-1 rounded text-sm font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
               >
-                {step.cta}
+                {step.linkText}
                 <ArrowRight
                   aria-hidden
                   className="size-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
                 />
-              </Link>
+              </LandingLink>
             </li>
           ))}
         </ul>

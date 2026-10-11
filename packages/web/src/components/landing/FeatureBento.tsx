@@ -4,6 +4,7 @@ import { Archive, BarChart3, GitPullRequest, Plug } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 
 /**
  * "03 / what you get" — four capabilities, each with a small picture of the
@@ -26,9 +27,9 @@ import { SectionHeading } from './SectionHeading';
  */
 export function FeatureBento() {
   return (
-    <section aria-labelledby="what-you-get" className="lk-reveal w-full max-w-5xl">
+    <section aria-labelledby={LANDING_SECTION_ID.whatYouGet} className="lk-reveal w-full max-w-5xl">
       <SectionHeading
-        id="what-you-get"
+        id={LANDING_SECTION_ID.whatYouGet}
         eyebrow="03 / what you get"
         title={
           <>

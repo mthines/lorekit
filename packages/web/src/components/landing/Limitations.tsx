@@ -1,4 +1,5 @@
 import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 
 const LIMITS = [
   'It doesn’t read your codebase. It stores what your agent writes to it, and nothing else.',
@@ -21,9 +22,9 @@ const LIMITS = [
  */
 export function Limitations() {
   return (
-    <section aria-labelledby="limitations" className="lk-reveal w-full max-w-3xl">
+    <section aria-labelledby={LANDING_SECTION_ID.limitations} className="lk-reveal w-full max-w-3xl">
       <SectionHeading
-        id="limitations"
+        id={LANDING_SECTION_ID.limitations}
         eyebrow="05 / the fine print, up front"
         title="What LoreKit doesn’t do"
         lede="Better you read it here than find it on day one."

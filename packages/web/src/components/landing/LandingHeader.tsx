@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 
 import { GitHubMark } from '@/components/ui/GitHubMark';
 
+import { LandingLink } from './LandingLink';
+
 // Docs and Blog share one style and one breakpoint: hidden below `sm` so the
 // mobile header keeps room for the GitHub icon and the Sign in control.
 const HEADER_TEXT_LINK_CLASS =
@@ -20,6 +22,11 @@ const HEADER_TEXT_LINK_CLASS =
  * label "Sign in" does not say), while `/login` passes the compact
  * `LoginButton`, which is that OAuth trigger and is correct once the visitor
  * has already chosen to sign in.
+ *
+ * Every outbound link reports `landing.cta_clicked` with `placement: 'header'`.
+ * The header renders on `/login` too, so those clicks carry that page's path —
+ * filter on `page.url.path` when only the home page is wanted. The logo is not
+ * tracked: it links to the page the visitor is already on.
  *
  * Sticky with a translucent, blurred fill, so Docs and Sign in stay one click
  * away on a long page without the bar ever hiding the content scrolling under
@@ -48,28 +55,30 @@ export function LandingHeader({ action }: { action?: ReactNode }) {
         </Link>
 
         <nav aria-label="Site" className="flex items-center gap-1 sm:gap-2">
-          <Link href="/docs" className={HEADER_TEXT_LINK_CLASS}>
+          <LandingLink href="/docs" cta="docs" placement="header" className={HEADER_TEXT_LINK_CLASS}>
             Docs
-          </Link>
-          <Link href="/blog" className={HEADER_TEXT_LINK_CLASS}>
+          </LandingLink>
+          <LandingLink href="/blog" cta="blog" placement="header" className={HEADER_TEXT_LINK_CLASS}>
             Blog
-          </Link>
-          <a
+          </LandingLink>
+          <LandingLink
             href="https://github.com/mthines/lorekit"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="View source on GitHub"
+            cta="github"
+            placement="header"
+            ariaLabel="View source on GitHub"
             className="flex size-11 items-center justify-center rounded-lg text-[var(--color-content-secondary)] transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
           >
             <GitHubMark className="size-5" />
-          </a>
+          </LandingLink>
           {action ?? (
-            <Link
+            <LandingLink
               href="/login"
+              cta="sign-in"
+              placement="header"
               className="flex h-9 items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-sm font-medium text-[var(--color-content-primary)] transition-colors duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
             >
               Sign in
-            </Link>
+            </LandingLink>
           )}
         </nav>
       </div>

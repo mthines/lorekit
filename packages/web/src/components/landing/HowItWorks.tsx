@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 import { StepBadge } from './StepBadge';
 
 type Step = {
@@ -52,9 +53,9 @@ const STEPS: Step[] = [
 
 export function HowItWorks() {
   return (
-    <section aria-labelledby="how-it-works" className="lk-reveal w-full max-w-5xl">
+    <section aria-labelledby={LANDING_SECTION_ID.howItWorks} className="lk-reveal w-full max-w-5xl">
       <SectionHeading
-        id="how-it-works"
+        id={LANDING_SECTION_ID.howItWorks}
         eyebrow="02 / how it works"
         title={
           <>

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
 import { AuthHashCatcher } from '@/components/auth/AuthHashCatcher';
+import { ReadingTelemetry } from '@/components/content/ReadingTelemetry';
 import { BeforeAfter } from '@/components/landing/BeforeAfter';
 import { FeatureBento } from '@/components/landing/FeatureBento';
 import { GetStartedCard } from '@/components/landing/GetStartedCard';
@@ -10,6 +11,7 @@ import { LandingBackdrop } from '@/components/landing/LandingBackdrop';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LandingHero } from '@/components/landing/LandingHero';
 import { Limitations } from '@/components/landing/Limitations';
+import { LANDING_SECTION_ORDER } from '@/components/landing/sections';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
 import { WhereLoreLives } from '@/components/landing/WhereLoreLives';
 import { SiteFooter } from '@/components/layout/SiteFooter';
@@ -89,22 +91,39 @@ export default async function RootPage({
   //
   // `overflow-x-clip`, not `overflow-hidden`: hidden makes <main> a scroll
   // container, and the sticky header would stick to a box that never scrolls.
+  //
+  // Reading telemetry is the blog's (`ReadingTelemetry`, `contentType:
+  // 'landing'`), measured against the `data-reading-content` wrapper — hero to
+  // closing card, header and footer excluded — so 100 % means "reached the
+  // closing call to action", not "scrolled past the footer links". The selector
+  // is explicit because the default (`article`) would match the first card on
+  // the page. The wrapper is a real box, not `display: contents`: an element
+  // with no box measures zero high, which `readPercent` reports as 0 %.
+  // `LANDING_SECTION_ORDER` must list the sections in the order rendered below.
   return (
     <main className="relative flex min-h-screen flex-col overflow-x-clip bg-[var(--color-bg)]">
       <AuthHashCatcher />
+      <ReadingTelemetry
+        contentType="landing"
+        slug="home"
+        sectionIds={LANDING_SECTION_ORDER}
+        contentSelector="[data-reading-content]"
+      />
       <LandingBackdrop />
       <LandingHeader />
 
-      <LandingHero />
+      <div data-reading-content className="relative z-10 flex flex-col">
+        <LandingHero />
 
-      <div className="relative z-10 flex flex-col items-center gap-28 px-6 pb-16 sm:gap-36">
-        <TerminalTheater />
-        <BeforeAfter />
-        <HowItWorks />
-        <FeatureBento />
-        <WhereLoreLives />
-        <Limitations />
-        <GetStartedCard />
+        <div className="flex flex-col items-center gap-28 px-6 pb-16 sm:gap-36">
+          <TerminalTheater />
+          <BeforeAfter />
+          <HowItWorks />
+          <FeatureBento />
+          <WhereLoreLives />
+          <Limitations />
+          <GetStartedCard />
+        </div>
       </div>
 
       <SiteFooter className="relative z-10 mt-16" />

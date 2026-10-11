@@ -3,6 +3,7 @@ import { Cloud, HardDrive, Server, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 
 type Store = {
   name: string;
@@ -47,9 +48,9 @@ const STORES: Store[] = [
  */
 export function WhereLoreLives() {
   return (
-    <section aria-labelledby="where-lore-lives" className="lk-reveal w-full max-w-5xl">
+    <section aria-labelledby={LANDING_SECTION_ID.whereLoreLives} className="lk-reveal w-full max-w-5xl">
       <SectionHeading
-        id="where-lore-lives"
+        id={LANDING_SECTION_ID.whereLoreLives}
         eyebrow="04 / where your lore lives"
         title={
           <>

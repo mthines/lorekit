@@ -1,9 +1,7 @@
-import Link from 'next/link';
-
-import { GetStartedButton } from '@/components/learn/GetStartedButton';
-
 import { CopyCommand } from './CopyCommand';
+import { LandingLink } from './LandingLink';
 import { StepBadge } from './StepBadge';
+import { LANDING_SECTION_ID } from './sections';
 
 const INLINE_LINK_CLASS =
   'rounded font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]';
@@ -24,12 +22,13 @@ const INLINE_LINK_CLASS =
  *
  * The copy surface is `landing-get-started`, kept apart from the hero's
  * `landing-hero` so "did the command alone convert" and "did the whole page
- * convert" stay separable in the data.
+ * convert" stay separable in the data. Its links report `landing.cta_clicked`
+ * with `placement: 'get-started'` for the same reason.
  */
 export function GetStartedCard() {
   return (
     <section
-      aria-labelledby="get-started"
+      aria-labelledby={LANDING_SECTION_ID.getStarted}
       className="lk-reveal lk-glow-frame relative mx-auto w-full max-w-3xl overflow-hidden rounded-3xl px-6 py-10 sm:px-12 sm:py-14"
     >
       {/* A warm pool of light at the top edge — the page's last moment of
@@ -45,7 +44,7 @@ export function GetStartedCard() {
           get started
         </p>
         <h2
-          id="get-started"
+          id={LANDING_SECTION_ID.getStarted}
           className="mb-3 text-balance text-center text-3xl font-semibold tracking-tight text-[var(--color-content-primary)] sm:text-4xl"
         >
           Give your agents <span className="lk-gradient-text">a memory.</span>
@@ -76,14 +75,24 @@ export function GetStartedCard() {
                 Paste a token, or go offline
               </p>
               <p className="text-sm leading-relaxed text-[var(--color-content-secondary)]">
-                <Link href="/login" className={INLINE_LINK_CLASS}>
+                <LandingLink
+                  href="/login"
+                  cta="sign-in"
+                  placement="get-started"
+                  className={INLINE_LINK_CLASS}
+                >
                   Sign in
-                </Link>{' '}
+                </LandingLink>{' '}
                 for a free token to share lessons across machines, teammates and CI. Or skip
                 it and{' '}
-                <Link href="/docs/offline" className={INLINE_LINK_CLASS}>
+                <LandingLink
+                  href="/docs/offline"
+                  cta="offline-guide"
+                  placement="get-started"
+                  className={INLINE_LINK_CLASS}
+                >
                   switch to local mode
-                </Link>{' '}
+                </LandingLink>{' '}
                 — lessons stay on this machine as markdown you can read and commit.
               </p>
             </div>
@@ -105,7 +114,17 @@ export function GetStartedCard() {
           </li>
         </ol>
 
-        <GetStartedButton />
+        <div className="flex justify-center border-t border-[var(--color-border)] pt-5">
+          <LandingLink
+            href="/docs"
+            cta="docs"
+            placement="get-started"
+            className="inline-flex items-center gap-1.5 rounded text-sm text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+          >
+            Explore docs &amp; guides
+            <span aria-hidden>→</span>
+          </LandingLink>
+        </div>
       </div>
     </section>
   );

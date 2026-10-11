@@ -4,10 +4,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Cloud, HardDrive } from 'lucide-react';
 
+import { track, type LandingDemoTab } from '@/lib/analytics/track';
 import { useAmbientAnimation } from '@/lib/hooks/useAmbientAnimation';
 import { createPausableTimers, type PausableTimers } from '@/lib/pausable-timers';
 
 import { SectionHeading } from './SectionHeading';
+import { LANDING_SECTION_ID } from './sections';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +48,8 @@ type ScriptLine = {
 };
 
 type UseCase = {
+  /** Stable telemetry id — the label is copy and may change; this may not. */
+  id: LandingDemoTab;
   label: string;
   act1: ScriptLine[];
   act2: ScriptLine[];
@@ -55,6 +59,7 @@ type UseCase = {
 
 const USE_CASES: UseCase[] = [
   {
+    id: 'self-healing',
     label: 'Self-healing',
     act1: [
       { type: 'command', text: 'pnpm build', pauseAfter: 240 },
@@ -116,6 +121,7 @@ const USE_CASES: UseCase[] = [
     ],
   },
   {
+    id: 'code-conventions',
     label: 'Code conventions',
     act1: [
       {
@@ -153,6 +159,7 @@ const USE_CASES: UseCase[] = [
     ],
   },
   {
+    id: 'pr-review',
     label: 'PR review',
     act1: [
       {
@@ -546,11 +553,11 @@ export function TerminalTheater() {
   return (
     <section
       ref={theaterRef}
-      aria-labelledby="live-demo"
+      aria-labelledby={LANDING_SECTION_ID.liveDemo}
       className="w-full max-w-3xl mx-auto"
     >
       <SectionHeading
-        id="live-demo"
+        id={LANDING_SECTION_ID.liveDemo}
         eyebrow="live demo"
         title={
           <>
@@ -583,7 +590,14 @@ export function TerminalTheater() {
           {USE_CASES.map((uc, i) => (
             <button
               key={uc.label}
-              onClick={() => { if (i !== activeTab) setActiveTab(i); }}
+              onClick={() => {
+                if (i === activeTab) return;
+                // Only a visitor's own pick is reported — the auto-playing first
+                // tab is not a choice — so this counts which use case people
+                // went looking for, not which one happened to be on screen.
+                track({ name: 'landing.demo_tab_selected', tab: uc.id });
+                setActiveTab(i);
+              }}
               className={[
                 'relative px-3 py-1.5 rounded-md font-mono text-xs',
                 'transition-colors duration-150',
