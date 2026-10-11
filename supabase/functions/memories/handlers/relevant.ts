@@ -24,7 +24,12 @@ import { outcomeFromTags } from '../../_shared/ranking/outcome-signal.ts';
 
 /**
  * One row of `lorekit_memory_relevant_candidates` (migration 00112) — the
- * `RELEVANT_SELECT` projection plus the graded `relevance`.
+ * route's narrow projection plus the graded `relevance`. The RPC's
+ * `returns table` is the route's only column list. It is deliberately NOT
+ * `MEMORY_SELECT`'s wide row (full `value` plus the `orgs(...)` embed): the
+ * handler reads `value` only to derive a one-line hook, and candidates
+ * outnumber the returned limit, so the wide row would move text out of
+ * Postgres only to discard it.
  *
  * `relevance` is the RAW, unbounded `ts_rank_cd` value, and `null` when the
  * request carried no `q`. Normalising it is this handler's job, not the RPC's:

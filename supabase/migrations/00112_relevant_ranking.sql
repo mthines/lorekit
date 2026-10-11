@@ -21,7 +21,8 @@
 --      fall outside the window and never be scored at all.
 --
 -- Both are the same fix: choose and grade the candidates IN Postgres. This
--- function returns the `RELEVANT_SELECT` projection plus a `relevance` column
+-- function returns the route's narrow projection (`scope, key, value,
+-- seen_count, updated_at, tags, origin_pr`) plus a `relevance` column
 -- = `ts_rank_cd(fts, websearch_to_tsquery('english', p_q))`, and — when a
 -- query is supplied — cuts the window in RANK order instead of recency order.
 --
