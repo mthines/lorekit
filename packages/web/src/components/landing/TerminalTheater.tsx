@@ -7,6 +7,8 @@ import { Cloud, HardDrive } from 'lucide-react';
 import { useAmbientAnimation } from '@/lib/hooks/useAmbientAnimation';
 import { createPausableTimers, type PausableTimers } from '@/lib/pausable-timers';
 
+import { SectionHeading } from './SectionHeading';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Where a memory lives: the on-disk offline store or the hosted remote store. */
@@ -252,11 +254,10 @@ function TypewriterLine({
   // layout shift. With the loop restarting forever, the login page accumulated
   // thousands of CLS entries per visit (p75 0.21, worst 0.58).
   //
-  // The theater does NOT sit above any call to action: `app/page.tsx` renders
-  // the hero — install command, sign-in and docs links — and only reaches this
-  // several sections further down, so the shifting text is always below every
-  // control. The cost is the accrued shift entries themselves, which CLS sums
-  // for the whole session; it is not a CTA moving under a cursor.
+  // This matters more now that the theater is the home page's product shot,
+  // rendered directly under the hero: every section and the closing call to
+  // action sit BELOW it, so a line that grew mid-type would push live controls
+  // around under the visitor's cursor, on top of the CLS entries it books.
   //
   // So: a full, invisible copy of the text reserves the space, and the typed
   // prefix is painted over it. The overlay is out of flow, so the number of
@@ -545,21 +546,24 @@ export function TerminalTheater() {
   return (
     <section
       ref={theaterRef}
-      aria-label="Terminal demo: how LoreKit persists agent memory"
-      className="w-full max-w-2xl mx-auto"
+      aria-labelledby="live-demo"
+      className="w-full max-w-3xl mx-auto"
     >
-      {/* Heading */}
-      <div className="mb-6 text-center">
-        <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-1">
-          Session A writes. Session B already knows.
-        </h2>
-        <p className="text-sm text-[var(--color-content-secondary)]">
-          Two sessions, one store, no re-explaining.
-        </p>
-      </div>
+      <SectionHeading
+        id="live-demo"
+        eyebrow="live demo"
+        title={
+          <>
+            Session A writes. <span className="lk-gradient-text">Session B already knows.</span>
+          </>
+        }
+        lede="Two sessions, one store, no re-explaining."
+      />
 
-      {/* Terminal window */}
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden shadow-[0_0_40px_var(--color-accent-glow)]">
+      {/* Terminal window — the page's product shot. `lk-tilt` lays it back and
+          lifts it flat as it scrolls in; `lk-glow-frame` is the amber edge the
+          page reserves for the product and its actions. */}
+      <div className="lk-glow-frame lk-tilt rounded-2xl overflow-hidden">
 
         {/* Title bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
@@ -688,8 +692,8 @@ export function TerminalTheater() {
       </div>
 
       {/* Caption */}
-      <p className="mt-4 text-center font-mono text-xs text-[var(--color-content-tertiary)]">
-        Memories survive session ends · Shared across Claude Code, Cursor &amp; Codex
+      <p className="mt-4 text-center font-mono text-xs text-[var(--color-content-secondary)]">
+        Memories survive session ends · Shared across Claude Code, Cursor &amp; any MCP client
       </p>
     </section>
   );

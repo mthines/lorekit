@@ -40,7 +40,9 @@ export function CopyCommand({
    * `sm` is the inline form used inside a step list. `lg` is the hero form,
    * where this affordance IS the page's primary call to action: it gets a
    * 40px-tall copy control (WCAG 2.2 SC 2.5.8 asks for 24px — a primary CTA
-   * should clear that comfortably) and body-sized command text.
+   * should clear that comfortably), body-sized command text, the amber
+   * `lk-glow-frame`, and a FILLED copy button — the one solid-amber control on
+   * the page, so nothing else competes with it for the first click.
    */
   size?: 'sm' | 'lg';
 }) {
@@ -73,31 +75,42 @@ export function CopyCommand({
   return (
     <div
       className={cn(
-        'mt-1 flex items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
-        isLarge ? 'py-2 pl-4 pr-2' : 'py-1.5 pl-3 pr-1.5',
+        'mt-1 flex items-center justify-between gap-2',
+        isLarge
+          ? 'lk-glow-frame rounded-xl py-2 pl-4 pr-2 [--lk-frame-fill:var(--color-bg-elevated)]'
+          : 'rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1.5 pl-3 pr-1.5',
       )}
     >
       <code
         className={cn(
-          'min-w-0 truncate font-mono text-[var(--color-accent)]',
-          isLarge ? 'text-sm' : 'text-xs',
+          'flex min-w-0 items-baseline gap-2 font-mono text-[var(--color-accent)]',
+          isLarge ? 'text-sm sm:text-base' : 'text-xs',
         )}
       >
-        {command}
+        {/* The prompt says "this goes in a terminal" at a glance. It sits
+            outside the copied string and is unselectable, so neither the
+            button nor a manual drag-select ever picks up a stray `$`. */}
+        <span aria-hidden className="select-none text-[var(--color-content-secondary)]">
+          $
+        </span>
+        <span className="truncate">{command}</span>
       </code>
       <button
         onClick={handleCopy}
         aria-label={copied ? 'Copied' : 'Copy command to clipboard'}
         className={cn(
-          // The label was `--color-content-tertiary`, which is 2.6:1 on this
-          // surface — under the 4.5:1 floor for text at any size. Secondary is
-          // 6.2:1 and reads as the same de-emphasised control.
-          //
           // `active:scale` and nothing else: a transform stays on the
           // compositor, which is where press feedback has to run to land inside
           // the ~100ms window that still reads as instant.
-          'flex shrink-0 items-center gap-1 rounded-md font-medium text-[var(--color-content-secondary)] transition-[color,background-color,transform] duration-150 ease-out hover:bg-[var(--color-bg-raised)] hover:text-[var(--color-accent)] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]',
-          isLarge ? 'min-h-10 px-3 text-xs' : 'px-2 py-1 text-[10px]',
+          'flex shrink-0 items-center gap-1 rounded-md font-medium transition-[color,background-color,transform] duration-150 ease-out active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]',
+          isLarge
+            ? // Dark text on solid amber: 9.9:1, and the only filled control on
+              // the page.
+              'min-h-10 gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-bg)] hover:bg-[var(--color-accent-bright)] focus-visible:outline-offset-2'
+            : // The label was `--color-content-tertiary`, which is 2.6:1 on this
+              // surface — under the 4.5:1 floor for text at any size. Secondary
+              // is 6.2:1 and reads as the same de-emphasised control.
+              'px-2 py-1 text-[10px] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)] hover:text-[var(--color-accent)]',
         )}
       >
         {copied

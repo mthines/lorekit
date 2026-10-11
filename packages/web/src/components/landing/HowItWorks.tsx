@@ -1,3 +1,6 @@
+import { SectionHeading } from './SectionHeading';
+import { StepBadge } from './StepBadge';
+
 const STEPS = [
   {
     title: 'Your agent writes what it learns',
@@ -26,39 +29,49 @@ time it needs it └────────────────────
 
 export function HowItWorks() {
   return (
-    <section aria-labelledby="how-it-works" className="lk-reveal w-full max-w-3xl">
-      <h2
+    <section aria-labelledby="how-it-works" className="lk-reveal w-full max-w-5xl">
+      <SectionHeading
         id="how-it-works"
-        className="mb-2 text-center text-xl font-semibold text-[var(--color-content-primary)]"
-      >
-        One store. Every agent, every machine.
-      </h2>
-      <p className="mb-8 text-center text-sm text-[var(--color-content-secondary)]">
-        Two MCP tool calls are the whole mechanic.
-      </p>
+        eyebrow="02 / how it works"
+        title={
+          <>
+            One store. <span className="lk-gradient-text">Every agent, every machine.</span>
+          </>
+        }
+        lede="Two MCP tool calls are the whole mechanic. The CLI wires the hooks that make your agent call them."
+      />
 
-      <pre
+      {/* Framed like a file so it reads as the README excerpt it is. */}
+      <figure
         aria-hidden
-        className="mb-8 hidden overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 font-mono text-[11px] leading-relaxed text-[var(--color-content-secondary)] sm:block"
+        className="mx-auto mb-12 hidden max-w-3xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]/80 sm:block"
       >
-        {DIAGRAM}
-      </pre>
+        <figcaption className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2 font-mono text-[11px] text-[var(--color-content-secondary)]">
+          README.md
+        </figcaption>
+        <pre className="overflow-x-auto p-5 font-mono text-[11px] leading-relaxed text-[var(--color-content-secondary)]">
+          {DIAGRAM}
+        </pre>
+      </figure>
 
-      <ol className="grid gap-4 sm:grid-cols-3">
+      {/* The connecting rule runs through the badges on wide screens, so the
+          three cards read as one left-to-right sequence rather than a grid of
+          unrelated features. */}
+      <ol className="relative grid gap-5 sm:grid-cols-3">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-[16.6%] right-[16.6%] top-[38px] hidden h-px bg-gradient-to-r from-transparent via-[var(--color-accent)]/50 to-transparent sm:block"
+        />
         {STEPS.map(({ title, body }, index) => (
           <li
             key={title}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
+            className="relative flex flex-col items-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]/80 p-6 text-center transition-colors duration-200 hover:border-[var(--color-accent)]/40"
           >
-            <span className="mb-3 flex size-6 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">
-              {index + 1}
-            </span>
-            <h3 className="mb-1.5 text-sm font-semibold text-[var(--color-content-primary)]">
+            <StepBadge step={index + 1} />
+            <h3 className="mb-2 mt-4 text-base font-semibold text-[var(--color-content-primary)]">
               {title}
             </h3>
-            <p className="text-sm leading-relaxed text-[var(--color-content-secondary)]">
-              {body}
-            </p>
+            <p className="text-sm leading-relaxed text-[var(--color-content-secondary)]">{body}</p>
           </li>
         ))}
       </ol>
