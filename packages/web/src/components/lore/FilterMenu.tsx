@@ -99,17 +99,17 @@
  * Both props are optional together: a caller that passes neither gets the menu
  * without the section, exactly like `status`/`onStatusChange`.
  *
- * ### Either direction, from the same row (migration 00112)
+ * ### Either direction, in the same list (migration 00112)
  * Four of the five rows can be read both ways — `Chosen` as "5 times or fewer"
  * (what a groomer asks) or "10 times or more" (what a reader looking for the
- * lore that is actually used asks). Their value list opens with a
- * {@link SegmentedControl} — `At most | At least`, `More than | Within` — and
- * switching it swaps the preset list in place without leaving the level or
- * clearing what was typed, so a custom value works in either direction. One row
- * holds one direction at a time: picking a value clears the other (see
- * `setRetentionCondition`). The toggle sits OUTSIDE the listbox, because a
- * radiogroup is not a legal child of one and the rows' positional ids would
- * shift under it.
+ * lore that is actually used asks). Their value list holds BOTH directions as
+ * ordinary rows under two small headings (`At most` / `At least`, `More than` /
+ * `Within`), built by `retentionEntryRows`. It was briefly a toggle above the
+ * list, and that was a mode: half the values hid behind it, and it took a click
+ * and a Tab stop before the reader could even see them. As rows, every option is
+ * one arrow-key walk away. Typing works the same way — `40` offers both
+ * directions, `>40` / `<40` pick one. One row holds one direction at a time:
+ * picking a value clears the other (see `setRetentionCondition`).
  *
  * ## Status lives here too, but it is NOT a dimension
  * A pinned "Status" row group sits above the search box at level 1, built
@@ -152,7 +152,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
-import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/SegmentedControl';
 import {
   CHROME_HEIGHT,
   anchoredPosition,
@@ -175,9 +174,9 @@ import {
   RETENTION_CONDITION_BOUNDS,
   requireRetentionField,
   retentionConditionsCount,
+  retentionEntryRows,
   retentionEntryValue,
   retentionFieldMatches,
-  retentionValueRows,
   setRetentionCondition,
   type PolicyRetentionField,
   type RetentionConditions,
@@ -233,21 +232,6 @@ export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {
 };
 
 /**
- * The two segments of a row's direction toggle, the row's own (retention)
- * direction first — `At most | At least`, `More than | Within` — whichever of
- * the two is showing. A fixed order, so the segments never trade places under
- * the pointer when the reader flips between them.
- */
-function directionItems(field: RetentionField): SegmentedControlItem<RetentionField>[] {
-  const own = requireRetentionField(requireRetentionField(field).entry);
-  const reverse = own.opposite === undefined ? null : requireRetentionField(own.opposite);
-  return [own, ...(reverse ? [reverse] : [])].map((d) => ({
-    value: d.field,
-    label: d.directionLabel ?? d.label,
-  }));
-}
-
-/**
  * A level-1 row: one of `rootSuggestions`' dimension/value rows, or one of the
  * five thresholds. A flat union rather than two lists, because `activeIndex`
  * addresses ONE array — splitting them would mean two index spaces and an
@@ -262,9 +246,9 @@ type MenuRootRow = RootSuggestion | { kind: 'retention'; field: PolicyRetentionF
  */
 type MenuLevel =
   | { kind: 'filter'; field: FilterField }
-  // `field` is the DIRECTION being shown — `minOpenedCount` for Chosen's
-  // `At least` list — so the toggle is just a level change to the opposite.
-  | { kind: 'retention'; field: RetentionField };
+  // A threshold's level is its MENU ROW; the rows inside carry their own
+  // direction (see `retentionEntryRows`).
+  | { kind: 'retention'; field: PolicyRetentionField };
 
 /**
  * This menu's own list height, overriding the shared default the way
@@ -280,11 +264,9 @@ type MenuLevel =
 const FILTER_MENU_SIZE = {
   maxListHeight: 400,
   // The shared chrome figure covers the search box, the footer and a level-two
-  // breadcrumb. A threshold's value list can also carry the direction toggle
-  // (00112), and level one carries the Status row — both ~40px the default did
-  // not count, which on a short viewport let the menu run past the bottom edge.
-  // Measured once on open rather than per level, so this budgets for the
-  // taller of the two.
+  // breadcrumb. Level one also carries the Status row (~40px the default did
+  // not count), which on a short viewport let the menu run past the bottom edge.
+  // Measured once on open rather than per level, so this budgets for it.
   chromeHeight: CHROME_HEIGHT + 40,
 } as const;
 
@@ -456,7 +438,9 @@ export function FilterMenu({
   // responds to is worse than no menu.
   useEffect(() => {
     if (!openAtRetentionField || !retentionEnabled) return;
-    openAtLevel({ kind: 'retention', field: openAtRetentionField });
+    // A pill names a DIRECTION (`minOpenedCount`); the menu opens on its row,
+    // where the applied value is selected inside the right group.
+    openAtLevel({ kind: 'retention', field: requireRetentionField(openAtRetentionField).entry });
     onOpenAtRetentionFieldHandled?.();
   }, [openAtRetentionField, retentionEnabled, onOpenAtRetentionFieldHandled, openAtLevel]);
 
@@ -483,10 +467,7 @@ export function FilterMenu({
   }, [facets, field, filters, query]);
 
   const retentionRows = useMemo(
-    () =>
-      retentionField
-        ? retentionValueRows(retentionField, query, retention?.[retentionField])
-        : [],
+    () => (retentionField ? retentionEntryRows(retentionField, query, retention ?? {}) : []),
     [retentionField, query, retention],
   );
 
@@ -594,7 +575,7 @@ export function FilterMenu({
       return;
     }
     if (row.kind === 'retention') {
-      pushLevel({ kind: 'retention', field: openingDirection(row.field) });
+      pushLevel({ kind: 'retention', field: row.field });
       return;
     }
     // A `Dimension → value` row is a whole condition in one keystroke.
@@ -607,27 +588,6 @@ export function FilterMenu({
     if (!row || !field) return;
     onToggleValue(field, row.value);
     if (close) closeMenu();
-  }
-
-  /**
-   * Which direction a row's value list opens on: the one already applied, so
-   * reopening `Chosen` while `10 times or more` is set shows the `At least`
-   * list with 10 selected — otherwise the row's own (retention) direction.
-   */
-  function openingDirection(entry: PolicyRetentionField): RetentionField {
-    return (retention && retentionEntryValue(retention, entry)?.field) ?? entry;
-  }
-
-  /**
-   * Swap the value list to the other direction of the same row. Stays on the
-   * level and KEEPS the query: a typed number is the custom-value input, so
-   * typing `40` and then flipping to `At least` should offer 40 there.
-   */
-  function switchDirection(next: RetentionField) {
-    setLevel({ kind: 'retention', field: next });
-    setActiveIndex(0);
-    // Popover only — see `pushLevel` for why the sheet must not grab focus.
-    if (!useSheet) inputRef.current?.focus();
   }
 
   /**
@@ -646,10 +606,9 @@ export function FilterMenu({
   function commitRetentionRow(index: number) {
     const row = retentionRows[index];
     if (!row || !retentionField || !retention || !onRetentionChange) return;
-    const cleared = retention[retentionField] === row.value;
-    onRetentionChange(
-      setRetentionCondition(retention, retentionField, cleared ? undefined : row.value),
-    );
+    // The ROW's field, not the level's: the list holds both directions.
+    const cleared = retention[row.field] === row.value;
+    onRetentionChange(setRetentionCondition(retention, row.field, cleared ? undefined : row.value));
     if (entryDepth === 1) {
       closeMenu();
       return;
@@ -687,7 +646,7 @@ export function FilterMenu({
         pushLevel({ kind: 'filter', field: row.field });
       } else if (row?.kind === 'retention') {
         e.preventDefault();
-        pushLevel({ kind: 'retention', field: openingDirection(row.field) });
+        pushLevel({ kind: 'retention', field: row.field });
       }
       return;
     }
@@ -813,11 +772,16 @@ export function FilterMenu({
   // so the only way to see nothing here is to type something that is not a legal
   // value. Saying so, with the range, is the difference between "this filter is
   // broken" and "3651 is too many days".
-  const retentionEmptyCopy = retentionField
-    ? `“${query.trim()}” is not a value here — type a whole number from ${
-        RETENTION_CONDITION_BOUNDS[retentionField].min
-      } to ${RETENTION_CONDITION_BOUNDS[retentionField].max}.`
-    : '';
+  const retentionEmptyCopy = !retentionField
+    ? ''
+    : retentionDescriptor?.opposite !== undefined
+      ? `“${query.trim()}” is not a value here — type a whole number, or >N / <N for one side.`
+      : /^\s*[<≤]/.test(query)
+        ? // Created reads one way only; "created within" is the date range's job.
+          `${retentionDescriptor?.label} only reads “more than” — use the date range for “within”.`
+        : `“${query.trim()}” is not a value here — type a whole number from ${
+            RETENTION_CONDITION_BOUNDS[retentionField].min
+          } to ${RETENTION_CONDITION_BOUNDS[retentionField].max}.`;
 
   const emptyCopy = retentionField
     ? retentionEmptyCopy
@@ -847,53 +811,70 @@ export function FilterMenu({
       ) : retentionField && retentionDescriptor ? (
         <>
           {retentionRows.map((row, i) => {
-            const isSelected = retention?.[retentionField] === row.value;
+            const isSelected = retention?.[row.field] === row.value;
+            const rowDescriptor = requireRetentionField(row.field);
+            // A heading opens each direction's group, between rows rather than
+            // as an entry in the array — the option ids are positional (see the
+            // `Age & activity` heading below for the same reasoning).
+            const heading =
+              retentionDescriptor.opposite !== undefined && retentionRows[i - 1]?.field !== row.field
+                ? rowDescriptor.directionLabel
+                : undefined;
             return (
-              <button
-                key={row.value}
-                id={`${OPTION_ID_PREFIX}${i}`}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                onClick={() => commitRetentionRow(i)}
-                onMouseEnter={() => setActiveIndex(i)}
-                className={[
-                  'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs',
-                  i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
-                  isSelected
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-content-secondary)]',
-                ].join(' ')}
-              >
-                {/* A radio, not a checkbox: the shape has to say "one of these"
-                    before the reader discovers it by picking a second. */}
-                <span
-                  aria-hidden
+              <div key={`${row.field}:${row.value}`}>
+                {heading && (
+                  <p
+                    role="presentation"
+                    className="px-2 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]"
+                  >
+                    {heading}
+                  </p>
+                )}
+                <button
+                  id={`${OPTION_ID_PREFIX}${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => commitRetentionRow(i)}
+                  onMouseEnter={() => setActiveIndex(i)}
                   className={[
-                    'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
+                    'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs',
+                    i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
                     isSelected
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-                      : 'border-[var(--color-border)]',
+                      ? 'text-[var(--color-accent)]'
+                      : 'text-[var(--color-content-secondary)]',
                   ].join(' ')}
                 >
-                  {isSelected && <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />}
-                </span>
-                <span className="flex-1 truncate">{retentionDescriptor.formatValue(row.value)}</span>
-                {row.custom && (
-                  // Labelled so a typed threshold is visibly a typed one and not
-                  // a preset the reader misremembers next time.
-                  <span className="shrink-0 text-[10px] text-[var(--color-content-tertiary)]">
-                    custom
+                  {/* A radio, not a checkbox: the shape has to say "one of these"
+                      before the reader discovers it by picking a second. */}
+                  <span
+                    aria-hidden
+                    className={[
+                      'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
+                      isSelected
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
+                        : 'border-[var(--color-border)]',
+                    ].join(' ')}
+                  >
+                    {isSelected && <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />}
                   </span>
-                )}
-              </button>
+                  <span className="flex-1 truncate">{rowDescriptor.formatValue(row.value)}</span>
+                  {row.custom && (
+                    // Labelled so a typed threshold is visibly a typed one and not
+                    // a preset the reader misremembers next time.
+                    <span className="shrink-0 text-[10px] text-[var(--color-content-tertiary)]">
+                      custom
+                    </span>
+                  )}
+                </button>
+              </div>
             );
           })}
           {/* What the threshold actually tests, once under the list rather than
               once per row: the rows are numbers, and a number without its rule
               is the thing readers got wrong about `Delivered` vs `Chosen`. */}
           <p className="px-2 pb-1 pt-2 text-[10px] leading-snug text-[var(--color-content-tertiary)]">
-            {retentionDescriptor.hint}
+            {retentionDescriptor.entryHint ?? retentionDescriptor.hint}
           </p>
         </>
       ) : field ? (
@@ -1191,7 +1172,9 @@ export function FilterMenu({
           // facet catalog to search), so the placeholder has to invite typing a
           // number rather than reading as a search over the five presets.
           placeholder={
-            retentionDescriptor
+            retentionDescriptor?.typeExample !== undefined
+              ? `Pick one, or type ${retentionDescriptor.typeExample}, >${retentionDescriptor.typeExample} or <${retentionDescriptor.typeExample}…`
+              : retentionDescriptor
               ? 'Pick one, or type a number…'
               : field
                 ? descriptor?.searchPlaceholder
@@ -1207,35 +1190,12 @@ export function FilterMenu({
         />
       </div>
 
-      {/* The direction toggle (00112) — only for a threshold with a reverse.
-          Between the search box and the list rather than inside it: the list
-          is a listbox, and a radiogroup is not a legal child of one. */}
-      {retentionDescriptor?.opposite !== undefined && retentionField && (
-        <div className="px-2.5 pb-2">
-          <SegmentedControl<RetentionField>
-            label={`${retentionDescriptor.label} direction`}
-            items={directionItems(retentionField)}
-            value={retentionField}
-            onChange={switchDirection}
-          />
-        </div>
-      )}
-
       {/* The level transition: a short slide in the direction of travel plus a
           height morph, so the surface reads as one menu changing contents. */}
       <div className="relative overflow-hidden">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            // Keyed by the ROW for a threshold, not the direction, so flipping
-            // the toggle swaps the values in place instead of sliding the whole
-            // level out and back in as if the reader had navigated.
-            key={
-              level
-                ? level.kind === 'retention'
-                  ? `retention:${requireRetentionField(level.field).entry}`
-                  : `filter:${level.field}`
-                : '__root__'
-            }
+            key={level ? `${level.kind}:${level.field}` : '__root__'}
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: level ? 12 : -12 }}
             animate={{ opacity: 1, x: 0 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: level ? -12 : 12 }}

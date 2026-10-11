@@ -14,7 +14,9 @@ import {
   RETENTION_MENU_FIELDS,
   filtersToGroomDimensionFilters,
   hasExplorerOnlyConditions,
+  parseRetentionQuery,
   policyRetentionConditions,
+  retentionEntryRows,
   retentionEntryValue,
   groomConditionsToFilters,
   hasRetentionConditions,
@@ -488,8 +490,16 @@ describe('RETENTION_FIELDS', () => {
       expect(other.opposite, d.field).toBe(d.field);
       expect(other.entry, d.field).toBe(d.entry);
       expect(other.label, d.field).toBe(d.label);
-      // A toggle with two identical segments would be unreadable.
+      // Two group headings reading the same would be unreadable.
       expect(other.directionLabel, d.field).not.toBe(d.directionLabel);
+      // Opposites keep opposite sides of N — that is what `<` / `>` route on.
+      expect(other.bound, d.field).not.toBe(d.bound);
+      expect(other.discrete, d.field).toBe(d.discrete);
+    }
+    // A row whose list holds both directions needs a hint that covers both.
+    for (const field of RETENTION_MENU_FIELDS) {
+      const d = requireRetentionField(field);
+      if (d.opposite !== undefined) expect(d.entryHint, field).toBeTruthy();
     }
     // Created has no reverse: the date range picker already answers "created
     // within", and a second spelling of it would be two controls for one fact.
@@ -675,6 +685,89 @@ describe('retentionValueRows — reverse directions', () => {
     // (The preset 10 still matches by numeric prefix — a reader typing toward
     // it — but no row offers 1 itself.)
     expect(retentionValueRows('minSeenCount', '1')).toEqual([{ value: 10, custom: false }]);
+  });
+});
+
+describe('parseRetentionQuery', () => {
+  it('splits an optional comparison from the number', () => {
+    expect(parseRetentionQuery('')).toBeNull();
+    expect(parseRetentionQuery('  ')).toBeNull();
+    expect(parseRetentionQuery('50')).toEqual({ op: 'any', digits: '50' });
+    expect(parseRetentionQuery('>50')).toEqual({ op: 'gt', digits: '50' });
+    expect(parseRetentionQuery('> 50')).toEqual({ op: 'gt', digits: '50' });
+    expect(parseRetentionQuery('<50')).toEqual({ op: 'lt', digits: '50' });
+    // Two-character operators are read whole, never as `>` then `=50`.
+    expect(parseRetentionQuery('>=50')).toEqual({ op: 'gte', digits: '50' });
+    expect(parseRetentionQuery('<=50')).toEqual({ op: 'lte', digits: '50' });
+    expect(parseRetentionQuery('≥50')).toEqual({ op: 'gte', digits: '50' });
+    expect(parseRetentionQuery('≤50')).toEqual({ op: 'lte', digits: '50' });
+    expect(parseRetentionQuery('>')).toEqual({ op: 'gt', digits: '' });
+  });
+});
+
+describe('retentionEntryRows — both directions in one list', () => {
+  const rows = (entry: Parameters<typeof retentionEntryRows>[0], query: string, conditions = {}) =>
+    retentionEntryRows(entry, query, conditions).map((r) => `${r.field}:${r.value}${r.custom ? '*' : ''}`);
+
+  it('lists the retention side\'s presets, then the reverse side\'s, with no query', () => {
+    expect(rows('maxOpenedCount', '')).toEqual([
+      'maxOpenedCount:0',
+      'maxOpenedCount:1',
+      'maxOpenedCount:2',
+      'maxOpenedCount:5',
+      'minOpenedCount:1',
+      'minOpenedCount:5',
+      'minOpenedCount:10',
+      'minOpenedCount:25',
+    ]);
+  });
+
+  it('offers a bare number in every direction it is legal for, then the presets it prefixes', () => {
+    expect(rows('maxOpenedCount', '40')).toEqual(['maxOpenedCount:40*', 'minOpenedCount:40*']);
+    // `1` prefixes 10 on the at-least side.
+    expect(rows('maxOpenedCount', '1')).toEqual(['maxOpenedCount:1', 'minOpenedCount:1', 'minOpenedCount:10']);
+    // 0 is legal only as a ceiling — a floor of 0 narrows nothing.
+    expect(rows('maxOpenedCount', '0')).toEqual(['maxOpenedCount:0']);
+  });
+
+  it('reads a strict comparison on a COUNT as the next whole number, so the row says what applies', () => {
+    expect(rows('maxOpenedCount', '>50')).toEqual(['minOpenedCount:51*']);
+    expect(rows('maxOpenedCount', '<50')).toEqual(['maxOpenedCount:49*']);
+    expect(rows('maxOpenedCount', '>=50')).toEqual(['minOpenedCount:50*']);
+    expect(rows('maxOpenedCount', '<=5')).toEqual(['maxOpenedCount:5']);
+    // `<1` is "never chosen"; `>0` is "at least once".
+    expect(rows('maxOpenedCount', '<1')).toEqual(['maxOpenedCount:0']);
+    expect(rows('maxOpenedCount', '>0')).toEqual(['minOpenedCount:1']);
+  });
+
+  it('leaves DAYS unshifted — time is continuous, so >30 is "more than 30 days ago" as is', () => {
+    expect(rows('unseenDays', '>30')).toEqual(['unseenDays:30']);
+    expect(rows('unseenDays', '<7')).toEqual(['openedWithinDays:7']);
+    expect(rows('unseenDays', '14')).toEqual(['unseenDays:14*', 'openedWithinDays:14*']);
+  });
+
+  it('narrows to one side\'s presets on a bare operator', () => {
+    expect(rows('maxReadCount', '>')).toEqual([
+      'minReadCount:100',
+      'minReadCount:200',
+      'minReadCount:500',
+      'minReadCount:1000',
+    ]);
+  });
+
+  it('offers nothing for a direction the row cannot read, or a value out of bounds', () => {
+    // Created reads one way; "created within" is the date range's job.
+    expect(rows('minAgeDays', '<30')).toEqual([]);
+    expect(rows('minAgeDays', '>30')).toEqual(['minAgeDays:30']);
+    expect(rows('maxOpenedCount', '<0')).toEqual([]);
+    expect(rows('maxOpenedCount', 'abc')).toEqual([]);
+  });
+
+  it('leads each group with its applied custom value, so the list never denies the pill', () => {
+    expect(rows('maxOpenedCount', '', { minOpenedCount: 40 }).slice(4, 6)).toEqual([
+      'minOpenedCount:40*',
+      'minOpenedCount:1',
+    ]);
   });
 });
 

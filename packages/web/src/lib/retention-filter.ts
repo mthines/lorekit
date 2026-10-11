@@ -36,9 +36,12 @@
  *   Delivered         maxReadCount                      ↔ minReadCount
  *   Chosen            maxOpenedCount                    ↔ minOpenedCount
  *
- * Each pair shares ONE menu row and ONE label; the value list carries a
- * direction toggle, and picking a value in one direction clears the other (see
- * {@link setRetentionCondition}). The four reverse directions are EXPLORER-ONLY:
+ * Each pair shares ONE menu row and ONE label, and the row's value list holds
+ * BOTH directions as ordinary rows — the retention side's presets, then the
+ * reverse side's — so nothing is hidden behind a mode. A typed number offers
+ * both directions, and `>50` / `<50` (also `>=`, `<=`, `≥`, `≤`) pick one (see
+ * {@link retentionEntryRows}). Picking a value in one direction clears the other
+ * (see {@link setRetentionCondition}). The four reverse directions are EXPLORER-ONLY:
  * a retention policy cannot carry them (`GroomConditionsSchema` deliberately
  * lacks them), so {@link retentionConditionsToGroomConditions} drops them and
  * {@link hasExplorerOnlyConditions} is what hides "Create retention policy"
@@ -521,8 +524,25 @@ export interface RetentionFieldDescriptor {
   entry: PolicyRetentionField;
   /** The same metadata row read the other way, when one exists (00112). */
   opposite?: RetentionField;
-  /** This direction's segment in the value list's toggle — `At most`, `Within`. */
+  /** This direction's group heading in its row's value list — `At most`, `Within`. */
   directionLabel?: string;
+  /**
+   * Which side of N this direction keeps, on the row's own quantity (a count,
+   * or days since the event): `upper` keeps N and below (`5 times or fewer`,
+   * `Within 7 days`), `lower` keeps N and above (`10 times or more`, `More than
+   * 30 days ago`). It is what a typed `<` or `>` routes to.
+   */
+  bound: 'upper' | 'lower';
+  /**
+   * Whether the quantity is a whole count. A strict `>50` on a count means 51
+   * and up, so it is stored as 51; on days it stays 50, because time is
+   * continuous and "more than 50 days ago" is exactly what 50 already tests.
+   */
+  discrete: boolean;
+  /** The menu row's hint when its list holds BOTH directions — covers either reading. */
+  entryHint?: string;
+  /** A representative number for the menu row's search placeholder (`type 10, >10 or <10`). */
+  typeExample?: number;
 }
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -553,6 +573,8 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'minAgeDays',
     entry: 'minAgeDays',
+    bound: 'lower',
+    discrete: false,
     label: 'Created',
     hint: 'Written more than this many days ago.',
     presets: [7, 30, 90, 180, 365],
@@ -563,6 +585,10 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'unseenDays',
     entry: 'unseenDays',
+    bound: 'lower',
+    discrete: false,
+    entryHint: 'When an agent last deliberately fetched it. More than: a lesson never opened counts from Created. Within: a lesson never opened does not match.',
+    typeExample: 30,
     opposite: 'openedWithinDays',
     directionLabel: 'More than',
     label: 'Last agent open',
@@ -578,6 +604,8 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'openedWithinDays',
     entry: 'unseenDays',
+    bound: 'upper',
+    discrete: false,
     opposite: 'unseenDays',
     directionLabel: 'Within',
     label: 'Last agent open',
@@ -592,6 +620,10 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'maxSeenCount',
     entry: 'maxSeenCount',
+    bound: 'upper',
+    discrete: true,
+    entryHint: 'How many times it was written. Many writes means agents keep relearning it.',
+    typeExample: 3,
     opposite: 'minSeenCount',
     directionLabel: 'At most',
     label: 'Recurrence',
@@ -606,6 +638,8 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'minSeenCount',
     entry: 'maxSeenCount',
+    bound: 'lower',
+    discrete: true,
     opposite: 'maxSeenCount',
     directionLabel: 'At least',
     label: 'Recurrence',
@@ -618,6 +652,10 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'maxReadCount',
     entry: 'maxReadCount',
+    bound: 'upper',
+    discrete: true,
+    entryHint: 'How many times it was handed to an agent. Bulk list/search reads count, so this runs to the hundreds.',
+    typeExample: 200,
     opposite: 'minReadCount',
     directionLabel: 'At most',
     label: 'Delivered',
@@ -634,6 +672,8 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'minReadCount',
     entry: 'maxReadCount',
+    bound: 'lower',
+    discrete: true,
     opposite: 'maxReadCount',
     directionLabel: 'At least',
     label: 'Delivered',
@@ -648,6 +688,10 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'maxOpenedCount',
     entry: 'maxOpenedCount',
+    bound: 'upper',
+    discrete: true,
+    entryHint: 'How many times an agent deliberately fetched it. Bulk reads do NOT count, so 0 means never chosen.',
+    typeExample: 10,
     opposite: 'minOpenedCount',
     directionLabel: 'At most',
     label: 'Chosen',
@@ -662,6 +706,8 @@ export const RETENTION_FIELDS: readonly RetentionFieldDescriptor[] = [
   {
     field: 'minOpenedCount',
     entry: 'maxOpenedCount',
+    bound: 'lower',
+    discrete: true,
     opposite: 'maxOpenedCount',
     directionLabel: 'At least',
     label: 'Chosen',
@@ -809,6 +855,110 @@ export function retentionValueRows(
     { value: typed, custom: !presets.includes(typed) },
     ...matching.filter((preset) => preset !== typed).map((value) => ({ value, custom: false })),
   ];
+}
+
+/** What a value-list query asks for: an optional comparison, then the number text. */
+export interface RetentionQuery {
+  /** `any` for a bare number (both directions); otherwise the side it picks. */
+  op: 'any' | 'gt' | 'gte' | 'lt' | 'lte';
+  /** Everything after the operator, trimmed — matched against presets by prefix. */
+  digits: string;
+}
+
+const QUERY_OPERATOR: Record<string, RetentionQuery['op']> = {
+  '>': 'gt',
+  '>=': 'gte',
+  '≥': 'gte',
+  '<': 'lt',
+  '<=': 'lte',
+  '≤': 'lte',
+};
+
+/**
+ * Split a value-list query into its comparison and its number. `null` for an
+ * empty query. `>=` is tried before `>` so it is never read as `>` then `=50`.
+ */
+export function parseRetentionQuery(query: string): RetentionQuery | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const match = /^(>=|<=|≥|≤|>|<)?\s*(.*)$/.exec(trimmed);
+  const operator = match?.[1];
+  return {
+    op: operator ? (QUERY_OPERATOR[operator] ?? 'any') : 'any',
+    digits: (match?.[2] ?? '').trim(),
+  };
+}
+
+/** One row of a menu row's value list: which direction it applies, and the value. */
+export interface RetentionEntryRow extends RetentionValueRow {
+  field: RetentionField;
+}
+
+/**
+ * The value a typed query applies in one direction, or `undefined` when the
+ * query does not ask for that direction or lands out of bounds.
+ *
+ * A strict comparison on a COUNT moves by one — `>50` keeps 51 and up, so it is
+ * stored and shown as `51 times or more` — because the stored conditions are
+ * inclusive and the row must read exactly as the filter it applies. On days it
+ * does not move: `>30` under Last agent open is `More than 30 days ago` as is.
+ */
+function typedValue(d: RetentionFieldDescriptor, q: RetentionQuery): number | undefined {
+  if (q.op === 'gt' || q.op === 'gte') {
+    if (d.bound !== 'lower') return undefined;
+  } else if (q.op === 'lt' || q.op === 'lte') {
+    if (d.bound !== 'upper') return undefined;
+  }
+  const n = parseCondition(q.digits, { min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER });
+  if (n === undefined) return undefined;
+  const shift = !d.discrete ? 0 : q.op === 'gt' ? 1 : q.op === 'lt' ? -1 : 0;
+  return parseCondition(n + shift, RETENTION_CONDITION_BOUNDS[d.field]);
+}
+
+/**
+ * A menu row's whole value list: its retention direction's rows, then its
+ * reverse direction's — one list, so both readings are visible at once and
+ * neither hides behind a mode.
+ *
+ * - No query: each direction's presets, with an applied custom value leading
+ *   its own group (see {@link retentionValueRows}).
+ * - A bare number: that value in EVERY direction it is legal for, each
+ *   followed by the presets it prefixes — typing `40` under Chosen offers both
+ *   `40 times or fewer` and `40 times or more`.
+ * - `>N` / `<N` (and `>=`, `<=`, `≥`, `≤`): the one direction that comparison
+ *   names, as a single row. An operator with no number yet (`>`) narrows the
+ *   list to that direction's presets, so the reader sees what the side holds.
+ *
+ * A comparison the row cannot read — `<30` under Created, which has no reverse
+ * — yields nothing, and the menu's empty state says why.
+ */
+export function retentionEntryRows(
+  entry: PolicyRetentionField,
+  query: string,
+  conditions: RetentionConditions,
+): RetentionEntryRow[] {
+  const own = requireRetentionField(entry);
+  const directions = own.opposite === undefined ? [own] : [own, requireRetentionField(own.opposite)];
+  const q = parseRetentionQuery(query);
+
+  return directions.flatMap((d): RetentionEntryRow[] => {
+    const tag = (rows: RetentionValueRow[]) => rows.map((row) => ({ ...row, field: d.field }));
+    if (q === null) return tag(retentionValueRows(d.field, '', conditions[d.field]));
+
+    const picksSide = q.op !== 'any';
+    const onThisSide = !picksSide || (q.op === 'gt' || q.op === 'gte' ? d.bound === 'lower' : d.bound === 'upper');
+    if (!onThisSide) return [];
+    if (picksSide && q.digits === '') return tag(retentionValueRows(d.field, '', conditions[d.field]));
+
+    const typed = typedValue(d, q);
+    const typedRows: RetentionValueRow[] =
+      typed === undefined ? [] : [{ value: typed, custom: !d.presets.includes(typed) }];
+    if (picksSide) return tag(typedRows);
+    const prefixed = d.presets
+      .filter((preset) => preset !== typed && String(preset).startsWith(q.digits))
+      .map((value) => ({ value, custom: false }));
+    return tag([...typedRows, ...prefixed]);
+  });
 }
 
 /**

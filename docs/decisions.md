@@ -762,9 +762,14 @@ lore in the store. The Explorer therefore hides **Create retention policy** whil
 saving a policy that would archive a different set from the one on screen
 (`retentionConditionsToGroomConditions` drops them as a second line).
 
-In the menu each pair shares ONE row and label with a direction toggle, and a row holds one direction at a
-time (setting one clears the other) — two rows per metadata row would double the list for a choice that is
-a property of the row. `opened_within_days` does **not** inherit 00100's never-opened fallback: a lesson
+In the menu each pair shares ONE row and label, and that row's value list holds BOTH directions as ordinary
+rows under two headings; a row holds one direction at a time (setting one clears the other). Two menu rows
+per metadata row would double the level-one list for a choice that is a property of the row. A direction
+TOGGLE above the value list was tried first and replaced: it was a mode that hid half the values, cost a
+click and a Tab stop before they were even visible, and typing could only ever fill the side it was set to.
+As rows, typing follows the list: a bare number offers both directions, `>N` / `<N` pick one, and a strict
+comparison on a COUNT is stored as the next whole number (`>40` → 41) so the row reads as the filter it
+applies. `opened_within_days` does **not** inherit 00100's never-opened fallback: a lesson
 nothing ever opened was not "opened recently". Created has no reverse — the date-range picker already
 answers "created within".
 
