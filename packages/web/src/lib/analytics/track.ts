@@ -30,6 +30,14 @@
  *                                        static developer-authored slug, plus the
  *                                        visual variant/size).
  *
+ * ### Public home page (`landing.*`)
+ * - `landing.cta_clicked`              — a link on the home page was followed: which
+ *                                        intent (`cta`) from which spot (`placement`).
+ * - `landing.demo_tab_selected`        — a visitor switched the live demo's use case.
+ * The home page ALSO emits the three `content.*` reading events, with
+ * `contentType: 'landing'` — the same model the blog uses, so "how far do they
+ * scroll / which sections hold them" has one schema across both surfaces.
+ *
  * ### Lore Explorer (`lore.*`)
  * - `lore.memory_opened`               — a memory was selected into the detail panel.
  * - `lore.memory_closed`               — the detail panel was dismissed, with WHY.
@@ -121,8 +129,51 @@ export type CommandSource = 'palette' | 'shortcut';
  */
 export type InstallCommandId = 'cli-install';
 
-/** Where the copy affordance was rendered. Bounded for the same reason. */
-export type CopySurface = 'login-get-started' | 'blog-cta';
+/**
+ * Where the copy affordance was rendered. Bounded for the same reason.
+ *
+ * `landing-hero` and `landing-get-started` are the two positions on the public
+ * home page, and they are kept apart because they answer different questions:
+ * the hero measures whether the command ALONE converts a first-time visitor,
+ * the card measures whether someone who read the whole page converts at the end
+ * of it. Collapsing them would hide which half of the page is doing the work.
+ *
+ * `login-get-started` is retained rather than deleted: the card it named moved
+ * from `/login` to `/`, but the value is already recorded against past events
+ * and dropping it from the union would make that history untypeable.
+ */
+export type CopySurface =
+  | 'landing-hero'
+  | 'landing-get-started'
+  | 'login-get-started'
+  | 'blog-cta';
+
+/**
+ * What a home-page link is FOR — the visitor's intent, not its label or URL.
+ *
+ * `get-token` and `offline-guide` are the two answers to the question the hero
+ * asks right under the install command (hosted or offline?), so their ratio is
+ * the page's most direct read on which path visitors want. `sign-in` is the
+ * same destination as `get-token` reached from a different promise (the header
+ * button, the closing card's inline link), which is why it is a separate value.
+ */
+export type LandingCta =
+  | 'get-token'
+  | 'offline-guide'
+  | 'sign-in'
+  | 'docs'
+  | 'blog'
+  | 'github';
+
+/**
+ * Where on the page the link sits. The header is shared with `/login`, so a
+ * `header` click from the sign-in page arrives with `page.url.path=/login` —
+ * filter on the path when only the home page is wanted.
+ */
+export type LandingPlacement = 'header' | 'hero' | 'get-started';
+
+/** The live demo's use-case tabs, by stable id (never the visible label). */
+export type LandingDemoTab = 'self-healing' | 'promotion' | 'pr-review';
 
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
@@ -188,6 +239,9 @@ export type AnalyticsEvent =
       /** The button's size, when set — a bounded enum. */
       size?: ButtonSize;
     }
+  // ── Public home page ──────────────────────────────────────────────────────
+  | { name: 'landing.cta_clicked'; cta: LandingCta; placement: LandingPlacement }
+  | { name: 'landing.demo_tab_selected'; tab: LandingDemoTab }
   // ── Lore Explorer ─────────────────────────────────────────────────────────
   | {
       name: 'lore.memory_opened';
@@ -391,6 +445,15 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
       if (event.size) attrs['lorekit.ui.button_size'] = event.size;
       return attrs;
     }
+
+    // ── Public home page ────────────────────────────────────────────────────
+    case 'landing.cta_clicked':
+      return {
+        'lorekit.landing.cta': event.cta,
+        'lorekit.landing.placement': event.placement,
+      };
+    case 'landing.demo_tab_selected':
+      return { 'lorekit.landing.demo_tab': event.tab };
 
     // ── Lore Explorer ───────────────────────────────────────────────────────
     case 'lore.memory_opened': {
