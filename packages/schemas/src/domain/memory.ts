@@ -205,8 +205,10 @@ const ValueListSchema = z.string().min(1).max(2048);
  *   age a never-opened lesson from `created_at`, because "opened recently" is a
  *   claim about an agent's behaviour that no agent made.
  * - `min_seen_count` / `min_read_count` / `min_opened_count` — at least N.
- *   They start at 1: a floor of 0 matches every row, so accepting it would put
- *   a filter on screen that narrows nothing.
+ *   Each starts at the first value that can narrow anything: 1 for the two
+ *   read counters (a floor of 0 matches every row), and 2 for `min_seen_count`,
+ *   because `seen_count >= 1` is a table constraint (00059) and "written at
+ *   least once" describes every memory there is.
  *
  * They are deliberately ABSENT from `GroomConditionsSchema`: archiving
  * "everything chosen at least 10 times" is not a policy anyone wants, and a
@@ -221,7 +223,7 @@ const retentionConditionBodyFields = {
   max_read_count: z.number().int().min(0).max(100_000).optional(),
   max_opened_count: z.number().int().min(0).max(100_000).optional(),
   opened_within_days: z.number().int().min(1).max(3650).optional(),
-  min_seen_count: z.number().int().min(1).max(100_000).optional(),
+  min_seen_count: z.number().int().min(2).max(100_000).optional(),
   min_read_count: z.number().int().min(1).max(100_000).optional(),
   min_opened_count: z.number().int().min(1).max(100_000).optional(),
 } as const;
@@ -239,7 +241,7 @@ const retentionConditionQueryFields = {
   max_read_count: z.coerce.number().int().min(0).max(100_000).optional(),
   max_opened_count: z.coerce.number().int().min(0).max(100_000).optional(),
   opened_within_days: z.coerce.number().int().min(1).max(3650).optional(),
-  min_seen_count: z.coerce.number().int().min(1).max(100_000).optional(),
+  min_seen_count: z.coerce.number().int().min(2).max(100_000).optional(),
   min_read_count: z.coerce.number().int().min(1).max(100_000).optional(),
   min_opened_count: z.coerce.number().int().min(1).max(100_000).optional(),
 } as const;

@@ -344,8 +344,9 @@ Explorer's facet counts, its stat cards and its matrix — counting the un-narro
 aggregates, through the same widened `lorekit_match_retention`. They are READ conditions only:
 `GroomConditionsSchema` does not carry them, so no policy can archive "the most chosen lore".
 `opened_within_days` deliberately does NOT inherit 00100's never-opened fallback — a lesson
-nothing ever opened was not "opened within N days", however new — and the three floors start at
-1 (a floor of 0 matches every row). The list also takes `sort=opened_count` (most chosen first,
+nothing ever opened was not "opened within N days", however new — and each floor starts at the
+first value that narrows: 1 for the read counters, 2 for `min_seen_count` (`seen_count >= 1` is a
+table constraint). The list also takes `sort=opened_count` (most chosen first,
 `id desc` breaking ties); it pages through `_shared/api/count-cursor.ts`'s integer cursor
 (mirrored from `mcp-core/src/rest/count-cursor.ts`) rather than `paginate.ts`'s timestamp one,
 so `paginate.ts` and its MCP byte-mirror stay untouched, and each decoder rejects the other's

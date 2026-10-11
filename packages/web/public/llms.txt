@@ -776,7 +776,7 @@ cannot carry them — and they reach the same four routes:
 | Parameter | Range | Keeps a memory when |
 |-----------|-------|---------------------|
 | `opened_within_days` | 1–3650 | an agent deliberately opened it within N days (one NEVER opened does not match) |
-| `min_seen_count` | 1–100000 | it has been written at least N times |
+| `min_seen_count` | 2–100000 | it has been written at least N times (every memory is written once) |
 | `min_read_count` | 1–100000 | it has been DELIVERED at least N times |
 | `min_opened_count` | 1–100000 | an agent CHOSE to fetch it at least N times |
 

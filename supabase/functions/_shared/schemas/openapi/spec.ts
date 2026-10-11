@@ -327,8 +327,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '`row in [x] AND col in [y]` and asks again still gets every other cell back — that ' +
       'is what keeps a drilled-in grid navigable instead of collapsing to the clicked cell. ' +
       'A pair counting zero emits no cell. `truncated` reports whether `limit` cut the grid. ' +
-      'The `created_since`/`created_until` window and the five retention thresholds narrow the ' +
-      'counted population, matching `GET /memories/facets`.',
+      'The `created_since`/`created_until` window, the five retention thresholds and their four ' +
+      'reverse directions narrow the counted population, matching `GET /memories/facets`.',
     security, request: { query: PivotQuerySchema },
     responses: {
       200: { description: 'Pivot cells', content: { 'application/json': { schema: PivotResponseSchema } } },

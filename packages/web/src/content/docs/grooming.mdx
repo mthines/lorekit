@@ -174,8 +174,10 @@ on screen.
 
 To see the most-used lore first without picking a threshold at all, set the
 **Sort** control next to the date picker to **Most chosen**: the list orders by
-deliberate fetches, highest first (`?sort=opened_count`). **Newest** is the
-default.
+deliberate fetches, highest first. The order is kept in the page URL like the
+filters, so a sorted view is shareable; **Newest** is the default. Over the
+REST API the same order is `sort=opened_count` on `GET /memories` and
+`POST /memories/list`.
 
 </TutorialStep>
 

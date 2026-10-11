@@ -41,9 +41,11 @@
 -- 7 days" — a claim about an agent's behaviour that no agent made. So a null
 -- `last_opened_at` never satisfies it.
 --
--- THE FLOORS USE `>=` AND START AT 1 at the API (the schemas' bound). `>= 0`
--- matches every row; accepting it would put a pill on screen that narrows
--- nothing.
+-- THE FLOORS USE `>=` AND START AT THE FIRST VALUE THAT NARROWS at the API
+-- (the schemas' bound): 1 for the read counters, since `>= 0` matches every
+-- row, and 2 for `min_seen_count`, since `seen_count >= 1` is a table
+-- constraint (00059). Accepting a no-op floor would put a pill on screen that
+-- narrows nothing.
 --
 -- THE COUNT SORT GETS ITS OWN CURSOR PARAMETER. The keyset predicate compares
 -- the sort column against the last row's value; the date sorts carry it in

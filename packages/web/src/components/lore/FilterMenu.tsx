@@ -154,6 +154,7 @@ import {
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { SegmentedControl, type SegmentedControlItem } from '@/components/ui/SegmentedControl';
 import {
+  CHROME_HEIGHT,
   anchoredPosition,
   type AnchoredPosition,
 } from '@/lib/anchored-position';
@@ -276,7 +277,16 @@ type MenuLevel =
  * takes the smaller of this and the space actually available, so a short viewport
  * shrinks the list rather than pushing it off-screen.
  */
-const FILTER_MENU_SIZE = { maxListHeight: 400 } as const;
+const FILTER_MENU_SIZE = {
+  maxListHeight: 400,
+  // The shared chrome figure covers the search box, the footer and a level-two
+  // breadcrumb. A threshold's value list can also carry the direction toggle
+  // (00112), and level one carries the Status row — both ~40px the default did
+  // not count, which on a short viewport let the menu run past the bottom edge.
+  // Measured once on open rather than per level, so this budgets for the
+  // taller of the two.
+  chromeHeight: CHROME_HEIGHT + 40,
+} as const;
 
 const LISTBOX_ID = 'filter-menu-listbox';
 const OPTION_ID_PREFIX = 'filter-menu-option-';

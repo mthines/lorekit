@@ -125,11 +125,11 @@ export const RETENTION_CONDITION_BOUNDS = {
   maxSeenCount: { min: 0, max: 100_000 },
   maxReadCount: { min: 0, max: 100_000 },
   maxOpenedCount: { min: 0, max: 100_000 },
-  // The reverse directions start at 1 (the API's own bound): a floor of 0
-  // matches every row, so offering it would put a pill on screen that narrows
-  // nothing.
+  // The reverse directions start at the API's own bound — the first value that
+  // can narrow anything. A floor of 0 matches every row, and so does a
+  // recurrence floor of 1: `seen_count >= 1` is a table constraint (00059).
   openedWithinDays: { min: 1, max: 3650 },
-  minSeenCount: { min: 1, max: 100_000 },
+  minSeenCount: { min: 2, max: 100_000 },
   minReadCount: { min: 1, max: 100_000 },
   minOpenedCount: { min: 1, max: 100_000 },
 } as const satisfies Record<keyof RetentionConditions, { min: number; max: number }>;

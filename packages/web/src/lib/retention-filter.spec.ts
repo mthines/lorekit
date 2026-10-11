@@ -668,8 +668,13 @@ describe('retentionValueRows — reverse directions', () => {
     expect(retentionValueRows('openedWithinDays', '14')).toEqual([{ value: 14, custom: true }]);
   });
 
-  it('offers no typed 0 for a floor, since a floor of 0 narrows nothing', () => {
+  it('offers no typed value that narrows nothing', () => {
     expect(retentionValueRows('minOpenedCount', '0')).toEqual([]);
+    // Every memory was written at least once (a table constraint), so a
+    // recurrence floor of 1 is the same no-op as a count floor of 0.
+    // (The preset 10 still matches by numeric prefix — a reader typing toward
+    // it — but no row offers 1 itself.)
+    expect(retentionValueRows('minSeenCount', '1')).toEqual([{ value: 10, custom: false }]);
   });
 });
 

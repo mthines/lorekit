@@ -195,13 +195,17 @@ describe('retention thresholds on the aggregate body schemas', () => {
         expect(AGGREGATES[name].safeParse({ ...base(name), min_age_days: '7' }).success).toBe(false);
       });
 
-      it('starts the reverse directions at 1, so no accepted value narrows nothing', () => {
+      it('starts each reverse direction at its first value that narrows anything', () => {
         // A floor of 0 matches every row; "opened within 0 days" matches none
         // the caller could mean. Both are 400s rather than silent no-ops.
-        for (const field of ['opened_within_days', 'min_seen_count', 'min_read_count', 'min_opened_count']) {
+        for (const field of ['opened_within_days', 'min_read_count', 'min_opened_count']) {
           expect(AGGREGATES[name].safeParse({ ...base(name), [field]: 0 }).success, field).toBe(false);
           expect(AGGREGATES[name].safeParse({ ...base(name), [field]: 1 }).success, field).toBe(true);
         }
+        // `seen_count >= 1` is a table constraint (00059), so "written at least
+        // once" is every memory — the recurrence floor starts at 2.
+        expect(AGGREGATES[name].safeParse({ ...base(name), min_seen_count: 1 }).success).toBe(false);
+        expect(AGGREGATES[name].safeParse({ ...base(name), min_seen_count: 2 }).success).toBe(true);
         expect(AGGREGATES[name].safeParse({ ...base(name), opened_within_days: 3651 }).success).toBe(false);
         expect(AGGREGATES[name].safeParse({ ...base(name), min_opened_count: 100_001 }).success).toBe(false);
       });
