@@ -31,8 +31,8 @@ describe('normalizeLexicalRank: the pinned mapping', () => {
   });
 
   it('maps a single-term cover onto the midpoint of the factor', () => {
-    // r = 0.1 is one query lexeme in one cover — the weakest a real match can
-    // be — and it reads 0.5, not 0.09.
+    // r = 0.1 is one tight cover (a single query lexeme) — the most one cover
+    // can score — and it reads 0.5, not 0.09.
     expect(normalizeLexicalRank(0.1)).toBeCloseTo(0.5, 12);
   });
 

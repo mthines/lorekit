@@ -161,14 +161,19 @@ export function normalizeRelevance(value: unknown): number {
  * NOT an arbitrary tuning knob — it is anchored to a fact about the schema.
  * `memories.fts` is `to_tsvector('english', key || ' ' || value)` with no
  * `setweight` call anywhere (migration 00001), so every lexeme in it carries
- * Postgres's default D weight, which is `0.1`. A cover containing exactly one
- * query lexeme therefore contributes `0.1` to `ts_rank_cd`, and that is the
- * weakest thing a real match can be. Putting the saturation point THERE makes
- * "matched about as well as a single term does" read as the midpoint of the
- * factor, with denser and multi-term covers ranging above it.
+ * Postgres's default D weight, which is `0.1`. `ts_rank_cd` sums, over the
+ * covers it finds, each cover's mean lexeme weight divided by `1 +` the
+ * number of non-query words inside it, so one TIGHT cover — a single query
+ * lexeme, or query terms sitting side by side — contributes exactly `0.1`.
+ * That is one cover's ceiling, not a floor on a match: a multi-term cover
+ * whose terms sit apart scores below it, a negation-only query scores `0` on
+ * the rows it matches, and several covers add up above it. Putting the
+ * saturation point THERE makes "matched about as well as a single term
+ * does" read as the midpoint of the factor, with looser covers below it and
+ * denser, multi-cover matches above.
  *
  * The obvious alternative — saturating at `1` — is monotone and bounded too,
- * but it maps the entire plausible `ts_rank_cd` range (roughly 0.1 to 1) into
+ * but it maps the typical `ts_rank_cd` range (roughly 0.1 to 1) into
  * `[0.09, 0.5]`, so a graded signal would arrive squashed into the bottom half
  * of its own scale and lose most of its say in the weighted average. Both
  * choices are deterministic; this one spends the range on values that occur.
