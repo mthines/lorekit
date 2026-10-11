@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Archive, BarChart3, GitPullRequest, Plug } from 'lucide-react';
+import { Archive, BarChart3, Eye, GitPullRequest } from 'lucide-react';
 
 import { cn } from '@/lib/cn';
 
@@ -21,7 +21,10 @@ import { LANDING_SECTION_ID } from './sections';
  *    (`supabase/functions/mcp/webhook.ts`), not "durable lessons automatically";
  *  - grooming previews first and archives, never hard-deletes, and an archived
  *    lesson comes back with `lorekit restore` (`packages/cli/src/commands.mjs`);
- *  - the cost figures are the read/opened ratio `/insights` already computes.
+ *  - the cost figures are the read/opened ratio `/insights` already computes;
+ *  - the Lore Explorer lists, filters, edits and archives every lesson.
+ * (Team sharing and tool coverage used to be a cell here too; "02 / how it
+ * works" now tells that story in full, so it is not repeated.)
  * The visuals are illustrations of those behaviours, so they are `aria-hidden`
  * and carry no numbers that could be mistaken for a measurement.
  */
@@ -56,10 +59,10 @@ export function FeatureBento() {
           visual={<ReviewVisual />}
         />
         <BentoCell
-          icon={<Plug className="size-4" />}
-          title="One store for every tool"
-          body="Claude Code, Cursor and any MCP client read and write the same lessons — on your laptop, your teammate’s, and in CI with a read-only token."
-          visual={<ToolsVisual />}
+          icon={<Eye className="size-4" />}
+          title="Every lesson in plain sight"
+          body="Browse, search and filter everything your agents have learned in the dashboard — who wrote it, where it applies — and edit or archive it in place. Local lore is plain markdown you can grep."
+          visual={<ExplorerVisual />}
         />
         <BentoCell
           className="md:col-span-2"
@@ -185,26 +188,37 @@ function ReviewVisual() {
   );
 }
 
-function ToolsVisual() {
-  const tools = ['Claude Code', 'Cursor', 'any MCP client', 'CI · read-only'];
+/** A slice of the Lore Explorer list: scope badge, key, and the agent that wrote it. */
+function ExplorerVisual() {
+  const rows = [
+    { scope: 'repo', color: 'var(--color-scope-repo)', key: 'ci/pg-ready', agent: 'claude' },
+    { scope: 'branch', color: 'var(--color-scope-branch)', key: 'fix/ssr-window', agent: 'cursor' },
+    // Webhook lessons land under the delivering repo's scope, never global.
+    { scope: 'repo', color: 'var(--color-scope-repo)', key: 'review/logging', agent: 'pr-webhook' },
+  ];
 
   return (
-    <div className="flex flex-col items-center gap-3 font-mono text-[11px]">
-      <div className="flex flex-wrap justify-center gap-2">
-        {tools.map((tool) => (
-          <span
-            key={tool}
-            className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/80 px-2.5 py-1 text-[var(--color-content-primary)]"
-          >
-            {tool}
-          </span>
-        ))}
+    <div className={MONO_PANEL}>
+      <div className="mb-3 flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-2 py-1 text-[var(--color-content-secondary)]">
+        <span aria-hidden>⌕</span>
+        <span>search lore…</span>
       </div>
-      <span className="h-5 w-px bg-gradient-to-b from-[var(--color-border)] to-[var(--color-accent)]" />
-      <span className="rounded-lg border border-[var(--color-accent)]/50 bg-[var(--color-accent-subtle)] px-3 py-1.5 text-[var(--color-accent)] shadow-[0_0_24px_var(--color-accent-glow)]">
-        one store
-      </span>
-      <span className="text-[10px] text-[var(--color-content-secondary)]">Codex: experimental</span>
+      <ul className="flex flex-col gap-2">
+        {rows.map((row) => (
+          <li key={row.key} className="flex items-center gap-2">
+            <span
+              className="shrink-0 rounded border px-1.5 text-[10px]"
+              style={{ color: row.color, borderColor: row.color }}
+            >
+              {row.scope}
+            </span>
+            <span className="truncate text-[var(--color-content-primary)]">{row.key}</span>
+            <span className="ml-auto shrink-0 text-[10px] text-[var(--color-content-secondary)]">
+              {row.agent}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

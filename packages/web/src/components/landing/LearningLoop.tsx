@@ -173,15 +173,17 @@ export function LearningLoop() {
       </ol>
 
       {/* The loop closing: from the last beat back to the first. Wide screens
-          only — stacked, the cards already read top to bottom. */}
+          only — stacked, the cards already read top to bottom. The label sits
+          UNDER the line rather than on it: masking the line needs an opaque
+          box, and no flat colour matches the glow behind this section. */}
       <div aria-hidden className="relative mx-[12.5%] mt-3 hidden xl:block">
         <div className="h-8 rounded-b-3xl border-x border-b border-dashed border-[var(--color-accent)]/40" />
         <span className="absolute -top-1.5 left-0 -translate-x-1/2 text-[10px] leading-none text-[var(--color-accent)]">
           ▲
         </span>
-        <span className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 bg-[var(--color-bg)] px-3 font-mono text-[11px] text-[var(--color-accent)]">
+        <p className="mt-3 text-center font-mono text-[11px] text-[var(--color-accent)]">
           and round again — every session, every agent
-        </span>
+        </p>
       </div>
 
       <ComparisonTable />
@@ -198,21 +200,21 @@ function StageCard({ stage, index }: { stage: Stage; index: number }) {
       className="lk-step relative flex flex-col"
       style={{ '--lk-step': index } as CSSProperties}
     >
-      <div className="mb-3 flex items-center gap-3">
-        {/* Opaque, and above the rail, so the rail reads as running THROUGH the
-            icons rather than over them. */}
+      {/* The icon has the rail's row to itself; the labels sit BELOW it. Side
+          by side, the rail (drawn at the icon's centre line) ran straight
+          through the gap between the "day" label and the verb. The icon is
+          opaque and above the rail, so the rail reads as running through it. */}
+      <div className="mb-4">
         <span
           aria-hidden
-          className="relative z-10 flex size-9 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/50 bg-[var(--color-bg-elevated)] text-[var(--color-accent)] shadow-[0_0_20px_var(--color-accent-glow)]"
+          className="relative z-10 flex size-9 items-center justify-center rounded-full border border-[var(--color-accent)]/50 bg-[var(--color-bg-elevated)] text-[var(--color-accent)] shadow-[0_0_20px_var(--color-accent-glow)]"
         >
           <Icon className="size-4" />
         </span>
-        <div className="min-w-0">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-content-secondary)]">
-            {stage.when}
-          </p>
-          <h3 className="text-base font-semibold text-[var(--color-content-primary)]">{stage.verb}</h3>
-        </div>
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-[var(--color-content-secondary)]">
+          {stage.when}
+        </p>
+        <h3 className="text-lg font-semibold text-[var(--color-content-primary)]">{stage.verb}</h3>
       </div>
 
       <div
@@ -235,16 +237,18 @@ function StageCard({ stage, index }: { stage: Stage; index: number }) {
           <span className="text-xs text-[var(--color-content-secondary)]">{stage.statCaption}</span>
         </div>
 
+        {/* A fixed four-line height, so a three-line transcript doesn't leave
+            its outcome sitting higher than its neighbours'. */}
         <ol
           aria-hidden
-          className="mb-4 flex flex-col gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]/80 p-3 font-mono text-[11px] leading-relaxed"
+          className="mb-4 flex min-h-[112px] flex-col gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]/80 p-3 font-mono text-[11px] leading-relaxed"
         >
           {stage.lines.map((line) => (
             <TranscriptLine key={line.text} kind={line.kind} text={line.text} />
           ))}
         </ol>
 
-        <p className="mt-auto text-sm leading-relaxed text-[var(--color-content-secondary)]">
+        <p className="text-sm leading-relaxed text-[var(--color-content-secondary)]">
           {stage.outcome}
         </p>
       </div>
