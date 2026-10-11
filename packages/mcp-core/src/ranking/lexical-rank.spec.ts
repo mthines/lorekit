@@ -98,7 +98,8 @@ describe('graded relevance changes the ordering the endpoint produces', () => {
 
   /** Two rows identical in every factor but how well they matched. */
   const twoTermVsOne = [
-    // `ts_rank_cd` for a cover holding two query lexemes vs one.
+    // `ts_rank_cd` for a row with two tight covers (both terms of an OR query
+    // matched) vs one: each cover adds 0.1, so 0.2 vs 0.1.
     { scope: 'repo::a/b', key: 'one-term', value: 'x', seen_count: 3, updated_at: updatedAt, relevance: normalizeLexicalRank(0.1) },
     { scope: 'repo::a/b', key: 'two-terms', value: 'y', seen_count: 3, updated_at: updatedAt, relevance: normalizeLexicalRank(0.2) },
   ];

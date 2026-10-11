@@ -187,8 +187,9 @@ export const LEXICAL_RANK_SATURATION = 0.1;
  * Map a raw Postgres `ts_rank_cd` value onto the `[0,1)` relevance factor
  * `scoreLesson` consumes.
  *
- * `ts_rank_cd` is UNBOUNDED above — it grows with how many query terms a cover
- * holds and how tightly they sit — so it cannot be handed to the scorer as-is
+ * `ts_rank_cd` is UNBOUNDED above — each cover adds at most `0.1` here (less
+ * the further apart its terms sit), and the total grows with the number of
+ * covers — so it cannot be handed to the scorer as-is
  * without letting one dense match swamp every other factor. `r / (r + s)` is
  * the saturating map: strictly increasing in `r` (so it never reorders what
  * Postgres ranked), `0` at `0`, asymptotic to `1`, and with no discontinuity to
