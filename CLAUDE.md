@@ -439,6 +439,7 @@ their rationale inline. **Do not relitigate these.**
 - **The Explorer's Duplicate Clusters panel is a PANEL, not an instrument** — [rationale](./docs/decisions.md#dashboard-analytics-reads-stay-rest-only)
 - **Dashboard analytics live on one dedicated `/insights` route** — [rationale](./docs/decisions.md#dashboard-analytics-live-on-one-dedicated-insights-route)
 - **A COUNT must describe the rows its LIST returns — retention thresholds reach all four readers** — [rationale](./docs/decisions.md#a-count-must-describe-the-rows-its-list-returns)
+- **Age/activity conditions read both ways (00113), but the reverse directions are READ-only — never in `GroomConditionsSchema`** — [rationale](./docs/decisions.md#the-ageactivity-conditions-read-both-ways-but-only-one-way-reaches-a-policy)
 - **A read must never restamp `updated_at`** — [rationale](./docs/decisions.md#a-read-must-never-restamp-updated_at)
 - **Lore value is the RATIO `opened_count / read_count`, and `/insights` leads with the bill** — [rationale](./docs/decisions.md#lore-value-is-a-ratio-and-insights-leads-with-the-bill)
 - **A citation is the agent's word, and it is a fact about a RUN** — [rationale](./docs/decisions.md#a-citation-is-the-agents-word-and-it-is-a-fact-about-a-run)

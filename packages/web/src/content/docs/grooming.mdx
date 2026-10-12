@@ -148,6 +148,41 @@ conditions AND filter bar to Settings → Retention Policies, which opens the Ne
 policy dialog pre-filled with all of it, using the identical filter control to
 edit it further.
 
+### Reading the other way: the lore that IS used
+
+Four of the entries also answer the opposite question. Their value list shows
+**both directions at once**, as two groups of presets — **At most / At least**
+for the three counters, **More than / Within** for Last agent open. Typing works
+the same way: a bare number such as `40` offers both `40 times or fewer` and
+`40 times or more`, while `>40` or `<40` picks one side (`>=` and `<=` work
+too). On a count a strict comparison means the next whole number, so `>40`
+reads — and applies — as `41 times or more`; on days it does not, so `>30` under
+Last agent open is `More than 30 days ago`.
+
+| Menu entry | Reverse condition | What it tests |
+|---|---|---|
+| Last agent open → Within | `opened_within_days` | Last deliberately fetched within N days. A lesson never opened does **not** match, however new |
+| Recurrence → At least | `min_seen_count` | Written N times or more |
+| Delivered → At least | `min_read_count` | Handed to an agent N times or more |
+| Chosen → At least | `min_opened_count` | Deliberately fetched N times or more — the lore agents actually reach for |
+
+A row holds one direction at a time: picking `Chosen → 10 times or more` replaces
+`Chosen: 5 times or fewer` rather than combining into an empty range. The pill
+carries the direction in its wording (`Chosen: 10 times or more`), and the
+counts, stat cards and matrix narrow exactly as they do for the retention side.
+
+These reverse directions are for **exploring**, not for policies — a retention
+policy cannot carry them, so **Create retention policy** is hidden while one is
+set rather than saving a policy that would archive a different set from the one
+on screen.
+
+To see the most-used lore first without picking a threshold at all, set the
+**Sort** control next to the date picker to **Most chosen**: the list orders by
+deliberate fetches, highest first. The order is kept in the page URL like the
+filters, so a sorted view is shareable; **Newest** is the default. Over the
+REST API the same order is `sort=opened_count` on `GET /memories` and
+`POST /memories/list`.
+
 </TutorialStep>
 
 <TutorialStep number={2} title="Save it as a policy">

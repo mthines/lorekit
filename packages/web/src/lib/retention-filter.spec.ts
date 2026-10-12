@@ -11,7 +11,13 @@ import {
   NO_RETENTION_CONDITIONS,
   RETENTION_CONDITION_BOUNDS,
   RETENTION_FIELDS,
+  RETENTION_MENU_FIELDS,
   filtersToGroomDimensionFilters,
+  hasExplorerOnlyConditions,
+  parseRetentionQuery,
+  policyRetentionConditions,
+  retentionEntryRows,
+  retentionEntryValue,
   groomConditionsToFilters,
   hasRetentionConditions,
   normalizeRetentionConditions,
@@ -69,6 +75,16 @@ describe('normalizeRetentionConditions', () => {
   it('drops an unrecognised key', () => {
     expect(normalizeRetentionConditions({ minAgeDays: 90, bogus: 1 })).toEqual({ minAgeDays: 90 });
   });
+
+  it('keeps the reverse directions (00113), bounded from 1', () => {
+    // Additive keys, so every pre-00113 `?retention=` link still resolves to
+    // exactly what it meant before.
+    expect(
+      normalizeRetentionConditions({ openedWithinDays: 7, minSeenCount: 2, minReadCount: 100, minOpenedCount: 10 }),
+    ).toEqual({ openedWithinDays: 7, minSeenCount: 2, minReadCount: 100, minOpenedCount: 10 });
+    // A floor of 0 narrows nothing, so it is dropped like any out-of-range value.
+    expect(normalizeRetentionConditions({ minOpenedCount: 0, openedWithinDays: 0 })).toEqual({});
+  });
 });
 
 describe('hasRetentionConditions / retentionConditionsCount', () => {
@@ -96,6 +112,26 @@ describe('hasRetentionConditions / retentionConditionsCount', () => {
     // 0 is the WHOLE POINT of this one — "nothing ever chose to open it" — so a
     // falsy-check regression here would silently disable the condition.
     expect(hasRetentionConditions({ maxOpenedCount: 0 })).toBe(true);
+  });
+
+  it('counts a reverse direction like any other condition', () => {
+    expect(hasRetentionConditions({ minOpenedCount: 10 })).toBe(true);
+    expect(retentionConditionsCount({ maxSeenCount: 1, minOpenedCount: 10, openedWithinDays: 7 })).toBe(3);
+  });
+});
+
+describe('hasExplorerOnlyConditions / policyRetentionConditions', () => {
+  it('is true only for a condition a retention policy cannot carry', () => {
+    expect(hasExplorerOnlyConditions({ minAgeDays: 90, maxOpenedCount: 0 })).toBe(false);
+    for (const field of ['openedWithinDays', 'minSeenCount', 'minReadCount', 'minOpenedCount'] as const) {
+      expect(hasExplorerOnlyConditions({ [field]: 1 }), field).toBe(true);
+    }
+  });
+
+  it('keeps just the five policy conditions', () => {
+    expect(
+      policyRetentionConditions({ minAgeDays: 90, maxOpenedCount: 0, minReadCount: 100, openedWithinDays: 7 }),
+    ).toEqual({ minAgeDays: 90, maxOpenedCount: 0 });
   });
 });
 
@@ -151,6 +187,27 @@ describe('retentionConditionsToListBody / retentionConditionsToGroomConditions',
     const groom = retentionConditionsToGroomConditions(conditions);
     expect(GroomConditionsSchema.safeParse(groom).success).toBe(true);
     expect(groom).toEqual({ min_age_days: 90, unseen_days: 30, max_seen_count: 1 });
+  });
+
+  it('maps the reverse directions to their own wire fields on the LIST body', () => {
+    const body = retentionConditionsToListBody({
+      openedWithinDays: 7,
+      minSeenCount: 2,
+      minReadCount: 100,
+      minOpenedCount: 10,
+    });
+    expect(body).toEqual({ opened_within_days: 7, min_seen_count: 2, min_read_count: 100, min_opened_count: 10 });
+    // Read back off the parsed output: the schema is not `.strict()`, so a
+    // success-only check would pass a route that silently dropped them.
+    const parsed = ListMemoriesBodySchema.parse(body);
+    expect([parsed.opened_within_days, parsed.min_seen_count, parsed.min_read_count, parsed.min_opened_count]).toEqual([
+      7, 2, 100, 10,
+    ]);
+  });
+
+  it('never hands a reverse direction to a POLICY — GroomConditions has no field for it', () => {
+    const groom = retentionConditionsToGroomConditions({ maxOpenedCount: 0, minOpenedCount: 10, openedWithinDays: 7 });
+    expect(groom).toEqual({ max_opened_count: 0 });
   });
 });
 
@@ -320,6 +377,18 @@ describe('retentionConditionsToAggregateBody', () => {
     });
   });
 
+  it('carries the reverse directions to all three aggregates, so the counts describe the list (00113)', () => {
+    const body = retentionConditionsToAggregateBody({ openedWithinDays: 7, minOpenedCount: 10 });
+    expect(body).toEqual({ opened_within_days: 7, min_opened_count: 10 });
+    for (const parsed of [
+      ListFacetsBodySchema.parse(body),
+      ActivityBodySchema.parse(body),
+      PivotBodySchema.parse({ row: 'host', col: 'kind', ...body }),
+    ]) {
+      expect([parsed.opened_within_days, parsed.min_opened_count]).toEqual([7, 10]);
+    }
+  });
+
   it('emits fields ALL THREE aggregate schemas actually CARRY', () => {
     const body = retentionConditionsToAggregateBody({
       minAgeDays: 7,
@@ -384,17 +453,65 @@ describe('retentionConditionsToAggregateBody', () => {
 
 describe('RETENTION_FIELDS', () => {
   it('covers every condition exactly once, and in a stable order', () => {
-    // The menu's row order, the pill order and `retentionConditionsPhrase`'s
-    // fragment order are all this one array, so a field added to
-    // `RetentionConditions` without an entry here is a condition the URL can
-    // carry and the UI can never show or clear.
+    // The pill order and `retentionConditionsPhrase`'s fragment order are this
+    // one array, so a field added to `RetentionConditions` without an entry
+    // here is a condition the URL can carry and the UI can never show or clear.
+    // Each reverse direction sits right after the row it reverses.
     expect(RETENTION_FIELDS.map((d) => d.field)).toEqual([
+      'minAgeDays',
+      'unseenDays',
+      'openedWithinDays',
+      'maxSeenCount',
+      'minSeenCount',
+      'maxReadCount',
+      'minReadCount',
+      'maxOpenedCount',
+      'minOpenedCount',
+    ]);
+    expect(RETENTION_FIELDS.map((d) => d.field).sort()).toEqual(
+      Object.keys(RETENTION_CONDITION_BOUNDS).sort(),
+    );
+  });
+
+  it('lists five menu rows — one per metadata row, never one per direction', () => {
+    expect(RETENTION_MENU_FIELDS).toEqual([
       'minAgeDays',
       'unseenDays',
       'maxSeenCount',
       'maxReadCount',
       'maxOpenedCount',
     ]);
+  });
+
+  it('pairs each reverse direction with its row symmetrically, under the same label', () => {
+    for (const d of RETENTION_FIELDS) {
+      if (d.opposite === undefined) continue;
+      const other = requireRetentionField(d.opposite);
+      expect(other.opposite, d.field).toBe(d.field);
+      expect(other.entry, d.field).toBe(d.entry);
+      expect(other.label, d.field).toBe(d.label);
+      // Two group headings reading the same would be unreadable.
+      expect(other.directionLabel, d.field).not.toBe(d.directionLabel);
+      // Opposites keep opposite sides of N — that is what `<` / `>` route on.
+      expect(other.bound, d.field).not.toBe(d.bound);
+      expect(other.discrete, d.field).toBe(d.discrete);
+    }
+    // A row whose list holds both directions needs a hint that covers both.
+    for (const field of RETENTION_MENU_FIELDS) {
+      const d = requireRetentionField(field);
+      if (d.opposite !== undefined) expect(d.entryHint, field).toBeTruthy();
+    }
+    // Created has no reverse: the date range picker already answers "created
+    // within", and a second spelling of it would be two controls for one fact.
+    expect(requireRetentionField('minAgeDays').opposite).toBeUndefined();
+  });
+
+  it('words the reverse directions as "or more" / "within", so a pill carries its direction', () => {
+    expect(requireRetentionField('minOpenedCount').formatValue(10)).toBe('10 times or more');
+    expect(requireRetentionField('minOpenedCount').formatValue(1)).toBe('At least once');
+    expect(requireRetentionField('minReadCount').formatValue(500)).toBe('500 times or more');
+    expect(requireRetentionField('openedWithinDays').formatValue(7)).toBe('Within 7 days');
+    expect(requireRetentionField('openedWithinDays').formatValue(1)).toBe('Within 1 day');
   });
 
   it('offers only in-bounds presets', () => {
@@ -431,9 +548,16 @@ describe('requireRetentionField', () => {
 });
 
 describe('retentionFieldMatches', () => {
-  it('offers every entry, in order, with no query', () => {
-    expect(retentionFieldMatches('')).toEqual(RETENTION_FIELDS.map((d) => d.field));
-    expect(retentionFieldMatches('   ')).toEqual(RETENTION_FIELDS.map((d) => d.field));
+  it('offers every menu row, in order, with no query', () => {
+    expect(retentionFieldMatches('')).toEqual(RETENTION_MENU_FIELDS);
+    expect(retentionFieldMatches('   ')).toEqual(RETENTION_MENU_FIELDS);
+  });
+
+  it('finds a row by the reverse question too', () => {
+    // "most used" is the question 00113 exists for; it must land on the row
+    // that answers it, never on a second row per direction.
+    expect(retentionFieldMatches('most')).toEqual(['maxOpenedCount']);
+    expect(retentionFieldMatches('recent')).toEqual(['unseenDays']);
   });
 
   it('ranks label hits above keyword hits', () => {
@@ -529,7 +653,141 @@ describe('retentionValueRows', () => {
   });
 });
 
+describe('retentionEntryValue', () => {
+  it('reports whichever direction a row holds', () => {
+    expect(retentionEntryValue({ maxOpenedCount: 0 }, 'maxOpenedCount')).toEqual({ field: 'maxOpenedCount', value: 0 });
+    expect(retentionEntryValue({ minOpenedCount: 10 }, 'maxOpenedCount')).toEqual({ field: 'minOpenedCount', value: 10 });
+    expect(retentionEntryValue({ openedWithinDays: 7 }, 'unseenDays')).toEqual({ field: 'openedWithinDays', value: 7 });
+    expect(retentionEntryValue({}, 'maxOpenedCount')).toBeNull();
+    expect(retentionEntryValue({ minOpenedCount: 10 }, 'minAgeDays')).toBeNull();
+  });
+
+  it('prefers the retention direction when a hand-edited link carries both', () => {
+    expect(retentionEntryValue({ maxSeenCount: 5, minSeenCount: 2 }, 'maxSeenCount')).toEqual({
+      field: 'maxSeenCount',
+      value: 5,
+    });
+  });
+});
+
+describe('retentionValueRows — reverse directions', () => {
+  it('offers the reverse direction its own presets, and a typed value in that direction', () => {
+    expect(retentionValueRows('minOpenedCount', '').map((r) => r.value)).toEqual([1, 5, 10, 25]);
+    // Typed values are the custom-value input in BOTH directions.
+    expect(retentionValueRows('minOpenedCount', '40')).toEqual([{ value: 40, custom: true }]);
+    expect(retentionValueRows('openedWithinDays', '14')).toEqual([{ value: 14, custom: true }]);
+  });
+
+  it('offers no typed value that narrows nothing', () => {
+    expect(retentionValueRows('minOpenedCount', '0')).toEqual([]);
+    // Every memory was written at least once (a table constraint), so a
+    // recurrence floor of 1 is the same no-op as a count floor of 0.
+    // (The preset 10 still matches by numeric prefix — a reader typing toward
+    // it — but no row offers 1 itself.)
+    expect(retentionValueRows('minSeenCount', '1')).toEqual([{ value: 10, custom: false }]);
+  });
+});
+
+describe('parseRetentionQuery', () => {
+  it('splits an optional comparison from the number', () => {
+    expect(parseRetentionQuery('')).toBeNull();
+    expect(parseRetentionQuery('  ')).toBeNull();
+    expect(parseRetentionQuery('50')).toEqual({ op: 'any', digits: '50' });
+    expect(parseRetentionQuery('>50')).toEqual({ op: 'gt', digits: '50' });
+    expect(parseRetentionQuery('> 50')).toEqual({ op: 'gt', digits: '50' });
+    expect(parseRetentionQuery('<50')).toEqual({ op: 'lt', digits: '50' });
+    // Two-character operators are read whole, never as `>` then `=50`.
+    expect(parseRetentionQuery('>=50')).toEqual({ op: 'gte', digits: '50' });
+    expect(parseRetentionQuery('<=50')).toEqual({ op: 'lte', digits: '50' });
+    expect(parseRetentionQuery('≥50')).toEqual({ op: 'gte', digits: '50' });
+    expect(parseRetentionQuery('≤50')).toEqual({ op: 'lte', digits: '50' });
+    expect(parseRetentionQuery('>')).toEqual({ op: 'gt', digits: '' });
+  });
+});
+
+describe('retentionEntryRows — both directions in one list', () => {
+  const rows = (entry: Parameters<typeof retentionEntryRows>[0], query: string, conditions = {}) =>
+    retentionEntryRows(entry, query, conditions).map((r) => `${r.field}:${r.value}${r.custom ? '*' : ''}`);
+
+  it('lists the retention side\'s presets, then the reverse side\'s, with no query', () => {
+    expect(rows('maxOpenedCount', '')).toEqual([
+      'maxOpenedCount:0',
+      'maxOpenedCount:1',
+      'maxOpenedCount:2',
+      'maxOpenedCount:5',
+      'minOpenedCount:1',
+      'minOpenedCount:5',
+      'minOpenedCount:10',
+      'minOpenedCount:25',
+    ]);
+  });
+
+  it('offers a bare number in every direction it is legal for, then the presets it prefixes', () => {
+    expect(rows('maxOpenedCount', '40')).toEqual(['maxOpenedCount:40*', 'minOpenedCount:40*']);
+    // `1` prefixes 10 on the at-least side.
+    expect(rows('maxOpenedCount', '1')).toEqual(['maxOpenedCount:1', 'minOpenedCount:1', 'minOpenedCount:10']);
+    // 0 is legal only as a ceiling — a floor of 0 narrows nothing.
+    expect(rows('maxOpenedCount', '0')).toEqual(['maxOpenedCount:0']);
+  });
+
+  it('reads a strict comparison on a COUNT as the next whole number, so the row says what applies', () => {
+    expect(rows('maxOpenedCount', '>50')).toEqual(['minOpenedCount:51*']);
+    expect(rows('maxOpenedCount', '<50')).toEqual(['maxOpenedCount:49*']);
+    expect(rows('maxOpenedCount', '>=50')).toEqual(['minOpenedCount:50*']);
+    expect(rows('maxOpenedCount', '<=5')).toEqual(['maxOpenedCount:5']);
+    // `<1` is "never chosen"; `>0` is "at least once".
+    expect(rows('maxOpenedCount', '<1')).toEqual(['maxOpenedCount:0']);
+    expect(rows('maxOpenedCount', '>0')).toEqual(['minOpenedCount:1']);
+  });
+
+  it('leaves DAYS unshifted — time is continuous, so >30 is "more than 30 days ago" as is', () => {
+    expect(rows('unseenDays', '>30')).toEqual(['unseenDays:30']);
+    expect(rows('unseenDays', '<7')).toEqual(['openedWithinDays:7']);
+    expect(rows('unseenDays', '14')).toEqual(['unseenDays:14*', 'openedWithinDays:14*']);
+  });
+
+  it('narrows to one side\'s presets on a bare operator', () => {
+    expect(rows('maxReadCount', '>')).toEqual([
+      'minReadCount:100',
+      'minReadCount:200',
+      'minReadCount:500',
+      'minReadCount:1000',
+    ]);
+  });
+
+  it('offers nothing for a direction the row cannot read, or a value out of bounds', () => {
+    // Created reads one way; "created within" is the date range's job.
+    expect(rows('minAgeDays', '<30')).toEqual([]);
+    expect(rows('minAgeDays', '>30')).toEqual(['minAgeDays:30']);
+    expect(rows('maxOpenedCount', '<0')).toEqual([]);
+    expect(rows('maxOpenedCount', 'abc')).toEqual([]);
+  });
+
+  it('leads each group with its applied custom value, so the list never denies the pill', () => {
+    expect(rows('maxOpenedCount', '', { minOpenedCount: 40 }).slice(4, 6)).toEqual([
+      'minOpenedCount:40*',
+      'minOpenedCount:1',
+    ]);
+  });
+});
+
 describe('setRetentionCondition', () => {
+  it('clears the same row\'s opposite direction when setting a value', () => {
+    // One direction per row: switching `Chosen` from "at most 5" to "at least
+    // 10" must REPLACE the condition, not narrow to the empty range 10..5.
+    expect(setRetentionCondition({ maxOpenedCount: 5, minAgeDays: 30 }, 'minOpenedCount', 10)).toEqual({
+      minAgeDays: 30,
+      minOpenedCount: 10,
+    });
+    expect(setRetentionCondition({ openedWithinDays: 7 }, 'unseenDays', 90)).toEqual({ unseenDays: 90 });
+  });
+
+  it('leaves the opposite alone when CLEARING, so a pill × removes only its own pill', () => {
+    expect(setRetentionCondition({ maxSeenCount: 5, minSeenCount: 2 }, 'minSeenCount', undefined)).toEqual({
+      maxSeenCount: 5,
+    });
+  });
+
   it('sets a field without mutating the input', () => {
     const before: RetentionConditions = { minAgeDays: 30 };
     const after = setRetentionCondition(before, 'maxOpenedCount', 0);
@@ -594,6 +852,10 @@ describe('policyRulePhrase', () => {
     expect(
       policyRulePhrase({}, [{ field: 'host', operator: 'in', values: ['reviewer'] }]),
     ).toContain('reviewer');
+  });
+
+  it('names only what a policy can carry, never a reverse direction', () => {
+    expect(policyRulePhrase({ maxOpenedCount: 0, minReadCount: 100 })).toBe('chosen ≤ 0×');
   });
 });
 

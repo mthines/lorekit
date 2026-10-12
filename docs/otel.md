@@ -917,6 +917,7 @@ attribute here.
 | `lore.memory_archive_toggled` | A memory was archived or restored | `lorekit.lore.memory.archive_action`, `.archive_outcome` |
 | `lore.filter_changed` | Any filter-bar mutation, age/activity thresholds included | `lorekit.lore.filter.action`, `.field` (optional), `.operator` (optional), `.count`, `.retention_count` |
 | `lore.status_changed` | Active / Archived / Expiring | `lorekit.lore.status` |
+| `lore.sort_changed` | The list order was picked (Newest / Most chosen) | `lorekit.lore.sort` (`created_at`/`opened_count`) |
 | `lore.search_committed` | The debounced search settled | `lorekit.lore.search.length` |
 | `lore.scope_selected` | A scope chip or Browse-all row was picked | `lorekit.lore.scope.type`, `.source` (`strip`/`browse-all`) |
 | `lore.range_changed` | Any of the FIVE controls that write `?range=` | `lorekit.lore.range.preset`, `.source`, `.span_days` (omitted when unbounded) |

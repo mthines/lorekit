@@ -286,8 +286,9 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       'An invalid `scope` is a `400`, not a silently ignored filter — the menu counts and the ' +
       'list they drill into agree on what a scope is. The `created_since`/`created_until` window ' +
       'and the five retention thresholds (`min_age_days`, `unseen_days`, `max_seen_count`, ' +
-      '`max_read_count`, `max_opened_count`) narrow the counted population exactly as they do on ' +
-      '`GET /memories`, so a count matches the list under the same parameters. They emit no facet ' +
+      '`max_read_count`, `max_opened_count`) and their four reverse directions (`opened_within_days`, ' +
+      '`min_seen_count`, `min_read_count`, `min_opened_count`) narrow the counted population exactly ' +
+      'as they do on `GET /memories`, so a count matches the list under the same parameters. They emit no facet ' +
       'rows of their own — they are comparisons, not enumerable dimensions. `q`, `key` and ' +
       '`expiring_within_days` remain unmirrored, so with those active a count is an upper bound.',
     security, request: { query: ListFacetsQuerySchema },
@@ -321,8 +322,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '`row in [x] AND col in [y]` and asks again still gets every other cell back — that ' +
       'is what keeps a drilled-in grid navigable instead of collapsing to the clicked cell. ' +
       'A pair counting zero emits no cell. `truncated` reports whether `limit` cut the grid. ' +
-      'The `created_since`/`created_until` window and the five retention thresholds narrow the ' +
-      'counted population, matching `GET /memories/facets`.',
+      'The `created_since`/`created_until` window, the five retention thresholds and their four ' +
+      'reverse directions narrow the counted population, matching `GET /memories/facets`.',
     security, request: { query: PivotQuerySchema },
     responses: {
       200: { description: 'Pivot cells', content: { 'application/json': { schema: PivotResponseSchema } } },
@@ -346,7 +347,8 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       'An invalid `scope` is a `400`, not a silently ignored filter — the same rule the read ' +
       'counterpart `GET /memories/read-activity` follows. The five retention thresholds ' +
       '(`min_age_days`, `unseen_days`, `max_seen_count`, `max_read_count`, `max_opened_count`) ' +
-      'narrow the counted population exactly as they do on `GET /memories`, so a series matches ' +
+      'and their four reverse directions (`opened_within_days`, `min_seen_count`, `min_read_count`, ' +
+      '`min_opened_count`) narrow the counted population exactly as they do on `GET /memories`, so a series matches ' +
       'the list under the same parameters. There is no `created_since`/`created_until` pair here, ' +
       'unlike `/facets` and `/pivot`: this route’s own `since`/`until` already bound `created_at`.',
     security, request: { query: ActivityQuerySchema },

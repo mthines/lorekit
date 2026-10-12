@@ -5,7 +5,7 @@ import { badRequest, forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.ts';
 import { parseScopeFilter } from '../../_shared/scope/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
-import type { SortColumn } from '../../_shared/api/paginate.ts';
+import { buildCountPage, decodeCountCursor } from '../../_shared/api/count-cursor.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { Span } from '../../_shared/telemetry/otel.ts';
 import {
@@ -13,6 +13,7 @@ import {
   ListMemoriesQuerySchema,
   shapeMemoryRow,
 } from '../../_shared/schemas/memory.ts';
+import type { MemorySort } from '../../_shared/schemas/memory.ts';
 import { dimensionsFromBody, dimensionsFromQuery } from '../../_shared/schemas/dimensions.ts';
 import type { MemoryDimensions } from '../../_shared/schemas/dimensions.ts';
 import { retentionRpcParams } from '../../_shared/api/retention.ts';
@@ -44,7 +45,7 @@ interface ListParams {
   q?: string | undefined;
   created_since?: string | undefined;
   created_until?: string | undefined;
-  sort: SortColumn;
+  sort: MemorySort;
   archived: boolean;
   expiring_within_days?: number | undefined;
   /**
@@ -58,6 +59,14 @@ interface ListParams {
   max_seen_count?: number | undefined;
   max_read_count?: number | undefined;
   max_opened_count?: number | undefined;
+  /**
+   * The reverse directions (00113) — read conditions only, see
+   * `_shared/api/retention.ts`.
+   */
+  opened_within_days?: number | undefined;
+  min_seen_count?: number | undefined;
+  min_read_count?: number | undefined;
+  min_opened_count?: number | undefined;
   limit: number;
   cursor?: string | undefined;
   dimensions: MemoryDimensions;
@@ -172,8 +181,15 @@ async function respondWithPage(
   // A cursor minted under the other sort order is not comparable with this one,
   // so it is ignored (→ first page) rather than silently mis-paging. Unchanged
   // contract; only the place the two halves are applied has moved.
-  const cursor = params.cursor ? decodeCursor(params.cursor) : null;
-  const usableCursor = cursor && cursor.sort === params.sort ? cursor : null;
+  //
+  // Two cursor FORMATS since 00113: the date sorts keep `paginate.ts`'s
+  // timestamp cursor, and `opened_count` uses `count-cursor.ts`'s integer one.
+  // Each decoder rejects the other's format, so the same "wrong sort → first
+  // page" rule holds across the two families as well as within the dates.
+  const countSort = params.sort === 'opened_count';
+  const dateCursor = !countSort && params.cursor ? decodeCursor(params.cursor) : null;
+  const usableCursor = dateCursor && dateCursor.sort === params.sort ? dateCursor : null;
+  const countCursor = countSort && params.cursor ? decodeCountCursor(params.cursor) : null;
 
   // The asymmetric `(after, on_or_before]` window stays in TypeScript so the
   // `now`-relative boundary has exactly one implementation (edge-parity.spec.ts
@@ -235,12 +251,15 @@ async function respondWithPage(
     p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     p_sort: params.sort,
     p_cursor_ts: usableCursor?.ts ?? null,
-    p_cursor_id: usableCursor?.id ?? null,
+    p_cursor_id: usableCursor?.id ?? countCursor?.id ?? null,
+    // 00113: the count sort's keyset bound. The RPC reads it only when
+    // `p_sort` is `opened_count`, and `p_cursor_ts` only otherwise.
+    p_cursor_count: countCursor?.count ?? null,
     // limit + 1: the overflow row is what `buildPage` reads `hasMore` from.
     p_limit: params.limit + 1,
     // The retention thresholds (00092, extended to the aggregates by 00108).
     // Mapped by the shared `retentionRpcParams` rather than inline, because
-    // this route is now one of FOUR that take the same five parameters — the
+    // this route is now one of FOUR that take the same parameters — the
     // list and the three aggregates describing it — and an inline copy per
     // route is how a count came to disagree with its own list in the first
     // place. `?? null` is applied there; see that module on why a truthiness
@@ -250,7 +269,10 @@ async function respondWithPage(
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
   const rows = (data ?? []) as ListRpcRow[];
-  const page = buildPage(rows, params.limit, params.sort);
+  const page =
+    params.sort === 'opened_count'
+      ? buildCountPage(rows, params.limit)
+      : buildPage(rows, params.limit, params.sort);
   // `total_count` is the SAME value on every row of `rows` (a `count(*) over
   // ()` — see migration 00094), so any row answers it; an empty result has no
   // row to read it from, and 0 matches is the exact total in that case too.
@@ -312,6 +334,10 @@ export async function handleList(
     max_seen_count: p.max_seen_count,
     max_read_count: p.max_read_count,
     max_opened_count: p.max_opened_count,
+    opened_within_days: p.opened_within_days,
+    min_seen_count: p.min_seen_count,
+    min_read_count: p.min_read_count,
+    min_opened_count: p.min_opened_count,
     limit: p.limit,
     cursor: p.cursor,
     dimensions: dimensionsFromQuery(p),
@@ -356,6 +382,10 @@ export async function handleListPost(
     max_seen_count: b.max_seen_count,
     max_read_count: b.max_read_count,
     max_opened_count: b.max_opened_count,
+    opened_within_days: b.opened_within_days,
+    min_seen_count: b.min_seen_count,
+    min_read_count: b.min_read_count,
+    min_opened_count: b.min_opened_count,
     limit: b.limit,
     cursor: b.cursor,
     dimensions: dimensionsFromBody(b),

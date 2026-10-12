@@ -123,8 +123,15 @@ export const TimestampFilterSchema = z
     'must be an ISO date (YYYY-MM-DD) or timestamp',
   );
 
-/** Sort column for `GET /memories`. The cursor encodes whichever is chosen. */
-export const MemorySortSchema = z.enum(['updated_at', 'created_at']);
+/**
+ * Sort column for `GET /memories`. The cursor encodes whichever is chosen.
+ *
+ * `opened_count` (migration 00113) is "most chosen first": descending on the
+ * deliberate-fetch counter, `id` breaking ties. It pages through a cursor of
+ * its own (`count-cursor.ts`), because a keyset bound on an integer column
+ * cannot ride in the timestamp cursor the two date sorts share.
+ */
+export const MemorySortSchema = z.enum(['updated_at', 'created_at', 'opened_count']);
 export type MemorySort = z.infer<typeof MemorySortSchema>;
 
 /**
@@ -186,6 +193,28 @@ const ValueListSchema = z.string().min(1).max(2048);
  * The bounds are copied rather than imported from `retention.ts`: that file is
  * its own domain file for the reason its header states, and `memory.spec.ts`
  * pins the two in step.
+ *
+ * ## The reverse directions (migration 00113) are READ-ONLY conditions
+ *
+ * The five above all point the retention way — "N or fewer", "not opened for
+ * N days" — because they are what a groomer asks before archiving. The last
+ * four are their mirrors, for the opposite question ("what is used the most?"):
+ *
+ * - `opened_within_days` — last deliberately fetched within N days. A lesson
+ *   NEVER opened does not match, however new: unlike `unseen_days` it does not
+ *   age a never-opened lesson from `created_at`, because "opened recently" is a
+ *   claim about an agent's behaviour that no agent made.
+ * - `min_seen_count` / `min_read_count` / `min_opened_count` — at least N.
+ *   Each starts at the first value that can narrow anything: 1 for the two
+ *   read counters (a floor of 0 matches every row), and 2 for `min_seen_count`,
+ *   because `seen_count >= 1` is a table constraint (00059) and "written at
+ *   least once" describes every memory there is.
+ *
+ * They are deliberately ABSENT from `GroomConditionsSchema`: archiving
+ * "everything chosen at least 10 times" is not a policy anyone wants, and a
+ * policy able to express it is one careless edit from archiving the most useful
+ * lore in the store. So they ride here, on the four read routes, and nowhere a
+ * write can reach them.
  */
 const retentionConditionBodyFields = {
   min_age_days: z.number().int().min(1).max(3650).optional(),
@@ -193,6 +222,10 @@ const retentionConditionBodyFields = {
   max_seen_count: z.number().int().min(0).max(100_000).optional(),
   max_read_count: z.number().int().min(0).max(100_000).optional(),
   max_opened_count: z.number().int().min(0).max(100_000).optional(),
+  opened_within_days: z.number().int().min(1).max(3650).optional(),
+  min_seen_count: z.number().int().min(2).max(100_000).optional(),
+  min_read_count: z.number().int().min(1).max(100_000).optional(),
+  min_opened_count: z.number().int().min(1).max(100_000).optional(),
 } as const;
 
 /**
@@ -207,6 +240,10 @@ const retentionConditionQueryFields = {
   max_seen_count: z.coerce.number().int().min(0).max(100_000).optional(),
   max_read_count: z.coerce.number().int().min(0).max(100_000).optional(),
   max_opened_count: z.coerce.number().int().min(0).max(100_000).optional(),
+  opened_within_days: z.coerce.number().int().min(1).max(3650).optional(),
+  min_seen_count: z.coerce.number().int().min(2).max(100_000).optional(),
+  min_read_count: z.coerce.number().int().min(1).max(100_000).optional(),
+  min_opened_count: z.coerce.number().int().min(1).max(100_000).optional(),
 } as const;
 
 export const ListMemoriesQuerySchema = z.object({

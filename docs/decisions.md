@@ -749,6 +749,30 @@ directories (`packages/cli/skill/*`) — the Claude-plugin-vendored mirror under
 `scripts/codegen/sync-plugin-skill.mjs --check` (run inside the `plugin` CI job), so the two guards
 compose instead of duplicating each other's job.
 
+## The age/activity conditions read both ways, but only one way reaches a policy
+
+The five retention conditions all point the archive way ("N or fewer", "not opened for N days"), so the
+Explorer could show the dead weight and never the load-bearing lore. 00113 adds the mirror of four of them
+— `opened_within_days`, `min_seen_count`, `min_read_count`, `min_opened_count` — plus `sort=opened_count`.
+
+They are **read conditions only**: they reach the list and the three aggregates (the rule below), and are
+deliberately absent from `GroomConditionsSchema`. Archiving "everything chosen at least 10 times" is not a
+policy anyone wants, and a schema able to express it is one careless edit from archiving the most useful
+lore in the store. The Explorer therefore hides **Create retention policy** while one is set, rather than
+saving a policy that would archive a different set from the one on screen
+(`retentionConditionsToGroomConditions` drops them as a second line).
+
+In the menu each pair shares ONE row and label, and that row's value list holds BOTH directions as ordinary
+rows under two headings; a row holds one direction at a time (setting one clears the other). Two menu rows
+per metadata row would double the level-one list for a choice that is a property of the row. A direction
+TOGGLE above the value list was tried first and replaced: it was a mode that hid half the values, cost a
+click and a Tab stop before they were even visible, and typing could only ever fill the side it was set to.
+As rows, typing follows the list: a bare number offers both directions, `>N` / `<N` pick one, and a strict
+comparison on a COUNT is stored as the next whole number (`>40` → 41) so the row reads as the filter it
+applies. `opened_within_days` does **not** inherit 00100's never-opened fallback: a lesson
+nothing ever opened was not "opened recently". Created has no reverse — the date-range picker already
+answers "created within".
+
 ## A COUNT must describe the rows its LIST returns
 
 The five retention conditions (`min_age_days`, `unseen_days`, `max_seen_count`, `max_read_count`,

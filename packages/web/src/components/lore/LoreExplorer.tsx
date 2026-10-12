@@ -50,6 +50,12 @@
  *   narrowing. Resolves to no conditions while the `retention-policies` flag is
  *   off — the whole feature is gated together with its Settings → Retention
  *   Policies destination, which 404s while the flag is off.
+ *   Four of the five also read the other way (migration 00113 — "chosen at
+ *   least N times", "opened within N days"); those reverse directions are
+ *   Explorer-only, so "Create retention policy" is hidden while one is set.
+ * - `sort` param:     the list order (`lib/explorer-sort.ts`) — Newest (absent,
+ *   the default) or Most chosen (`opened_count`, migration 00113). Shareable;
+ *   an unknown value falls back to Newest.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
  *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
@@ -139,7 +145,14 @@ import {
   type FilterOperator,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
+import { SortSelect } from './SortSelect';
 import {
+  explorerSortParamValue,
+  resolveExplorerSort,
+  type ExplorerSort,
+} from '@/lib/explorer-sort';
+import {
+  hasExplorerOnlyConditions,
   hasRetentionConditions,
   normalizeRetentionConditions,
   retentionConditionsParamValue,
@@ -238,6 +251,8 @@ function ControlRow({
   onRetentionChange,
   editingRetentionField,
   onEditRetentionField,
+  sort,
+  onSortChange,
 }: {
   variant: 'desktop' | 'mobile';
   search: string;
@@ -264,6 +279,9 @@ function ControlRow({
   onRetentionChange: (next: RetentionConditions) => void;
   editingRetentionField: RetentionField | null;
   onEditRetentionField: (field: RetentionField | null) => void;
+  /** The list order — see `SortSelect` for why it is not inside the Filter menu. */
+  sort: ExplorerSort;
+  onSortChange: (sort: ExplorerSort) => void;
 }) {
   const desktop = variant === 'desktop';
 
@@ -307,6 +325,7 @@ function ControlRow({
         active={dateActive}
         className="shrink-0"
       />
+      <SortSelect value={sort} onChange={onSortChange} variant={variant} />
     </div>
   );
 }
@@ -542,6 +561,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     },
     [setRawRetention, retentionConditions, filters.length],
   );
+  // "Create retention policy" hands this view to a policy, so it is offered only
+  // when a policy could reproduce it: the flag is on (the destination 404s
+  // otherwise) and no Explorer-only reverse direction is set.
+  const canCreatePolicy =
+    retentionPoliciesEnabled && !hasExplorerOnlyConditions(retentionConditions);
   // Which threshold the menu should open at, set by a retention pill's value
   // segment — the `editingField` above, for the other half of the bar.
   const [editingRetentionField, setEditingRetentionField] = useState<RetentionField | null>(null);
@@ -611,6 +635,23 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   const status = resolveStatus(rawStatus, legacyArchived);
   const showArchived = isArchivedView(status);
 
+  // URL-backed list order — scoped to /lore, absent for the default (Newest) so
+  // an unsorted link is byte-identical to one minted before sorting existed.
+  // `resolveExplorerSort` turns a stale or hand-edited value into the default
+  // rather than a 400 from the list route.
+  const [rawSort, setRawSort] = useUrlState<ExplorerSort | null>('sort', null, {
+    cleanOnPathname: '/lore',
+  });
+  const sort = resolveExplorerSort(rawSort);
+  const handleSortChange = useCallback(
+    (next: ExplorerSort) => {
+      if (next === sort) return;
+      track({ name: 'lore.sort_changed', sort: next });
+      setRawSort(explorerSortParamValue(next));
+    },
+    [sort, setRawSort],
+  );
+
   // Paginated lesson list — server-side filtered by scope / search / range / status.
   const {
     data,
@@ -625,6 +666,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     range: resolvedRange,
     filters,
     retentionConditions,
+    sort,
     showArchived,
     expiringWithinDays: expiringWithinDays(status),
   });
@@ -1488,6 +1530,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               retentionEnabled={retentionPoliciesEnabled}
               retentionConditions={retentionConditions}
               onRetentionChange={setRetentionConditions}
+              sort={sort}
+              onSortChange={handleSortChange}
             />
 
             <FilterPillRow
@@ -1500,8 +1544,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               onRetentionChange={setRetentionConditions}
               onEditRetentionField={setEditingRetentionField}
               // Omitted while the flag is off, which hides the action rather
-              // than offering a hand-off to a page that 404s.
-              onCreatePolicy={retentionPoliciesEnabled ? handleCreatePolicy : undefined}
+              // than offering a hand-off to a page that 404s — and while a
+              // reverse direction (00113) is set, because a policy cannot
+              // carry one and would archive a different set from this view.
+              onCreatePolicy={canCreatePolicy ? handleCreatePolicy : undefined}
             />
 
             <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
@@ -1530,6 +1576,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               retentionEnabled={retentionPoliciesEnabled}
               retentionConditions={retentionConditions}
               onRetentionChange={setRetentionConditions}
+              sort={sort}
+              onSortChange={handleSortChange}
             />
 
             <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
@@ -1542,7 +1590,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
                 retention={retentionConditions}
                 onRetentionChange={setRetentionConditions}
                 onEditRetentionField={setEditingRetentionField}
-                onCreatePolicy={retentionPoliciesEnabled ? handleCreatePolicy : undefined}
+                onCreatePolicy={canCreatePolicy ? handleCreatePolicy : undefined}
               />
             </div>
 

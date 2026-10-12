@@ -99,6 +99,18 @@
  * Both props are optional together: a caller that passes neither gets the menu
  * without the section, exactly like `status`/`onStatusChange`.
  *
+ * ### Either direction, in the same list (migration 00113)
+ * Four of the five rows can be read both ways — `Chosen` as "5 times or fewer"
+ * (what a groomer asks) or "10 times or more" (what a reader looking for the
+ * lore that is actually used asks). Their value list holds BOTH directions as
+ * ordinary rows under two small headings (`At most` / `At least`, `More than` /
+ * `Within`), built by `retentionEntryRows`. It was briefly a toggle above the
+ * list, and that was a mode: half the values hid behind it, and it took a click
+ * and a Tab stop before the reader could even see them. As rows, every option is
+ * one arrow-key walk away. Typing works the same way — `40` offers both
+ * directions, `>40` / `<40` pick one. One row holds one direction at a time:
+ * picking a value clears the other (see `setRetentionCondition`).
+ *
  * ## Status lives here too, but it is NOT a dimension
  * A pinned "Status" row group sits above the search box at level 1, built
  * from `MEMORY_STATUSES`/`STATUS_LABELS`/`STATUS_ICONS` (`lib/status-filter.ts`
@@ -141,6 +153,7 @@ import {
 } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import {
+  CHROME_HEIGHT,
   anchoredPosition,
   type AnchoredPosition,
 } from '@/lib/anchored-position';
@@ -161,9 +174,11 @@ import {
   RETENTION_CONDITION_BOUNDS,
   requireRetentionField,
   retentionConditionsCount,
+  retentionEntryRows,
+  retentionEntryValue,
   retentionFieldMatches,
-  retentionValueRows,
   setRetentionCondition,
+  type PolicyRetentionField,
   type RetentionConditions,
   type RetentionField,
 } from '@/lib/retention-filter';
@@ -201,14 +216,19 @@ export const FIELD_ICONS: Record<FilterField, LucideIcon> = {
  * Each names its DATA rather than its condition: a calendar-plus for when a
  * lesson was written, a clock-history for when one was last opened, a repeat
  * for how often it recurred, a download for how often it was delivered, a
- * pointer for how often something chose it.
+ * pointer for how often something chose it. A reverse direction (00113) reads
+ * the same data, so it wears the same icon as its row.
  */
 export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {
   minAgeDays: CalendarPlus,
   unseenDays: History,
+  openedWithinDays: History,
   maxSeenCount: Repeat,
+  minSeenCount: Repeat,
   maxReadCount: Download,
+  minReadCount: Download,
   maxOpenedCount: MousePointerClick,
+  minOpenedCount: MousePointerClick,
 };
 
 /**
@@ -217,7 +237,7 @@ export const RETENTION_FIELD_ICONS: Record<RetentionField, LucideIcon> = {
  * addresses ONE array — splitting them would mean two index spaces and an
  * arrow key that has to know which half it is in.
  */
-type MenuRootRow = RootSuggestion | { kind: 'retention'; field: RetentionField };
+type MenuRootRow = RootSuggestion | { kind: 'retention'; field: PolicyRetentionField };
 
 /**
  * Which value list is showing, or `null` for the level-1 row list. A
@@ -226,7 +246,9 @@ type MenuRootRow = RootSuggestion | { kind: 'retention'; field: RetentionField }
  */
 type MenuLevel =
   | { kind: 'filter'; field: FilterField }
-  | { kind: 'retention'; field: RetentionField };
+  // A threshold's level is its MENU ROW; the rows inside carry their own
+  // direction (see `retentionEntryRows`).
+  | { kind: 'retention'; field: PolicyRetentionField };
 
 /**
  * This menu's own list height, overriding the shared default the way
@@ -239,7 +261,14 @@ type MenuLevel =
  * takes the smaller of this and the space actually available, so a short viewport
  * shrinks the list rather than pushing it off-screen.
  */
-const FILTER_MENU_SIZE = { maxListHeight: 400 } as const;
+const FILTER_MENU_SIZE = {
+  maxListHeight: 400,
+  // The shared chrome figure covers the search box, the footer and a level-two
+  // breadcrumb. Level one also carries the Status row (~40px the default did
+  // not count), which on a short viewport let the menu run past the bottom edge.
+  // Measured once on open rather than per level, so this budgets for it.
+  chromeHeight: CHROME_HEIGHT + 40,
+} as const;
 
 const LISTBOX_ID = 'filter-menu-listbox';
 const OPTION_ID_PREFIX = 'filter-menu-option-';
@@ -409,7 +438,9 @@ export function FilterMenu({
   // responds to is worse than no menu.
   useEffect(() => {
     if (!openAtRetentionField || !retentionEnabled) return;
-    openAtLevel({ kind: 'retention', field: openAtRetentionField });
+    // A pill names a DIRECTION (`minOpenedCount`); the menu opens on its row,
+    // where the applied value is selected inside the right group.
+    openAtLevel({ kind: 'retention', field: requireRetentionField(openAtRetentionField).entry });
     onOpenAtRetentionFieldHandled?.();
   }, [openAtRetentionField, retentionEnabled, onOpenAtRetentionFieldHandled, openAtLevel]);
 
@@ -436,10 +467,7 @@ export function FilterMenu({
   }, [facets, field, filters, query]);
 
   const retentionRows = useMemo(
-    () =>
-      retentionField
-        ? retentionValueRows(retentionField, query, retention?.[retentionField])
-        : [],
+    () => (retentionField ? retentionEntryRows(retentionField, query, retention ?? {}) : []),
     [retentionField, query, retention],
   );
 
@@ -578,10 +606,9 @@ export function FilterMenu({
   function commitRetentionRow(index: number) {
     const row = retentionRows[index];
     if (!row || !retentionField || !retention || !onRetentionChange) return;
-    const cleared = retention[retentionField] === row.value;
-    onRetentionChange(
-      setRetentionCondition(retention, retentionField, cleared ? undefined : row.value),
-    );
+    // The ROW's field, not the level's: the list holds both directions.
+    const cleared = retention[row.field] === row.value;
+    onRetentionChange(setRetentionCondition(retention, row.field, cleared ? undefined : row.value));
     if (entryDepth === 1) {
       closeMenu();
       return;
@@ -745,11 +772,16 @@ export function FilterMenu({
   // so the only way to see nothing here is to type something that is not a legal
   // value. Saying so, with the range, is the difference between "this filter is
   // broken" and "3651 is too many days".
-  const retentionEmptyCopy = retentionField
-    ? `“${query.trim()}” is not a value here — type a whole number from ${
-        RETENTION_CONDITION_BOUNDS[retentionField].min
-      } to ${RETENTION_CONDITION_BOUNDS[retentionField].max}.`
-    : '';
+  const retentionEmptyCopy = !retentionField
+    ? ''
+    : retentionDescriptor?.opposite !== undefined
+      ? `“${query.trim()}” is not a value here — type a whole number, or >N / <N for one side.`
+      : /^\s*[<≤]/.test(query)
+        ? // Created reads one way only; "created within" is the date range's job.
+          `${retentionDescriptor?.label} only reads “more than” — use the date range for “within”.`
+        : `“${query.trim()}” is not a value here — type a whole number from ${
+            RETENTION_CONDITION_BOUNDS[retentionField].min
+          } to ${RETENTION_CONDITION_BOUNDS[retentionField].max}.`;
 
   const emptyCopy = retentionField
     ? retentionEmptyCopy
@@ -779,53 +811,70 @@ export function FilterMenu({
       ) : retentionField && retentionDescriptor ? (
         <>
           {retentionRows.map((row, i) => {
-            const isSelected = retention?.[retentionField] === row.value;
+            const isSelected = retention?.[row.field] === row.value;
+            const rowDescriptor = requireRetentionField(row.field);
+            // A heading opens each direction's group, between rows rather than
+            // as an entry in the array — the option ids are positional (see the
+            // `Age & activity` heading below for the same reasoning).
+            const heading =
+              retentionDescriptor.opposite !== undefined && retentionRows[i - 1]?.field !== row.field
+                ? rowDescriptor.directionLabel
+                : undefined;
             return (
-              <button
-                key={row.value}
-                id={`${OPTION_ID_PREFIX}${i}`}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                onClick={() => commitRetentionRow(i)}
-                onMouseEnter={() => setActiveIndex(i)}
-                className={[
-                  'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs',
-                  i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
-                  isSelected
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-content-secondary)]',
-                ].join(' ')}
-              >
-                {/* A radio, not a checkbox: the shape has to say "one of these"
-                    before the reader discovers it by picking a second. */}
-                <span
-                  aria-hidden
+              <div key={`${row.field}:${row.value}`}>
+                {heading && (
+                  <p
+                    role="presentation"
+                    className="px-2 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]"
+                  >
+                    {heading}
+                  </p>
+                )}
+                <button
+                  id={`${OPTION_ID_PREFIX}${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => commitRetentionRow(i)}
+                  onMouseEnter={() => setActiveIndex(i)}
                   className={[
-                    'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
+                    'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs',
+                    i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
                     isSelected
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-                      : 'border-[var(--color-border)]',
+                      ? 'text-[var(--color-accent)]'
+                      : 'text-[var(--color-content-secondary)]',
                   ].join(' ')}
                 >
-                  {isSelected && <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />}
-                </span>
-                <span className="flex-1 truncate">{retentionDescriptor.formatValue(row.value)}</span>
-                {row.custom && (
-                  // Labelled so a typed threshold is visibly a typed one and not
-                  // a preset the reader misremembers next time.
-                  <span className="shrink-0 text-[10px] text-[var(--color-content-tertiary)]">
-                    custom
+                  {/* A radio, not a checkbox: the shape has to say "one of these"
+                      before the reader discovers it by picking a second. */}
+                  <span
+                    aria-hidden
+                    className={[
+                      'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
+                      isSelected
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
+                        : 'border-[var(--color-border)]',
+                    ].join(' ')}
+                  >
+                    {isSelected && <span className="size-1.5 rounded-full bg-[var(--color-accent)]" />}
                   </span>
-                )}
-              </button>
+                  <span className="flex-1 truncate">{rowDescriptor.formatValue(row.value)}</span>
+                  {row.custom && (
+                    // Labelled so a typed threshold is visibly a typed one and not
+                    // a preset the reader misremembers next time.
+                    <span className="shrink-0 text-[10px] text-[var(--color-content-tertiary)]">
+                      custom
+                    </span>
+                  )}
+                </button>
+              </div>
             );
           })}
           {/* What the threshold actually tests, once under the list rather than
               once per row: the rows are numbers, and a number without its rule
               is the thing readers got wrong about `Delivered` vs `Chosen`. */}
           <p className="px-2 pb-1 pt-2 text-[10px] leading-snug text-[var(--color-content-tertiary)]">
-            {retentionDescriptor.hint}
+            {retentionDescriptor.entryHint ?? retentionDescriptor.hint}
           </p>
         </>
       ) : field ? (
@@ -875,7 +924,13 @@ export function FilterMenu({
           if (row.kind === 'retention') {
             const entry = requireRetentionField(row.field);
             const Icon = RETENTION_FIELD_ICONS[row.field];
-            const value = retention?.[row.field];
+            // Either direction — the badge has to name what is applied, and
+            // `Chosen: 10 times or more` is just as applied as `Never chosen`.
+            const applied = retention ? retentionEntryValue(retention, row.field) : null;
+            const value = applied?.value;
+            const appliedLabel = applied
+              ? requireRetentionField(applied.field).formatValue(applied.value)
+              : undefined;
             // The heading is rendered BETWEEN rows rather than as an entry in
             // `rootRows`, because `activeIndex` and the `role="option"` ids are
             // positional — a non-selectable element in the array would shift
@@ -903,11 +958,7 @@ export function FilterMenu({
                   // The chosen value is a badge, and a badge is aria-hidden
                   // decoration — fold it into the name so a screen reader hears
                   // "Chosen, never chosen" rather than just "Chosen".
-                  aria-label={
-                    value !== undefined
-                      ? `${entry.label}, ${entry.formatValue(value)}`
-                      : undefined
-                  }
+                  aria-label={appliedLabel !== undefined ? `${entry.label}, ${appliedLabel}` : undefined}
                   onClick={() => commitRootRow(i)}
                   onMouseEnter={() => setActiveIndex(i)}
                   className={[
@@ -936,7 +987,7 @@ export function FilterMenu({
                       // the phrase that carries no information.
                       className="max-w-36 truncate rounded-full bg-[var(--color-accent-subtle)] px-1.5 text-[10px] font-semibold text-[var(--color-accent)]"
                     >
-                      {entry.formatValue(value)}
+                      {appliedLabel}
                     </span>
                   )}
                   <ChevronRight
@@ -1121,7 +1172,9 @@ export function FilterMenu({
           // facet catalog to search), so the placeholder has to invite typing a
           // number rather than reading as a search over the five presets.
           placeholder={
-            retentionDescriptor
+            retentionDescriptor?.typeExample !== undefined
+              ? `Pick one, or type ${retentionDescriptor.typeExample}, >${retentionDescriptor.typeExample} or <${retentionDescriptor.typeExample}…`
+              : retentionDescriptor
               ? 'Pick one, or type a number…'
               : field
                 ? descriptor?.searchPlaceholder

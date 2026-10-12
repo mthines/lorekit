@@ -25,6 +25,7 @@ import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { normalizeTags } from '@/lib/tag-filter';
 import { filtersToBody, normalizeFilters, type Filter } from '@/lib/filters';
+import { DEFAULT_EXPLORER_SORT, type ExplorerSort } from '@/lib/explorer-sort';
 import {
   retentionConditionsToListBody,
   type RetentionConditions,
@@ -193,6 +194,13 @@ export interface MemoryFilters {
    * what that policy would catch. Absent/empty means no narrowing.
    */
   retentionConditions?: RetentionConditions;
+  /**
+   * The list order (`lib/explorer-sort.ts`) — `created_at` (Newest, the
+   * default) or `opened_count` (Most chosen, migration 00113). A cursor is only
+   * valid for the order that minted it; the route restarts at page one if the
+   * two disagree, and the Explorer's query key changes with the sort anyway.
+   */
+  sort?: ExplorerSort;
   /** Page size, default 50, hard max 100. */
   pageSize?: number;
   /** Opaque keyset cursor from a previous page's `nextCursor`. */
@@ -231,10 +239,10 @@ const EMPTY_PAGE: MemoryPage = { rows: [], nextCursor: null, hasMore: false };
  * List a keyset page of the memories the caller can see, newest first, with
  * optional combinable filters (scope / substring / date interval / labels).
  *
- * Ordering is `created_at desc` — `sort: 'created_at'` — not the route's
- * `updated_at` default: a memory migrated with a backdated `created_at` belongs
- * at its original position in the Explorer, which is the order the list has
- * always been in.
+ * Ordering defaults to `created_at desc` — `sort: 'created_at'` — not the
+ * route's `updated_at` default: a memory migrated with a backdated `created_at`
+ * belongs at its original position in the Explorer, which is the order the list
+ * has always been in. `filters.sort` swaps in `opened_count` ("Most chosen").
  *
  * Sent over `POST /memories/list` rather than `GET /memories`: the filter bar's
  * dimensions are unbounded, and the query transport caps each one at 2048
@@ -265,7 +273,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   try {
     const page = await listMemoriesPostRequest(token, {
       limit: pageSize,
-      sort: 'created_at',
+      sort: filters.sort ?? DEFAULT_EXPLORER_SORT,
       archived: filters.showArchived ?? false,
       ...(filters.expiringWithinDays !== undefined
         ? { expiring_within_days: filters.expiringWithinDays }

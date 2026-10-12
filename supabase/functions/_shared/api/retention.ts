@@ -26,6 +26,13 @@
  * five field names — the query forms coerce a numeric string, the body forms
  * require a real number, and by the time either reaches here it is a `number`
  * or absent.
+ *
+ * Migration 00113 added four more, the reverse direction of four of the five:
+ * `opened_within_days` and the `min_seen_count` / `min_read_count` /
+ * `min_opened_count` floors. They are READ conditions — the Explorer's "what is
+ * used the most?" — and `GroomConditionsSchema` deliberately does not carry
+ * them, but they reach the same four readers through this same mapping for the
+ * same reason: a count must describe the rows its list returns.
  */
 
 /**
@@ -38,6 +45,10 @@ export interface RetentionConditions {
   max_seen_count?: number | undefined;
   max_read_count?: number | undefined;
   max_opened_count?: number | undefined;
+  opened_within_days?: number | undefined;
+  min_seen_count?: number | undefined;
+  min_read_count?: number | undefined;
+  min_opened_count?: number | undefined;
 }
 
 /**
@@ -56,6 +67,10 @@ export function retentionFrom(input: RetentionConditions): RetentionConditions {
     max_seen_count: input.max_seen_count,
     max_read_count: input.max_read_count,
     max_opened_count: input.max_opened_count,
+    opened_within_days: input.opened_within_days,
+    min_seen_count: input.min_seen_count,
+    min_read_count: input.min_read_count,
+    min_opened_count: input.min_opened_count,
   };
 }
 
@@ -83,6 +98,10 @@ export function retentionRpcParams(r: RetentionConditions): {
   p_max_seen_count: number | null;
   p_max_read_count: number | null;
   p_max_opened_count: number | null;
+  p_opened_within_days: number | null;
+  p_min_seen_count: number | null;
+  p_min_read_count: number | null;
+  p_min_opened_count: number | null;
 } {
   return {
     p_min_age_days: r.min_age_days ?? null,
@@ -90,5 +109,9 @@ export function retentionRpcParams(r: RetentionConditions): {
     p_max_seen_count: r.max_seen_count ?? null,
     p_max_read_count: r.max_read_count ?? null,
     p_max_opened_count: r.max_opened_count ?? null,
+    p_opened_within_days: r.opened_within_days ?? null,
+    p_min_seen_count: r.min_seen_count ?? null,
+    p_min_read_count: r.min_read_count ?? null,
+    p_min_opened_count: r.min_opened_count ?? null,
   };
 }

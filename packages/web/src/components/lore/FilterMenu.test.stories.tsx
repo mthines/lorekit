@@ -16,7 +16,8 @@ import {
   type FilterField,
 } from '@/lib/filters';
 import {
-  RETENTION_FIELDS,
+  RETENTION_MENU_FIELDS,
+  requireRetentionField,
   type RetentionConditions,
   type RetentionField,
 } from '@/lib/retention-filter';
@@ -752,11 +753,13 @@ export const AgeAndActivityRowsSitBelowTheDimensions: StoryObj<typeof RetentionH
     const canvas = await openMenu(canvasElement);
 
     await step('the five thresholds follow the nine dimensions, in order', async () => {
+      // Five ROWS, not nine conditions: a reverse direction (00113) lives inside
+      // its row's value list, never as a row of its own.
       const rows = canvas.getAllByRole('option');
-      await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_FIELDS.length);
+      await expect(rows).toHaveLength(FILTER_FIELDS.length + RETENTION_MENU_FIELDS.length);
       const retentionRows = rows.slice(FILTER_FIELDS.length);
       await expect(retentionRows.map((r) => r.textContent?.trim())).toEqual(
-        RETENTION_FIELDS.map((d) => d.label),
+        RETENTION_MENU_FIELDS.map((f) => requireRetentionField(f).label),
       );
     });
 
@@ -891,6 +894,82 @@ export const TypingAValueOffersItAsACustomThreshold: StoryObj<typeof RetentionHa
       );
       await expect(await canvas.findByText(/is not a value here/i)).toHaveTextContent(/3650/);
     });
+  },
+};
+
+/**
+ * Four rows read both ways (migration 00113), in ONE list.
+ *
+ * `Chosen` answers "what is nothing using?" as `5 times or fewer` and "what do
+ * agents actually reach for?" as `10 times or more`. Both directions are
+ * ordinary rows under two small headings — no toggle, no mode — and typing
+ * follows the same model: a bare number offers both directions, `>N` / `<N`
+ * pick one. Picking the other direction replaces the condition rather than
+ * narrowing to an empty range.
+ */
+export const BothDirectionsAreRowsInOneList: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = await openMenu(canvasElement);
+    await userEvent.click(canvas.getByRole('option', { name: /^chosen$/i }));
+    const input = await canvas.findByRole('combobox', { name: /search chosen values/i });
+
+    await step('both directions are listed at once, each under its heading', async () => {
+      const list = within(await canvas.findByRole('listbox', { name: /chosen values/i }));
+      await expect(list.getByRole('option', { name: /never chosen/i })).toBeInTheDocument();
+      await expect(list.getByRole('option', { name: /10 times or more/i })).toBeInTheDocument();
+      await expect(list.getByText('At most')).toBeInTheDocument();
+      await expect(list.getByText('At least')).toBeInTheDocument();
+      // The headings are not options — the option ids are positional.
+      await expect(list.getAllByRole('option')).toHaveLength(8);
+      await expect(canvas.queryByRole('radiogroup', { name: /direction/i })).not.toBeInTheDocument();
+    });
+
+    await step('a bare number offers both directions', async () => {
+      await userEvent.type(input, '40');
+      const options = within(await canvas.findByRole('listbox', { name: /chosen values/i })).getAllByRole('option');
+      await expect(options.map((o) => o.textContent?.replace('custom', '').trim())).toEqual([
+        '40 times or fewer',
+        '40 times or more',
+      ]);
+      await userEvent.clear(input);
+    });
+
+    await step('>N picks one side, and a strict comparison on a count reads as the next whole number', async () => {
+      await userEvent.type(input, '>40');
+      const options = within(await canvas.findByRole('listbox', { name: /chosen values/i })).getAllByRole('option');
+      await expect(options).toHaveLength(1);
+      await expect(options[0]).toHaveTextContent(/41 times or more/i);
+      await userEvent.keyboard('{Enter}');
+      await waitFor(async () => {
+        await expect(within(canvasElement).getByLabelText('Chosen: 41 times or more')).toBeInTheDocument();
+      });
+    });
+
+    await step('the row reopens with the applied value selected, and the other side replaces it', async () => {
+      await userEvent.click(await canvas.findByRole('option', { name: /^chosen, 41 times or more$/i }));
+      const list = within(await canvas.findByRole('listbox', { name: /chosen values/i }));
+      await expect(list.getByRole('option', { name: /41 times or more/i })).toHaveAttribute('aria-selected', 'true');
+      await userEvent.click(list.getByRole('option', { name: /never chosen/i }));
+      await waitFor(async () => {
+        await expect(within(canvasElement).getByLabelText('Chosen: Never chosen')).toBeInTheDocument();
+        await expect(within(canvasElement).queryByLabelText('Chosen: 41 times or more')).not.toBeInTheDocument();
+      });
+    });
+  },
+};
+
+/**
+ * A row with no reverse reads one way: `Created` has the date-range picker for
+ * "created within", so `<30` explains where to go instead of offering a value.
+ */
+export const CreatedReadsOneWay: StoryObj<typeof RetentionHarness> = {
+  render: () => <RetentionHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = await openMenu(canvasElement);
+    await userEvent.click(canvas.getByRole('option', { name: /^created$/i }));
+    await userEvent.type(await canvas.findByRole('combobox', { name: /search created values/i }), '<30');
+    await expect(await canvas.findByText(/use the date range/i)).toBeInTheDocument();
   },
 };
 
