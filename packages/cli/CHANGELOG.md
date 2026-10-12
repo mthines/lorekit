@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.0](https://github.com/mthines/lorekit/compare/cli-v1.71.2...cli-v1.72.0) (2026-10-12)
+
+
+### Features
+
+* **explorer:** read age & activity filters both ways, and sort by most chosen ([#686](https://github.com/mthines/lorekit/issues/686)) ([50ed8c7](https://github.com/mthines/lorekit/commit/50ed8c7cd8a6c7887daac70d4609e961e5ae62ad))
+
 ## [1.71.2](https://github.com/mthines/lorekit/compare/cli-v1.71.1...cli-v1.71.2) (2026-10-06)
 
 
