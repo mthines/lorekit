@@ -4,6 +4,14 @@
   "projectType": "application",
   "tags": ["type:infra"],
   "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test byod/generate.test.mjs",
+        "cwd": "supabase"
+      }
+    },
+
     "start": {
       "executor": "nx:run-commands",
       "options": {

@@ -1,5 +1,5 @@
 // Unit tests for the BYOD bootstrap generator's pure logic.
-//   node --test scripts/codegen/gen-byod-bootstrap.test.mjs
+//   node --test supabase/byod/generate.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import {
   renderBootstrap,
   readMigrations,
   OUTPUT_PATH,
-} from './gen-byod-bootstrap.mjs';
+} from './generate.mjs';
 
 test('parseMigrationName follows the Supabase CLI grammar', () => {
   assert.deepEqual(parseMigrationName('00001_memories.sql'), { version: '00001', name: 'memories' });
@@ -57,6 +57,6 @@ test('the committed bootstrap.sql is generated from the current migrations', () 
   assert.equal(
     fs.readFileSync(OUTPUT_PATH, 'utf8'),
     renderBootstrap(readMigrations()),
-    'run: node scripts/codegen/gen-byod-bootstrap.mjs',
+    'run: node supabase/byod/generate.mjs',
   );
 });

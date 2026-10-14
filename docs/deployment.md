@@ -1062,6 +1062,18 @@ The collision-proof end state is Supabase's **timestamp filenames**
 (`YYYYMMDDHHMMSS_…`), which are monotonic and parallel-safe — a larger,
 rename-everything change to consider separately.
 
+#### Every migration regenerates the BYOD bootstrap
+
+`supabase/byod/bootstrap.sql` — the single file a BYOD user applies to their own
+database ([byod.md](./byod.md)) — is **generated** from `supabase/migrations/`
+by `node supabase/byod/generate.mjs`. After adding or editing a migration, run
+it and commit the result. The `supabase` project's `test` target
+(`supabase/byod/generate.test.mjs`) fails when the committed file and the
+migrations disagree, and the `check` job's `nx affected -t test` runs it on any
+change under `supabase/`. The file used to be a hand-written subset, which
+drifted until BYOD's `memory_write` could no longer be resolved by the edge
+function's calls — a generated projection cannot drift.
+
 ---
 
 ## Prerequisites

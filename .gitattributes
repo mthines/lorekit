@@ -1,0 +1,3 @@
+# Generated from supabase/migrations/ by `node supabase/byod/generate.mjs`.
+# Collapsed in GitHub diffs; review the migrations, not this projection.
+supabase/byod/bootstrap.sql linguist-generated=true
