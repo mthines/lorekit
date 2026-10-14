@@ -23,6 +23,15 @@ import { probeByodStorage } from '../shared/byod.mjs';
 const BOOTSTRAP_SQL_PATH = fileURLToPath(
   new URL('../../../../supabase/byod/bootstrap.sql', import.meta.url),
 );
+const BOOTSTRAP_SQL_URL = 'https://raw.githubusercontent.com/mthines/lorekit/main/supabase/byod/bootstrap.sql';
+
+// The checkout copy next to this file, else one under the current directory
+// (running from a LoreKit checkout), else null (an npm install).
+function locateBootstrapSql() {
+  if (fs.existsSync(BOOTSTRAP_SQL_PATH)) return BOOTSTRAP_SQL_PATH;
+  const cwdPath = path.resolve(process.cwd(), 'supabase/byod/bootstrap.sql');
+  return fs.existsSync(cwdPath) ? cwdPath : null;
+}
 
 export async function bootstrap(_args) {
   heading('LoreKit bootstrap');
@@ -32,48 +41,31 @@ export async function bootstrap(_args) {
   const storageAnonKey = process.env['LOREKIT_STORAGE_ANON_KEY'];
 
   // If no BYOD env vars are set, this command is a no-op — it's only for BYOD.
-  if (!storageUrl && !storageServiceKey) {
+  if (!storageUrl && !storageServiceKey && !storageAnonKey) {
     log('');
     log(
       `  ${c.cyan('•')} No BYOD storage configured — ${c.dim('bootstrap is only needed for custom databases.')}`,
     );
     log('');
-    log('  Set LOREKIT_STORAGE_URL and LOREKIT_STORAGE_SERVICE_KEY to use your own');
-    log('  Supabase project, then re-run this command.');
+    log('  Set LOREKIT_STORAGE_URL and LOREKIT_STORAGE_ANON_KEY (or LOREKIT_STORAGE_SERVICE_KEY)');
+    log('  for your own Supabase project, then re-run this command.');
     log('');
     log('  See docs/byod.md for setup instructions.');
     return 0;
   }
 
   if (!storageUrl) {
-    err(`${c.red('Error:')} LOREKIT_STORAGE_SERVICE_KEY is set but LOREKIT_STORAGE_URL is missing.`);
-    err('  Both variables are required. Set LOREKIT_STORAGE_URL and try again.');
+    err(`${c.red('Error:')} a LOREKIT_STORAGE_*_KEY is set but LOREKIT_STORAGE_URL is missing.`);
+    err('  Set LOREKIT_STORAGE_URL to the storage project\'s URL and try again.');
     return 1;
   }
 
-  // Locate the bootstrap SQL file.
-  let sqlPath = BOOTSTRAP_SQL_PATH;
-
-  // When running from a published npm package, the SQL file is not bundled
-  // with the CLI. Fall back to looking for it relative to CWD (for dev use).
-  if (!fs.existsSync(sqlPath)) {
-    const cwdPath = path.resolve(process.cwd(), 'supabase/byod/bootstrap.sql');
-    if (fs.existsSync(cwdPath)) {
-      sqlPath = cwdPath;
-    } else {
-      err(`${c.red('Error:')} bootstrap.sql not found at expected path:`);
-      err(`  ${sqlPath}`);
-      err('');
-      err('  Apply the schema manually with psql:');
-      err('    psql "$DATABASE_URL" -f supabase/byod/bootstrap.sql');
-      err('');
-      err('  Or download it from the LoreKit repository:');
-      err('    https://github.com/mthines/lorekit/blob/main/supabase/byod/bootstrap.sql');
-      return 1;
-    }
-  }
-
-  status('pass', 'bootstrap.sql', sqlPath);
+  // The published npm package does not ship supabase/, so outside a LoreKit
+  // checkout there is no local file — that is the normal case, not an error:
+  // probe anyway and point at the file's download URL.
+  const sqlPath = locateBootstrapSql();
+  if (sqlPath) status('pass', 'bootstrap.sql', sqlPath);
+  else status('info', 'bootstrap.sql', `not in this install — download: ${BOOTSTRAP_SQL_URL}`);
   status('info', 'storage url', storageUrl);
 
   // Probe the project with whichever key is set (the anon key when both are,
@@ -98,15 +90,17 @@ export async function bootstrap(_args) {
   // PostgREST cannot run DDL, so the schema goes in over a Postgres connection
   // (psql) or the SQL Editor. Never print a key here: the connection string's
   // password is the DATABASE password, which is not the service-role API key.
+  const sqlArg = sqlPath ?? 'bootstrap.sql';
   log('');
   log(`  ${c.bold('To apply the schema, run:')}`);
   log('');
-  log(`    ${c.cyan('psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f')} ${sqlPath}`);
+  if (!sqlPath) log(`    ${c.cyan('curl -fsSLO')} ${BOOTSTRAP_SQL_URL}`);
+  log(`    ${c.cyan('psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f')} ${sqlArg}`);
   log('');
   log(`  ${c.dim('$DATABASE_URL is the connection string from the Supabase dashboard → Connect;')}`);
   log(`  ${c.dim('its password is your database password, not an API key.')}`);
   log('');
-  log(`  Or paste the contents of ${c.dim(sqlPath)}`);
+  log(`  Or paste the contents of ${c.dim(sqlArg)}`);
   log('  into the Supabase dashboard → SQL Editor and run it.');
   log('');
   log(`  Or, from a LoreKit checkout: ${c.cyan('supabase link --project-ref')} ${parseRef(storageUrl)} && ${c.cyan('supabase db push')}`);

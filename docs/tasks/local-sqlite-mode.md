@@ -29,13 +29,13 @@ The server logic lives in Postgres, not in TypeScript:
 
 | Fact (measured on `main` at 00113) | Consequence for SQLite |
 |---|---|
-| 108 migrations define 87 SQL functions; the edge functions call **48** distinct RPCs | Each RPC a route needs must be re-implemented |
+| 108 migrations define 87 SQL functions; the edge functions make string-literal `.rpc('…')` calls to **48** distinct ones | Each RPC a route needs must be re-implemented |
 | The Explorer's routes rest on ~1,200 lines of PL/pgSQL (`lorekit_memory_list` 206, `_facets` 218, `_activity` 136, `memory_write` 245, `memory_delete` 157, …); Insights on ~690 more (`lorekit_usage_stats`, `_usage_runs`, `_read_activity`, `_memory_pivot` 158, `_utility_*`, …) | That is the size of a second implementation |
 | `lorekit_memory_list`, `_facets`, `_activity` and `_pivot` were all redefined in the newest migration (00113) | A second implementation drifts at that rate unless something forces parity |
 | Full-text search is `tsvector` + `websearch_to_tsquery`; graded relevance is `ts_rank_cd` by decision | SQLite FTS5 ranks with `bm25` — ordering will differ, and must be documented as a local-mode difference, not relitigated for hosted |
 | Labels are `text[]` with containment/overlap; RLS and `auth.uid()` scope every read | JSON arrays + `json_each`; single user, so tenant scoping collapses to one fixed id |
 | Edge handlers speak PostgREST's query builder and `.rpc()`, not a repository interface | There is no seam to swap a SQLite client in behind the existing handlers |
-| The dashboard reads memories and analytics through the REST API (`packages/web/src/lib/api/`, base URL derived from `NEXT_PUBLIC_SUPABASE_URL` in `rest.ts`), but signs in with Supabase Auth (`middleware.ts`, `@supabase/ssr`) and still has **40** direct supabase-js call sites for orgs, invites, API tokens, audit log, scope bindings and GitHub installations | The REST contract is the seam; the supabase-js surfaces stay hosted-only |
+| The dashboard reads memories and analytics through the REST API (`packages/web/src/lib/api/`, base URL derived from `NEXT_PUBLIC_SUPABASE_URL` in `rest.ts`), but signs in with Supabase Auth (`middleware.ts`, `@supabase/ssr`) and still has about **40** direct supabase-js call sites — mostly orgs, invites, API tokens, audit log, scope bindings and GitHub installations, but also direct memory reads in onboarding (`lib/onboarding-server.ts`), the plan-usage figure (`lib/plan.ts`, `lorekit_memory_count`), org and scope-binding counts | The REST contract is the seam; the org/token/audit surfaces stay hosted-only, and the onboarding and plan reads need REST equivalents first |
 
 The [BYOD drift](../byod.md) is the cautionary example: a hand-written second
 copy of the schema fell 42 RPCs and a `memory_write` signature behind before
@@ -111,6 +111,10 @@ bump read counters on reads — so `/insights` renders from local activity.
   use a fixed local identity, and hides the navigation entries backed by direct
   supabase-js calls (orgs, invites, API tokens, audit log, scope bindings,
   GitHub installations).
+- The direct memory reads that are not behind a hidden entry — onboarding's
+  memory count and the plan-usage figure — move onto REST routes first, in the
+  hosted dashboard too. That is the existing rule ("a capability the dashboard
+  needs becomes part of the public contract"), applied ahead of local mode.
 - Run it as `lorekit serve` plus the dashboard's dev server for development.
   How to ship it to self-hosters is open question 2.
 

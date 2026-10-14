@@ -28,8 +28,12 @@
 --
 -- Billing: memories stored in your own database are NOT counted against
 -- LoreKit's hosted memory-count billing — LoreKit has no visibility into it.
--- The memory cap and rate limit are read from `lorekit_default_limit` /
--- `user_limits` in YOUR database; adjust them there.
+-- The memory cap is read from `lorekit_default_limit` / `user_limits` in
+-- YOUR database; adjust it there. (In BYOD mode the mcp function skips the
+-- rate limiter.)
+--
+-- pg_cron: the purge jobs are scheduled only when the pg_cron extension is
+-- already enabled (Database → Extensions). Enable it before applying.
 --
 -- See docs/byod.md for the full setup.
 
@@ -43,7 +47,7 @@ begin
   if to_regclass('public.memories') is not null then
     raise exception using
       message = 'LoreKit schema already present: bootstrap.sql only initialises an empty database.',
-      hint = 'Upgrade an existing BYOD database with `supabase db push` (see docs/byod.md).';
+      hint = 'Upgrade a database set up from this file with `supabase db push`. One set up from the older hand-written bootstrap.sql has no migration history: see docs/byod.md.';
   end if;
 end
 $guard$;
@@ -141,7 +145,7 @@ $$;
 create or replace trigger memories_updated_at
   before update on memories
   for each row execute function set_updated_at();
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00001', 'memories')
 on conflict (version) do nothing;
@@ -193,7 +197,7 @@ create policy "rls_api_tokens_delete"
 
 -- Service role can look up tokens for auth validation (bypasses RLS)
 -- No update policy needed — last_used_at is updated via service role
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00002', 'api_tokens')
 on conflict (version) do nothing;
@@ -345,7 +349,7 @@ begin
   return v_count;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00003', 'archive')
 on conflict (version) do nothing;
@@ -568,7 +572,7 @@ begin
   end if;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00004', 'limits')
 on conflict (version) do nothing;
@@ -619,7 +623,7 @@ create policy "rls_webhook_secrets_update"
 
 -- Service role reads the active secret for HMAC verification on each webhook
 -- call (bypasses RLS — no additional policy needed for service role).
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00005', 'webhook_secrets')
 on conflict (version) do nothing;
@@ -650,7 +654,7 @@ grant select, insert, update, delete on all tables in schema public
 alter default privileges in schema public
   grant select, insert, update, delete on tables
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00006', 'grants')
 on conflict (version) do nothing;
@@ -723,7 +727,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00007', 'memory_write_rpc')
 on conflict (version) do nothing;
@@ -767,7 +771,7 @@ create unique index webhook_secrets_user_repo_active_uidx
 create index webhook_secrets_repo_active_idx
   on webhook_secrets (repo)
   where active = true and repo is not null;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00008', 'webhook_secrets_repo')
 on conflict (version) do nothing;
@@ -848,7 +852,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00009', 'memory_write_created_at')
 on conflict (version) do nothing;
@@ -980,7 +984,7 @@ $$;
 create or replace trigger user_limits_audit
   after insert or update or delete on user_limits
   for each row execute function audit_user_limits();
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00010', 'audit_log')
 on conflict (version) do nothing;
@@ -1065,7 +1069,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00011', 'memory_write_inserted')
 on conflict (version) do nothing;
@@ -1099,7 +1103,7 @@ create index if not exists audit_log_target_trgm_idx
 
 create index if not exists audit_log_user_created_id_idx
   on audit_log (user_id, created_at desc, id);
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00012', 'audit_log_search')
 on conflict (version) do nothing;
@@ -1131,7 +1135,7 @@ create index if not exists memories_key_trgm_idx
 
 create index if not exists memories_value_trgm_idx
   on memories using gin (value gin_trgm_ops);
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00013', 'memory_keyset_index')
 on conflict (version) do nothing;
@@ -1218,7 +1222,7 @@ $$;
 -- membership via PostgREST RPC. RLS policies that call it run as the
 -- querying role, and only authenticated/service_role ever read `memories`.
 grant execute on function lorekit_member_org_ids(uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00014', 'orgs')
 on conflict (version) do nothing;
@@ -1283,7 +1287,7 @@ create policy "rls_read_archived"
       or org_id in (select lorekit_member_org_ids(auth.uid()))
     )
   );
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00015', 'memories_org_fk')
 on conflict (version) do nothing;
@@ -1387,7 +1391,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00016', 'memories_org_unique_arbiter')
 on conflict (version) do nothing;
@@ -1477,7 +1481,7 @@ end;
 $$;
 
 grant execute on function lorekit_org_can(uuid, uuid, text) to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00017', 'org_roles_and_author')
 on conflict (version) do nothing;
@@ -1606,7 +1610,7 @@ begin
   return new;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00018', 'org_limits')
 on conflict (version) do nothing;
@@ -1739,7 +1743,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00019', 'memory_write_org')
 on conflict (version) do nothing;
@@ -1840,7 +1844,7 @@ end;
 $$;
 
 grant execute on function memory_delete(uuid, text, text, text, boolean) to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00020', 'memory_delete_org')
 on conflict (version) do nothing;
@@ -1923,7 +1927,7 @@ create policy "rls_org_invites_select_invitee" on org_invites for select
 drop policy "rls_org_members_select" on org_members;
 create policy "rls_org_members_select" on org_members for select
   using (lorekit_org_role(auth.uid(), org_id) is not null);
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00021', 'org_invites')
 on conflict (version) do nothing;
@@ -2324,7 +2328,7 @@ end;
 $$;
 
 grant execute on function lorekit_org_leave(uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00022', 'org_management_rpcs')
 on conflict (version) do nothing;
@@ -2364,7 +2368,7 @@ alter table audit_log add constraint audit_log_action_check check (action in (
   'member.role_change',
   'member.leave'
 ));
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00023', 'audit_log_org_actions')
 on conflict (version) do nothing;
@@ -2441,7 +2445,7 @@ $$;
 -- for other users, so it is authenticated-only, defense in depth beyond the
 -- membership gate above.
 grant execute on function lorekit_org_members_list(uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00024', 'org_member_identities')
 on conflict (version) do nothing;
@@ -2560,7 +2564,7 @@ end;
 $$;
 
 grant execute on function lorekit_org_purge(uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00025', 'safe_org_deletion')
 on conflict (version) do nothing;
@@ -2826,7 +2830,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00026', 'scope_org_bindings')
 on conflict (version) do nothing;
@@ -2869,7 +2873,7 @@ alter table audit_log add constraint audit_log_action_check check (action in (
   'scope.bind',
   'scope.unbind'
 ));
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00027', 'audit_log_scope_actions')
 on conflict (version) do nothing;
@@ -2940,7 +2944,7 @@ $$;
 -- the same defense-in-depth posture as `lorekit_org_members_list` (00024)
 -- and every other PII-bearing definer function in this schema.
 grant execute on function lorekit_invite_org_details(uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00028', 'invite_org_details')
 on conflict (version) do nothing;
@@ -3164,7 +3168,7 @@ comment on column memories.expires_at is
   'Optional timestamp after which the row is treated as invisible by active-read
    paths. NULL means the row never expires. Physically deleted by
    purge_expired_memories() or the MCP memory.purge tool.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00030', 'memory_ttl')
 on conflict (version) do nothing;
@@ -3346,7 +3350,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00031', 'memory_ttl_clear')
 on conflict (version) do nothing;
@@ -3508,7 +3512,7 @@ grant select on table plans to anon, authenticated, service_role;
 grant select on table user_plans to anon, authenticated, service_role;
 grant insert, update on table user_plans to service_role;
 grant insert, update on table user_limits to service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00032', 'plans')
 on conflict (version) do nothing;
@@ -3618,7 +3622,7 @@ begin
   end if;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00033', 'performance_indexes')
 on conflict (version) do nothing;
@@ -3766,7 +3770,7 @@ $$;
 
 grant execute on function lorekit_record_usage_event(uuid, uuid, text, text, text, text, text, integer, integer)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00034', 'usage_events')
 on conflict (version) do nothing;
@@ -3831,7 +3835,7 @@ $$;
 -- user JWT (supabase-js createServerClient uses the user's JWT session).
 grant execute on function lorekit_memory_count(uuid)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00035', 'memory_count')
 on conflict (version) do nothing;
@@ -3927,7 +3931,7 @@ $$;
 
 grant execute on function lorekit_memory_count(uuid)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00036', 'fix_memory_count')
 on conflict (version) do nothing;
@@ -4178,7 +4182,7 @@ $$;
 
 grant execute on function lorekit_find_user_by_github_id(text)
   to service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00037', 'github_installations')
 on conflict (version) do nothing;
@@ -4370,7 +4374,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00038', 'memory_ttl_seconds')
 on conflict (version) do nothing;
@@ -4460,7 +4464,7 @@ $$;
 -- RPC call. `authenticated` is safe because the edge functions resolve
 -- p_user_id from the verified credential, never from request input.
 grant execute on function lorekit_memory_scopes(uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00039', 'memory_scopes')
 on conflict (version) do nothing;
@@ -4974,7 +4978,7 @@ $$;
 -- membership gate above.
 revoke execute on function lorekit_org_members_list(uuid, uuid) from public;
 grant execute on function lorekit_org_members_list(uuid, uuid) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00041', 'org_actor_override')
 on conflict (version) do nothing;
@@ -5035,7 +5039,7 @@ alter table audit_log add constraint audit_log_action_check check (action in (
   'scope.unbind',
   'github_app.installation_linked'
 ));
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00042', 'audit_log_github_app_action')
 on conflict (version) do nothing;
@@ -5126,7 +5130,7 @@ $$;
 -- input; `service_role` is the CI escape hatch.
 grant execute on function lorekit_usage_stats(uuid, timestamptz, timestamptz)
   to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00043', 'usage_stats')
 on conflict (version) do nothing;
@@ -5275,7 +5279,7 @@ $$;
 revoke execute on function lorekit_usage_stats(uuid, timestamptz, timestamptz, text) from public;
 grant execute on function lorekit_usage_stats(uuid, timestamptz, timestamptz, text)
   to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00044', 'usage_event_dimensions')
 on conflict (version) do nothing;
@@ -5342,7 +5346,7 @@ begin
   return v_count;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00045', 'memory_expiry_events')
 on conflict (version) do nothing;
@@ -5710,7 +5714,7 @@ comment on function memory_delete(uuid, text, text, text, boolean) is
    wins — scoping BOTH the personal user_id filter and the org capability
    check to the real caller. SECURITY DEFINER bypasses RLS; the actor is the
    gate. Fails closed on a NULL actor.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00046', 'memory_rpc_actor_guard')
 on conflict (version) do nothing;
@@ -5878,7 +5882,7 @@ revoke execute on function lorekit_installation_remove_repos(bigint, text[])    
 revoke execute on function lorekit_installation_remove(bigint)                                     from public, anon, authenticated;
 revoke execute on function lorekit_purge_old_usage_events(interval)                                from public, anon, authenticated;
 revoke execute on function lorekit_purge_all_expired_memories()                                    from public, anon, authenticated;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00047', 'readfn_grant_hardening')
 on conflict (version) do nothing;
@@ -6160,7 +6164,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean, text, text, text, integer)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00048', 'memory_origin')
 on conflict (version) do nothing;
@@ -6246,7 +6250,7 @@ comment on function lorekit_memory_scopes(uuid) is
    auth.uid() wins — so an authenticated caller can never enumerate another
    user''s scope names. p_user_id IS NULL under service-role is the CI escape
    hatch. last_activity is max(created_at) over the same counted rows.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00049', 'memory_scopes_last_activity')
 on conflict (version) do nothing;
@@ -6341,7 +6345,7 @@ comment on function lorekit_memory_tags(uuid, boolean) is
    selected by p_archived, visible to the EFFECTIVE caller. Same
    service-role-gated actor rule and tenant predicate as
    lorekit_memory_scopes. Ordered count desc, tag asc.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00050', 'memory_tags')
 on conflict (version) do nothing;
@@ -6434,7 +6438,7 @@ comment on function lorekit_memory_activity(uuid, text, timestamptz, timestamptz
    [p_since, p_until) window, visible to the EFFECTIVE caller. Same
    service-role-gated actor rule and tenant predicate as
    lorekit_memory_scopes. p_bucket is validated against (hour, day).';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00051', 'memory_activity')
 on conflict (version) do nothing;
@@ -6551,7 +6555,7 @@ comment on function lorekit_memory_facets(uuid, boolean) is
    partition selected by p_archived, visible to the EFFECTIVE caller. Same
    service-role-gated actor rule, tenant predicate and ordering as
    lorekit_memory_tags.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00052', 'memory_facets')
 on conflict (version) do nothing;
@@ -6654,7 +6658,7 @@ comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz) 
    service-role + NULL escape hatch as lorekit_usage_stats — usage is a
    per-user ledger and is never org-shared. p_bucket is validated against
    (hour, day). Buckets with no records read are omitted.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00053', 'read_activity')
 on conflict (version) do nothing;
@@ -6849,7 +6853,7 @@ comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz) 
    NULL escape hatch as lorekit_usage_stats — usage is a per-user ledger and is
    never org-shared. p_bucket is validated against (hour, day). Buckets with no
    records read are omitted.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00054', 'usage_event_client')
 on conflict (version) do nothing;
@@ -6950,7 +6954,7 @@ comment on function lorekit_blog_like(text, int) is
    the new global total. SECURITY DEFINER + granted to anon so an unauthenticated
    blog visitor can like a post. Validates the slug shape (lowercase kebab, <=128)
    so no junk rows can be created.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00055', 'blog_post_likes')
 on conflict (version) do nothing;
@@ -7263,7 +7267,7 @@ $$;
 
 grant execute on function lorekit_record_usage_event(uuid, uuid, text, text, text, text, text, integer, integer, integer, text, text, text, text)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00056', 'memory_kind_host')
 on conflict (version) do nothing;
@@ -7479,7 +7483,7 @@ comment on function lorekit_memory_facets(
    what adding that value would yield. With no filters supplied the result is
    00052''s global catalog. Same service-role-gated actor rule and ordering as
    lorekit_memory_tags.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00057', 'memory_facets_drilldown')
 on conflict (version) do nothing;
@@ -7717,7 +7721,7 @@ comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, 
    NULL escape hatch as lorekit_usage_stats — usage is a per-user ledger and is
    never org-shared. p_bucket is validated against (hour, day). Buckets with no
    records read are omitted.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00058', 'usage_event_scope')
 on conflict (version) do nothing;
@@ -7970,7 +7974,7 @@ $$;
 
 grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean, text, text, text, integer, text, text)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00059', 'memory_seen_count')
 on conflict (version) do nothing;
@@ -8079,7 +8083,7 @@ create index if not exists memories_embedding_hnsw_idx
 create index if not exists memories_embedding_pending_idx
   on memories (created_at desc)
   where embedding is null;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00060', 'memory_embeddings')
 on conflict (version) do nothing;
@@ -8164,7 +8168,7 @@ on conflict (version) do nothing;
 create index if not exists memories_scope_updated_at_id_idx
   on memories (scope, updated_at desc, id desc)
   where archived_at is null;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00061', 'memories_keyset_index')
 on conflict (version) do nothing;
@@ -8450,7 +8454,7 @@ comment on function lorekit_memory_set_embedding(uuid, uuid, text, text) is
   'Returns true when a row was written, false when none matched — the write path records that '
   'miss on its span rather than dropping the embedding silently, which is what rls_update did '
   'for org-owned memories before 00062.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00062', 'memory_embedding_write')
 on conflict (version) do nothing;
@@ -8613,7 +8617,7 @@ comment on function lorekit_memory_activity(
    optional scope + dimension filters (00063) — the SAME predicate as
    GET /memories and lorekit_memory_facets, so the stat header agrees with the
    list. With no filters supplied the result is byte-for-byte 00051''s.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00063', 'activity_filters')
 on conflict (version) do nothing;
@@ -8999,7 +9003,7 @@ comment on function lorekit_memory_activity(
    `personal` / org slug) — the SAME predicate as GET /memories and
    lorekit_memory_facets, so the stat header agrees with the list. With no
    filters supplied the result is byte-for-byte 00051''s.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00064', 'owner_filter')
 on conflict (version) do nothing;
@@ -9081,7 +9085,7 @@ comment on function lorekit_memory_scopes(uuid) is
    auth.uid() wins — so an authenticated caller can never enumerate another
    user''s scope names. p_user_id IS NULL under service-role is the CI escape
    hatch. last_activity is max(created_at) over the same counted rows.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00065', 'memory_scopes_order_by_count')
 on conflict (version) do nothing;
@@ -9554,7 +9558,7 @@ comment on function lorekit_memory_activity(
    lorekit_memory_facets composes and the SAME behaviour GET /memories has, so
    the stat header agrees with the list. With no filters supplied the result is
    byte-for-byte 00051''s.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00066', 'dimension_filter_helpers')
 on conflict (version) do nothing;
@@ -9875,7 +9879,7 @@ comment on function lorekit_memory_list(
    already computed, so neither escaping nor the now()-relative boundary is
    implemented twice. Callers pass limit + 1 and derive hasMore from the
    overflow row.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00067', 'memory_list_rpc')
 on conflict (version) do nothing;
@@ -10307,7 +10311,7 @@ revoke execute on function lorekit_api_token_set_scoping(uuid, text[], text, uui
   from public, anon;
 grant execute on function lorekit_api_token_set_scoping(uuid, text[], text, uuid[])
   to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00068', 'api_token_scoping')
 on conflict (version) do nothing;
@@ -11687,7 +11691,7 @@ comment on function lorekit_memory_list(
    narrowed by the CALLING KEY''s scope allowlist and tenancy (00069). Otherwise
    identical to the function 00067 introduced; the key parameters default to
    unrestricted, so a non-key caller is unaffected.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00069', 'api_token_scoping_enforcement')
 on conflict (version) do nothing;
@@ -11751,7 +11755,7 @@ alter table audit_log add constraint audit_log_action_check check (action in (
   'scope.unbind',
   'github_app.installation_linked'
 ));
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00070', 'audit_log_api_key_scope_change')
 on conflict (version) do nothing;
@@ -11986,7 +11990,7 @@ comment on function memory_delete(uuid, text, text, text, boolean, text[], text,
    (service-role connection, no p_user_id — no user and no key) is unpinned: it
    has no actor to be pinned to. Org removals remain gated on the archive /
    hard_delete capability.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00071', 'api_token_scope_authorized_removal')
 on conflict (version) do nothing;
@@ -12107,7 +12111,7 @@ comment on function restore_memory(uuid, text, text, text[], text, uuid[]) is
    their own (and member-org) rows — the 00046/00071 actor guard, applied to
    restore. The service tier (service-role connection, no p_user_id — no user and
    no key) is unpinned: it has no actor to be pinned to.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00072', 'api_token_scope_authorized_restore')
 on conflict (version) do nothing;
@@ -12386,7 +12390,7 @@ grant execute on function memory_write(
   uuid, text, text, text, text[], text, text, timestamptz, text,
   integer, boolean, text, text, text, integer, text, text, text[], text, uuid[]
 ) to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00073', 'memory_write_security_definer')
 on conflict (version) do nothing;
@@ -12651,7 +12655,7 @@ begin
   end if;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00074', 'db_query_stats')
 on conflict (version) do nothing;
@@ -12930,7 +12934,7 @@ grant execute on function memory_write(
   uuid, text, text, text, text[], text, text, timestamptz, text,
   integer, boolean, text, text, text, integer, text, text, text[], text, uuid[]
 ) to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00075', 'memory_write_returns_full_row')
 on conflict (version) do nothing;
@@ -12987,7 +12991,7 @@ comment on index memories_tags_idx is
   'GIN index supporting tags @> / <@ / && containment queries (e.g. '
   'onboarding-server.ts''s source::pr-webhook check), avoiding a sequential '
   'scan on every /overview render.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00076', 'memories_tags_gin_index')
 on conflict (version) do nothing;
@@ -13051,7 +13055,7 @@ revoke execute on function purge_archived_memories(uuid, integer) from public, a
 revoke execute on function purge_expired_memories(uuid) from public, anon;
 revoke execute on function lorekit_usage_stats(uuid, timestamptz, timestamptz, text) from public, anon;
 revoke execute on function lorekit_memory_set_embedding(uuid, uuid, text, text) from public, anon;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00077', 'org_actor_functions_anon_revoke')
 on conflict (version) do nothing;
@@ -13185,7 +13189,7 @@ $$;
 
 grant execute on function lorekit_record_usage_event(uuid, uuid, text, text, text, text, text, integer, integer, integer, text, text, text, text, text, integer)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00078', 'usage_event_scope_count')
 on conflict (version) do nothing;
@@ -13316,7 +13320,7 @@ comment on function lorekit_usage_stats(uuid, timestamptz, timestamptz, text) is
    top 20 by event count; anything else collapses to ''other'' (NULL host stays
    NULL). Summing event_count over every row reproduces the pre-00079 total —
    the extra dimensions only refine existing buckets, never duplicate rows.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00079', 'usage_stats_client_kind_host')
 on conflict (version) do nothing;
@@ -13437,7 +13441,7 @@ comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, 
    allowlist (00068/00069). One row per (bucket, scope, read_kind); retrieved
    + opened sum to the same total the pre-00080 function gave for the same
    window. Visibility is SELF-ONLY with the service-role + NULL escape hatch.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00080', 'read_activity_read_kind')
 on conflict (version) do nothing;
@@ -13529,7 +13533,7 @@ comment on function lorekit_usage_memory_count_peak(uuid, timestamptz, timestamp
    events at all. Self-only: v_actor is auth.uid() for a JWT caller and the
    verified service-role''s own p_user_id otherwise -- an authenticated
    caller can never pass another user''s id through p_user_id.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00081', 'usage_memory_count_peak')
 on conflict (version) do nothing;
@@ -13636,7 +13640,7 @@ $$;
 
 grant execute on function lorekit_record_usage_event(uuid, uuid, text, text, text, text, text, integer, integer, integer, text, text, text, text, text, integer, text)
   to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00082', 'usage_event_session_kind')
 on conflict (version) do nothing;
@@ -13784,7 +13788,7 @@ comment on function lorekit_usage_runs(uuid, timestamptz, timestamptz, timestamp
    caller supplies the previous page''s last row as the cursor. Self-only
    visibility, same escape hatch as lorekit_usage_stats. No org axis --
    usage_events is a per-user ledger.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00083', 'usage_runs')
 on conflict (version) do nothing;
@@ -13970,7 +13974,7 @@ comment on function lorekit_record_memory_reads(uuid[], text) is
    definition, not usage-stats.ts''s broader READ_TOOL_NAMES. Fail-safe: never
    throws, so a counter-write failure cannot fail the read it measures. No-op
    on a null/empty array.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00084', 'memory_read_counters')
 on conflict (version) do nothing;
@@ -14089,7 +14093,7 @@ comment on function lorekit_memory_read_ranking(uuid, text, text, integer, text[
    counting", never "never read" -- the calling handler must stamp and every
    consumer must render the counting_since qualifier. p_limit is clamped to
    [1, 100].';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00085', 'memory_read_ranking')
 on conflict (version) do nothing;
@@ -14172,7 +14176,7 @@ comment on index memories_tags_idx is
   'scan on every /overview render. Rebuilt + ANALYZEd by 00086 after the '
   'same seq-scan signature reappeared four days after 00076 first added it '
   '(Dash0 issues 8667967338373977430 / 9019610890880570001).';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00086', 'reindex_memories_tags_idx')
 on conflict (version) do nothing;
@@ -14524,7 +14528,7 @@ begin
   end if;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00088', 'retention_policies')
 on conflict (version) do nothing;
@@ -14587,7 +14591,7 @@ alter table audit_log add constraint audit_log_action_check check (action in (
   'policy.delete',
   'memory.protect'
 ));
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00089', 'audit_log_groom_actions')
 on conflict (version) do nothing;
@@ -14854,7 +14858,7 @@ comment on function lorekit_memory_pivot(
    lorekit_memory_facets, with BOTH axes self-excluded from the filters so a
    drilled-in matrix still shows every cell you could move to. Ordered count
    desc, row asc, col asc and bounded by p_limit.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00090', 'memory_pivot')
 on conflict (version) do nothing;
@@ -15086,7 +15090,7 @@ grant execute on function lorekit_memory_list(
   text, text[], text, text[], text, text[], text, text[], text, text,
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00092', 'list_retention_conditions')
 on conflict (version) do nothing;
@@ -15425,7 +15429,7 @@ as $$
 $$;
 
 grant execute on function lorekit_policy_update(uuid, uuid, jsonb) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00093', 'policy_dimension_filters')
 on conflict (version) do nothing;
@@ -15646,7 +15650,7 @@ grant execute on function lorekit_memory_list(
   text, text[], text, text[], text, text[], text, text[], text, text,
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00094', 'memory_list_total_count')
 on conflict (version) do nothing;
@@ -15849,7 +15853,7 @@ begin
   end if;
 end;
 $$;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00095', 'groom_sweep_telemetry')
 on conflict (version) do nothing;
@@ -15901,7 +15905,7 @@ on conflict (version) do nothing;
 create index if not exists memories_user_updated_at_id_idx
   on memories (user_id, updated_at desc, id desc)
   where archived_at is null;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00096', 'memories_user_updated_at_id_idx')
 on conflict (version) do nothing;
@@ -16191,7 +16195,7 @@ grant execute on function lorekit_memory_list(
 -- after the two replacements above — it was never wired to anything in the
 -- first place. Dropping it rather than leaving it as inert dead weight.
 alter table memories drop column if exists last_seen_at;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00098', 'groom_unseen_days_last_read_at')
 on conflict (version) do nothing;
@@ -16555,7 +16559,7 @@ grant execute on function lorekit_memory_list(
   text, text[], text, text[], text, text[], text, text[], text, text,
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00099', 'last_opened_at_targeted_agent_reads')
 on conflict (version) do nothing;
@@ -16848,7 +16852,7 @@ grant execute on function lorekit_memory_list(
   text, text[], text, text[], text, text[], text, text[], text, text,
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00100', 'unseen_days_never_opened_uses_created_at')
 on conflict (version) do nothing;
@@ -17375,7 +17379,7 @@ grant execute on function lorekit_memory_list(
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer,
   integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00101', 'max_read_count_condition')
 on conflict (version) do nothing;
@@ -17681,7 +17685,7 @@ revoke execute on function lorekit_relevance_config_deactivate(bigint, text)
   from public, anon;
 grant execute on function lorekit_relevance_config_deactivate(bigint, text)
   to authenticated;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00102', 'github_relevance_configs')
 on conflict (version) do nothing;
@@ -17811,7 +17815,7 @@ comment on function lorekit_memories_set_updated_at() is
   'index, lesson-rank and BOTH default sorts (Explorer, memory.list order=recency) all read. Before '
   '00103 a single bulk memory.list restamped every row on the page, so updated_at reported '
   'last-READ under a last-WRITTEN name and recency ordering was effectively arbitrary.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00103', 'reads_must_not_restamp_updated_at')
 on conflict (version) do nothing;
@@ -18247,7 +18251,7 @@ grant execute on function lorekit_memory_list(
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer,
   integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00104', 'opened_count_pull_through')
 on conflict (version) do nothing;
@@ -18814,7 +18818,7 @@ grant execute on function lorekit_memory_list(
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer,
   integer, integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00105', 'max_opened_count_condition')
 on conflict (version) do nothing;
@@ -19138,7 +19142,7 @@ comment on function lorekit_memory_delivery_cost(uuid, timestamptz, timestamptz,
    names -- pass NULL, not now(), for "through right now". Tokens are
    length(value)/4, never tokenized: render them as estimates. Archived lore is
    included, because it cost context while it was live.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00106', 'memory_utility_grid')
 on conflict (version) do nothing;
@@ -19445,7 +19449,7 @@ comment on function lorekit_record_memory_citations(uuid, uuid, text[], text[], 
 
 grant execute on function lorekit_record_memory_citations(uuid, uuid, text[], text[], text)
   to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00107', 'memory_citations')
 on conflict (version) do nothing;
@@ -20351,7 +20355,7 @@ grant execute on function lorekit_memory_list(
   timestamptz, uuid, integer, text[], text, uuid[], integer, integer, integer,
   integer, integer
 ) to authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00108', 'retention_conditions_on_aggregates')
 on conflict (version) do nothing;
@@ -20404,7 +20408,7 @@ comment on index usage_events_user_tool_created_idx is
    force a full per-user scan of usage_events, this schema''s highest-volume
    table. Fixes production statement-timeout cancellations on
    GET /memories/read-activity for heavier accounts.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00109', 'usage_events_read_activity_idx')
 on conflict (version) do nothing;
@@ -20689,7 +20693,7 @@ comment on function lorekit_memory_facets(
    is drawn from, so a count matches the list under the same parameters.
    q/key/expiring_within_days remain unmirrored, so with those active a count
    is an upper bound.';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00110', 'facets_within_group_cooccurrence')
 on conflict (version) do nothing;
@@ -21077,7 +21081,7 @@ grant execute on function memory_write(
   uuid, text, text, text, text[], text, text, timestamptz, text,
   integer, boolean, text, text, text, integer, text, text, text[], text, uuid[]
 ) to anon, authenticated, service_role;
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00111', 'wildcard_scope_org_bindings')
 on conflict (version) do nothing;
@@ -21284,7 +21288,7 @@ comment on function lorekit_memory_relevant_candidates(uuid, text, text[], text[
    so it can never be wider than the RLS read policy or the calling key.
    Deterministic and embedding-free: no model, no vector index, no external
    call. p_limit is clamped to [1, 1000].';
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00112', 'relevant_ranking')
 on conflict (version) do nothing;
@@ -22348,7 +22352,7 @@ drop function if exists lorekit_match_retention(
   timestamptz, timestamptz, integer, integer, integer,
   timestamptz, timestamptz, integer, integer, integer
 );
-
+;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00113', 'explorer_reverse_activity_filters_and_opened_sort')
 on conflict (version) do nothing;

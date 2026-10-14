@@ -38,7 +38,11 @@ export async function probeByodStorage({ url, key, fetchImpl = globalThis.fetch,
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
-    return { state: 'error', detail: `could not connect: ${e && e.message ? e.message : String(e)}` };
+    // Node's fetch reports every network failure as "fetch failed"; the
+    // reason (ENOTFOUND, ECONNREFUSED, a TLS error) is on `cause`.
+    const reason = e && e.cause ? e.cause.code || e.cause.message : null;
+    const message = e && e.message ? e.message : String(e);
+    return { state: 'error', detail: `could not connect: ${message}${reason ? ` (${reason})` : ''}` };
   }
 
   if (res.ok) return { state: 'ready' };

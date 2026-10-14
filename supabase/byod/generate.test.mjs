@@ -15,6 +15,7 @@ test('parseMigrationName follows the Supabase CLI grammar', () => {
   assert.deepEqual(parseMigrationName('00113_a_b_c.sql'), { version: '00113', name: 'a_b_c' });
   assert.equal(parseMigrationName('README.md'), null);
   assert.equal(parseMigrationName('memories.sql'), null);
+  assert.deepEqual(parseMigrationName('00002_.sql'), { version: '00002', name: '' }, 'CLI accepts an empty name');
 });
 
 test('renderBootstrap keeps migrations verbatim, in order, inside one transaction', () => {
@@ -44,6 +45,22 @@ test('renderBootstrap guards against re-running on an initialised database', () 
   const out = renderBootstrap([{ file: '00001_first.sql', sql: 'select 1;' }]);
   const guard = out.indexOf("to_regclass('public.memories') is not null");
   assert.ok(guard > 0 && guard < out.indexOf('select 1;'), 'guard runs before any migration');
+});
+
+test('renderBootstrap normalises CRLF and a BOM, and terminates an unterminated last statement', () => {
+  const out = renderBootstrap([{ file: '00001_first.sql', sql: '\uFEFFselect 1;\r\nselect 2' }]);
+  assert.ok(!out.includes('\r') && !out.includes('\uFEFF'));
+  assert.match(out, /select 2\n;\ninsert into supabase_migrations/);
+});
+
+test('renderBootstrap rejects two migrations with one version', () => {
+  assert.throws(
+    () => renderBootstrap([
+      { file: '00114_a.sql', sql: 'select 1;' },
+      { file: '00114_b.sql', sql: 'select 2;' },
+    ]),
+    /duplicate migration version 00114/,
+  );
 });
 
 test('renderBootstrap is deterministic and rejects bad input', () => {

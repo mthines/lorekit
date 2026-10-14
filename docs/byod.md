@@ -5,7 +5,7 @@ project that runs LoreKit's `mcp` Edge Function. Use it when memory rows must
 live in a specific database — data residency, an existing Supabase
 subscription, or full control over the data.
 
-It covers the `memory.*` MCP tools. Read [How BYOD is wired](#how-byod-is-wired)
+It covers the MCP server's tools. Read [How BYOD is wired](#how-byod-is-wired)
 before setting it up: what reaches the storage project, and what does not, is
 the part most likely to surprise you.
 
@@ -32,7 +32,9 @@ the part most likely to surprise you.
 
 Create a project at [supabase.com](https://supabase.com). Note its URL and API
 keys (**Project Settings → API**) and its database connection string
-(**Connect**).
+(**Connect**). Enable the `pg_cron` extension (**Database → Extensions**)
+before applying the schema: the purge jobs are scheduled only when it is
+already enabled.
 
 ### 2. Apply the LoreKit schema
 
@@ -55,9 +57,9 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/byod/bootstrap.sql
 ```
 
 or paste [`supabase/byod/bootstrap.sql`](https://github.com/mthines/lorekit/blob/main/supabase/byod/bootstrap.sql)
-into the Supabase dashboard → **SQL Editor** and run it. `$DATABASE_URL` is the
-connection string from **Connect**; its password is your **database password**,
-not an API key.
+into the Supabase dashboard → **SQL Editor** and run it (the file is about 1 MB;
+if the editor refuses it, use `psql`). `$DATABASE_URL` is the connection string
+from **Connect**; its password is your **database password**, not an API key.
 
 `bootstrap.sql` is generated from `supabase/migrations/` (CI fails when the two
 disagree). It applies every migration in one transaction, so a failure leaves
@@ -76,13 +78,20 @@ Set the storage secrets on the project that runs your `mcp` function:
 ```bash
 supabase secrets set --project-ref <function-project-ref> \
   LOREKIT_STORAGE_URL=https://<storage-project-ref>.supabase.co \
-  LOREKIT_STORAGE_ANON_KEY=<storage-anon-key>
+  LOREKIT_STORAGE_ANON_KEY=<storage-anon-key> \
+  LOREKIT_STORAGE_SERVICE_KEY=<storage-service-role-key>
 ```
 
-`LOREKIT_STORAGE_SERVICE_KEY` is optional. When it is set, the function uses it
-instead of the anon key, and it **bypasses row-level security** in the storage
-project: data isolation then rests on the `user_id` filters the function
-applies, not on RLS policies.
+**Set the service key.** The function reads with whichever key it is given,
+and the storage project's read policies require `auth.uid()`, which an API key
+never carries. With only the anon key, writes succeed (they go through a
+`SECURITY DEFINER` function) but every read returns no rows.
+
+The service key **bypasses row-level security**. Reads made with an `lk_*`
+token are still filtered to that token's user by the function. Reads from a
+caller authenticated with a Supabase session (JWT) are not filtered, because
+the function leaves RLS to do that, and so they see every row in the storage
+project.
 
 ### 4. Check it
 
@@ -93,7 +102,8 @@ lorekit doctor
 ```
 
 The `byod storage` line passes when the project is reachable and holds the
-schema, and says so when the schema has not been applied yet.
+schema. It fails when the project is unreachable, rejects the key, or does not
+have the schema yet, and says which.
 
 ## Upgrading
 
@@ -109,6 +119,18 @@ supabase db push
 works the same whether you set the database up with `db push` or with
 `bootstrap.sql`. Upgrade the storage project before deploying the matching
 `mcp` function: the function calls the RPCs those migrations define.
+
+### Databases set up from the old `bootstrap.sql`
+
+`bootstrap.sql` used to be a hand-written subset of the schema. A database set
+up from that version has no migration history — `select count(*) from
+supabase_migrations.schema_migrations` errors or returns 0 — so `db push` would
+try to replay every migration from the first and fail, and its schema is
+missing most of the functions the current `mcp` function calls. Move to a fresh storage
+project instead: apply the current schema to it as above, copy the `memories`
+rows across (for example `pg_dump --data-only --table=public.memories` from the
+old database, loaded with `psql` into the new one), then point
+`LOREKIT_STORAGE_URL` at the new project.
 
 ## Billing
 
@@ -135,8 +157,9 @@ and does not record hosted usage events.
   storage project. Writes made with the service-role key carry no user id and
   are not affected.
 - **No per-user RLS in the storage project.** The function talks to it with the
-  service or anon key, never with the caller's JWT.
-- **Tested surface.** The BYOD smoke test covers write, read, list, search and
-  delete across the four scope types. The schema now also contains the org,
-  audit, retention and webhook tables and RPCs, but BYOD has not been exercised
-  for those features — treat them as unsupported.
+  service or anon key, never with the caller's JWT — see step 3 for what that
+  means for reads.
+- **Tested surface.** The BYOD smoke test exercises write, read, list, search
+  and delete, and runs only where its secrets are configured. The schema now
+  also contains the org, audit, retention and webhook tables and RPCs, but BYOD
+  has not been exercised for those features — treat them as unsupported.

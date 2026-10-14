@@ -32,7 +32,7 @@ export const MIGRATIONS_DIR = path.join(ROOT, 'supabase/migrations');
 export const OUTPUT_PATH = path.join(ROOT, 'supabase/byod/bootstrap.sql');
 
 // The Supabase CLI's own migration filename grammar: `<digits>_<name>.sql`.
-const MIGRATION_FILE = /^(\d+)_(.+)\.sql$/;
+const MIGRATION_FILE = /^(\d+)_(.*)\.sql$/;
 
 /**
  * Parse a migration filename into the (version, name) pair the Supabase CLI
@@ -60,10 +60,18 @@ function banner(text) {
  */
 export function renderBootstrap(migrations) {
   if (migrations.length === 0) throw new Error('no migrations to render');
+  const seen = new Set();
   const parsed = migrations.map(({ file, sql }) => {
     const id = parseMigrationName(file);
     if (!id) throw new Error(`not a migration filename: ${file}`);
-    return { file, sql: sql.endsWith('\n') ? sql : `${sql}\n`, ...id };
+    // Two files with one version (parallel PRs both taking the next number)
+    // would otherwise be hidden by the history insert's `on conflict do nothing`.
+    if (seen.has(id.version)) throw new Error(`duplicate migration version ${id.version}: ${file}`);
+    seen.add(id.version);
+    // Normalise a BOM and CRLF line endings, so a Windows checkout with
+    // core.autocrlf renders byte-identical output and the drift check holds.
+    const text = sql.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+    return { file, sql: text.endsWith('\n') ? text : `${text}\n`, ...id };
   });
   const newest = parsed[parsed.length - 1].file;
 
@@ -97,8 +105,12 @@ export function renderBootstrap(migrations) {
 --
 -- Billing: memories stored in your own database are NOT counted against
 -- LoreKit's hosted memory-count billing — LoreKit has no visibility into it.
--- The memory cap and rate limit are read from \`lorekit_default_limit\` /
--- \`user_limits\` in YOUR database; adjust them there.
+-- The memory cap is read from \`lorekit_default_limit\` / \`user_limits\` in
+-- YOUR database; adjust it there. (In BYOD mode the mcp function skips the
+-- rate limiter.)
+--
+-- pg_cron: the purge jobs are scheduled only when the pg_cron extension is
+-- already enabled (Database → Extensions). Enable it before applying.
 --
 -- See docs/byod.md for the full setup.
 
@@ -112,7 +124,7 @@ begin
   if to_regclass('public.memories') is not null then
     raise exception using
       message = 'LoreKit schema already present: bootstrap.sql only initialises an empty database.',
-      hint = 'Upgrade an existing BYOD database with \`supabase db push\` (see docs/byod.md).';
+      hint = 'Upgrade a database set up from this file with \`supabase db push\`. One set up from the older hand-written bootstrap.sql has no migration history: see docs/byod.md.';
   end if;
 end
 $guard$;
@@ -128,12 +140,16 @@ create table if not exists supabase_migrations.schema_migrations (
 );
 `;
 
+  // The bare `;` after each body: a migration's last statement need not end in
+  // one for the Supabase CLI, which splits statements itself, so terminate it
+  // here rather than let it run into the history insert. An empty statement is
+  // a no-op when the last statement did end in `;`.
   const body = parsed
     .map(
       ({ file, sql, version, name }) => `
 ${banner(file)}
 
-${sql}
+${sql};
 insert into supabase_migrations.schema_migrations (version, name)
 values (${sqlLiteral(version)}, ${sqlLiteral(name)})
 on conflict (version) do nothing;
