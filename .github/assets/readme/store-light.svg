@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="392" viewBox="0 0 1000 392" role="img" aria-label="Every agent reads and writes one LoreKit store, scoped narrow to broad, kept locally, hosted, or self-hosted">
+<title>Every agent reads and writes one LoreKit store, scoped narrow to broad, kept locally, hosted, or self-hosted</title>
+<rect width="1000" height="392" rx="16" fill="#ffffff" stroke="#e2e4e9"/>
+<text x="34" y="44" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#b86e00" text-anchor="start" letter-spacing="2">ONE STORE, EVERY AGENT</text>
+<text x="34" y="68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#565c69" text-anchor="start">Connect each agent once. Lessons stay with the repo they’re about.</text>
+<rect x="34" y="96" width="250" height="46" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="50" y="116" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#16181d" text-anchor="start">Claude Code</text>
+<text x="50" y="133" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="400" fill="#565c69" text-anchor="start">plugin · hooks · MCP</text>
+<rect x="34" y="152" width="250" height="46" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="50" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#16181d" text-anchor="start">Cursor</text>
+<text x="50" y="189" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="400" fill="#565c69" text-anchor="start">rule · stop hook · MCP</text>
+<rect x="34" y="208" width="250" height="46" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="50" y="228" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#16181d" text-anchor="start">Codex</text>
+<text x="50" y="245" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="400" fill="#565c69" text-anchor="start">hooks · experimental</text>
+<rect x="34" y="264" width="250" height="46" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="50" y="284" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#16181d" text-anchor="start">Any MCP client</text>
+<text x="50" y="301" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="400" fill="#565c69" text-anchor="start">endpoint + token</text>
+<rect x="34" y="320" width="250" height="46" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="50" y="340" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#16181d" text-anchor="start">CI</text>
+<text x="50" y="357" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="400" fill="#565c69" text-anchor="start">read-only lk_ro_ token</text>
+<path d="M284 119 C318 119, 310 231, 344 231" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+<path d="M284 175 C318 175, 310 231, 344 231" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+<path d="M284 231 C318 231, 310 231, 344 231" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+<path d="M284 287 C318 287, 310 231, 344 231" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+<path d="M284 343 C318 343, 310 231, 344 231" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+<rect x="344" y="96" width="340" height="270" rx="12" fill="#fff4e0" stroke="#b86e00"/>
+<text x="364" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#16181d" text-anchor="start">LoreKit</text>
+<text x="664" y="128" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#b86e00" text-anchor="end">memory.*</text>
+<text x="364" y="156" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="600" fill="#565c69" text-anchor="start" letter-spacing="1.2">READ ORDER · NARROW → BROAD</text>
+<rect x="364" y="172" width="228" height="34" rx="7" fill="#ffffff" stroke="#b45309"/>
+<rect x="364" y="172" width="5" height="34" rx="2" fill="#b45309"/>
+<text x="380" y="194" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" font-weight="400" fill="#b45309" text-anchor="start">branch::acme/api::feat/x</text>
+<rect x="364" y="216" width="252" height="34" rx="7" fill="#ffffff" stroke="#2563eb"/>
+<rect x="364" y="216" width="5" height="34" rx="2" fill="#2563eb"/>
+<text x="380" y="238" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" font-weight="400" fill="#2563eb" text-anchor="start">repo::acme/api</text>
+<rect x="364" y="260" width="276" height="34" rx="7" fill="#ffffff" stroke="#059669"/>
+<rect x="364" y="260" width="5" height="34" rx="2" fill="#059669"/>
+<text x="380" y="282" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" font-weight="400" fill="#059669" text-anchor="start">project::payments</text>
+<rect x="364" y="304" width="300" height="34" rx="7" fill="#ffffff" stroke="#7c3aed"/>
+<rect x="364" y="304" width="5" height="34" rx="2" fill="#7c3aed"/>
+<text x="380" y="326" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" font-weight="400" fill="#7c3aed" text-anchor="start">global</text>
+<path d="M684 239 H724" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+<text x="744" y="110" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="600" fill="#565c69" text-anchor="start" letter-spacing="1.2">LIVES WHERE YOU CHOOSE</text>
+<rect x="744" y="126" width="222" height="66" rx="9" fill="#f7f7f9" stroke="#b86e00"/>
+<text x="760" y="153" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#16181d" text-anchor="start">Local</text>
+<text x="760" y="173" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="400" fill="#565c69" text-anchor="start">markdown files · no account</text>
+<rect x="744" y="206" width="222" height="66" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="760" y="233" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#16181d" text-anchor="start">Hosted</text>
+<text x="760" y="253" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="400" fill="#565c69" text-anchor="start">shared across machines + team</text>
+<rect x="744" y="286" width="222" height="66" rx="9" fill="#f7f7f9" stroke="#e2e4e9"/>
+<text x="760" y="313" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#16181d" text-anchor="start">Self-hosted</text>
+<text x="760" y="333" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="400" fill="#565c69" text-anchor="start">your Supabase + Vercel · MIT</text>
+<path d="M724 159 V319 M724 159 H744 M724 239 H744 M724 319 H744" stroke="#9aa0ad" stroke-width="1.5" fill="none"/>
+</svg>
