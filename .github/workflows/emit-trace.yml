@@ -40,7 +40,7 @@ jobs:
       # The harness strips TS types at runtime via --experimental-transform-types,
       # which needs Node >= 22.7 (the rest of CI runs on 20).
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
 
