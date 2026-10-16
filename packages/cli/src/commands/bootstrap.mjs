@@ -78,6 +78,7 @@ export async function bootstrap(_args) {
       log('');
       log('  bootstrap.sql only initialises an EMPTY database. To upgrade this one, run');
       log(`  from a LoreKit checkout: ${c.cyan('supabase link --project-ref')} ${parseRef(storageUrl)} && ${c.cyan('supabase db push')}`);
+      log(`  then re-apply the storage overlay: ${c.cyan('psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f')} supabase/byod/storage-overlay.sql`);
       log('');
       return 0;
     }
@@ -103,7 +104,9 @@ export async function bootstrap(_args) {
   log(`  Or paste the contents of ${c.dim(sqlArg)}`);
   log('  into the Supabase dashboard → SQL Editor and run it.');
   log('');
-  log(`  Or, from a LoreKit checkout: ${c.cyan('supabase link --project-ref')} ${parseRef(storageUrl)} && ${c.cyan('supabase db push')}`);
+  log(`  Or, from a LoreKit checkout: ${c.cyan('supabase link --project-ref')} ${parseRef(storageUrl)} && ${c.cyan('supabase db push')},`);
+  log(`  then ${c.cyan('psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f')} supabase/byod/storage-overlay.sql`);
+  log(`  ${c.dim('(bootstrap.sql already includes the overlay; the db push route needs it after every push)')}`);
   log('');
 
   return 0;

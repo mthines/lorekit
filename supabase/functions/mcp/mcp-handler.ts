@@ -3,9 +3,9 @@
  * Handles initialize, tools/list, and tools/call.
  */
 
-import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction } from './auth.ts';
+import { type AuthContext, getDb, canWrite, canRead, keyRestriction } from './auth.ts';
 import { scopeAllowedByKey, KeyScopeDeniedError } from '../_shared/schemas/api-key.ts';
-import { type StorageAdapter } from './storage-adapter.ts';
+import { type StorageAdapter, storageUserId } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope, parseMemoryRefs } from '../_shared/scope/scope.ts';
 import { scopeTypeAttribute } from '../_shared/scope/scope-type-attribute.ts';
 import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
@@ -332,22 +332,17 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // own Supabase project. For hosted mode, derive a correctly-scoped client
     // from the auth context (JWT → user RLS, api_key → service-role).
     //
-    // LIMITATION — BYOD + JWT auth: when BYOD mode is active the adapter.db
-    // client is built at startup with the LOREKIT_STORAGE_SERVICE_KEY (or the
-    // anon key as fallback). A BYOD caller that authenticates via a Supabase JWT
-    // does NOT get a per-user-scoped client — the JWT is consumed by *this*
-    // hosted function for rate-limiting / auth, but the downstream BYOD database
-    // receives the service-key (or anon-key) client, not a JWT-forwarded one.
-    // RLS on the BYOD database therefore runs as service role (all rows visible)
-    // or anon (policy-dependent), never as the individual JWT user.
-    // BYOD users must rely on application-level data isolation in their own
-    // Supabase project. If per-user RLS is required, configure the BYOD database
-    // to treat service-role writes as trusted and enforce isolation via a
-    // user_id column rather than auth.uid()-based policies.
+    // BYOD + JWT auth: adapter.db is built from the storage project's SERVICE
+    // key and never carries the caller's JWT, so RLS on the storage project
+    // cannot scope a JWT caller. `storageUserId` scopes it in app code by its
+    // resolved id instead — the path an api_key caller already takes — so it
+    // neither reads other users' rows nor writes ownerless ones.
     const db = adapter.mode === 'byod' ? adapter.db : getDb(auth);
-    // toolUserId: null for JWT auth (RLS handles scoping), api_key userId otherwise.
-    // analyticsUserId: the resolved user ID for usage-event annotation regardless of auth type.
-    const toolUserId = getUserId(auth);
+    // toolUserId: who the tool scopes reads and stamps writes by — the api_key
+    // userId; null for a hosted JWT caller (RLS scopes it); the JWT caller's own
+    // id in BYOD mode (see above). analyticsUserId: the resolved user ID for
+    // usage-event annotation regardless of auth type.
+    const toolUserId = storageUserId(adapter.mode, auth);
     const analyticsUserId = toolUserId ?? (auth.type === 'user' ? auth.userId : null) ?? null;
 
     // Resolve plan name for usage-event annotation (fails open — null → 'free').
@@ -411,7 +406,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         result = await RETENTION_TOOLS[toolName as keyof typeof RETENTION_TOOLS](db, toolArgs, analyticsUserId, toolSpan, keyRestriction(auth));
       } else {
         // memory.* tools: (db, args, toolUserId, span, keyScoping, correlationId)
-        // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
+        // toolUserId is null for hosted JWT auth — RLS handles scoping on the DB
+        // side — and the caller's own id in BYOD mode (`storageUserId`).
         //
         // The trailing `correlationId` is read by `memory.write` alone, for its
         // `cited` array (00107): a citation joins to the run `usage_events`

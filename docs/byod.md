@@ -20,7 +20,9 @@ the part most likely to surprise you.
   your machine. Deploy the function yourself first: [install.md](./install.md).
 - **Two projects, two jobs.** API tokens and users are resolved in the
   function's own project; memory rows are read from and written to the
-  storage project.
+  storage project. The storage project's `auth.users` never holds those users,
+  which is why the storage schema drops its foreign keys into `auth.users`
+  (step 2).
 - **Only the `mcp` function has a BYOD mode.** The `memories` REST function —
   which backs the web dashboard, the CLI's remote commands and the hook
   engine's lesson injection — always uses the function's own project. See
@@ -41,14 +43,21 @@ already enabled.
 The storage project needs the full LoreKit schema — the same migrations the
 hosted project runs. Pick one route.
 
-**Supabase CLI (recommended — the same command upgrades it later):**
+**Supabase CLI (recommended — the same commands upgrade it later):**
 
 ```bash
 git clone https://github.com/mthines/lorekit.git
 cd lorekit
 supabase link --project-ref <storage-project-ref>
 supabase db push
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/byod/storage-overlay.sql
 ```
+
+The last line applies the **storage overlay**: it drops every foreign key from
+a `public` table into `auth.users`, because the users live in the function's
+project, not this one. Without it, every write made with an `lk_*` token fails
+with `memories_user_id_fkey`. It is idempotent; re-run it after every
+`db push`. Never apply it to the project that runs the `mcp` function.
 
 **One SQL file (empty database only):**
 
@@ -62,10 +71,11 @@ if the editor refuses it, use `psql`). `$DATABASE_URL` is the connection string
 from **Connect**; its password is your **database password**, not an API key.
 
 `bootstrap.sql` is generated from `supabase/migrations/` (CI fails when the two
-disagree). It applies every migration in one transaction, so a failure leaves
-the database untouched; it refuses to run against a database that already has
-the schema; and it records each migration in Supabase's migration history, so
-the CLI route above upgrades the database later.
+disagree) and ends with the storage overlay. It applies everything in one
+transaction, so a failure leaves the database untouched; it refuses to run
+against a database that already has the schema; and it records each migration
+in Supabase's migration history, so the CLI route above upgrades the database
+later.
 
 `lorekit bootstrap`, run with `LOREKIT_STORAGE_URL` and a key in your shell,
 checks whether the project is reachable and already has the schema, and prints
@@ -82,16 +92,16 @@ supabase secrets set --project-ref <function-project-ref> \
   LOREKIT_STORAGE_SERVICE_KEY=<storage-service-role-key>
 ```
 
-**Set the service key.** The function reads with whichever key it is given,
-and the storage project's read policies require `auth.uid()`, which an API key
-never carries. With only the anon key, writes succeed (they go through a
-`SECURITY DEFINER` function) but every read returns no rows.
+The service key is **required**: without it, every call to the function fails
+with an error naming `LOREKIT_STORAGE_SERVICE_KEY`. The storage project's read policies need `auth.uid()`, which an API
+key never carries, so an anon-key client could write but would read back
+nothing. `LOREKIT_STORAGE_ANON_KEY` is accepted but unused once the service key
+is set.
 
-The service key **bypasses row-level security**. Reads made with an `lk_*`
-token are still filtered to that token's user by the function. Reads from a
-caller authenticated with a Supabase session (JWT) are not filtered, because
-the function leaves RLS to do that, and so they see every row in the storage
-project.
+The service key bypasses row-level security, so the function scopes every call
+itself: reads and writes made with an `lk_*` token, or from a Supabase session,
+are filtered to and stamped with that caller's user id. Only the service-role
+tier (CI) sees every row.
 
 ### 4. Check it
 
@@ -113,12 +123,14 @@ checkout of that release:
 ```bash
 supabase link --project-ref <storage-project-ref>
 supabase db push
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/byod/storage-overlay.sql
 ```
 
 `db push` applies only the migrations the database has not recorded, which
 works the same whether you set the database up with `db push` or with
-`bootstrap.sql`. Upgrade the storage project before deploying the matching
-`mcp` function: the function calls the RPCs those migrations define.
+`bootstrap.sql`. Re-run the overlay after it, in case a new migration added a
+foreign key into `auth.users`. Upgrade the storage project before deploying the
+matching `mcp` function: the function calls the RPCs those migrations define.
 
 ### Databases set up from the old `bootstrap.sql`
 
@@ -126,8 +138,8 @@ works the same whether you set the database up with `db push` or with
 up from that version has no migration history — `select count(*) from
 supabase_migrations.schema_migrations` errors or returns 0 — so `db push` would
 try to replay every migration from the first and fail, and its schema is
-missing most of the functions the current `mcp` function calls. Move to a fresh storage
-project instead: apply the current schema to it as above, copy the `memories`
+missing most of the functions the current `mcp` function calls. Move to a
+fresh storage project instead: apply the current schema to it as above, copy the `memories`
 rows across (for example `pg_dump --data-only --table=public.memories` from the
 old database, loaded with `psql` into the new one), then point
 `LOREKIT_STORAGE_URL` at the new project.
@@ -149,16 +161,12 @@ and does not record hosted usage events.
   API, the CLI's remote commands (`list`, `search`, `show`, `write` against the
   remote store) and the hook engine's lesson injection go through the `memories`
   function, which has no BYOD mode. They read and write the function's own
-  project and do not see memories stored through BYOD.
-- **A token's user must also exist in the storage project.** `memories.user_id`
-  references the storage project's `auth.users`. A write made with an `lk_*`
-  token carries the token owner's id from the function's project, and it fails
-  with `memories_user_id_fkey` unless a user with that id also exists in the
-  storage project. Writes made with the service-role key carry no user id and
-  are not affected.
-- **No per-user RLS in the storage project.** The function talks to it with the
-  service or anon key, never with the caller's JWT — see step 3 for what that
-  means for reads.
+  project and do not see memories stored through BYOD. To run the dashboard on
+  a database you control, self-host the whole stack instead
+  ([install.md](./install.md)).
+- **No row-level security in the storage project.** The function talks to it
+  with the service key and scopes every call in its own code (step 3); RLS
+  policies there do not apply to it.
 - **Tested surface.** The BYOD smoke test exercises write, read, list, search
   and delete, and runs only where its secrets are configured. The schema now
   also contains the org, audit, retention and webhook tables and RPCs, but BYOD

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Generate the BYOD ("bring your own database") bootstrap from the migrations.
 // Source of truth: supabase/migrations/*.sql (applied in filename order)
+// + the BYOD storage overlay: supabase/byod/storage-overlay.sql
 // Generated file:  supabase/byod/bootstrap.sql
 //
 //   node supabase/byod/generate.mjs          regenerate bootstrap.sql
@@ -30,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const MIGRATIONS_DIR = path.join(ROOT, 'supabase/migrations');
 export const OUTPUT_PATH = path.join(ROOT, 'supabase/byod/bootstrap.sql');
+export const OVERLAY_PATH = path.join(ROOT, 'supabase/byod/storage-overlay.sql');
 
 // The Supabase CLI's own migration filename grammar: `<digits>_<name>.sql`.
 const MIGRATION_FILE = /^(\d+)_(.*)\.sql$/;
@@ -54,11 +56,14 @@ function banner(text) {
 }
 
 /**
- * Render bootstrap.sql from an ordered list of migrations.
+ * Render bootstrap.sql from an ordered list of migrations, followed by the
+ * BYOD storage overlay (storage-overlay.sql), all in one transaction.
  * @param {{ file: string, sql: string }[]} migrations  already sorted by filename
+ * @param {string} overlay  the storage overlay's SQL
  * @returns {string}
  */
-export function renderBootstrap(migrations) {
+export function renderBootstrap(migrations, overlay) {
+  if (typeof overlay !== 'string' || overlay.trim() === '') throw new Error('no storage overlay to render');
   if (migrations.length === 0) throw new Error('no migrations to render');
   const seen = new Set();
   const parsed = migrations.map(({ file, sql }) => {
@@ -84,8 +89,11 @@ export function renderBootstrap(migrations) {
 -- one) and regenerate instead.
 --
 -- What it does: applies the FULL LoreKit schema — the same migrations the hosted
--- project runs — to an empty Supabase project, in one transaction, and records
--- each migration in Supabase's migration history.
+-- project runs — to an empty Supabase project, in one transaction, records each
+-- migration in Supabase's migration history, and ends with the BYOD storage
+-- overlay (storage-overlay.sql), which drops the foreign keys into auth.users:
+-- this project's auth.users never holds the users of the project that runs the
+-- mcp function. Never apply this file to the project that runs the function.
 --
 -- Fresh database only. A guard below aborts (and rolls everything back) when the
 -- LoreKit schema is already present. Apply with ON_ERROR_STOP so psql stops at
@@ -102,6 +110,7 @@ export function renderBootstrap(migrations) {
 --
 --   supabase link --project-ref <your-storage-project-ref>
 --   supabase db push
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/byod/storage-overlay.sql
 --
 -- Billing: memories stored in your own database are NOT counted against
 -- LoreKit's hosted memory-count billing — LoreKit has no visibility into it.
@@ -157,7 +166,12 @@ on conflict (version) do nothing;
     )
     .join('');
 
+  const overlaySql = overlay.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
   return `${header}${body}
+${banner('storage-overlay.sql — BYOD only: drop foreign keys into auth.users')}
+
+${overlaySql.endsWith('\n') ? overlaySql : `${overlaySql}\n`};
+
 commit;
 `;
 }
@@ -172,7 +186,7 @@ export function readMigrations(dir = MIGRATIONS_DIR) {
 }
 
 function main() {
-  const expected = renderBootstrap(readMigrations());
+  const expected = renderBootstrap(readMigrations(), fs.readFileSync(OVERLAY_PATH, 'utf8'));
   const rel = path.relative(ROOT, OUTPUT_PATH);
 
   if (process.argv.includes('--check')) {

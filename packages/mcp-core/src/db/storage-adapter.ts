@@ -94,11 +94,11 @@ export function createBYODAdapter(url: string, anonKey: string, serviceKey?: str
  * Resolve the correct StorageAdapter from environment variables or config.
  *
  * Resolution order:
- *   1. LOREKIT_STORAGE_URL + LOREKIT_STORAGE_ANON_KEY → BYOD adapter
- *      (optionally uses LOREKIT_STORAGE_SERVICE_KEY for privileged access)
+ *   1. LOREKIT_STORAGE_URL + LOREKIT_STORAGE_SERVICE_KEY → BYOD adapter
+ *      (LOREKIT_STORAGE_ANON_KEY is accepted but unused once the service key is set)
  *   2. SUPABASE_URL + SUPABASE_ANON_KEY → hosted adapter (default)
  *
- * Throws if LOREKIT_STORAGE_URL is set without LOREKIT_STORAGE_ANON_KEY.
+ * Throws if LOREKIT_STORAGE_URL is set without LOREKIT_STORAGE_SERVICE_KEY.
  */
 export function resolveStorageAdapter(jwt?: string): StorageAdapter {
   const storageUrl = process.env['LOREKIT_STORAGE_URL'];
@@ -106,14 +106,44 @@ export function resolveStorageAdapter(jwt?: string): StorageAdapter {
   const storageServiceKey = process.env['LOREKIT_STORAGE_SERVICE_KEY'];
 
   if (storageUrl) {
-    if (!storageAnonKey) {
+    // The service key is required, not optional: the storage project's read
+    // policies need auth.uid(), which an API key never carries, so an anon-key
+    // client writes (memory_write is SECURITY DEFINER) but reads back nothing.
+    // Fail at configuration rather than return empty reads that look healthy.
+    if (!storageServiceKey) {
       throw new Error(
-        'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_ANON_KEY is missing. ' +
-          'Both variables are required to use a custom database.',
+        'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_SERVICE_KEY is missing. ' +
+          'BYOD needs the storage project\'s service-role key: with only the anon key every read returns no rows.',
       );
     }
-    return createBYODAdapter(storageUrl, storageAnonKey, storageServiceKey);
+    return createBYODAdapter(storageUrl, storageAnonKey ?? '', storageServiceKey);
   }
 
   return createHostedAdapter(jwt);
+}
+
+/**
+ * The user id a tool call filters its reads and stamps its writes with.
+ *
+ * Hosted: an `api_key` caller runs on the service-role client, so it is scoped
+ * in app code by its id; a JWT (`user`) caller gets a client carrying its own
+ * JWT, so RLS scopes it and the id stays null; `service` sees everything.
+ *
+ * BYOD: the storage client is built from the storage project's SERVICE key and
+ * never carries the caller's JWT, so RLS cannot scope a JWT caller there. Left
+ * at null it would read every row in the storage project and write rows with
+ * no owner. It is scoped in app code by its resolved id instead — the same path
+ * an `api_key` caller takes. A JWT caller with no resolved id is refused rather
+ * than allowed through unscoped.
+ */
+export function storageUserId(
+  mode: StorageAdapter['mode'],
+  auth: { type: 'user' | 'service' | 'api_key'; userId?: string | null },
+): string | null {
+  if (auth.type === 'api_key') return auth.userId ?? null;
+  if (auth.type === 'user' && mode === 'byod') {
+    if (!auth.userId) throw new Error('BYOD: the session has no resolved user id, so its reads cannot be scoped.');
+    return auth.userId;
+  }
+  return null;
 }

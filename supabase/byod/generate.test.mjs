@@ -5,10 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   parseMigrationName,
-  renderBootstrap,
+  renderBootstrap as render,
   readMigrations,
   OUTPUT_PATH,
+  OVERLAY_PATH,
 } from './generate.mjs';
+
+const OVERLAY = '-- overlay\ndo $o$ begin perform 1; end $o$;\n';
+const renderBootstrap = (migrations, overlay = OVERLAY) => render(migrations, overlay);
 
 test('parseMigrationName follows the Supabase CLI grammar', () => {
   assert.deepEqual(parseMigrationName('00001_memories.sql'), { version: '00001', name: 'memories' });
@@ -63,6 +67,22 @@ test('renderBootstrap rejects two migrations with one version', () => {
   );
 });
 
+test('renderBootstrap ends with the storage overlay, after every migration and inside the transaction', () => {
+  const out = renderBootstrap([{ file: '00001_first.sql', sql: 'select 1;' }]);
+  const history = out.lastIndexOf("values ('00001', 'first')");
+  const overlay = out.indexOf('do $o$ begin perform 1; end $o$;');
+  assert.ok(overlay > history, 'overlay runs after the last migration is recorded');
+  assert.ok(overlay < out.lastIndexOf('commit;'), 'overlay is inside the transaction');
+  assert.throws(() => render([{ file: '00001_first.sql', sql: 'select 1;' }], ''), /no storage overlay/);
+});
+
+test('the overlay finds the foreign keys by query, never by a hard-coded name', () => {
+  const overlay = fs.readFileSync(OVERLAY_PATH, 'utf8').replace(/^\s*--.*$/gm, '');
+  assert.match(overlay, /confrelid = 'auth\.users'::regclass/);
+  assert.match(overlay, /nspname = 'public'/);
+  assert.doesNotMatch(overlay, /_fkey/, 'a named constraint would miss the next migration\'s user FK');
+});
+
 test('renderBootstrap is deterministic and rejects bad input', () => {
   const input = [{ file: '00001_first.sql', sql: 'select 1;' }];
   assert.equal(renderBootstrap(input), renderBootstrap(input));
@@ -73,7 +93,7 @@ test('renderBootstrap is deterministic and rejects bad input', () => {
 test('the committed bootstrap.sql is generated from the current migrations', () => {
   assert.equal(
     fs.readFileSync(OUTPUT_PATH, 'utf8'),
-    renderBootstrap(readMigrations()),
+    render(readMigrations(), fs.readFileSync(OVERLAY_PATH, 'utf8')),
     'run: node supabase/byod/generate.mjs',
   );
 });

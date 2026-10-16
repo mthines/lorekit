@@ -56,7 +56,7 @@ frontmatter, checked in BOTH the project and global install locations): a `curre
 a `warn` — never a `fail`, the skill still works — naming the installed and shipped versions and
 pointing at `lorekit update --<scope>`, the same scope-aware wording the hooks-upgrade line above it
 uses. When `LOREKIT_STORAGE_URL` is set, a `byod storage` check probes that project with
-`LOREKIT_STORAGE_ANON_KEY` (`probeByodStorage` in `shared/byod.mjs` — one PostgREST
+`LOREKIT_STORAGE_ANON_KEY` or, failing that, `LOREKIT_STORAGE_SERVICE_KEY` (`probeByodStorage` in `shared/byod.mjs` — one PostgREST
 `GET /rest/v1/memories?limit=1`, plain `fetch`): it passes when the `memories` table answers and
 FAILS when the project is unreachable, rejects the key, or has no LoreKit schema yet.
 
@@ -306,7 +306,8 @@ BYOD only ([byod.md](./byod.md)). Probes the project named by `LOREKIT_STORAGE_U
 `LOREKIT_STORAGE_ANON_KEY` or `LOREKIT_STORAGE_SERVICE_KEY` (the same `probeByodStorage` as
 `doctor`), reports whether the LoreKit schema is already there, and prints the three routes that
 apply it: `psql -v ON_ERROR_STOP=1 -f supabase/byod/bootstrap.sql`, the SQL Editor, or
-`supabase link` + `supabase db push`. It runs no DDL — PostgREST, the only thing a Supabase API key
+`supabase link` + `supabase db push` followed by `supabase/byod/storage-overlay.sql` (which
+`bootstrap.sql` already includes). It runs no DDL — PostgREST, the only thing a Supabase API key
 reaches, cannot. The published package does not ship `supabase/`, so outside a LoreKit checkout it
 prints the file's download URL instead of a local path. It never prints a key: the `psql`
 connection string's password is the database password, not the service-role key.

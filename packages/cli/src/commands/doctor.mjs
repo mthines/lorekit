@@ -629,23 +629,23 @@ function cliVersion() {
 
 async function checkBYODStorage(record) {
   const storageUrl = process.env['LOREKIT_STORAGE_URL'];
-  const storageAnonKey = process.env['LOREKIT_STORAGE_ANON_KEY'];
+  const storageKey = process.env['LOREKIT_STORAGE_ANON_KEY'] || process.env['LOREKIT_STORAGE_SERVICE_KEY'];
 
-  if (!storageUrl && !storageAnonKey) {
+  if (!storageUrl && !storageKey) {
     return; // No BYOD configured — skip silently.
   }
 
-  if (storageUrl && !storageAnonKey) {
-    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_ANON_KEY is missing');
+  if (!storageUrl) {
+    record('fail', 'byod storage', 'a LOREKIT_STORAGE_*_KEY is set but LOREKIT_STORAGE_URL is missing');
     return;
   }
 
-  if (!storageUrl && storageAnonKey) {
-    record('fail', 'byod storage', 'LOREKIT_STORAGE_ANON_KEY is set but LOREKIT_STORAGE_URL is missing');
+  if (!storageKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but neither LOREKIT_STORAGE_ANON_KEY nor LOREKIT_STORAGE_SERVICE_KEY is');
     return;
   }
 
-  const probe = await probeByodStorage({ url: storageUrl, key: storageAnonKey });
+  const probe = await probeByodStorage({ url: storageUrl, key: storageKey });
   if (probe.state === 'ready') record('pass', 'byod storage', `ok — ${storageUrl}`);
   else if (probe.state === 'no-schema') record('fail', 'byod storage', `${probe.detail} — see docs/byod.md`);
   else record('fail', 'byod storage', probe.detail);
