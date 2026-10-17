@@ -96,6 +96,24 @@ describe('the /lore scope tree is fetched once', () => {
     expect(((await lore) as { scopes: unknown }).scopes).toEqual(tree);
   });
 
+  it('hands a joining useScopeTree the shared retry policy when useLoreData starts the fetch', async () => {
+    // The retry policy belongs to whichever caller STARTS the shared fetch, so
+    // a no-retry override in the lore fetch would turn one transient scopes
+    // failure into an error for the scope tree that joined it. Real ~1 s
+    // backoff: TanStack's default retry delay, kept rather than faked.
+    api.listScopesRequest.mockImplementationOnce(
+      () => new Promise((_, reject) => setTimeout(() => reject(new Error('transient')), 10)),
+    );
+
+    const lore = mount(useLoreData);
+    await vi.waitFor(() => expect(api.listScopesRequest).toHaveBeenCalledTimes(1), { interval: 1 });
+    const tree = (await mount(useScopeTree)) as { scope: string }[];
+
+    expect(api.listScopesRequest).toHaveBeenCalledTimes(2);
+    expect(tree.map((node) => node.scope)).toEqual(['repo::mthines/lorekit', 'global']);
+    expect(((await lore) as { scopes: unknown }).scopes).toEqual(tree);
+  });
+
   it('still fetches the scopes for useLoreData when no scope tree is cached', async () => {
     const lore = (await mount(useLoreData)) as { scopes: { scope: string }[] };
 

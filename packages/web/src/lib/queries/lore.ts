@@ -350,8 +350,12 @@ async function fetchLoreData(queryClient: QueryClient, signal?: AbortSignal): Pr
     // mounts `useScopeTree` beside this hook, and two independent requests ran
     // the `lorekit_memory_scopes` RPC twice, concurrently, on every load.
     // `fetchQuery` joins an in-flight fetch and serves a fresh cached tree.
-    // `retry: false` because this query's own retry already re-runs this half.
-    queryClient.fetchQuery({ ...scopeTreeQueryOptions, retry: false }),
+    // No `retry` override: the retry policy is captured by whichever caller
+    // STARTS the shared fetch, so a no-retry override here would hand a
+    // `useScopeTree` that joins it a fetch that fails on one transient error.
+    // The cost is accepted: during a sustained scopes outage this query's own
+    // retry stacks on top, re-running an already-retried, backoff-spaced fetch.
+    queryClient.fetchQuery(scopeTreeQueryOptions),
     listMemoriesRequest(token, { limit: LEGACY_PAGE_SIZE, sort: 'created_at' }, signal),
     // `since` is EXPLICIT, not left to the endpoint's default. That default is
     // 200 days, sized when the heatmap was a fixed 26 weeks; the desktop grid
