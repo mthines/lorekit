@@ -76,6 +76,8 @@ Two of those checks answer different questions, and both must be green:
 - **`connectivity`** probes the public `/health` function. It proves the network path only — it stays green for a token that no longer works.
 - **`authentication`** makes one authenticated request and reports what the server said about the token. A revoked or deleted token fails here with HTTP 401, and doctor exits non-zero. A write-only `lk_wo_*` token passes with a note that it has no read permission.
 
+The **`endpoint`** line checks the URL's shape. It warns (without failing) when the endpoint is shaped wrong for an MCP client: a `*.supabase.co` endpoint must end in `/functions/v1/mcp`, and a custom domain or reverse proxy must end in `/mcp`. A URL like `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1` still passes `connectivity` and `authentication`, because those go over REST, but your agent's MCP client gets a 404. The warning names where the endpoint came from and the command that fixes it, for example `npx @lorekit/cli install --project --force --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`.
+
 <TutorialCallout variant="tip">
 
 Seeing `authentication — token REJECTED`? The token was revoked or deleted. Generate a new one at [lorekit.io](https://lorekit.io), then run `npx @lorekit/cli install --force` — it asks whether to keep, replace, or remove the token already in your config.

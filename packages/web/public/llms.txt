@@ -26,7 +26,13 @@ npx @lorekit/cli install \
   --token    lk_rw_<your-token>
 ```
 
-5. Verify: `npx @lorekit/cli doctor`
+5. Verify: `npx @lorekit/cli doctor`. Its `endpoint` line WARNS when the MCP
+   URL is shaped wrong for an MCP client — a `*.supabase.co` endpoint must end in
+   `/functions/v1/mcp`, any other host in `/mcp`. A URL like `.../functions/v1`
+   still passes the REST-based `connectivity`/`authentication` checks but 404s for
+   an MCP client. The warning names the config source and the fix, e.g.
+   `npx @lorekit/cli install --project --force --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
+   (`--force` is required: a plain re-install of an installed scope rewrites nothing).
 
 `install` asks whether to wire the Claude Code lifecycle hooks. They inject
 context into the agent — none of them writes memory (the write is still the
