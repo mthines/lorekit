@@ -394,7 +394,7 @@ these as successes.
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, expired, or rotated token |
 | `-32003` | Forbidden — authenticated, but not permitted for this tool: a wrong-permission-tier token (read-only token on a write, write-only token on a read), an account-wide tool on a scoped key, or a scope outside the key's allowlist |
-| `-32603` | Server fault — a DB outage or unexpected exception. Safe to retry |
+| `-32603` | Server fault — a DB outage or unexpected exception. Safe to retry. A BYOD storage misconfiguration (`LOREKIT_STORAGE_URL` set without `LOREKIT_STORAGE_SERVICE_KEY`) also returns `-32603`, with a message naming the missing variable — that one does not clear on retry; fix the function's secrets |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown tool name |
 

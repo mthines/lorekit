@@ -787,7 +787,7 @@ no `error` member. The `lorekit` CLI's own client checks `result.isError`
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, or expired token |
-| `-32603` | Server fault — a DB outage or an unexpected exception. Not something the model can self-correct from, and safe for a client to retry |
+| `-32603` | Server fault — a DB outage or an unexpected exception. Not something the model can self-correct from, and safe for a client to retry. A BYOD storage misconfiguration (`LOREKIT_STORAGE_URL` set without `LOREKIT_STORAGE_SERVICE_KEY`) also returns `-32603`, with a message naming the missing variable — that one does not clear on retry; fix the function's secrets |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown method or tool name |
 | `-32003` | Forbidden (authenticated, but not permitted) — a read-only token attempted a write (or vice versa), an account-wide tool on a scoped key, or a scope outside the key's allowlist. The last one covers `memory.*` and, as of this change, `policy.*`/`groom.*` too: `policy.create`/`groom.*`'s target-or-resolved scope, and `policy.update`/`policy.delete`'s STORED scope. |
