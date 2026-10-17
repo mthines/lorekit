@@ -2,6 +2,7 @@
 
 import {
   keepPreviousData,
+  queryOptions,
   useQueries,
   useQuery,
   useInfiniteQuery,
@@ -313,14 +314,21 @@ export function useFacetCatalog(
   });
 }
 
+/**
+ * The ONE definition of the scope-tree query, shared by `useScopeTree` and
+ * `fetchLoreData` so the two cannot drift onto different keys or stale times —
+ * a drift that would silently bring back the duplicate `GET /memories/scopes`.
+ */
+const scopeTreeQueryOptions = queryOptions({
+  queryKey: ['lore-scopes'],
+  queryFn: ({ signal }) => fetchScopes(signal),
+  // Scope tree is read-heavy — keep data for 90 s before refetching.
+  staleTime: 90_000,
+  retry: retryUnlessSignedOut,
+});
+
 export function useScopeTree() {
-  return useQuery<ScopeNode[]>({
-    queryKey: ['lore-scopes'],
-    queryFn: ({ signal }) => fetchScopes(signal),
-    // Scope tree is read-heavy — keep data for 90 s before refetching.
-    staleTime: 90_000,
-    retry: retryUnlessSignedOut,
-  });
+  return useQuery<ScopeNode[]>(scopeTreeQueryOptions);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,11 +342,16 @@ export function useScopeTree() {
 // from `GET /memories/activity`, which buckets per UTC day in Postgres.
 // ---------------------------------------------------------------------------
 
-async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
+async function fetchLoreData(queryClient: QueryClient, signal?: AbortSignal): Promise<LoreData> {
   const token = await requireBrowserToken();
 
-  const [scopesRes, page, activity] = await Promise.all([
-    listScopesRequest(token, signal),
+  const [scopes, page, activity] = await Promise.all([
+    // Through the shared scope-tree query, not a request of its own: `/lore`
+    // mounts `useScopeTree` beside this hook, and two independent requests ran
+    // the `lorekit_memory_scopes` RPC twice, concurrently, on every load.
+    // `fetchQuery` joins an in-flight fetch and serves a fresh cached tree.
+    // `retry: false` because this query's own retry already re-runs this half.
+    queryClient.fetchQuery({ ...scopeTreeQueryOptions, retry: false }),
     listMemoriesRequest(token, { limit: LEGACY_PAGE_SIZE, sort: 'created_at' }, signal),
     // `since` is EXPLICIT, not left to the endpoint's default. That default is
     // 200 days, sized when the heatmap was a fixed 26 weeks; the desktop grid
@@ -349,8 +362,6 @@ async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
     activityRequest(token, { bucket: 'day', since: heatmapSince(new Date().toISOString()) }, signal),
   ]);
 
-  const scopes: ScopeNode[] = buildScopeTree(scopesRes.scopes);
-
   return {
     scopes,
     lessons: page.entries.map(lessonFromMemoryEntry),
@@ -359,9 +370,10 @@ async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
 }
 
 export function useLoreData() {
+  const queryClient = useQueryClient();
   return useQuery<LoreData>({
     queryKey: ['lore'],
-    queryFn: ({ signal }) => fetchLoreData(signal),
+    queryFn: ({ signal }) => fetchLoreData(queryClient, signal),
     // Lore explorer is read-heavy — keep data for 90 s before refetching.
     staleTime: 90_000,
     retry: retryUnlessSignedOut,
