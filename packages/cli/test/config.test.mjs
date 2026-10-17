@@ -497,8 +497,7 @@ test('removeWebMcpServer removes the web form but leaves an embedded-token entry
 // the files. Every test here pins HOME/USERPROFILE to an empty temp dir and
 // clears the LOREKIT_MCP_URL/LOREKIT_ENDPOINT/LOREKIT_TOKEN env vars first —
 // the three pre-existing `resolveProjectConnection` tests above do NOT do this
-// and leak the developer's real ~/.claude.json (known, pre-existing baseline
-// reds; not fixed here per the plan).
+// and leak the developer's real ~/.claude.json.
 import { loadControl } from '../src/shared/control.mjs';
 
 function withIsolatedConnectionEnv(home, fn) {

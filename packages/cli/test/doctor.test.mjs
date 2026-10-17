@@ -488,8 +488,8 @@ test('a default doctor run reports telemetry as info and never fails on it', () 
 import { classifyMcpEndpoint } from '../src/shared/mcp.mjs';
 import { ENDPOINT_SOURCES, endpointCheck } from '../src/commands/doctor.mjs';
 
-// One row per Edge Cases entry in plan.md — every input the plan commits to a
-// specific kind/expected/suggested for.
+// One row per endpoint shape the classifier commits to, each pinned to a
+// specific kind/expected/suggested.
 const EDGE_CASES = [
   { url: 'https://ref.supabase.co/functions/v1/mcp/', kind: 'ok' },
   { url: 'https://ref.supabase.co/functions/v1/mcp?foo=1', kind: 'ok' },
@@ -555,7 +555,7 @@ const EDGE_CASES = [
   { url: 'ftp://x/mcp', kind: 'invalid-url' },
 ];
 
-test('classifyMcpEndpoint matches every Edge Cases row from plan.md', () => {
+test('classifyMcpEndpoint classifies every known endpoint shape', () => {
   for (const { url, kind, expected, suggested } of EDGE_CASES) {
     const result = classifyMcpEndpoint(url);
     assert.equal(result.kind, kind, `${url}: expected kind ${kind}, got ${JSON.stringify(result)}`);
@@ -608,7 +608,7 @@ test('endpointCheck labels an unrecognised source as "resolved config" rather th
   assert.match(result.detail, /lorekit install --force --endpoint/);
 });
 
-// ── doctor --mode remote: the endpoint line itself (AC-5, AC-6) ──────────────
+// ── doctor --mode remote: the endpoint line itself ───────────────────────────
 
 function runRemoteEndpointDoctor(dir, home, extraArgs = []) {
   return spawnSync(
