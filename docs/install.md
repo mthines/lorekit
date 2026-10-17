@@ -265,8 +265,9 @@ Store a read+write token as `LOREKIT_TOKEN` in your repo secrets, then use it in
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `{"code":-32001}` on write | Read-only (`lk_ro_`) token | Generate a `lk_rw_` or `lk_wo_` token |
-| `{"code":-32001}` on read | Write-only (`lk_wo_`) token, or missing/wrong token | Generate a `lk_rw_` or `lk_ro_` token; check the `Authorization` header |
+| `{"code":-32003}` on write | Read-only (`lk_ro_`) token | Generate a `lk_rw_` or `lk_wo_` token |
+| `{"code":-32003}` on read | Write-only (`lk_wo_`) token | Generate a `lk_rw_` or `lk_ro_` token |
+| `{"code":-32001}` | Missing, invalid, expired or revoked token | Check the `Authorization` header; generate a new token |
 | `{"code":-32603}` | Scope validation error | Use `::` as separator; check scope format |
 | `{"db":false}` on health check | DB not reachable from Edge Function | Verify Supabase secrets in Step 5 |
 | Dashboard auth loop | Redirect URL not set | Add your URL in Supabase Auth settings (Step 8) |
