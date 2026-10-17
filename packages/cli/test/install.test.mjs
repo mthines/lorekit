@@ -9,7 +9,13 @@ import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } f
 import {
   skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES, CLAUDE_HOOK_EVENTS,
 } from '../src/shared/config.mjs';
+import { mcpToRestBase } from '../src/shared/mcp.mjs';
 import { withHome } from './helpers.mjs';
+
+// The one hosted LoreKit endpoint — self-hosting (docs/install.md,
+// /lorekit-self-host) never changes this default; it only ever adds
+// `--endpoint`/`LOREKIT_MCP_URL` to point somewhere else.
+const HOSTED_ENDPOINT = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -76,6 +82,64 @@ test('install --project writes into the repo, not home', async () => {
   const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
   assert.ok(mcp.mcpServers.lorekit, 'lorekit server wired into project .mcp.json');
   assert.ok(mcp.mcpServers.lorekit.args.some((a) => a.includes(ENDPOINT)));
+});
+
+test('install with no --endpoint and no env override still targets the hosted project (self-hosting never changes the default)', async () => {
+  const root = tmp('lk-default-endpoint-');
+  const prevUrl = process.env.LOREKIT_MCP_URL;
+  const prevEndpoint = process.env.LOREKIT_ENDPOINT;
+  delete process.env.LOREKIT_MCP_URL;
+  delete process.env.LOREKIT_ENDPOINT;
+  try {
+    const code = await install({ dir: root, token: TOKEN, yes: true, project: true });
+    assert.equal(exitOf(code), 0);
+    const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+    assert.ok(
+      mcp.mcpServers.lorekit.args.some((a) => a.includes(HOSTED_ENDPOINT)),
+      'omitting --endpoint falls back to the hosted MCP URL, not a self-hosted one',
+    );
+  } finally {
+    if (prevUrl === undefined) delete process.env.LOREKIT_MCP_URL;
+    else process.env.LOREKIT_MCP_URL = prevUrl;
+    if (prevEndpoint === undefined) delete process.env.LOREKIT_ENDPOINT;
+    else process.env.LOREKIT_ENDPOINT = prevEndpoint;
+  }
+});
+
+test('install --endpoint <self-hosted-ref> writes that project into .mcp.json, and the same URL derives the matching REST base', async () => {
+  const root = tmp('lk-self-host-');
+  const selfHostedEndpoint = 'https://my-own-ref.supabase.co/functions/v1/mcp';
+  const code = await install({ dir: root, endpoint: selfHostedEndpoint, token: TOKEN, yes: true, project: true });
+  assert.equal(exitOf(code), 0);
+
+  const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+  assert.ok(
+    mcp.mcpServers.lorekit.args.some((a) => a.includes(selfHostedEndpoint)),
+    'the self-hosted endpoint is written verbatim, never silently rewritten to the hosted one',
+  );
+  assert.ok(
+    !mcp.mcpServers.lorekit.args.some((a) => a.includes(HOSTED_ENDPOINT)),
+    'the hosted endpoint is NOT also present once a self-hosted one is given',
+  );
+
+  // One endpoint setting covers MCP, REST, hooks, and the remote CLI commands
+  // (docs/install.md "REST/hook base" fact, encoded in the self-host skill
+  // and the public self-host page): the REST base the CLI derives for that
+  // same project's `memories`/`health` calls must point at the project the
+  // agent was just connected to.
+  assert.equal(mcpToRestBase(selfHostedEndpoint), 'https://my-own-ref.supabase.co/functions/v1');
+});
+
+test('the lorekit-self-host runbook skill is never scaffolded by install (D2 — it is a one-time deployment runbook, not everyday agent memory)', async () => {
+  const root = tmp('lk-no-self-host-skill-');
+  const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true });
+  assert.equal(exitOf(code), 0);
+
+  assert.ok(fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md')));
+  assert.ok(
+    !fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-self-host')),
+    'lorekit-self-host must stay absent from a fresh install — it ships only via the Claude plugin / npm tarball',
+  );
 });
 
 test('install --global writes into ~/.claude and preserves existing user config', async () => {
