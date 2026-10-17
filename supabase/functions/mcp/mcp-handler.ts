@@ -385,10 +385,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       if (isOrgTool) {
         // org.* tools: (db, args, toolUserId, span) — the same shape as the
         // memory family, so both maps look alike and this dispatcher threads
-        // the actor one way. null for a JWT caller (auth.uid() applies inside
-        // the RPCs); the token owner for an api_key caller, forwarded as
-        // `p_actor_user_id` and honoured only on a verified service_role
-        // connection.
+        // the actor one way. `toolUserId` is the caller's own id for JWT and
+        // api_key callers alike (null only for service auth). It is forwarded
+        // as `p_actor_user_id`, which the RPCs honour only on a verified
+        // service_role connection (00041) — on a JWT connection they ignore it
+        // and resolve the actor from `auth.uid()`.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolUserId, toolSpan);
       } else if (isRetentionTool) {
         // policy.*/groom.* tools: (db, args, userId, span, keyScoping) — but
@@ -396,12 +397,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // `analyticsUserId` (the RESOLVED owner), never `toolUserId`. The
         // underlying lorekit_policy_*/lorekit_groom_* RPCs take `p_user_id`
         // explicitly and throw a UserInputError on null — there is no
-        // `auth.uid()` fallback the way the org RPCs have. `toolUserId` is
-        // null for every JWT caller, so passing it here would break
-        // policy/groom over MCP for exactly the dashboard-JWT path the REST
-        // `requireUserId(auth)` helper already resolves correctly.
-        // `analyticsUserId` is that same resolved owner for both JWT and
-        // api_key auth. `keyRestriction(auth)` is the same call the memory
+        // `auth.uid()` fallback the way the org RPCs have. `analyticsUserId`
+        // is the resolved owner for both JWT and api_key auth — the same id
+        // the REST `requireUserId(auth)` helper resolves.
+        // `keyRestriction(auth)` is the same call the memory
         // family makes below — each retention handler gates the scope it
         // resolves against it (see `assertScopeAllowed` in `tools.ts`).
         result = await RETENTION_TOOLS[toolName as keyof typeof RETENTION_TOOLS](db, toolArgs, analyticsUserId, toolSpan, keyRestriction(auth));
