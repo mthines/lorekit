@@ -215,7 +215,11 @@ project leaves `.mcp.json` untouched.) Always pass `--endpoint`, or export
 `LOREKIT_MCP_URL` in your shell profile, on every install.
 
 **Verify:** `npx @lorekit/cli doctor` shows your endpoint and reports
-connectivity + authentication passing. **On failure:** re-check the endpoint
+connectivity + authentication passing, **and** that endpoint line ends in
+`/functions/v1/mcp`. Check the suffix yourself: `doctor` probes over REST,
+which drops the `/mcp` suffix, so an endpoint missing it still passes
+`doctor` while the agent's MCP client gets a 404. Step 9 is the real MCP
+check. **On failure:** re-check the endpoint
 URL (must end in `/functions/v1/mcp`) and that the token matches the
 permission tier the connection needs.
 
