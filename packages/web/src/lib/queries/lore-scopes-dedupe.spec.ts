@@ -83,10 +83,17 @@ describe('the /lore scope tree is fetched once', () => {
   });
 
   it('shares the request whichever hook mounts first', async () => {
-    const [lore, tree] = await Promise.all([mount(useLoreData), mount(useScopeTree)]);
+    // Mounting both in one `Promise.all` does not reverse the order: the lore
+    // fetch awaits the session token before it reaches the scopes query, so
+    // `useScopeTree` would still start the request. Wait until the lore fetch
+    // has actually issued it, then mount the scope tree into the in-flight
+    // request (the mock answers after 10 ms; polling every 1 ms lands inside it).
+    const lore = mount(useLoreData);
+    await vi.waitFor(() => expect(api.listScopesRequest).toHaveBeenCalledTimes(1), { interval: 1 });
+    const tree = await mount(useScopeTree);
 
     expect(api.listScopesRequest).toHaveBeenCalledTimes(1);
-    expect((lore as { scopes: unknown }).scopes).toEqual(tree);
+    expect(((await lore) as { scopes: unknown }).scopes).toEqual(tree);
   });
 
   it('still fetches the scopes for useLoreData when no scope tree is cached', async () => {
