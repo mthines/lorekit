@@ -111,6 +111,12 @@ describe('tool-originated failures use isError', () => {
     expect(toolCatch).toMatch(/jsonrpcError\(id,\s*-32603/);
   });
 
+  it('a server fault reaches the client with its URLs redacted', () => {
+    // A transport failure's message carries the PostgREST URL and with it every
+    // filter value (`user_id=eq.<uuid>`); spans redact it, so must the response.
+    expect(toolCatch).toMatch(/jsonrpcError\(id,\s*-32603,\s*redactUrls\(/);
+  });
+
   it('the isError text is the bare message, not the class-qualified span text', () => {
     // `msg` is `Name: message`, which is useful on a span and noise to a model.
     expect(toolCatch).toMatch(/text:\s*\(err as Error\)\.message/);

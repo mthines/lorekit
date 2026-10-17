@@ -22,6 +22,7 @@ import { type Params } from './tools.ts';
 // the try/catch, the usage events — stays here and stays hand-written.
 import { MEMORY_TOOLS, ORG_TOOLS, RETENTION_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
 import { type Span } from '../_shared/telemetry/otel.ts';
+import { redactUrls } from '../_shared/telemetry/span-semconv.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/auth/account-wide-tools.ts';
@@ -579,7 +580,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           isError: true,
         });
       }
-      return jsonrpcError(id, -32603, (err as Error).message);
+      // A transport failure's message carries the request URL, and a PostgREST
+      // URL carries every filter value (`user_id=eq.<uuid>`, `key=eq.<key>`).
+      // Spans already redact it (`Span.error`); the client message must too.
+      return jsonrpcError(id, -32603, redactUrls(String((err as Error).message ?? err)));
     }
   }
 
