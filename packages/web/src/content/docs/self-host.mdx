@@ -1,0 +1,133 @@
+---
+title: "Self-hosting"
+description: "Run your own LoreKit backend — full self-host on your own Supabase project, or self-host plus BYOD for memory rows in a second database. Compare the three setups and connect your agent to your own endpoint."
+order: 4
+keywords: ["self-host", "self-hosting", "byod", "bring your own database", "supabase", "deploy", "install.md", "lorekit-self-host", "endpoint", "mcp url"]
+---
+
+<TutorialCallout variant="tip">
+
+The hosted instance at `lorekit.io` needs none of this; it's ready to use
+today, at this MCP endpoint:
+
+```text
+https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+```
+
+This page is for running LoreKit on infrastructure you control.
+
+</TutorialCallout>
+
+## Compare the three setups
+
+| | Hosted | Full self-host | Self-host + BYOD |
+| --- | --- | --- | --- |
+| What you run | Nothing | Your own Supabase project, all 8 Edge Functions | Your function project, plus a second Supabase project for storage |
+| Where memories live | LoreKit's hosted project | Your project's own database | The second (storage) project's database |
+| Dashboard / REST / hooks see your memories? | Yes | Yes | **No** — they all read the function project's own database, never the BYOD storage project |
+| BYOD available? | No | N/A | Yes — layered on top of a full self-host deployment |
+
+**Full self-host is the right default** unless your memory rows must live in
+a separate database — data residency, an existing Supabase subscription
+billed separately, or org policy. BYOD is never a substitute for deploying
+your own function project; it only changes where rows are written, and the
+hosted endpoint has no BYOD at all.
+
+<TutorialStep number={1} title="Deploy your own backend">
+
+Follow the [Installation Guide](https://github.com/mthines/lorekit/blob/main/docs/install.md)
+on GitHub — it covers linking a Supabase project, applying migrations,
+setting Edge Function secrets, deploying all 8 Edge Functions (not just
+`mcp` + `health` — the `memories` function is required for hooks, the remote
+CLI commands, and the dashboard's REST API), and generating an API token on a
+dashboard connected to your project.
+
+```bash
+supabase link --project-ref <your-project-ref>
+pnpm nx db:push supabase
+supabase functions deploy --no-verify-jwt --project-ref <your-project-ref>
+```
+
+Verify with a health check:
+
+```bash
+curl https://<your-project-ref>.supabase.co/functions/v1/health
+# → {"status":"ok","version":"1.0.0","db":"ok","ts":"…"}
+```
+
+</TutorialStep>
+
+<TutorialStep number={2} title="(Optional) Bring your own database">
+
+Only if your memory rows must live in a database you already run. Apply the
+LoreKit schema to that second project and set `LOREKIT_STORAGE_URL` +
+`LOREKIT_STORAGE_ANON_KEY` + `LOREKIT_STORAGE_SERVICE_KEY` as **Edge Function
+secrets on your function project** (not in `.mcp.json` — that env never
+reaches a deployed function). Follow the
+[BYOD guide](https://github.com/mthines/lorekit/blob/main/docs/byod.md) for
+the exact schema commands.
+
+Remember: the dashboard, REST API, remote CLI commands, and hooks all read
+the function project's own database. None of them see rows written to the
+BYOD storage project.
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Point your agent at your endpoint">
+
+One endpoint setting covers MCP, REST, hooks, and the remote CLI commands,
+because the CLI derives the REST base from the MCP endpoint:
+
+```bash
+npx @lorekit/cli install \
+  --endpoint https://<your-project-ref>.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+```
+
+(or export `LOREKIT_MCP_URL` instead of passing `--endpoint` every time —
+`install` reads only `--endpoint`, then `LOREKIT_MCP_URL`, then
+`LOREKIT_ENDPOINT`. A committed `"mcp.endpoint"` in `.lorekit.json` is never
+read by `install`. The remote CLI commands and hooks check the project's
+`.mcp.json` first, then the global `~/.claude.json`, and use `mcp.endpoint`
+only when neither has a LoreKit entry. A leftover hosted
+`install --global` entry in `~/.claude.json` therefore still wins over a
+committed `mcp.endpoint`, so re-run the global install with `--endpoint` too.)
+
+<TutorialCallout variant="warning">
+
+Almost every `npx @lorekit/cli install` rewrites the MCP entry — a new
+project, a global install, `--force`, `--hooks`, `--mcp-json`, `--completions <shell>`,
+or a re-run after an upgrade adds a skill — and **without** `--endpoint` it
+writes the hosted URL. Only a plain re-run on a fully installed project leaves
+`.mcp.json` alone. Always pass `--endpoint`, or export
+`LOREKIT_MCP_URL` in your shell profile, on every install.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Use the guided runbook">
+
+The Claude plugin ships a slash-only `/lorekit-self-host` skill that walks
+every step above as a gate — do the thing, verify it, stop and diagnose if
+the verification fails — and links to the docs instead of duplicating their
+commands. Claude plugin users get it automatically with
+`/plugin install lorekit-memory@lorekit`. Everyone else can fetch it
+directly:
+
+```bash
+curl --create-dirs -o ~/.claude/skills/lorekit-self-host/SKILL.md \
+  https://raw.githubusercontent.com/mthines/lorekit/main/packages/cli/skill/lorekit-self-host/SKILL.md
+```
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next steps:** once you're connected, see [Remote storage](/docs/remote) for
+token scoping and CI, which work the same way against a self-hosted endpoint.
+The GitHub App does not: it is off until you register your own App, point its
+webhook at your project, and set `GITHUB_APP_ENABLED=true` — see the
+[GitHub App guide](https://github.com/mthines/lorekit/blob/main/docs/github-app.md).
+
+</TutorialCallout>

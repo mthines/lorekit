@@ -69,7 +69,7 @@ See each bundle's README for copy-in instructions:
 
 ## Keeping the Claude skills in sync
 
-The `lorekit-claude/skills/*` directories (`lorekit-memory/`, `lorekit-setup/`, `lorekit-groom/`) are vendored from the
+The `lorekit-claude/skills/*` directories (`lorekit-memory/`, `lorekit-setup/`, `lorekit-groom/`, `lorekit-self-host/`) are vendored from the
 single sources at `packages/cli/skill/*`. `sync-plugin-skill.mjs` mirrors every skill it finds, so a newly added source
 skill is vendored automatically. Re-sync after editing any source:
 

@@ -65,7 +65,9 @@ scope that answered in the response. An omitted scope means EVERYWHERE, never
 `hybrid` (default, list + that map), `index` (list only) or `map`
 (map + the three most salient).
 
-Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
+Self-hosting your own backend (your own Supabase + Vercel)? Compare full
+self-host vs BYOD at https://lorekit.io/docs/self-host, then follow the full
+install guide: https://github.com/mthines/lorekit/blob/main/docs/install.md
 
 ## Local mode (offline, no account)
 
@@ -419,6 +421,6 @@ id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 - API tokens: https://github.com/mthines/lorekit/blob/main/docs/api-tokens.md
 - Limits: https://github.com/mthines/lorekit/blob/main/docs/limits.md
 - Organizations & sharing: https://github.com/mthines/lorekit/blob/main/docs/org-sharing.md
-- Deployment / self-hosting: https://github.com/mthines/lorekit/blob/main/docs/install.md
+- Deployment / self-hosting: https://lorekit.io/docs/self-host (full guide: https://github.com/mthines/lorekit/blob/main/docs/install.md)
 - CLI reference: https://github.com/mthines/lorekit/blob/main/packages/cli/README.md
 - Plugins (Claude / Cursor / Codex): https://github.com/mthines/lorekit/blob/main/plugins/README.md

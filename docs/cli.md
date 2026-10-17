@@ -500,12 +500,21 @@ on every TAB, so it is METERED, never traced).
 
 ## Skills shipped with the CLI
 
-Ships three skills under `skill/*` — `lorekit-memory` (runtime read/write), `lorekit-setup`
-(authoring a self-improvement loop into a host), and `lorekit-groom` (a propose-then-confirm
+Ships four skills under `skill/*` — `lorekit-memory` (runtime read/write), `lorekit-setup`
+(authoring a self-improvement loop into a host), `lorekit-groom` (a propose-then-confirm
 grooming pass over an accumulated store: survey→lint→dedupe/merge→expiry→prune, analysis via the CLI
 read commands and mutation via the `lorekit archive`/`delete`/`restore` commands or the `memory.*`
-MCP tools); `install`/`uninstall`/`doctor` iterate the `SKILLS` list in `config.mjs`, and
-`scripts/codegen/sync-plugin-skill.mjs` mirrors every `skill/*` into the plugin.
+MCP tools), and `lorekit-self-host` (a slash-only guided deployment runbook). `install`/`uninstall`/`doctor`
+iterate the `SKILLS` list in `config.mjs`, and `scripts/codegen/sync-plugin-skill.mjs` mirrors every
+`skill/*` into the plugin regardless of whether it's in `SKILLS`.
+
+**`lorekit-self-host` is deliberately NOT in `SKILLS`.** `doctor.mjs` reports `fail` — "not found —
+run lorekit install" — for every `SKILLS` entry missing from an install, so adding it there would turn
+every existing install's `doctor` red until a re-install, and would scaffold a one-time deployment
+runbook onto every hosted user who never needs it. It still reaches users two other ways: the Claude
+plugin vendors it (`sync-plugin-skill.mjs` mirrors every directory under `skill/*`, not just the
+`SKILLS` subset), and the npm tarball's `files` field includes `skill/`, so a non-plugin user can fetch
+`skill/lorekit-self-host/SKILL.md` directly.
 
 ## Telemetry
 

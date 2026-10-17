@@ -175,7 +175,8 @@ observable effect.
 | `README.md` | repo root | The change alters the pitch, the install path, or the package map. |
 
 Writing rules for all of the above: always the concrete MCP endpoint, never a `<ref>` placeholder
-(see Endpoints and Key decisions); tag every fenced code block with its language; keep `llms.txt`
+(see Endpoints and Key decisions — self-hosting instructions for the reader's OWN project are the one
+exception); tag every fenced code block with its language; keep `llms.txt`
 consistent with the MDX docs — when the two disagree, agents read `llms.txt` and get it wrong.
 
 Definition of done: the diff either touches the surfaces above, or the PR description says in one
@@ -365,7 +366,12 @@ Trace-context propagation (W3C `traceparent` — who sends/receives, the origin 
 The production Supabase project ref is **`pqokxlhvnosogizsjztg`** (static). Always
 write the concrete endpoint below in any user-facing surface — dashboard copy,
 Learn pages, config examples, docs — **NEVER** a `<ref>` / `<project-ref>`
-placeholder for the MCP server URL.
+placeholder for the MCP server URL. The one exception is a self-hosting
+instruction addressed to someone running THEIR OWN Supabase project
+(`docs/install.md`, `docs/byod.md`, the `lorekit-self-host` skill, and the
+self-host sections of the `self-host` docs page), where `<your-project-ref>` is
+correct; anywhere the HOSTED endpoint is meant, the concrete
+`pqokxlhvnosogizsjztg` URL remains mandatory.
 
 | URL | Auth | Purpose |
 |-----|------|---------|

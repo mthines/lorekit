@@ -1277,6 +1277,14 @@ before mutating (archive is preferred over hard-delete), because the store is
 shared and a merge or delete is permanent for every agent. See its `SKILL.md`,
 `rules/grooming-pass.md`, and `references/merge-and-expiry.md`.
 
+A fourth skill, **`lorekit-self-host`**, ships in the `skill/*` directory and in
+the Claude plugin, but is **not** scaffolded by `install` — it's a one-time,
+slash-only deployment runbook (`/lorekit-self-host`), not everyday agent
+memory, so it is deliberately absent from the `SKILLS` list `install`/`doctor`
+iterate. It walks deploying your own LoreKit backend (full self-host, or
+self-host plus BYOD) as a series of gates: do the step, verify it, stop and
+diagnose on failure. See its `SKILL.md`.
+
 The **skills** are model-invoked (the agent chooses to use them). For a
 **deterministic** guarantee — lessons injected on every session start, a nudge
 on every tool failure — use the framework plugins in [`plugins/`](../../plugins/),
