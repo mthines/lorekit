@@ -1,6 +1,6 @@
-From fa35afff515340266cee986a4609741a0aa6ef74 Mon Sep 17 00:00:00 2001
+From 66fb01bdecb6746876b14a733ce7646878b49a0a Mon Sep 17 00:00:00 2001
 From: "mads.thines" <mads.thines@dash0.com>
-Date: Sat, 17 Oct 2026 15:49:42 +0000
+Date: Sat, 17 Oct 2026 17:16:54 +0000
 Subject: [PATCH] ci: run the e2e and smoke suites on every PR and gate deploys
  on them
 
@@ -182,7 +182,7 @@ index 6e640e2c..7d942e92 100644
      steps:
        - name: Aggregate job results into a pass/fail gate
 diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
-index b0134efb..c3adbfb2 100644
+index b0134efb..f7f57810 100644
 --- a/.github/workflows/deploy.yml
 +++ b/.github/workflows/deploy.yml
 @@ -11,9 +11,9 @@
@@ -318,7 +318,7 @@ index b0134efb..c3adbfb2 100644
 +        if: steps.login.outcome == 'failure'
 +        run: echo "::warning::The e2e test account could not sign in to the staged build, so signed-in pages were NOT checked before promotion. Check LOREKIT_TESTING_USER_NAME / LOREKIT_TESTING_USER_PW."
 +
-+      - name: Upload the Playwright report (traces + screenshots)
++      - name: Upload the Playwright report (screenshots — traces are off here)
 +        if: failure()
 +        uses: actions/upload-artifact@v7
 +        with:
@@ -429,7 +429,7 @@ index b0134efb..c3adbfb2 100644
 +        if: steps.e2e_login.outcome == 'failure'
 +        run: echo "::warning::The e2e test account could not sign in to production, so signed-in pages were NOT checked after this deploy. Check LOREKIT_TESTING_USER_NAME / LOREKIT_TESTING_USER_PW."
 +
-+      - name: Upload the Playwright report (traces + screenshots)
++      - name: Upload the Playwright report (screenshots — traces are off here)
 +        if: failure()
 +        uses: actions/upload-artifact@v7
 +        with:
