@@ -1,3 +1,5 @@
+import { supabaseUrl } from './supabase/config';
+
 /** The hosted LoreKit MCP endpoint, used when no usable Supabase URL is configured. */
 const HOSTED_MCP_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
 
@@ -19,12 +21,13 @@ function supabaseBaseUrl(raw: string): string | null {
 }
 
 /**
- * Resolve the user's MCP + webhook URLs from NEXT_PUBLIC_SUPABASE_URL — any
+ * Resolve the user's MCP + webhook URLs from the dashboard's Supabase URL
+ * (`supabaseUrl()`, so `NEXT_PUBLIC_USE_LOCAL_SUPABASE` is honoured) — any
  * Supabase base URL, not only `*.supabase.co`. Shared by the dashboard
  * onboarding and the settings pages so the derivation lives in exactly one place.
  */
 export function resolveMcpUrls(): { mcpUrl: string; webhookUrl: string } {
-  const base = supabaseBaseUrl(process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? '');
+  const base = supabaseBaseUrl(supabaseUrl());
   const mcpUrl = base ? `${base}/functions/v1/mcp` : HOSTED_MCP_URL;
   return { mcpUrl, webhookUrl: `${mcpUrl}/webhooks/github` };
 }

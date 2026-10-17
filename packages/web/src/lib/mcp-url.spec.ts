@@ -5,11 +5,15 @@ import { resolveMcpUrls } from './mcp-url';
 // restore it around every case so the tests don't leak env state into each
 // other (or into the rest of the suite).
 const KEY = 'NEXT_PUBLIC_SUPABASE_URL';
+const LOCAL_FLAG = 'NEXT_PUBLIC_USE_LOCAL_SUPABASE';
 const original = process.env[KEY];
+const originalFlag = process.env[LOCAL_FLAG];
 
 afterEach(() => {
   if (original === undefined) delete process.env[KEY];
   else process.env[KEY] = original;
+  if (originalFlag === undefined) delete process.env[LOCAL_FLAG];
+  else process.env[LOCAL_FLAG] = originalFlag;
 });
 
 // The hardcoded fallback ref baked into mcp-url.ts, used when the env var is
@@ -76,5 +80,11 @@ describe('resolveMcpUrls', () => {
   ])('falls back to the hosted URL for %s', (_label, value) => {
     process.env[KEY] = value;
     expect(resolveMcpUrls().mcpUrl).toBe(FALLBACK);
+  });
+
+  it('follows the local stack when NEXT_PUBLIC_USE_LOCAL_SUPABASE is set, like every other client', () => {
+    process.env[KEY] = 'https://abcdefghijklmnop.supabase.co';
+    process.env[LOCAL_FLAG] = 'true';
+    expect(resolveMcpUrls().mcpUrl).toBe('http://127.0.0.1:54321/functions/v1/mcp');
   });
 });
