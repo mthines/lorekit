@@ -55,7 +55,9 @@ can legitimately serve MCP off a non-standard path. This is the gap where `.../f
 every other check via the suffix-agnostic REST probes and then 404s for an actual MCP client. The
 warning names the config source that produced the endpoint (`--endpoint` flag, `.mcp.json`,
 `~/.claude.json`, `.lorekit.json`'s `mcp.endpoint`, or an env var) and a fix command for that
-source. Every installed skill also reports its
+source — for `.mcp.json` / `~/.claude.json` that is `lorekit install --project|--global --force
+--endpoint <url>`; the `--force` is load-bearing, because `install` on an already-installed scope
+otherwise prints "already installed" and rewrites nothing. Every installed skill also reports its
 **version** against the one this running CLI ships (`checkSkillVersions` in
 `shared/skill-versions.mjs` — an offline compare of `metadata.version` in each SKILL.md's
 frontmatter, checked in BOTH the project and global install locations): a `current` install is a

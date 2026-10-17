@@ -313,14 +313,22 @@ async function checkLocal(control, root, args, record) {
  * branches it resolves directly). One record, not parallel label/fix maps —
  * adding a new source is one entry here, not a matching `if` in two places.
  */
+//
+// Every `lorekit install` fix MUST carry a flag that passes install's
+// already-installed early return (`--force`, `--hooks`, `--mcp-json` or
+// `--completions`) — a plain `install --endpoint <u>` on an installed scope
+// prints "already installed" and rewrites nothing. `--force` is the one that
+// means "rewrite this install": it re-copies the shipped skill files and, on an
+// interactive run with a stored token, asks whether to keep it (non-interactive
+// runs keep it silently) — both harmless next to an MCP entry that 404s.
 export const ENDPOINT_SOURCES = {
   flag: { label: '--endpoint flag', fix: (u) => `pass \`--endpoint ${u}\`` },
-  'project-mcp': { label: '.mcp.json', fix: (u) => `run \`lorekit install --project --endpoint ${u}\`` },
+  'project-mcp': { label: '.mcp.json', fix: (u) => `run \`lorekit install --project --force --endpoint ${u}\`` },
   'project-mcp-web': {
     label: '.mcp.json (committable web entry)',
     fix: (u) => `run \`lorekit install --project --mcp-json --endpoint ${u}\``,
   },
-  'global-mcp': { label: '~/.claude.json', fix: (u) => `run \`lorekit install --global --endpoint ${u}\`` },
+  'global-mcp': { label: '~/.claude.json', fix: (u) => `run \`lorekit install --global --force --endpoint ${u}\`` },
   'lorekit-json': {
     label: '.lorekit.json mcp.endpoint',
     fix: (u) => `set "mcp.endpoint" to ${u} in .lorekit.json`,
@@ -334,7 +342,7 @@ export const ENDPOINT_SOURCES = {
 // error — degraded attribution, not a crash.
 const UNKNOWN_ENDPOINT_SOURCE = {
   label: 'resolved config',
-  fix: (u) => `run \`lorekit install --endpoint ${u}\``,
+  fix: (u) => `run \`lorekit install --force --endpoint ${u}\``,
 };
 
 // Used in the fix text when `classifyMcpEndpoint` could not guess a safe

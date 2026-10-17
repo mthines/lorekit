@@ -593,7 +593,7 @@ test('endpointCheck labels an unrecognised source as "resolved config" rather th
   const result = endpointCheck('https://ref.supabase.co/functions/v1', 'some-future-source');
   assert.equal(result.kind, 'warn');
   assert.match(result.detail, /resolved config/);
-  assert.match(result.detail, /lorekit install --endpoint/);
+  assert.match(result.detail, /lorekit install --force --endpoint/);
 });
 
 // ── doctor --mode remote: the endpoint line itself (AC-5, AC-6) ──────────────
@@ -656,7 +656,72 @@ test('doctor --mode remote names .mcp.json and the project fix when the tokenles
   assert.match(line, /\.mcp\.json/, `expected .mcp.json named, got: ${line}`);
   assert.match(
     line,
-    /lorekit install --project --endpoint https:\/\/ref\.supabase\.co\/functions\/v1\/mcp/,
+    /lorekit install --project --force --endpoint https:\/\/ref\.supabase\.co\/functions\/v1\/mcp/,
     `expected the project fix command, got: ${line}`,
   );
 });
+
+// ── every printed `lorekit install` fix actually rewrites the MCP entry ──────
+// `install` early-returns on an already-installed scope unless one of
+// `--force`/`--hooks`/`--mcp-json`/`--completions` is passed, so a fix like
+// `lorekit install --project --endpoint <u>` would print "already installed"
+// and change nothing. Run each suggested command against a scope that is
+// ALREADY installed with the bad endpoint and assert the entry now holds the
+// suggested one.
+
+// `run \`lorekit install --a --b v\`` → { a: true, b: 'v' }
+function installOptsFromFix(fixText) {
+  const cmd = fixText.match(/`lorekit install ([^`]*)`/);
+  assert.ok(cmd, `fix is not a lorekit install command: ${fixText}`);
+  const tokens = cmd[1].trim().split(/\s+/);
+  const opts = {};
+  for (let i = 0; i < tokens.length; i++) {
+    const key = tokens[i].replace(/^--/, '');
+    const next = tokens[i + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      opts[key] = next;
+      i++;
+    } else {
+      opts[key] = true;
+    }
+  }
+  return opts;
+}
+
+function lorekitArgs(file) {
+  const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return config.mcpServers?.lorekit?.args ?? [];
+}
+
+const BAD_ENDPOINT = 'https://ref.supabase.co/functions/v1';
+const FIX_CASES = [
+  { source: 'project-mcp', initial: { project: true }, file: (dir) => path.join(dir, '.mcp.json') },
+  { source: 'project-mcp-web', initial: { project: true, 'mcp-json': true }, file: (dir) => path.join(dir, '.mcp.json') },
+  { source: 'global-mcp', initial: { global: true }, file: (_dir, home) => path.join(home, '.claude.json') },
+  // An unrecognised source falls back to a scope-less install, which defaults
+  // to the project scope non-interactively.
+  { source: 'some-future-source', initial: { project: true }, file: (dir) => path.join(dir, '.mcp.json') },
+];
+
+for (const { source, initial, file } of FIX_CASES) {
+  test(`the ${source} fix rewrites an already-installed MCP entry to the suggested endpoint`, async () => {
+    const dir = tmp('lk-doc-fix-');
+    const home = tmp('lk-doc-fix-home-');
+    await installWith({ dir, endpoint: BAD_ENDPOINT, token: TOKEN, yes: true, ...initial }, home);
+    assert.ok(
+      !lorekitArgs(file(dir, home)).some((a) => a.startsWith(ENDPOINT)),
+      'precondition: the installed entry holds the bad endpoint',
+    );
+
+    const check = endpointCheck(BAD_ENDPOINT, source);
+    assert.equal(check.kind, 'warn');
+    const opts = installOptsFromFix(check.detail);
+    await installWith({ ...opts, dir, yes: true }, home);
+
+    const args = lorekitArgs(file(dir, home));
+    assert.ok(
+      args.some((a) => a.startsWith(ENDPOINT)),
+      `${source}: \`${check.detail}\` left the entry unchanged: ${JSON.stringify(args)}`,
+    );
+  });
+}
