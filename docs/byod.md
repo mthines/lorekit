@@ -12,8 +12,8 @@ the part most likely to surprise you.
 ## How BYOD is wired
 
 - **It needs your own deployment of the `mcp` function.** The function reads
-  `LOREKIT_STORAGE_URL`, `LOREKIT_STORAGE_ANON_KEY` and the optional
-  `LOREKIT_STORAGE_SERVICE_KEY` from its **own Edge Function secrets**. The
+  `LOREKIT_STORAGE_URL`, the required `LOREKIT_STORAGE_SERVICE_KEY` and the
+  optional `LOREKIT_STORAGE_ANON_KEY` from its **own Edge Function secrets**. The
   hosted endpoint (`https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`)
   has no BYOD storage configured, and an `env` block in your `.mcp.json` does
   not reach it — those variables only reach the local `mcp-remote` process on
