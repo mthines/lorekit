@@ -169,8 +169,9 @@ Either:
   [docs/install.md § Step 8](https://github.com/mthines/lorekit/blob/main/docs/install.md#step-8--deploy-the-web-dashboard-optional)), or
 - Run it locally against your project: set `NEXT_PUBLIC_SUPABASE_URL` and
   `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `packages/web/.env.local` to your
-  project's values, add `http://localhost:3000/api/auth/callback` to
-  Supabase → Auth → URL Configuration → Redirect URLs, then `pnpm nx serve web`.
+  project's values, add `http://localhost:4200/api/auth/callback` to
+  Supabase → Auth → URL Configuration → Redirect URLs, then `pnpm nx serve web`
+  (it listens on port 4200).
 
 Then, in that dashboard: **Lore Explorer → Step 2: Connect your agent →
 Generate new token**. Choose Read + Write (`lk_rw_`), Read only (`lk_ro_`), or

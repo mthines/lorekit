@@ -62,7 +62,7 @@ This applies all migrations in `supabase/migrations/` and creates all required t
 
 1. Go to https://github.com/settings/developers → OAuth Apps → New OAuth App
    - **Application name:** LoreKit (or any name)
-   - **Homepage URL:** `https://<your-vercel-url>.vercel.app` (or `http://localhost:3000` for local dev)
+   - **Homepage URL:** `https://<your-vercel-url>.vercel.app` (or `http://localhost:4200` for local dev)
    - **Authorization callback URL:** `https://<your-project-ref>.supabase.co/auth/v1/callback`
 2. Note the **Client ID** and generate a **Client Secret**
 3. In Supabase → Auth → Providers → GitHub: enable and paste both values
@@ -135,9 +135,9 @@ your project first:
 - Deploy your own dashboard now (see Step 8 below) and open it, **or**
 - Run it locally against your project: set `NEXT_PUBLIC_SUPABASE_URL` and
   `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `packages/web/.env.local` to your
-  project's values, add `http://localhost:3000/api/auth/callback` to
+  project's values, add `http://localhost:4200/api/auth/callback` to
   Supabase → Auth → URL Configuration → Redirect URLs, then run
-  `pnpm nx serve web`.
+  `pnpm nx serve web` (it listens on port 4200).
 
 Then, in that dashboard:
 
