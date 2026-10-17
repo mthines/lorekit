@@ -132,6 +132,12 @@ catch a mistake at that step.
     `packages/web/src/lib/docs/sections.ts` entry (`sections.spec.ts` guards
     drift), and update `docs/README.md`'s index table and `README.md`'s package
     map if the capability is user-facing.
+11. **Smoke checks** — add a `check(...)` that calls the tool to
+    `scripts/smoke/smoke-mcp-tools.mjs` (the hosted server, run at deploy time),
+    and, unless it is in `LOCAL_MCP_EXEMPT`, call it in the offline `mcp` case in
+    `packages/cli/test/smoke/cases.mjs` (plus `LOCAL_MCP_CALLED`). A new CLI
+    command also needs a case there. `cli-smoke.test.mjs` fails the PR on any
+    of the three gaps. How-to: [smoke-tests.md](./smoke-tests.md).
 
 ## 3. Gates that catch a missed step
 
@@ -145,6 +151,7 @@ failure is cheaper to fix:
 | `pnpm nx test schemas` (`surface-generator.spec.ts`, `render.spec.ts`) | Generated artifacts + `llms.txt` drift |
 | `pnpm nx test mcp-core` (`tool-catalog-parity.spec.ts`, `permissions.spec.ts`, `audit-vocabulary.spec.ts`, `edge-parity.spec.ts`, `edge-schema-parity.spec.ts`, `dry-run-coverage.spec.ts`, `audit-coverage.spec.ts`, `mcp-authz-status.spec.ts`) | Permission-mirror drift, audit vocabulary drift, pure-module mirror drift, missing dry-run/audit wiring |
 | `pnpm nx test cli` (`surface-parity.test.mjs`, `frameworks.test.mjs`) | CLI registry vs catalog binding drift |
+| `pnpm nx test cli` (`cli-smoke.test.mjs`) | A tool or command with no smoke check; a broken command in the offline CLI/MCP session |
 | `node scripts/ci/deno-check-functions.mjs --node-modules-dir=none` | Type errors in the edge tree — **nothing else typechecks it** |
 | `pnpm nx test web` (`sections.spec.ts`) | Missing/malformed docs registry entry |
 

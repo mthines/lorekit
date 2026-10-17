@@ -18,8 +18,8 @@ function heading(page: Page, r: RouteCheck) {
 
 async function expectPageRenders(page: Page, r: RouteCheck) {
   const response = await page.goto(visitPath(r));
-  expect(response, `no response for ${visitPath(r)}`).not.toBeNull();
-  expect(response!.status(), `HTTP status for ${visitPath(r)}`).toBeLessThan(400);
+  expect(response?.status() ?? 0, `HTTP status for ${visitPath(r)} (0 = no response)`).toBeGreaterThan(0);
+  expect(response?.status() ?? 0, `HTTP status for ${visitPath(r)}`).toBeLessThan(400);
   if (r.landsOn) {
     const landsOn = r.landsOn;
     await expect(page).toHaveURL((url) => url.pathname === landsOn);

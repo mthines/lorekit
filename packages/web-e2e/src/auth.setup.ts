@@ -13,9 +13,11 @@ setup('sign in through the login form', async ({ page }) => {
   // Always leave a file behind: the `signed-in` project loads this path, and
   // its tests skip themselves when there is no user.
   writeFileSync(STORAGE_STATE, JSON.stringify(EMPTY_STORAGE_STATE));
-  setup.skip(!USER_SOURCE, NO_USER_REASON);
+  const source = USER_SOURCE;
+  setup.skip(!source, NO_USER_REASON);
+  if (!source) return;
 
-  const user = USER_SOURCE!.kind === 'fixed' ? USER_SOURCE! : await provisionUser(USER_SOURCE!);
+  const user = source.kind === 'fixed' ? source : await provisionUser(source);
   await signInThroughTheForm(page, user.email, user.password);
 
   // Plain /login lands on DEFAULT_POST_LOGIN_PATH (lib/auth-redirect.ts).

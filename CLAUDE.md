@@ -21,6 +21,7 @@ lets humans browse, search, and manage those lessons.
 | `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
 | `@lorekit/smoke-tests` | `packages/smoke-tests/` | Live-endpoint integration/smoke tests against the deployed Edge Functions (memories, orgs, MCP, BYOD) — no application code, self-skips when its env vars are absent |
+| `@lorekit/web-e2e` | `packages/web-e2e/` | Playwright smoke suite for every page of the website. One entry per page in `src/routes.ts`; a vitest guard fails the PR when a `page.tsx` has none. Runs per PR (local build + local Supabase), on the staged production build before promotion, and against `lorekit.io` after it — see [docs/smoke-tests.md](./docs/smoke-tests.md) |
 
 The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained). There
 is no other MCP server implementation — a prior Node.js/Fly.io variant (`packages/mcp-server/`)
@@ -151,6 +152,8 @@ npx vitest run --config vitest.storybook.config.ts -u              # update base
 - **Playwright is pinned to `1.56.0`** via a root pnpm override so local + CI pixel baselines match; bumping it requires regenerating baselines (`-u`) on Linux/Chromium.
 - CI runs these in the `web-test` job (browser job, gated by `changes.web`) — NOT part of `check`'s `nx affected -t test`.
 - Full-page stories mock Supabase REST with **MSW** so real React Query hooks resolve against a stable dataset; server-component pages story their largest client subtree, never refactored to client. Storybook deploys as its OWN Vercel project. Full runbook + MSW / mixed-rendering / deploy detail: [docs/storybook.md](./docs/storybook.md).
+
+**Smoke + e2e coverage is table-driven and guarded.** A new page needs an entry in `packages/web-e2e/src/routes.ts`; a new CLI command a case in `packages/cli/test/smoke/cases.mjs`; a new MCP tool a call in `scripts/smoke/smoke-mcp-tools.mjs` (and in the offline `mcp` case unless it is in `LOCAL_MCP_EXEMPT`). `routes.test.ts` and `cli-smoke.test.mjs` fail the PR otherwise. What runs where: [docs/smoke-tests.md](./docs/smoke-tests.md).
 
 ---
 
