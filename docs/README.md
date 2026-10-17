@@ -21,6 +21,7 @@
 | [telemetry-quality-review.md](./telemetry-quality-review.md) | Developers | Cross-service `traceparent` correlation contract, telemetry-quality review vs OTel semantic conventions, and the tests that guard it |
 | [deployment.md](./deployment.md) | Developers | Step-by-step deployment for all three pieces |
 | [storybook.md](./storybook.md) | Developers | Web Storybook: MSW-mocked full-page stories, determinism, and deploying Storybook as a second Vercel project |
+| [smoke-tests.md](./smoke-tests.md) | Developers | Website e2e (Playwright), CLI and MCP smoke suites: what runs on each PR and deploy, and how to add a page, command or tool |
 | [releasing.md](./releasing.md) | Developers | Automated `@lorekit/cli` npm releases via release-please + conventional commits |
 | [adding-an-operation.md](./adding-an-operation.md) | Developers | Step-by-step checklist for adding a new MCP tool / CLI command / REST route across the catalog, both permission mirrors, the audit vocabulary, and docs |
 | [sandbox.md](./sandbox.md) | Developers | Fresh sandbox/container baseline — the six traps that make a red gate lie, and how to prove a failure pre-existing (full runbook behind the CLAUDE.md summary) |

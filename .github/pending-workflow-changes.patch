@@ -1,0 +1,492 @@
+From 66fb01bdecb6746876b14a733ce7646878b49a0a Mon Sep 17 00:00:00 2001
+From: "mads.thines" <mads.thines@dash0.com>
+Date: Sat, 17 Oct 2026 17:16:54 +0000
+Subject: [PATCH] ci: run the e2e and smoke suites on every PR and gate deploys
+ on them
+
+- ci.yml: new web-e2e job (local build + local Supabase, every page signed
+  out and signed in) in the CI Summary gate; the web filter covers web-e2e.
+- deploy.yml: CLI remote lane in smoke-preview; e2e-web-staged runs Playwright
+  on the staged production build and gates promote-web-production;
+  smoke-production runs Playwright against lorekit.io (a failed page rolls
+  back). In both, the test-account sign-in is its own step that can only warn,
+  so a credential problem never blocks promotion or rolls back, and secrets
+  are scoped to the steps that use them.
+- preview.yml: CLI remote lane, so /preview validates it before merge.
+
+Co-authored-by: dash0-dev[bot] <257284812+dash0-dev[bot]@users.noreply.github.com>
+---
+ .github/workflows/ci.yml      | 128 +++++++++++++++++++-
+ .github/workflows/deploy.yml  | 214 +++++++++++++++++++++++++++++++++-
+ .github/workflows/preview.yml |   9 ++
+ 3 files changed, 342 insertions(+), 9 deletions(-)
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 6e640e2c..7d942e92 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -25,7 +25,8 @@ jobs:
+   #    `code`   — any non-docs file touched → gates the `check` job.
+   #    `api`    — API/backend paths → gates the (expensive) `integration` job.
+   #    `plugin` — Claude-plugin paths → gates the `plugin` smoke job.
+-  #    `web`    — dashboard paths (broad) → gates the `web-test` Storybook job.
++  #    `web`    — dashboard paths (broad) → gates the `web-test` Storybook job
++  #               and the `web-e2e` Playwright job.
+   #    `web_preview` — the narrower, Vercel-quota-metered subset → gates
+   #               `web-preview`. Two filters, not one, because the test job is
+   #               free CI compute and the preview is a metered deployment.
+@@ -114,7 +115,10 @@ jobs:
+           # is precisely what the visual baselines are for. `ci.yml` is here for
+           # the same reason as in every sibling gate: so an edit to this job runs
+           # the job.
+-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github/workflows/ci\.yml$)'; then
++          #
++          # `packages/web-e2e/` rides along: a change to the e2e suite itself must
++          # run the `web-e2e` job that executes it.
++          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/web-e2e/|packages/schemas/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github/workflows/ci\.yml$)'; then
+             echo "web=true" >> "$GITHUB_OUTPUT"
+           else
+             echo "web=false" >> "$GITHUB_OUTPUT"
+@@ -361,6 +365,124 @@ jobs:
+           BASE: ${{ github.event.pull_request.base.sha }}
+         run: npx vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
+ 
++  # ── Web e2e — Playwright against a local production build ────────────────────
++  #    The page smoke suite (packages/web-e2e; docs/smoke-tests.md). The site is
++  #    built with NEXT_PUBLIC_USE_LOCAL_SUPABASE=true and a local Supabase stack
++  #    runs behind it, so the job needs NO secrets (fork PRs included) and
++  #    touches nothing real. It proves that every public page renders, that every
++  #    dashboard page sends a signed-out visitor to /login, and — signed in as a
++  #    throwaway user the suite provisions on the local stack — that every
++  #    dashboard page renders. Any uncaught exception, console error or 5xx on
++  #    a page fails its test, not just a missing heading.
++  #
++  #    The same suite runs again at deploy time: against the staged production
++  #    build before its domain is assigned, and against lorekit.io after
++  #    (deploy.yml `e2e-web-staged` / `smoke-production`).
++  #
++  #    `npx playwright`, not `pnpm exec` / `nx run`, for the stdio reason given
++  #    on web-test above.
++  web-e2e:
++    name: Web — Playwright e2e (local build + local Supabase)
++    runs-on: ubuntu-latest
++    needs: [changes]
++    if: needs.changes.outputs.web == 'true'
++    timeout-minutes: 30
++    permissions:
++      contents: read
++    steps:
++      - name: Checkout repository
++        uses: actions/checkout@v7.0.1
++
++      - name: Set up pnpm
++        uses: pnpm/action-setup@v6
++
++      - name: Set up Node.js
++        uses: actions/setup-node@v7.1.0
++        with:
++          node-version: 20
++          cache: pnpm
++
++      - name: Install dependencies
++        run: pnpm install --frozen-lockfile
++
++      # Same key as web-test, so both jobs share one browser cache.
++      - name: Resolve Playwright version
++        id: pw
++        working-directory: packages/web-e2e
++        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
++
++      - name: Cache Playwright browsers
++        uses: actions/cache@v6
++        with:
++          path: ~/.cache/ms-playwright
++          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
++
++      - name: Install Playwright Chromium (+ OS deps)
++        run: pnpm --filter @lorekit/web-e2e exec playwright install --with-deps chromium
++
++      - name: Install Supabase CLI
++        uses: supabase/setup-cli@v3
++        with:
++          # Same pin as the integration job — see the reason there.
++          version: 2.115.0
++
++      - name: Start local Supabase (auth + edge functions behind the dashboard)
++        run: supabase start
++
++      - name: Capture local service-role key
++        id: supabase
++        run: |
++          supabase status -o json > /tmp/status.json
++          KEY="$(jq -r '.SERVICE_ROLE_KEY // .SECRET_KEY // .service_role_key // .Secret // empty' /tmp/status.json)"
++          if [ -z "$KEY" ]; then
++            echo "::error::No service-role/secret key in supabase status. Available keys:"
++            jq -r 'keys[]' /tmp/status.json
++            exit 1
++          fi
++          echo "::add-mask::$KEY"
++          echo "service_role_key=$KEY" >> "$GITHUB_OUTPUT"
++
++      - name: Cache the Next.js build cache
++        uses: actions/cache@v6
++        with:
++          path: packages/web/.next/cache
++          key: web-e2e-next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('packages/web/src/**', 'packages/schemas/src/**') }}
++          restore-keys: |
++            web-e2e-next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
++
++      # NEXT_PUBLIC_* values are inlined at build time, so THIS step decides
++      # that the site talks to the local stack and nothing else.
++      - name: Build the website (pointed at the local stack)
++        working-directory: packages/web
++        env:
++          NEXT_PUBLIC_USE_LOCAL_SUPABASE: 'true'
++          NEXT_TELEMETRY_DISABLED: '1'
++        run: npx next build
++
++      # Playwright starts `next start` itself (playwright.config.ts webServer).
++      # E2E_SUPABASE_* lets the setup project create a throwaway confirmed user
++      # on the local stack (refused for any non-local URL — src/support/env.ts).
++      - name: Playwright — every page, signed out and signed in
++        working-directory: packages/web-e2e
++        env:
++          E2E_SUPABASE_URL: http://127.0.0.1:54321
++          E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
++        run: npx playwright test
++
++      - name: Upload the Playwright report (traces + screenshots)
++        if: failure()
++        uses: actions/upload-artifact@v7
++        with:
++          name: web-e2e-report
++          path: |
++            packages/web-e2e/playwright-report
++            packages/web-e2e/test-results
++          retention-days: 14
++
++      - name: Stop local Supabase
++        if: always()
++        run: supabase stop --no-backup
++
+   # ── Web preview — deploy a Vercel preview, ONLY when web paths changed ────────
+   #    Replaces Vercel's native Git integration for the dashboard project. That
+   #    integration deployed a preview on EVERY PR/branch push — even docs- or
+@@ -924,7 +1046,7 @@ jobs:
+     # `always()` so the gate still runs (and reports) even when an upstream job
+     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
+     if: always()
+-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, skill-version-guard, seed-tests, preview-filter, bench-tests, edge-typecheck]
++    needs: [changes, check, plugin, integration, web-test, web-e2e, migration-order, deploy-scope, skill-version-guard, seed-tests, preview-filter, bench-tests, edge-typecheck]
+     permissions: {}
+     steps:
+       - name: Aggregate job results into a pass/fail gate
+diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
+index b0134efb..f7f57810 100644
+--- a/.github/workflows/deploy.yml
++++ b/.github/workflows/deploy.yml
+@@ -11,9 +11,9 @@
+ #
+ #   deploy-preview (API) ────────┐
+ #   deploy-web-preview (FE) ──────┤
+-#   stage-web-production (FE build)┘
++#   stage-web-production (FE build)┘─▶ e2e-web-staged (Playwright) ──────────┐
+ #            └─▶ smoke-preview ─▶ deploy-production (API) ─▶ promote-web-production (FE)
+-#                                          └────────────────────────┴─▶ smoke-production
++#                                          └────────────────────────┴─▶ smoke-production (+ Playwright)
+ #                                                                            ├─▶ rollback-production (functions)
+ #                                                                            └─▶ rollback-web-production (Vercel)
+ #   any job fails ─▶ notify-failure (Discord + Dash0)
+@@ -48,6 +48,12 @@
+ # The fixed smoke user those secrets name must already exist on the project — seed it
+ # once with `node scripts/smoke/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
+ # the orgs-smoke user"); the mint signs in as it, it is never auto-created.
++# Optional repo-level secrets for the website e2e suite (packages/web-e2e,
++# docs/smoke-tests.md): VERCEL_AUTOMATION_BYPASS_SECRET lets e2e-web-staged reach
++# the staged build through Vercel Deployment Protection (unset → that job skips,
++# announced, and promotion proceeds as before); LOREKIT_TESTING_USER_NAME +
++# LOREKIT_TESTING_USER_PW sign in a production test account for the signed-in
++# pages (unset → those tests skip, announced; public pages still run).
+ # Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
+ # a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
+ # Add a required reviewer on the `production` environment for a manual gate.
+@@ -395,6 +401,120 @@ jobs:
+           echo "### Web production (staged)" >> "$GITHUB_STEP_SUMMARY"
+           echo "- Built and uploaded: $URL (domain not yet applied)" >> "$GITHUB_STEP_SUMMARY"
+ 
++  # ── 1d. Website e2e against the STAGED production build ───────────────────────
++  #    Playwright (packages/web-e2e) against the exact bundle promote-web-production
++  #    is about to put on the production domain — so a broken page stops the flip
++  #    instead of being rolled back after users saw it. The staged URL is behind
++  #    Vercel Deployment Protection; VERCEL_AUTOMATION_BYPASS_SECRET gets through it
++  #    and, while it is unset, this job skips (announced) and promotion proceeds
++  #    exactly as before.
++  #
++  #    Signed-in pages run here only when this merge leaves the API alone. When the
++  #    API changed too, it reaches production only AFTER this job (deploy-production),
++  #    so the staged bundle would be tested against an API it will never be served
++  #    with; those pages run in smoke-production instead, once both halves are live.
++  #
++  #    No `environment:` — a required reviewer on `production` must not gate a test.
++  e2e-web-staged:
++    name: Web e2e → staged production build (Playwright)
++    runs-on: ubuntu-latest
++    needs: [changes, stage-web-production]
++    if: needs.stage-web-production.result == 'success'
++    timeout-minutes: 20
++    permissions:
++      contents: read
++    # Secrets are set on the steps that use them, never job-wide: a job-level
++    # env is readable by every step, third-party actions and `pnpm install` included.
++    env:
++      E2E_BASE_URL: ${{ needs.stage-web-production.outputs.deployment_url }}
++      # The staged build talks to the PRODUCTION backend, whatever its URL says.
++      E2E_TARGET: production
++      API_CHANGED: ${{ needs.changes.outputs.api }}
++    steps:
++      - name: Skip without the Vercel bypass secret
++        id: gate
++        env:
++          HAS_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET != '' }}
++        run: |
++          if [ "$HAS_BYPASS" != "true" ]; then
++            echo "::warning::VERCEL_AUTOMATION_BYPASS_SECRET is not set — the staged build is behind Vercel Deployment Protection, so the website e2e gate is SKIPPED. Add the secret (Vercel ▸ Project ▸ Settings ▸ Deployment Protection ▸ Protection Bypass for Automation) to turn it on."
++            echo "run=false" >> "$GITHUB_OUTPUT"
++          else
++            echo "run=true" >> "$GITHUB_OUTPUT"
++          fi
++
++      - name: Checkout repository
++        if: steps.gate.outputs.run == 'true'
++        uses: actions/checkout@v7.0.1
++
++      - name: Set up pnpm
++        if: steps.gate.outputs.run == 'true'
++        uses: pnpm/action-setup@v6
++
++      - name: Set up Node.js
++        if: steps.gate.outputs.run == 'true'
++        uses: actions/setup-node@v7.1.0
++        with:
++          node-version: 20
++          cache: pnpm
++
++      - name: Install dependencies
++        if: steps.gate.outputs.run == 'true'
++        run: pnpm install --frozen-lockfile
++
++      - name: Install Playwright Chromium (+ OS deps)
++        if: steps.gate.outputs.run == 'true'
++        run: pnpm --filter @lorekit/web-e2e exec playwright install --with-deps chromium
++
++      - name: Playwright — public pages on the staged build
++        if: steps.gate.outputs.run == 'true'
++        working-directory: packages/web-e2e
++        env:
++          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
++        run: npx playwright test --project=public
++
++      - name: Note — signed-in pages run after promotion this time
++        if: steps.gate.outputs.run == 'true' && env.API_CHANGED == 'true'
++        run: echo "::notice::This merge changes the API too — signed-in pages run in smoke-production, once both halves are live."
++
++      # Sign in as its own step, allowed to fail: an expired test-account password
++      # or an auth rate limit is a credential problem, not a broken page, so it
++      # warns rather than blocking promotion. Pages that fail AFTER a successful
++      # sign-in do block it (next step).
++      - name: Sign in the e2e test account on the staged build
++        id: login
++        if: steps.gate.outputs.run == 'true' && env.API_CHANGED != 'true'
++        continue-on-error: true
++        working-directory: packages/web-e2e
++        env:
++          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
++          E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
++          E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
++        run: npx playwright test --project=setup
++
++      - name: Playwright — signed-in pages on the staged build
++        if: steps.login.outcome == 'success'
++        working-directory: packages/web-e2e
++        env:
++          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
++          E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
++          E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
++        run: npx playwright test --project=signed-in --no-deps
++
++      - name: Warn — the test account could not sign in
++        if: steps.login.outcome == 'failure'
++        run: echo "::warning::The e2e test account could not sign in to the staged build, so signed-in pages were NOT checked before promotion. Check LOREKIT_TESTING_USER_NAME / LOREKIT_TESTING_USER_PW."
++
++      - name: Upload the Playwright report (screenshots — traces are off here)
++        if: failure()
++        uses: actions/upload-artifact@v7
++        with:
++          name: web-e2e-staged-report
++          path: |
++            packages/web-e2e/playwright-report
++            packages/web-e2e/test-results
++          retention-days: 14
++
+   # ── 2. Integration test against PREVIEW (the gate before prod) ────────────────
+   smoke-preview:
+     name: Smoke tests → preview
+@@ -528,6 +648,29 @@ jobs:
+           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+ 
++      # Every `lorekit` command, through the real binary, against the deploy that
++      # just landed (packages/cli/test/smoke, remote lane). The PR gate already ran
++      # the same cases offline; this proves them against a real backend. It
++      # writes only under its own `project::cli-smoke-<run>` scope and hard-deletes
++      # what it wrote, and refuses production by itself — preview only, like the
++      # MCP surface smoke above. Retried once: the run is self-contained, so a
++      # re-run after a transient flake is safe and a real regression still fails.
++      - name: Smoke — every CLI command against preview
++        run: |
++          for attempt in 1 2; do
++            node packages/cli/test/smoke/run.mjs --remote "$URL" "$TOKEN" && break
++            rc=$?
++            if [ "$attempt" -eq 2 ]; then
++              echo "::error::CLI smoke failed after $attempt attempts"
++              exit "$rc"
++            fi
++            echo "::warning::CLI smoke failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
++            sleep 10
++          done
++        env:
++          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
++          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
++
+       # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
+       # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant,
+       # unlike CI's ephemeral mode against a throwaway local stack. Runs only when
+@@ -711,13 +854,15 @@ jobs:
+   promote-web-production:
+     name: Promote web → production (Vercel)
+     runs-on: ubuntu-latest
+-    needs: [changes, deploy-production, stage-web-production]
+-    # Flip the web when it changed (stage-web-production ran) AND either the API
++    needs: [changes, deploy-production, stage-web-production, e2e-web-staged]
++    # Flip the web when it changed (stage-web-production ran), its staged build
++    # passed the website e2e (e2e-web-staged — green when it skips for a missing
++    # bypass secret), AND either the API
+     # did not change (nothing to wait for) or the API's prod deploy succeeded (so
+     # the API is live before the FE fronts it). `changes.outputs.api` disambiguates
+     # deploy-production's 'skipped' (API unchanged, fine) from a real upstream stop
+     # (API changed but its deploy failed / smoke-preview failed → not 'success').
+-    if: always() && needs.stage-web-production.result == 'success' && (needs.changes.outputs.api == 'false' || needs.deploy-production.result == 'success')
++    if: always() && needs.stage-web-production.result == 'success' && needs.e2e-web-staged.result == 'success' && (needs.changes.outputs.api == 'false' || needs.deploy-production.result == 'success')
+     environment: production
+     permissions:
+       # `write` for this job's own deployed-SHA marker, nothing else.
+@@ -917,6 +1062,61 @@ jobs:
+             exit 1
+           fi
+ 
++      # The website, in a browser, as users get it now that both halves are live:
++      # every public page, every dashboard page's signed-out redirect, and — with
++      # the test account secrets — every dashboard page signed in plus the shell
++      # journeys (packages/web-e2e). Read-only: page views and nothing else (the
++      # sign-out and wrong-password journeys skip themselves on production). A
++      # failed page trips both rollbacks, like the curl above; the suite retries
++      # each test twice on CI before failing.
++      - name: Install Playwright Chromium (+ OS deps)
++        run: pnpm --filter @lorekit/web-e2e exec playwright install --with-deps chromium
++
++      - name: Web e2e — public pages against production (Playwright)
++        working-directory: packages/web-e2e
++        env:
++          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
++          E2E_TARGET: production
++        run: npx playwright test --project=public
++
++      # Sign in as its own step, allowed to fail: an expired test-account password
++      # or an auth rate limit must never roll back a healthy deploy. A signed-in
++      # page that fails AFTER a successful sign-in does (next step).
++      - name: Web e2e — sign in the test account (production)
++        id: e2e_login
++        continue-on-error: true
++        working-directory: packages/web-e2e
++        env:
++          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
++          E2E_TARGET: production
++          E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
++          E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
++        run: npx playwright test --project=setup
++
++      - name: Web e2e — signed-in pages against production (Playwright)
++        if: steps.e2e_login.outcome == 'success'
++        working-directory: packages/web-e2e
++        env:
++          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
++          E2E_TARGET: production
++          E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
++          E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
++        run: npx playwright test --project=signed-in --no-deps
++
++      - name: Warn — the test account could not sign in (production)
++        if: steps.e2e_login.outcome == 'failure'
++        run: echo "::warning::The e2e test account could not sign in to production, so signed-in pages were NOT checked after this deploy. Check LOREKIT_TESTING_USER_NAME / LOREKIT_TESTING_USER_PW."
++
++      - name: Upload the Playwright report (screenshots — traces are off here)
++        if: failure()
++        uses: actions/upload-artifact@v7
++        with:
++          name: web-e2e-production-report
++          path: |
++            packages/web-e2e/playwright-report
++            packages/web-e2e/test-results
++          retention-days: 14
++
+       # Full authenticated onboarding + round-trip against the live production
+       # deploy, mirroring smoke-preview: scaffold skill + config, then
+       # `doctor --deep` (self-cleaning write→read→delete). Stronger than the
+@@ -1222,7 +1422,7 @@ jobs:
+   notify-failure:
+     name: Notify on failure (Discord + Dash0)
+     runs-on: ubuntu-latest
+-    needs: [changes, deploy-preview, deploy-web-preview, stage-web-production, smoke-preview, deploy-production, promote-web-production, smoke-production, rollback-production, rollback-web-production]
++    needs: [changes, deploy-preview, deploy-web-preview, stage-web-production, e2e-web-staged, smoke-preview, deploy-production, promote-web-production, smoke-production, rollback-production, rollback-web-production]
+     if: always() && contains(needs.*.result, 'failure')
+     permissions:
+       contents: read # checkout, so the local composite action is available
+@@ -1237,6 +1437,7 @@ jobs:
+           RESULT_DEPLOY_PREVIEW: ${{ needs.deploy-preview.result }}
+           RESULT_DEPLOY_WEB_PREVIEW: ${{ needs.deploy-web-preview.result }}
+           RESULT_STAGE_WEB_PRODUCTION: ${{ needs.stage-web-production.result }}
++          RESULT_E2E_WEB_STAGED: ${{ needs.e2e-web-staged.result }}
+           RESULT_SMOKE_PREVIEW: ${{ needs.smoke-preview.result }}
+           RESULT_DEPLOY_PRODUCTION: ${{ needs.deploy-production.result }}
+           RESULT_PROMOTE_WEB_PRODUCTION: ${{ needs.promote-web-production.result }}
+@@ -1251,6 +1452,7 @@ jobs:
+           elif [ "$RESULT_DEPLOY_PREVIEW"         = "failure" ]; then failed="deploy → preview"
+           elif [ "$RESULT_DEPLOY_WEB_PREVIEW"     = "failure" ]; then failed="web deploy → preview"
+           elif [ "$RESULT_STAGE_WEB_PRODUCTION"   = "failure" ]; then failed="web build (production staging)"
++          elif [ "$RESULT_E2E_WEB_STAGED"         = "failure" ]; then failed="web e2e → staged production build"
+           elif [ "$RESULT_SMOKE_PREVIEW"          = "failure" ]; then failed="smoke tests → preview"
+           elif [ "$RESULT_DEPLOY_PRODUCTION"      = "failure" ]; then failed="deploy → production"
+           elif [ "$RESULT_PROMOTE_WEB_PRODUCTION" = "failure" ]; then failed="web promote → production"
+diff --git a/.github/workflows/preview.yml b/.github/workflows/preview.yml
+index 5e940480..a1b523b0 100644
+--- a/.github/workflows/preview.yml
++++ b/.github/workflows/preview.yml
+@@ -371,6 +371,15 @@ jobs:
+           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+ 
++      # Every `lorekit` command against this PR's preview deploy — the same
++      # remote lane deploy.yml's smoke-preview runs after a merge, so `/preview`
++      # shows before merging whether the CLI still works against the PR's API.
++      - name: Smoke — every CLI command against preview
++        run: node packages/cli/test/smoke/run.mjs --remote "$URL" "$TOKEN"
++        env:
++          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
++          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
++
+       # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
+       # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant.
+       # Runs only when the optional credentials are configured; otherwise the
+-- 
+2.39.5
+
