@@ -122,6 +122,19 @@ describe('grammar', () => {
     });
   });
 
+  it('refuses `has text`, which would silently read as an attribute', () => {
+    expect(() => parseAssertion('{role: "heading", name: "Blog"} has text: "Blog"')).toThrow(/not an attribute/);
+  });
+
+  it('reads "signed-in" with a hyphen as signed in', () => {
+    expect(
+      parseSpecFile(
+        '## Spec 1: x\nurl: /lore\npreconditions:\n  - User is signed-in\nflow:\n  - WHEN page loads\n    THEN {text: "x"} is visible\n',
+        'f.md',
+      )[0].signedIn,
+    ).toBe(true);
+  });
+
   it('refuses what it cannot check deterministically, by name', () => {
     expect(() => parseAssertion('semantic: the user sees a confirmation')).toThrow(/LLM judge/);
     expect(() => parseSpecFile('Format: intent\n\n## Spec 1: x\n', 'f.md')).toThrow(/intent spec/);

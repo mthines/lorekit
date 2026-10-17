@@ -87,7 +87,8 @@ function keysIn(value) {
 const alphaValue = (ctx) => `The CLI smoke suite wrote this lesson — marker zebra-${ctx.runId}.`;
 
 /** Write through the CLI and record it for the remote lane's cleanup. */
-function writeLesson(cli, ctx, key, value, extra = []) {
+function writeLesson(cli, ctx, name, value, extra = []) {
+  const key = ctx.key(name);
   trackRemoteWrite(ctx, ctx.scope, key);
   return cli.json(['write', `${ctx.scope}::${key}`, value, ...extra]);
 }
@@ -129,18 +130,18 @@ smoke('write', 'stores a lesson from a positional value', BOTH, async ({ cli, ct
   const out = writeLesson(cli, ctx, 'alpha', alphaValue(ctx), ['--tags', 'smoke,cli']);
   assert.equal(out.store, ctx.lane === 'remote' ? 'remote' : 'local');
   assert.equal(out.scope, ctx.scope);
-  assert.equal(out.key, 'alpha');
+  assert.equal(out.key, ctx.key('alpha'));
   assert.deepEqual(out.tags, ['smoke', 'cli']);
 });
 
 smoke('write', 'stores a lesson piped on stdin', BOTH, async ({ cli, ctx }) => {
-  trackRemoteWrite(ctx, ctx.scope, 'beta');
-  const out = cli.json(['write', `${ctx.scope}::beta`], { input: 'short body\n' });
+  trackRemoteWrite(ctx, ctx.scope, ctx.key('beta'));
+  const out = cli.json(['write', `${ctx.scope}::${ctx.key('beta')}`], { input: 'short body\n' });
   assert.equal(out.value, 'short body');
 });
 
 smoke('show', 'returns the full lesson that was written', BOTH, async ({ cli, ctx }) => {
-  const out = cli.json(['show', `${ctx.scope}::alpha`]);
+  const out = cli.json(['show', `${ctx.scope}::${ctx.key('alpha')}`]);
   const block = out[storeOf(ctx)];
   assert.equal(block.found, true, `alpha not found in the ${storeOf(ctx)} store`);
   assert.equal(block.record.value, alphaValue(ctx));
@@ -150,14 +151,14 @@ smoke('list', 'lists the lessons that apply to this directory (also as `ls`)', B
   for (const cmd of ctx.lane === 'offline' ? ['list', 'ls'] : ['list']) {
     const out = cli.json([cmd]);
     const keys = keysIn(out[storeOf(ctx)]);
-    assert.ok(keys.includes('alpha') && keys.includes('beta'), `\`${cmd}\` is missing alpha/beta: ${keys}`);
+    assert.ok(keys.includes(ctx.key('alpha')) && keys.includes(ctx.key('beta')), `\`${cmd}\` is missing alpha/beta: ${keys}`);
   }
 });
 
 smoke('search', 'finds a lesson by a word in its body (also as `grep`)', BOTH, async ({ cli, ctx }) => {
   for (const cmd of ctx.lane === 'offline' ? ['search', 'grep'] : ['search']) {
     const out = cli.json([cmd, `zebra-${ctx.runId}`]);
-    assert.deepEqual(keysIn(out[storeOf(ctx)]), ['alpha'], `\`${cmd}\` should match alpha only`);
+    assert.deepEqual(keysIn(out[storeOf(ctx)]), [ctx.key('alpha')], `\`${cmd}\` should match alpha only`);
   }
 });
 
@@ -168,18 +169,15 @@ smoke('stats', 'counts the lessons per scope', BOTH, async ({ cli, ctx }) => {
 
 smoke('scopes', 'inventories the scopes that hold lessons', BOTH, async ({ cli, ctx }) => {
   const out = cli.json(['scopes']);
-  if (ctx.lane === 'offline') {
-    assert.ok(JSON.stringify(out.offline.scopes).includes(ctx.scope), `${ctx.scope} missing from scopes`);
-  } else {
-    // The remote cannot enumerate scopes; the command says so instead of failing.
-    assert.equal(typeof out.remote, 'object');
-  }
+  const block = out[storeOf(ctx)];
+  assert.equal(block.available, true, `the ${storeOf(ctx)} inventory is unavailable: ${block.reason}`);
+  assert.ok(JSON.stringify(block.scopes).includes(ctx.scope), `${ctx.scope} missing from scopes`);
 });
 
 smoke('tree', 'shows which lesson wins for this directory (also as `resolve`)', BOTH, async ({ cli, ctx }) => {
   for (const cmd of ctx.lane === 'offline' ? ['tree', 'resolve'] : ['tree']) {
     const out = cli.json([cmd]);
-    assert.ok(keysIn(out[storeOf(ctx)].winners).includes('alpha'), `\`${cmd}\` lists no winning alpha`);
+    assert.ok(keysIn(out[storeOf(ctx)].winners).includes(ctx.key('alpha')), `\`${cmd}\` lists no winning alpha`);
   }
 });
 
@@ -187,23 +185,30 @@ smoke('lint', 'fails the gate on a too-short lesson and names it', BOTH, async (
   // beta's body is deliberately short — lint is documented as a CI gate, so it must exit non-zero.
   const out = cli.json(['lint'], { code: 1 });
   const findings = JSON.stringify(out[storeOf(ctx)]);
-  assert.match(findings, /"key":"beta"[^}]*"rule":"short-value"/, `no short-value finding for beta: ${findings}`);
+  assert.match(
+    findings,
+    new RegExp(`"key":"${ctx.key('beta')}"[^}]*"rule":"short-value"`),
+    `no short-value finding for beta: ${findings}`,
+  );
 });
 
 smoke('dedupe', 'clusters a near-duplicate lesson', BOTH, async ({ cli, ctx }) => {
   writeLesson(cli, ctx, 'alpha-copy', alphaValue(ctx));
   const out = cli.json(['dedupe']);
   const clusters = JSON.stringify(out[storeOf(ctx)].clusters);
-  assert.ok(clusters.includes('alpha-copy') && clusters.includes('"alpha"'), `alpha/alpha-copy not clustered: ${clusters}`);
+  assert.ok(
+    clusters.includes(`"${ctx.key('alpha-copy')}"`) && clusters.includes(`"${ctx.key('alpha')}"`),
+    `alpha/alpha-copy not clustered: ${clusters}`,
+  );
 });
 
 smoke('delete', 'hard-deletes with --force (also as `rm`)', BOTH, async ({ cli, ctx }) => {
   const cmd = ctx.lane === 'offline' ? 'rm' : 'delete';
-  const out = cli.json([cmd, `${ctx.scope}::alpha-copy`, '--force']);
+  const out = cli.json([cmd, `${ctx.scope}::${ctx.key('alpha-copy')}`, '--force']);
   assert.equal(out.ok, true);
   assert.equal(out.force, true);
   // `show` exits 1 for a lesson that is not there — the deletion is the point.
-  assert.equal(cli.json(['show', `${ctx.scope}::alpha-copy`], { code: 1 })[storeOf(ctx)].found, false);
+  assert.equal(cli.json(['show', `${ctx.scope}::${ctx.key('alpha-copy')}`], { code: 1 })[storeOf(ctx)].found, false);
 });
 
 smoke('diff', 'reports offline-vs-remote divergence only when both stores are readable', BOTH, async ({ cli, ctx }) => {
@@ -214,13 +219,13 @@ smoke('diff', 'reports offline-vs-remote divergence only when both stores are re
 // ── archive lifecycle ────────────────────────────────────────────────────────
 
 smoke('archive', 'hides a lesson from the default listing', BOTH, async ({ cli, ctx }) => {
-  cli.ok(['archive', `${ctx.scope}::beta`]);
-  assert.ok(!keysIn(cli.json(['list'])[storeOf(ctx)]).includes('beta'), 'beta still listed after archive');
+  cli.ok(['archive', `${ctx.scope}::${ctx.key('beta')}`]);
+  assert.ok(!keysIn(cli.json(['list'])[storeOf(ctx)]).includes(ctx.key('beta')), 'beta still listed after archive');
 });
 
 smoke('restore', 'brings an archived lesson back', BOTH, async ({ cli, ctx }) => {
-  cli.ok(['restore', `${ctx.scope}::beta`]);
-  assert.ok(keysIn(cli.json(['list'])[storeOf(ctx)]).includes('beta'), 'beta not listed after restore');
+  cli.ok(['restore', `${ctx.scope}::${ctx.key('beta')}`]);
+  assert.ok(keysIn(cli.json(['list'])[storeOf(ctx)]).includes(ctx.key('beta')), 'beta not listed after restore');
 });
 
 // ── tools that read the store but change nothing ─────────────────────────────
@@ -238,9 +243,9 @@ smoke('invariants', 'scans for compile-pipeline candidates', BOTH, async ({ cli,
 
 smoke('link', 'builds a dashboard deep link to one lesson (also as `url`)', OFFLINE, async ({ cli, ctx }) => {
   for (const cmd of ['link', 'url']) {
-    const out = cli.json([cmd, `${ctx.scope}::alpha`]);
+    const out = cli.json([cmd, `${ctx.scope}::${ctx.key('alpha')}`]);
     assert.ok(out.url.startsWith('https://lorekit.io/lore?'), out.url);
-    assert.deepEqual(out.params.lesson, { scope: ctx.scope, key: 'alpha' });
+    assert.deepEqual(out.params.lesson, { scope: ctx.scope, key: ctx.key('alpha') });
   }
 });
 
@@ -249,7 +254,7 @@ smoke('migrate', 'previews a move between stores without writing', BOTH, async (
   const to = ctx.lane === 'remote' ? 'remote' : 'project';
   if (ctx.lane === 'remote') {
     // Give the dry run something to report: one lesson in the local home tier.
-    cli.ok(['write', `${ctx.scope}::local-only`, 'A lesson that only exists offline.', '--local']);
+    cli.ok(['write', `${ctx.scope}::${ctx.key('local-only')}`, 'A lesson that only exists offline.', '--local']);
   }
   const out = cli.ok(['migrate', '--from', from, '--to', to]);
   assert.match(out, /dry-run/);
@@ -276,17 +281,18 @@ smoke('hook', 'injects the applicable lessons at SessionStart', BOTH, async ({ c
 
 smoke('mcp', 'serves the catalog over stdio and answers every memory tool', OFFLINE, async ({ ctx }) => {
   const s = ctx.scope;
+  const gamma = ctx.key('gamma');
   const session = runMcp(ctx, [
-    { name: 'memory.write', arguments: { scope: s, key: 'gamma', value: 'Written over the stdio MCP server.' } },
-    { name: 'memory.read', arguments: { scope: s, key: 'gamma' } },
+    { name: 'memory.write', arguments: { scope: s, key: gamma, value: 'Written over the stdio MCP server.' } },
+    { name: 'memory.read', arguments: { scope: s, key: gamma } },
     { name: 'memory.list', arguments: { scope: s } },
     // The local server searches the scopes it is given (mcp-server.mjs: list and
     // search "need a scope (or a scope list) up front").
     { name: 'memory.search', arguments: { q: 'stdio MCP server', scopes: [s] } },
     { name: 'memory.scopes', arguments: {} },
-    { name: 'memory.archive', arguments: { scope: s, key: 'gamma' } },
-    { name: 'memory.restore', arguments: { scope: s, key: 'gamma' } },
-    { name: 'memory.delete', arguments: { scope: s, key: 'gamma', force: true } },
+    { name: 'memory.archive', arguments: { scope: s, key: gamma } },
+    { name: 'memory.restore', arguments: { scope: s, key: gamma } },
+    { name: 'memory.delete', arguments: { scope: s, key: gamma, force: true } },
     // org.* needs a remote; offline they must refuse and say how to fix it.
     { name: 'org.create', arguments: { slug: 'smoke-org', name: 'Smoke' } },
     { name: 'org.list', arguments: {} },
@@ -302,8 +308,8 @@ smoke('mcp', 'serves the catalog over stdio and answers every memory tool', OFFL
     assert.equal(r.ok, true, `memory.${name} was refused: ${JSON.stringify(r.error)}`);
   }
   assert.ok(JSON.stringify(read.value).includes('Written over the stdio MCP server.'), 'memory.read lost the body');
-  assert.ok(keysIn(list.value).includes('gamma'), 'memory.list is missing gamma');
-  assert.ok(keysIn(search.value).includes('gamma'), 'memory.search did not find gamma');
+  assert.ok(keysIn(list.value).includes(gamma), 'memory.list is missing gamma');
+  assert.ok(keysIn(search.value).includes(gamma), 'memory.search did not find gamma');
   assert.ok(JSON.stringify(scopes.value).includes(s), 'memory.scopes is missing the run scope');
   for (const r of orgs) {
     assert.equal(r.ok, false, 'an org.* tool succeeded with no remote');
@@ -312,7 +318,7 @@ smoke('mcp', 'serves the catalog over stdio and answers every memory tool', OFFL
 });
 
 smoke('mcp', 'passes tools through to the endpoint over stdio', REMOTE, async ({ ctx }) => {
-  const session = runMcp(ctx, [{ name: 'memory.read', arguments: { scope: ctx.scope, key: 'alpha' } }]);
+  const session = runMcp(ctx, [{ name: 'memory.read', arguments: { scope: ctx.scope, key: ctx.key('alpha') } }]);
   assert.equal(session.code, 0, `lorekit mcp exited ${session.code}: ${session.stderr}`);
   assert.ok(session.tools.includes('memory.read'), `tools/list: ${session.tools}`);
   assert.equal(session.results[0].ok, true, JSON.stringify(session.results[0].error));
@@ -324,9 +330,9 @@ smoke('mcp', 'passes tools through to the endpoint over stdio', REMOTE, async ({
 // Offline, each must refuse with an actionable message rather than pretend to
 // work. Against an endpoint, each must actually do its job.
 const REMOTE_ONLY = [
-  ['protect', (ctx) => ['protect', `${ctx.scope}::alpha`]],
-  ['pin', (ctx) => ['pin', `${ctx.scope}::alpha`]],
-  ['unpin', (ctx) => ['unpin', `${ctx.scope}::alpha`]],
+  ['protect', (ctx) => ['protect', `${ctx.scope}::${ctx.key('alpha')}`]],
+  ['pin', (ctx) => ['pin', `${ctx.scope}::${ctx.key('alpha')}`]],
+  ['unpin', (ctx) => ['unpin', `${ctx.scope}::${ctx.key('alpha')}`]],
   ['policy', () => ['policy', 'list']],
   ['groom', (ctx) => ['groom', '--scope', ctx.scope]],
   ['purge', () => ['purge', '--yes']],
@@ -339,12 +345,12 @@ for (const [command, args] of REMOTE_ONLY) {
 }
 
 smoke('protect', 'protects and unprotects a lesson', REMOTE, async ({ cli, ctx }) => {
-  assert.equal(cli.json(['protect', `${ctx.scope}::alpha`]).protected, true);
-  assert.equal(cli.json(['protect', `${ctx.scope}::alpha`, '--off']).protected, false);
+  assert.equal(cli.json(['protect', `${ctx.scope}::${ctx.key('alpha')}`]).protected, true);
+  assert.equal(cli.json(['protect', `${ctx.scope}::${ctx.key('alpha')}`, '--off']).protected, false);
 });
 
 smoke('pin', 'is shorthand for protect', REMOTE, async ({ cli, ctx }) => {
-  assert.equal(cli.json(['pin', `${ctx.scope}::alpha`]).protected, true);
+  assert.equal(cli.json(['pin', `${ctx.scope}::${ctx.key('alpha')}`]).protected, true);
 });
 
 smoke('policy', 'creates, lists, updates and deletes a retention policy', REMOTE, async ({ cli, ctx }) => {
@@ -362,18 +368,18 @@ smoke('policy', 'creates, lists, updates and deletes a retention policy', REMOTE
 smoke('groom', 'archives what a policy matches, but never a protected lesson', REMOTE, async ({ cli, ctx }) => {
   writeLesson(cli, ctx, 'groom-target', 'A lesson the smoke policy should archive.', ['--tags', 'groom-me']);
   writeLesson(cli, ctx, 'groom-keeper', 'A protected lesson the smoke policy must not touch.', ['--tags', 'groom-me']);
-  cli.json(['protect', `${ctx.scope}::groom-keeper`]);
+  cli.json(['protect', `${ctx.scope}::${ctx.key('groom-keeper')}`]);
 
   const preview = cli.json(['groom', '--policy-id', ctx.state.policyId]);
-  assert.deepEqual(keysIn(preview.keys), ['groom-target'], `preview: ${JSON.stringify(preview.keys)}`);
+  assert.deepEqual(keysIn(preview.keys), [ctx.key('groom-target')], `preview: ${JSON.stringify(preview.keys)}`);
 
   const run = cli.json(['groom', '--policy-id', ctx.state.policyId, '--run', '--yes']);
   assert.equal(run.archived, 1);
-  assert.equal(cli.json(['show', `${ctx.scope}::groom-keeper`]).remote.found, true, 'groom archived a protected lesson');
+  assert.equal(cli.json(['show', `${ctx.scope}::${ctx.key('groom-keeper')}`]).remote.found, true, 'groom archived a protected lesson');
 });
 
 smoke('unpin', 'is shorthand for protect --off', REMOTE, async ({ cli, ctx }) => {
-  assert.equal(cli.json(['unpin', `${ctx.scope}::groom-keeper`]).protected, false);
+  assert.equal(cli.json(['unpin', `${ctx.scope}::${ctx.key('groom-keeper')}`]).protected, false);
   // Delete the policy here rather than leave it to cleanup, so `policy delete` is exercised too.
   assert.equal(cli.json(['policy', 'delete', ctx.state.policyId, '--yes']).deleted, true);
   ctx.policies.delete(ctx.state.policyId);
@@ -393,7 +399,7 @@ smoke('purge', 'purges archived lessons past the retention window', REMOTE, asyn
 // ── teardown ─────────────────────────────────────────────────────────────────
 
 smoke('delete', 'archives without --force', BOTH, async ({ cli, ctx }) => {
-  const out = cli.json(['delete', `${ctx.scope}::beta`]);
+  const out = cli.json(['delete', `${ctx.scope}::${ctx.key('beta')}`]);
   assert.equal(out.ok, true);
   assert.equal(out.force, false);
 });

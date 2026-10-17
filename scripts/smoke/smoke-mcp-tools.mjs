@@ -867,10 +867,15 @@ check('memory.protect shields a lesson from policy.update → groom.run', async 
   requireUserScoped('a retention-policy owner');
   const scope = `project::smoke-groom-${RUN_ID}`;
   const tag = `smoke-groom-${RUN_ID}`;
-  ok((await write(scope, 'target', { tags: [tag] })).ok, 'write target failed');
-  ok((await write(scope, 'keeper', { tags: [tag] })).ok, 'write keeper failed');
+  // Keys in the `smoke-<epoch-ms>-<name>` shape scripts/smoke/smoke-cleanup.mjs
+  // recognises, so a run killed before `finally` leaves nothing it cannot sweep.
+  const stamp = Date.now();
+  const target = `smoke-${stamp}-groom-target`;
+  const keeper = `smoke-${stamp}-groom-keeper`;
+  ok((await write(scope, target, { tags: [tag] })).ok, 'write target failed');
+  ok((await write(scope, keeper, { tags: [tag] })).ok, 'write keeper failed');
 
-  const protect = await call('memory.protect', { scope, key: 'keeper', protected: true });
+  const protect = await call('memory.protect', { scope, key: keeper, protected: true });
   ok(protect.ok, `memory.protect failed: ${JSON.stringify(protect.error ?? protect.value)}`);
   eq(protect.value?.protected, true, 'memory.protect result');
 
@@ -889,15 +894,15 @@ check('memory.protect shields a lesson from policy.update → groom.run', async 
 
   const run = await call('groom.run', { policy_id: policyId });
   ok(run.ok, `groom.run failed: ${JSON.stringify(run.error ?? run.value)}`);
-  eq(run.value?.keys?.map((k) => k.key), ['target'], 'groom.run archived keys');
+  eq(run.value?.keys?.map((k) => k.key), [target], 'groom.run archived keys');
   eq(run.value?.archived, 1, 'groom.run archived count');
 
-  const keeper = await call('memory.read', { scope, key: 'keeper' });
-  ok(keeper.ok && keeper.value !== null, 'groom.run archived a protected lesson');
-  const target = await call('memory.read', { scope, key: 'target' });
-  ok(target.ok && target.value === null, 'groom.run reported target archived, but it is still readable');
+  const keeperRead = await call('memory.read', { scope, key: keeper });
+  ok(keeperRead.ok && keeperRead.value !== null, 'groom.run archived a protected lesson');
+  const targetRead = await call('memory.read', { scope, key: target });
+  ok(targetRead.ok && targetRead.value === null, 'groom.run reported target archived, but it is still readable');
 
-  const unprotect = await call('memory.protect', { scope, key: 'keeper', protected: false });
+  const unprotect = await call('memory.protect', { scope, key: keeper, protected: false });
   eq(unprotect.value?.protected, false, 'memory.protect(false) result');
 });
 

@@ -61,9 +61,16 @@ export function createContext({ lane, endpoint = null, token = null }) {
   mkdirSync(home, { recursive: true });
   mkdirSync(dir, { recursive: true });
   spawnSync('git', ['init', '-q'], { cwd: dir });
+  // Lesson keys look like `smoke-<epoch-ms>-<name>`: the shape
+  // scripts/smoke/smoke-cleanup.mjs recognises (SMOKE_ARTEFACT_PATTERN, matched
+  // on the key), so a remote run killed before its cleanup leaves nothing the
+  // sweeper cannot find.
+  const stamp = Date.now();
   return {
     lane,
     runId,
+    /** @param {string} name */
+    key: (name) => `smoke-${stamp}-${name}`,
     root,
     home,
     dir,

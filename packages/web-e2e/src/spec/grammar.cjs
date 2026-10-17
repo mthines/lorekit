@@ -198,6 +198,9 @@ function parseAssertion(text) {
   const { locator, rest } = parseLocator(text);
   if (rest === 'is visible' || rest === 'is visible on the page') return { kind: 'visible', locator };
   if (rest === 'is not visible') return { kind: 'hidden', locator };
+  if (/^has text\b/.test(rest)) {
+    throw new Error('`has text` is not an attribute — assert text with `{text: "…"} is visible`');
+  }
   const attr = /^has ([\w-]+):\s*"?(.*?)"?$/.exec(rest);
   if (attr) return { kind: 'attribute', locator, attribute: attr[1], value: attr[2] };
   throw new Error(`unsupported assertion "${rest}" — ${ASSERTIONS_HELP}`);
@@ -226,7 +229,7 @@ function interpretPreconditions(items) {
       skipOn[target] = skip[2] || `the spec says it does not run on ${target}`;
       continue;
     }
-    if (/\b(signed|logged) in\b/i.test(item) && !/\bnot (signed|logged) in\b/i.test(item)) signedIn = true;
+    if (/\b(signed|logged)[ -]in\b/i.test(item) && !/\bnot (signed|logged)[ -]in\b/i.test(item)) signedIn = true;
   }
   return { signedIn, skipOn };
 }
