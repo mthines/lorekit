@@ -1,0 +1,38 @@
+{
+  "name": "web-e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/web-e2e/src",
+  "projectType": "application",
+  "tags": ["type:e2e", "platform:web"],
+  "implicitDependencies": ["web"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "tsc --noEmit -p packages/web-e2e/tsconfig.json",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "build-web": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "cwd": "packages/web",
+        "command": "next build",
+        "env": {
+          "NEXT_PUBLIC_USE_LOCAL_SUPABASE": "true",
+          "NEXT_TELEMETRY_DISABLED": "1"
+        }
+      }
+    },
+    "e2e": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "cwd": "packages/web-e2e",
+        "command": "playwright test"
+      }
+    }
+  }
+}

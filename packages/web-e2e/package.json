@@ -1,0 +1,15 @@
+{
+  "name": "@lorekit/web-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Playwright end-to-end smoke tests for the LoreKit website (@lorekit/web). One manifest entry per page in src/routes.ts; a vitest guard fails when a page has no entry.",
+  "scripts": {
+    "e2e": "playwright test",
+    "e2e:public": "playwright test --project=public",
+    "e2e:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.0"
+  }
+}
