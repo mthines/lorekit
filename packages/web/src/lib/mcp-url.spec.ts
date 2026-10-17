@@ -42,10 +42,39 @@ describe('resolveMcpUrls', () => {
     expect(resolveMcpUrls().mcpUrl).toBe(FALLBACK);
   });
 
-  it('strips both the https:// prefix and the .supabase.co suffix to isolate the ref', () => {
-    // A bare ref (no scheme, no suffix) leaves nothing to strip, so it is used
-    // verbatim as the project ref — proving the derivation is a plain replace.
-    process.env[KEY] = 'myref';
-    expect(resolveMcpUrls().mcpUrl).toBe('https://myref.supabase.co/functions/v1/mcp');
+  it('ignores a trailing slash on a *.supabase.co URL', () => {
+    process.env[KEY] = 'https://abcdefghijklmnop.supabase.co/';
+    expect(resolveMcpUrls().mcpUrl).toBe('https://abcdefghijklmnop.supabase.co/functions/v1/mcp');
+  });
+
+  it('derives the MCP URL from a self-hosted custom domain', () => {
+    process.env[KEY] = 'https://db.example.com';
+    const { mcpUrl, webhookUrl } = resolveMcpUrls();
+    expect(mcpUrl).toBe('https://db.example.com/functions/v1/mcp');
+    expect(webhookUrl).toBe('https://db.example.com/functions/v1/mcp/webhooks/github');
+  });
+
+  it('ignores a trailing slash on a custom domain', () => {
+    process.env[KEY] = 'https://db.example.com/';
+    expect(resolveMcpUrls().mcpUrl).toBe('https://db.example.com/functions/v1/mcp');
+  });
+
+  it('keeps the scheme and port of a local http Supabase', () => {
+    process.env[KEY] = 'http://127.0.0.1:54321';
+    expect(resolveMcpUrls().mcpUrl).toBe('http://127.0.0.1:54321/functions/v1/mcp');
+  });
+
+  it('keeps a reverse-proxy base path, minus its trailing slash', () => {
+    process.env[KEY] = 'https://example.com/supabase/';
+    expect(resolveMcpUrls().mcpUrl).toBe('https://example.com/supabase/functions/v1/mcp');
+  });
+
+  it.each([
+    ['a bare word that is not a URL', 'myref'],
+    ['whitespace only', '   '],
+    ['a non-http scheme', 'ftp://db.example.com'],
+  ])('falls back to the hosted URL for %s', (_label, value) => {
+    process.env[KEY] = value;
+    expect(resolveMcpUrls().mcpUrl).toBe(FALLBACK);
   });
 });
