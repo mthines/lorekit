@@ -513,7 +513,10 @@ function routesToSpecs(files) {
  * @param {Spec[]} specs
  */
 function specsToUiVerifyBlock(specs) {
-  const bodies = specs.map((s, i) => s.block.replace(SPEC_HEADING, `## Spec ${i + 1}: ${s.title}`));
+  const bodies = specs.map((s, i) => {
+    const [head, ...rest] = s.block.split('\n');
+    return [head.replace(SPEC_HEADING, `## Spec ${i + 1}: ${s.title}`), ...rest].join('\n');
+  });
   return [
     '<!-- ui-verify:v1 -->',
     '<details>',

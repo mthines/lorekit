@@ -196,6 +196,14 @@ describe('ui-verify interop', () => {
     expect(shape(again)).toEqual(shape(specs));
   });
 
+  it('renumbers specs from several files 1..n when exporting a block', () => {
+    const pages = readFileSync(path.join(SPECS_DIR, 'pages.md'), 'utf8');
+    const specs = [...parseSpecFile(pages, 'pages.md'), ...parseSpecFile(journeys, 'journeys.md')];
+    const extracted = extractUiVerifyBlock(specsToUiVerifyBlock(specs));
+    const ids = parseSpecFile(extracted?.content ?? '', 'pr.md').map((s) => s.id);
+    expect(ids).toEqual(specs.map((_, i) => String(i + 1)));
+  });
+
   it('turns an intent (v2) spec into a draft that cannot run until finished', () => {
     const intent = [
       '<!-- ui-verify:v2 -->',
