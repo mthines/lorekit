@@ -19,8 +19,8 @@ The guards need no browser, no network and no secrets, so they run in the
 |------|-------------|-----------|-----------|
 | **Every PR** (`ci.yml`) | `web-e2e` job: a local production build against a local Supabase stack — public pages, the signed-out redirect of every dashboard page, and every dashboard page signed in as a throwaway user | offline lane, inside `cli:test` | local stdio server, inside `cli:test` |
 | **`/preview` on a PR** (`preview.yml`) | — | remote lane against the preview project | hosted server against the preview project |
-| **Merge → before production** (`deploy.yml`) | `e2e-web-staged`: the staged production build, before its domain is assigned. Gates `promote-web-production` | remote lane in `smoke-preview`. Gates `deploy-production` | hosted server in `smoke-preview`. Gates `deploy-production` |
-| **Merge → after production** (`deploy.yml`) | `smoke-production`: `https://lorekit.io`, public + signed in. A failure rolls both halves back | — (it writes; production is never written to by a smoke) | stdio handshake only (read-only) |
+| **Merge → before production** (`deploy.yml`) | `e2e-web-staged`: the staged production build, before its domain is assigned (signed-in pages too when the merge leaves the API alone). Gates `promote-web-production` | remote lane in `smoke-preview`. Gates `deploy-production` | hosted server in `smoke-preview`. Gates `deploy-production` |
+| **Merge → after production** (`deploy.yml`) | `smoke-production`: `https://lorekit.io`, public + signed in. A failed page rolls both halves back; a failed test-account sign-in only warns | — (it writes; production is never written to by a smoke) | stdio handshake only (read-only) |
 
 ## Adding a website test
 
@@ -124,6 +124,13 @@ the top of `packages/web-e2e/src/support/env.ts`.
 | `VERCEL_AUTOMATION_BYPASS_SECRET` (repo) | `e2e-web-staged` — gets through Vercel Deployment Protection on the staged URL | the job skips with a warning and promotion proceeds as before |
 | `LOREKIT_TESTING_USER_NAME`, `LOREKIT_TESTING_USER_PW` (repo) | signed-in pages on the staged build and on `lorekit.io` | signed-in tests skip, announced; public tests still run |
 | `LOREKIT_SMOKE_TOKEN` (preview env, existing) | CLI remote lane, hosted MCP smoke | — (already required) |
+
+The sign-in is its own CI step in both deploy-time jobs: when the test account
+cannot sign in (an expired password, an auth rate limit) the signed-in pages are
+skipped with a warning, so a credential problem never blocks a promotion or
+rolls back production — only a page that fails after a successful sign-in does.
+The deliberately failed sign-in (`journeys/login.e2e.ts`) never targets
+production.
 
 The test account must be a normal user (not in `DEVELOPER_EMAILS`); opening
 `/lore` as a user with no API tokens creates one, so expect a "My first token".
