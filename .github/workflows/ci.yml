@@ -232,7 +232,7 @@ jobs:
         uses: pnpm/action-setup@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           # 22, not 20: `@lorekit/evals` imports `@lorekit/core`'s TypeScript
           # source directly and relies on Node's native type stripping (stable
@@ -275,7 +275,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -317,7 +317,7 @@ jobs:
         uses: pnpm/action-setup@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
           cache: pnpm
@@ -432,7 +432,7 @@ jobs:
           fetch-depth: 0 # need base + HEAD history to diff the added migrations
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -485,7 +485,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -521,7 +521,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -552,7 +552,7 @@ jobs:
           fetch-depth: 0 # need base + HEAD history to diff each skill's SKILL.md
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -579,7 +579,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -614,7 +614,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
 
@@ -736,7 +736,7 @@ jobs:
         uses: pnpm/action-setup@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
           cache: pnpm
