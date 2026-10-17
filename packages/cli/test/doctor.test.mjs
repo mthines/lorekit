@@ -481,3 +481,259 @@ test('a default doctor run reports telemetry as info and never fails on it', () 
   assert.match(line, /export off/, `expected a telemetry line, got: ${line}`);
   assert.doesNotMatch(line, /FAIL/, 'a user with no phone-home is not broken');
 });
+
+// ── `lorekit doctor` warns when the resolved MCP endpoint lacks the /mcp
+// suffix (classifyMcpEndpoint / endpointCheck / the `endpoint` check itself)
+// ─────────────────────────────────────────────────────────────────────────
+import { classifyMcpEndpoint } from '../src/shared/mcp.mjs';
+import { ENDPOINT_SOURCES, endpointCheck } from '../src/commands/doctor.mjs';
+
+// One row per endpoint shape the classifier commits to, each pinned to a
+// specific kind/expected/suggested.
+const EDGE_CASES = [
+  { url: 'https://ref.supabase.co/functions/v1/mcp/', kind: 'ok' },
+  { url: 'https://ref.supabase.co/functions/v1/mcp?foo=1', kind: 'ok' },
+  {
+    url: 'https://ref.supabase.co/functions/v1',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/functions/v1/',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/mcp',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/functions/v1/mcp/webhooks/github',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/rest/v1',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/rest/v1/?apikey=x',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  { url: 'http://127.0.0.1:54321/functions/v1/mcp', kind: 'ok' },
+  { url: 'https://lore.example.com/mcp', kind: 'ok' },
+  {
+    url: 'https://lore.example.com/functions/v1',
+    kind: 'wrong-path',
+    expected: '/mcp',
+    suggested: 'https://lore.example.com/functions/v1/mcp',
+  },
+  { url: 'https://lore.example.com/api', kind: 'wrong-path', expected: '/mcp', suggested: null },
+  { url: 'https://lore.example.com', kind: 'wrong-path', expected: '/mcp', suggested: null },
+  { url: 'not a url', kind: 'invalid-url' },
+  { url: 'ftp://x/mcp', kind: 'invalid-url' },
+];
+
+test('classifyMcpEndpoint classifies every known endpoint shape', () => {
+  for (const { url, kind, expected, suggested } of EDGE_CASES) {
+    const result = classifyMcpEndpoint(url);
+    assert.equal(result.kind, kind, `${url}: expected kind ${kind}, got ${JSON.stringify(result)}`);
+    if (kind === 'wrong-path') {
+      assert.equal(result.expected, expected, `${url}: expected shape ${expected}`);
+      assert.equal(result.suggested, suggested, `${url}: expected suggestion ${suggested}`);
+    }
+  }
+});
+
+test('classifyMcpEndpoint: ok never carries expected/suggested fields', () => {
+  assert.deepEqual(classifyMcpEndpoint('https://ref.supabase.co/functions/v1/mcp'), { kind: 'ok' });
+});
+
+test('endpointCheck passes a canonical endpoint with the endpoint itself as detail', () => {
+  const result = endpointCheck('https://ref.supabase.co/functions/v1/mcp', 'flag');
+  assert.deepEqual(result, { kind: 'pass', detail: 'https://ref.supabase.co/functions/v1/mcp' });
+});
+
+test('endpointCheck warns for every ENDPOINT_SOURCES key, naming the endpoint, /mcp, the label, and the fix', () => {
+  const badEndpoint = 'https://ref.supabase.co/functions/v1';
+  for (const [source, { label, fix }] of Object.entries(ENDPOINT_SOURCES)) {
+    const result = endpointCheck(badEndpoint, source);
+    assert.equal(result.kind, 'warn', `source ${source}`);
+    assert.match(result.detail, new RegExp(badEndpoint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), source);
+    assert.match(result.detail, /\/mcp/, source);
+    assert.match(result.detail, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), source);
+    const expectedFix = fix('https://ref.supabase.co/functions/v1/mcp');
+    assert.ok(result.detail.includes(expectedFix), `${source}: expected fix "${expectedFix}" in "${result.detail}"`);
+  }
+});
+
+test('endpointCheck falls back to the placeholder URL when no suggestion can be guessed', () => {
+  const result = endpointCheck('https://lore.example.com/api', 'global-mcp');
+  assert.equal(result.kind, 'warn');
+  assert.match(result.detail, /<your MCP URL ending in \/mcp>/);
+});
+
+test('endpointCheck warns on an invalid URL, naming "not a valid http\\(s\\) URL"', () => {
+  const result = endpointCheck('not a url', 'env:LOREKIT_MCP_URL');
+  assert.equal(result.kind, 'warn');
+  assert.match(result.detail, /not a valid http\(s\) URL/);
+  assert.match(result.detail, /LOREKIT_MCP_URL/);
+});
+
+test('endpointCheck labels an unrecognised source as "resolved config" rather than throwing', () => {
+  const result = endpointCheck('https://ref.supabase.co/functions/v1', 'some-future-source');
+  assert.equal(result.kind, 'warn');
+  assert.match(result.detail, /resolved config/);
+  assert.match(result.detail, /lorekit install --force --endpoint/);
+});
+
+// ── doctor --mode remote: the endpoint line itself ───────────────────────────
+
+function runRemoteEndpointDoctor(dir, home, extraArgs = []) {
+  return spawnSync(
+    process.execPath,
+    [BIN, 'doctor', '--mode', 'remote', '--dir', dir, ...extraArgs],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        NO_COLOR: '1',
+        LOREKIT_TELEMETRY: '0',
+        LOREKIT_TOKEN: '',
+        LOREKIT_MCP_URL: '',
+        LOREKIT_ENDPOINT: '',
+      },
+    },
+  );
+}
+
+test('doctor --mode remote WARNs (not FAILs) the endpoint check for a --endpoint flag missing the /mcp suffix', () => {
+  const dir = tmp('lk-doc-epwarn-');
+  const home = tmp('lk-doc-epwarn-home-');
+  const res = runRemoteEndpointDoctor(dir, home, [
+    '--endpoint', 'https://ref.supabase.co/functions/v1',
+  ]);
+  const line = lineFor(res.stdout, 'endpoint');
+  assert.match(line, /WARN/, `expected endpoint WARN, got: ${line}`);
+  assert.match(line, /--endpoint flag/, `expected the flag source named, got: ${line}`);
+  assert.match(line, /https:\/\/ref\.supabase\.co\/functions\/v1\/mcp/, `expected the suggested fix URL, got: ${line}`);
+});
+
+test('doctor --mode remote PASSes the endpoint check for a canonical --endpoint, byte-identical to before', () => {
+  const dir = tmp('lk-doc-eppass-');
+  const home = tmp('lk-doc-eppass-home-');
+  const res = runRemoteEndpointDoctor(dir, home, [
+    '--endpoint', 'https://ref.supabase.co/functions/v1/mcp',
+  ]);
+  const line = lineFor(res.stdout, 'endpoint');
+  assert.match(line, /PASS/, `expected endpoint PASS, got: ${line}`);
+  assert.match(line, /https:\/\/ref\.supabase\.co\/functions\/v1\/mcp/, `expected the endpoint as detail, got: ${line}`);
+});
+
+test('doctor --mode remote names .mcp.json and the project fix when the tokenless project entry lacks the suffix', () => {
+  const dir = tmp('lk-doc-epmcp-');
+  const home = tmp('lk-doc-epmcp-home-');
+  fs.writeFileSync(
+    path.join(dir, '.mcp.json'),
+    JSON.stringify({
+      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', 'https://ref.supabase.co/functions/v1'] } },
+    }),
+  );
+  const res = runRemoteEndpointDoctor(dir, home);
+  const line = lineFor(res.stdout, 'endpoint');
+  assert.match(line, /WARN/, `expected endpoint WARN, got: ${line}`);
+  assert.match(line, /\.mcp\.json/, `expected .mcp.json named, got: ${line}`);
+  assert.match(
+    line,
+    /lorekit install --project --force --endpoint https:\/\/ref\.supabase\.co\/functions\/v1\/mcp/,
+    `expected the project fix command, got: ${line}`,
+  );
+});
+
+// ── every printed `lorekit install` fix actually rewrites the MCP entry ──────
+// `install` early-returns on an already-installed scope unless one of
+// `--force`/`--hooks`/`--mcp-json`/`--completions` is passed, so a fix like
+// `lorekit install --project --endpoint <u>` would print "already installed"
+// and change nothing. Run each suggested command against a scope that is
+// ALREADY installed with the bad endpoint and assert the entry now holds the
+// suggested one.
+
+// `run \`lorekit install --a --b v\`` → { a: true, b: 'v' }
+function installOptsFromFix(fixText) {
+  const cmd = fixText.match(/`lorekit install ([^`]*)`/);
+  assert.ok(cmd, `fix is not a lorekit install command: ${fixText}`);
+  const tokens = cmd[1].trim().split(/\s+/);
+  const opts = {};
+  for (let i = 0; i < tokens.length; i++) {
+    const key = tokens[i].replace(/^--/, '');
+    const next = tokens[i + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      opts[key] = next;
+      i++;
+    } else {
+      opts[key] = true;
+    }
+  }
+  return opts;
+}
+
+function lorekitArgs(file) {
+  const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return config.mcpServers?.lorekit?.args ?? [];
+}
+
+const BAD_ENDPOINT = 'https://ref.supabase.co/functions/v1';
+const FIX_CASES = [
+  { source: 'project-mcp', initial: { project: true }, file: (dir) => path.join(dir, '.mcp.json') },
+  { source: 'project-mcp-web', initial: { project: true, 'mcp-json': true }, file: (dir) => path.join(dir, '.mcp.json') },
+  { source: 'global-mcp', initial: { global: true }, file: (_dir, home) => path.join(home, '.claude.json') },
+  // An unrecognised source falls back to a scope-less install, which defaults
+  // to the project scope non-interactively.
+  { source: 'some-future-source', initial: { project: true }, file: (dir) => path.join(dir, '.mcp.json') },
+];
+
+for (const { source, initial, file } of FIX_CASES) {
+  test(`the ${source} fix rewrites an already-installed MCP entry to the suggested endpoint`, async () => {
+    const dir = tmp('lk-doc-fix-');
+    const home = tmp('lk-doc-fix-home-');
+    await installWith({ dir, endpoint: BAD_ENDPOINT, token: TOKEN, yes: true, ...initial }, home);
+    assert.ok(
+      !lorekitArgs(file(dir, home)).some((a) => a.startsWith(ENDPOINT)),
+      'precondition: the installed entry holds the bad endpoint',
+    );
+
+    const check = endpointCheck(BAD_ENDPOINT, source);
+    assert.equal(check.kind, 'warn');
+    const opts = installOptsFromFix(check.detail);
+    await installWith({ ...opts, dir, yes: true }, home);
+
+    const args = lorekitArgs(file(dir, home));
+    assert.ok(
+      args.some((a) => a.startsWith(ENDPOINT)),
+      `${source}: \`${check.detail}\` left the entry unchanged: ${JSON.stringify(args)}`,
+    );
+  });
+}

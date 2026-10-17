@@ -563,7 +563,7 @@ export function loadControl(root, { env = process.env } = {}) {
   const usable = Boolean(
     conn.endpoint && conn.token && !String(conn.endpoint).includes('<project-ref>'),
   );
-  const connection = { endpoint: conn.endpoint, token: conn.token, usable };
+  const connection = { endpoint: conn.endpoint, token: conn.token, usable, source: conn.source };
   return resolveControl({ env, userConfig, repoConfig, connection, root, home });
 }
 

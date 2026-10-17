@@ -104,6 +104,14 @@ writes the hosted URL. Only a plain re-run on a fully installed project leaves
 
 </TutorialCallout>
 
+Run `npx @lorekit/cli doctor` to confirm the connection: its `endpoint` line
+WARNS when the resolved endpoint is shaped wrong for an MCP client. On a
+`*.supabase.co` host the path must end in `/functions/v1/mcp`; behind a custom
+domain or reverse proxy it only needs to end in `/mcp`. A shape like
+`.../functions/v1` still answers doctor's other REST-based checks but 404s for
+an actual MCP client, so the warning catches it before your agent does, naming
+the config source and the exact fix command to re-run.
+
 </TutorialStep>
 
 <TutorialStep number={4} title="Use the guided runbook">

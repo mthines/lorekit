@@ -180,10 +180,14 @@ Verifies the setup and prints a status report:
 - for `local`: the store path, entry count, and whether it is committed or
   gitignored
 - for `remote`: `.mcp.json` has a `lorekit` server, the endpoint is real (not
-  the `<project-ref>` placeholder), the token and its permission tier
-  (`lk_rw_*` / `lk_ro_*` / `lk_wo_*`), that the endpoint is reachable, and —
-  the `authentication` check — that the token is **still accepted by the
-  server**
+  the `<project-ref>` placeholder) **and ends in `/mcp`** (a warning, naming
+  the config source and a fix, when it doesn't — e.g. `.../functions/v1` with
+  no `/mcp` still answers the REST-based probes below but 404s for an actual
+  MCP client; the fix for an installed `.mcp.json` / `~/.claude.json` is
+  `lorekit install --project|--global --force --endpoint <url>`, since a plain
+  re-install of an installed scope changes nothing), the token and its permission tier (`lk_rw_*` / `lk_ro_*` /
+  `lk_wo_*`), that the endpoint is reachable, and — the `authentication`
+  check — that the token is **still accepted by the server**
 - for `off`: a note that memory is disabled
 - the git-derived read/write scopes for the current directory
 
