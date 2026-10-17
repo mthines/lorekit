@@ -1,7 +1,11 @@
 import { NO_USER_REASON, USER_SOURCE } from '../support/env';
 import { expect, test } from '../support/fixtures';
 
-/** Signed-in journeys through the app shell. Runs in the `signed-in` project. */
+/**
+ * Signed-in journeys through the app shell. Runs in the `signed-in` project.
+ * These stay in TypeScript because the grammar has no reload step, and the
+ * sidebar renders twice (desktop + mobile) so its links need scoping to one nav.
+ */
 
 test.describe('the signed-in app shell', () => {
   test.skip(!USER_SOURCE, NO_USER_REASON);
@@ -31,9 +35,4 @@ test.describe('the signed-in app shell', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Lore Explorer', exact: true })).toBeVisible();
   });
 
-  test('sends a signed-in visitor away from /login', { tag: '@signed-in' }, async ({ page }) => {
-    await page.goto('/login?next=%2Fsettings%2Fuser');
-    await expect(page).toHaveURL((url) => url.pathname === '/settings/user');
-    await expect(page.getByRole('heading', { level: 2, name: 'User', exact: true })).toBeVisible();
-  });
 });

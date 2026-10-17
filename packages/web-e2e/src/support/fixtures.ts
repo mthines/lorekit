@@ -6,9 +6,13 @@ const ORIGIN = new URL(BASE_URL).origin;
 /**
  * Console errors ANY page may emit without failing its test. Every entry needs
  * a reason — an allowlist nobody can explain is how real errors get hidden.
- * Prefer a per-route `allowConsoleErrors` in routes.ts over growing this list.
  */
-const GLOBAL_ALLOWED_PROBLEMS: RegExp[] = [];
+const GLOBAL_ALLOWED_PROBLEMS: RegExp[] = [
+  // A blog post's like counter fetches <supabase>/functions/v1/blog/likes and
+  // swallows a failure by design (PostLikes.tsx); a local build with no Supabase
+  // behind it cannot reach it. Likes are not core — the post is.
+  /functions\/v1\/blog\/likes/,
+];
 
 export interface PageHealthOptions {
   /**
@@ -25,8 +29,10 @@ export interface PageHealthOptions {
  *   • A health check. Each test records uncaught page exceptions, console
  *     errors and same-origin 5xx responses, and fails when any were seen — so
  *     a hydration error or a crashing component fails the smoke even when the
- *     heading still rendered. Allow a known one with `allowConsoleErrors` on the
- *     route (routes.ts) or `test.use({ allowedConsoleErrors: [...] })`.
+ *     heading still rendered. A spec that asserts its own error status
+ *     (`network: GET /x returned 404`) tolerates that status's console line;
+ *     anything else known and harmless goes in GLOBAL_ALLOWED_PROBLEMS with a
+ *     reason, or `test.use({ allowedConsoleErrors: [...] })` in a TS journey.
  *   • The Vercel bypass header on requests to the site's OWN origin when
  *     VERCEL_AUTOMATION_BYPASS_SECRET is set. Only that origin: adding it to
  *     every request (`extraHTTPHeaders`) would put an unexpected header on the
@@ -79,7 +85,7 @@ export const test = base.extend<PageHealthOptions & { pageProblems: string[] }>(
         expect(
           problems,
           'The page reported errors (listed above). Fix them, or — if one is known and harmless — allow it ' +
-            'with `allowConsoleErrors` on the route in src/routes.ts.',
+            'in GLOBAL_ALLOWED_PROBLEMS (src/support/fixtures.ts) with the reason.',
         ).toEqual([]);
       }
     },

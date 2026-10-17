@@ -12,7 +12,8 @@
     "types": ["node"],
     "strict": true,
     "noUnusedLocals": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true
   },
-  "include": ["playwright.config.ts", "vitest.config.ts", "src/**/*.ts"]
+  "include": ["playwright.config.ts", "vitest.config.ts", "src/**/*.ts", "src/**/*.cjs"]
 }

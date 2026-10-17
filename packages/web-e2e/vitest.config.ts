@@ -1,10 +1,11 @@
 import { defineConfig } from 'vitest/config';
 
-// Vitest runs ONLY the coverage guard (`src/**/*.test.ts`) — the static check
-// that every page in packages/web has an entry in src/routes.ts. It needs no
-// browser and no server, so it rides the `check` job's `nx affected -t test`
-// on every PR that touches packages/web (see `implicitDependencies` in
-// project.json). The browser specs are `*.e2e.ts` and belong to Playwright.
+// Vitest runs ONLY the browser-free half (`src/**/*.test.ts`): every spec in
+// specs/*.md parses, every page in packages/web is visited by one, and the
+// grammar + ui-verify import/export behave. It needs no browser and no
+// server, so it rides the `check` job's `nx affected -t test` on every PR that
+// touches packages/web or this package (see `implicitDependencies` in
+// project.json). The browser tests are `*.e2e.ts` and belong to Playwright.
 export default defineConfig({
   test: {
     reporters:

@@ -6,7 +6,7 @@ the PR when something new ships without a row.
 
 | Suite | What it drives | Where it lives | Guard |
 |-------|----------------|----------------|-------|
-| Website e2e | Every page of `@lorekit/web` in a real browser (Playwright) | `packages/web-e2e/` | `routes.test.ts` — every `page.tsx` needs an entry in `src/routes.ts` |
+| Website e2e | Every page and key journey of `@lorekit/web` in a real browser (Playwright) | `packages/web-e2e/specs/*.md` — Markdown, the ui-verify `WHEN`/`THEN` grammar | `specs.test.ts` — every spec parses, and every `page.tsx` is visited by one |
 | CLI smoke | Every `lorekit` command, through the real binary | `packages/cli/test/smoke/` | `cli-smoke.test.mjs` — every command and alias needs a case |
 | MCP smoke | Every MCP tool: the local stdio server and the hosted server | `packages/cli/test/smoke/cases.mjs` (`mcp` case) and `scripts/smoke/smoke-mcp-tools.mjs` | `cli-smoke.test.mjs` — every catalog tool needs a call in both |
 
@@ -22,32 +22,41 @@ The guards need no browser, no network and no secrets, so they run in the
 | **Merge → before production** (`deploy.yml`) | `e2e-web-staged`: the staged production build, before its domain is assigned. Gates `promote-web-production` | remote lane in `smoke-preview`. Gates `deploy-production` | hosted server in `smoke-preview`. Gates `deploy-production` |
 | **Merge → after production** (`deploy.yml`) | `smoke-production`: `https://lorekit.io`, public + signed in. A failure rolls both halves back | — (it writes; production is never written to by a smoke) | stdio handshake only (read-only) |
 
-## Adding a page
+## Adding a website test
 
-Add one object to `ROUTES` in `packages/web-e2e/src/routes.ts`:
+Append a Markdown block to a file in `packages/web-e2e/specs/` — no TypeScript:
 
-```ts
-{ route: '/settings/billing', access: 'signed-in', heading: { level: 2, name: 'Billing' } },
+```markdown
+## Spec 29: Settings › Billing renders
+url: /settings/billing
+preconditions:
+  - User is signed in (handled by the e2e auth setup)
+flow:
+  - WHEN page loads
+    THEN {role: "heading", name: "Billing"} is visible
 ```
 
-- `route` is the directory of the `page.tsx` with route groups removed
-  (`(dashboard)/settings/billing/page.tsx` → `/settings/billing`). For a dynamic
-  route, keep the pattern in `route` and put a real URL in `path`.
-- `access: 'public'` → one test: it renders for a signed-out visitor.
-  `access: 'signed-in'` → two: a signed-out visitor is sent to
-  `/login?next=<path>`, and a signed-in user sees the heading.
-- `heading` is what a person sees — the exact accessible name. Use the h2 on
-  settings pages (they share the h1 "Settings").
-- `landsOn` when the page redirects; `skipOn` (with a reason) when one kind of
-  target cannot show it; `allowConsoleErrors` (with a comment) for a known,
-  harmless console error.
+- The format is aw-tester's `WHEN`/`THEN` grammar — the body of a
+  `<!-- ui-verify:v1 -->` PR block — so a spec moves between a PR and this suite
+  unchanged. `pnpm spec:import --pr <n>` pulls a PR's ui-verify block in (an
+  intent block arrives as a draft with TODO lines to finish); `pnpm spec:export
+  <file>` prints a block to paste into a PR. Full guide, every supported phrase
+  and locator: [`packages/web-e2e/specs/README.md`](../packages/web-e2e/specs/README.md).
+- `User is signed in …` in `preconditions:` runs the spec as the test user, and
+  also generates a check that a signed-out visitor to its url is sent to
+  `/login?next=<url>`. `Not on production: <why>` skips it there.
+- Assert what a person sees — the heading, exactly as rendered (settings pages
+  share the h1 "Settings", so use their section heading).
+- A typo fails `nx test web-e2e` with the file and line, before CI boots a
+  browser; so does a new `page.tsx` that no spec visits.
 
 Every test also fails on an uncaught exception, a `console.error` or a
 same-origin 5xx, so a page that renders its heading but throws underneath still
 fails.
 
-A journey that spans pages (sign in, navigate, sign out) goes in
-`packages/web-e2e/src/journeys/` — tag it `@signed-in` if it needs a session.
+What the grammar cannot express — a reload, a locator that needs scoping to one
+container, a request-level check — goes in `packages/web-e2e/src/journeys/*.e2e.ts`
+(tag it `@signed-in` if it needs a session).
 
 ## Adding a CLI command
 

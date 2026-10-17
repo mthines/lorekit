@@ -2,20 +2,9 @@ import { signInThroughTheForm } from '../support/auth';
 import { HAS_AUTH_BACKEND } from '../support/env';
 import { expect, test } from '../support/fixtures';
 
-test('the login page offers GitHub, email and magic-link sign-in', async ({ page }) => {
-  await page.goto('/login');
-  await expect(page.getByRole('button', { name: 'Continue with GitHub', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Or email me a magic link', exact: true })).toBeVisible();
-
-  await page.getByRole('button', { name: 'Continue with email', exact: true }).click();
-  await expect(page.locator('#lk-email')).toBeVisible();
-  await expect(page.locator('#lk-password')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Forgot password?', exact: true })).toBeVisible();
-
-  await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Continue with email', exact: true })).toBeVisible();
-});
-
+// The provider-choice screen and the email form are specs/journeys.md (Spec 3).
+// This flow stays in TypeScript: the form's submit is named "Sign in" like the
+// header's GitHub button, and the grammar cannot scope a locator to the form.
 test.describe('signing in with a wrong password', () => {
   // The auth endpoint answers 400 for bad credentials; Chromium logs that
   // failed request as a console error.
