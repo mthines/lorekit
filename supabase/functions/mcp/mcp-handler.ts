@@ -338,10 +338,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // resolved id instead — the path an api_key caller already takes — so it
     // neither reads other users' rows nor writes ownerless ones.
     const db = adapter.mode === 'byod' ? adapter.db : getDb(auth);
-    // toolUserId: who the tool scopes reads and stamps writes by — the api_key
-    // userId; null for a hosted JWT caller (RLS scopes it); the JWT caller's own
-    // id in BYOD mode (see above). analyticsUserId: the resolved user ID for
-    // usage-event annotation regardless of auth type.
+    // toolUserId: who the tool scopes reads and stamps writes by — the caller's
+    // resolved id for api_key and JWT callers alike (a hosted JWT caller is also
+    // RLS-scoped; the id is what makes its writes owned), null for service.
+    // analyticsUserId: the resolved user ID for usage-event annotation.
     const toolUserId = storageUserId(adapter.mode, auth);
     const analyticsUserId = toolUserId ?? (auth.type === 'user' ? auth.userId : null) ?? null;
 
@@ -406,8 +406,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         result = await RETENTION_TOOLS[toolName as keyof typeof RETENTION_TOOLS](db, toolArgs, analyticsUserId, toolSpan, keyRestriction(auth));
       } else {
         // memory.* tools: (db, args, toolUserId, span, keyScoping, correlationId)
-        // toolUserId is null for hosted JWT auth — RLS handles scoping on the DB
-        // side — and the caller's own id in BYOD mode (`storageUserId`).
+        // toolUserId is the caller's own id for api_key and JWT auth, null for
+        // service (`storageUserId`).
         //
         // The trailing `correlationId` is read by `memory.write` alone, for its
         // `cited` array (00107): a citation joins to the run `usage_events`

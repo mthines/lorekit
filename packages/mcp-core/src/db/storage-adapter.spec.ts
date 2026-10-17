@@ -146,8 +146,12 @@ describe('storageUserId', () => {
     expect(storageUserId('byod', { type: 'api_key', userId: USER })).toBe(USER);
   });
 
-  it('leaves a hosted JWT caller to RLS', () => {
-    expect(storageUserId('hosted', { type: 'user', userId: USER })).toBeNull();
+  it('stamps a hosted JWT caller with its id — memory_write reads p_user_id = null as an ownerless row', () => {
+    expect(storageUserId('hosted', { type: 'user', userId: USER })).toBe(USER);
+  });
+
+  it('leaves a hosted JWT caller with no resolved id to RLS rather than refusing it', () => {
+    expect(storageUserId('hosted', { type: 'user' })).toBeNull();
   });
 
   it('scopes a BYOD JWT caller by its id — the storage client carries no JWT for RLS to read', () => {

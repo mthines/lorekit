@@ -97,8 +97,11 @@ export function resolveStorageAdapter(jwt?: string): StorageAdapter {
  * The user id a tool call filters its reads and stamps its writes with.
  *
  * Hosted: an `api_key` caller runs on the service-role client, so it is scoped
- * in app code by its id; a JWT (`user`) caller gets a client carrying its own
- * JWT, so RLS scopes it and the id stays null; `service` sees everything.
+ * in app code by its id. A JWT (`user`) caller gets a client carrying its own
+ * JWT, so RLS already scopes its reads — but writes still need the id: the
+ * `memory_write` RPC treats `p_user_id = null` as an ownerless row, which the
+ * caller could then not read back. So it carries its id too, as the REST
+ * create handler does (`auth.userId`). `service` sees everything.
  *
  * BYOD: the storage client is built from the storage project's SERVICE key and
  * never carries the caller's JWT, so RLS cannot scope a JWT caller there. Left
@@ -112,9 +115,11 @@ export function storageUserId(
   auth: { type: 'user' | 'service' | 'api_key'; userId?: string | null },
 ): string | null {
   if (auth.type === 'api_key') return auth.userId ?? null;
-  if (auth.type === 'user' && mode === 'byod') {
-    if (!auth.userId) throw new Error('BYOD: the session has no resolved user id, so its reads cannot be scoped.');
-    return auth.userId;
+  if (auth.type === 'user') {
+    if (!auth.userId && mode === 'byod') {
+      throw new Error('BYOD: the session has no resolved user id, so its reads cannot be scoped.');
+    }
+    return auth.userId ?? null;
   }
   return null;
 }
