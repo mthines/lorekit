@@ -221,9 +221,9 @@ function suggestMcpEndpoint(u, isSupabaseHost) {
   const functionsMatch = pathname.match(FUNCTIONS_V1_PREFIX);
   if (functionsMatch) return `${u.origin}${functionsMatch[1]}/mcp`;
 
-  if (isSupabaseHost && (pathname === '' || pathname === '/mcp')) {
-    return `${u.origin}/functions/v1/mcp`;
-  }
+  // A `*.supabase.co` host only ever serves LoreKit's MCP at one path, so any
+  // other path (bare origin, `/mcp`, `/rest/v1`, …) has a safe, concrete fix.
+  if (isSupabaseHost) return `${u.origin}/functions/v1/mcp`;
 
   return null;
 }

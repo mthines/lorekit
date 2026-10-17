@@ -529,6 +529,18 @@ const EDGE_CASES = [
     expected: '/functions/v1/mcp',
     suggested: 'https://ref.supabase.co/functions/v1/mcp',
   },
+  {
+    url: 'https://ref.supabase.co/rest/v1',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
+  {
+    url: 'https://ref.supabase.co/rest/v1/?apikey=x',
+    kind: 'wrong-path',
+    expected: '/functions/v1/mcp',
+    suggested: 'https://ref.supabase.co/functions/v1/mcp',
+  },
   { url: 'http://127.0.0.1:54321/functions/v1/mcp', kind: 'ok' },
   { url: 'https://lore.example.com/mcp', kind: 'ok' },
   {
