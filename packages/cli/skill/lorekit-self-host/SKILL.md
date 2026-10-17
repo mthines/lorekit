@@ -206,8 +206,9 @@ npx @lorekit/cli install --endpoint https://<your-project-ref>.supabase.co/funct
 and `LOREKIT_TOKEN` instead of passing `--endpoint`/`--token` each time).
 
 **Warning:** re-running `lorekit install` **without** `--endpoint` rewrites
-the MCP entry back to the hosted URL (`install.mjs` falls back to
-`LOREKIT_MCP_ENDPOINT` when `--endpoint` is omitted). Always pass
+the MCP entry back to the hosted URL: when neither `--endpoint` nor the
+`LOREKIT_MCP_URL` / `LOREKIT_ENDPOINT` env vars are set, `install` uses the
+hosted URL hardcoded in `install.mjs`. Always pass
 `--endpoint`, or export `LOREKIT_MCP_URL` in your shell profile, on every
 subsequent install.
 
