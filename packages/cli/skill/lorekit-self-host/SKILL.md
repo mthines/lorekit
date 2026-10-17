@@ -143,8 +143,21 @@ Skip this step for full self-host.
    — NOT in `.mcp.json`. An older `docs/byod.md` revision may say to put
    these in `.mcp.json`; that env never reaches the edge function, only your
    local MCP client process, so it has no effect on a deployed function.
-4. With that env set, run `lorekit bootstrap` (follow what it prints) and
-   then `lorekit doctor` to confirm the storage connection is healthy.
+4. `lorekit bootstrap` and `lorekit doctor` read `LOREKIT_STORAGE_*` from
+   your **local shell**, not from the Edge Function secrets set in 6.3 — so
+   pass them inline, matching docs/byod.md:
+
+   ```bash
+   LOREKIT_STORAGE_URL=https://<storage-ref>.supabase.co \
+   LOREKIT_STORAGE_SERVICE_KEY=<storage-service-role-key> \
+   lorekit bootstrap
+
+   LOREKIT_STORAGE_URL=https://<storage-ref>.supabase.co \
+   LOREKIT_STORAGE_ANON_KEY=<storage-anon-key> \
+   lorekit doctor
+   ```
+
+   Without those vars in the shell, `doctor` silently skips the BYOD check.
 
 **Caveat — repeat this to the user:** the dashboard, REST API, remote CLI
 commands, and hooks all read the **function project's own DB**. They do
@@ -152,10 +165,12 @@ commands, and hooks all read the **function project's own DB**. They do
 view into BYOD data — it is intentionally invisible to everything except the
 `memory.*` MCP tools and the `lorekit` CLI talking directly to that endpoint.
 
-**Verify:** `lorekit doctor` reports the BYOD storage connection healthy, with
-no error reading or resolving `LOREKIT_STORAGE_URL`. **On failure:** confirm
-all three secrets are set on the function project (not the storage project),
-and that the schema from Step 6.2 applied cleanly.
+**Verify:** the inline-env `lorekit doctor` run from 6.4 prints a **passing**
+`byod storage` line. No `byod storage` line at all means the check was
+skipped — the vars weren't set in that shell; re-run with them inline.
+**On failure:** check the storage URL/anon key you passed, that the schema
+from Step 6.2 applied cleanly, and that all three secrets are set on the
+function project (not the storage project).
 
 ## Step 7 — Dashboard and API token
 
