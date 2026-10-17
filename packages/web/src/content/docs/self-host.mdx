@@ -95,9 +95,10 @@ committed `mcp.endpoint`, so re-run the global install with `--endpoint` too.)
 
 <TutorialCallout variant="warning">
 
-Re-running `npx @lorekit/cli install` **without** `--endpoint` rewrites the
-MCP entry back to the hosted URL. Always pass `--endpoint`, or export
-`LOREKIT_MCP_URL` in your shell profile, on every subsequent install.
+Any `npx @lorekit/cli install` that writes the MCP entry **without**
+`--endpoint` — a `--force` reinstall, a new project, or a global install —
+points it at the hosted URL. Always pass `--endpoint`, or export
+`LOREKIT_MCP_URL` in your shell profile, on every install.
 
 </TutorialCallout>
 

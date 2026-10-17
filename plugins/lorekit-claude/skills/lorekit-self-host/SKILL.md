@@ -206,12 +206,13 @@ npx @lorekit/cli install --endpoint https://<your-project-ref>.supabase.co/funct
 (or export `LOREKIT_MCP_URL=https://<your-project-ref>.supabase.co/functions/v1/mcp`
 and `LOREKIT_TOKEN` instead of passing `--endpoint`/`--token` each time).
 
-**Warning:** re-running `lorekit install` **without** `--endpoint` rewrites
-the MCP entry back to the hosted URL: when neither `--endpoint` nor the
-`LOREKIT_MCP_URL` / `LOREKIT_ENDPOINT` env vars are set, `install` uses the
-hosted URL hardcoded in `install.mjs`. Always pass
-`--endpoint`, or export `LOREKIT_MCP_URL` in your shell profile, on every
-subsequent install.
+**Warning:** any `lorekit install` that writes the MCP entry **without**
+`--endpoint` — a `--force` reinstall, a new project, a global install, or a
+project whose `.mcp.json` lost its LoreKit entry — uses the hosted URL
+hardcoded in `install.mjs` when neither the `LOREKIT_MCP_URL` nor the
+`LOREKIT_ENDPOINT` env var is set. (A plain re-run on an already-installed
+project leaves `.mcp.json` untouched.) Always pass `--endpoint`, or export
+`LOREKIT_MCP_URL` in your shell profile, on every install.
 
 **Verify:** `npx @lorekit/cli doctor` shows your endpoint and reports
 connectivity + authentication passing. **On failure:** re-check the endpoint

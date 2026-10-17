@@ -194,9 +194,12 @@ npx @lorekit/cli install \
   --token    lk_rw_<your-token>
 ```
 
-Re-running `lorekit install` **without** `--endpoint` rewrites the MCP entry
-back to the hosted URL — always pass `--endpoint`, or export
-`LOREKIT_MCP_URL` in your shell profile, on every subsequent install.
+Any `lorekit install` that writes the MCP entry **without** `--endpoint` —
+a `--force` reinstall, a new project, a global install, or a project whose
+`.mcp.json` lost its LoreKit entry — points it at the hosted URL. (A plain
+re-run on an already-installed project leaves `.mcp.json` untouched.) Always
+pass `--endpoint`, or export `LOREKIT_MCP_URL` in your shell profile, on every
+install.
 
 **Claude Code on the web** clones the repo fresh into an ephemeral container, so
 it only sees a committed, repo-root `.mcp.json`. Add `--mcp-json` to also write
