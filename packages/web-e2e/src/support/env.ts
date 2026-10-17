@@ -8,10 +8,11 @@
  *                  `next start` on E2E_PORT (see playwright.config.ts) against
  *                  a build made with NEXT_PUBLIC_USE_LOCAL_SUPABASE=true.
  *   E2E_TARGET     local | preview | production. Inferred from the URL when
- *                  unset (localhost → local, lorekit.io → production, anything
- *                  else → preview). Set it explicitly when the URL does not say
- *                  which backend it talks to — a STAGED production build on a
- *                  *.vercel.app URL is `production`.
+ *                  unset (localhost / 127.0.0.1 / [::1] → local, lorekit.io →
+ *                  production, anything else → preview). Set it explicitly
+ *                  when the URL does not say which backend it talks to — a
+ *                  STAGED production build on a *.vercel.app URL is
+ *                  `production`.
  *
  * ## Getting through Vercel Deployment Protection
  *
@@ -28,9 +29,9 @@
  *      aliases, so the credentials aw-tester already uses work unchanged.
  *   2. E2E_SUPABASE_URL + E2E_SUPABASE_SERVICE_ROLE_KEY — provision a throwaway
  *      confirmed user through the Auth admin API. LOCAL STACKS ONLY: anything
- *      that is not localhost/127.0.0.1 is refused, so a run can never create
- *      users in a real tenant (the same rule scripts/smoke/mint-smoke-jwt.mjs
- *      follows).
+ *      that is not localhost/127.0.0.1/[::1] is refused, so a run can never
+ *      create users in a real tenant (the same rule
+ *      scripts/smoke/mint-smoke-jwt.mjs follows).
  *   3. Neither → every signed-in test is skipped, and the reason is printed.
  */
 
@@ -49,9 +50,11 @@ export const BASE_URL = (env('E2E_BASE_URL') ?? `http://127.0.0.1:${E2E_PORT}`).
 /** True when Playwright must start the site itself. */
 export const STARTS_LOCAL_SERVER = !env('E2E_BASE_URL');
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 function inferTarget(url: string): TargetKind {
   const host = new URL(url).hostname;
-  if (host === 'localhost' || host === '127.0.0.1') return 'local';
+  if (LOCAL_HOSTS.has(host)) return 'local';
   if (host === 'lorekit.io' || host.endsWith('.lorekit.io')) return 'production';
   return 'preview';
 }
@@ -76,8 +79,6 @@ export interface ProvisionedUser {
   serviceRoleKey: string;
 }
 export type UserSource = FixedUser | ProvisionedUser;
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 function resolveUserSource(): { source: UserSource | null; reason: string } {
   const email = env('E2E_USER_EMAIL') ?? env('LOREKIT_TESTING_USER_NAME');
