@@ -187,6 +187,7 @@ function parseAssertion(text) {
   const network = /^network:\s*([A-Z]+)\s+(\/\S*)\s+returned\s+(\d{3})$/.exec(text);
   if (network) {
     if (/[{}]/.test(network[2])) throw new Error(`replace the {placeholder} in ${network[2]} with a real path`);
+    if (/[?#]/.test(network[2])) throw new Error(`network paths match the path only — drop the query from ${network[2]}`);
     return { kind: 'network', method: network[1], path: network[2], status: Number(network[3]) };
   }
   if (/^network:/.test(text)) throw new Error('network assertions read exactly `network: METHOD /path returned NNN`');

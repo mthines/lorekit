@@ -122,6 +122,10 @@ describe('grammar', () => {
     });
   });
 
+  it('refuses a network path with a query, which responses (recorded by pathname) never match', () => {
+    expect(() => parseAssertion('network: GET /x?y=1 returned 200')).toThrow(/path only/);
+  });
+
   it('refuses `has text`, which would silently read as an attribute', () => {
     expect(() => parseAssertion('{role: "heading", name: "Blog"} has text: "Blog"')).toThrow(/not an attribute/);
   });
