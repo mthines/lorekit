@@ -371,6 +371,15 @@ jobs:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # Every `lorekit` command against this PR's preview deploy — the same
+      # remote lane deploy.yml's smoke-preview runs after a merge, so `/preview`
+      # shows before merging whether the CLI still works against the PR's API.
+      - name: Smoke — every CLI command against preview
+        run: node packages/cli/test/smoke/run.mjs --remote "$URL" "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
       # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
       # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant.
       # Runs only when the optional credentials are configured; otherwise the
