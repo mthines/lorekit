@@ -38,10 +38,11 @@ flow:
 
 - The format is aw-tester's `WHEN`/`THEN` grammar — the body of a
   `<!-- ui-verify:v1 -->` PR block — so a spec moves between a PR and this suite
-  unchanged. `pnpm spec:import --pr <n>` pulls a PR's ui-verify block in (an
-  intent block arrives as a draft with TODO lines to finish); `pnpm spec:export
-  <file>` prints a block to paste into a PR. Full guide, every supported phrase
-  and locator: [`packages/web-e2e/specs/README.md`](../packages/web-e2e/specs/README.md).
+  unchanged. `pnpm --filter @lorekit/web-e2e spec:import --pr <n>` pulls a PR's
+  ui-verify block in (an intent block arrives as a draft with TODO lines to
+  finish); `pnpm --filter @lorekit/web-e2e spec:export <file>` prints a block to
+  paste into a PR. Full guide, every supported phrase and locator:
+  [`packages/web-e2e/specs/README.md`](../packages/web-e2e/specs/README.md).
 - `User is signed in …` in `preconditions:` runs the spec as the test user, and
   also generates a check that a signed-out visitor to its url is sent to
   `/login?next=<url>`. `Not on production: <why>` skips it there.
