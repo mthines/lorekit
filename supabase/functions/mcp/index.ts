@@ -169,7 +169,20 @@ Deno.serve(async (req: Request) => {
       ...(auth.userId ? { 'auth.user_id': auth.userId } : {}),
     });
 
-    const adapter = resolveStorageAdapter();
+    // A BYOD misconfiguration (e.g. LOREKIT_STORAGE_URL without the service
+    // key) throws here. Uncaught, the runtime answers every MCP call with a
+    // bare `500 Internal Server Error`, so the operator never sees the reason.
+    // Deliver it in-band like the auth failure above; the message names env
+    // vars, never their values, and only authenticated callers reach it.
+    let adapter: ReturnType<typeof resolveStorageAdapter>;
+    try {
+      adapter = resolveStorageAdapter();
+    } catch (err) {
+      const message = (err as Error).message;
+      console.error(`[mcp] storage configuration error: ${message}`);
+      span.error(message, 'storage_config');
+      return jsonrpcError(await peekRequestId(req), -32603, message);
+    }
 
     // Per-user request rate limit — transport layer, all MCP methods.
     // Service-role (CI/internal) is exempt; unauthenticated requests never
