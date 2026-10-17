@@ -804,11 +804,18 @@ and the outbound Supabase fetch calls; the custom spans add business context
 | `lorekit.org.invite.accept` | `lorekit.invite.id` |
 | `lorekit.org.invite.decline` | `lorekit.invite.id` |
 
-### API token management (`lib/tokens.ts`)
+### API token management (`lib/token-mint.ts`, `lib/tokens.ts`)
+
+The `lorekit.api_token.generate` span is emitted from `lib/token-mint.ts`'s `mintToken` —
+the `server-only` mint core shared by both callers: `lib/tokens.ts`'s `generateToken`
+action (dashboard "Generate token" button, revalidates on success) and `lib/first-token.ts`'s
+`resolveFirstToken` (the `/lore` first-sign-in auto-mint, which runs during a Server
+Component render and must never revalidate). `lorekit.api_token.origin` tells the two
+apart in telemetry rather than guessing from auth tier.
 
 | Span name | Key attributes |
 |-----------|---------------|
-| `lorekit.api_token.generate` | `lorekit.api_token.permissions`, `lorekit.api_token.id` (on success), `lorekit.api_token.limit_reached` (when cap is hit) |
+| `lorekit.api_token.generate` | `lorekit.api_token.permissions`, `lorekit.api_token.origin` (`onboarding`\|`dashboard`), `lorekit.api_token.id` (on success), `lorekit.api_token.limit_reached` (when cap is hit) |
 | `lorekit.api_token.revoke` | `lorekit.api_token.id`, `lorekit.api_token.prefix` |
 
 On **any RPC/DB failure** the span also carries:
