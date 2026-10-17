@@ -77,7 +77,7 @@ export interface ProvisionedUser {
 }
 export type UserSource = FixedUser | ProvisionedUser;
 
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 function resolveUserSource(): { source: UserSource | null; reason: string } {
   const email = env('E2E_USER_EMAIL') ?? env('LOREKIT_TESTING_USER_NAME');
