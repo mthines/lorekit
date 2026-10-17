@@ -125,7 +125,9 @@ curl --create-dirs -o ~/.claude/skills/lorekit-self-host/SKILL.md \
 <TutorialCallout>
 
 **Next steps:** once you're connected, see [Remote storage](/docs/remote) for
-the token-scoping, CI, and GitHub App features that work the same way against
-a self-hosted endpoint.
+token scoping and CI, which work the same way against a self-hosted endpoint.
+The GitHub App does not: it is off until you register your own App, point its
+webhook at your project, and set `GITHUB_APP_ENABLED=true` — see the
+[GitHub App guide](https://github.com/mthines/lorekit/blob/main/docs/github-app.md).
 
 </TutorialCallout>
