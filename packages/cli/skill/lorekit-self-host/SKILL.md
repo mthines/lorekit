@@ -118,8 +118,9 @@ supabase functions deploy --no-verify-jwt --project-ref <your-project-ref>
 **Verify, in order:**
 
 1. Health check: `curl https://<your-project-ref>.supabase.co/functions/v1/health`
-   must return `{"status":"ok","db":true}`. `{"db":false}` means the function
-   can't reach the DB — recheck the secrets from Step 4.
+   must return HTTP 200 with `"status":"ok"` and `"db":"ok"`. A 503 with
+   `"status":"degraded"` and `"db":"error"` means the function can't reach the
+   DB — recheck the secrets from Step 4.
 2. `memories` deployed: `curl -s -o /dev/null -w '%{http_code}' https://<your-project-ref>.supabase.co/functions/v1/memories`
    must return `401` (deployed, auth required). A `404` means the function
    wasn't deployed — re-run the deploy command above; it deploys every

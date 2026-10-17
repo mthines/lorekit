@@ -117,7 +117,7 @@ Verify the deployment:
 
 ```bash
 pnpm nx health supabase
-# expected: {"status":"ok","db":true}
+# expected: HTTP 200 {"status":"ok","version":"1.0.0","db":"ok","ts":"…"}
 
 curl -s -o /dev/null -w '%{http_code}' https://<your-project-ref>.supabase.co/functions/v1/memories
 # expected: 401 (deployed, auth required) — 404 means it did not deploy
@@ -258,7 +258,7 @@ other repos' secrets are untouched.
 ```bash
 # 1. Health check
 curl https://<your-project-ref>.supabase.co/functions/v1/health
-# → {"status":"ok","db":true}
+# → {"status":"ok","version":"1.0.0","db":"ok","ts":"…"}
 
 # 2. Write a test lesson
 curl -X POST https://<your-project-ref>.supabase.co/functions/v1/mcp \
