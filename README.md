@@ -151,6 +151,10 @@ lorekit install --completions auto   # zsh / fish tab completion
 - `lorekit-groom` — tidies a noisy store: merges near-duplicates, lints weak
   lessons, sets expiry. Always proposes a plan before changing anything.
 
+Also shipped in the Claude plugin, but **not** installed by `lorekit install`
+(it's a one-time runbook, not everyday agent memory): `lorekit-self-host` — a
+slash-only guided deployment walkthrough. Invoke it with `/lorekit-self-host`.
+
 </details>
 
 ## One store, every agent
@@ -245,7 +249,8 @@ self-hosted instance sets its own limits.
 
 The whole stack — MCP server, dashboard, database — is in this repo under MIT,
 and deploys to your own Supabase and Vercel projects in about five minutes
-([self-hosting guide](./docs/install.md)). Or skip the hosted store entirely
+([self-hosting guide](./docs/install.md), or the walkthrough at
+[lorekit.io/docs/self-host](https://lorekit.io/docs/self-host)). Or skip the hosted store entirely
 and keep lessons as markdown in your repo.
 
 </details>

@@ -11,6 +11,7 @@ import {
   Link2,
   FileCode,
   Archive,
+  Server,
   type LucideIcon,
 } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
@@ -38,6 +39,7 @@ export const DOCS_SECTIONS: readonly DocsSection[] = [
   { id: 'setup', label: 'Getting started', icon: Rocket, summary: 'Connect your agent and generate a token' },
   { id: 'offline', label: 'Offline storage', icon: HardDrive, summary: 'Store lessons locally without a server' },
   { id: 'remote', label: 'Remote storage', icon: Cloud, summary: 'Sync lessons to the hosted LoreKit server' },
+  { id: 'self-host', label: 'Self-hosting', icon: Server, summary: 'Run your own LoreKit backend, with optional BYOD' },
   { id: 'organization', label: 'Team sharing', icon: Users, summary: 'Share lore across your organization' },
   { id: 'private', label: 'Private lore', icon: Lock, summary: 'Keep sensitive lessons private' },
   { id: 'tags', label: 'Tags & scopes', icon: Tag, summary: 'Organise lessons by scope and tag' },

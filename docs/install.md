@@ -2,6 +2,9 @@
 
 > This guide is structured so an AI agent can execute every step autonomously, or a developer can follow it manually in about 5 minutes. Each section is self-contained with exact commands.
 
+> Prefer a guided run? Use `/lorekit-self-host`. Choosing between full
+> self-host and BYOD? See https://lorekit.io/docs/self-host.
+
 ---
 
 ## Prerequisites
@@ -31,16 +34,16 @@ pnpm install
 
 ## Step 2 — Link to your Supabase project
 
-Your project ref is the subdomain of your Supabase URL: `https://pqokxlhvnosogizsjztg.supabase.co`
+Your project ref is the subdomain of your Supabase URL: `https://<your-project-ref>.supabase.co`
 
 ```bash
-supabase link --project-ref pqokxlhvnosogizsjztg
+supabase link --project-ref <your-project-ref>
 ```
 
 Create a `.env.local` file in the repo root (needed for NX targets):
 
 ```bash
-echo "SUPABASE_PROJECT_REF=pqokxlhvnosogizsjztg" > .env.local
+echo "SUPABASE_PROJECT_REF=<your-project-ref>" > .env.local
 ```
 
 ---
@@ -60,7 +63,7 @@ This applies all migrations in `supabase/migrations/` and creates all required t
 1. Go to https://github.com/settings/developers → OAuth Apps → New OAuth App
    - **Application name:** LoreKit (or any name)
    - **Homepage URL:** `https://<your-vercel-url>.vercel.app` (or `http://localhost:3000` for local dev)
-   - **Authorization callback URL:** `https://pqokxlhvnosogizsjztg.supabase.co/auth/v1/callback`
+   - **Authorization callback URL:** `https://<your-project-ref>.supabase.co/auth/v1/callback`
 2. Note the **Client ID** and generate a **Client Secret**
 3. In Supabase → Auth → Providers → GitHub: enable and paste both values
 
@@ -70,16 +73,23 @@ This applies all migrations in `supabase/migrations/` and creates all required t
 
 ```bash
 supabase secrets set \
-  SUPABASE_URL=https://pqokxlhvnosogizsjztg.supabase.co \
+  SUPABASE_URL=https://<your-project-ref>.supabase.co \
   SUPABASE_ANON_KEY=<publishable-key> \
   SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
+  ALLOWED_ORIGINS=https://<your-dashboard-domain> \
   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com \
   OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <dash0-token>" \
   VERCEL_ENV=production \
-  --project-ref pqokxlhvnosogizsjztg
+  --project-ref <your-project-ref>
 ```
 
 Find the Supabase keys in: Supabase dashboard → Project Settings → API
+
+`ALLOWED_ORIGINS` is only needed if you deploy your own dashboard (Step 8) on
+a domain other than `lorekit.io` — with `VERCEL_ENV=production` and no
+`ALLOWED_ORIGINS`, the REST CORS allowlist defaults to `https://lorekit.io`
+and your own dashboard's requests are blocked. The Dash0/OTel vars are
+optional telemetry and safe to omit.
 
 > `GITHUB_WEBHOOK_SECRET` is **not required** — webhook secrets are now
 > per-repository and generated from the dashboard (Step 10). The env var is
@@ -89,34 +99,54 @@ Find the Supabase keys in: Supabase dashboard → Project Settings → API
 
 ---
 
-## Step 6 — Deploy the MCP server
+## Step 6 — Deploy all Edge Functions
 
 ```bash
-pnpm nx fn:deploy supabase
+supabase functions deploy --no-verify-jwt --project-ref <your-project-ref>
 ```
 
-This typechecks and deploys two Edge Functions:
-- `mcp` — the MCP server (requires auth)
-- `health` — unauthenticated health check endpoint
+`pnpm nx fn:deploy supabase` only typechecks and deploys `mcp` + `health` —
+fine for the hosted project's own deploy pipeline, but it leaves the
+`memories` function (used by hooks, the remote CLI commands, and the
+dashboard's REST API), `orgs`, `openapi`, `blog`, `profiling`, and
+`groom-sweep` undeployed. Deploy all 8 Edge Functions with the command above
+instead — it is exactly what `.github/workflows/deploy.yml` runs, and
+`supabase/config.toml` sets `verify_jwt = false` for all of them.
 
 Verify the deployment:
 
 ```bash
 pnpm nx health supabase
 # expected: {"status":"ok","db":true}
+
+curl -s -o /dev/null -w '%{http_code}' https://<your-project-ref>.supabase.co/functions/v1/memories
+# expected: 401 (deployed, auth required) — 404 means it did not deploy
 ```
 
 ---
 
 ## Step 7 — Generate an API token
 
-1. Open the web dashboard: https://lorekit.io/lore (or your own Vercel URL after step 8)
-2. Go to **Lore Explorer → Step 2: Connect your agent**
-3. Click **Generate new token**
-4. Enter a name (e.g. `claude-local`, `ci-github-actions`)
-5. Choose **Read + Write** for agents that learn, **Read only** for CI context injection,
+A token must be minted on a dashboard that is connected to **your** project —
+a token minted on `lorekit.io` only authenticates the hosted project and will
+not work against your self-hosted deployment. Open a dashboard connected to
+your project first:
+
+- Deploy your own dashboard now (see Step 8 below) and open it, **or**
+- Run it locally against your project: set `NEXT_PUBLIC_SUPABASE_URL` and
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `packages/web/.env.local` to your
+  project's values, add `http://localhost:3000/api/auth/callback` to
+  Supabase → Auth → URL Configuration → Redirect URLs, then run
+  `pnpm nx serve web`.
+
+Then, in that dashboard:
+
+1. Go to **Lore Explorer → Step 2: Connect your agent**
+2. Click **Generate new token**
+3. Enter a name (e.g. `claude-local`, `ci-github-actions`)
+4. Choose **Read + Write** for agents that learn, **Read only** for CI context injection,
    or **Write only** for a one-way lesson feeder that should never read
-6. Copy the token — it is shown **once only**
+5. Copy the token — it is shown **once only**
 
 Token formats:
 - `lk_rw_<32 chars>` — read + write
@@ -138,9 +168,9 @@ If you want your own dashboard instance (rather than using `lorekit.io`):
 3. Add environment variables:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL          https://pqokxlhvnosogizsjztg.supabase.co
+NEXT_PUBLIC_SUPABASE_URL          https://<your-project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY     <publishable-key>
-NEXT_PUBLIC_SUPABASE_PROJECT_REF  pqokxlhvnosogizsjztg
+NEXT_PUBLIC_SUPABASE_PROJECT_REF  <your-project-ref>
 NEXT_PUBLIC_APP_URL               https://<your-vercel-url>.vercel.app
 NEXT_PUBLIC_DASH0_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
 NEXT_PUBLIC_DASH0_AUTH_TOKEN      <ingesting-only-dash0-token>
@@ -156,13 +186,17 @@ OTEL_EXPORTER_OTLP_HEADERS        Authorization=Bearer <dash0-token>
 
 ## Step 9 — Connect your agent
 
-The fastest path is the CLI — it scaffolds the skill, MCP connection, and lifecycle hooks in one command:
+The fastest path is the CLI — it scaffolds the skill, MCP connection, and lifecycle hooks in one command. `<your-project-ref>` is the same ref you linked in Step 2 — this is YOUR project, never the hosted one:
 
 ```bash
 npx @lorekit/cli install \
-  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+  --endpoint https://<your-project-ref>.supabase.co/functions/v1/mcp \
   --token    lk_rw_<your-token>
 ```
+
+Re-running `lorekit install` **without** `--endpoint` rewrites the MCP entry
+back to the hosted URL — always pass `--endpoint`, or export
+`LOREKIT_MCP_URL` in your shell profile, on every subsequent install.
 
 **Claude Code on the web** clones the repo fresh into an ephemeral container, so
 it only sees a committed, repo-root `.mcp.json`. Add `--mcp-json` to also write
@@ -171,7 +205,7 @@ reference instead of an embedded token, so it holds no secret:
 
 ```bash
 npx @lorekit/cli install --global --mcp-json \
-  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+  --endpoint https://<your-project-ref>.supabase.co/functions/v1/mcp
 ```
 
 Commit the generated `.mcp.json` and set `LOREKIT_TOKEN` as an environment
@@ -191,7 +225,7 @@ For any other MCP-compatible agent, add the endpoint and Bearer token to the age
     "lorekit": {
       "command": "npx",
       "args": ["-y", "mcp-remote",
-               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "https://<your-project-ref>.supabase.co/functions/v1/mcp",
                "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
@@ -209,7 +243,7 @@ are **per-repository** — generate one for each repo you want to webhook:
 2. Under **Webhook secrets**, add the repo (`owner/repo`) and copy the
    generated secret — it's shown once
 3. Go to that repo on GitHub → Settings → Webhooks → Add webhook
-4. **Payload URL:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`
+4. **Payload URL:** `https://<your-project-ref>.supabase.co/functions/v1/mcp/webhooks/github`
 5. **Content type:** `application/json`
 6. **Secret:** the value you copied in step 2
 7. **Events:** Pull request review comments + Pull request reviews
@@ -223,18 +257,18 @@ other repos' secrets are untouched.
 
 ```bash
 # 1. Health check
-curl https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/health
+curl https://<your-project-ref>.supabase.co/functions/v1/health
 # → {"status":"ok","db":true}
 
 # 2. Write a test lesson
-curl -X POST https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+curl -X POST https://<your-project-ref>.supabase.co/functions/v1/mcp \
   -H "Authorization: Bearer lk_rw_<your-token>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.write","arguments":{"scope":"global","key":"install-test","value":"LoreKit is working."}}}'
 # → {"jsonrpc":"2.0","id":1,"result":{"id":"...","created_at":"..."}}
 
 # 3. Read it back
-curl -X POST https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+curl -X POST https://<your-project-ref>.supabase.co/functions/v1/mcp \
   -H "Authorization: Bearer lk_ro_<your-token>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory.read","arguments":{"scope":"global","key":"install-test"}}}'
@@ -255,7 +289,7 @@ Store a read+write token as `LOREKIT_TOKEN` in your repo secrets, then use it in
       -H "Content-Type: application/json" \
       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.list","arguments":{"scope":"repo::${{ github.repository }}"}}}'
   env:
-    LOREKIT_MCP_URL: https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+    LOREKIT_MCP_URL: https://<your-project-ref>.supabase.co/functions/v1/mcp
     LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}
 ```
 
