@@ -15,9 +15,10 @@ import {
   readMcpConfig,
   tokenKind,
   readLorekitJson,
+  isWebMcpServerEntry,
 } from '../shared/config.mjs';
 import { checkSkillVersions } from '../shared/skill-versions.mjs';
-import { splitEndpoint } from '../shared/mcp.mjs';
+import { splitEndpoint, classifyMcpEndpoint } from '../shared/mcp.mjs';
 import {
   resolveTelemetryConfig,
   resolveTelemetryTokenSource,
@@ -305,6 +306,72 @@ async function checkLocal(control, root, args, record) {
   if (args.deep) await deepCheckLocal(store, scope, record);
 }
 
+/**
+ * Where a resolved endpoint can have come from, keyed by the `source` id
+ * `resolveProjectConnection`/`resolveConnection` attach to their result (and
+ * `checkRemote` derives for the `--endpoint` flag / project `.mcp.json`
+ * branches it resolves directly). One record, not parallel label/fix maps —
+ * adding a new source is one entry here, not a matching `if` in two places.
+ */
+export const ENDPOINT_SOURCES = {
+  flag: { label: '--endpoint flag', fix: (u) => `pass \`--endpoint ${u}\`` },
+  'project-mcp': { label: '.mcp.json', fix: (u) => `run \`lorekit install --project --endpoint ${u}\`` },
+  'project-mcp-web': {
+    label: '.mcp.json (committable web entry)',
+    fix: (u) => `run \`lorekit install --project --mcp-json --endpoint ${u}\``,
+  },
+  'global-mcp': { label: '~/.claude.json', fix: (u) => `run \`lorekit install --global --endpoint ${u}\`` },
+  'lorekit-json': {
+    label: '.lorekit.json mcp.endpoint',
+    fix: (u) => `set "mcp.endpoint" to ${u} in .lorekit.json`,
+  },
+  'env:LOREKIT_MCP_URL': { label: 'LOREKIT_MCP_URL', fix: (u) => `export LOREKIT_MCP_URL=${u}` },
+  'env:LOREKIT_ENDPOINT': { label: 'LOREKIT_ENDPOINT', fix: (u) => `export LOREKIT_ENDPOINT=${u}` },
+};
+
+// An unrecognised or missing source (e.g. a future resolver branch this map
+// hasn't caught up with yet) still gets a usable warning instead of a thrown
+// error — degraded attribution, not a crash.
+const UNKNOWN_ENDPOINT_SOURCE = {
+  label: 'resolved config',
+  fix: (u) => `run \`lorekit install --endpoint ${u}\``,
+};
+
+// Used in the fix text when `classifyMcpEndpoint` could not guess a safe
+// replacement URL (an invalid URL, or a custom domain with an unrecognised
+// path) — never silently omitted, so the check always says what endpoint a
+// fix needs to end with, even without a concrete suggestion to offer.
+const SUGGESTED_URL_PLACEHOLDER = '<your MCP URL ending in /mcp>';
+
+/**
+ * Pure: judge a resolved endpoint's shape and report a doctor-shaped result.
+ * Never FAILs — a custom reverse proxy can legitimately serve MCP on an
+ * unconventional path, so this cannot prove an endpoint is broken, only that
+ * its shape is suspicious. See `classifyMcpEndpoint` for the shape rules.
+ *
+ * @returns {{ kind: 'pass', detail: string } | { kind: 'warn', detail: string }}
+ */
+export function endpointCheck(endpoint, source) {
+  const classification = classifyMcpEndpoint(endpoint);
+  if (classification.kind === 'ok') {
+    return { kind: 'pass', detail: endpoint };
+  }
+
+  const { label, fix } = ENDPOINT_SOURCES[source] || UNKNOWN_ENDPOINT_SOURCE;
+  const reason =
+    classification.kind === 'invalid-url'
+      ? 'is not a valid http(s) URL'
+      : `does not end in ${classification.expected}`;
+  const fixTarget = (classification.kind === 'wrong-path' && classification.suggested) || SUGGESTED_URL_PLACEHOLDER;
+
+  return {
+    kind: 'warn',
+    detail:
+      `${endpoint} ${reason} (from ${label}) — MCP clients will 404 even though the ` +
+      `REST-based connectivity/authentication probes pass. fix: ${fix(fixTarget)}`,
+  };
+}
+
 async function checkRemote(control, root, args, record) {
   const override = { endpoint: args.endpoint || null, token: args.token || null };
   const mcp = readMcpConfig(root);
@@ -313,6 +380,16 @@ async function checkRemote(control, root, args, record) {
 
   const endpoint = override.endpoint || fromMcp.endpoint || control.connection.endpoint;
   const token = override.token || fromMcp.token || control.connection.token;
+
+  // Resolved in the SAME precedence as `endpoint` above, so the `endpoint`
+  // check below can name exactly which config source produced it — re-reading
+  // the files here would risk drifting from that precedence; this just labels
+  // the branch already taken.
+  const endpointSource = override.endpoint
+    ? 'flag'
+    : fromMcp.endpoint
+      ? (isWebMcpServerEntry(configured.server) ? 'project-mcp-web' : 'project-mcp')
+      : control.connection.source;
 
   if (mcp.present && !mcp.valid) {
     record('fail', '.mcp.json', 'invalid JSON — fix it or re-run `lorekit install`');
@@ -327,7 +404,8 @@ async function checkRemote(control, root, args, record) {
   } else if (endpoint.includes('<project-ref>')) {
     record('fail', 'endpoint', `still a placeholder: ${endpoint}`);
   } else {
-    record('pass', 'endpoint', endpoint);
+    const check = endpointCheck(endpoint, endpointSource);
+    record(check.kind, 'endpoint', check.detail);
   }
 
   const kind = tokenKind(token);

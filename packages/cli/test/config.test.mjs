@@ -159,7 +159,7 @@ test('copyDir reports how many files it actually wrote', () => {
 });
 
 // ── mcp.endpoint in .lorekit.json ─────────────────────────────────────────────
-import { resolveProjectConnection } from '../src/shared/config.mjs';
+import { resolveProjectConnection, resolveConnection } from '../src/shared/config.mjs';
 import { splitEndpoint } from '../src/shared/mcp.mjs';
 
 test('resolveProjectConnection uses mcp.endpoint from .lorekit.json as fallback', () => {
@@ -487,4 +487,141 @@ test('removeWebMcpServer removes the web form but leaves an embedded-token entry
   );
   assert.equal(removeWebMcpServer(embedded).removed, false, 'embedded-token entry is not the web form');
   assert.ok(readMcpConfig(embedded).config.mcpServers.lorekit, 'embedded-token entry preserved');
+});
+
+// ── `source` attribution (feeds doctor's endpoint-shape warning) ─────────────
+//
+// `resolveProjectConnection` / `resolveConnection` now report WHICH config
+// source produced the resolved endpoint, so `doctor` can name it (and the
+// matching fix command) without re-deriving this same precedence by re-reading
+// the files. Every test here pins HOME/USERPROFILE to an empty temp dir and
+// clears the LOREKIT_MCP_URL/LOREKIT_ENDPOINT/LOREKIT_TOKEN env vars first —
+// the three pre-existing `resolveProjectConnection` tests above do NOT do this
+// and leak the developer's real ~/.claude.json (known, pre-existing baseline
+// reds; not fixed here per the plan).
+import { loadControl } from '../src/shared/control.mjs';
+
+function withIsolatedConnectionEnv(home, fn) {
+  const prev = {
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+    LOREKIT_MCP_URL: process.env.LOREKIT_MCP_URL,
+    LOREKIT_ENDPOINT: process.env.LOREKIT_ENDPOINT,
+    LOREKIT_TOKEN: process.env.LOREKIT_TOKEN,
+  };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.LOREKIT_MCP_URL;
+  delete process.env.LOREKIT_ENDPOINT;
+  delete process.env.LOREKIT_TOKEN;
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('resolveProjectConnection attributes an embedded-token project .mcp.json to source "project-mcp"', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  const ep = 'https://project.supabase.co/functions/v1/mcp';
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${ep}?token=lk_rw_proj`] } } }),
+  );
+  withIsolatedConnectionEnv(home, () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.source, 'project-mcp');
+    assert.equal(conn.endpoint, ep);
+  });
+});
+
+test('resolveProjectConnection attributes the committable web .mcp.json to source "project-mcp-web"', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  upsertWebMcpServer(root, WEB_ENDPOINT);
+  withIsolatedConnectionEnv(home, () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.source, 'project-mcp-web');
+    assert.equal(conn.endpoint, WEB_ENDPOINT);
+  });
+});
+
+test('resolveProjectConnection attributes ~/.claude.json to source "global-mcp"', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  const ep = 'https://global.supabase.co/functions/v1/mcp';
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${ep}?token=lk_rw_glob`] } } }),
+  );
+  withIsolatedConnectionEnv(home, () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.source, 'global-mcp');
+    assert.equal(conn.endpoint, ep);
+  });
+});
+
+test('resolveProjectConnection attributes .lorekit.json mcp.endpoint to source "lorekit-json"', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  const ep = 'https://fallback.supabase.co/functions/v1/mcp';
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'mcp.endpoint': ep }));
+  withIsolatedConnectionEnv(home, () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.source, 'lorekit-json');
+    assert.equal(conn.endpoint, ep);
+  });
+});
+
+test('resolveProjectConnection attributes LOREKIT_MCP_URL to source "env:LOREKIT_MCP_URL"', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  withIsolatedConnectionEnv(home, () => {
+    process.env.LOREKIT_MCP_URL = 'https://envurl.supabase.co/functions/v1';
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.source, 'env:LOREKIT_MCP_URL');
+    assert.equal(conn.endpoint, 'https://envurl.supabase.co/functions/v1');
+  });
+});
+
+test('resolveProjectConnection attributes LOREKIT_ENDPOINT to source "env:LOREKIT_ENDPOINT"', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  withIsolatedConnectionEnv(home, () => {
+    process.env.LOREKIT_ENDPOINT = 'https://envep.supabase.co/functions/v1';
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.source, 'env:LOREKIT_ENDPOINT');
+    assert.equal(conn.endpoint, 'https://envep.supabase.co/functions/v1');
+  });
+});
+
+test('resolveConnection attributes the --endpoint flag to source "flag", and null endpoint to source null', () => {
+  const home = tmpRoot();
+  withIsolatedConnectionEnv(home, () => {
+    const withFlag = resolveConnection({ endpoint: 'https://flag.supabase.co/functions/v1/mcp' });
+    assert.equal(withFlag.source, 'flag');
+
+    const withNothing = resolveConnection({});
+    assert.equal(withNothing.endpoint, null);
+    assert.equal(withNothing.source, null);
+  });
+});
+
+test('loadControl(root).connection.source carries the same source resolveProjectConnection returned', () => {
+  const home = tmpRoot();
+  const root = tmpRoot();
+  const ep = 'https://project.supabase.co/functions/v1/mcp';
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${ep}?token=lk_rw_proj`] } } }),
+  );
+  withIsolatedConnectionEnv(home, () => {
+    const control = loadControl(root, { env: process.env });
+    assert.equal(control.connection.source, 'project-mcp');
+    assert.equal(control.connection.endpoint, ep);
+  });
 });

@@ -610,17 +610,28 @@ export function copyDir(src, dest, { force = false } = {}) {
   return written;
 }
 
-// Resolve endpoint + token from flags, then env, in that order.
+// Resolve endpoint + token from flags, then env, in that order. `source`
+// names which one won (`flag` / `env:LOREKIT_MCP_URL` / `env:LOREKIT_ENDPOINT`),
+// or `null` when no endpoint was resolved at all — `doctor` reads it to name
+// where a wrong-shaped endpoint came from without re-deriving this precedence.
 export function resolveConnection(args) {
-  const endpoint =
-    args.endpoint ||
-    process.env.LOREKIT_MCP_URL ||
-    process.env.LOREKIT_ENDPOINT ||
-    null;
+  let endpoint = null;
+  let source = null;
+  if (args.endpoint) {
+    endpoint = args.endpoint;
+    source = 'flag';
+  } else if (process.env.LOREKIT_MCP_URL) {
+    endpoint = process.env.LOREKIT_MCP_URL;
+    source = 'env:LOREKIT_MCP_URL';
+  } else if (process.env.LOREKIT_ENDPOINT) {
+    endpoint = process.env.LOREKIT_ENDPOINT;
+    source = 'env:LOREKIT_ENDPOINT';
+  }
   const token = args.token || process.env.LOREKIT_TOKEN || null;
   return {
     endpoint: typeof endpoint === 'string' ? endpoint.trim() : null,
     token: typeof token === 'string' ? token.trim() : null,
+    source: endpoint ? source : null,
   };
 }
 
@@ -652,19 +663,34 @@ export function tokenKind(token) {
 // LOREKIT_TOKEN was exported — so a tokenless source is only remembered as an
 // endpoint fallback, and the loop keeps looking for a stored token.
 export function resolveProjectConnection(root, splitEndpoint) {
-  const sources = [readLorekitServer(root), readServerFromFile(mcpConfigPath(root, 'global'))];
+  // Each candidate source carries its own id so the winning branch can report
+  // WHERE the endpoint came from (doctor's `source` field) without re-reading
+  // the files a second time and re-deriving this same precedence.
+  const sources = [
+    { configured: readLorekitServer(root), source: 'project-mcp' },
+    { configured: readServerFromFile(mcpConfigPath(root, 'global')), source: 'global-mcp' },
+  ];
   let endpointOnly = null; // closest usable endpoint that carried no token (e.g. the web .mcp.json)
-  for (const configured of sources) {
+  let endpointOnlySource = null;
+  for (const { configured, source } of sources) {
     if (!configured || !configured.url) continue;
     const { endpoint, token } = splitEndpoint(configured.url);
     if (!endpoint || endpoint.includes('<project-ref>')) continue;
-    if (token) return { endpoint, token }; // a stored token wins; project (closest) beats global
-    if (!endpointOnly) endpointOnly = endpoint; // remember the closest tokenless source, keep looking
+    // The committable web form (auth via a `--header` referencing an env var)
+    // is a distinct source id from a plain embedded-token/plain-URL entry, so
+    // a WARN naming it points at `install --mcp-json`, not a bare `install`.
+    const resolvedSource =
+      source === 'project-mcp' && isWebMcpServerEntry(configured.server) ? 'project-mcp-web' : source;
+    if (token) return { endpoint, token, source: resolvedSource }; // a stored token wins; project (closest) beats global
+    if (!endpointOnly) {
+      endpointOnly = endpoint; // remember the closest tokenless source, keep looking
+      endpointOnlySource = resolvedSource;
+    }
   }
   if (endpointOnly) {
     // No source stored a token — the committable web .mcp.json is exactly this
     // case. Fall back to the env token so the local CLI still authenticates.
-    return { endpoint: endpointOnly, token: process.env.LOREKIT_TOKEN || null };
+    return { endpoint: endpointOnly, token: process.env.LOREKIT_TOKEN || null, source: endpointOnlySource };
   }
 
   // Fallback: `mcp.endpoint` in .lorekit.json — a committable URL without token.
@@ -678,6 +704,7 @@ export function resolveProjectConnection(root, splitEndpoint) {
     return {
       endpoint: committedEndpoint,
       token: process.env.LOREKIT_TOKEN || null,
+      source: 'lorekit-json',
     };
   }
 

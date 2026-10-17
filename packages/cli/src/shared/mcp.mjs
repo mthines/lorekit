@@ -129,6 +129,27 @@ function parseBody(text) {
 }
 
 /**
+ * The shape of "this URL ends in /mcp" — shared by `mcpToRestBase` (which
+ * strips it to get the REST base) and `classifyMcpEndpoint` (which judges
+ * whether an endpoint has it). One regex, one concept: the two must always
+ * agree on what counts as the suffix, or doctor could warn on an endpoint
+ * the REST-based probes treat as perfectly fine (or vice versa).
+ */
+export const MCP_PATH_SUFFIX = /\/mcp\/?$/;
+
+// The stricter shape required on a hosted Supabase function host, where only
+// paths under /functions/v1/ are routed at all — a bare /mcp on such a host
+// (e.g. https://ref.supabase.co/mcp) 404s even though it satisfies the
+// generic MCP_PATH_SUFFIX.
+const SUPABASE_FUNCTIONS_MCP_SUFFIX = /\/functions\/v1\/mcp\/?$/;
+
+// Does this URL's pathname contain a /functions/v1 segment? Captures the
+// prefix up to and including it, so a suggestion can be built by appending
+// /mcp — this works for both a Supabase host and a custom domain fronting
+// Supabase Functions behind a proxy.
+const FUNCTIONS_V1_PREFIX = /^(.*\/functions\/v1)(?:\/.*)?$/;
+
+/**
  * Derive the REST API base URL from an MCP endpoint URL.
  * e.g. 'https://ref.supabase.co/functions/v1/mcp?token=...'
  *   → 'https://ref.supabase.co/functions/v1'
@@ -139,11 +160,72 @@ export function mcpToRestBase(mcpEndpointUrl) {
     const u = new URL(mcpEndpointUrl);
     u.searchParams.delete('token');
     // Strip /mcp suffix (with or without trailing slash)
-    const restPath = u.pathname.replace(/\/mcp\/?$/, '');
+    const restPath = u.pathname.replace(MCP_PATH_SUFFIX, '');
     return `${u.origin}${restPath || '/'}`;
   } catch {
     return null;
   }
+}
+
+/**
+ * Pure, offline shape-check of a resolved MCP endpoint — never throws, never
+ * touches the network. Used by `lorekit doctor` to warn when an endpoint is
+ * reachable (and even authenticates, via the suffix-agnostic REST probes)
+ * but is shaped wrong for an actual MCP client, which always 404s on it.
+ *
+ * Classification, in order:
+ *   1. Not a parseable http(s) URL → `invalid-url`.
+ *   2. A `*.supabase.co` host → must end in `/functions/v1/mcp` (the only
+ *      path hosted Supabase Functions route traffic under).
+ *   3. Any other host → must end in `/mcp` (covers custom domains and
+ *      reverse proxies, which may legitimately serve MCP off a bare path).
+ *
+ * `suggested` is a best-effort fix URL (origin + path only, never the query
+ * string) and is `null` whenever guessing would mean inventing a path on an
+ * unknown custom domain.
+ *
+ * @param {string} endpoint
+ * @returns {{ kind: 'ok' }
+ *         | { kind: 'invalid-url' }
+ *         | { kind: 'wrong-path', expected: '/mcp' | '/functions/v1/mcp', suggested: string | null }}
+ */
+export function classifyMcpEndpoint(endpoint) {
+  let u;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    return { kind: 'invalid-url' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return { kind: 'invalid-url' };
+  }
+
+  const isSupabaseHost = u.hostname.endsWith('.supabase.co');
+  const pathOk = isSupabaseHost
+    ? SUPABASE_FUNCTIONS_MCP_SUFFIX.test(u.pathname)
+    : MCP_PATH_SUFFIX.test(u.pathname);
+  if (pathOk) return { kind: 'ok' };
+
+  return {
+    kind: 'wrong-path',
+    expected: isSupabaseHost ? '/functions/v1/mcp' : '/mcp',
+    suggested: suggestMcpEndpoint(u, isSupabaseHost),
+  };
+}
+
+// Best-effort fix target for a `wrong-path` endpoint. Strips a trailing
+// slash first so '/functions/v1/' and '/functions/v1' suggest identically.
+function suggestMcpEndpoint(u, isSupabaseHost) {
+  const pathname = u.pathname.replace(/\/$/, '');
+
+  const functionsMatch = pathname.match(FUNCTIONS_V1_PREFIX);
+  if (functionsMatch) return `${u.origin}${functionsMatch[1]}/mcp`;
+
+  if (isSupabaseHost && (pathname === '' || pathname === '/mcp')) {
+    return `${u.origin}/functions/v1/mcp`;
+  }
+
+  return null;
 }
 
 /**
