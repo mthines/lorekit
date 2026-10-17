@@ -80,8 +80,12 @@ npx @lorekit/cli install \
   --token    lk_rw_<your-token>
 ```
 
-(or export `LOREKIT_MCP_URL` / commit `"mcp.endpoint"` in `.lorekit.json`
-instead of passing `--endpoint` every time)
+(or export `LOREKIT_MCP_URL` instead of passing `--endpoint` every time —
+`install` reads only `--endpoint`, then `LOREKIT_MCP_URL`, then
+`LOREKIT_ENDPOINT`. A committed `"mcp.endpoint"` in `.lorekit.json` is never
+read by `install`; it is only a fallback for the remote CLI commands and
+hooks when `.mcp.json` has no LoreKit entry, and `.mcp.json` wins whenever it
+has one.)
 
 <TutorialCallout variant="warning">
 
