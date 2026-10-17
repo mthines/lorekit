@@ -234,6 +234,7 @@ async function rpc(body, { auth = token, retryOn429 = true, attempt = 0 } = {}) 
  * `scripts/load-test/load-test-lib.mjs`, and both integration smoke specs.
  */
 async function call(name, args = {}) {
+  exercised.add(name);
   const { status, json } = await rpc({
     jsonrpc: '2.0',
     id: ++rpcId,
@@ -273,6 +274,11 @@ const writtenIds = new Set(); // row ids — cleared by DELETE /memories/:id
 const createdOrgs = new Set();
 const createdPolicies = new Set(); // policy ids — cleared by policy.delete
 const residue = [];
+// Every tool a check reached this run. Static coverage (each catalog tool has
+// a check) is enforced on every PR by packages/cli/test/cli-smoke.test.mjs; this
+// reports which ones the CURRENT credential actually exercised, since tier-gated
+// checks skip.
+const exercised = new Set();
 
 /** Record a write so the `finally` can undo it, whatever the assertion did. */
 function tracked(scope, key, value) {
@@ -851,6 +857,50 @@ check('policy.create → policy.list → groom.preview(policy_id) → policy.del
   );
 });
 
+// ── 4c. memory.protect + policy.update + groom.run ──────────────────────────
+//
+// The three tools no check reached, so a regression in any of them could ship
+// through a green deploy. One behaviour ties them together: grooming archives
+// what a policy matches EXCEPT a protected lesson. Runs under its own scope so
+// the archive can only ever touch rows this check wrote.
+check('memory.protect shields a lesson from policy.update → groom.run', async () => {
+  requireUserScoped('a retention-policy owner');
+  const scope = `project::smoke-groom-${RUN_ID}`;
+  const tag = `smoke-groom-${RUN_ID}`;
+  ok((await write(scope, 'target', { tags: [tag] })).ok, 'write target failed');
+  ok((await write(scope, 'keeper', { tags: [tag] })).ok, 'write keeper failed');
+
+  const protect = await call('memory.protect', { scope, key: 'keeper', protected: true });
+  ok(protect.ok, `memory.protect failed: ${JSON.stringify(protect.error ?? protect.value)}`);
+  eq(protect.value?.protected, true, 'memory.protect result');
+
+  // Created matching NOTHING (a tag no row carries), then pointed at the run's
+  // tag by policy.update — so the archive below proves the update took effect.
+  const create = await call('policy.create', { scope, name: `smoke groom ${RUN_ID}`, tags: [`${tag}-none`] });
+  ok(create.ok, `policy.create failed: ${JSON.stringify(create.error ?? create.value)}`);
+  const policyId = create.value?.id;
+  ok(policyId, 'policy.create did not return an id');
+  createdPolicies.add(policyId);
+
+  const update = await call('policy.update', { id: policyId, name: `smoke groom ${RUN_ID} v2`, tags: [tag] });
+  ok(update.ok, `policy.update failed: ${JSON.stringify(update.error ?? update.value)}`);
+  eq(update.value?.id, policyId, 'policy.update id');
+  eq(update.value?.name, `smoke groom ${RUN_ID} v2`, 'policy.update name');
+
+  const run = await call('groom.run', { policy_id: policyId });
+  ok(run.ok, `groom.run failed: ${JSON.stringify(run.error ?? run.value)}`);
+  eq(run.value?.keys?.map((k) => k.key), ['target'], 'groom.run archived keys');
+  eq(run.value?.archived, 1, 'groom.run archived count');
+
+  const keeper = await call('memory.read', { scope, key: 'keeper' });
+  ok(keeper.ok && keeper.value !== null, 'groom.run archived a protected lesson');
+  const target = await call('memory.read', { scope, key: 'target' });
+  ok(target.ok && target.value === null, 'groom.run reported target archived, but it is still readable');
+
+  const unprotect = await call('memory.protect', { scope, key: 'keeper', protected: false });
+  eq(unprotect.value?.protected, false, 'memory.protect(false) result');
+});
+
 // ── 5. known defects, observed live (run with --probe) ───────────────────────
 
 known(
@@ -1126,6 +1176,12 @@ try {
 console.log(
   `\n${results.pass} passed · ${results.fail} failed · ${results.known} known · ` +
     `${results.fixed} fixed · ${results.skip} skipped`,
+);
+const unexercised = MCP_TOOL_NAMES.filter((t) => !exercised.has(t));
+console.log(
+  unexercised.length
+    ? `tools not exercised this run (credential tier ${TIER}): ${unexercised.join(', ')}`
+    : `all ${MCP_TOOL_NAMES.length} catalog tools exercised`,
 );
 if (residue.length) {
   console.log('\nleft behind (delete by hand if it matters):');
