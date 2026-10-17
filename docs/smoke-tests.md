@@ -106,7 +106,7 @@ npx playwright test --ui                           # watch it run
 
 # …with signed-in pages, against `supabase start`
 E2E_SUPABASE_URL=http://127.0.0.1:54321 \
-E2E_SUPABASE_SERVICE_ROLE_KEY="$(supabase status -o json | jq -r .SERVICE_ROLE_KEY)" \
+E2E_SUPABASE_SERVICE_ROLE_KEY="$(supabase status -o json | jq -r '.SERVICE_ROLE_KEY // .SECRET_KEY // .service_role_key // .Secret // empty')" \
   npx playwright test
 
 # …or against a deployed site
