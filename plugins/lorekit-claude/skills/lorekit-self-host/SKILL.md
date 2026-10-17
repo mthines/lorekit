@@ -223,8 +223,10 @@ REST, a transport that is suffix-agnostic, which is exactly the trap this
 check closes): a `WARN` there names which config source produced the
 endpoint and the fix command to re-run, so follow that line rather than
 re-deriving it by hand. Step 9 remains the real MCP check. **On failure:**
-follow the `WARN` line's fix (it ends in `/functions/v1/mcp`) and confirm
-the token matches the permission tier the connection needs.
+follow the `WARN` line's fix and confirm the token matches the permission
+tier the connection needs. The required suffix depends on the host: a
+`*.supabase.co` endpoint must end in `/functions/v1/mcp`; a custom domain or
+reverse proxy only needs the path to end in `/mcp`.
 
 ## Step 9 — Write/read round-trip
 
