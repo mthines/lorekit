@@ -104,6 +104,13 @@ writes the hosted URL. Only a plain re-run on a fully installed project leaves
 
 </TutorialCallout>
 
+Run `npx @lorekit/cli doctor` to confirm the connection: it now WARNS (not
+just the plain pass/fail before) when the resolved endpoint does not end in
+`/functions/v1/mcp` — a shape like `.../functions/v1` still answers doctor's
+other REST-based checks but 404s for an actual MCP client, so the warning
+catches it before your agent does, naming the config source and the exact
+fix command to re-run.
+
 </TutorialStep>
 
 <TutorialStep number={4} title="Use the guided runbook">

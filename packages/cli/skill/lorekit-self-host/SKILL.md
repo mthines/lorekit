@@ -19,7 +19,7 @@ argument-hint: '[full|byod]'
 license: MIT
 metadata:
   author: mthines
-  version: '1.0.0'
+  version: '1.0.1'
   workflow_type: self-host-deployment-runbook
   tags:
     - lorekit
@@ -215,14 +215,16 @@ hardcoded in `install.mjs`. Only a plain re-run on a fully installed project
 leaves `.mcp.json` alone. Always pass `--endpoint`, or export
 `LOREKIT_MCP_URL` in your shell profile, on every install.
 
-**Verify:** `npx @lorekit/cli doctor` shows your endpoint and reports
-connectivity + authentication passing, **and** that endpoint line ends in
-`/functions/v1/mcp`. Check the suffix yourself: `doctor` probes over REST,
-which drops the `/mcp` suffix, so an endpoint missing it still passes
-`doctor` while the agent's MCP client gets a 404. Step 9 is the real MCP
-check. **On failure:** re-check the endpoint
-URL (must end in `/functions/v1/mcp`) and that the token matches the
-permission tier the connection needs.
+**Verify:** `npx @lorekit/cli doctor` shows your endpoint, reports
+connectivity + authentication passing, and the `endpoint` line itself reads
+`PASS` — not `WARN`. `doctor`'s `endpoint` check judges the URL's shape
+directly now (the `connectivity`/`authentication` checks above it go over
+REST, a transport that is suffix-agnostic, which is exactly the trap this
+check closes): a `WARN` there names which config source produced the
+endpoint and the fix command to re-run, so follow that line rather than
+re-deriving it by hand. Step 9 remains the real MCP check. **On failure:**
+follow the `WARN` line's fix (it ends in `/functions/v1/mcp`) and confirm
+the token matches the permission tier the connection needs.
 
 ## Step 9 — Write/read round-trip
 
