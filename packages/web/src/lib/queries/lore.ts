@@ -319,7 +319,7 @@ export function useFacetCatalog(
  * `fetchLoreData` so the two cannot drift onto different keys or stale times —
  * a drift that would silently bring back the duplicate `GET /memories/scopes`.
  */
-const scopeTreeQueryOptions = queryOptions({
+const scopeTreeQueryOptions = queryOptions<ScopeNode[], Error>({
   queryKey: ['lore-scopes'],
   queryFn: ({ signal }) => fetchScopes(signal),
   // Scope tree is read-heavy — keep data for 90 s before refetching.
@@ -328,7 +328,7 @@ const scopeTreeQueryOptions = queryOptions({
 });
 
 export function useScopeTree() {
-  return useQuery<ScopeNode[]>(scopeTreeQueryOptions);
+  return useQuery(scopeTreeQueryOptions);
 }
 
 // ---------------------------------------------------------------------------
