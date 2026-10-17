@@ -395,6 +395,7 @@ const urlPath = (url) => url.split(/[?#]/)[0];
 
 // ── ui-verify interop ────────────────────────────────────────────────────────
 
+/** @type {{ version: 'v2' | 'v1' | 'legacy', open: string, close: string }[]} */
 const BLOCKS = [
   { version: 'v2', open: '<!-- ui-verify:v2 -->', close: '<!-- /ui-verify:v2 -->' },
   { version: 'v1', open: '<!-- ui-verify:v1 -->', close: '<!-- /ui-verify:v1 -->' },
@@ -420,7 +421,7 @@ function extractUiVerifyBlock(body) {
       .filter((l) => !/^\s*<\/?details>\s*$/.test(l) && !/^\s*<summary>.*<\/summary>\s*$/.test(l))
       .join('\n')
       .trim();
-    return { version: /** @type {any} */ (b.version), content };
+    return { version: b.version, content };
   }
   return null;
 }
