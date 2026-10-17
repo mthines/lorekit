@@ -8,8 +8,8 @@ description: >
   dashboard/token → connect-your-agent → write/read round-trip, each step a
   gate: do the thing, verify it, stop and diagnose if the verification fails.
   Links out to docs/install.md and docs/byod.md rather than duplicating their
-  commands. Slash-only — not installed by `lorekit install`, and never reads
-  or writes a lesson itself. Use when deploying your own LoreKit instance, not
+  commands. Slash-only — not installed by `lorekit install`. Its only memory
+  call is Step 9's throwaway `self-host-test` write/read/delete round-trip. Use when deploying your own LoreKit instance, not
   for everyday read/write (see lorekit-memory) or store maintenance (see
   lorekit-groom). Triggers ONLY on explicit invocation:
   "/lorekit-self-host".
@@ -207,7 +207,8 @@ npx @lorekit/cli install --endpoint https://<your-project-ref>.supabase.co/funct
 and `LOREKIT_TOKEN` instead of passing `--endpoint`/`--token` each time).
 
 **Warning:** almost every `lorekit install` rewrites the MCP entry — a new
-project, a global install, `--force`, `--hooks`, `--mcp-json`, or a re-run
+project, a global install, `--force`, `--hooks`, `--mcp-json`,
+`--completions <shell>`, or a re-run
 after an upgrade adds a skill. Without `--endpoint` (and with neither
 `LOREKIT_MCP_URL` nor `LOREKIT_ENDPOINT` set) it writes the hosted URL
 hardcoded in `install.mjs`. Only a plain re-run on a fully installed project

@@ -195,7 +195,7 @@ npx @lorekit/cli install \
 ```
 
 Almost every `lorekit install` rewrites the MCP entry — a new project, a
-global install, `--force`, `--hooks`, `--mcp-json`, or a re-run after an
+global install, `--force`, `--hooks`, `--mcp-json`, `--completions <shell>`, or a re-run after an
 upgrade adds a skill — and **without** `--endpoint` it writes the hosted URL.
 Only a plain re-run on a fully installed project leaves `.mcp.json` alone.
 Always pass `--endpoint`, or export `LOREKIT_MCP_URL` in your shell profile,
