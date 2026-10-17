@@ -62,6 +62,20 @@ function makeSupabase(script: SupabaseScript) {
   };
 }
 
+// Capture every span's start attributes while still running the real
+// `withSpan`, so a test can assert what `mintToken` stamps on its span.
+const spanAttrs = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock('@/lib/telemetry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/telemetry')>();
+  return {
+    ...actual,
+    withSpan: ((name: string, attrs: Record<string, unknown>, fn: never) => {
+      spanAttrs.push(attrs);
+      return (actual.withSpan as (...a: unknown[]) => unknown)(name, attrs, fn);
+    }) as typeof actual.withSpan,
+  };
+});
+
 const createServerClient = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({ createServerClient: () => createServerClient() }));
 
@@ -83,6 +97,7 @@ const RECORD = {
 beforeEach(() => {
   vi.clearAllMocks();
   insertCalls.length = 0;
+  spanAttrs.length = 0;
   getVerifiedUser.mockResolvedValue(USER);
   recordAuditEvent.mockResolvedValue(undefined);
 });
@@ -127,7 +142,7 @@ describe('mintToken', () => {
     expect(insertCalls).toHaveLength(0);
   });
 
-  it('stamps the origin attribute without affecting the result shape', async () => {
+  it('stamps lorekit.api_token.origin on its span, defaulting to dashboard', async () => {
     createServerClient.mockResolvedValue(
       makeSupabase({
         count: { count: 0, error: null },
@@ -136,8 +151,9 @@ describe('mintToken', () => {
     );
 
     const result = await mintToken('My first token', ['read', 'write'], undefined, 'onboarding');
+    await mintToken('Another', ['read', 'write']);
 
     expect('token' in result).toBe(true);
-    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(spanAttrs.map((a) => a['lorekit.api_token.origin'])).toEqual(['onboarding', 'dashboard']);
   });
 });
