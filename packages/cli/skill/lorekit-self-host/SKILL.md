@@ -234,8 +234,8 @@ function project's — since that is the whole point of the BYOD layering.
 ## Never
 
 - Never print or echo a token, API key, or service-role key value.
-- Never apply the BYOD storage overlay to the function project's own
-  database — it only ever goes on the separate storage project; the function
-  project gets the Step 6.3 secrets only.
+- Never apply the BYOD storage-only schema steps from docs/byod.md to the
+  function project's own database — they only ever go on the separate
+  storage project; the function project gets the Step 6.3 secrets only.
 - Never point a self-hosted deployment's agent connection at the hosted
   endpoint, and never assume a `lorekit.io`-minted token works against it.
