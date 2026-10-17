@@ -230,7 +230,11 @@ Write a `global` test lesson, read it back, then delete it:
 ```json
 memory.write { scope: "global", key: "self-host-test", value: "It works." }
 memory.read  { scope: "global", key: "self-host-test" }
+memory.delete { scope: "global", key: "self-host-test" }
 ```
+
+`memory.delete` archives the lesson (`"archived":true`); a later
+`memory.read` returns `null`.
 
 **Verify:** the read returns the value you wrote. **For BYOD**, also confirm
 the row landed in the **storage project's** `memories` table — not the
