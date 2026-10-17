@@ -121,7 +121,7 @@ ${c.bold('Commands')}
               Remote only. --json.
   pin / unpin Shorthand for protect / protect --off. Remote only. --json.
   bootstrap   Check a BYOD Supabase database and print how to apply the schema.
-              Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
+              Only needed when using LOREKIT_STORAGE_URL with a storage key.
               See docs/byod.md for setup instructions.
   migrate     Relocate a LoreKit-format local store into the current layout,
               or push it up to the hosted store with --to remote.
