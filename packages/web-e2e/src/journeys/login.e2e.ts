@@ -2,7 +2,8 @@ import { signInThroughTheForm } from '../support/auth';
 import { HAS_AUTH_BACKEND, TARGET } from '../support/env';
 import { expect, test } from '../support/fixtures';
 
-// The provider-choice screen and the email form are specs/journeys.md (Spec 3).
+// The provider-choice screen and the email form are a spec in specs/journeys.md
+// ("The login page offers GitHub, email and magic-link sign-in").
 // This flow stays in TypeScript: the form's submit is named "Sign in" like the
 // header's GitHub button, and the grammar cannot scope a locator to the form.
 test.describe('signing in with a wrong password', () => {
