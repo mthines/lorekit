@@ -120,8 +120,8 @@ ${c.bold('Commands')}
               regardless of policy. protect <scope::key> [--off] to unprotect.
               Remote only. --json.
   pin / unpin Shorthand for protect / protect --off. Remote only. --json.
-  bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
-              Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
+  bootstrap   Check a BYOD Supabase database and print how to apply the schema.
+              Only needed when using LOREKIT_STORAGE_URL with a storage key.
               See docs/byod.md for setup instructions.
   migrate     Relocate a LoreKit-format local store into the current layout,
               or push it up to the hosted store with --to remote.
@@ -856,19 +856,20 @@ ${c.bold('Options')}
       --json              Machine-readable result
 `,
 
-  bootstrap: `${c.bold('lorekit bootstrap')} — apply the LoreKit schema to your own Supabase database
+  bootstrap: `${c.bold('lorekit bootstrap')} — check your own Supabase database and show how to apply the LoreKit schema
 
 ${c.bold('Usage')}
   lorekit bootstrap [--yes]
 
-For BYOD ("bring your own database") only: creates the tables, functions and
-policies LoreKit needs in a Supabase project you control, so lore never leaves
-your infrastructure. You only need this if you are pointing the CLI at your own
-database via ${c.cyan('LOREKIT_STORAGE_URL')} / ${c.cyan('LOREKIT_STORAGE_ANON_KEY')} — the hosted
-service and the offline store both need nothing here.
+For BYOD ("bring your own database") only. Probes the Supabase project named by
+${c.cyan('LOREKIT_STORAGE_URL')} (with ${c.cyan('LOREKIT_STORAGE_ANON_KEY')} or ${c.cyan('LOREKIT_STORAGE_SERVICE_KEY')}),
+reports whether the LoreKit schema is already there, and prints the commands
+that apply it: ${c.cyan('psql')} with supabase/byod/bootstrap.sql, the SQL Editor, or
+${c.cyan('supabase db push')}. It does not run DDL itself — a Supabase API key cannot.
+The hosted service and the offline store both need nothing here.
 
-See ${c.cyan('docs/byod.md')} for the full setup, including which key to use and what the
-schema contains.
+See ${c.cyan('docs/byod.md')} for the full setup, including which key to use and how
+upgrades work.
 
 ${c.bold('Options')}
   -y, --yes                Apply without prompting

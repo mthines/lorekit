@@ -129,20 +129,20 @@ routed into an org the token was never granted.
 
 | Tool | Read + Write (`lk_rw_`) | Read only (`lk_ro_`) | Write only (`lk_wo_`) |
 |------|------------------------|---------------------|------------------------|
-| `memory.write` | ✓ | ✗ (returns -32001) | ✓ |
-| `memory.read` | ✓ | ✓ | ✗ (returns -32001) |
-| `memory.list` | ✓ | ✓ | ✗ (returns -32001) |
-| `memory.delete` | ✓ | ✗ (returns -32001) | ✓ |
-| `memory.search` | ✓ | ✓ | ✗ (returns -32001) |
-| `memory.archive` | ✓ | ✗ (returns -32001) | ✓ |
-| `memory.restore` | ✓ | ✗ (returns -32001) | ✓ |
-| `memory.purge` | ✓ | ✗ (returns -32001) | ✓ |
-| `memory.purge_expired` | ✓ | ✗ (returns -32001) | ✓ |
-| `memory.list_archived` | ✓ | ✓ | ✗ (returns -32001) |
-| `org.list` | ✓ | ✓ | ✗ (returns -32001) |
-| `org.create` | ✓ | ✗ (returns -32001) | ✓ |
-| `org.rename` | ✓ | ✗ (returns -32001) | ✓ |
-| `org.delete` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.write` | ✓ | ✗ (returns -32003) | ✓ |
+| `memory.read` | ✓ | ✓ | ✗ (returns -32003) |
+| `memory.list` | ✓ | ✓ | ✗ (returns -32003) |
+| `memory.delete` | ✓ | ✗ (returns -32003) | ✓ |
+| `memory.search` | ✓ | ✓ | ✗ (returns -32003) |
+| `memory.archive` | ✓ | ✗ (returns -32003) | ✓ |
+| `memory.restore` | ✓ | ✗ (returns -32003) | ✓ |
+| `memory.purge` | ✓ | ✗ (returns -32003) | ✓ |
+| `memory.purge_expired` | ✓ | ✗ (returns -32003) | ✓ |
+| `memory.list_archived` | ✓ | ✓ | ✗ (returns -32003) |
+| `org.list` | ✓ | ✓ | ✗ (returns -32003) |
+| `org.create` | ✓ | ✗ (returns -32003) | ✓ |
+| `org.rename` | ✓ | ✗ (returns -32003) | ✓ |
+| `org.delete` | ✓ | ✗ (returns -32003) | ✓ |
 
 The four `org.*` rows are new: those tools used to be dashboard-JWT-only on the
 MCP surface, while the REST `/orgs` routes already served `lk_*` tokens. Both

@@ -1,9 +1,9 @@
 /**
  * MCP tool handlers — one function per memory.* and org.* tool.
  *
- * SECURITY: When userId is provided (api_key auth), every query MUST include
- * .eq('user_id', userId). The service-role client bypasses RLS — without this
- * filter, users could access each other's memories.
+ * SECURITY: When userId is provided (api_key and JWT auth), every query MUST
+ * include .eq('user_id', userId). The service-role client bypasses RLS —
+ * without this filter, users could access each other's memories.
  *
  * org.* tools accept BOTH auth tiers. A JWT caller resolves inside the SECURITY
  * DEFINER RPCs from auth.uid() as before; an api_key caller has no auth.uid()
@@ -1039,14 +1039,16 @@ export async function toolPurge(
 // RPCs, which resolve the actor one of two ways: from `auth.uid()` on a JWT
 // connection, or from the explicit `p_actor_user_id` an api_key caller passes
 // (honoured only on a verified service_role connection — 00041). So the
-// dispatcher resolves the caller and passes `userId`: null for a JWT caller,
-// where auth.uid() applies, and the token's owner for an api_key caller.
+// dispatcher resolves the caller and passes `userId` — the caller's own id for
+// both tiers. The RPCs honour it as `p_actor_user_id` only on a verified
+// service_role connection; on a JWT connection they resolve the actor from
+// auth.uid().
 //
 // A NULL actor fails closed inside the RPCs rather than defaulting to anyone.
 
 /**
  * Resolve an org's UUID from its slug. Throws if the org does not exist, is
- * soft-deleted, or (on the api_key path) the caller is not a member.
+ * soft-deleted, or (whenever a caller id is passed) the caller is not a member.
  *
  * The membership join is NOT redundant with the role check inside the RPCs. On
  * a JWT connection RLS on `orgs` already restricts this read to the caller's
@@ -1062,7 +1064,7 @@ async function resolveOrgId(
   slug: string,
   userId: string | null,
 ): Promise<string> {
-  // JWT path: unchanged, RLS-scoped.
+  // No caller id (service auth — JWT and api_key callers pass their own id).
   if (!userId) {
     const { data: org, error } = await tracedDb
       .from('orgs')
@@ -1076,7 +1078,7 @@ async function resolveOrgId(
     return (org as { id: string }).id;
   }
 
-  // api_key path: service-role, so the tenant predicate has to be explicit.
+  // Caller path (api_key or JWT): on service-role the tenant predicate has to be explicit.
   const { data: row, error } = await tracedDb
     .from('org_members')
     .select('org_id, orgs!inner(id, slug, deleted_at)')

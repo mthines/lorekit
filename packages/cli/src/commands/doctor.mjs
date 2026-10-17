@@ -27,6 +27,7 @@ import { describeIdentity } from '../telemetry/telemetry-identity.mjs';
 import { deriveScope } from '../shared/scope.mjs';
 import { loadControl, HOOK_INSTRUCTION_EVENTS } from '../shared/control.mjs';
 import { createStore } from '../store/index.mjs';
+import { probeByodStorage } from '../shared/byod.mjs';
 import { log, heading, status, c } from '../shared/util.mjs';
 
 const AUTH_CODES = new Set([401, 403, -32001]);
@@ -628,36 +629,26 @@ function cliVersion() {
 
 async function checkBYODStorage(record) {
   const storageUrl = process.env['LOREKIT_STORAGE_URL'];
-  const storageAnonKey = process.env['LOREKIT_STORAGE_ANON_KEY'];
+  const storageKey = process.env['LOREKIT_STORAGE_ANON_KEY'] || process.env['LOREKIT_STORAGE_SERVICE_KEY'];
 
-  if (!storageUrl && !storageAnonKey) {
+  if (!storageUrl && !storageKey) {
     return; // No BYOD configured — skip silently.
   }
 
-  if (storageUrl && !storageAnonKey) {
-    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_ANON_KEY is missing');
+  if (!storageUrl) {
+    record('fail', 'byod storage', 'a LOREKIT_STORAGE_*_KEY is set but LOREKIT_STORAGE_URL is missing');
     return;
   }
 
-  if (!storageUrl && storageAnonKey) {
-    record('fail', 'byod storage', 'LOREKIT_STORAGE_ANON_KEY is set but LOREKIT_STORAGE_URL is missing');
+  if (!storageKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but neither LOREKIT_STORAGE_ANON_KEY nor LOREKIT_STORAGE_SERVICE_KEY is');
     return;
   }
 
-  try {
-    const { createClient } = await import('@supabase/supabase-js');
-    const db = createClient(storageUrl, storageAnonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { error } = await db.from('memories').select('id').limit(1);
-    if (error && error.code !== '42P01') {
-      record('fail', 'byod storage', `connectivity error: ${error.message}`);
-    } else {
-      record('pass', 'byod storage', `ok — ${storageUrl}`);
-    }
-  } catch (e) {
-    record('fail', 'byod storage', `could not connect: ${e && e.message ? e.message : String(e)}`);
-  }
+  const probe = await probeByodStorage({ url: storageUrl, key: storageKey });
+  if (probe.state === 'ready') record('pass', 'byod storage', `ok — ${storageUrl}`);
+  else if (probe.state === 'no-schema') record('fail', 'byod storage', `${probe.detail} — see docs/byod.md`);
+  else record('fail', 'byod storage', probe.detail);
 }
 
 function gitTracked(root, dir) {

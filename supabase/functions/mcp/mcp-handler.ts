@@ -3,9 +3,9 @@
  * Handles initialize, tools/list, and tools/call.
  */
 
-import { type AuthContext, getDb, canWrite, canRead, getUserId, keyRestriction } from './auth.ts';
+import { type AuthContext, getDb, canWrite, canRead, keyRestriction } from './auth.ts';
 import { scopeAllowedByKey, KeyScopeDeniedError } from '../_shared/schemas/api-key.ts';
-import { type StorageAdapter } from './storage-adapter.ts';
+import { type StorageAdapter, storageUserId } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope, parseMemoryRefs } from '../_shared/scope/scope.ts';
 import { scopeTypeAttribute } from '../_shared/scope/scope-type-attribute.ts';
 import { OrgPermissionError, UnknownOrgError } from './org-permissions.ts';
@@ -22,6 +22,7 @@ import { type Params } from './tools.ts';
 // the try/catch, the usage events — stays here and stays hand-written.
 import { MEMORY_TOOLS, ORG_TOOLS, RETENTION_TOOLS, ALL_TOOL_NAMES } from './tool-dispatch.generated.ts';
 import { type Span } from '../_shared/telemetry/otel.ts';
+import { redactUrls } from '../_shared/telemetry/span-semconv.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/auth/account-wide-tools.ts';
@@ -332,22 +333,17 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // own Supabase project. For hosted mode, derive a correctly-scoped client
     // from the auth context (JWT → user RLS, api_key → service-role).
     //
-    // LIMITATION — BYOD + JWT auth: when BYOD mode is active the adapter.db
-    // client is built at startup with the LOREKIT_STORAGE_SERVICE_KEY (or the
-    // anon key as fallback). A BYOD caller that authenticates via a Supabase JWT
-    // does NOT get a per-user-scoped client — the JWT is consumed by *this*
-    // hosted function for rate-limiting / auth, but the downstream BYOD database
-    // receives the service-key (or anon-key) client, not a JWT-forwarded one.
-    // RLS on the BYOD database therefore runs as service role (all rows visible)
-    // or anon (policy-dependent), never as the individual JWT user.
-    // BYOD users must rely on application-level data isolation in their own
-    // Supabase project. If per-user RLS is required, configure the BYOD database
-    // to treat service-role writes as trusted and enforce isolation via a
-    // user_id column rather than auth.uid()-based policies.
+    // BYOD + JWT auth: adapter.db is built from the storage project's SERVICE
+    // key and never carries the caller's JWT, so RLS on the storage project
+    // cannot scope a JWT caller. `storageUserId` scopes it in app code by its
+    // resolved id instead — the path an api_key caller already takes — so it
+    // neither reads other users' rows nor writes ownerless ones.
     const db = adapter.mode === 'byod' ? adapter.db : getDb(auth);
-    // toolUserId: null for JWT auth (RLS handles scoping), api_key userId otherwise.
-    // analyticsUserId: the resolved user ID for usage-event annotation regardless of auth type.
-    const toolUserId = getUserId(auth);
+    // toolUserId: who the tool scopes reads and stamps writes by — the caller's
+    // resolved id for api_key and JWT callers alike (a hosted JWT caller is also
+    // RLS-scoped; the id is what makes its writes owned), null for service.
+    // analyticsUserId: the resolved user ID for usage-event annotation.
+    const toolUserId = storageUserId(adapter.mode, auth);
     const analyticsUserId = toolUserId ?? (auth.type === 'user' ? auth.userId : null) ?? null;
 
     // Resolve plan name for usage-event annotation (fails open — null → 'free').
@@ -389,10 +385,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       if (isOrgTool) {
         // org.* tools: (db, args, toolUserId, span) — the same shape as the
         // memory family, so both maps look alike and this dispatcher threads
-        // the actor one way. null for a JWT caller (auth.uid() applies inside
-        // the RPCs); the token owner for an api_key caller, forwarded as
-        // `p_actor_user_id` and honoured only on a verified service_role
-        // connection.
+        // the actor one way. `toolUserId` is the caller's own id for JWT and
+        // api_key callers alike (null only for service auth). It is forwarded
+        // as `p_actor_user_id`, which the RPCs honour only on a verified
+        // service_role connection (00041) — on a JWT connection they ignore it
+        // and resolve the actor from `auth.uid()`.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolUserId, toolSpan);
       } else if (isRetentionTool) {
         // policy.*/groom.* tools: (db, args, userId, span, keyScoping) — but
@@ -400,18 +397,17 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // `analyticsUserId` (the RESOLVED owner), never `toolUserId`. The
         // underlying lorekit_policy_*/lorekit_groom_* RPCs take `p_user_id`
         // explicitly and throw a UserInputError on null — there is no
-        // `auth.uid()` fallback the way the org RPCs have. `toolUserId` is
-        // null for every JWT caller, so passing it here would break
-        // policy/groom over MCP for exactly the dashboard-JWT path the REST
-        // `requireUserId(auth)` helper already resolves correctly.
-        // `analyticsUserId` is that same resolved owner for both JWT and
-        // api_key auth. `keyRestriction(auth)` is the same call the memory
+        // `auth.uid()` fallback the way the org RPCs have. `analyticsUserId`
+        // is the resolved owner for both JWT and api_key auth — the same id
+        // the REST `requireUserId(auth)` helper resolves.
+        // `keyRestriction(auth)` is the same call the memory
         // family makes below — each retention handler gates the scope it
         // resolves against it (see `assertScopeAllowed` in `tools.ts`).
         result = await RETENTION_TOOLS[toolName as keyof typeof RETENTION_TOOLS](db, toolArgs, analyticsUserId, toolSpan, keyRestriction(auth));
       } else {
         // memory.* tools: (db, args, toolUserId, span, keyScoping, correlationId)
-        // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
+        // toolUserId is the caller's own id for api_key and JWT auth, null for
+        // service (`storageUserId`).
         //
         // The trailing `correlationId` is read by `memory.write` alone, for its
         // `cited` array (00107): a citation joins to the run `usage_events`
@@ -583,7 +579,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           isError: true,
         });
       }
-      return jsonrpcError(id, -32603, (err as Error).message);
+      // A transport failure's message carries the request URL, and a PostgREST
+      // URL carries every filter value (`user_id=eq.<uuid>`, `key=eq.<key>`).
+      // Spans already redact it (`Span.error`); the client message must too.
+      return jsonrpcError(id, -32603, redactUrls(String((err as Error).message ?? err)));
     }
   }
 

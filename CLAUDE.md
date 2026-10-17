@@ -254,7 +254,7 @@ Single `:` → 400 error. All segments lowercased. See [docs/scope-format.md](./
 **Critical:** `api_key` auth uses service-role. ALL queries must `.eq('user_id', userId)`.
 Write tools require write permission (`lk_rw_*` / `lk_wo_*`); read tools require read
 permission (`lk_rw_*` / `lk_ro_*`). `lk_ro_*` is denied on write tools; `lk_wo_*` is denied
-on read tools — both with the standard `-32001` permission-denied error. The gating logic
+on read tools — both with the `-32003` forbidden error (`-32001` is unauthenticated). The gating logic
 (`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) is a shared pure module,
 `packages/mcp-core/src/auth/permissions.ts`, mirrored self-contained into
 `supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern).

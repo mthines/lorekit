@@ -1,0 +1,8 @@
+# Generated from supabase/migrations/ by `node supabase/byod/generate.mjs`.
+# Collapsed in GitHub diffs; review the migrations, not this projection.
+supabase/byod/bootstrap.sql linguist-generated=true
+
+# The generator's drift check compares bytes. Keep both sides LF on every
+# checkout, so core.autocrlf on Windows cannot turn a clean tree red.
+supabase/migrations/*.sql text eol=lf
+supabase/byod/bootstrap.sql text eol=lf
