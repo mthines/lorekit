@@ -162,12 +162,41 @@ test('copyDir reports how many files it actually wrote', () => {
 import { resolveProjectConnection, resolveConnection } from '../src/shared/config.mjs';
 import { splitEndpoint } from '../src/shared/mcp.mjs';
 
+// Pin HOME/USERPROFILE to an empty temp dir and clear the
+// LOREKIT_MCP_URL/LOREKIT_ENDPOINT/LOREKIT_TOKEN env vars for the duration of
+// `fn`, so a resolver test never reads the developer's real ~/.claude.json or
+// shell env — a machine with a global install would otherwise change the result.
+function withIsolatedConnectionEnv(home, fn) {
+  const prev = {
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+    LOREKIT_MCP_URL: process.env.LOREKIT_MCP_URL,
+    LOREKIT_ENDPOINT: process.env.LOREKIT_ENDPOINT,
+    LOREKIT_TOKEN: process.env.LOREKIT_TOKEN,
+  };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.LOREKIT_MCP_URL;
+  delete process.env.LOREKIT_ENDPOINT;
+  delete process.env.LOREKIT_TOKEN;
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 test('resolveProjectConnection uses mcp.endpoint from .lorekit.json as fallback', () => {
   const root = tmpRoot();
   const ep = 'https://abc.supabase.co/functions/v1/mcp';
   fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'mcp.endpoint': ep }));
-  const conn = resolveProjectConnection(root, splitEndpoint);
-  assert.equal(conn.endpoint, ep);
+  withIsolatedConnectionEnv(tmpRoot(), () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.endpoint, ep);
+  });
 });
 
 test('resolveProjectConnection prefers .mcp.json over mcp.endpoint in .lorekit.json', () => {
@@ -184,8 +213,10 @@ test('resolveProjectConnection prefers .mcp.json over mcp.endpoint in .lorekit.j
   };
   fs.writeFileSync(path.join(root, '.mcp.json'), JSON.stringify(mcpJson));
   fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'mcp.endpoint': fallbackEp }));
-  const conn = resolveProjectConnection(root, splitEndpoint);
-  assert.equal(conn.endpoint, mpcEp);
+  withIsolatedConnectionEnv(tmpRoot(), () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.endpoint, mpcEp);
+  });
 });
 
 test('resolveProjectConnection ignores placeholder mcp.endpoint', () => {
@@ -194,8 +225,10 @@ test('resolveProjectConnection ignores placeholder mcp.endpoint', () => {
     path.join(root, '.lorekit.json'),
     JSON.stringify({ 'mcp.endpoint': 'https://<project-ref>.supabase.co/functions/v1/mcp' }),
   );
-  const conn = resolveProjectConnection(root, splitEndpoint);
-  assert.equal(conn.endpoint, null);
+  withIsolatedConnectionEnv(tmpRoot(), () => {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.endpoint, null);
+  });
 });
 
 // ── Hook modes: the vocabulary `install` and `doctor` share ──────────────────
@@ -494,34 +527,8 @@ test('removeWebMcpServer removes the web form but leaves an embedded-token entry
 // `resolveProjectConnection` / `resolveConnection` now report WHICH config
 // source produced the resolved endpoint, so `doctor` can name it (and the
 // matching fix command) without re-deriving this same precedence by re-reading
-// the files. Every test here pins HOME/USERPROFILE to an empty temp dir and
-// clears the LOREKIT_MCP_URL/LOREKIT_ENDPOINT/LOREKIT_TOKEN env vars first —
-// the three pre-existing `resolveProjectConnection` tests above do NOT do this
-// and leak the developer's real ~/.claude.json.
+// the files. Every test here runs inside `withIsolatedConnectionEnv`.
 import { loadControl } from '../src/shared/control.mjs';
-
-function withIsolatedConnectionEnv(home, fn) {
-  const prev = {
-    HOME: process.env.HOME,
-    USERPROFILE: process.env.USERPROFILE,
-    LOREKIT_MCP_URL: process.env.LOREKIT_MCP_URL,
-    LOREKIT_ENDPOINT: process.env.LOREKIT_ENDPOINT,
-    LOREKIT_TOKEN: process.env.LOREKIT_TOKEN,
-  };
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  delete process.env.LOREKIT_MCP_URL;
-  delete process.env.LOREKIT_ENDPOINT;
-  delete process.env.LOREKIT_TOKEN;
-  try {
-    return fn();
-  } finally {
-    for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  }
-}
 
 test('resolveProjectConnection attributes an embedded-token project .mcp.json to source "project-mcp"', () => {
   const home = tmpRoot();
