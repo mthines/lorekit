@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.2](https://github.com/mthines/lorekit/compare/cli-v1.72.1...cli-v1.72.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **cli:** warn in doctor when the MCP endpoint lacks the /mcp suffix ([#698](https://github.com/mthines/lorekit/issues/698)) ([db84211](https://github.com/mthines/lorekit/commit/db84211d7da7203312c7cd1131dd16451d13b425))
+
 ## [1.72.1](https://github.com/mthines/lorekit/compare/cli-v1.72.0...cli-v1.72.1) (2026-10-17)
 
 
