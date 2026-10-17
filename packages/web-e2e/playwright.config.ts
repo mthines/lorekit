@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { STORAGE_STATE } from './src/support/auth';
-import { BASE_URL, E2E_PORT, STARTS_LOCAL_SERVER } from './src/support/env';
+import { BASE_URL, E2E_PORT, STARTS_LOCAL_SERVER, TARGET, VERCEL_BYPASS_SECRET } from './src/support/env';
 
 const CI = Boolean(process.env.CI);
 
@@ -44,7 +44,10 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
-    trace: 'retain-on-failure',
+    // A trace stores request headers and cookies verbatim, and CI uploads it from a
+    // public repo — so never record one where a bypass secret or a production
+    // session is in play. The PR job (local stack, throwaway user) keeps traces.
+    trace: VERCEL_BYPASS_SECRET || TARGET === 'production' ? 'off' : 'retain-on-failure',
     screenshot: 'only-on-failure',
     // Production builds register /sw.js, which serves pages cache-first; a
     // smoke test must see what the server returns now.

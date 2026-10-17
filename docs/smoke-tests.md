@@ -125,6 +125,10 @@ the top of `packages/web-e2e/src/support/env.ts`.
 | `LOREKIT_TESTING_USER_NAME`, `LOREKIT_TESTING_USER_PW` (repo) | signed-in pages on the staged build and on `lorekit.io` | signed-in tests skip, announced; public tests still run |
 | `LOREKIT_SMOKE_TOKEN` (preview env, existing) | CLI remote lane, hosted MCP smoke | — (already required) |
 
+Traces are off on any run that uses the bypass secret or targets production: a
+trace records request headers and cookies, and this public repo's artifacts are
+downloadable by anyone. Failure screenshots still upload.
+
 The sign-in is its own CI step in both deploy-time jobs: when the test account
 cannot sign in (an expired password, an auth rate limit) the signed-in pages are
 skipped with a warning, so a credential problem never blocks a promotion or
