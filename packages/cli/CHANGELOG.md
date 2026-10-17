@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.1](https://github.com/mthines/lorekit/compare/cli-v1.72.0...cli-v1.72.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **byod:** generate the bootstrap from migrations and fix BYOD's limits ([#690](https://github.com/mthines/lorekit/issues/690)) ([d3fd774](https://github.com/mthines/lorekit/commit/d3fd774cab0d4472d65f823fb47475bd2084fa56))
+
 ## [1.72.0](https://github.com/mthines/lorekit/compare/cli-v1.71.2...cli-v1.72.0) (2026-10-12)
 
 
