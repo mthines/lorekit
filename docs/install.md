@@ -268,7 +268,9 @@ Store a read+write token as `LOREKIT_TOKEN` in your repo secrets, then use it in
 | `{"code":-32003}` on write | Read-only (`lk_ro_`) token | Generate a `lk_rw_` or `lk_wo_` token |
 | `{"code":-32003}` on read | Write-only (`lk_wo_`) token | Generate a `lk_rw_` or `lk_ro_` token |
 | `{"code":-32001}` | Missing, invalid, expired or revoked token | Check the `Authorization` header; generate a new token |
-| `{"code":-32603}` | Scope validation error | Use `::` as separator; check scope format |
+| `{"code":-32603}` naming `LOREKIT_STORAGE_SERVICE_KEY` | BYOD storage URL set without the service key | Set `LOREKIT_STORAGE_SERVICE_KEY` on the function project (see [byod.md](./byod.md)); retrying will not help |
+| `{"code":-32603}` otherwise | Server fault — DB unreachable or an unexpected exception | Retry; if it persists, check the function logs |
+| Tool result with `isError: true` mentioning the scope | Invalid scope format | Use `::` as separator; check scope format |
 | `{"db":false}` on health check | DB not reachable from Edge Function | Verify Supabase secrets in Step 5 |
 | Dashboard auth loop | Redirect URL not set | Add your URL in Supabase Auth settings (Step 8) |
 
