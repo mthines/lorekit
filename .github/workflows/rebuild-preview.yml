@@ -143,16 +143,26 @@ jobs:
       - name: Reset preview database from migrations
         run: supabase db reset --linked --yes
 
-      # `db reset` wipes the seeded orgs-smoke user along with everything else,
-      # so the orgs REST smoke self-skips (announced, non-fatal) until it is
-      # re-seeded. Re-seeding needs the service-role key (the Auth admin API) and
-      # is DELIBERATELY not done in CI — the recurring smoke path never carries
-      # that key (see docs/deployment.md → "Seed the orgs-smoke user"). Surface a
-      # reminder rather than smuggling the key into a recurring workflow.
-      - name: Remind to re-seed the orgs-smoke user
+      # `db reset` wipes the fixed orgs-smoke user along with everything else, so
+      # re-create it here (smoke-preview also ensures it before every mint, so a
+      # failure here heals on the next smoke run). The service-role key is scoped
+      # to this step; the job's `preview` environment and the production-ref guard
+      # above mean it can only reach the preview project. Best-effort: the reset
+      # itself succeeded, and the orgs REST suite only skips until a seed works.
+      - name: Re-seed the orgs-smoke user
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
+          LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
         run: |
-          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/smoke/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
-          echo "::notice::The reset also wiped any demo data from a prior '/preview --seed'. Once the smoke user is re-seeded, repopulate it with a '/preview --seed' comment on any open PR (see docs/deployment.md → 'Seed the preview with demo data') — not done here, for the same service-role-key reason."
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] || [ -z "$LOREKIT_SMOKE_EMAIL" ] || [ -z "$LOREKIT_SMOKE_PASSWORD" ]; then
+            echo "::warning::SUPABASE_SERVICE_ROLE_KEY / LOREKIT_SMOKE_EMAIL / LOREKIT_SMOKE_PASSWORD not all set — the orgs-smoke user was not re-created."
+          else
+            SUPABASE_URL="https://$PROJECT_REF.supabase.co" node scripts/smoke/seed-smoke-user.mjs \
+              || echo "::warning::Could not re-seed the orgs-smoke user — smoke-preview retries before its next mint."
+          fi
+          echo "::notice::Preview DB was reset, which also wiped any '/preview --seed' demo data. Repopulate it with a '/preview --seed' comment on any open PR (see docs/deployment.md → 'Seed the preview with demo data')."
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM

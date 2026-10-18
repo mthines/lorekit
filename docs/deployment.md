@@ -692,12 +692,10 @@ repair`), and it's where you confirm whether the pinned Supabase CLI prompts on
 drive it non-interactively with whatever confirmation flag the installed CLI
 exposes.
 
-A reset wipes **everything**, including the seeded orgs-smoke user (see "Seed the
-orgs-smoke user" below), so the orgs REST smoke self-skips until you re-seed it.
-Re-seeding needs the service-role key and is deliberately **not** wired into the
-workflow (the recurring smoke path never carries that key) — the workflow only
-emits a reminder. After a rebuild, run `scripts/smoke/seed-smoke-user.mjs` from a
-trusted admin shell against the preview project.
+A reset wipes **everything**, including the orgs-smoke user (see "Seed the
+orgs-smoke user" below). The workflow re-creates that user right after the reset,
+and `smoke-preview` ensures it again before every JWT mint, so the orgs REST smoke
+keeps running across rebuilds with no manual step.
 
 ### Failure notifications (Discord)
 
@@ -904,19 +902,19 @@ right values:
 
 **Optional — the orgs REST smoke suite (`smoke-preview` only).** Unset → the
 suite is announced-skipped and the memories suite still runs; the deploy is
-never blocked. Set all three to enable it:
+never blocked. Set all four to enable it:
 
 | Secret | `preview` environment |
 |--------|-----------------------|
 | `SUPABASE_ANON_KEY` | preview anon (publishable) key |
+| `SUPABASE_SERVICE_ROLE_KEY` | preview service-role key — lets CI (re)create the smoke user after a reset; without it the suite skips again after the next weekly rebuild |
 | `LOREKIT_SMOKE_EMAIL` | fixed smoke user's email |
 | `LOREKIT_SMOKE_PASSWORD` | fixed smoke user's password |
 
 The org endpoints require a real Supabase **user JWT** (`lk_*` tokens and the
 service-role key are rejected), so `smoke-preview` mints one per run by signing
-in as this fixed user. That user must already exist on the project —
-seed it once with [`scripts/smoke/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
-below.
+in as this fixed user. On **preview** the pipeline creates that user itself —
+see [Seed the orgs-smoke user](#seed-the-orgs-smoke-user) below.
 
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
 personal access token); the three **Vercel** secrets the web jobs use —
@@ -945,25 +943,30 @@ Variables), both optional:
 
 #### Seed the orgs-smoke user
 
-The orgs smoke signs in as a fixed user; it never creates one (a smoke run must
-not provision users in a real tenant). Create that user **once per project**
-with the idempotent seed script — it creates + email-confirms the user, resets a
-drifted password on re-run, and verifies the sign-in works end-to-end before
-exiting 0:
+The orgs smoke signs in as a fixed user. On the **preview** project the pipeline
+creates it: `smoke-preview` (in `deploy.yml` and `preview.yml`) runs the
+idempotent seed script right before it mints the JWT, and `rebuild-preview.yml`
+runs it right after `db reset`. The script signs in first and touches the Auth
+admin API only when that fails (the user is missing after a reset, or its
+password drifted from `LOREKIT_SMOKE_PASSWORD`). It then creates and
+email-confirms the user, or resets its password, and verifies the sign-in.
+
+The seed needs the service-role key (the Auth admin API). It is the `preview`
+environment's `SUPABASE_SERVICE_ROLE_KEY`, set on that one step only, so it can
+never reach production; the step also refuses outright when the project ref is
+the production one. Seeding is best-effort, like the mint: a failure warns and the
+orgs suite skips that run.
+
+Production is never seeded by CI. To seed it (or any project by hand), run the
+script from a trusted admin shell:
 
 ```bash
-SUPABASE_URL=https://<preview-ref>.supabase.co \
-SUPABASE_SERVICE_ROLE_KEY=<preview-service-role-key> \
+SUPABASE_URL=https://<project-ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
 LOREKIT_SMOKE_EMAIL=<email> \
 LOREKIT_SMOKE_PASSWORD='<password>' \
   node scripts/smoke/seed-smoke-user.mjs
 ```
-
-Run it from a trusted admin shell — **not in CI**. Creating a confirmed user
-needs the service-role key (the Auth admin API), which the recurring deploy
-smoke path deliberately does not carry; CI only ever uses the anon key +
-email/password to mint the JWT. Re-run with the production ref + key to seed the
-production project too.
 
 #### Seed the preview with demo data
 
@@ -1001,7 +1004,8 @@ node scripts/seed/seed-preview.mjs --user-email <email> --reset     # wipe this 
 
 The target user must already exist — seed it first with
 [`seed-smoke-user.mjs`](#seed-the-orgs-smoke-user) above; this script never
-creates one, for the same reason the smoke suites don't. It refuses the
+creates one. On preview, CI keeps that user in place (the `smoke-preview` jobs,
+`/preview --seed`, and rebuild-preview.yml all run `seed-smoke-user.mjs`). It refuses the
 **production** project ref unconditionally (no override flag), matching
 [Rebuilding the shared preview project](#rebuilding-the-shared-preview-project)'s
 own belt-and-suspenders check. Every seeded memory's key is prefixed
@@ -1011,9 +1015,9 @@ close to idempotent: memories upsert on `(user_id, scope, key)`, so a reseed
 without `--reset` refreshes the same rows rather than duplicating them.
 
 A [Rebuilding the shared preview project](#rebuilding-the-shared-preview-project)
-run wipes any seeded demo data along with everything else (and the smoke
-user, per the notice above) — reseed with `/preview --seed` on any open PR
-once the smoke user is re-seeded.
+run wipes any seeded demo data along with everything else. The smoke user comes
+back on its own (the rebuild re-creates it, and so does `/preview --seed`'s own
+job), so reseed with `/preview --seed` on any open PR.
 
 ### Recommended branch protection
 
