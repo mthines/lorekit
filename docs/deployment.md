@@ -902,11 +902,12 @@ right values:
 
 **Optional — the orgs REST smoke suite (`smoke-preview` only).** Unset → the
 suite is announced-skipped and the memories suite still runs; the deploy is
-never blocked. Set all three to enable it:
+never blocked. Set all four to enable it:
 
 | Secret | `preview` environment |
 |--------|-----------------------|
 | `SUPABASE_ANON_KEY` | preview anon (publishable) key |
+| `SUPABASE_SERVICE_ROLE_KEY` | preview service-role key — lets CI (re)create the smoke user after a reset; without it the suite skips again after the next weekly rebuild |
 | `LOREKIT_SMOKE_EMAIL` | fixed smoke user's email |
 | `LOREKIT_SMOKE_PASSWORD` | fixed smoke user's password |
 
@@ -1003,7 +1004,8 @@ node scripts/seed/seed-preview.mjs --user-email <email> --reset     # wipe this 
 
 The target user must already exist — seed it first with
 [`seed-smoke-user.mjs`](#seed-the-orgs-smoke-user) above; this script never
-creates one, for the same reason the smoke suites don't. It refuses the
+creates one. On preview, CI keeps that user in place (the `smoke-preview` jobs,
+`/preview --seed`, and rebuild-preview.yml all run `seed-smoke-user.mjs`). It refuses the
 **production** project ref unconditionally (no override flag), matching
 [Rebuilding the shared preview project](#rebuilding-the-shared-preview-project)'s
 own belt-and-suspenders check. Every seeded memory's key is prefixed

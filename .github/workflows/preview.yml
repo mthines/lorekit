@@ -16,6 +16,9 @@
 #                        SUPABASE_ACCESS_TOKEN, LOREKIT_SMOKE_TOKEN
 #   repository level:    VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   optional:            DISCORD_WEBHOOK_URL
+#   optional (orgs REST smoke + --seed): LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD
+#                        (repo); SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+#                        (preview environment — the key (re)creates the smoke user)
 #
 # Security: issue_comment reads from main's workflow file (not the PR branch).
 # PR head is checked out by pinned SHA, not a user-controllable ref.
@@ -203,6 +206,30 @@ jobs:
         with:
           node-version: 20
 
+      # The seed targets the fixed smoke user, and this job runs in parallel
+      # with `smoke` — so it cannot rely on smoke's ensure step having run.
+      # Ensure the user here too (idempotent: a sign-in first, the admin API
+      # only when that fails), so `/preview --seed` works straight after a
+      # rebuild-preview.yml reset.
+      - name: Ensure the fixed smoke user exists on preview
+        env:
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
+          LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
+        run: |
+          if [ "$PROJECT_REF" = "pqokxlhvnosogizsjztg" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is the production project — refusing to seed the smoke user there."
+            exit 1
+          fi
+          if [ -z "$LOREKIT_SMOKE_EMAIL" ] || [ -z "$LOREKIT_SMOKE_PASSWORD" ] || [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Smoke-user credentials incomplete — not (re)creating the fixed smoke user."
+            exit 0
+          fi
+          SUPABASE_URL="https://$PROJECT_REF.supabase.co" node scripts/smoke/seed-smoke-user.mjs \
+            || echo "::warning::Could not seed the fixed smoke user on preview — the demo-data seed below may fail."
+
       # The seed targets the fixed smoke user (LOREKIT_SMOKE_EMAIL) — the same
       # account the orgs REST smoke signs in as — so it is optional in the
       # same way that suite is: unset → skip, announced, never fail the run.
@@ -213,7 +240,7 @@ jobs:
           LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
         run: |
           if [ -z "$LOREKIT_SMOKE_EMAIL" ]; then
-            echo "::warning::--seed requested but LOREKIT_SMOKE_EMAIL is not set — skipping. Seed it once with scripts/smoke/seed-smoke-user.mjs to enable /preview --seed."
+            echo "::warning::--seed requested but LOREKIT_SMOKE_EMAIL is not set — skipping. Set LOREKIT_SMOKE_EMAIL/PASSWORD (repo) and SUPABASE_ANON_KEY/SUPABASE_SERVICE_ROLE_KEY (preview environment) to enable /preview --seed."
             exit 0
           fi
           node scripts/seed/seed-preview.mjs --user-email "$LOREKIT_SMOKE_EMAIL"

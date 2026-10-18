@@ -9,7 +9,8 @@
  * the actor as `auth.uid()` — `lk_*` tokens and the service-role key are both
  * rejected). `mint-smoke-jwt.mjs` mints that user's JWT in fixed-user mode by
  * signing in with `LOREKIT_SMOKE_EMAIL`/`LOREKIT_SMOKE_PASSWORD`, but it never
- * *creates* the user (a smoke run must not provision users in a real tenant).
+ * *creates* the user — minting is a read-only sign-in; provisioning is this
+ * script's job, run as its own step.
  *
  * So the user has to exist up front. Doing that by hand in the dashboard is
  * error-prone in exactly the way that bites silently: an unconfirmed email or a
@@ -23,7 +24,8 @@
  * ## Where to run it
  *
  * PREVIEW: CI runs it — `smoke-preview` (deploy.yml, preview.yml) before every
- * JWT mint and rebuild-preview.yml after every `db reset`, because a reset wipes
+ * JWT mint, preview.yml's `seed` job before `/preview --seed`, and
+ * rebuild-preview.yml after every `db reset`, because a reset wipes
  * the user. The service-role key is the `preview` environment's, set on that one
  * step, and the step refuses the production ref.
  * PRODUCTION (or any project by hand): from a trusted admin shell, never CI.
