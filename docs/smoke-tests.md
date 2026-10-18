@@ -118,12 +118,24 @@ E2E_BASE_URL=https://www.lorekit.io E2E_USER_EMAIL=… E2E_USER_PASSWORD=… npx
 the build for the dev server while iterating. Every variable is documented at
 the top of `packages/web-e2e/src/support/env.ts`.
 
+## Telemetry
+
+Every Playwright test attempt is also a trace in Dash0 (`service.name=e2e`),
+shipped by `packages/web-e2e/src/support/otel-reporter.ts` whenever the CLI's
+`resolveTelemetryConfig` enables export (`LOREKIT_TELEMETRY_TOKEN`, or the
+standard `OTEL_EXPORTER_OTLP_*` variables — an explicit
+`OTEL_EXPORTER_OTLP_ENDPOINT` needs no credential): a root span per test, a child per step, with
+the status, retry, flakiness and duration. Typed values (the sign-in password)
+are redacted. A run the resolver does not enable sends nothing (export it locally to send
+from your machine too); `E2E_OTEL_OUT=<file>` writes the payload to a file. Span reference: [otel.md](./otel.md#website-e2e-runs-servicenamee2e).
+
 ## Secrets the deploy-time runs use
 
 | Secret | Used by | Without it |
 |--------|---------|------------|
 | `LOREKIT_TESTING_USER_NAME`, `LOREKIT_TESTING_USER_PW` (repo) | signed-in pages on the staged build and on `lorekit.io` | signed-in tests skip, announced; public tests still run |
 | `LOREKIT_SMOKE_TOKEN` (preview env, existing) | CLI remote lane, hosted MCP smoke | — (already required) |
+| `LOREKIT_TELEMETRY_TOKEN` (repo, existing) | the e2e OTel reporter, on every Playwright step | tests run as before; no traces are sent |
 
 Traces are off on any run that targets production (the staged build included): a
 trace records request headers and cookies, and this public repo's artifacts are

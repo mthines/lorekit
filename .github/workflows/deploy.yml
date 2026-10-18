@@ -428,6 +428,9 @@ jobs:
       # The staged build talks to the PRODUCTION backend, whatever its URL says.
       E2E_TARGET: production
       API_CHANGED: ${{ needs.changes.outputs.api }}
+      # The otel reporter (packages/web-e2e/src/support/otel-reporter.ts) ships
+      # each test as a trace; LOREKIT_TELEMETRY_TOKEN is set on the Playwright steps.
+      LOREKIT_CORRELATION_ID: e2e-web-staged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -449,6 +452,8 @@ jobs:
 
       - name: Playwright — public pages on the staged build
         working-directory: packages/web-e2e
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
         run: npx playwright test --project=public
 
       - name: Note — signed-in pages run after promotion this time
@@ -467,6 +472,7 @@ jobs:
         env:
           E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
           E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
         run: npx playwright test --project=setup
 
       - name: Playwright — signed-in pages on the staged build
@@ -475,6 +481,7 @@ jobs:
         env:
           E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
           E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
         run: npx playwright test --project=signed-in --no-deps
 
       - name: Warn — the test account could not sign in

@@ -341,6 +341,51 @@ itself forever.
 
 ---
 
+## Website e2e runs (`service.name=e2e`)
+
+The Playwright suite (`packages/web-e2e`, [smoke-tests.md](./smoke-tests.md))
+ships every test attempt to Dash0 as its own trace, through a custom reporter,
+`src/support/otel-reporter.ts`. Its span model is ported from the Dash0 repo's
+`tests/e2e` reporter:
+
+| Span | Carries |
+|---|---|
+| Root, one per test attempt (its own trace) | `test.case.name`, `test.case.result.status` (`pass`/`fail`, absent on a skip), `test.suite.name`, `code.file.path`/`code.line.number`, and `lorekit.e2e.{project,status,expected_status,retry,flaky,worker_index,duration_ms,tags,skip_reason}`. ERROR with an `exception` event when the attempt ended unexpectedly |
+| Child, one per step | `test.step`s (the spec grammar's `WHEN`/`THEN`), Playwright actions, `expect`s and hooks, nested as Playwright nests them; `lorekit.e2e.step.category`. Fixture steps are folded away. Capped at 250 per test (`lorekit.e2e.steps_dropped` counts the rest) |
+
+A retried test emits one trace per attempt, so a flake is two traces, the
+second with `lorekit.e2e.flaky=true`. Run-wide values ride the resource:
+`lorekit.e2e.target`, `lorekit.e2e.base_url`, `lorekit.correlation_id` (the
+same run key the CLI, REST and MCP smokes send as the `X-LoreKit-Correlation-Id`
+header, recorded on `usage_events` rather than on a span), and the
+`cicd.pipeline.*` of the GitHub run.
+
+**What it never sends:** the value of any typing step. Playwright titles
+`locator.fill(x)` as `Fill "x"`, which for the sign-in step is the test
+account's password, so `Fill`/`Type`/`Insert`/`Press`/`Key up`/`Key down`
+become `Fill "…"`. The same values are scrubbed from error text, where a failed
+action's call log echoes them as `fill("x")`, and the configured secrets
+(`E2E_USER_PASSWORD`, `LOREKIT_TESTING_USER_PW`, `E2E_SUPABASE_SERVICE_ROLE_KEY`)
+are blanked from it whatever shape they arrive in. It also drops stdout, stderr, attachment paths, username and
+hostname, which the Dash0 original records, and it rewrites absolute paths in
+error messages and stack traces (repo root → relative, home directory → `~`) so
+a failed local run does not ship the username. `otel-spans.test.ts` pins this.
+
+Export reuses `scripts/telemetry/otlp-export.mjs` and the CLI's
+`resolveTelemetryConfig`, exactly as the eval exporter does: same token
+priority, `Dash0-Dataset` routing, opt-outs and the hard-coded
+`deployment.environment.name=test`. Nothing is sent unless that resolver
+enables export — a credential (`LOREKIT_TELEMETRY_TOKEN`,
+`OTEL_EXPORTER_OTLP_HEADERS`) or an explicit `OTEL_EXPORTER_OTLP_ENDPOINT` — so a
+local shell that exports any of those sends, as the CLI does. Spans are sent once, from `onEnd`, and a failed export prints a line
+without failing the run. `E2E_OTEL_OUT=<file>` writes the payload to a file,
+sent or not.
+
+In CI the Playwright steps of `web-e2e` (ci.yml), `e2e-web-staged` and
+`smoke-production` (deploy.yml) carry the existing `LOREKIT_TELEMETRY_TOKEN`.
+Compare runs on `service.name=e2e`, keyed by `vcs.ref.head.revision` or
+`cicd.pipeline.run.id`.
+
 ## Eval runs (`service.name=eval`)
 
 Full runbook, arms and how to read a summary: [`packages/evals/README.md`](../packages/evals/README.md).
@@ -1557,11 +1602,12 @@ unique.
 | `sweep` | The row-scaling benchmark ([above](#the-row-scaling-sweep)) | `scripts/telemetry/sweep-telemetry.mjs` |
 | `load` | The load generator | `scripts/telemetry/load-telemetry.mjs` |
 | `eval` | The eval harness ([above](#eval-runs-servicenameeval)) | `scripts/telemetry/eval-telemetry.mjs` |
+| `e2e` | The website Playwright suite ([above](#website-e2e-runs-servicenamee2e)) | `packages/web-e2e/src/support/otel-reporter.ts` |
 
-- **The last three are synthetic by construction** and each gets its own name for
-  the same reason: a benchmark, a load test and an eval all emit traffic nobody
+- **The last four are synthetic by construction** and each gets its own name for
+  the same reason: a benchmark, a load test, an eval and a browser test all emit traffic nobody
   asked for, and folding any of them into `api`/`cli`/`web` would corrupt the
-  very production numbers they exist to measure against. All three hard-code
+  very production numbers they exist to measure against. All four hard-code
   `deployment.environment.name=test` and are keyed by `vcs.ref.head.revision`.
 - **The edge functions are one service, not five.** They share a deployment, a database and a
   lifecycle; each function is an *operation* on `api`, not a separate service. Splitting them

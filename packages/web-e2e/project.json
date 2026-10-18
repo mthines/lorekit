@@ -3,11 +3,30 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/web-e2e/src",
   "projectType": "application",
-  "tags": ["type:e2e", "platform:web"],
-  "implicitDependencies": ["web"],
+  "tags": [
+    "type:e2e",
+    "platform:web"
+  ],
+  "implicitDependencies": [
+    "web",
+    "cli"
+  ],
   "targets": {
     "test": {
-      "dependsOn": []
+      "dependsOn": [],
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "externalDependencies": [
+            "vitest"
+          ]
+        },
+        {
+          "env": "CI"
+        },
+        "{workspaceRoot}/scripts/telemetry/**/*"
+      ]
     },
     "typecheck": {
       "executor": "nx:run-commands",
