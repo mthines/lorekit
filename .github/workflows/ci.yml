@@ -25,7 +25,8 @@ jobs:
   #    `code`   — any non-docs file touched → gates the `check` job.
   #    `api`    — API/backend paths → gates the (expensive) `integration` job.
   #    `plugin` — Claude-plugin paths → gates the `plugin` smoke job.
-  #    `web`    — dashboard paths (broad) → gates the `web-test` Storybook job.
+  #    `web`    — dashboard paths (broad) → gates the `web-test` Storybook job
+  #               and the `web-e2e` Playwright job.
   #    `web_preview` — the narrower, Vercel-quota-metered subset → gates
   #               `web-preview`. Two filters, not one, because the test job is
   #               free CI compute and the preview is a metered deployment.
@@ -114,7 +115,10 @@ jobs:
           # is precisely what the visual baselines are for. `ci.yml` is here for
           # the same reason as in every sibling gate: so an edit to this job runs
           # the job.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github/workflows/ci\.yml$)'; then
+          #
+          # `packages/web-e2e/` rides along: a change to the e2e suite itself must
+          # run the `web-e2e` job that executes it.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/web-e2e/|packages/schemas/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github/workflows/ci\.yml$)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
@@ -360,6 +364,124 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: npx vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
+
+  # ── Web e2e — Playwright against a local production build ────────────────────
+  #    The page smoke suite (packages/web-e2e; docs/smoke-tests.md). The site is
+  #    built with NEXT_PUBLIC_USE_LOCAL_SUPABASE=true and a local Supabase stack
+  #    runs behind it, so the job needs NO secrets (fork PRs included) and
+  #    touches nothing real. It proves that every public page renders, that every
+  #    dashboard page sends a signed-out visitor to /login, and — signed in as a
+  #    throwaway user the suite provisions on the local stack — that every
+  #    dashboard page renders. Any uncaught exception, console error or 5xx on
+  #    a page fails its test, not just a missing heading.
+  #
+  #    The same suite runs again at deploy time: against the staged production
+  #    build before its domain is assigned, and against lorekit.io after
+  #    (deploy.yml `e2e-web-staged` / `smoke-production`).
+  #
+  #    `npx playwright`, not `pnpm exec` / `nx run`, for the stdio reason given
+  #    on web-test above.
+  web-e2e:
+    name: Web — Playwright e2e (local build + local Supabase)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.web == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same key as web-test, so both jobs share one browser cache.
+      - name: Resolve Playwright version
+        id: pw
+        working-directory: packages/web-e2e
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright Chromium (+ OS deps)
+        run: pnpm --filter @lorekit/web-e2e exec playwright install --with-deps chromium
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          # Same pin as the integration job — see the reason there.
+          version: 2.115.0
+
+      - name: Start local Supabase (auth + edge functions behind the dashboard)
+        run: supabase start
+
+      - name: Capture local service-role key
+        id: supabase
+        run: |
+          supabase status -o json > /tmp/status.json
+          KEY="$(jq -r '.SERVICE_ROLE_KEY // .SECRET_KEY // .service_role_key // .Secret // empty' /tmp/status.json)"
+          if [ -z "$KEY" ]; then
+            echo "::error::No service-role/secret key in supabase status. Available keys:"
+            jq -r 'keys[]' /tmp/status.json
+            exit 1
+          fi
+          echo "::add-mask::$KEY"
+          echo "service_role_key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: packages/web/.next/cache
+          key: web-e2e-next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('packages/web/src/**', 'packages/schemas/src/**') }}
+          restore-keys: |
+            web-e2e-next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      # NEXT_PUBLIC_* values are inlined at build time, so THIS step decides
+      # that the site talks to the local stack and nothing else.
+      - name: Build the website (pointed at the local stack)
+        working-directory: packages/web
+        env:
+          NEXT_PUBLIC_USE_LOCAL_SUPABASE: 'true'
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npx next build
+
+      # Playwright starts `next start` itself (playwright.config.ts webServer).
+      # E2E_SUPABASE_* lets the setup project create a throwaway confirmed user
+      # on the local stack (refused for any non-local URL — src/support/env.ts).
+      - name: Playwright — every page, signed out and signed in
+        working-directory: packages/web-e2e
+        env:
+          E2E_SUPABASE_URL: http://127.0.0.1:54321
+          E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
+        run: npx playwright test
+
+      - name: Upload the Playwright report (traces + screenshots)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-e2e-report
+          path: |
+            packages/web-e2e/playwright-report
+            packages/web-e2e/test-results
+          retention-days: 14
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
 
   # ── Web preview — deploy a Vercel preview, ONLY when web paths changed ────────
   #    Replaces Vercel's native Git integration for the dashboard project. That
@@ -924,7 +1046,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration, web-test, migration-order, deploy-scope, skill-version-guard, seed-tests, preview-filter, bench-tests, edge-typecheck]
+    needs: [changes, check, plugin, integration, web-test, web-e2e, migration-order, deploy-scope, skill-version-guard, seed-tests, preview-filter, bench-tests, edge-typecheck]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate

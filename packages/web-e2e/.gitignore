@@ -1,0 +1,5 @@
+# Saved sign-in session (contains auth cookies) — never commit.
+.auth/
+playwright-report/
+test-results/
+blob-report/
