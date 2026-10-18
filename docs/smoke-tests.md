@@ -20,7 +20,7 @@ The guards need no browser, no network and no secrets, so they run in the
 | **Every PR** (`ci.yml`) | `web-e2e` job: a local production build against a local Supabase stack — public pages, the signed-out redirect of every dashboard page, and every dashboard page signed in as a throwaway user | offline lane, inside `cli:test` | local stdio server, inside `cli:test` |
 | **`/preview` on a PR** (`preview.yml`) | — | remote lane against the preview project | hosted server against the preview project |
 | **Merge → before production** (`deploy.yml`) | `e2e-web-staged`: the staged production build, before its domain is assigned (signed-in pages too when the merge leaves the API alone). Gates `promote-web-production` | remote lane in `smoke-preview`. Gates `deploy-production` | hosted server in `smoke-preview`. Gates `deploy-production` |
-| **Merge → after production** (`deploy.yml`) | `smoke-production`: `https://lorekit.io`, public + signed in. A failed page rolls both halves back; a failed test-account sign-in only warns | — (it writes; production is never written to by a smoke) | stdio handshake only (read-only) |
+| **Merge → after production** (`deploy.yml`) | `smoke-production`: `https://www.lorekit.io`, public + signed in. A failed page rolls both halves back; a failed test-account sign-in only warns | — (it writes; production is never written to by a smoke) | stdio handshake only (read-only) |
 
 ## Adding a website test
 
@@ -111,7 +111,7 @@ E2E_SUPABASE_SERVICE_ROLE_KEY="$(supabase status -o json | jq -r '.SERVICE_ROLE_
   npx playwright test
 
 # …or against a deployed site
-E2E_BASE_URL=https://lorekit.io E2E_USER_EMAIL=… E2E_USER_PASSWORD=… npx playwright test
+E2E_BASE_URL=https://www.lorekit.io E2E_USER_EMAIL=… E2E_USER_PASSWORD=… npx playwright test
 ```
 
 `E2E_WEB_COMMAND="pnpm --filter @lorekit/web exec next dev --port 3100"` swaps

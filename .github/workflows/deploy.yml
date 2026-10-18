@@ -37,7 +37,9 @@
 # Repo-level Vercel secrets (used by every web job): VERCEL_TOKEN, VERCEL_ORG_ID,
 # VERCEL_PROJECT_ID — the same three preview.yml already uses.
 # Optional repo-level variable: WEB_PROD_URL (the production dashboard origin the
-# production smoke curls; defaults to https://lorekit.io).
+# production smoke curls; defaults to https://www.lorekit.io). It must be the
+# origin that serves pages without a redirect: the e2e page-health check only
+# counts same-origin responses.
 # Optional (preview only) — enables the orgs REST smoke suite in smoke-preview
 # (see its "Mint a user JWT" step); unset → that suite is announced-skipped and
 # the memories suite still runs. SUPABASE_ANON_KEY additionally points the
@@ -1053,7 +1055,7 @@ jobs:
       # canonical dashboard domain.
       - name: Verify web dashboard responds (production)
         env:
-          URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
+          URL: ${{ vars.WEB_PROD_URL || 'https://www.lorekit.io' }}
         run: |
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
           echo "- Web dashboard: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
@@ -1075,7 +1077,7 @@ jobs:
       - name: Web e2e — public pages against production (Playwright)
         working-directory: packages/web-e2e
         env:
-          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
+          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://www.lorekit.io' }}
           E2E_TARGET: production
         run: npx playwright test --project=public
 
@@ -1087,7 +1089,7 @@ jobs:
         continue-on-error: true
         working-directory: packages/web-e2e
         env:
-          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
+          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://www.lorekit.io' }}
           E2E_TARGET: production
           E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
           E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
@@ -1097,7 +1099,7 @@ jobs:
         if: steps.e2e_login.outcome == 'success'
         working-directory: packages/web-e2e
         env:
-          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
+          E2E_BASE_URL: ${{ vars.WEB_PROD_URL || 'https://www.lorekit.io' }}
           E2E_TARGET: production
           E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
           E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
