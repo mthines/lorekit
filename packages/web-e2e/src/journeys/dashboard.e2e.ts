@@ -4,7 +4,8 @@ import { expect, test } from '../support/fixtures';
 /**
  * Signed-in journeys through the app shell. Runs in the `signed-in` project.
  * These stay in TypeScript because the grammar has no reload step, and the
- * sidebar renders twice (desktop + mobile) so its links need scoping to one nav. */
+ * sidebar renders twice (desktop + mobile) so its links need scoping to one nav.
+ */
 
 test.describe('the signed-in app shell', () => {
   test.skip(!USER_SOURCE, NO_USER_REASON);
