@@ -32,6 +32,24 @@ shares one set of lessons. MIT licensed and self-hostable.
   <img alt="A month in the life of one lesson. Day 1, learns: the agent works its way out of a failure and writes the lesson itself. Day 4, recalls: a teammate's agent fails the same way and the lesson arrives with the error. Day 12, promotes: seen three times, it becomes a permanent rule. Day 90, prunes: lore nobody opens is archived, never deleted." src=".github/assets/readme/loop-light.svg" width="100%">
 </picture>
 
+## Design choices
+
+LoreKit makes retrieval deterministic and leaves reasoning to the model.
+It stores lessons in scopes (`branch::`, `repo::`, `project::`, `global`; the
+most specific copy of a key wins), delivers them through lifecycle hooks and
+error matching, counts recurrence so lessons worth promoting into a rule
+surface, and archives by measured usage (how often a lesson is chosen versus
+delivered). Reasoning over what it delivers is the model's job. Non-goals, by
+design:
+
+- No belief graph, and no typed links between memories.
+- No confidence scores, and no propagation between memories.
+- No contradiction detection, and no invalidation through dependency chains.
+
+The bet: keep memory small, legible, and in the hot path — no structure
+precomputed at write time. Beyond catching failures, a skill can use LoreKit
+to improve on every run: [self-improving workflows](https://lorekit.io/docs/self-improving-workflows).
+
 ## Why not just a CLAUDE.md?
 
 Keep it. A rules file holds what you knew to write down **before** anything
