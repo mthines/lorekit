@@ -195,7 +195,7 @@ A good lesson is an observation, scoped as narrowly as it can be, and short.
 
 The `lorekit-setup` skill writes loop lessons to this shape:
 
-```markdown
+```text
 # <one-line takeaway — what to do, not what the lesson is about>
 
 **Applies when:** <concrete signal — file glob, task type, tool name, error shape>
@@ -372,7 +372,7 @@ takes a task from plan to a tested draft pull request. Its loop uses the bucket
 
 `global::aw-lessons::agent0-sandbox-headless-chrome-in-trusted-hosts-mode`:
 
-```markdown
+```text
 # Download Chrome for Testing directly when the Playwright CDN is blocked
 
 **Applies when:** installing Playwright browsers in an Agent0 sandbox in trusted-hosts mode.
@@ -387,7 +387,7 @@ Chrome for Testing
 
 `aw-lessons::executor-context-lacks-subagent-dispatch-skips-review-loop`:
 
-```markdown
+```text
 # Run review-loop from a session that can dispatch sub-agents
 
 **Applies when:** `aw` hands a Full-tier task to the `aw-executor` agent.
@@ -427,7 +427,7 @@ failure of its own.
 
 `reviewer-lessons::resolved-bot-thread-is-not-evidence-of-a-fix`:
 
-```markdown
+```text
 # A resolved thread is not evidence of a fix — check HEAD
 
 **Applies when:** deciding whether to drop a finding because an earlier review thread on the same line is resolved.
@@ -442,7 +442,7 @@ Seen seven times in production, it is now a standing rule in the reviewer:
 
 `reviewer-lessons::gate-table-says-pass-while-contract-says-fail`:
 
-```markdown
+```text
 # Don't print PASS on a verdict line that has warnings
 
 **Applies when:** writing the review report's verdict line when there are warnings but nothing blocking.
@@ -459,7 +459,7 @@ Also seen seven times in production, it changed the reviewer's report format
 A decision is worth a lesson when a later run might undo it without knowing why
 it was made. Write it to this shape:
 
-```markdown
+```text
 # <the decision, in one line>
 
 **Decision:** <what was chosen, and what was not>
