@@ -1,5 +1,5 @@
 import { NO_USER_REASON, TARGET, USER_SOURCE } from '../support/env';
-import { expect, test } from '../support/fixtures';
+import { allowing, expect, test } from '../support/fixtures';
 
 /**
  * Signing out revokes EVERY session of the account — SignOutButton calls
@@ -11,6 +11,10 @@ import { expect, test } from '../support/fixtures';
 test.describe('signing out', () => {
   test.skip(!USER_SOURCE, NO_USER_REASON);
   test.skip(TARGET === 'production', 'signing out revokes every session of the shared test account');
+  // Signing out while /lore's data queries are still in flight revokes the token
+  // under them; they answer 401 and Chromium logs each one. The redirect below is
+  // the behavior under test, not those requests.
+  test.use({ allowedConsoleErrors: allowing([/status of 401 .*\/functions\/v1\//]) });
 
   test('ends the session', { tag: '@sign-out' }, async ({ page }) => {
     await page.goto('/lore');
