@@ -22,11 +22,11 @@
  *
  * ## Where to run it
  *
- * ONCE per project (preview, then production), from a trusted admin shell —
- * NOT in CI. Creating a confirmed user requires the service-role key (the Auth
- * admin API), which the recurring deploy smoke path deliberately does NOT carry
- * (CI only ever uses the anon key + email/password to mint a JWT). Keep the
- * service-role key on your machine / a secret store, not in a workflow.
+ * PREVIEW: CI runs it — `smoke-preview` (deploy.yml, preview.yml) before every
+ * JWT mint and rebuild-preview.yml after every `db reset`, because a reset wipes
+ * the user. The service-role key is the `preview` environment's, set on that one
+ * step, and the step refuses the production ref.
+ * PRODUCTION (or any project by hand): from a trusted admin shell, never CI.
  *
  * ## What it does (idempotent, self-healing)
  *

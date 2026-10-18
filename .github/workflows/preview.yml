@@ -380,8 +380,35 @@ jobs:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # The fixed smoke user lives in the preview project's auth schema, which
+      # rebuild-preview.yml wipes. Re-create it before the mint so the orgs suite
+      # heals on its own: seed-smoke-user.mjs signs in first and touches the Auth
+      # admin API only when that fails (user missing, or its password drifted).
+      # The service-role key is scoped to this ONE step and comes from the
+      # `preview` environment, so it can only ever reach the preview project.
+      # Best-effort like the mint: a failure leaves the orgs suite skipped.
+      - name: Ensure the fixed smoke user exists on preview
+        if: env.HAVE_ORG_SMOKE_CREDS == 'true'
+        env:
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
+          LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
+        run: |
+          if [ "$PROJECT_REF" = "pqokxlhvnosogizsjztg" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is the production project — refusing to seed the smoke user there."
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::warning::SUPABASE_SERVICE_ROLE_KEY is not set on the preview environment — cannot (re)create the fixed smoke user."
+            exit 0
+          fi
+          SUPABASE_URL="https://$PROJECT_REF.supabase.co" node scripts/smoke/seed-smoke-user.mjs \
+            || echo "::warning::Could not seed the fixed smoke user on preview — the orgs REST suite will be skipped."
+
       # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
-      # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant.
+      # (LOREKIT_SMOKE_EMAIL/PASSWORD), the user the step above ensures.
       # Runs only when the optional credentials are configured; otherwise the
       # orgs suite is left out and announced by smoke-rest, never a green suite
       # that tested nothing.
@@ -406,7 +433,7 @@ jobs:
             echo "::add-mask::$JWT"
             echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Could not mint a smoke JWT — the orgs REST suite is skipped this run. Seed a confirmed email+password smoke user (matching LOREKIT_SMOKE_EMAIL/PASSWORD) on this project to enable it."
+            echo "::warning::Could not mint a smoke JWT — the orgs REST suite is skipped this run. See the 'Ensure the fixed smoke user exists' step above."
           fi
 
       # REST Edge Functions end-to-end against the live preview stack — the

@@ -37,9 +37,8 @@
  *   node scripts/seed/seed-preview.mjs --user-email … --reset     # wipe this seed's rows first
  *
  * The target user must already exist (seed it with
- * scripts/smoke/seed-smoke-user.mjs first) — this script never creates one,
- * for the same reason the smoke suites don't: provisioning a user is a
- * separate, deliberate, out-of-CI act.
+ * scripts/smoke/seed-smoke-user.mjs first — on preview, smoke-preview and
+ * rebuild-preview.yml already do) — this script never creates one.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
