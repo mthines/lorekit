@@ -6,6 +6,9 @@
   "tags": ["type:e2e", "platform:web"],
   "implicitDependencies": ["web"],
   "targets": {
+    "test": {
+      "dependsOn": []
+    },
     "typecheck": {
       "executor": "nx:run-commands",
       "cache": true,
