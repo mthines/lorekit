@@ -7,7 +7,7 @@ keywords: ["use cases", "autonomous workflow", "aw", "stuck-loop", "ci", "github
 
 ### Autonomous workflow self-improvement
 
-The [autonomous-workflow](https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow) skill (part of [mthines/agent-skills](https://github.com/mthines/agent-skills)) defines a multi-phase agent dispatcher. The `aw` executor reads memories at Phase 1 (planning) and writes new ones at Phase 4 (stuck-loop) and Phase 7 (end-of-run). Universal memories go to `global`; repo-bound memories go to `repo::{owner}/{repo}`.
+The [autonomous-workflow](https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow) skill (part of [mthines/agent-skills](https://github.com/mthines/agent-skills)) defines a multi-phase agent dispatcher. The `aw` executor reads memories at Phase 1 (planning) and writes new ones at Phase 4 (stuck-loop) and Phase 7 (end-of-run). Universal memories go to `global`; repo-bound memories go to `repo::{owner}/{repo}`. The pattern behind this loop — read at the start, write a retrospective at the end, promote what recurs — is in [Self-improving workflows](/docs/self-improving-workflows).
 
 **Read memories before planning**
 

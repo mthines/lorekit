@@ -12,6 +12,7 @@ import {
   FileCode,
   Archive,
   Server,
+  Repeat,
   type LucideIcon,
 } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
@@ -48,6 +49,7 @@ export const DOCS_SECTIONS: readonly DocsSection[] = [
   { id: 'use-cases', label: 'Use cases', icon: Zap, summary: 'Common patterns and workflows' },
   { id: 'deep-links', label: 'Deep links', icon: Link2, summary: 'Shareable dashboard URLs for scopes, memories, and filters' },
   { id: 'grooming', label: 'Retention policies', icon: Archive, summary: 'Automatically archive stale lore — reviewed or nightly' },
+  { id: 'self-improving-workflows', label: 'Self-improving workflows', icon: Repeat, summary: 'Make a skill read its lessons each run and write a retrospective' },
 ];
 
 /** URL slugs / MDX filename stems, in reading order. */

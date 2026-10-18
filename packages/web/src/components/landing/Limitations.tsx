@@ -4,6 +4,8 @@ import { LANDING_SECTION_ID } from './sections';
 const LIMITS = [
   'It doesn’t read your codebase. It stores what your agent writes to it, and nothing else.',
   'It doesn’t make an agent smarter on its own. If nothing writes a lesson, there is nothing to read — which is why the plugins wire lifecycle hooks instead of leaving it to the agent’s discretion.',
+  'It doesn’t model beliefs or propagate confidence between memories. It stores and delivers lessons; reasoning over them is left to your agent.',
+  'It doesn’t detect contradictions, or invalidate a lesson when something it depends on changes. Grooming archives lessons nobody uses — it doesn’t catch a lesson that is used but wrong.',
   'It can surface a lesson you didn’t need. Scopes narrow what an agent sees, grooming prunes what has stopped earning its place, and every memory is visible to you in the dashboard.',
   'Codex support is experimental. Claude Code and Cursor are the supported paths; anything speaking MCP works too.',
   'There is no paid tier yet. If the free limits ever change, your lore exports to plain markdown files you own.',

@@ -957,6 +957,7 @@ id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 - [Use cases](https://lorekit.io/docs/use-cases) — End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows.
 - [Deep links](https://lorekit.io/docs/deep-links) — Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag.
 - [Retention policies](https://lorekit.io/docs/grooming) — Save scoped rules that automatically archive lessons you no longer need — reviewed manually or swept nightly — without ever hard-deleting anything. Plus the Insights grid that shows which lessons are earning their place, citations so an agent can say which lessons it actually applied, and the read-only Duplicate Clusters sidebar for spotting the same lesson written twice.
+- [Self-improving workflows](https://lorekit.io/docs/self-improving-workflows) — Two ways to use LoreKit: reactive capture, where hooks turn a failure into a lesson, and self-improving workflows, where a skill reads its own lessons at the start of every run and writes a retrospective at the end. Covers the loop, what makes a good lesson, how to tell the loop works, the guards that stop it reinforcing its own mistakes, and how to record decisions.
 
 ## Key documentation
 
