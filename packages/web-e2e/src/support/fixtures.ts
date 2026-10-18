@@ -32,7 +32,7 @@ export interface PageHealthOptions {
  *     heading still rendered. A spec that asserts its own error status
  *     (`network: GET /x returned 404`) tolerates that status's console line;
  *     anything else known and harmless goes in GLOBAL_ALLOWED_PROBLEMS with a
- *     reason, or `test.use({ allowedConsoleErrors: [...] })` in a TS journey.
+ *     reason, or `test.use({ allowedConsoleErrors: allowing([...]) })` in a TS journey.
  *   • The Vercel bypass header on requests to the site's OWN origin when
  *     VERCEL_AUTOMATION_BYPASS_SECRET is set. Only that origin: adding it to
  *     every request (`extraHTTPHeaders`) would put an unexpected header on the
@@ -94,6 +94,13 @@ export const test = base.extend<PageHealthOptions & { pageProblems: string[] }>(
 });
 
 export { expect };
+
+/**
+ * The `test.use` value for `allowedConsoleErrors`. Never pass the bare array:
+ * Playwright reads any array whose second element is an object as a
+ * `[value, options]` tuple, so `[/a/, /b/]` would become the value `/a/`.
+ */
+export const allowing = (patterns: RegExp[]): [RegExp[], { scope: 'test' }] => [patterns, { scope: 'test' }];
 
 /** Headers for `request.*` calls that must get through Vercel Deployment Protection. */
 export function originHeaders(): Record<string, string> {

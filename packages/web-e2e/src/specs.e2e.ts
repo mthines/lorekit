@@ -4,7 +4,7 @@ import { urlPath } from './spec/grammar.cjs';
 import { loadSpecs } from './spec/load';
 import { expectedErrorStatuses, runSpec } from './spec/run';
 import { NO_USER_REASON, TARGET, USER_SOURCE } from './support/env';
-import { expect, test } from './support/fixtures';
+import { allowing, expect, test } from './support/fixtures';
 
 /**
  * Turns every `## Spec` block in packages/web-e2e/specs/*.md into a test.
@@ -28,7 +28,7 @@ for (const spec of specs) {
   const skipReason = spec.skipOn[TARGET];
 
   test.describe(`${spec.file} › ${spec.title}`, () => {
-    test.use({ allowedConsoleErrors: allowedFor(spec) });
+    test.use({ allowedConsoleErrors: allowing(allowedFor(spec)) });
 
     if (!spec.signedIn) {
       test(`signed out — ${spec.url}`, async ({ page }, testInfo) => {
