@@ -1015,9 +1015,9 @@ close to idempotent: memories upsert on `(user_id, scope, key)`, so a reseed
 without `--reset` refreshes the same rows rather than duplicating them.
 
 A [Rebuilding the shared preview project](#rebuilding-the-shared-preview-project)
-run wipes any seeded demo data along with everything else (and the smoke
-user, per the notice above) — reseed with `/preview --seed` on any open PR
-once the smoke user is re-seeded.
+run wipes any seeded demo data along with everything else. The smoke user comes
+back on its own (the rebuild re-creates it, and so does `/preview --seed`'s own
+job), so reseed with `/preview --seed` on any open PR.
 
 ### Recommended branch protection
 
