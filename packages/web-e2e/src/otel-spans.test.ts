@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadOtlpExport, loadTelemetryConfig } from './support/otel-modules';
-import { buildTestSpans, type OtlpEncoder, MAX_STEP_SPANS, stepSpanName, type ResultLike, type StepLike, type TestLike } from './support/otel-spans';
+import { buildRedactions, buildTestSpans, type OtlpEncoder, MAX_STEP_SPANS, stepSpanName, type ResultLike, type StepLike, type TestLike } from './support/otel-spans';
 
 const T0 = new Date('2026-10-18T12:00:00.000Z');
 
@@ -54,6 +54,30 @@ describe('the reused CLI telemetry config', () => {
       enabled: false,
       reason: expect.any(String),
     });
+  });
+});
+
+describe('buildRedactions', () => {
+  it('blanks configured secrets first, then makes repo paths relative, then folds home to ~', () => {
+    const redactions = buildRedactions(
+      { E2E_USER_PASSWORD: ' hunter2 ', LOREKIT_TESTING_USER_PW: '', E2E_SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_x', OTHER: 'kept' },
+      '/home/ci/repo/',
+      '/home/ci',
+    );
+    expect(redactions).toEqual([
+      ['hunter2', '…'],
+      ['sb_secret_x', '…'],
+      ['/home/ci/repo/', ''],
+      ['/home/ci', '~'],
+    ]);
+    const [root] = buildTestSpans(
+      test,
+      result({ status: 'failed', error: { message: 'hunter2 at /home/ci/repo/packages/a.ts and /home/ci/.cache/b.js' } }),
+      newId,
+      encoder,
+      redactions,
+    );
+    expect(root.status.message).toBe('… at packages/a.ts and ~/.cache/b.js');
   });
 });
 

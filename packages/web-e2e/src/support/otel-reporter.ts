@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import type { FullConfig, Reporter, TestCase, TestResult } from '@playwright/test/reporter';
 import { BASE_URL, TARGET } from './env';
 import { loadOtlpExport, loadTelemetryConfig } from './otel-modules';
-import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type Redactions } from './otel-spans';
+import { buildRedactions, buildTestSpans, type OtlpEncoder, type OtlpSpan } from './otel-spans';
 
 /**
  * Ships every test attempt to Dash0 as a trace (`service.name=e2e`), so a red —
@@ -24,9 +24,6 @@ import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type Redactions } from
  * E2E_OTEL_OUT=<file> also writes the payload there, sent or not — the way to
  * see exactly what would leave the machine.
  */
-
-/** Env vars whose values must never appear in exported error text. */
-const SECRET_ENV = ['E2E_USER_PASSWORD', 'LOREKIT_TESTING_USER_PW', 'E2E_SUPABASE_SERVICE_ROLE_KEY'];
 
 export default class OtelReporter implements Reporter {
   private readonly finished: [TestCase, TestResult][] = [];
@@ -76,16 +73,6 @@ export default class OtelReporter implements Reporter {
     );
   }
 
-  /** Secret values blanked, then repo-relative paths and `~` for the rest of home. */
-  private redactions(): Redactions {
-    const secrets = SECRET_ENV.map((name) => process.env[name]?.trim()).filter((v): v is string => !!v);
-    return [
-      ...secrets.map((secret) => [secret, '…'] as const),
-      [this.repoRoot + sep, ''],
-      [homedir(), '~'],
-    ];
-  }
-
   private spansFor(test: TestCase, result: TestResult, encoder: OtlpEncoder): OtlpSpan[] {
     // titlePath(): ['', project, file, ...describes, title]
     const [, , , ...titlePath] = test.titlePath();
@@ -102,7 +89,7 @@ export default class OtelReporter implements Reporter {
       result,
       (bytes) => randomBytes(bytes).toString('hex'),
       encoder,
-      this.redactions(),
+      buildRedactions(process.env, this.repoRoot, homedir()),
     );
   }
 }

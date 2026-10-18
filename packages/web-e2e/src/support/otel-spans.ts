@@ -119,6 +119,15 @@ export type NewId = (bytes: 8 | 16) => string;
  */
 export type Redactions = readonly (readonly [string, string])[];
 
+/** Env vars whose values must never appear in exported error text. */
+export const SECRET_ENV = ['E2E_USER_PASSWORD', 'LOREKIT_TESTING_USER_PW', 'E2E_SUPABASE_SERVICE_ROLE_KEY'] as const;
+
+/** Secret values blanked first, then repo-relative paths, then `~` for the rest of home. */
+export function buildRedactions(env: Record<string, string | undefined>, repoRoot: string, home: string): Redactions {
+  const secrets = SECRET_ENV.map((name) => env[name]?.trim()).filter((v): v is string => !!v);
+  return [...secrets.map((secret) => [secret, '…'] as const), [`${repoRoot.replace(/\/+$/, '')}/`, ''], [home, '~']];
+}
+
 function redact(text: string | undefined, redactions: Redactions): string | undefined {
   if (!text) return text;
   const literal = redactions.reduce((out, [from, to]) => (from ? out.split(from).join(to) : out), text);
