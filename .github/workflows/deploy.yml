@@ -51,11 +51,9 @@
 # once with `node scripts/smoke/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
 # the orgs-smoke user"); the mint signs in as it, it is never auto-created.
 # Optional repo-level secrets for the website e2e suite (packages/web-e2e,
-# docs/smoke-tests.md): VERCEL_AUTOMATION_BYPASS_SECRET lets e2e-web-staged reach
-# the staged build through Vercel Deployment Protection (unset → that job skips,
-# announced, and promotion proceeds as before); LOREKIT_TESTING_USER_NAME +
-# LOREKIT_TESTING_USER_PW sign in a production test account for the signed-in
-# pages (unset → those tests skip, announced; public pages still run).
+# docs/smoke-tests.md): LOREKIT_TESTING_USER_NAME + LOREKIT_TESTING_USER_PW sign
+# in a production test account for the signed-in pages (unset → those tests
+# skip, announced; public pages still run).
 # Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
 # a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
 # Add a required reviewer on the `production` environment for a manual gate.
@@ -406,10 +404,8 @@ jobs:
   # ── 1d. Website e2e against the STAGED production build ───────────────────────
   #    Playwright (packages/web-e2e) against the exact bundle promote-web-production
   #    is about to put on the production domain — so a broken page stops the flip
-  #    instead of being rolled back after users saw it. The staged URL is behind
-  #    Vercel Deployment Protection; VERCEL_AUTOMATION_BYPASS_SECRET gets through it
-  #    and, while it is unset, this job skips (announced) and promotion proceeds
-  #    exactly as before.
+  #    instead of being rolled back after users saw it. The staged URL is public
+  #    (Vercel Deployment Protection is off for this project), so no bypass secret.
   #
   #    Signed-in pages run here only when this merge leaves the API alone. When the
   #    API changed too, it reaches production only AFTER this job (deploy-production),
@@ -433,50 +429,30 @@ jobs:
       E2E_TARGET: production
       API_CHANGED: ${{ needs.changes.outputs.api }}
     steps:
-      - name: Skip without the Vercel bypass secret
-        id: gate
-        env:
-          HAS_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET != '' }}
-        run: |
-          if [ "$HAS_BYPASS" != "true" ]; then
-            echo "::warning::VERCEL_AUTOMATION_BYPASS_SECRET is not set — the staged build is behind Vercel Deployment Protection, so the website e2e gate is SKIPPED. Add the secret (Vercel ▸ Project ▸ Settings ▸ Deployment Protection ▸ Protection Bypass for Automation) to turn it on."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout repository
-        if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v7.0.1
 
       - name: Set up pnpm
-        if: steps.gate.outputs.run == 'true'
         uses: pnpm/action-setup@v6
 
       - name: Set up Node.js
-        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-node@v7.1.0
         with:
           node-version: 20
           cache: pnpm
 
       - name: Install dependencies
-        if: steps.gate.outputs.run == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright Chromium (+ OS deps)
-        if: steps.gate.outputs.run == 'true'
         run: pnpm --filter @lorekit/web-e2e exec playwright install --with-deps chromium
 
       - name: Playwright — public pages on the staged build
-        if: steps.gate.outputs.run == 'true'
         working-directory: packages/web-e2e
-        env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npx playwright test --project=public
 
       - name: Note — signed-in pages run after promotion this time
-        if: steps.gate.outputs.run == 'true' && env.API_CHANGED == 'true'
+        if: env.API_CHANGED == 'true'
         run: echo "::notice::This merge changes the API too — signed-in pages run in smoke-production, once both halves are live."
 
       # Sign in as its own step, allowed to fail: an expired test-account password
@@ -485,11 +461,10 @@ jobs:
       # sign-in do block it (next step).
       - name: Sign in the e2e test account on the staged build
         id: login
-        if: steps.gate.outputs.run == 'true' && env.API_CHANGED != 'true'
+        if: env.API_CHANGED != 'true'
         continue-on-error: true
         working-directory: packages/web-e2e
         env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
           E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
         run: npx playwright test --project=setup
@@ -498,7 +473,6 @@ jobs:
         if: steps.login.outcome == 'success'
         working-directory: packages/web-e2e
         env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           E2E_USER_EMAIL: ${{ secrets.LOREKIT_TESTING_USER_NAME }}
           E2E_USER_PASSWORD: ${{ secrets.LOREKIT_TESTING_USER_PW }}
         run: npx playwright test --project=signed-in --no-deps
@@ -858,8 +832,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes, deploy-production, stage-web-production, e2e-web-staged]
     # Flip the web when it changed (stage-web-production ran), its staged build
-    # passed the website e2e (e2e-web-staged — green when it skips for a missing
-    # bypass secret), AND either the API
+    # passed the website e2e (e2e-web-staged), AND either the API
     # did not change (nothing to wait for) or the API's prod deploy succeeded (so
     # the API is live before the FE fronts it). `changes.outputs.api` disambiguates
     # deploy-production's 'skipped' (API unchanged, fine) from a real upstream stop

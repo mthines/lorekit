@@ -122,11 +122,10 @@ the top of `packages/web-e2e/src/support/env.ts`.
 
 | Secret | Used by | Without it |
 |--------|---------|------------|
-| `VERCEL_AUTOMATION_BYPASS_SECRET` (repo) | `e2e-web-staged` — gets through Vercel Deployment Protection on the staged URL | the job skips with a warning and promotion proceeds as before |
 | `LOREKIT_TESTING_USER_NAME`, `LOREKIT_TESTING_USER_PW` (repo) | signed-in pages on the staged build and on `lorekit.io` | signed-in tests skip, announced; public tests still run |
 | `LOREKIT_SMOKE_TOKEN` (preview env, existing) | CLI remote lane, hosted MCP smoke | — (already required) |
 
-Traces are off on any run that uses the bypass secret or targets production: a
+Traces are off on any run that targets production (the staged build included): a
 trace records request headers and cookies, and this public repo's artifacts are
 downloadable by anyone. Failure screenshots still upload.
 

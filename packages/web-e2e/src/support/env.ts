@@ -14,12 +14,6 @@
  *                  STAGED production build on a *.vercel.app URL is
  *                  `production`.
  *
- * ## Getting through Vercel Deployment Protection
- *
- *   VERCEL_AUTOMATION_BYPASS_SECRET   sent as `x-vercel-protection-bypass` on
- *                  requests to the site's own origin only (never to Supabase,
- *                  where the extra header would fail the CORS preflight).
- *
  * ## Signing in (the `signed-in` project)
  *
  * The first source that is set wins:
@@ -65,8 +59,6 @@ export const TARGET: TargetKind = (() => {
   if (explicit) throw new Error(`E2E_TARGET must be local | preview | production, got "${explicit}"`);
   return inferTarget(BASE_URL);
 })();
-
-export const VERCEL_BYPASS_SECRET = env('VERCEL_AUTOMATION_BYPASS_SECRET');
 
 export interface FixedUser {
   kind: 'fixed';

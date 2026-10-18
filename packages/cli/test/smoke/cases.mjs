@@ -344,16 +344,24 @@ for (const [command, args] of REMOTE_ONLY) {
   });
 }
 
+// protect / pin / unpin / policy / groom are owner-keyed: the server refuses a
+// service-role credential (it has no user to own the row), as the hosted MCP
+// smoke does for the same tools. Preview's smoke token is service-role.
+const OWNERLESS = 'skipped: owner-keyed — a service-role credential has no owner';
+
 smoke('protect', 'protects and unprotects a lesson', REMOTE, async ({ cli, ctx }) => {
+  if (ctx.tier === 'service') return OWNERLESS;
   assert.equal(cli.json(['protect', `${ctx.scope}::${ctx.key('alpha')}`]).protected, true);
   assert.equal(cli.json(['protect', `${ctx.scope}::${ctx.key('alpha')}`, '--off']).protected, false);
 });
 
 smoke('pin', 'is shorthand for protect', REMOTE, async ({ cli, ctx }) => {
+  if (ctx.tier === 'service') return OWNERLESS;
   assert.equal(cli.json(['pin', `${ctx.scope}::${ctx.key('alpha')}`]).protected, true);
 });
 
 smoke('policy', 'creates, lists, updates and deletes a retention policy', REMOTE, async ({ cli, ctx }) => {
+  if (ctx.tier === 'service') return OWNERLESS;
   const created = cli.json(['policy', 'create', '--scope', ctx.scope, '--name', `cli smoke ${ctx.runId}`, '--tags', 'groom-me']);
   const id = created.policy?.id;
   assert.ok(id, `policy create returned no id: ${JSON.stringify(created)}`);
@@ -366,6 +374,7 @@ smoke('policy', 'creates, lists, updates and deletes a retention policy', REMOTE
 });
 
 smoke('groom', 'archives what a policy matches, but never a protected lesson', REMOTE, async ({ cli, ctx }) => {
+  if (ctx.tier === 'service') return OWNERLESS;
   writeLesson(cli, ctx, 'groom-target', 'A lesson the smoke policy should archive.', ['--tags', 'groom-me']);
   writeLesson(cli, ctx, 'groom-keeper', 'A protected lesson the smoke policy must not touch.', ['--tags', 'groom-me']);
   cli.json(['protect', `${ctx.scope}::${ctx.key('groom-keeper')}`]);
@@ -379,6 +388,7 @@ smoke('groom', 'archives what a policy matches, but never a protected lesson', R
 });
 
 smoke('unpin', 'is shorthand for protect --off', REMOTE, async ({ cli, ctx }) => {
+  if (ctx.tier === 'service') return OWNERLESS;
   assert.equal(cli.json(['unpin', `${ctx.scope}::${ctx.key('groom-keeper')}`]).protected, false);
   // Delete the policy here rather than leave it to cleanup, so `policy delete` is exercised too.
   assert.equal(cli.json(['policy', 'delete', ctx.state.policyId, '--yes']).deleted, true);

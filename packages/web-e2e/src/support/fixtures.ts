@@ -1,5 +1,5 @@
 import { test as base, expect } from '@playwright/test';
-import { BASE_URL, VERCEL_BYPASS_SECRET } from './env';
+import { BASE_URL } from './env';
 
 const ORIGIN = new URL(BASE_URL).origin;
 
@@ -24,36 +24,17 @@ export interface PageHealthOptions {
 }
 
 /**
- * The suite's `test`: Playwright's, plus two things every spec gets for free.
- *
- *   • A health check. Each test records uncaught page exceptions, console
- *     errors and same-origin 5xx responses, and fails when any were seen — so
- *     a hydration error or a crashing component fails the smoke even when the
- *     heading still rendered. A spec that asserts its own error status
- *     (`network: GET /x returned 404`) tolerates that status's console line;
- *     anything else known and harmless goes in GLOBAL_ALLOWED_PROBLEMS with a
- *     reason, or `test.use({ allowedConsoleErrors: allowing([...]) })` in a TS journey.
- *   • The Vercel bypass header on requests to the site's OWN origin when
- *     VERCEL_AUTOMATION_BYPASS_SECRET is set. Only that origin: adding it to
- *     every request (`extraHTTPHeaders`) would put an unexpected header on the
- *     app's Supabase calls and fail their CORS preflight.
+ * The suite's `test`: Playwright's, plus a health check every spec gets for
+ * free. Each test records uncaught page exceptions, console errors and
+ * same-origin 5xx responses, and fails when any were seen — so a hydration
+ * error or a crashing component fails the smoke even when the heading still
+ * rendered. A spec that asserts its own error status (`network: GET /x
+ * returned 404`) tolerates that status's console line; anything else known and
+ * harmless goes in GLOBAL_ALLOWED_PROBLEMS with a reason, or
+ * `test.use({ allowedConsoleErrors: allowing([...]) })` in a TS journey.
  */
 export const test = base.extend<PageHealthOptions & { pageProblems: string[] }>({
   allowedConsoleErrors: [[], { option: true }],
-
-  context: async ({ context }, use) => {
-    const secret = VERCEL_BYPASS_SECRET;
-    if (secret) {
-      await context.route(
-        (url) => url.origin === ORIGIN,
-        (route) =>
-          route.continue({
-            headers: { ...route.request().headers(), 'x-vercel-protection-bypass': secret },
-          }),
-      );
-    }
-    await use(context);
-  },
 
   pageProblems: [
     async ({ page, allowedConsoleErrors }, use, testInfo) => {
@@ -101,8 +82,3 @@ export { expect };
  * `[value, options]` tuple, so `[/a/, /b/]` would become the value `/a/`.
  */
 export const allowing = (patterns: RegExp[]): [RegExp[], { scope: 'test' }] => [patterns, { scope: 'test' }];
-
-/** Headers for `request.*` calls that must get through Vercel Deployment Protection. */
-export function originHeaders(): Record<string, string> {
-  return VERCEL_BYPASS_SECRET ? { 'x-vercel-protection-bypass': VERCEL_BYPASS_SECRET } : {};
-}
