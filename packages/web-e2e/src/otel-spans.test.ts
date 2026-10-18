@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { loadOtlpExport } from './support/otel-modules';
+import { loadOtlpExport, loadTelemetryConfig } from './support/otel-modules';
 import { buildTestSpans, type OtlpEncoder, MAX_STEP_SPANS, stepSpanName, type ResultLike, type StepLike, type TestLike } from './support/otel-spans';
 
 const T0 = new Date('2026-10-18T12:00:00.000Z');
@@ -42,6 +42,20 @@ const newId = (bytes: 8 | 16) => String(++counter).padStart(bytes * 2, '0');
 const build = (r: ResultLike, t: TestLike = test) => buildTestSpans(t, r, newId, encoder);
 const attrs = (span: { attributes: { key: string; value: Record<string, unknown> }[] }) =>
   Object.fromEntries(span.attributes.map((a) => [a.key, Object.values(a.value)[0]]));
+
+describe('the reused CLI telemetry config', () => {
+  // The reporter calls this at runtime only, from onEnd, where a break is just a
+  // log line — so pin the contract it relies on here.
+  it('resolves an endpoint and headers with a token, and disables on opt-out', async () => {
+    const resolveTelemetryConfig = await loadTelemetryConfig();
+    const on = resolveTelemetryConfig({ LOREKIT_TELEMETRY_TOKEN: 'test-token' });
+    expect(on).toMatchObject({ enabled: true, endpoint: expect.stringMatching(/^https?:\/\//), headers: expect.any(Object) });
+    expect(resolveTelemetryConfig({ LOREKIT_TELEMETRY_TOKEN: 'test-token', LOREKIT_TELEMETRY: 'off' })).toMatchObject({
+      enabled: false,
+      reason: expect.any(String),
+    });
+  });
+});
 
 describe('stepSpanName', () => {
   it.each([

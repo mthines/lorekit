@@ -15,7 +15,7 @@ import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type Redactions } from
  * Export is the repo's existing one: the CLI's `resolveTelemetryConfig` decides
  * endpoint, credential, dataset and opt-outs (`LOREKIT_TELEMETRY_TOKEN` in CI;
  * `LOREKIT_TELEMETRY=off` / `DO_NOT_TRACK=1` opt out), and `otlp-export.mjs`
- * encodes and POSTs. With no credential nothing is sent.
+ * encodes and POSTs. When that resolver does not enable export, nothing is sent.
  *
  * Results are collected during the run and sent ONCE, from `onEnd`. A failed
  * export prints a line and never fails a run: the tests are the gate, their

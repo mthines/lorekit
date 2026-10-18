@@ -374,8 +374,10 @@ a failed local run does not ship the username. `otel-spans.test.ts` pins this.
 Export reuses `scripts/telemetry/otlp-export.mjs` and the CLI's
 `resolveTelemetryConfig`, exactly as the eval exporter does: same token
 priority, `Dash0-Dataset` routing, opt-outs and the hard-coded
-`deployment.environment.name=test`. With no credential nothing is sent; a
-local shell that exports `LOREKIT_TELEMETRY_TOKEN` sends, as the CLI does. Spans are sent once, from `onEnd`, and a failed export prints a line
+`deployment.environment.name=test`. Nothing is sent unless that resolver
+enables export — a credential (`LOREKIT_TELEMETRY_TOKEN`,
+`OTEL_EXPORTER_OTLP_HEADERS`) or an explicit `OTEL_EXPORTER_OTLP_ENDPOINT` — so a
+local shell that exports any of those sends, as the CLI does. Spans are sent once, from `onEnd`, and a failed export prints a line
 without failing the run. `E2E_OTEL_OUT=<file>` writes the payload to a file,
 sent or not.
 

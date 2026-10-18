@@ -38,8 +38,9 @@ export default defineConfig({
   workers: CI ? 2 : undefined,
   timeout: 45_000,
   expect: { timeout: 15_000 },
-  // otel-reporter ships each test as a trace to Dash0 (service.name=e2e) when a
-  // telemetry credential is set (LOREKIT_TELEMETRY_TOKEN in CI) and is a no-op otherwise.
+  // otel-reporter ships each test as a trace (service.name=e2e) when the CLI's
+  // resolveTelemetryConfig enables export (LOREKIT_TELEMETRY_TOKEN in CI, or the
+  // OTEL_EXPORTER_OTLP_* variables) and is a no-op otherwise.
   reporter: CI
     ? [['github'], ['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['./src/support/otel-reporter.ts']]
     : [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['./src/support/otel-reporter.ts']],
