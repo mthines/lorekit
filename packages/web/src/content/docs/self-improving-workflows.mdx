@@ -1,0 +1,456 @@
+---
+title: "Self-improving workflows"
+description: "Two ways to use LoreKit: reactive capture, where hooks turn a failure into a lesson, and self-improving workflows, where a skill reads its own lessons at the start of every run and writes a retrospective at the end. Covers the loop, what makes a good lesson, how to tell the loop works, the guards that stop it reinforcing its own mistakes, and how to record decisions."
+order: 13
+keywords: ["self-improvement", "self-improving", "retrospective", "loop", "reactive capture", "lorekit-setup", "lorekit-memory", "loop::", "bucket", "seen_count", "promotion", "status::structural", "status::promoted", "chosen", "delivered", "pull-through", "insights", "cited", "entrenchment", "guards", "quarantine", "aw", "pr-review", "pr-reviewer", "review-loop", "decisions", "design choices", "non-goals"]
+---
+
+LoreKit makes retrieval deterministic and leaves reasoning to the model. It
+decides which lessons reach an agent, and when; the agent decides what they
+mean. This guide builds on that split: a skill that reads what it learned last
+time, does its work, and writes down what it learned this time.
+
+## What LoreKit does, and what it leaves to the model
+
+| LoreKit does | The model does |
+| --- | --- |
+| Stores lessons under a scope — `branch::`, `repo::`, `project::`, or `global` — and returns the most specific copy of a key | Decides whether a delivered lesson applies to the task in front of it |
+| Delivers lessons through lifecycle hooks and error matching, and through `memory.list` / `memory.search` | Weighs a lesson against the user's intent and against other lessons |
+| Counts recurrence: writing the same scope + key again increments `seen_count` | Decides when a recurring lesson should become a rule, and writes the rule |
+| Measures usage: how often each lesson is delivered, and how often an agent chooses to open it | Notices when two lessons disagree, or when a lesson is wrong |
+| Archives lessons by age and usage through [retention policies](/docs/grooming), and stops delivering a lesson once its TTL runs out | Writes the lesson in the first place |
+
+Some things LoreKit does not do, by design. It keeps no belief graph and no
+typed links between memories. It attaches no confidence score to a lesson and
+propagates nothing from one lesson to another. It does not detect
+contradictions, and when something a lesson depends on changes, nothing
+invalidates the lesson. Memory stays small, legible, and in the hot path, with
+no structure precomputed at write time.
+
+Two mechanisms look close to these and are not:
+
+- **Ranking is not confidence.** The session-start injection orders candidates
+  by a fixed, reproducible formula of recency, recurrence, match against the
+  current query, and recorded outcome. That orders delivery. Nothing is stored
+  on the lesson, and nothing flows between lessons.
+- **Citations are not links.** A write can name the lessons it applied in
+  `cited`. LoreKit counts those citations so you can see which lessons get used.
+  A citation carries no relationship type, and LoreKit infers nothing from it.
+
+## Two usage patterns
+
+### Reactive capture (the default)
+
+`npx @lorekit/cli install` wires this for you. Lifecycle hooks deliver lessons
+at session start, on a prompt that matches one, and when a tool call fails: the
+hook searches your lore with the tool name and the error text, and injects up
+to three matching lessons before the agent retries. At the end of a turn that
+hit friction — an errored tool call, or the same command repeated in a loop —
+the hook nudges the agent to write a lesson, and the `lorekit-memory` skill
+writes it. A clean session stays silent.
+
+Per-prompt and error-matched recall run on Claude Code. Cursor reads lessons
+through a rule and an end-of-turn hook.
+
+Reactive capture starts from a failure. Until something goes wrong, nothing is
+written.
+
+### Self-improving workflows
+
+A skill, agent, or workflow owns a loop of its own. It reads its scoped lessons
+at the start of every run and writes a retrospective lesson at the end.
+Improvement does not need a failure first: a near-miss, a guess that paid off,
+and a lesson that was applied and worked are all worth recording.
+
+| | Reactive capture | Self-improving workflow |
+| --- | --- | --- |
+| Set up by | `npx @lorekit/cli install` — hooks plus the `lorekit-memory` skill | You, inside your skill, with the `lorekit-setup` skill |
+| Reads | At session start, on matching prompts, on failing tool calls | Its own bucket, at the start of every run |
+| Writes | After a turn with friction | At the end of every run, and at the skill's own failure points |
+| Bucket | Tag `skill::lorekit-memory` | Tag `loop::<host>-lessons`, keys `<host>-lessons::<slug>` |
+| Promotion | [Insights](/insights) flags load-bearing lessons | The skill suggests a reviewed rule change once a lesson recurs |
+
+Both patterns use the same store and the same `memory.*` tools, so one project
+can run both.
+
+## The loop
+
+Read at the start → do the work → write a retrospective → promote when a lesson
+recurs.
+
+Give the loop its own bucket first, so its lessons stay apart from every other
+loop's on the same scopes: the tag `loop::<host>-lessons` and the key namespace
+`<host>-lessons::<slug>`, where `<host>` is the skill's name. Same scope + key
+overwrites in place, which is what makes recurrence countable.
+
+<TutorialStep number={1} title="Read at the start of every run">
+
+Read narrow to broad, filter by the bucket tag, and cap what you inject. The
+`lorekit-setup` recipe cards default to five lessons per scope.
+
+```json
+memory.list { scope: "repo::acme/app", tags: ["loop::deploy-lessons"], limit: 5 }
+memory.list { scope: "global",         tags: ["loop::deploy-lessons"], limit: 5 }
+```
+
+Apply each lesson whose **Applies when** line matches the run as a
+consideration, not a command. When a lesson conflicts with what the user asked
+for, the user wins — say so. When a `repo::` lesson and a `global` lesson
+disagree, the `repo::` lesson wins.
+
+If the `memory.*` tools are not connected, log one line and carry on. The loop
+must never block the run.
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Do the work">
+
+Run the skill as normal. Note which lessons changed what you did — the
+retrospective names them.
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Write a retrospective at the end">
+
+Ask the 30-second question: would a future run do better if it knew this? If
+not, write nothing. If so, search for a near-duplicate first, so a recurrence
+updates the existing lesson instead of adding a second one:
+
+```json
+memory.search { q: "<key words of the lesson>", scopes: ["repo::acme/app", "global"], limit: 10 }
+```
+
+Then write it, with every fact the store models in its own field:
+
+```json
+memory.write {
+  scope:    "repo::acme/app",
+  key:      "deploy-lessons::<slug>",
+  value:    "<the markdown lesson — see What a good lesson is>",
+  tags:     ["loop::deploy-lessons", "source::paid-off"],
+  trigger:  "paid-off",
+  ttl_days: 90,
+  cited:    ["<scope::key of each lesson you applied>"]
+}
+```
+
+Writing the same scope and key again is an update: the store increments
+`seen_count` by one, and passing `ttl_days` again restarts the expiry. Never
+write a count or a date into the lesson body — the columns are the only copies
+that stay true. If a lesson you applied at the start worked, write the update
+anyway. A lesson that keeps working is recurrence evidence too.
+
+`cited` names the lessons that shaped this run. It is the only way LoreKit
+learns that a lesson was used rather than only shown — see
+[Letting your agent say which lessons it used](/docs/grooming#letting-your-agent-say-which-lessons-it-used).
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Promote when a lesson recurs">
+
+LoreKit counts; your skill decides. A lesson is promotion-eligible when its
+`seen_count` reaches 3, or when it carries the `status::structural` tag because
+it describes a design gap rather than a one-off. The skill then suggests the
+promotion in one line, and never acts on its own:
+
+```text
+Lesson "<title>" recurred 3 times. Promote it to a permanent guard in <host>?
+```
+
+Promotion is a normal, reviewed edit — LoreKit does not apply it. A `global`
+lesson hardens the skill's own source; a `repo::` lesson hardens the repo's own
+rules or docs. Once the edit lands, write an update that adds the
+`status::promoted` tag, so the lesson stops re-suggesting itself and records
+why the rule exists.
+
+On the dashboard, [Insights](/insights) labels lessons that are delivered widely
+and chosen often **Load-bearing** — the candidates to promote.
+
+</TutorialStep>
+
+## What a good lesson is
+
+A good lesson is an observation, scoped as narrowly as it can be, and short.
+
+- **An observation, not a rigid rule.** Write what happened and what worked.
+  The `lorekit-memory` skill's own contrast: "Running `pnpm nx test mcp-core`
+  without `supabase start` fails with a connection refused error; start
+  Supabase first" ages well, while "ALWAYS start Supabase" does not. The next
+  run weighs an observation against its own situation; a commandment gets
+  applied where it doesn't fit.
+- **The narrowest scope that fits.** For a loop lesson that could go either
+  way, `lorekit-setup` defaults to `global`: its **Applies when** line still has
+  to match before it fires anywhere.
+- **Short.** One lesson per record, led by the takeaway, at most about 1,500
+  characters. No transcript excerpts, session IDs, timestamps, or "in this run
+  I…" framing — the next run has none of that context. Never a secret or
+  personal data: drop the lesson instead.
+
+| The lesson is about… | Scope |
+| --- | --- |
+| A principle that holds in any repo | `global` |
+| This repository's code or tooling | `repo::{owner}/{repo}` |
+| A monorepo-wide convention | `project::{name}` |
+| A throwaway detail of one branch | `branch::{owner}/{repo}::{branch}` |
+
+The `lorekit-setup` skill writes loop lessons to this shape:
+
+```markdown
+# <one-line takeaway — what to do, not what the lesson is about>
+
+**Applies when:** <concrete signal — file glob, task type, tool name, error shape>
+
+**What happened:** <the concrete observable from the run>
+**Why:** <root cause, if known; "unknown" is allowed>
+**Do this instead:** <prescriptive, actionable, testable instruction>
+**Promotion target:** <the rule or step this would harden if promoted, or "none">
+```
+
+**Applies when** must be concrete, so the read step can match it against a run.
+**Do this instead** is advice the next run weighs, never a command it obeys.
+
+Keep everything the store already models out of the body: recurrence is
+`seen_count`, expiry is `ttl_days`, status is a `status::<value>` tag, and the
+trigger, host, and origin have fields of their own. `lorekit lint` flags a body
+that hides metadata in an HTML comment, front matter, or a `key=value` header.
+
+## When to write
+
+Write when a run produces something a future run would benefit from knowing.
+These are the moments the `lorekit-memory` skill writes on, with the `trigger`
+value to record:
+
+| Moment | `trigger` |
+| --- | --- |
+| A stuck loop — the same step failing again and again | `stuck-loop` |
+| A repeated command failure | `command-failure` |
+| A surprising gotcha | `gotcha` |
+| A near-miss | `near-miss` |
+| A wrong assumption that cost time | `assumption-wrong` |
+| A guess that paid off and should be reused | `paid-off` |
+| A lesson written by hand | `manual` |
+
+A self-improving workflow adds two moments of its own:
+
+- **The end of every run.** Ask the 30-second question even when the run went
+  well. The `aw` workflow does this in its last phase, so friction is captured
+  on clean runs too, and records it with `trigger: "end-of-run"` — the field
+  takes any string.
+- **When feedback on the run's output arrives.** A review comment the author
+  fixed, or one they rejected, is evidence about the reviewer's own judgement.
+  The `pr-review` example below records both.
+
+Skip a smooth run with nothing durable to say. An empty retrospective is not
+written.
+
+## How to know it works
+
+LoreKit counts two things for every lesson:
+
+- **Delivered** (`read_count`) — every time the lesson is handed to a reader,
+  including bulk `memory.list` and `memory.search` results and a person opening
+  it in the dashboard.
+- **Chosen** (`opened_count`) — the deliveries where an agent deliberately
+  fetched that one lesson, with `memory.read` or `lorekit read` / `lorekit show`.
+
+Chosen divided by delivered is the lesson's pull-through: how often something
+went and got it on purpose. A lesson delivered often and chosen rarely costs
+context without earning it.
+
+Where you see it:
+
+- **[Insights](/insights)** places every lesson on a grid of delivered × chosen:
+  **Load-bearing** (promote it to a rule), **Specialist** (broaden its scope),
+  **Noise tax** (prune it first), and **Dormant** (archive it). A lesson gets a
+  verdict once it is at least 7 days old and has been delivered at least 10
+  times; until then it is **Too new to judge**.
+- **The [Lore Explorer](/lore) detail sheet** shows Recurrence, Delivered,
+  Chosen, and Cited side by side.
+- **The Explorer list** sorts by **Most chosen**, and its **Chosen** filter
+  finds lessons chosen N times or fewer.
+- **The CLI** previews the lessons nothing has ever chosen:
+
+```bash
+lorekit groom --scope repo::acme/app --max-opened-count 0
+```
+
+Pull-through measures selection, not influence. A lesson injected at session
+start is already in the agent's context, and can change what it does without
+ever being fetched again. That is what `cited` is for — and why a `0` in Cited
+means "nobody said so", not "unused". Full detail:
+[Which lessons are earning their place?](/docs/grooming#which-lessons-are-earning-their-place)
+
+For proof that a loop improved something, `lorekit-setup` asks for one check:
+after a lesson is promoted to a rule, its failure should stop recurring. Watch
+the source lesson's `seen_count` go flat. A new write that matches the promoted
+lesson's **Applies when** line means the rule did not hold. A flat count proves
+something only while the loop is still firing, and a loop you seeded up front
+has no clean baseline to compare against.
+
+## Guards
+
+The main risk of a learning loop is self-reinforcing error: the loop wrongly
+concludes "approach X always fails", stores it, avoids X forever, and never
+gathers the evidence that would overturn the belief. LoreKit does not reason
+about lessons, so these guards live in your skill. They come from
+`lorekit-setup`:
+
+1. **Lessons are advisory, never auto-applied.** A lesson biases a run. It
+   never disables a gate, skips a step, or changes a limit. The only path from a
+   lesson to changed behaviour is a human-reviewed edit.
+2. **Recurrence gates promotion, not a single run.** A `seen_count` of 3 or
+   more, or an explicit `status::structural` tag.
+3. **Every lesson expires.** Write `ttl_days: 90` and pass it again on every
+   recurrence, so a stale belief decays instead of entrenching. The store
+   enforces the TTL; an expiry written in the prose does nothing.
+4. **Contradiction is surfaced, not silently overwritten.** The search before
+   every write finds the prior lesson, and a genuine reversal is a reviewed
+   decision. LoreKit does not detect the contradiction: the search puts both
+   lessons in front of the model, and the model has to notice.
+5. **The privacy pre-flight is never skipped.** A lesson that contains a
+   secret, a token, or personal data is dropped, not written. The bar is higher
+   for `repo::`, which is team-visible.
+
+`lorekit-setup`'s wiring checklist adds four more:
+
+- **Cap the injection.** Read a few lessons per scope into a run — five by
+  default. An uncapped loop crowds out the run it was meant to help.
+- **Quarantine, don't delete.** Tag a suspect lesson `status::quarantine` and
+  shorten its TTL. Your read step skips quarantined lessons, so the lesson stops
+  biasing runs but survives long enough for a person to inspect it.
+- **Protect what a person has vetted.** `lorekit pin <scope::key>` (or
+  `memory.protect`) keeps every retention policy and manual `groom --run` from
+  archiving it.
+- **Don't loop an audit step.** An adversarial or fresh-eyes pass must not be
+  biased by earlier runs, so it should not read a lessons bucket at all.
+
+## Lifecycle
+
+`lorekit-setup` walks a loop through six steps. `npx @lorekit/cli install` adds
+the skill; run `/lorekit-setup <skill-name>` to start.
+
+| Step | What it answers |
+| --- | --- |
+| **Find** | Where a loop pays off. Start from recurring pain — `lorekit dedupe`, `lorekit invariants candidates`, git fix-and-revert chains — not from a guess |
+| **Wire** | Add the read and write steps from a recipe card: code-changing agent, reviewer, multi-step orchestrator, or CI job |
+| **Seed** | Deliver value on run one with a handful of hand-checked lessons, or leave the loop cold to prove its lift — never both |
+| **Prove** | Show that a real failure stopped recurring after its lesson was promoted |
+| **Maintain** | Keep the loop firing with a canary lesson, check that writes match the read, quarantine bad lessons, and groom the bucket |
+| **Scale** | Turn one person's loop into a team practice: rediscovery across authors, promotion as review, onboarding from the store |
+
+The full skill, with its recipe cards:
+[`lorekit-setup`](https://github.com/mthines/lorekit/tree/main/packages/cli/skill/lorekit-setup).
+
+## Worked examples
+
+Both examples come from [mthines/agent-skills](https://github.com/mthines/agent-skills).
+The lesson keys are real. Their full bodies live in the author's LoreKit store,
+so each example quotes what the skill's own docs record about the lesson, with
+a link to the source.
+
+### `aw` — autonomous development
+
+[`aw`](https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow)
+takes a task from plan to a tested draft pull request. Its loop uses the bucket
+`loop::aw-lessons`.
+
+- **Reads** at the start of planning, and again before implementation and
+  testing: `loop::aw-lessons` from `repo::{owner}/{repo}`, then `global`.
+  Matching lessons are applied as considerations and, in Full mode, listed in
+  the plan under "Lessons applied". Once the plan names the files it will
+  change, `aw` also reads the repo's shared `codebase-knowledge` records for
+  those files — read-only.
+- **Writes** when testing hits its stuck-loop cap, and at the end of every run —
+  CI green, a user-approved stop, or a post-merge bug in the same session —
+  after a retrospective prompt. A lesson that was applied and whose failure did
+  not recur is written back as an update.
+- **Promotes** at `seen_count` 3 or `status::structural`. A `global` lesson
+  becomes a proposed change to the skill's own source; a `repo::` lesson becomes
+  a proposed rule in that repo. Both need a passing confidence gate and the
+  user's approval.
+
+Real lessons:
+
+- `global::aw-lessons::agent0-sandbox-headless-chrome-in-trusted-hosts-mode`
+  recorded that some Agent0 sandbox network modes allow `storage.googleapis.com`
+  but block the CDN that Playwright's own installer uses. The `ui-verify` skill
+  cites it as the reason its browser install falls back to downloading Chrome
+  for Testing directly
+  ([source](https://github.com/mthines/agent-skills/blob/main/skills/testing/ui-verify/references/agent0-browser-install.md)).
+- `aw-lessons::executor-context-lacks-subagent-dispatch-skips-review-loop`
+  recorded, at `seen_count` 2, draft pull requests marked `NOT REVIEWED`: the
+  executor agent could not dispatch the review sub-agent. The workflow's design
+  notes cite it as the field report behind giving the executor that capability
+  ([source](https://github.com/mthines/agent-skills/blob/main/skills/workflow/autonomous-workflow/CLAUDE.md)).
+
+### `pr-review` and `review-loop` — code review
+
+[`pr-review`](https://github.com/mthines/agent-skills/tree/main/skills/quality/pr-review)
+runs the [`pr-reviewer`](https://github.com/mthines/agent-skills/blob/main/agents/pr-reviewer.md)
+agent once; [`review-loop`](https://github.com/mthines/agent-skills/tree/main/skills/quality/review-loop)
+runs it, for up to five iterations, until every review thread is resolved. The
+reviewer learns from what happens to its own comments, so it improves without a
+failure of its own.
+
+- **Reads** before it reviews: `loop::reviewer-lessons` and
+  `loop::reviewer-comment-relevance`, from `repo::{owner}/{repo}` and `global`.
+  Once its impact graph names the changed symbols, it reads the repo's
+  `codebase-knowledge` records for those symbols and files.
+- **Writes** during a review, from the reactions and replies to its earlier
+  comments. A 👎 or a "not a bug" reply is evidence toward suppressing that kind
+  of finding in the repo; a 👍, an agreeing reply, or a commit that fixes the
+  flagged line is evidence toward amplifying it. A thread resolved with nothing
+  to corroborate it writes nothing directional. At the end of a run it records
+  what it verified about the symbols and files it traced. A maintainer's
+  `/pr-review remember <fact>` writes a rule immediately.
+- **Promotes** after the pull request closes: a finding pattern with 3 or more
+  concordant outcomes becomes a `reviewer-lessons` entry. A relevance rule turns
+  active only after 3 concordant signals from at least 2 different pull
+  requests — one author's bad afternoon is not a repository preference.
+
+Real lessons:
+
+- `reviewer-lessons::resolved-bot-thread-is-not-evidence-of-a-fix` recorded
+  seven production sightings of a real defect suppressed because a review bot's
+  thread on the same line had been marked resolved with no code change behind
+  it — the defect was still live at HEAD. The reviewer's rules cite it for
+  "Resolved is not verified — check HEAD before trusting it"
+  ([source](https://github.com/mthines/agent-skills/blob/main/agents/shared/rules/prior-comment-awareness.md)).
+- `reviewer-lessons::gate-table-says-pass-while-contract-says-fail` recorded
+  seven sightings of a warning line reading "PASS — no blocking issues" beside a
+  FAIL verdict, which readers took as a contradiction. The reviewer's terminal
+  report dropped the word PASS from warning lines because of it
+  ([source](https://github.com/mthines/agent-skills/blob/main/agents/pr-reviewer/rules/terminal-report.md)).
+
+## Recording decisions
+
+A decision is worth a lesson when a later run might undo it without knowing why
+it was made. Write it to this shape:
+
+```markdown
+# <the decision, in one line>
+
+**Decision:** <what was chosen, and what was not>
+**Rationale:** <the constraint or evidence that decided it>
+**Assumptions:** <what has to stay true for the decision to hold>
+**Revisit if:** <a concrete signal — a file changing, a version, a limit, a metric>
+```
+
+Store it like any other lesson: the narrowest scope that fits, and a stable key
+so a revised decision updates in place. If it should not outlive a review, give
+it a `ttl_days` — `GET /memories?expiring_within_days=N` lists what lapses
+soon, so you can renew it or let it go.
+
+This is a writing convention the model reads, not a LoreKit feature. LoreKit
+stores the decision and delivers it like any other lesson. It does not parse
+the four fields, link the decision to the lessons or code it depends on, or
+invalidate it when an assumption stops being true. **Revisit if** works only
+when a later run reads the decision and notices that the condition has been
+met.
+
+<TutorialCallout variant="tip">
+
+More `aw` read and write snippets are in [Use cases](/docs/use-cases). How
+scopes and tags combine is in [Tags & scopes](/docs/tags).
+
+</TutorialCallout>
