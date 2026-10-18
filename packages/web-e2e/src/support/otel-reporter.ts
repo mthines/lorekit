@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { relative } from 'node:path';
+import { homedir } from 'node:os';
+import { relative, sep } from 'node:path';
 import type { FullConfig, Reporter, TestCase, TestResult } from '@playwright/test/reporter';
 import { BASE_URL, TARGET } from './env';
 import { loadOtlpExport, loadTelemetryConfig } from './otel-modules';
-import { buildTestSpans, type OtlpEncoder, type OtlpSpan } from './otel-spans';
+import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type PathRedactions } from './otel-spans';
 
 /**
  * Ships every test attempt to Dash0 as a trace (`service.name=e2e`), so a red —
@@ -71,6 +72,14 @@ export default class OtelReporter implements Reporter {
     );
   }
 
+  /** Repo-relative paths in error text, and `~` for anything else under home. */
+  private pathRedactions(): PathRedactions {
+    return [
+      [this.rootDir + sep, ''],
+      [homedir(), '~'],
+    ];
+  }
+
   private spansFor(test: TestCase, result: TestResult, encoder: OtlpEncoder): OtlpSpan[] {
     // titlePath(): ['', project, file, ...describes, title]
     const [, , , ...titlePath] = test.titlePath();
@@ -87,6 +96,7 @@ export default class OtelReporter implements Reporter {
       result,
       (bytes) => randomBytes(bytes).toString('hex'),
       encoder,
+      this.pathRedactions(),
     );
   }
 }

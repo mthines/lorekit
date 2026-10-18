@@ -121,8 +121,9 @@ the top of `packages/web-e2e/src/support/env.ts`.
 ## Telemetry
 
 Every Playwright test attempt is also a trace in Dash0 (`service.name=e2e`),
-shipped by `packages/web-e2e/src/support/otel-reporter.ts` when
-`LOREKIT_TELEMETRY_TOKEN` is set: a root span per test, a child per step, with
+shipped by `packages/web-e2e/src/support/otel-reporter.ts` when a telemetry
+credential resolves (`LOREKIT_TELEMETRY_TOKEN`, or the standard
+`OTEL_EXPORTER_OTLP_*` variables — the CLI's resolution order): a root span per test, a child per step, with
 the status, retry, flakiness and duration. Typed values (the sign-in password)
 are redacted. A run with no credential sends nothing (export it locally to send
 from your machine too); `E2E_OTEL_OUT=<file>` writes the payload to a file. Span reference: [otel.md](./otel.md#website-e2e-runs-servicenamee2e).

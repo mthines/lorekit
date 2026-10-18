@@ -350,20 +350,23 @@ ships every test attempt to Dash0 as its own trace, through a custom reporter,
 
 | Span | Carries |
 |---|---|
-| Root, one per test attempt (its own trace) | `test.case.name`, `test.case.result.status` (`pass`/`fail`, absent on a skip), `test.suite.name`, `code.filepath`/`code.lineno`, and `lorekit.e2e.{project,status,expected_status,retry,flaky,worker_index,duration_ms,tags,skip_reason}`. ERROR with an `exception` event when the attempt ended unexpectedly |
+| Root, one per test attempt (its own trace) | `test.case.name`, `test.case.result.status` (`pass`/`fail`, absent on a skip), `test.suite.name`, `code.file.path`/`code.line.number`, and `lorekit.e2e.{project,status,expected_status,retry,flaky,worker_index,duration_ms,tags,skip_reason}`. ERROR with an `exception` event when the attempt ended unexpectedly |
 | Child, one per step | `test.step`s (the spec grammar's `WHEN`/`THEN`), Playwright actions, `expect`s and hooks, nested as Playwright nests them; `lorekit.e2e.step.category`. Fixture steps are folded away. Capped at 250 per test (`lorekit.e2e.steps_dropped` counts the rest) |
 
 A retried test emits one trace per attempt, so a flake is two traces, the
 second with `lorekit.e2e.flaky=true`. Run-wide values ride the resource:
-`lorekit.e2e.target`, `lorekit.e2e.base_url`, `lorekit.correlation_id` (the key
-the deploy run's CLI, REST and MCP smokes already share), and the
+`lorekit.e2e.target`, `lorekit.e2e.base_url`, `lorekit.correlation_id` (the
+same run key the CLI, REST and MCP smokes send as the `X-LoreKit-Correlation-Id`
+header, recorded on `usage_events` rather than on a span), and the
 `cicd.pipeline.*` of the GitHub run.
 
 **What it never sends:** the value of any typing step. Playwright titles
 `locator.fill(x)` as `Fill "x"`, which for the sign-in step is the test
 account's password, so `Fill`/`Type`/`Insert`/`Press`/`Key up`/`Key down`
 become `Fill "…"`. It also drops stdout, stderr, attachment paths, username and
-hostname, which the Dash0 original records. `otel-spans.test.ts` pins this.
+hostname, which the Dash0 original records, and it rewrites absolute paths in
+error messages and stack traces (repo root → relative, home directory → `~`) so
+a failed local run does not ship the username. `otel-spans.test.ts` pins this.
 
 Export reuses `scripts/telemetry/otlp-export.mjs` and the CLI's
 `resolveTelemetryConfig`, exactly as the eval exporter does: same token

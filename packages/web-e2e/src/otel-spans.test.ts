@@ -89,6 +89,19 @@ describe('buildTestSpans', () => {
     expect(attrs(exception)).toMatchObject({ 'exception.message': 'expected 200', 'exception.stacktrace': 'at x' });
   });
 
+  it('rewrites absolute paths in error text so no home directory leaves the machine', () => {
+    const stack = 'Error: boom\n    at /Users/someone/repo/packages/web-e2e/journeys/a.e2e.ts:3:1\n    at /Users/someone/.cache/x.js:1:1';
+    const [root] = buildTestSpans(test, result({ status: 'failed', error: { message: 'boom in /Users/someone/repo/x.ts', stack } }), newId, encoder, [
+      ['/Users/someone/repo/packages/web-e2e/', ''],
+      ['/Users/someone', '~'],
+    ]);
+    expect(JSON.stringify(root)).not.toContain('someone');
+    const [exception] = root.events ?? [];
+    expect(attrs(exception)['exception.stacktrace']).toContain('at journeys/a.e2e.ts:3:1');
+    expect(attrs(exception)['exception.stacktrace']).toContain('at ~/.cache/x.js:1:1');
+    expect(root.status.message).toBe('boom in ~/repo/x.ts');
+  });
+
   it('treats an expected failure (test.fail) as a pass', () => {
     const [root] = build(result({ status: 'failed' }), { ...test, expectedStatus: 'failed' });
     expect(root.status.code).toBe(0);

@@ -12,7 +12,9 @@
  *     re-parented to the nearest kept ancestor.
  *
  * What it deliberately does NOT carry, unlike the dash0 original: stdout,
- * stderr, attachment paths, username and hostname. And it REDACTS the value of
+ * stderr, attachment paths, username and hostname — and it rewrites the absolute
+ * paths in error messages and stacks (which name the home directory) as
+ * relative ones. And it REDACTS the value of
  * every typing step — Playwright titles `locator.fill(x)` as `Fill "x"`, so the
  * test account's password would otherwise ride a span name into Dash0.
  */
@@ -99,6 +101,18 @@ export interface OtlpSpan {
 /** `bytes` random bytes as lowercase hex — 16 for a trace id, 8 for a span id. */
 export type NewId = (bytes: 8 | 16) => string;
 
+/**
+ * `[absolute prefix, replacement]` pairs applied to error text, most specific
+ * first — e.g. the repo root → `''`, then the home directory → `~`. A stack
+ * frame `/Users/<name>/…` would otherwise ship the username.
+ */
+export type PathRedactions = readonly (readonly [string, string])[];
+
+function redactPaths(text: string | undefined, redactions: PathRedactions): string | undefined {
+  if (!text) return text;
+  return redactions.reduce((out, [prefix, replacement]) => (prefix ? out.split(prefix).join(replacement) : out), text);
+}
+
 // eslint-disable-next-line no-control-regex -- matching the ESC control character is the point
 const ANSI = /\u001B\[[0-9;]*[A-Za-z]/g;
 
@@ -129,7 +143,9 @@ export function buildTestSpans(
   result: ResultLike,
   newId: NewId,
   { toOtlpAttributes, toUnixNano }: OtlpEncoder,
+  pathRedactions: PathRedactions = [],
 ): OtlpSpan[] {
+  const errorText = (text: string | undefined, max: number) => clean(redactPaths(text, pathRedactions), max);
   const traceId = newId(16);
   const rootId = newId(8);
   const startMs = result.startTime.getTime();
@@ -150,7 +166,7 @@ export function buildTestSpans(
       }
       const spanId = newId(8);
       const stepStart = step.startTime.getTime();
-      const message = clean(step.error?.message, MESSAGE_MAX);
+      const message = errorText(step.error?.message, MESSAGE_MAX);
       stepSpans.push({
         traceId,
         spanId,
@@ -168,7 +184,7 @@ export function buildTestSpans(
   walk(result.steps, rootId);
 
   const endMs = startMs + result.duration;
-  const message = failed ? (clean(result.error?.message, MESSAGE_MAX) ?? `test ${result.status}`) : undefined;
+  const message = failed ? (errorText(result.error?.message, MESSAGE_MAX) ?? `test ${result.status}`) : undefined;
   const root: OtlpSpan = {
     traceId,
     spanId: rootId,
@@ -191,8 +207,8 @@ export function buildTestSpans(
       'lorekit.e2e.tags': test.tags.length ? test.tags.join(',') : undefined,
       'lorekit.e2e.skip_reason': verdict === 'skipped' ? test.skipReason : undefined,
       'lorekit.e2e.steps_dropped': droppedSteps || undefined,
-      'code.filepath': test.file,
-      'code.lineno': test.line,
+      'code.file.path': test.file,
+      'code.line.number': test.line,
     }),
     status: failed ? { code: STATUS_ERROR, message } : { code: STATUS_UNSET },
   };
@@ -204,7 +220,7 @@ export function buildTestSpans(
         attributes: toOtlpAttributes({
           'exception.type': `playwright.${result.status}`,
           'exception.message': message,
-          'exception.stacktrace': clean(result.error.stack, STACK_MAX),
+          'exception.stacktrace': errorText(result.error.stack, STACK_MAX),
         }),
       },
     ];
