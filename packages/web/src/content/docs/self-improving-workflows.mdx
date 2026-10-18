@@ -343,10 +343,11 @@ The full skill, with its recipe cards:
 
 ## Worked examples
 
-Both examples come from [mthines/agent-skills](https://github.com/mthines/agent-skills).
-The lesson keys are real. Their full bodies live in the author's LoreKit store,
-so each example quotes what the skill's own docs record about the lesson, with
-a link to the source.
+Both examples come from [mthines/agent-skills](https://github.com/mthines/agent-skills),
+and every lesson shown is a real one. The key is the stored key. The body is a
+short version written from what the skill's own docs record — trimmed to the
+title, **Applies when**, **What happened**, and **Do this instead** — so the
+stored wording may differ. Each links to its source.
 
 ### `aw` — autonomous development
 
@@ -369,19 +370,35 @@ takes a task from plan to a tested draft pull request. Its loop uses the bucket
   a proposed rule in that repo. Both need a passing confidence gate and the
   user's approval.
 
-Real lessons:
+`global::aw-lessons::agent0-sandbox-headless-chrome-in-trusted-hosts-mode`:
 
-- `global::aw-lessons::agent0-sandbox-headless-chrome-in-trusted-hosts-mode`
-  recorded that some Agent0 sandbox network modes allow `storage.googleapis.com`
-  but block the CDN that Playwright's own installer uses. The `ui-verify` skill
-  cites it as the reason its browser install falls back to downloading Chrome
-  for Testing directly
-  ([source](https://github.com/mthines/agent-skills/blob/main/skills/testing/ui-verify/references/agent0-browser-install.md)).
-- `aw-lessons::executor-context-lacks-subagent-dispatch-skips-review-loop`
-  recorded, at `seen_count` 2, draft pull requests marked `NOT REVIEWED`: the
-  executor agent could not dispatch the review sub-agent. The workflow's design
-  notes cite it as the field report behind giving the executor that capability
-  ([source](https://github.com/mthines/agent-skills/blob/main/skills/workflow/autonomous-workflow/CLAUDE.md)).
+```markdown
+# Download Chrome for Testing directly when the Playwright CDN is blocked
+
+**Applies when:** installing Playwright browsers in an Agent0 sandbox in trusted-hosts mode.
+
+**What happened:** The network allowed `storage.googleapis.com` but blocked the CDN Playwright's installer uses.
+**Do this instead:** Download the build Playwright pinned in `browsers.json` from `chrome-for-testing-public`.
+```
+
+The `ui-verify` skill now does this itself: its browser install falls back to
+Chrome for Testing
+([source](https://github.com/mthines/agent-skills/blob/main/skills/testing/ui-verify/references/agent0-browser-install.md)).
+
+`aw-lessons::executor-context-lacks-subagent-dispatch-skips-review-loop`:
+
+```markdown
+# Run review-loop from a session that can dispatch sub-agents
+
+**Applies when:** `aw` hands a Full-tier task to the `aw-executor` agent.
+
+**What happened:** The executor could not dispatch sub-agents, so `review-loop` was skipped and the draft PR was marked `NOT REVIEWED`.
+**Do this instead:** Dispatch the planner and executor from the top-level session, and re-run `review-loop` there if the executor reports it skipped.
+```
+
+It reached a `seen_count` of 2, and the workflow's design notes cite it as the
+reason for that change
+([source](https://github.com/mthines/agent-skills/blob/main/skills/workflow/autonomous-workflow/CLAUDE.md)).
 
 ### `pr-review` and `review-loop` — code review
 
@@ -408,19 +425,34 @@ failure of its own.
   active only after 3 concordant signals from at least 2 different pull
   requests — one author's bad afternoon is not a repository preference.
 
-Real lessons:
+`reviewer-lessons::resolved-bot-thread-is-not-evidence-of-a-fix`:
 
-- `reviewer-lessons::resolved-bot-thread-is-not-evidence-of-a-fix` recorded
-  seven production sightings of a real defect suppressed because a review bot's
-  thread on the same line had been marked resolved with no code change behind
-  it — the defect was still live at HEAD. The reviewer's rules cite it for
-  "Resolved is not verified — check HEAD before trusting it"
-  ([source](https://github.com/mthines/agent-skills/blob/main/agents/shared/rules/prior-comment-awareness.md)).
-- `reviewer-lessons::gate-table-says-pass-while-contract-says-fail` recorded
-  seven sightings of a warning line reading "PASS — no blocking issues" beside a
-  FAIL verdict, which readers took as a contradiction. The reviewer's terminal
-  report dropped the word PASS from warning lines because of it
-  ([source](https://github.com/mthines/agent-skills/blob/main/agents/pr-reviewer/rules/terminal-report.md)).
+```markdown
+# A resolved thread is not evidence of a fix — check HEAD
+
+**Applies when:** deciding whether to drop a finding because an earlier review thread on the same line is resolved.
+
+**What happened:** A bot's thread was marked resolved with no code change. The defect was still live at HEAD, and the finding was dropped.
+**Do this instead:** Before dropping the finding, confirm at HEAD that the file still exists and the problem no longer reproduces.
+```
+
+Seen seven times in production, it is now a standing rule in the reviewer:
+"Resolved is not verified — check HEAD before trusting it"
+([source](https://github.com/mthines/agent-skills/blob/main/agents/shared/rules/prior-comment-awareness.md)).
+
+`reviewer-lessons::gate-table-says-pass-while-contract-says-fail`:
+
+```markdown
+# Don't print PASS on a verdict line that has warnings
+
+**Applies when:** writing the review report's verdict line when there are warnings but nothing blocking.
+
+**What happened:** A line reading "PASS — no blocking issues" sat beside a FAIL verdict, and readers took it as a contradiction.
+**Do this instead:** Write "No blocking issues — N warning(s): …" with no PASS in it.
+```
+
+Also seen seven times in production, it changed the reviewer's report format
+([source](https://github.com/mthines/agent-skills/blob/main/agents/pr-reviewer/rules/terminal-report.md)).
 
 ## Recording decisions
 
