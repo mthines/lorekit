@@ -462,11 +462,15 @@ jobs:
       # Playwright starts `next start` itself (playwright.config.ts webServer).
       # E2E_SUPABASE_* lets the setup project create a throwaway confirmed user
       # on the local stack (refused for any non-local URL — src/support/env.ts).
+      # LOREKIT_TELEMETRY_TOKEN lets src/support/otel-reporter.ts ship each test
+      # as a trace (service.name=e2e); empty on a fork PR, where it sends nothing.
       - name: Playwright — every page, signed out and signed in
         working-directory: packages/web-e2e
         env:
           E2E_SUPABASE_URL: http://127.0.0.1:54321
           E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+          LOREKIT_CORRELATION_ID: web-e2e-${{ github.run_id }}-${{ github.run_attempt }}
         run: npx playwright test
 
       - name: Upload the Playwright report (traces + screenshots)

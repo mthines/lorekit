@@ -4,7 +4,7 @@
   "sourceRoot": "packages/web-e2e/src",
   "projectType": "application",
   "tags": ["type:e2e", "platform:web"],
-  "implicitDependencies": ["web"],
+  "implicitDependencies": ["web", "cli"],
   "targets": {
     "test": {
       "dependsOn": []

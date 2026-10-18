@@ -1,0 +1,135 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { loadOtlpExport } from './support/otel-modules';
+import { buildTestSpans, type OtlpEncoder, MAX_STEP_SPANS, stepSpanName, type ResultLike, type StepLike, type TestLike } from './support/otel-spans';
+
+const T0 = new Date('2026-10-18T12:00:00.000Z');
+
+const test: TestLike = {
+  titlePath: ['the signed-in app shell', 'keeps the session across a reload'],
+  projectName: 'signed-in',
+  file: 'journeys/dashboard.e2e.ts',
+  line: 13,
+  tags: ['@signed-in'],
+  expectedStatus: 'passed',
+};
+
+const step = (title: string, category: string, steps: StepLike[] = [], error?: string): StepLike => ({
+  title,
+  category,
+  startTime: T0,
+  duration: 10,
+  steps,
+  ...(error ? { error: { message: error } } : {}),
+});
+
+const result = (over: Partial<ResultLike> = {}): ResultLike => ({
+  status: 'passed',
+  startTime: T0,
+  duration: 1500,
+  retry: 0,
+  workerIndex: 1,
+  steps: [],
+  ...over,
+});
+
+let encoder: OtlpEncoder;
+beforeAll(async () => {
+  encoder = await loadOtlpExport();
+});
+
+let counter = 0;
+const newId = (bytes: 8 | 16) => String(++counter).padStart(bytes * 2, '0');
+const build = (r: ResultLike, t: TestLike = test) => buildTestSpans(t, r, newId, encoder);
+const attrs = (span: { attributes: { key: string; value: Record<string, unknown> }[] }) =>
+  Object.fromEntries(span.attributes.map((a) => [a.key, Object.values(a.value)[0]]));
+
+describe('stepSpanName', () => {
+  it.each([
+    ['Fill "hunter2"', 'Fill "…"'],
+    ['Type "secret text"', 'Type "…"'],
+    ['Insert "x"', 'Insert "…"'],
+    ['Press "Enter"', 'Press "…"'],
+    ['Key down "Shift"', 'Key down "…"'],
+  ])('redacts the typed value of %s', (title, expected) => {
+    expect(stepSpanName('pw:api', title)).toBe(expected);
+  });
+
+  it('keeps titles that carry no typed value', () => {
+    expect(stepSpanName('pw:api', 'Navigate to "/login"')).toBe('Navigate to "/login"');
+    expect(stepSpanName('test.step', 'Fill "the form"')).toBe('Fill "the form"');
+  });
+});
+
+describe('buildTestSpans', () => {
+  it('emits one root per attempt, in its own trace, with the test.* conventions', () => {
+    const [root, ...rest] = build(result());
+    expect(rest).toEqual([]);
+    expect(root.parentSpanId).toBeUndefined();
+    expect(root.traceId).toHaveLength(32);
+    expect(root.name).toBe('the signed-in app shell › keeps the session across a reload');
+    expect(root.status).toEqual({ code: 0 });
+    expect(attrs(root)).toMatchObject({
+      'test.case.name': 'journeys/dashboard.e2e.ts › the signed-in app shell › keeps the session across a reload',
+      'test.case.result.status': 'pass',
+      'lorekit.e2e.project': 'signed-in',
+      'lorekit.e2e.retry': '0',
+      'lorekit.e2e.flaky': false,
+      'lorekit.e2e.tags': '@signed-in',
+    });
+    expect(root.startTimeUnixNano).toBe(`${T0.getTime()}000000`);
+    expect(root.endTimeUnixNano).toBe(`${T0.getTime() + 1500}000000`);
+  });
+
+  it('marks an unexpected failure as an ERROR with an exception event', () => {
+    const [root] = build(result({ status: 'failed', error: { message: '\u001b[31mexpected 200\u001b[39m', stack: 'at x' } }));
+    expect(root.status).toEqual({ code: 2, message: 'expected 200' });
+    expect(attrs(root)['test.case.result.status']).toBe('fail');
+    const [exception] = root.events ?? [];
+    expect(exception.name).toBe('exception');
+    expect(attrs(exception)).toMatchObject({ 'exception.message': 'expected 200', 'exception.stacktrace': 'at x' });
+  });
+
+  it('treats an expected failure (test.fail) as a pass', () => {
+    const [root] = build(result({ status: 'failed' }), { ...test, expectedStatus: 'failed' });
+    expect(root.status.code).toBe(0);
+    expect(attrs(root)['test.case.result.status']).toBe('pass');
+  });
+
+  it('flags a pass on a retry as flaky', () => {
+    expect(attrs(build(result({ retry: 1 }))[0])['lorekit.e2e.flaky']).toBe(true);
+  });
+
+  it('records a skip without a pass/fail verdict, keeping the reason', () => {
+    const [root] = build(result({ status: 'skipped', duration: 0 }), { ...test, expectedStatus: 'skipped', skipReason: 'no test user' });
+    expect(attrs(root)['test.case.result.status']).toBeUndefined();
+    expect(attrs(root)['lorekit.e2e.skip_reason']).toBe('no test user');
+  });
+
+  it('nests steps, folds fixtures away, and never leaks a typed password', () => {
+    const spans = build(
+      result({
+        steps: [
+          step('Fixture "page"', 'fixture', [step('Create context', 'pw:api')]),
+          step('WHEN the visitor signs in', 'test.step', [
+            step('Fill "hunter2"', 'pw:api'),
+            step('Expect "toHaveURL"', 'expect', [], 'timed out'),
+          ]),
+        ],
+      }),
+    );
+    const [root, create, when, fill, expectStep] = spans;
+    expect(spans.map((s) => s.name)).toEqual([root.name, 'Create context', 'WHEN the visitor signs in', 'Fill "…"', 'Expect "toHaveURL"']);
+    expect(create.parentSpanId).toBe(root.spanId); // re-parented past the fixture
+    expect(fill.parentSpanId).toBe(when.spanId);
+    expect(expectStep.status).toEqual({ code: 2, message: 'timed out' });
+    expect(JSON.stringify(spans)).not.toContain('hunter2');
+    expect(new Set(spans.map((s) => s.traceId)).size).toBe(1);
+  });
+
+  it(`caps a test at ${MAX_STEP_SPANS} step spans and counts the rest`, () => {
+    const steps = Array.from({ length: MAX_STEP_SPANS + 5 }, (_, i) => step(`Click ${i}`, 'pw:api'));
+    const [root, ...stepSpans] = build(result({ steps }));
+    expect(stepSpans).toHaveLength(MAX_STEP_SPANS);
+    expect(attrs(root)['lorekit.e2e.steps_dropped']).toBe('5');
+  });
+});

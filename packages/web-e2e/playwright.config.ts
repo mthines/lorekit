@@ -38,9 +38,11 @@ export default defineConfig({
   workers: CI ? 2 : undefined,
   timeout: 45_000,
   expect: { timeout: 15_000 },
+  // otel-reporter ships each test as a trace to Dash0 (service.name=e2e) when a
+  // telemetry credential is set (LOREKIT_TELEMETRY_TOKEN in CI) and is a no-op otherwise.
   reporter: CI
-    ? [['github'], ['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
-    : [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+    ? [['github'], ['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['./src/support/otel-reporter.ts']]
+    : [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['./src/support/otel-reporter.ts']],
 
   use: {
     baseURL: BASE_URL,
