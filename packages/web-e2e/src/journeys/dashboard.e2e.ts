@@ -4,8 +4,7 @@ import { expect, test } from '../support/fixtures';
 /**
  * Signed-in journeys through the app shell. Runs in the `signed-in` project.
  * These stay in TypeScript because the grammar has no reload step, and the
- * sidebar renders twice (desktop + mobile) so its links need scoping to one nav.
- */
+ * sidebar renders twice (desktop + mobile) so its links need scoping to one nav. */
 
 test.describe('the signed-in app shell', () => {
   test.skip(!USER_SOURCE, NO_USER_REASON);
@@ -26,7 +25,9 @@ test.describe('the signed-in app shell', () => {
     await expect(page).toHaveURL((url) => url.pathname === '/insights');
     await expect(page.getByRole('heading', { level: 1, name: 'Insights', exact: true })).toBeVisible();
 
-    await nav.getByRole('link', { name: 'Settings', exact: true }).click();
+    // Settings lives in the sidebar footer, outside the nav landmark; the mobile
+    // tab bar's copy is display:none at this width, so this matches one link.
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await expect(page).toHaveURL((url) => url.pathname.startsWith('/settings'));
     await expect(page.getByRole('heading', { level: 1, name: 'Settings', exact: true })).toBeVisible();
 
