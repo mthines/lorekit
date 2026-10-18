@@ -102,6 +102,33 @@ describe('buildTestSpans', () => {
     expect(root.status.message).toBe('boom in ~/repo/x.ts');
   });
 
+  it('never ships a typed value or a known secret through error text', () => {
+    const callLog = [
+      'TimeoutError: locator.fill: Timeout 5000ms exceeded.',
+      'Call log:',
+      '  - Fill "hunter2" with timeout 5000ms',
+      '  - waiting for getByLabel(\'Password\')',
+      '  -   fill("hunter2")',
+      '  - elementHandle.type("pa"ss")',
+    ].join('\n');
+    const spans = buildTestSpans(
+      test,
+      result({
+        status: 'failed',
+        error: { message: callLog, stack: `${callLog}\n    at x (s3cr3t-key)` },
+        steps: [step('Fill "hunter2"', 'pw:api', [], callLog)],
+      }),
+      newId,
+      encoder,
+      [['s3cr3t-key', '…']],
+    );
+    const json = JSON.stringify(spans);
+    for (const leaked of ['hunter2', 'pa\\"ss', 's3cr3t-key']) expect(json).not.toContain(leaked);
+    expect(spans[0].status.message).toContain('Fill "…" with timeout 5000ms');
+    expect(spans[0].status.message).toContain('fill("…")');
+    expect(spans[0].status.message).toContain("getByLabel('Password')");
+  });
+
   it('treats an expected failure (test.fail) as a pass', () => {
     const [root] = build(result({ status: 'failed' }), { ...test, expectedStatus: 'failed' });
     expect(root.status.code).toBe(0);

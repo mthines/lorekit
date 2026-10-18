@@ -363,7 +363,10 @@ header, recorded on `usage_events` rather than on a span), and the
 **What it never sends:** the value of any typing step. Playwright titles
 `locator.fill(x)` as `Fill "x"`, which for the sign-in step is the test
 account's password, so `Fill`/`Type`/`Insert`/`Press`/`Key up`/`Key down`
-become `Fill "…"`. It also drops stdout, stderr, attachment paths, username and
+become `Fill "…"`. The same values are scrubbed from error text, where a failed
+action's call log echoes them as `fill("x")`, and the configured secrets
+(`E2E_USER_PASSWORD`, `LOREKIT_TESTING_USER_PW`, `E2E_SUPABASE_SERVICE_ROLE_KEY`)
+are blanked from it whatever shape they arrive in. It also drops stdout, stderr, attachment paths, username and
 hostname, which the Dash0 original records, and it rewrites absolute paths in
 error messages and stack traces (repo root → relative, home directory → `~`) so
 a failed local run does not ship the username. `otel-spans.test.ts` pins this.

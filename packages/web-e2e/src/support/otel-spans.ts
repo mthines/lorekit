@@ -14,9 +14,11 @@
  * What it deliberately does NOT carry, unlike the dash0 original: stdout,
  * stderr, attachment paths, username and hostname — and it rewrites the absolute
  * paths in error messages and stacks (which name the home directory) as
- * relative ones. And it REDACTS the value of
- * every typing step — Playwright titles `locator.fill(x)` as `Fill "x"`, so the
- * test account's password would otherwise ride a span name into Dash0.
+ * relative ones. And it REDACTS every typed value — Playwright titles
+ * `locator.fill(x)` as `Fill "x"`, and a failed action's error carries a call
+ * log with `fill("x")` in it, so the test account's password would otherwise
+ * ride a span name or an exception into Dash0. Known secret values are blanked
+ * from error text on top of that, whatever shape they arrive in.
  */
 
 /**
@@ -52,6 +54,15 @@ const STACK_MAX = 4096;
 
 /** Playwright API titles that interpolate what the test TYPED (protocolMetainfo.js). */
 const TYPING_STEP = /^(Fill|Type|Insert|Press|Key up|Key down) "/;
+/**
+ * The same typed values inside error text: a call-log title (`Fill "x"`) or a
+ * call-log action (`fill("x")`, `elementHandle.type("x")`). Playwright does not
+ * escape the value, so match greedily to the line's last quote.
+ */
+const TYPED_IN_ERROR = [
+  /\b(Fill|Type|Insert|Press|Key up|Key down) ".*"/g,
+  /\b(fill|type|press|insertText)\(".*"\)/g,
+] as const;
 
 export interface StepLike {
   title: string;
@@ -66,7 +77,7 @@ export interface TestLike {
   /** describe blocks + title, without the root/project/file entries. */
   titlePath: string[];
   projectName: string;
-  /** Path relative to the Playwright testDir, e.g. `journeys/login.e2e.ts`. */
+  /** Repo-relative path, e.g. `packages/web-e2e/src/journeys/login.e2e.ts`. */
   file: string;
   line: number;
   tags: string[];
@@ -102,15 +113,19 @@ export interface OtlpSpan {
 export type NewId = (bytes: 8 | 16) => string;
 
 /**
- * `[absolute prefix, replacement]` pairs applied to error text, most specific
- * first — e.g. the repo root → `''`, then the home directory → `~`. A stack
- * frame `/Users/<name>/…` would otherwise ship the username.
+ * `[literal, replacement]` pairs applied to error text, in order — known secret
+ * values → `…`, then the repo root → `''`, then the home directory → `~`. A
+ * stack frame `/Users/<name>/…` would otherwise ship the username.
  */
-export type PathRedactions = readonly (readonly [string, string])[];
+export type Redactions = readonly (readonly [string, string])[];
 
-function redactPaths(text: string | undefined, redactions: PathRedactions): string | undefined {
+function redact(text: string | undefined, redactions: Redactions): string | undefined {
   if (!text) return text;
-  return redactions.reduce((out, [prefix, replacement]) => (prefix ? out.split(prefix).join(replacement) : out), text);
+  const literal = redactions.reduce((out, [from, to]) => (from ? out.split(from).join(to) : out), text);
+  return TYPED_IN_ERROR.reduce(
+    (out, pattern) => out.replace(pattern, (match) => match.replace(/(\(?)".*"(\)?)$/, '$1"…"$2')),
+    literal,
+  );
 }
 
 // eslint-disable-next-line no-control-regex -- matching the ESC control character is the point
@@ -143,9 +158,9 @@ export function buildTestSpans(
   result: ResultLike,
   newId: NewId,
   { toOtlpAttributes, toUnixNano }: OtlpEncoder,
-  pathRedactions: PathRedactions = [],
+  redactions: Redactions = [],
 ): OtlpSpan[] {
-  const errorText = (text: string | undefined, max: number) => clean(redactPaths(text, pathRedactions), max);
+  const errorText = (text: string | undefined, max: number) => clean(redact(text, redactions), max);
   const traceId = newId(16);
   const rootId = newId(8);
   const startMs = result.startTime.getTime();

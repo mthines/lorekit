@@ -5,7 +5,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { FullConfig, Reporter, TestCase, TestResult } from '@playwright/test/reporter';
 import { BASE_URL, TARGET } from './env';
 import { loadOtlpExport, loadTelemetryConfig } from './otel-modules';
-import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type PathRedactions } from './otel-spans';
+import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type Redactions } from './otel-spans';
 
 /**
  * Ships every test attempt to Dash0 as a trace (`service.name=e2e`), so a red —
@@ -25,9 +25,11 @@ import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type PathRedactions } 
  * see exactly what would leave the machine.
  */
 
+/** Env vars whose values must never appear in exported error text. */
+const SECRET_ENV = ['E2E_USER_PASSWORD', 'LOREKIT_TESTING_USER_PW', 'E2E_SUPABASE_SERVICE_ROLE_KEY'];
+
 export default class OtelReporter implements Reporter {
   private readonly finished: [TestCase, TestResult][] = [];
-  private rootDir = process.cwd();
   /** The monorepo root — playwright.config.ts sits in packages/web-e2e/. */
   private repoRoot = process.cwd();
 
@@ -36,7 +38,6 @@ export default class OtelReporter implements Reporter {
   }
 
   onBegin(config: FullConfig): void {
-    this.rootDir = config.rootDir;
     if (config.configFile) this.repoRoot = resolve(dirname(config.configFile), '../..');
   }
 
@@ -75,9 +76,11 @@ export default class OtelReporter implements Reporter {
     );
   }
 
-  /** Repo-relative paths in error text, and `~` for anything else under home. */
-  private pathRedactions(): PathRedactions {
+  /** Secret values blanked, then repo-relative paths and `~` for the rest of home. */
+  private redactions(): Redactions {
+    const secrets = SECRET_ENV.map((name) => process.env[name]?.trim()).filter((v): v is string => !!v);
     return [
+      ...secrets.map((secret) => [secret, '…'] as const),
       [this.repoRoot + sep, ''],
       [homedir(), '~'],
     ];
@@ -90,7 +93,7 @@ export default class OtelReporter implements Reporter {
       {
         titlePath,
         projectName: test.parent.project()?.name ?? '',
-        file: relative(this.rootDir, test.location.file),
+        file: relative(this.repoRoot, test.location.file),
         line: test.location.line,
         tags: test.tags,
         expectedStatus: test.expectedStatus,
@@ -99,7 +102,7 @@ export default class OtelReporter implements Reporter {
       result,
       (bytes) => randomBytes(bytes).toString('hex'),
       encoder,
-      this.pathRedactions(),
+      this.redactions(),
     );
   }
 }
