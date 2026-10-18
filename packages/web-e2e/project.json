@@ -16,6 +16,15 @@
       "dependsOn": [],
       "inputs": [
         "default",
+        "^production",
+        {
+          "externalDependencies": [
+            "vitest"
+          ]
+        },
+        {
+          "env": "CI"
+        },
         "{workspaceRoot}/scripts/telemetry/**/*"
       ]
     },

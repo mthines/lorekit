@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { relative, sep } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import type { FullConfig, Reporter, TestCase, TestResult } from '@playwright/test/reporter';
 import { BASE_URL, TARGET } from './env';
 import { loadOtlpExport, loadTelemetryConfig } from './otel-modules';
@@ -28,6 +28,8 @@ import { buildTestSpans, type OtlpEncoder, type OtlpSpan, type PathRedactions } 
 export default class OtelReporter implements Reporter {
   private readonly finished: [TestCase, TestResult][] = [];
   private rootDir = process.cwd();
+  /** The monorepo root — playwright.config.ts sits in packages/web-e2e/. */
+  private repoRoot = process.cwd();
 
   printsToStdio(): boolean {
     return false;
@@ -35,6 +37,7 @@ export default class OtelReporter implements Reporter {
 
   onBegin(config: FullConfig): void {
     this.rootDir = config.rootDir;
+    if (config.configFile) this.repoRoot = resolve(dirname(config.configFile), '../..');
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
@@ -75,7 +78,7 @@ export default class OtelReporter implements Reporter {
   /** Repo-relative paths in error text, and `~` for anything else under home. */
   private pathRedactions(): PathRedactions {
     return [
-      [this.rootDir + sep, ''],
+      [this.repoRoot + sep, ''],
       [homedir(), '~'],
     ];
   }
