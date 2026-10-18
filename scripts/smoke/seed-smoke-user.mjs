@@ -110,8 +110,18 @@ async function trySignIn(supabaseUrl, apikey, email, password) {
   return ok && body?.access_token ? body.access_token : null;
 }
 
+/**
+ * Auth admin headers. The service-role key goes in BOTH `apikey` (authFetch's
+ * argument) and `Authorization` — the shape both key generations accept, as in
+ * scripts/load-test/. Pairing an anon `apikey` with an opaque `sb_secret_…`
+ * Bearer fails: GoTrue then parses the secret as a JWT (`bad_jwt`).
+ */
+function adminAuth(serviceKey) {
+  return { Authorization: `Bearer ${serviceKey}` };
+}
+
 /** Find an existing user's id by email, paging through the admin list. */
-async function findUserId(supabaseUrl, apikey, serviceKey, email) {
+async function findUserId(supabaseUrl, serviceKey, email) {
   const wanted = email.toLowerCase();
   // Request 200/page, but terminate on an EMPTY page rather than a short one:
   // GoTrue may cap `per_page` below what we ask (its default is 50), so a page
@@ -120,8 +130,8 @@ async function findUserId(supabaseUrl, apikey, serviceKey, email) {
   for (let page = 1; page <= 50; page++) {
     const { ok, status, body, text } = await authFetch(
       `${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=200`,
-      apikey,
-      { headers: { Authorization: `Bearer ${serviceKey}` } },
+      serviceKey,
+      { headers: adminAuth(serviceKey) },
     );
     if (!ok) fail(`admin user list failed (HTTP ${status})\n  ${body ? JSON.stringify(body) : text.slice(0, 300)}`);
     const users = Array.isArray(body) ? body : (body?.users ?? []);
@@ -133,9 +143,10 @@ async function findUserId(supabaseUrl, apikey, serviceKey, email) {
 }
 
 const supabaseUrl = resolveSupabaseUrl();
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-// GoTrue only requires `apikey` to be a valid project key; the service-role key
-// qualifies, so the anon key is optional.
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+// Sign-in only needs `apikey` to be a valid project key; the service-role key
+// qualifies, so the anon key is optional. Admin calls always send the
+// service-role key as `apikey` too — see adminAuth().
 const apikey = process.env.SUPABASE_ANON_KEY || serviceKey;
 const email = process.env.LOREKIT_SMOKE_EMAIL;
 const password = process.env.LOREKIT_SMOKE_PASSWORD;
@@ -155,9 +166,9 @@ if (await trySignIn(supabaseUrl, apikey, email, password)) {
 
 // 2. Ensure the user via the admin API.
 log(`seeding smoke user ${email} at ${supabaseUrl}`);
-const created = await authFetch(`${supabaseUrl}/auth/v1/admin/users`, apikey, {
+const created = await authFetch(`${supabaseUrl}/auth/v1/admin/users`, serviceKey, {
   method: 'POST',
-  headers: { Authorization: `Bearer ${serviceKey}` },
+  headers: adminAuth(serviceKey),
   // email_confirm short-circuits the confirmation mail; without it the user
   // exists but cannot sign in — the exact silent-skip this script prevents.
   body: JSON.stringify({ email, password, email_confirm: true }),
@@ -188,16 +199,16 @@ if (created.ok) {
     );
   }
   log('  user already exists — resetting its password and re-confirming');
-  const id = await findUserId(supabaseUrl, apikey, serviceKey, email);
+  const id = await findUserId(supabaseUrl, serviceKey, email);
   if (!id) {
     fail(
       `the user reports as already existing but was not found in the admin list for ${email}.\n` +
         `  Cannot reset its password. Check the email and that this is the right project.`,
     );
   }
-  const updated = await authFetch(`${supabaseUrl}/auth/v1/admin/users/${id}`, apikey, {
+  const updated = await authFetch(`${supabaseUrl}/auth/v1/admin/users/${id}`, serviceKey, {
     method: 'PUT',
-    headers: { Authorization: `Bearer ${serviceKey}` },
+    headers: adminAuth(serviceKey),
     body: JSON.stringify({ password, email_confirm: true }),
   });
   if (!updated.ok) {
