@@ -4,9 +4,14 @@ import {
   InMemoryLogRecordExporter,
   LoggerProvider,
 } from '@opentelemetry/sdk-logs';
+import { after } from 'next/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushLogs, logger, withSpan } from './telemetry';
+
+// The real `after()` throws outside a Next.js request scope, which would hide
+// whether the logger schedules the flush at all.
+vi.mock('next/server', () => ({ after: vi.fn() }));
 
 // Silence the stdout/stderr copy: NX reads a test run's output for failure
 // signals, and an ERROR line on stderr must not look like one.
@@ -71,6 +76,27 @@ describe('logger with an SDK registered', () => {
       JSON.stringify({ level: 'INFO', msg: 'lorekit.test.info', 'lorekit.org.role': 'owner' }) + '\n',
     );
     expect(stderr).toHaveBeenCalledWith(JSON.stringify({ level: 'ERROR', msg: 'lorekit.test.error' }) + '\n');
+  });
+
+  it('schedules a log flush for after the response', () => {
+    captureStdio();
+    vi.mocked(after).mockClear();
+
+    logger.warn('lorekit.test.warn');
+
+    expect(after).toHaveBeenCalledWith(flushLogs);
+  });
+
+  it('keeps logging when after() throws outside a request scope', async () => {
+    captureStdio();
+    vi.mocked(after).mockImplementationOnce(() => {
+      throw new Error('`after` was called outside a request scope');
+    });
+
+    expect(() => logger.info('lorekit.test.outside')).not.toThrow();
+    await flushLogs();
+
+    expect(exporter.getFinishedLogRecords().map((r) => r.body)).toEqual(['lorekit.test.outside']);
   });
 
   it('records a failed withSpan as an ERROR log record carrying the exception', async () => {

@@ -87,17 +87,26 @@ function buildVcsResourceAttributes(): Record<string, string> {
  * OTEL_EXPORTER_OTLP_HEADERS as the trace exporter, so it needs no secret of
  * its own. Imported lazily, so only a configured nodejs runtime loads the Node
  * log SDK.
+ *
+ * Never throws: Next.js rethrows an error from `register()` and the server
+ * fails to start, so a broken log pipeline must cost the logs, not the traces
+ * and the site.
  */
 async function createLogRecordProcessor(): Promise<LogRecordProcessor | undefined> {
   const endpoint =
     process.env['OTEL_EXPORTER_OTLP_LOGS_ENDPOINT'] || process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
   if (!endpoint) return undefined;
 
-  const [{ BatchLogRecordProcessor }, { OTLPLogExporter }] = await Promise.all([
-    import('@opentelemetry/sdk-logs'),
-    import('@opentelemetry/exporter-logs-otlp-http'),
-  ]);
-  return new BatchLogRecordProcessor(new OTLPLogExporter());
+  try {
+    const [{ BatchLogRecordProcessor }, { OTLPLogExporter }] = await Promise.all([
+      import('@opentelemetry/sdk-logs'),
+      import('@opentelemetry/exporter-logs-otlp-http'),
+    ]);
+    return new BatchLogRecordProcessor(new OTLPLogExporter());
+  } catch (err) {
+    console.warn(`[otel] OTLP log export disabled: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 export async function register() {
