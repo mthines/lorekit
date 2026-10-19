@@ -227,15 +227,15 @@ describe('OTLP log export', () => {
   it('the edge posts log records from the same post() as the spans', () => {
     const post = otel().match(/private post\(\): Promise<void> \| null\s*\{([\s\S]*?)\n {2}\}/);
     expect(post, 'ExportBatch.post() not found').not.toBeNull();
-    expect(post![1]).toMatch(/'\/v1\/traces'/);
-    expect(post![1]).toMatch(/'\/v1\/logs'/);
+    expect(post?.[1]).toMatch(/'\/v1\/traces'/);
+    expect(post?.[1]).toMatch(/'\/v1\/logs'/);
   });
 
   it('the edge builds the log payload on the shared resource, never a second attribute list', () => {
     const fn = otel().match(/export function buildOtlpLogsPayload\([\s\S]*?\n\}/);
     expect(fn, 'buildOtlpLogsPayload not found').not.toBeNull();
-    expect(fn![0]).toMatch(/resource: \{ attributes: buildResourceAttributes\(opts\) \}/);
-    expect(fn![0]).not.toMatch(/'service\.name'/);
+    expect(fn?.[0]).toMatch(/resource: \{ attributes: buildResourceAttributes\(opts\) \}/);
+    expect(fn?.[0]).not.toMatch(/'service\.name'/);
   });
 
   it('the edge links every log record to the span that wrote it', () => {

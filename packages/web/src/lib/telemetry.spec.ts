@@ -32,7 +32,10 @@ describe('logger with an SDK registered', () => {
     await provider.shutdown();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Drain what an earlier test queued but never flushed, so each test reads
+    // only its own records.
+    await flushLogs();
     exporter.reset();
     vi.restoreAllMocks();
   });
