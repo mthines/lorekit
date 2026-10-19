@@ -16,10 +16,17 @@
  *
  * Logging
  * -------
- * Logs are written to stdout as structured JSON (Next.js / Vercel captures
- * stdout). They intentionally do NOT use the OTel Logs SDK exporter to avoid
- * duplicate delivery — the Vercel log drain already forwards stdout to Dash0.
- * See: agent-skills/skills/otel-instrumentation/rules/logs.md § "Stdout vs OTLP"
+ * Each `logger.*` call writes the record twice, on purpose:
+ *   - as an OTLP log record through the global logs API. instrumentation.ts
+ *     registers the exporter with @vercel/otel, so the record carries the
+ *     spans' resource (service.name=web, service.namespace=lorekit, vcs.*) and
+ *     the active span's trace_id / span_id, and reaches Dash0 on /v1/logs.
+ *     With no SDK registered (vitest, a local server without an endpoint) the
+ *     API is a no-op;
+ *   - as single-line JSON on stdout/stderr, for Vercel's runtime log view and
+ *     for local development.
+ * Do NOT also forward stdout to Dash0 with a Vercel log drain: every record
+ * would then arrive twice.
  *
  * PII policy
  * ----------
@@ -29,7 +36,9 @@
  */
 
 import { trace, context, SpanStatusCode, SpanKind, type Span } from '@opentelemetry/api';
+import { logs, SeverityNumber, type LogAttributes } from '@opentelemetry/api-logs';
 import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
+import { after } from 'next/server';
 
 export { SpanStatusCode, SpanKind };
 
@@ -50,12 +59,71 @@ export function getTraceContext(): Record<string, string> {
 }
 
 // ---------------------------------------------------------------------------
-// Structured logger — writes single-line JSON to stdout.
+// OTLP log flush — reaches the SDK provider through the GLOBAL registry.
+//
+// Next.js compiles instrumentation.ts apart from the route and server-action
+// bundles, so a processor exported from a module is not guaranteed to be the
+// object @vercel/otel registered. The global logs API is shared across them.
+// ---------------------------------------------------------------------------
+interface FlushableLoggerProvider {
+  forceFlush(): Promise<void>;
+}
+
+function isFlushable(provider: object): provider is FlushableLoggerProvider {
+  return typeof (provider as Partial<FlushableLoggerProvider>).forceFlush === 'function';
+}
+
+/**
+ * Export every queued log record now. Resolves at once when no SDK is
+ * registered: the API's no-op provider has no `forceFlush`.
+ */
+export function flushLogs(): Promise<void> {
+  const provider = logs.getLoggerProvider();
+  return isFlushable(provider) ? provider.forceFlush() : Promise.resolve();
+}
+
+/**
+ * Flush the log batch once the response has been sent.
+ *
+ * @vercel/otel flushes spans when a root span ends but flushes the
+ * LoggerProvider only on shutdown, and a Vercel function can be frozen between
+ * requests with records still queued. `after()` keeps the function alive until
+ * the flush settles. It throws outside a request scope (vitest, module init),
+ * where the batch processor's own timer still exports.
+ */
+function scheduleLogFlush(): void {
+  try {
+    after(flushLogs);
+  } catch {
+    // Outside a request scope: nothing is about to freeze this process.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Structured logger — OTLP log record + single-line JSON on stdout/stderr.
 // Every record automatically carries trace_id + span_id when called inside a span.
 // ---------------------------------------------------------------------------
 type LogLevel = 'INFO' | 'WARN' | 'ERROR';
 
+const SEVERITY_NUMBER: Record<LogLevel, SeverityNumber> = {
+  INFO: SeverityNumber.INFO,
+  WARN: SeverityNumber.WARN,
+  ERROR: SeverityNumber.ERROR,
+};
+
 function emit(level: LogLevel, message: string, attributes: Record<string, unknown> = {}) {
+  // Resolved per call rather than once at module load: this module can load
+  // before instrumentation.ts registers the provider, and a logger taken from
+  // another bundle's copy of the API would never be bound to it.
+  logs.getLogger('lorekit.web', '1.0.0').emit({
+    severityNumber: SEVERITY_NUMBER[level],
+    severityText: level,
+    body: message,
+    // The SDK stamps trace_id / span_id from the active context itself.
+    attributes: attributes as LogAttributes,
+  });
+  scheduleLogFlush();
+
   // Single-line JSON — no pretty-printing; stack traces arrive pre-serialised
   // as a string value in exception.stacktrace so the one-record-per-line
   // contract is never broken. The filelog receiver / Vercel log drain parses

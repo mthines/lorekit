@@ -4,7 +4,7 @@
  * Uses @vercel/otel which wraps the OpenTelemetry Node SDK and works
  * seamlessly with Vercel's infrastructure.
  *
- * Required env vars (set in Vercel dashboard):
+ * Required env vars (set in Vercel dashboard; shared by traces and logs):
  *   OTEL_EXPORTER_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
  *   OTEL_EXPORTER_OTLP_HEADERS    Authorization=Bearer <DASH0_AUTH_TOKEN>
  *
@@ -105,6 +105,16 @@ export async function register() {
   );
   if (deploymentEnv.clamped) console.warn(deploymentEnvironmentClampMessage(deploymentEnv));
 
+  // OTLP log export. Loaded here, behind the nodejs guard, so the Edge runtime
+  // never evaluates the Node log SDK. The exporter reads the same
+  // OTEL_EXPORTER_OTLP_ENDPOINT (it appends /v1/logs) and
+  // OTEL_EXPORTER_OTLP_HEADERS as the trace exporter, so it needs no secret of
+  // its own.
+  const [{ BatchLogRecordProcessor }, { OTLPLogExporter }] = await Promise.all([
+    import('@opentelemetry/sdk-logs'),
+    import('@opentelemetry/exporter-logs-otlp-http'),
+  ]);
+
   registerOTel({
     serviceName: serviceName.name,
     attributes: {
@@ -126,5 +136,11 @@ export async function register() {
         propagateContextUrls: [supabaseOriginPattern()],
       },
     },
+    // @vercel/otel builds a LoggerProvider on the SAME resource as the spans
+    // and registers it globally, so `logger.*` in lib/telemetry.ts reaches
+    // Dash0 as log records correlated to the active span. It flushes that
+    // provider only on shutdown, which is why lib/telemetry.ts schedules a
+    // flush after each response.
+    logRecordProcessor: new BatchLogRecordProcessor(new OTLPLogExporter()),
   });
 }
