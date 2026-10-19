@@ -218,6 +218,45 @@ describe('AlwaysOn: the sampled flag is recorded, never an export gate', () => {
   });
 });
 
+describe('OTLP log export', () => {
+  // Log records are only useful in Dash0 when they land on the SAME resource as
+  // the spans beside them and link to the span that wrote them; each failure
+  // below is silent — the records still arrive, filed somewhere nobody looks.
+  const otel = () => read('supabase/functions/_shared/telemetry/otel.ts');
+
+  it('the edge posts log records from the same post() as the spans', () => {
+    const post = otel().match(/private post\(\): Promise<void> \| null\s*\{([\s\S]*?)\n {2}\}/);
+    expect(post, 'ExportBatch.post() not found').not.toBeNull();
+    expect(post![1]).toMatch(/'\/v1\/traces'/);
+    expect(post![1]).toMatch(/'\/v1\/logs'/);
+  });
+
+  it('the edge builds the log payload on the shared resource, never a second attribute list', () => {
+    const fn = otel().match(/export function buildOtlpLogsPayload\([\s\S]*?\n\}/);
+    expect(fn, 'buildOtlpLogsPayload not found').not.toBeNull();
+    expect(fn![0]).toMatch(/resource: \{ attributes: buildResourceAttributes\(opts\) \}/);
+    expect(fn![0]).not.toMatch(/'service\.name'/);
+  });
+
+  it('the edge links every log record to the span that wrote it', () => {
+    expect(otel()).toMatch(/traceId: l\.ctx\.traceId,\s*\n\s*spanId: l\.ctx\.spanId/);
+  });
+
+  it('web hands @vercel/otel an OTLP log record processor', () => {
+    const src = read('packages/web/src/instrumentation.ts');
+    expect(src).toMatch(/new BatchLogRecordProcessor\(new OTLPLogExporter\(\)\)/);
+    expect(src).toMatch(/registerOTel\(\{[\s\S]*?\n\s*logRecordProcessor,\n/);
+  });
+
+  it('the web logger emits through the global logs API and flushes after the response', () => {
+    // @vercel/otel flushes the LoggerProvider only on shutdown; without the
+    // after() flush a frozen Vercel function keeps its queued records.
+    const src = read('packages/web/src/lib/telemetry.ts');
+    expect(src).toMatch(/logs\.getLogger\('lorekit\.web'/);
+    expect(src).toMatch(/after\(flushLogs\)/);
+  });
+});
+
 describe('lorekit.* tool span + histogram attributes', () => {
   const toolsDir = path.join(here, '../tools');
   const toolFiles = readdirSync(toolsDir).filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'));

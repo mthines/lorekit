@@ -7,6 +7,8 @@
  *    after the response via EdgeRuntime.waitUntil (guarantees export before
  *    the Deno isolate shuts down)
  *  - Span: child spans, W3C traceparent, bounded `error.type`
+ *  - Span.log(): log records linked to the span, carried in the same batch
+ *    and posted to /v1/logs by the same flush (no extra secret, same resource)
  *  - createTracedClient(): wraps @supabase/supabase-js so every .from()
  *    chain gets an automatic CLIENT span named `SELECT memories` (the
  *    `db.query.summary`) with the parameterised statement in `db.query.text`
@@ -337,8 +339,59 @@ export function buildOtlpPayload(
   };
 }
 
+// ── OTLP log records ──────────────────────────────────────────────────────────
+// Recorded on a span with `Span.log()`, carried in the same request-scoped
+// batch, and posted to `/v1/logs` by the same flush as the spans — so a log
+// record shares the spans' resource, their environment override and their
+// EdgeRuntime.waitUntil keep-alive, and links to the span that wrote it.
+
+export type LogSeverity = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+/** OTLP `SeverityNumber` for each level (the first number of each range). */
+const SEVERITY_NUMBER: Record<LogSeverity, number> = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 };
+
+interface LogPayload {
+  ctx: TraceContext;
+  timeMs: number;
+  severity: LogSeverity;
+  body: string;
+  attributes: Record<string, string | number | boolean>;
+}
+
+/**
+ * Encode log records as an OTLP/JSON `resourceLogs` payload on the SAME
+ * resource as the spans (`buildResourceAttributes`), so Dash0 files a log
+ * record under the service and deployment its span belongs to.
+ */
+export function buildOtlpLogsPayload(
+  records: LogPayload[],
+  opts: { environmentOverride?: string } = {},
+): unknown {
+  return {
+    resourceLogs: [{
+      resource: { attributes: buildResourceAttributes(opts) },
+      scopeLogs: [{
+        scope: { name: `lorekit-${resolveServiceName()}`, version: '1.0.0' },
+        logRecords: records.map((l) => ({
+          timeUnixNano: String(l.timeMs * 1_000_000),
+          observedTimeUnixNano: String(l.timeMs * 1_000_000),
+          severityNumber: SEVERITY_NUMBER[l.severity],
+          severityText: l.severity,
+          body: { stringValue: l.body },
+          attributes: Object.entries(l.attributes).map(([key, value]) => ({ key, value: toOtlpValue(value) })),
+          traceId: l.ctx.traceId,
+          spanId: l.ctx.spanId,
+          flags: l.ctx.sampled ? 1 : 0,
+        })),
+      }],
+    }],
+  };
+}
+
 export class ExportBatch {
   private spans: SpanPayload[] = [];
+  /** Log records written during this request; posted and cleared by `post()`. */
+  private logs: LogPayload[] = [];
   /**
    * Optional per-request `deployment.environment.name` override (a smoke run's
    * `test`). Set by `traceRequest` from a validated header; applied at flush so
@@ -361,6 +414,9 @@ export class ExportBatch {
 
   add(span: SpanPayload): void { this.spans.push(span); }
 
+  /** Queue one log record. Called by `Span.log()`. */
+  addLog(record: LogPayload): void { this.logs.push(record); }
+
   /** Record one outbound call's interval. Called by `Span.end()` on CLIENT spans. */
   recordIo(interval: IoInterval): void { this.ioIntervals.push(interval); }
 
@@ -380,25 +436,37 @@ export class ExportBatch {
   }
 
   /**
-   * Build and POST the collected spans; `null` when there is nothing to send.
+   * Build and POST the collected spans and log records; `null` when there is
+   * nothing to send.
    *
    * Split out of `flush()` so the same body serves both the fire-and-forget
    * request-path flush and the awaitable `flushAsync()` — two copies of the
    * payload build would be two places for the environment override to drift.
+   * Spans and logs go out as two concurrent requests, one per OTLP signal path.
    */
   private post(): Promise<void> | null {
-    if (this.spans.length === 0) return null;
+    if (this.spans.length === 0 && this.logs.length === 0) return null;
     const cfg = getOtlpConfig();
     if (!cfg) return null;
 
-    const payload = buildOtlpPayload([...this.spans], { environmentOverride: this.environmentOverride });
-    this.spans = [];
+    const opts = { environmentOverride: this.environmentOverride };
+    const send = (path: string, payload: unknown): Promise<void> =>
+      fetch(`${cfg.endpoint}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cfg.headers },
+        body: JSON.stringify(payload),
+      }).then(() => { /* discard the response */ }, () => { /* swallow */ });
 
-    return fetch(`${cfg.endpoint}/v1/traces`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cfg.headers },
-      body: JSON.stringify(payload),
-    }).then(() => { /* discard the response */ }, () => { /* swallow */ });
+    const requests: Promise<void>[] = [];
+    if (this.spans.length > 0) {
+      requests.push(send('/v1/traces', buildOtlpPayload([...this.spans], opts)));
+      this.spans = [];
+    }
+    if (this.logs.length > 0) {
+      requests.push(send('/v1/logs', buildOtlpLogsPayload([...this.logs], opts)));
+      this.logs = [];
+    }
+    return Promise.all(requests).then(() => { /* both settled */ });
   }
 
   /** Fire-and-forget flush — use EdgeRuntime.waitUntil when available. */
@@ -555,6 +623,31 @@ export class Span {
    */
   setErrorTypeIfAbsent(type: string): this {
     if (!('error.type' in this.attributes)) this.attributes['error.type'] = type;
+    return this;
+  }
+
+  /**
+   * Record a log record linked to this span (its trace and span ids), exported
+   * with the request's batch on flush. Use it where a `console.*` line would
+   * otherwise be the only trace of what happened — console output never
+   * reaches Dash0.
+   *
+   * The message is URL-redacted like `error()`'s, because the same failure text
+   * lands here; attributes follow the span-attribute rules (bounded values, no
+   * credentials, no user-supplied strings).
+   */
+  log(
+    severity: LogSeverity,
+    message: string,
+    attributes: Record<string, string | number | boolean> = {},
+  ): this {
+    this.batch.addLog({
+      ctx: this.ctx,
+      timeMs: Date.now(),
+      severity,
+      body: redactUrls(String(message ?? '')),
+      attributes,
+    });
     return this;
   }
 
