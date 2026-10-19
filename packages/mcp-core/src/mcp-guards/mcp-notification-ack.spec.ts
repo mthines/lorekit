@@ -48,6 +48,13 @@ describe('handleMcp acknowledges every JSON-RPC notification', () => {
     expect(handler).not.toMatch(/method === 'notifications\/initialized'/);
   });
 
+  it('guards the prefix test with typeof, so a non-string method cannot throw', () => {
+    // `method` is unchecked JSON. Optional chaining only skips null/undefined,
+    // so `method?.startsWith(...)` throws a TypeError for `42` or `{}` and turns
+    // a client error into a 500. The CLI stdio server guards the same check.
+    expect(handler).toMatch(/typeof method === 'string' && method\.startsWith\('notifications\/'\)/);
+  });
+
   it('answers a notification with an empty 2xx, not a JSON-RPC body', () => {
     expect(ackBlock()).toMatch(/return new Response\(null, \{ status: 204 \}\);/);
   });

@@ -129,7 +129,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   // every other one to the MethodNotFound fallthrough below (HTTP 400). Not a
   // span error: the request was handled correctly. 204 is what `initialized`
   // has always answered; pinned by `mcp-notification-ack.spec.ts`.
-  if (method?.startsWith('notifications/')) {
+  // `method` is unchecked JSON: the `typeof` guard keeps a non-string value
+  // (`42`, `{}`) on the MethodNotFound path instead of throwing a TypeError
+  // (500), the same guard the CLI stdio server uses.
+  if (typeof method === 'string' && method.startsWith('notifications/')) {
     return new Response(null, { status: 204 });
   }
 
