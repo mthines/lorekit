@@ -37,7 +37,7 @@ logs need no configuration of their own.
 
 | Component | How to log | Export path |
 |-----------|------------|-------------|
-| Edge Functions (`api`) | `span.log('ERROR' \| 'WARN' \| 'INFO' \| 'DEBUG', message, attrs?)` on any span | Queued on the request's `ExportBatch` and posted to `/v1/logs` by the same `post()` that sends the spans, after the response, under `EdgeRuntime.waitUntil` |
+| Edge Functions (`api`) | `span.log('ERROR' \| 'WARN' \| 'INFO' \| 'DEBUG', message, attrs?)` on any span | Queued on the span's `ExportBatch` and posted to `/v1/logs` by the same `post()` that sends the spans: after the response under `EdgeRuntime.waitUntil`, or by a `detachedChild`'s own awaited `flush()` |
 | Next.js server (`web`) | `logger.info` / `logger.warn` / `logger.error(message, attrs?)` from `lib/telemetry.ts` | `@vercel/otel`'s LoggerProvider, fed by a `BatchLogRecordProcessor` + `OTLPLogExporter` that `instrumentation.ts` registers when an endpoint is set; flushed after each response with `after()` |
 
 - **`console.*` never reaches Dash0.** Supabase keeps edge console output in its
@@ -49,6 +49,10 @@ logs need no configuration of their own.
 - **The edge message is URL-redacted** the way `span.error()`'s is
   (`redactUrls`). Attributes follow the span-attribute rules: bounded values, no
   credentials, no user-supplied strings.
+- **Background work logs on a `detachedChild`.** `traceRequest` flushes the
+  request batch in its `finally`, so a `span.log()` on the request span from a
+  `waitUntil` task that finishes later is silently dropped — exactly like a late
+  span. Log on the span `detachedChild()` returns and await its `flush()`.
 - **`web` flushes per response because `@vercel/otel` does not.** It flushes its
   span processors when a root span ends but the LoggerProvider only on
   shutdown, and a Vercel function can be frozen with records still queued.
@@ -59,9 +63,9 @@ logs need no configuration of their own.
 - **`web` still writes the JSON line to stdout/stderr**, for Vercel's log view
   and local development. Do not also forward stdout to Dash0 with a Vercel log
   drain, or every record arrives twice.
-- **Guarded by** `supabase/functions/_shared/telemetry/otel.logs.test.ts` (the
-  edge export path, run with `deno test --no-check --allow-env`),
-  `packages/web/src/lib/telemetry.spec.ts` (the web logger and flush) and the
+- **Guarded by** `packages/mcp-core/src/telemetry/otel-logs.spec.ts` (executes
+  the edge export path under vitest, so it runs in CI's `nx test mcp-core`),
+  `packages/web/src/lib/telemetry.spec.ts` (the web logger and its flush) and the
   "OTLP log export" block of `packages/mcp-core/src/telemetry/otel-conventions.spec.ts`.
 
 To check it end to end, filter Dash0's Logs view on `service.namespace = lorekit`
@@ -912,9 +916,9 @@ On **any RPC/DB failure** the span also carries:
 | `error.type` | The error class (e.g. `SupabaseRpcError`, `SupabaseInsertError`) |
 | Span status | `ERROR` with `{ErrorClass}: {message}` |
 
-A structured error log record is emitted to stdout with `exception.type`,
-`exception.message`, `exception.stacktrace`, and `trace_id` + `span_id` for
-span↔log correlation.
+A structured error log record carrying `exception.type`, `exception.message` and
+`exception.stacktrace` is emitted as an OTLP log record linked to the span (see
+[Logs](#logs)), with a JSON copy on stderr that carries `trace_id` + `span_id`.
 
 ---
 

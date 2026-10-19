@@ -635,6 +635,9 @@ export class Span {
    * The message is URL-redacted like `error()`'s, because the same failure text
    * lands here; attributes follow the span-attribute rules (bounded values, no
    * credentials, no user-supplied strings).
+   *
+   * Like a span, a record written after its batch flushed is never exported:
+   * background work that outlives the response logs on a `detachedChild()`.
    */
   log(
     severity: LogSeverity,

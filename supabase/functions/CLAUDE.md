@@ -62,7 +62,9 @@ record rides the request's span batch and is posted to `/v1/logs` by the same fl
 on the same resource and linked to that span. `console.*` output stays in Supabase's
 function logs and never reaches Dash0, so anything an operator should find there
 needs a `span.log()`. The message is URL-redacted like `span.error()`'s; keep
-attributes bounded, as on spans. See [docs/otel.md](../../docs/otel.md) → "Logs".
+attributes bounded, as on spans. Background work that outlives the response logs on
+the span `detachedChild()` returns, never on the already-flushed request span. See
+[docs/otel.md](../../docs/otel.md) → "Logs".
 
 **Metrics** go through `_shared/telemetry/otlp-metrics.ts`, which imports its resource
 attributes, endpoint and encoding from `_shared/telemetry/otel.ts`. Never build a second
