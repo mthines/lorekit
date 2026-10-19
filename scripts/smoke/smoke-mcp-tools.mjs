@@ -457,6 +457,20 @@ check('an unknown method is -32601', async () => {
   eq(json.error?.code, -32601, 'error code');
 });
 
+check('a notification other than initialized is acknowledged with an empty 2xx', async () => {
+  // A JSON-RPC notification carries no `id` and gets no response body. Clients
+  // send `notifications/cancelled` whenever they abandon a request; it used to
+  // fall through to the unknown-method branch and answer 400 / -32601.
+  const { status, json } = await rpc({
+    jsonrpc: '2.0',
+    method: 'notifications/cancelled',
+    params: { requestId: rpcId, reason: 'smoke' },
+  });
+  ok(status >= 200 && status < 300, `http status: expected 2xx, got ${status}`);
+  // `rpc` keeps an unparseable body under `_unparsed`, so an empty body is ''.
+  eq(json?._unparsed, '', 'response body');
+});
+
 check('an unknown tool is -32601', async () => {
   const r = await call('memory.frobnicate');
   eq(r.error?.code, -32601, 'error code');
