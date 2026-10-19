@@ -1,13 +1,15 @@
 # OpenTelemetry & Dash0
 
-LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
+LoreKit emits traces and metrics to Dash0 from every layer of the stack, and
+OTLP log records from the Edge Functions and the Next.js server
+([Logs](#logs) below).
 
 ## What's instrumented
 
 | Layer | SDK | Signals |
 |-------|-----|---------|
-| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by `db.query.summary` (`SELECT memories`) with a parameterised `db.query.text`; `http.route` + `error.type` on root spans; self-time attribution on every root span; Postgres query-cost metrics (opt-in) |
-| Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action |
+| Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by `db.query.summary` (`SELECT memories`) with a parameterised `db.query.text`; `http.route` + `error.type` on root spans; self-time attribution on every root span; log records from `span.log()`, linked to their span; Postgres query-cost metrics (opt-in) |
+| Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action; every `logger.*` call as an OTLP log record linked to the active span |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
 | CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `obligations` / `link` / `migrate`) |
 
@@ -24,6 +26,50 @@ All signals carry `service.namespace=lorekit` so you can filter the full stack i
 > propagation), a review of telemetry quality against the OTel semantic
 > conventions, and the tests that guard both, see
 > [telemetry-quality-review.md](./telemetry-quality-review.md).
+
+---
+
+## Logs
+
+Two components export OTLP log records. Both put them on the same resource as
+their spans and send them through the same `OTEL_EXPORTER_OTLP_*` variables, so
+logs need no configuration of their own.
+
+| Component | How to log | Export path |
+|-----------|------------|-------------|
+| Edge Functions (`api`) | `span.log('ERROR' \| 'WARN' \| 'INFO' \| 'DEBUG', message, attrs?)` on any span | Queued on the span's `ExportBatch` and posted to `/v1/logs` by the same `post()` that sends the spans: after the response under `EdgeRuntime.waitUntil`, or by a `detachedChild`'s own awaited `flush()` |
+| Next.js server (`web`) | `logger.info` / `logger.warn` / `logger.error(message, attrs?)` from `lib/telemetry.ts` | `@vercel/otel`'s LoggerProvider, fed by a `BatchLogRecordProcessor` + `OTLPLogExporter` that `instrumentation.ts` registers when an endpoint is set; flushed after each response with `after()` |
+
+- **`console.*` never reaches Dash0.** Supabase keeps edge console output in its
+  own function logs, and Vercel keeps stdout in its runtime log view. Use
+  `span.log()` / `logger.*` for anything an operator should find in Dash0.
+- **Every record links to its span.** The edge copies the span's `traceId` /
+  `spanId`; on `web` the SDK stamps them from the active context. A log record
+  in Dash0 opens its trace in one click.
+- **The edge message is URL-redacted** the way `span.error()`'s is
+  (`redactUrls`). Attributes follow the span-attribute rules: bounded values, no
+  credentials, no user-supplied strings.
+- **Background work logs on a `detachedChild`.** `traceRequest` flushes the
+  request batch in its `finally`, so a `span.log()` on the request span from a
+  `waitUntil` task that finishes later is silently dropped — exactly like a late
+  span. Log on the span `detachedChild()` returns and await its `flush()`.
+- **`web` flushes per response because `@vercel/otel` does not.** It flushes its
+  span processors when a root span ends but the LoggerProvider only on
+  shutdown, and a Vercel function can be frozen with records still queued.
+  `flushLogs()` reaches the provider through the global logs API: Next.js
+  compiles `instrumentation.ts` apart from the route and server-action bundles,
+  so a processor exported from a module is not guaranteed to be the registered
+  one.
+- **`web` still writes the JSON line to stdout/stderr**, for Vercel's log view
+  and local development. Do not also forward stdout to Dash0 with a Vercel log
+  drain, or every record arrives twice.
+- **Guarded by** `packages/mcp-core/src/telemetry/otel-logs.spec.ts` (executes
+  the edge export path under vitest, so it runs in CI's `nx test mcp-core`),
+  `packages/web/src/lib/telemetry.spec.ts` (the web logger and its flush) and the
+  "OTLP log export" block of `packages/mcp-core/src/telemetry/otel-conventions.spec.ts`.
+
+To check it end to end, filter Dash0's Logs view on `service.namespace = lorekit`
+and `service.name` = `api` or `web`.
 
 ---
 
@@ -870,9 +916,9 @@ On **any RPC/DB failure** the span also carries:
 | `error.type` | The error class (e.g. `SupabaseRpcError`, `SupabaseInsertError`) |
 | Span status | `ERROR` with `{ErrorClass}: {message}` |
 
-A structured error log record is emitted to stdout with `exception.type`,
-`exception.message`, `exception.stacktrace`, and `trace_id` + `span_id` for
-span↔log correlation.
+A structured error log record carrying `exception.type`, `exception.message` and
+`exception.stacktrace` is emitted as an OTLP log record linked to the span (see
+[Logs](#logs)), with a JSON copy on stderr that carries `trace_id` + `span_id`.
 
 ---
 
@@ -1345,6 +1391,8 @@ supabase secrets set \
 
 Then redeploy: `pnpm nx fn:deploy supabase`
 
+The same two secrets carry spans, metrics and `span.log()` records.
+
 ### Next.js server (Vercel)
 
 Add to Vercel → Settings → Environment Variables:
@@ -1355,6 +1403,10 @@ OTEL_EXPORTER_OTLP_HEADERS    Authorization=Bearer <DASH0_AUTH_TOKEN>
 ```
 
 `VERCEL_GIT_COMMIT_SHA` and `VERCEL_ENV` are injected automatically by Vercel.
+
+The same two variables carry traces and `logger.*` log records; the log pipeline
+is only registered when `OTEL_EXPORTER_OTLP_ENDPOINT` (or
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set.
 
 ### Browser RUM
 
@@ -1539,6 +1591,10 @@ To see spans in your terminal without sending to Dash0, the Edge Function logs t
 ```bash
 OTEL_TRACES_EXPORTER=console OTEL_METRICS_EXPORTER=console pnpm nx serve web
 ```
+
+Without an endpoint the Next.js server registers no log pipeline, so `logger.*`
+writes only its JSON line to stdout/stderr. The edge's `span.log()` records are
+dropped with the spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
 
 ## Custom span attributes — propagation & service.name (from CLAUDE.md)
 

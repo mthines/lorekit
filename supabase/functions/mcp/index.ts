@@ -179,7 +179,10 @@ Deno.serve(async (req: Request) => {
       adapter = resolveStorageAdapter();
     } catch (err) {
       const message = (err as Error).message;
+      // console.* stays in Supabase's function logs only; span.log() is the
+      // copy that reaches Dash0, linked to this request's trace.
       console.error(`[mcp] storage configuration error: ${message}`);
+      span.log('ERROR', `storage configuration error: ${message}`, { 'error.type': 'storage_config' });
       span.error(message, 'storage_config');
       return jsonrpcError(await peekRequestId(req), -32603, message);
     }

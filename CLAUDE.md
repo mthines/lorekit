@@ -314,7 +314,7 @@ specific handler, migration, or pure module. The load-bearing "start here" files
 | `packages/mcp-core/src/limits/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit` — the origin of the "pure module mirrored self-contained into the edge function" pattern |
 | `packages/mcp-core/src/auth/tenant-scope.ts` | `applyTenantScope` — the single widened tenant-visibility predicate (RLS side is `lorekit_member_org_ids()`) |
 | `supabase/functions/mcp/index.ts` | Self-contained Deno MCP server (production) |
-| `supabase/functions/_shared/telemetry/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()`, and the ONE source of the OTLP resource attributes / endpoint / attribute encoding that both the span and metric exporters share |
+| `supabase/functions/_shared/telemetry/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()`, and the ONE source of the OTLP resource attributes / endpoint / attribute encoding that the span, log (`Span.log()` → `/v1/logs`) and metric exporters share |
 | `packages/mcp-core/src/telemetry/io-ledger.ts` | `mergeBusyMs`/`attributeIoTime` — the self-time split behind `lorekit.self_time_ms` (mirrored to `_shared/`). Merged intervals, never summed |
 | `supabase/functions/_shared/audit/audit.ts` (← `packages/mcp-core/src/audit/audit.ts`) | THE single edge audit writer (MCP tools **and** REST handlers) |
 | `supabase/functions/_shared/telemetry/usage.ts` | `recordUsageEvent` + `getUserPlanName` — the single edge usage-event writer |

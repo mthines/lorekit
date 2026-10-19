@@ -4,7 +4,7 @@
  * Uses @vercel/otel which wraps the OpenTelemetry Node SDK and works
  * seamlessly with Vercel's infrastructure.
  *
- * Required env vars (set in Vercel dashboard):
+ * Required env vars (set in Vercel dashboard; shared by traces and logs):
  *   OTEL_EXPORTER_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
  *   OTEL_EXPORTER_OTLP_HEADERS    Authorization=Bearer <DASH0_AUTH_TOKEN>
  *
@@ -24,6 +24,7 @@
  *                   production/preview clamped because NODE_ENV proves this
  *                   is a dev server — see lib/otel-deployment-env.ts
  */
+import type { LogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { registerOTel } from '@vercel/otel';
 
 import {
@@ -78,6 +79,36 @@ function buildVcsResourceAttributes(): Record<string, string> {
   return attrs;
 }
 
+/**
+ * The OTLP log pipeline, or `undefined` when no endpoint is configured (local
+ * dev, a CI build): an exporter without one would POST every batch to its
+ * localhost:4318 default. The exporter reads the same
+ * OTEL_EXPORTER_OTLP_ENDPOINT (it appends /v1/logs) and
+ * OTEL_EXPORTER_OTLP_HEADERS as the trace exporter, so it needs no secret of
+ * its own. Imported lazily, so only a configured nodejs runtime loads the Node
+ * log SDK.
+ *
+ * Never throws: Next.js rethrows an error from `register()` and the server
+ * fails to start, so a broken log pipeline must cost the logs, not the traces
+ * and the site.
+ */
+async function createLogRecordProcessor(): Promise<LogRecordProcessor | undefined> {
+  const endpoint =
+    process.env['OTEL_EXPORTER_OTLP_LOGS_ENDPOINT'] || process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
+  if (!endpoint) return undefined;
+
+  try {
+    const [{ BatchLogRecordProcessor }, { OTLPLogExporter }] = await Promise.all([
+      import('@opentelemetry/sdk-logs'),
+      import('@opentelemetry/exporter-logs-otlp-http'),
+    ]);
+    return new BatchLogRecordProcessor(new OTLPLogExporter());
+  } catch (err) {
+    console.warn(`[otel] OTLP log export disabled: ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
 export async function register() {
   // CRITICAL: guard on the nodejs runtime.
   // Next.js calls register() for BOTH the Node.js and Edge runtimes.
@@ -105,6 +136,10 @@ export async function register() {
   );
   if (deploymentEnv.clamped) console.warn(deploymentEnvironmentClampMessage(deploymentEnv));
 
+  // Created here, behind the nodejs guard, so the Edge runtime never evaluates
+  // the Node log SDK.
+  const logRecordProcessor = await createLogRecordProcessor();
+
   registerOTel({
     serviceName: serviceName.name,
     attributes: {
@@ -126,5 +161,11 @@ export async function register() {
         propagateContextUrls: [supabaseOriginPattern()],
       },
     },
+    // @vercel/otel builds a LoggerProvider on the SAME resource as the spans
+    // and registers it globally, so `logger.*` in lib/telemetry.ts reaches
+    // Dash0 as log records correlated to the active span. It flushes that
+    // provider only on shutdown, which is why lib/telemetry.ts schedules a
+    // flush after each response.
+    logRecordProcessor,
   });
 }

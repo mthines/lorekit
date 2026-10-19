@@ -57,6 +57,15 @@ so wrapping a raw `fetch` in `span.child(name, attrs, SPAN_KIND_CLIENT)` is
 enough to have it attributed. Intervals are MERGED, not summed (concurrent
 queries count once) — see `_shared/telemetry/io-ledger.ts`.
 
+**Logs** go through `span.log(severity, message, attrs?)` on the span in scope. The
+record rides the request's span batch and is posted to `/v1/logs` by the same flush,
+on the same resource and linked to that span. `console.*` output stays in Supabase's
+function logs and never reaches Dash0, so anything an operator should find there
+needs a `span.log()`. The message is URL-redacted like `span.error()`'s; keep
+attributes bounded, as on spans. Background work that outlives the response logs on
+the span `detachedChild()` returns, never on the already-flushed request span. See
+[docs/otel.md](../../docs/otel.md) → "Logs".
+
 **Metrics** go through `_shared/telemetry/otlp-metrics.ts`, which imports its resource
 attributes, endpoint and encoding from `_shared/telemetry/otel.ts`. Never build a second
 resource-attribute list: a metric on a different resource than the spans beside
