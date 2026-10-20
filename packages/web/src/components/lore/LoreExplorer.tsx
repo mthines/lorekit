@@ -1178,8 +1178,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onClick={() => {
               // `pages.length` is how many are already loaded, so it IS the index
               // of the one about to arrive: 1 for the second page.
-              track({ name: 'lore.results_paged', page: data?.pages.length ?? 1 });
-              void fetchNextPage();
+              const page = data?.pages.length ?? 1;
+              // Tracked once the page lands: the event means "a page was appended",
+              // so a failed attempt and its retry must not count twice.
+              void fetchNextPage().then((result) => {
+                if (!result.isFetchNextPageError) track({ name: 'lore.results_paged', page });
+              });
             }}
             disabled={isFetchingNextPage}
             className="flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-60"
