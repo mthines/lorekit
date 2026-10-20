@@ -284,7 +284,7 @@ describe('valueSummary / filterPhrase', () => {
   it('never truncates the phrase — an AT user has no +2 to hover', () => {
     expect(
       filterPhrase({ field: 'label', operator: 'all', values: ['a', 'b', 'c', 'd'] }),
-    ).toBe('Label includes all a, b, c, d');
+    ).toBe('Tag includes all a, b, c, d');
   });
 
   it('joins the whole bar for the trigger name', () => {
@@ -293,7 +293,7 @@ describe('valueSummary / filterPhrase', () => {
         { field: 'label', operator: 'all', values: ['perf'] },
         { field: 'branch', operator: 'nin', values: ['main'] },
       ]),
-    ).toBe('Label includes all perf; Branch is not main');
+    ).toBe('Tag includes all perf; Branch is not main');
     expect(filtersPhrase([])).toBe('Add filter');
   });
 });
@@ -353,6 +353,20 @@ describe('rootSuggestions', () => {
   it('ranks a matching dimension name above any value', () => {
     const hits = rootSuggestions(FACETS, 'branch');
     expect(hits[0]).toEqual({ kind: 'field', field: 'branch' });
+  });
+
+  // The `label` field is shown as "Tag". Someone typing `tags` (the API's word)
+  // or `label` (the menu's old word) must still land on it.
+  it.each(['tag', 'tags', 'Tags', 'label', 'labels'])(
+    'finds the Tag dimension when the query is %s',
+    (query) => {
+      expect(rootSuggestions(FACETS, query)[0]).toEqual({ kind: 'field', field: 'label' });
+    },
+  );
+
+  it('shows the label field as "Tag" while keeping its serialised id', () => {
+    expect(fieldDescriptor('label')?.label).toBe('Tag');
+    expect(fieldDescriptor('tag')).toBeUndefined();
   });
 
   it('caps the value hits so an unbounded catalog cannot flood the menu', () => {

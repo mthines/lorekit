@@ -64,6 +64,28 @@ export function matchesQuery(entry, query) {
   return key.includes(needle) || value.includes(needle);
 }
 
+// ── tag matching (the `--tags` filter core, shared with the local store) ──────
+
+// The `tags_mode` values the hosted `GET /memories` accepts, and the default it
+// applies. `list`/`search` adopt the same default so `--tags` means the same
+// thing offline and online.
+export const TAGS_MODES = Object.freeze(['any', 'all', 'none']);
+export const DEFAULT_TAGS_MODE = 'any';
+
+// Whether an entry's tags satisfy `wanted` (an iterable of tags) under `mode` —
+// the hosted list's semantics: `any` = carries at least one, `all` = carries
+// every one, `none` = carries none of them. An empty `wanted` matches
+// everything. Pure.
+export function matchesTags(entryTags, wanted, mode = DEFAULT_TAGS_MODE) {
+  const want = [...new Set(wanted ?? [])];
+  if (want.length === 0) return true;
+  const have = new Set(Array.isArray(entryTags) ? entryTags : []);
+  const hits = want.filter((t) => have.has(t)).length;
+  if (mode === 'all') return hits === want.length;
+  if (mode === 'none') return hits === 0;
+  return hits > 0;
+}
+
 // ── the scope grammar + the scope/key argument parser ─────────────────────────
 //
 // These three live together, in the dependency-free module, because they are ONE

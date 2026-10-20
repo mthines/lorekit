@@ -523,8 +523,16 @@ export const MCP_TOOLS = [
     },
     // `scope` optional for the same reason as `memory.list`, whose
     // `?archived=true` form this is the MCP twin of — the two must not disagree
-    // about whether a scope is needed to look at the same rows.
-    inputSchema: { type: 'object', properties: { scope: readScope, limit } },
+    // about whether a scope is needed to look at the same rows. `tags` carries
+    // `memory.list`'s exact semantics (ANY, OR) for the same reason.
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: readScope,
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter to entries carrying ANY of these labels (OR).' },
+        limit,
+      },
+    },
     returns: '`{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "archived_at" }] }` — every entry names its own `scope`, so an unscoped listing stays readable.',
   },
   {

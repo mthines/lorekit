@@ -1017,7 +1017,7 @@ export function FilterMenu({
               role="option"
               aria-selected={i === activeIndex}
               // A count badge is aria-hidden decoration; fold it into the name so
-              // a screen-reader user hears "Label, 2 selected", not just "Label".
+              // a screen-reader user hears "Tag, 2 selected", not just "Tag".
               aria-label={
                 !isValueRow && selectedCount > 0
                   ? `${rowField.label}, ${selectedCount} selected`

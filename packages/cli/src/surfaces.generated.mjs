@@ -397,6 +397,13 @@ export const MCP_TOOL_DEFS = [
           "type": "string",
           "description": "Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see."
         },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter to entries carrying ANY of these labels (OR)."
+        },
         "limit": {
           "type": "integer",
           "minimum": 1,

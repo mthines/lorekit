@@ -193,7 +193,7 @@ view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
-| Label | `tags` | includes all (default), includes any, includes none |
+| Tag | `tags` | includes all (default), includes any, includes none |
 | Kind | `kind` | is / is either of, is not |
 | Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |

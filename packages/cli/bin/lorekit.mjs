@@ -350,6 +350,13 @@ short note on how to set it up — never an error.
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
       --scope <scope>     Restrict to a single scope (default: all applicable)
+      --tags <a,b>        Only memories carrying these tags (combined by --tags-mode)
+      --tags-mode <m>     any (at least one, default) | all (every one) | none
+      --kind, --host, --trigger, --source-agent,
+      --origin-repo, --origin-branch, --origin-pr <a,b>
+                          Only memories whose field is one of these values
+                          (kind: lesson|bus|signal; origin-pr: PR numbers)
+      --<dim>-mode <m>    in (is one of them, default) | nin (is set, and none of them)
       --json              Machine-readable output
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
@@ -360,6 +367,12 @@ ${c.bold('Examples')}
   npx @lorekit/cli list
   npx @lorekit/cli list --json
   npx @lorekit/cli list --scope global
+  npx @lorekit/cli list --tags loop::aw-lessons
+  npx @lorekit/cli list --tags perf,ci --tags-mode all
+  npx @lorekit/cli list --kind lesson --host reviewer
+  npx @lorekit/cli list --kind bus --kind-mode nin
+  npx @lorekit/cli list --source-agent claude --origin-pr 482
+  npx @lorekit/cli list --origin-branch main --origin-branch-mode nin
   npx @lorekit/cli list --scope global --link
 `,
   search: `${c.bold('lorekit search')} — full-text search the applicable memories ${c.dim('(alias: grep)')}
@@ -376,6 +389,13 @@ never interpreted). Results are shown in the same Offline / Remote split as
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
       --scope <scope>     Restrict to a single scope (default: all applicable)
+      --tags <a,b>        Only search memories carrying these tags (combined by --tags-mode)
+      --tags-mode <m>     any (at least one, default) | all (every one) | none
+      --kind, --host, --trigger, --source-agent,
+      --origin-repo, --origin-branch, --origin-pr <a,b>
+                          Only search memories whose field is one of these values
+                          (kind: lesson|bus|signal; origin-pr: PR numbers)
+      --<dim>-mode <m>    in (is one of them, default) | nin (is set, and none of them)
       --json              Machine-readable output
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
@@ -386,6 +406,9 @@ ${c.bold('Examples')}
   npx @lorekit/cli search sandbox
   npx @lorekit/cli grep "flaky test" --json
   npx @lorekit/cli search migration --scope global
+  npx @lorekit/cli search migration --tags loop::aw-lessons
+  npx @lorekit/cli search flaky --kind lesson --host-mode nin --host ci
+  npx @lorekit/cli search flaky --trigger stuck-loop --origin-repo mthines/lorekit
   npx @lorekit/cli search "flaky test" --scope global --link
 `,
   write: `${c.bold('lorekit write')} — create or update a memory from the CLI
