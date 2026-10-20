@@ -89,37 +89,56 @@ export function parseDimensionConditions(args, { clearable = false } = {}) {
 }
 
 /**
- * The dimensions the read commands (`list`, `search`) filter on, in the order
- * they are checked, with an example value list for the usage error. Each
- * reuses its {@link DIMENSIONS} row for the field name and the valid modes, so
- * `--kind-mode` accepts exactly what `policy create --kind-mode` accepts.
+ * An example value list per dimension, for the read commands' usage error.
+ * The read commands accept every {@link DIMENSIONS} row — the same eight
+ * filters `policy create` and `groom` take, with the same field names and the
+ * same valid modes, so `--trigger-mode` accepts exactly what
+ * `policy create --trigger-mode` accepts.
  */
-const READ_FILTERS = [
-  { flag: 'tags', example: 'loop::aw-lessons,perf' },
-  { flag: 'kind', example: 'lesson,bus' },
-  { flag: 'host', example: 'reviewer,aw' },
-];
+const READ_FILTER_EXAMPLES = {
+  tags: 'loop::aw-lessons,perf',
+  'source-agent': 'claude,aw',
+  trigger: 'stuck-loop,manual',
+  kind: 'lesson,bus',
+  host: 'reviewer,aw',
+  'origin-repo': 'mthines/lorekit',
+  'origin-branch': 'main,feat/x',
+  'origin-pr': '482,511',
+};
+
+/**
+ * One `--origin-pr` value as the canonical digits the hosted route compares,
+ * or `null` when it is not a pull request number. A leading `#` is accepted —
+ * the dashboard writes PRs as `#482` — and `007` becomes `7`, because the
+ * hosted filter compares numerically (`lorekit_match_int`, migration 00066).
+ */
+export function canonicalPrNumber(raw) {
+  const digits = String(raw).trim().replace(/^#/, '');
+  if (!/^\d+$/.test(digits)) return null;
+  return String(Number(digits));
+}
 
 /**
  * Parse the read commands' dimension filters — `--tags a,b [--tags-mode
- * any|all|none]`, `--kind a,b [--kind-mode in|nin]` and `--host a,b
- * [--host-mode in|nin]` on `list` and `search`.
+ * any|all|none]`, and `--kind`, `--host`, `--trigger`, `--source-agent`,
+ * `--origin-repo`, `--origin-branch`, `--origin-pr a,b`, each with a
+ * `--<dim>-mode in|nin` — on `list` and `search`.
  *
  * Returns `{ filters }` holding only the dimensions that were given, each as a
  * value array plus its `*_mode` — defaulting to the dimension's first mode
- * (`any` for tags, `in` for kind/host), the hosted list's own defaults, so
+ * (`any` for tags, `in` for the rest), the hosted list's own defaults, so
  * offline and remote agree — or `{ error }` naming the offending flag.
  *
  * Stricter than {@link parseDimensionConditions} on purpose: a bare `--tags`
- * with no value, or a `--kind-mode` with no `--kind`, is rejected rather than
- * quietly listing everything. That silent no-op is how `list --tags x` used to
- * behave (`tags` was a known flag for `write`, so it parsed cleanly and
- * filtered nothing).
+ * with no value, a `--kind-mode` with no `--kind`, or an `--origin-pr` that is
+ * not a number is rejected rather than quietly listing everything. Each of
+ * those would otherwise filter nothing: `list --tags x` used to parse cleanly
+ * (a known flag for `write`) and be ignored, and the hosted route DROPS a
+ * non-numeric PR value, then applies no PR filter once the list is empty.
  */
 export function parseReadFilters(args) {
   const filters = {};
-  for (const { flag, example } of READ_FILTERS) {
-    const { field, modes } = DIMENSIONS.find((d) => d.flag === flag);
+  for (const { flag, field, modes } of DIMENSIONS) {
     const raw = args[flag];
     const modeRaw = args[`${flag}-mode`];
 
@@ -131,13 +150,20 @@ export function parseReadFilters(args) {
       continue;
     }
 
-    const values = typeof raw === 'string'
-      ? [...new Set(raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0))]
+    let values = typeof raw === 'string'
+      ? raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
       : [];
     if (values.length === 0) {
-      return { error: `--${flag} needs a comma-separated list, e.g. --${flag} ${example}` };
+      return { error: `--${flag} needs a comma-separated list, e.g. --${flag} ${READ_FILTER_EXAMPLES[flag]}` };
     }
-    filters[field] = values;
+    if (field === 'origin_pr') {
+      const bad = values.find((v) => canonicalPrNumber(v) === null);
+      if (bad !== undefined) {
+        return { error: `--origin-pr takes pull request numbers, e.g. --origin-pr 482,511 — got ${JSON.stringify(bad)}` };
+      }
+      values = values.map(canonicalPrNumber);
+    }
+    filters[field] = [...new Set(values)];
     filters[`${field}_mode`] = modeRaw ?? modes[0];
   }
   return { filters };

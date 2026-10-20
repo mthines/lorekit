@@ -79,7 +79,7 @@ test('filterGroups preserves a per-scope read error and never counts it', () => 
 
 // ── integration fixtures ──────────────────────────────────────────────────────
 
-function entry({ scope, key, value, tags = [], kind, host }) {
+function entry({ scope, key, value, tags = [], kind, host, ...overrides }) {
   const fm = {
     scope,
     key,
@@ -91,6 +91,7 @@ function entry({ scope, key, value, tags = [], kind, host }) {
     created: '2026-07-20T10:00:00.000Z',
     updated: '2026-07-20T10:00:00.000Z',
     archived_at: null,
+    ...overrides,
   };
   const lines = Object.entries(fm).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
   return `---\n${lines.join('\n')}\n---\n${value}\n`;
@@ -120,6 +121,7 @@ function seedProject() {
     value: 'The build cache is flaky on CI.',
     kind: 'bus',
     host: 'ci',
+    trigger: 'stuck-loop',
   });
   write(`project/${projectName}/c.md`, {
     scope: `project::${projectName}`,
@@ -127,6 +129,8 @@ function seedProject() {
     value: 'Needs --no-sandbox to build.',
     kind: 'lesson',
     host: 'reviewer',
+    origin_repo: 'acme/widget',
+    origin_pr: 7,
   });
   write(`project/${projectName}/d.md`, {
     scope: `project::${projectName}`,
@@ -357,6 +361,22 @@ test('search --kind / --host narrow the matches, and nin negates them', () => {
   assert.deepEqual(keysFor(['--host', 'ci']), ['build-cache-tip']);
   assert.deepEqual(keysFor(['--host', 'ci', '--host-mode', 'nin']), ['widget-build-flags']);
   assert.deepEqual(keysFor(['--kind', 'bus', '--host', 'reviewer']), []);
+});
+
+test('search filters by trigger and provenance, with nin', () => {
+  const { root, home } = seedProject();
+  const keysFor = (args) => {
+    const res = runSearch(root, home, ['build', ...args, '--json']);
+    assert.equal(res.status, 0, res.stderr);
+    return JSON.parse(res.stdout).offline.groups.flatMap((g) => g.entries.map((e) => e.key));
+  };
+  // `build` hits build-cache-tip (trigger stuck-loop, no provenance) and
+  // widget-build-flags (trigger manual, acme/widget PR 7).
+  assert.deepEqual(keysFor(['--trigger', 'stuck-loop']), ['build-cache-tip']);
+  assert.deepEqual(keysFor(['--trigger', 'stuck-loop', '--trigger-mode', 'nin']), ['widget-build-flags']);
+  assert.deepEqual(keysFor(['--origin-pr', '007']), ['widget-build-flags']);
+  assert.deepEqual(keysFor(['--origin-repo', 'acme/widget', '--origin-repo-mode', 'nin']), []);
+  assert.deepEqual(keysFor(['--source-agent', 'aw']).sort(), ['build-cache-tip', 'widget-build-flags']);
 });
 
 test('search rejects an invalid --kind-mode', () => {

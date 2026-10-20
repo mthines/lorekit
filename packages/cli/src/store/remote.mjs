@@ -140,6 +140,13 @@ function remoteTtlDaysExact(expiresAt, now = new Date()) {
   return Math.ceil(remaining / 86_400_000);
 }
 
+// The `GET /memories` dimension params `list()` forwards — the eight filters
+// the Explorer bar and retention policies share, minus `owner` (the CLI has no
+// owner flag). Each may carry a matching `<name>_mode`.
+const LIST_DIMENSION_PARAMS = [
+  'tags', 'kind', 'host', 'source_agent', 'trigger', 'origin_repo', 'origin_branch', 'origin_pr',
+];
+
 export function createRemoteStore({ endpoint, token } = {}) {
   return new RemoteStore(endpoint, token);
 }
@@ -189,26 +196,19 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({
-    scope, tags, tags_mode, kind, kind_mode, host, host_mode,
-    limit, cursor, created_since, created_until, key_prefix,
-  } = {}) {
+  async list({ scope, limit, cursor, created_since, created_until, key_prefix, ...dimensions } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
-    // Each mode travels only with its dimension (a mode alone means nothing);
-    // an omitted mode is the route's own default — `any` for tags, `in` for
-    // kind/host.
-    if (tags?.length) {
-      p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
-      if (tags_mode) p.set('tags_mode', tags_mode);
-    }
-    if (kind?.length) {
-      p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
-      if (kind_mode) p.set('kind_mode', kind_mode);
-    }
-    if (host?.length) {
-      p.set('host', Array.isArray(host) ? host.join(',') : host);
-      if (host_mode) p.set('host_mode', host_mode);
+    // The dimension filters, under the route's own param names. Each mode
+    // travels only with its dimension (a mode alone means nothing); an omitted
+    // mode is the route's default — `any` for tags, `in` for the rest. Any
+    // other key a caller passes is ignored, exactly as before.
+    for (const field of LIST_DIMENSION_PARAMS) {
+      const values = dimensions[field];
+      if (!values?.length) continue;
+      p.set(field, Array.isArray(values) ? values.join(',') : values);
+      const mode = dimensions[`${field}_mode`];
+      if (mode) p.set(`${field}_mode`, mode);
     }
     if (limit) p.set('limit', String(limit));
     if (cursor) p.set('cursor', cursor);

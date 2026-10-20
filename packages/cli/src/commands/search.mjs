@@ -34,7 +34,7 @@ export async function search(args) {
   // and would otherwise degrade to `list`.
   const query = typeof args._[1] === 'string' ? args._[1] : '';
   if (!query.trim()) {
-    err(`${c.red('Usage:')} lorekit search <query> [--scope <s>] [--kind|--host <a,b> [--kind-mode|--host-mode in|nin]] [--tags <a,b> [--tags-mode any|all|none]] [--json]`);
+    err(`${c.red('Usage:')} lorekit search <query> [--scope <s>] [--tags <a,b> [--tags-mode any|all|none]] [--kind|--host|--trigger|--source-agent|--origin-repo|--origin-branch|--origin-pr <a,b> [--<dim>-mode in|nin]] [--json]`);
     err(`Provide a search term. Run ${c.cyan('lorekit search --help')} for options.`);
     return 1;
   }
@@ -44,9 +44,10 @@ export async function search(args) {
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
 
-  // `--kind`/`--host` (+ `--kind-mode`/`--host-mode in|nin`) and `--tags`
-  // (+ `--tags-mode any|all|none`) narrow the candidate set before the query is
-  // matched — the same filters, with the same semantics, as `list`.
+  // The eight dimension filters (`--tags` + `--tags-mode any|all|none`, and
+  // `--kind`/`--host`/`--trigger`/`--source-agent`/`--origin-*` + `--<dim>-mode
+  // in|nin`) narrow the candidate set before the query is matched — the same
+  // filters, with the same semantics, as `list`.
   const parsed = parseReadFilters(args);
   if (parsed.error) {
     err(`${c.red('Error:')} ${parsed.error}`);
@@ -119,9 +120,9 @@ export async function search(args) {
     'lorekit.cli.search.offline_matches': offline.total,
     'lorekit.cli.search.remote_matches': remoteResult.total,
     'lorekit.cli.search.remote_available': remoteAvailable,
-    'lorekit.cli.search.tags_filtered': Boolean(filters.tags),
-    'lorekit.cli.search.kind_filtered': Boolean(filters.kind),
-    'lorekit.cli.search.host_filtered': Boolean(filters.host),
+    // How many of the eight dimension filters were applied (0–8) — a count,
+    // never a value.
+    'lorekit.cli.search.filter_count': Object.keys(filters).filter((k) => !k.endsWith('_mode')).length,
   };
 }
 

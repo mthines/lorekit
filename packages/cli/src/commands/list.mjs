@@ -42,9 +42,10 @@ export async function list(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
-  // Optional dimension filters, ANDed — `--kind lesson --host reviewer` narrows
-  // to one family/owner, `--kind-mode nin` / `--host-mode nin` negate, and
-  // `--tags a,b [--tags-mode any|all|none]` matches `memory.list`'s semantics.
+  // Optional dimension filters, ANDed — the eight `policy`/`groom` take:
+  // `--tags a,b [--tags-mode any|all|none]` (`memory.list`'s semantics), and
+  // `--kind`/`--host`/`--trigger`/`--source-agent`/`--origin-repo`/
+  // `--origin-branch`/`--origin-pr a,b`, each negated by `--<dim>-mode nin`.
   const parsed = parseReadFilters(args);
   if (parsed.error) {
     err(`${c.red('Error:')} ${parsed.error}`);
@@ -156,9 +157,9 @@ export async function list(args) {
     'lorekit.cli.list.offline_count': offline.total,
     'lorekit.cli.list.remote_count': remoteResult.total,
     'lorekit.cli.list.remote_available': remoteAvailable,
-    'lorekit.cli.list.tags_filtered': Boolean(filters.tags),
-    'lorekit.cli.list.kind_filtered': Boolean(filters.kind),
-    'lorekit.cli.list.host_filtered': Boolean(filters.host),
+    // How many of the eight dimension filters were applied (0–8) — a count,
+    // never a value.
+    'lorekit.cli.list.filter_count': Object.keys(filters).filter((k) => !k.endsWith('_mode')).length,
   };
 }
 

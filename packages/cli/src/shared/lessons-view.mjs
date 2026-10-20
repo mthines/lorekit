@@ -8,6 +8,7 @@
 // Kept separate from `list.mjs` on purpose: the offline/remote sectioned
 // rendering is a reusable seam, not a `list`-only detail. Zero-dependency.
 import { log, heading, status, c } from './util.mjs';
+import { canonicalPrNumber } from './flags.mjs';
 // `resolvePrecedence` (the cross-scope merge) and `matchesQuery` (the literal
 // substring matcher) live in the dependency-free `lessons-pure.mjs` so the hook
 // hot path can share them without pulling in this file's `util`/render stack.
@@ -84,6 +85,15 @@ export function normalizeEntry(e = {}) {
     tags,
     kind: e.kind ?? inferred.kind ?? null,
     host: e.host ?? inferred.host ?? null,
+    // Attribution and provenance — carried so `list`/`search` can filter on them
+    // (`--source-agent`, `--trigger`, `--origin-*`) after normalization, which
+    // both `gather()` and `gatherStream` apply before any filter runs. Both
+    // stores already hold these columns under the same names.
+    source_agent: e.source_agent ?? null,
+    trigger: e.trigger ?? null,
+    origin_repo: e.origin_repo ?? null,
+    origin_branch: e.origin_branch ?? null,
+    origin_pr: e.origin_pr ?? null,
   };
 }
 
@@ -611,21 +621,39 @@ export function matchesScalar(value, wanted, mode = 'in') {
   return mode === 'nin' ? !wanted.has(value) : wanted.has(value);
 }
 
-// The `keep` predicate for normalized entries under the read commands' filters
-// (`kind` + `kind_mode`, `host` + `host_mode`, `tags` + `tags_mode`), ANDed.
+// The single-valued dimensions the read commands filter on, by normalized field
+// name — the same names the hosted `GET /memories` params use.
+export const SCALAR_FILTER_FIELDS = Object.freeze([
+  'kind', 'host', 'source_agent', 'trigger', 'origin_repo', 'origin_branch', 'origin_pr',
+]);
+
+// A PR number as the digits the hosted filter compares numerically, so `7`,
+// `'7'` and `'007'` are one value — the remote column is an integer, a local
+// row may hold either type. A value that is not a number is kept verbatim (it
+// can then only match itself), never coerced into a different PR.
+function canonicalPr(v) {
+  if (v == null) return null;
+  return canonicalPrNumber(v) ?? String(v);
+}
+
+// The `keep` predicate for normalized entries under the read commands' filters,
+// ANDed: `tags` + `tags_mode`, and each of SCALAR_FILTER_FIELDS + its `*_mode`.
 // ONE predicate for every path that narrows a listing — `gather()`, and
 // `list --all`'s streamed drain — so the offline store, the remote store and a
 // full drain can never disagree about what a filter means. Kind/host match the
 // taxonomy `normalizeEntry` inferred for a row without explicit columns. Pure.
 export function entryFilter(filters = {}) {
-  const kindSet = valueSet(filters.kind);
-  const hostSet = valueSet(filters.host);
+  const scalars = SCALAR_FILTER_FIELDS.map((field) => {
+    const raw = valueSet(filters[field]);
+    const wanted = raw && field === 'origin_pr' ? new Set([...raw].map(canonicalPr)) : raw;
+    return { field, wanted, mode: filters[`${field}_mode`] };
+  }).filter((s) => s.wanted);
   const tagSet = valueSet(filters.tags);
   const tagsMode = filters.tags_mode ?? DEFAULT_TAGS_MODE;
   return (e) =>
-    matchesScalar(e.kind, kindSet, filters.kind_mode) &&
-    matchesScalar(e.host, hostSet, filters.host_mode) &&
-    matchesTags(e.tags, tagSet, tagsMode);
+    scalars.every(({ field, wanted, mode }) =>
+      matchesScalar(field === 'origin_pr' ? canonicalPr(e[field]) : e[field], wanted, mode),
+    ) && matchesTags(e.tags, tagSet, tagsMode);
 }
 
 // Collect a store's non-archived entries for each scope, via the common
