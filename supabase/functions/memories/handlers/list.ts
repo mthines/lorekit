@@ -222,6 +222,7 @@ async function respondWithPage(
     // would turn into "matches nothing".
     p_tags: d.tags.values.length ? d.tags.values : null,
     p_tags_mode: d.tags.mode,
+    p_exclude_tags: d.exclude_tags.length ? d.exclude_tags : null,
     p_source_agent: d.source_agent.values.length ? d.source_agent.values : null,
     p_source_agent_mode: d.source_agent.mode,
     p_trigger: d.trigger.values.length ? d.trigger.values : null,

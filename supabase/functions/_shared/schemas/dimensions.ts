@@ -53,6 +53,13 @@ export interface Dimension<Mode> {
  */
 export interface MemoryDimensions {
   tags: Dimension<TagsMode>;
+  /**
+   * Labels the row must carry NONE of, ANDed with `tags` whatever its mode
+   * (migration 00114). A bare list, not a `Dimension`: its combination is fixed
+   * ("carries none of"), so a `mode` would be a field with one legal value.
+   * Empty means "not filtered", like every dimension's `values`.
+   */
+  exclude_tags: string[];
   source_agent: Dimension<ScalarFilterMode>;
   trigger: Dimension<ScalarFilterMode>;
   kind: Dimension<ScalarFilterMode>;
@@ -101,6 +108,7 @@ function digitsOnly(values: readonly string[]): string[] {
 export interface DimensionQueryParams {
   tags?: string | undefined;
   tags_mode?: TagsMode | undefined;
+  exclude_tags?: string | undefined;
   source_agent?: string | undefined;
   source_agent_mode?: ScalarFilterMode | undefined;
   trigger?: string | undefined;
@@ -123,6 +131,7 @@ export interface DimensionQueryParams {
 export interface DimensionBodyFields {
   tags?: readonly string[] | undefined;
   tags_mode?: TagsMode | undefined;
+  exclude_tags?: readonly string[] | undefined;
   source_agent?: readonly string[] | undefined;
   source_agent_mode?: ScalarFilterMode | undefined;
   trigger?: readonly string[] | undefined;
@@ -151,6 +160,7 @@ function build(
   });
   return {
     tags: { values: values('tags'), mode: params.tags_mode ?? 'any' },
+    exclude_tags: values('exclude_tags'),
     source_agent: scalar('source_agent'),
     trigger: scalar('trigger'),
     kind: scalar('kind'),
