@@ -30,7 +30,7 @@ export interface AuthContext {
   permissions?: string[];
   /**
    * api_key only: the key's scope/org restriction (migration 00068), which an
-   * OAuth-issued token (00055) populates the same way a scoped dashboard token
+   * OAuth-issued token (00095) populates the same way a scoped dashboard token
    * does — the consent screen's per-org checkboxes map onto `org_access` +
    * `org_ids`, never a second scoping mechanism.
    *
