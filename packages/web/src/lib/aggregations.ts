@@ -219,6 +219,27 @@ function bucketAnchor(now: number, unit: 'hour' | 'day'): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
+/**
+ * The COMPARISON half of a grid as a fetch window: the `count` whole buckets
+ * immediately before the first charted one, `[since, until)`.
+ *
+ * {@link computeRangeTrends} / {@link computeCountTrend} tally `2 × count`
+ * buckets and compare the charted half against this one, so a caller that
+ * fetched only the charted window hands them an empty comparison half — and
+ * `pctChange(n, 0)` reads +100% for every n. Derived from the same
+ * `bucketAnchor` the grid uses, so the window covers exactly those buckets:
+ * `until` is the first charted bucket's start, never the selection's `since`,
+ * which an unaligned absolute range would put mid-bucket.
+ */
+export function comparisonWindow(plan: BucketPlan, nowIso: string): { since: string; until: string } {
+  const unitMs = plan.unit === 'hour' ? HOUR_MS : DAY_MS;
+  const chartStart = bucketAnchor(Date.parse(nowIso), plan.unit) - (plan.count - 1) * unitMs;
+  return {
+    since: new Date(chartStart - plan.count * unitMs).toISOString(),
+    until: new Date(chartStart).toISOString(),
+  };
+}
+
 /** Display label for a bucket start (UTC): "HH:00" for hours, "Mon D" for days. */
 function bucketLabel(start: number, unit: 'hour' | 'day'): string {
   if (unit === 'hour') return `${String(new Date(start).getUTCHours()).padStart(2, '0')}:00`;

@@ -47,6 +47,7 @@ import {
   useExplorerStats,
 } from '@/lib/queries/explorer-stats';
 import {
+  comparisonWindow,
   computeCountTrend,
   computeRangeTrends,
   RANGE_BUCKETS,
@@ -154,17 +155,20 @@ export function ExplorerStats({
     [filters, retention],
   );
 
+  // The absolute arm anchors its grid at its own end, not at the clock — see
+  // `gridAnchor`.
+  const gridNowIso = useMemo(() => gridAnchor(shown, nowIso), [shown, nowIso]);
+  // The trend chip's preceding period, as whole grid buckets — see `comparisonWindow`.
+  const comparison = useMemo(() => comparisonWindow(plan, gridNowIso), [plan, gridNowIso]);
+
   const { data, isLoading, isError, isFetching } = useExplorerStats(
     scope,
     activityFilters,
     plan.unit,
     queryWindow.since,
     queryWindow.until,
+    comparison,
   );
-
-  // The absolute arm anchors its grid at its own end, not at the clock — see
-  // `gridAnchor`.
-  const gridNowIso = useMemo(() => gridAnchor(shown, nowIso), [shown, nowIso]);
   const rows = data?.rows;
   const readBuckets = data?.readBuckets;
   const memoryTrends = useMemo(

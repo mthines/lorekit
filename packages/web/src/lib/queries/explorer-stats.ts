@@ -115,21 +115,6 @@ export function statsWindow(
   return { since: new Date(now).toISOString(), until: new Date(now).toISOString() };
 }
 
-/**
- * The start of the window the two SERIES are fetched over: the selected window
- * plus the equal-length window immediately before it.
- *
- * `computeRangeTrends` / `computeCountTrend` chart the recent half of a
- * `2 × count` grid and compare it against the preceding half, so their rows
- * must cover both. Fetching only `[since, until)` left the comparison half
- * empty and every trend chip read +100% (growth from zero). The charted half
- * and the headline totals are unaffected — they only read the recent half.
- */
-export function comparisonSince(since: string, until: string): string {
-  const from = Date.parse(since);
-  return new Date(from - (Date.parse(until) - from)).toISOString();
-}
-
 /** Exported for the trend regression spec; the hook below is the only caller. */
 export async function fetchExplorerStats(
   scope: string | null,
@@ -137,36 +122,48 @@ export async function fetchExplorerStats(
   bucket: BucketUnit,
   since: string,
   until: string,
+  comparison: { since: string; until: string },
   signal?: AbortSignal,
 ): Promise<ExplorerStatsData> {
   const token = await browserAccessToken();
   if (!token) return EMPTY;
 
-  // Written / Scopes / Read carry a trend, so they reach one window further
-  // back (see `comparisonSince`). The usage summary has no trend and stays on
-  // the selected window — widening it would double the Archived/Expired totals.
-  const seriesSince = comparisonSince(since, until);
-
-  const [activity, readActivity, usage] = await Promise.all([
+  // Written / Scopes / Read carry a trend chip, which compares the charted
+  // window against the preceding one — so each series is fetched TWICE: the
+  // selection as before, and the grid's comparison buckets (`comparisonWindow`).
+  // Two requests rather than one wider one: a single `since` reaching further
+  // back would let rows from before an unaligned `since` into the first charted
+  // bar. The usage summary has no trend and stays on the selection alone.
+  const scopeParam = scope ? { scope } : {};
+  const [activity, prevActivity, readActivity, prevReadActivity, usage] = await Promise.all([
     // Scope AND the dimension filters go to the SERVER now (migration 00063):
     // the response is aggregated per (bucket, scope) and carries no per-memory
     // tag/agent/repo, so a dimension filter CANNOT be applied client-side — the
     // written/scopes counts have to be narrowed in the RPC to agree with the list.
-    activityPostRequest(token, { bucket, since: seriesSince, until, ...(scope ? { scope } : {}), ...filters }, signal),
+    activityPostRequest(token, { bucket, since, until, ...scopeParam, ...filters }, signal),
+    activityPostRequest(token, { bucket, ...comparison, ...scopeParam, ...filters }, signal),
     // Read follows scope + range ONLY: usage_events has no per-memory dimension,
     // so a label/repo filter is unanswerable for reads (the Read card is
     // scope-level by design). `scope` still goes server-side (00058) because the
     // read series carries a NULL-scope remainder that client filtering would fold
     // in or out depending on how the predicate was written.
-    readActivityRequest(token, { bucket, since: seriesSince, until, ...(scope ? { scope } : {}) }, signal),
+    readActivityRequest(token, { bucket, since, until, ...scopeParam }, signal),
+    readActivityRequest(token, { bucket, ...comparison, ...scopeParam }, signal),
     usageRequest(token, { since, until }, signal),
   ]);
+
+  // The selection's leading partial bucket (a preset's `since` is mid-bucket)
+  // sits in the comparison half, which the second request already covers in
+  // full — drop it here so it is not counted twice.
+  const chartStart = Date.parse(comparison.until);
+  const charted = <T extends { bucket: string }>(rows: T[]) =>
+    rows.filter((r) => Date.parse(r.bucket) >= chartStart);
 
   return {
     // No client-side scope filter: the server already returns exactly the scope
     // (and dimension) selection, so re-filtering here would double-apply it.
-    rows: trendRowsFromActivity(activity.buckets),
-    readBuckets: readActivity.buckets,
+    rows: trendRowsFromActivity([...prevActivity.buckets, ...charted(activity.buckets)]),
+    readBuckets: [...prevReadActivity.buckets, ...charted(readActivity.buckets)],
     archived: usage.summary.archived,
     expired: usage.summary.expired,
   };
@@ -187,13 +184,14 @@ export function useExplorerStats(
   bucket: BucketUnit,
   since: string,
   until: string,
+  comparison: { since: string; until: string },
 ) {
   return useQuery<ExplorerStatsData>({
     // `filters` is a plain object; React Query's default hash sorts its keys, so
     // the same filter set always produces the same key regardless of insertion
     // order — the header refetches when (and only when) the predicate changes.
-    queryKey: ['explorer-stats', scope, filters, bucket, since, until],
-    queryFn: ({ signal }) => fetchExplorerStats(scope, filters, bucket, since, until, signal),
+    queryKey: ['explorer-stats', scope, filters, bucket, since, until, comparison.since],
+    queryFn: ({ signal }) => fetchExplorerStats(scope, filters, bucket, since, until, comparison, signal),
     placeholderData: keepPreviousData,
     // Matches the lesson list's staleTime: the two are read together and a
     // header that refreshed on a different cadence than the list under it would
