@@ -8,11 +8,12 @@
  *
  * ## Two icons, each explained by its own tooltip
  *
- * The flyout is a compact pair of icon buttons — magnifier-plus "filter in",
- * magnifier-minus "filter out", the pair Kibana and Grafana use for "filter for
- * value" / "filter out value" — rather than a sentence-long text button. The
- * words moved into a second-level {@link Tooltip} on each icon, so the resting
- * flyout stays small and the explanation is one hover away. A value that is
+ * The flyout is a compact pair of icon buttons — funnel-plus "filter in",
+ * funnel-minus "filter out" — rather than a sentence-long text button. Funnels
+ * rather than magnifiers: a magnifier reads as "search" or "zoom", and this
+ * acts on the filter bar, whose own trigger is a filter glyph. The words moved
+ * into a second-level {@link Tooltip} on each icon, so the resting flyout stays
+ * small and the explanation is one hover away. A value that is
  * already filtered in or out shows that button pressed, and its tooltip says
  * how to take the filter back off (pressing it again does exactly that).
  *
@@ -57,7 +58,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ZoomIn, ZoomOut, type LucideIcon } from 'lucide-react';
+import { FunnelPlus, createLucideIcon, type LucideIcon } from 'lucide-react';
 
 import { track } from '@/lib/analytics/track';
 import { filterActionLabel, filterAnchorLabel } from '@/lib/filter-from-metadata';
@@ -91,6 +92,23 @@ interface FilterableMetaValueProps {
    */
   cueOnValue?: boolean;
 }
+
+/**
+ * lucide ships `FunnelPlus` and `FunnelX` but no funnel-minus, and `FunnelX`
+ * reads as "clear the filter" rather than "filter this out". This is
+ * `FunnelPlus`'s own funnel and horizontal stroke without the vertical one, so
+ * the pair matches stroke for stroke.
+ */
+const FunnelMinus = createLucideIcon('funnel-minus', [
+  [
+    'path',
+    {
+      d: 'M13.354 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14v6a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341l1.218-1.348',
+      key: 'funnel',
+    },
+  ],
+  ['path', { d: 'M16 6h6', key: 'minus' }],
+]);
 
 /** Matches `Tooltip`/`AnchoredTooltip`'s gap, so the two read as one system. */
 const GAP = 6;
@@ -234,17 +252,17 @@ export function FilterableMetaValue({
               polarity="include"
               subject={subject}
               state={state}
-              icon={ZoomIn}
+              icon={FunnelPlus}
               onActivate={() => activate('include')}
             />
             {onFilterOut && (
               <>
-                <span aria-hidden className="h-4 w-px bg-[var(--color-border)]" />
+                <span aria-hidden className="h-3.5 w-px bg-[var(--color-border)]" />
                 <FilterActionButton
                   polarity="exclude"
                   subject={subject}
                   state={state}
-                  icon={ZoomOut}
+                  icon={FunnelMinus}
                   onActivate={() => activate('exclude')}
                 />
               </>
@@ -301,7 +319,7 @@ function FilterActionButton({
             : `text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)] ${tone.hover}`,
         ].join(' ')}
       >
-        <Icon className="size-3.5" aria-hidden />
+        <Icon className="size-3" aria-hidden />
       </button>
     </Tooltip>
   );
