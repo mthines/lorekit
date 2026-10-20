@@ -17,15 +17,30 @@ import { log, heading, status, c } from './util.mjs';
 // parsers live there too — the `lint` rule below and the `write`/`show`/`link`
 // argument handling must agree on ONE scope grammar, and the parser is only
 // decidable because it can ask the validator.
+// `matchesTags` (the `--tags` matcher) lives there for the same reason: the
+// local store applies it too, and must not import this file's render stack.
 import {
   resolvePrecedence,
   matchesQuery,
+  matchesTags,
+  TAGS_MODES,
+  DEFAULT_TAGS_MODE,
   scopeIssue,
   isScopeString,
   resolveScopeArg,
   resolveScopeKeyArgs,
 } from './lessons-pure.mjs';
-export { resolvePrecedence, matchesQuery, scopeIssue, isScopeString, resolveScopeArg, resolveScopeKeyArgs };
+export {
+  resolvePrecedence,
+  matchesQuery,
+  matchesTags,
+  TAGS_MODES,
+  DEFAULT_TAGS_MODE,
+  scopeIssue,
+  isScopeString,
+  resolveScopeArg,
+  resolveScopeKeyArgs,
+};
 
 // The scopes that apply to the current directory, most-specific → broadest:
 // project, branch, repo, global. De-duplicated (a repo with no branch scope,
@@ -576,6 +591,32 @@ export function clusterByKeyPattern(entries = [], pattern) {
   return clusters;
 }
 
+// A comma list (or array) as a de-duplicated set of trimmed values, or `null`
+// when the filter was not given at all.
+function valueSet(v) {
+  if (v == null) return null;
+  const list = Array.isArray(v) ? v : String(v).split(',');
+  const set = new Set(list.map((s) => String(s).trim()).filter(Boolean));
+  return set.size > 0 ? set : null;
+}
+
+// The `keep` predicate for normalized entries under the read commands' filters
+// (`kind`, `host`, `tags` + `tags_mode`). ONE predicate for every path that
+// narrows a listing — `gather()`, and `list --all`'s streamed drain — so the
+// offline store, the remote store and a full drain can never disagree about
+// what a filter means. Kind/host match the taxonomy `normalizeEntry` inferred
+// for a row without explicit columns. Pure.
+export function entryFilter(filters = {}) {
+  const kindSet = valueSet(filters.kind);
+  const hostSet = valueSet(filters.host);
+  const tagSet = valueSet(filters.tags);
+  const tagsMode = filters.tags_mode ?? DEFAULT_TAGS_MODE;
+  return (e) =>
+    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
+    (!hostSet || (e.host != null && hostSet.has(e.host))) &&
+    matchesTags(e.tags, tagSet, tagsMode);
+}
+
 // Collect a store's non-archived entries for each scope, via the common
 // `store.list({scope})` contract. Returns ordered per-scope groups plus a total
 // — a per-scope read failure is captured on the group, never thrown, so one bad
@@ -583,19 +624,11 @@ export function clusterByKeyPattern(entries = [], pattern) {
 // Single-page only (the existing default behaviour). For full-scope traversal
 // use `gatherStream` below.
 export async function gather(store, scopes, filters = {}) {
-  // Parse the taxonomy filters into value sets. `filters` is passed to the store
-  // too (the remote narrows server-side); we ALSO post-filter the normalized
-  // entries here so the offline store — which ignores kind/host in its own
-  // `list()` — stays consistent with remote. Post-filtering the remote rows is
-  // idempotent (they were already narrowed) and matches on the same inferred
-  // taxonomy a row without explicit columns gets in normalizeEntry.
-  const wanted = (v) =>
-    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
-  const kindSet = wanted(filters.kind);
-  const hostSet = wanted(filters.host);
-  const keep = (e) =>
-    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
-    (!hostSet || (e.host != null && hostSet.has(e.host)));
+  // `filters` is passed to the store too (the remote narrows server-side); we
+  // ALSO post-filter the normalized entries here so the offline store — which
+  // ignores kind/host in its own `list()` — stays consistent with remote.
+  // Post-filtering the remote rows is idempotent (they were already narrowed).
+  const keep = entryFilter(filters);
 
   const groups = [];
   let total = 0;

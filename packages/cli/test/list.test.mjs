@@ -15,9 +15,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { scopeList, normalizeEntry, preview, shortDate, gather } from '../src/shared/lessons-view.mjs';
+import { scopeList, normalizeEntry, preview, shortDate, gather, matchesTags, entryFilter } from '../src/shared/lessons-view.mjs';
 import { remoteUnavailableReason } from '../src/shared/stores.mjs';
+import { parseTagsFilter } from '../src/shared/flags.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
+import { createRemoteStore } from '../src/store/remote.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -111,6 +113,86 @@ test('gather captures a per-scope read failure instead of throwing', async () =>
   assert.equal(groups[0].error, 'fetch failed');
 });
 
+// ── unit: the --tags filter ───────────────────────────────────────────────────
+
+test('matchesTags applies the hosted any/all/none semantics', () => {
+  const tags = ['perf', 'ci'];
+  assert.equal(matchesTags(tags, ['perf', 'auth'], 'any'), true);
+  assert.equal(matchesTags(tags, ['auth'], 'any'), false);
+  assert.equal(matchesTags(tags, ['perf', 'ci'], 'all'), true);
+  assert.equal(matchesTags(tags, ['perf', 'auth'], 'all'), false);
+  assert.equal(matchesTags(tags, ['auth'], 'none'), true);
+  assert.equal(matchesTags(tags, ['perf'], 'none'), false);
+  // `any` is the default, an empty wanted list matches everything, and an
+  // untagged entry never satisfies `any`/`all`.
+  assert.equal(matchesTags(tags, ['ci']), true);
+  assert.equal(matchesTags(tags, []), true);
+  assert.equal(matchesTags(undefined, ['perf'], 'any'), false);
+});
+
+test('entryFilter combines kind, host and tags with AND', () => {
+  const keep = entryFilter({ kind: 'lesson', tags: ['perf'], tags_mode: 'any' });
+  assert.equal(keep({ kind: 'lesson', host: null, tags: ['perf'] }), true);
+  assert.equal(keep({ kind: 'bus', host: null, tags: ['perf'] }), false);
+  assert.equal(keep({ kind: 'lesson', host: null, tags: ['ci'] }), false);
+  // No filters → keeps everything.
+  assert.equal(entryFilter({})({ kind: null, host: null, tags: [] }), true);
+});
+
+test('parseTagsFilter defaults to any, validates the mode, and refuses a silent no-op', () => {
+  assert.deepEqual(parseTagsFilter({}), { filters: {} });
+  assert.deepEqual(parseTagsFilter({ tags: ' perf, ci ,perf' }), {
+    filters: { tags: ['perf', 'ci'], tags_mode: 'any' },
+  });
+  assert.deepEqual(parseTagsFilter({ tags: 'perf', 'tags-mode': 'none' }), {
+    filters: { tags: ['perf'], tags_mode: 'none' },
+  });
+  assert.match(parseTagsFilter({ tags: 'perf', 'tags-mode': 'some' }).error, /--tags-mode must be one of any\|all\|none/);
+  assert.match(parseTagsFilter({ tags: true }).error, /--tags needs a comma-separated list/);
+  assert.match(parseTagsFilter({ tags: ' , ' }).error, /--tags needs a comma-separated list/);
+  assert.match(parseTagsFilter({ 'tags-mode': 'all' }).error, /--tags-mode needs --tags/);
+});
+
+test('gather narrows a local store by tags under each mode', async () => {
+  const dir = tmp('lk-list-tags-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'global', key: 'both', value: 'v', tags: ['perf', 'ci'] });
+  await store.write({ scope: 'global', key: 'perf-only', value: 'v', tags: ['perf'] });
+  await store.write({ scope: 'global', key: 'untagged', value: 'v' });
+
+  const keys = async (filters) =>
+    (await gather(store, ['global'], filters)).groups[0].entries.map((e) => e.key).sort();
+
+  assert.deepEqual(await keys({ tags: ['perf', 'ci'], tags_mode: 'any' }), ['both', 'perf-only']);
+  assert.deepEqual(await keys({ tags: ['perf', 'ci'], tags_mode: 'all' }), ['both']);
+  assert.deepEqual(await keys({ tags: ['ci'], tags_mode: 'none' }), ['perf-only', 'untagged']);
+});
+
+test('the local store keeps requiring every tag when no mode is given', async () => {
+  // `search()` and other existing callers pass `tags` alone and rely on AND.
+  const dir = tmp('lk-list-tags-default-');
+  const store = createLocalStore(dir);
+  await store.write({ scope: 'global', key: 'both', value: 'v', tags: ['perf', 'ci'] });
+  await store.write({ scope: 'global', key: 'perf-only', value: 'v', tags: ['perf'] });
+  const { entries } = await store.list({ scope: 'global', tags: ['perf', 'ci'] });
+  assert.deepEqual(entries.map((e) => e.key), ['both']);
+});
+
+test('RemoteStore.list forwards tags and tags_mode to GET /memories', async () => {
+  const store = createRemoteStore({ endpoint: 'https://example.test/functions/v1/mcp', token: 'lk_ro_x' });
+  const seen = [];
+  store._rest = async (p) => { seen.push(p); return { ok: true, data: { entries: [] } }; };
+
+  await store.list({ scope: 'global', tags: ['perf', 'ci'], tags_mode: 'none' });
+  const params = new URL(seen[0], 'https://x').searchParams;
+  assert.equal(params.get('tags'), 'perf,ci');
+  assert.equal(params.get('tags_mode'), 'none');
+
+  // A mode without tags is meaningless, so it is not sent.
+  await store.list({ scope: 'global', tags_mode: 'all' });
+  assert.equal(new URL(seen[1], 'https://x').searchParams.has('tags_mode'), false);
+});
+
 // ── integration: the real binary, no remote configured ────────────────────────
 
 // A project with an opted-in project-tier store (.lorekit/) holding two lessons.
@@ -127,7 +209,7 @@ function seedProject() {
   fs.mkdirSync(path.join(store, 'project', projectName), { recursive: true });
   fs.writeFileSync(
     path.join(store, 'global', 'a.md'),
-    entry({ scope: 'global', key: 'prefer-guard-clauses', value: 'Use early returns.' }),
+    entry({ scope: 'global', key: 'prefer-guard-clauses', value: 'Use early returns.', tags: ['style'] }),
   );
   fs.writeFileSync(
     path.join(store, 'project', projectName, 'b.md'),
@@ -136,11 +218,11 @@ function seedProject() {
   return { root, home };
 }
 
-function entry({ scope, key, value }) {
+function entry({ scope, key, value, tags = [] }) {
   const fm = {
     scope,
     key,
-    tags: [],
+    tags,
     source_agent: 'aw',
     trigger: 'manual',
     created: '2026-07-20T10:00:00.000Z',
@@ -236,4 +318,34 @@ test('LOREKIT_DENY=local suppresses the offline section', () => {
   const out = JSON.parse(res.stdout);
   assert.equal(out.offline.available, false);
   assert.match(out.offline.reason, /deny constraint/);
+});
+
+test('list --tags narrows both sections to tagged memories (default any)', () => {
+  const { root, home } = seedProject();
+  const res = runList(root, home, ['--tags', 'style,perf', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  const keys = out.offline.groups.flatMap((g) => g.entries.map((e) => e.key));
+  assert.deepEqual(keys, ['prefer-guard-clauses']);
+  assert.equal(out.offline.total, 1);
+});
+
+test('list --tags-mode none excludes the tagged memory', () => {
+  const { root, home } = seedProject();
+  const res = runList(root, home, ['--tags', 'style', '--tags-mode', 'none', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  const keys = out.offline.groups.flatMap((g) => g.entries.map((e) => e.key));
+  assert.deepEqual(keys, ['widget-build-flags']);
+});
+
+test('list rejects an invalid --tags-mode and a bare --tags instead of listing everything', () => {
+  const { root, home } = seedProject();
+  const badMode = runList(root, home, ['--tags', 'style', '--tags-mode', 'some']);
+  assert.notEqual(badMode.status, 0);
+  assert.match(badMode.stderr, /--tags-mode must be one of any\|all\|none/);
+
+  const bare = runList(root, home, ['--tags', '--json']);
+  assert.notEqual(bare.status, 0);
+  assert.match(bare.stderr, /--tags needs a comma-separated list/);
 });

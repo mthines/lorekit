@@ -87,3 +87,36 @@ export function parseDimensionConditions(args, { clearable = false } = {}) {
   }
   return { conditions };
 }
+
+/**
+ * Parse the read commands' tag filter — `--tags a,b [--tags-mode any|all|none]`
+ * on `list` and `search`.
+ *
+ * Returns `{ filters: {} }` when `--tags` was not given, `{ filters: { tags,
+ * tags_mode } }` when it was (the mode defaulting to `any`, the hosted list's
+ * own default, so offline and remote agree), or `{ error }` naming the flag.
+ *
+ * Stricter than {@link parseDimensionConditions} on purpose: a bare `--tags`
+ * with no value, or a `--tags-mode` with no `--tags`, is rejected rather than
+ * quietly listing everything — that silent no-op is the bug this flag exists
+ * to fix (`tags` was already a known flag for `write`, so `list --tags x` used
+ * to parse cleanly and filter nothing).
+ */
+export function parseTagsFilter(args) {
+  const { modes } = DIMENSIONS.find((d) => d.flag === 'tags');
+  const raw = args.tags;
+  const modeRaw = args['tags-mode'];
+
+  if (modeRaw !== undefined && !modes.includes(modeRaw)) {
+    return { error: `--tags-mode must be one of ${modes.join('|')}, got ${JSON.stringify(String(modeRaw))}` };
+  }
+  if (raw === undefined) {
+    return modeRaw === undefined ? { filters: {} } : { error: '--tags-mode needs --tags <a,b>' };
+  }
+
+  const tags = typeof raw === 'string'
+    ? [...new Set(raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0))]
+    : [];
+  if (tags.length === 0) return { error: '--tags needs a comma-separated list, e.g. --tags loop::aw-lessons,perf' };
+  return { filters: { tags, tags_mode: modeRaw ?? 'any' } };
+}

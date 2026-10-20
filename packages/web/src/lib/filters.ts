@@ -111,6 +111,11 @@ export interface FilterFieldDescriptor {
   field: FilterField;
   /** The word in the type list and in the pill's first segment. */
   label: string;
+  /**
+   * Other words a user may type for this dimension in the menu's search box.
+   * Matched exactly like {@link FilterFieldDescriptor.label}, never shown.
+   */
+  aliases?: readonly string[];
   /** Placeholder for the value-list search box. */
   searchPlaceholder: string;
   /** The facet whose values populate this field. */
@@ -135,12 +140,20 @@ export interface FilterFieldDescriptor {
  * memories with every selected label"), and silently flipping a live filter's
  * semantics on upgrade would change what an already-shared `?tags=` link
  * returns. `includes any` is one click away in the operator menu.
+ *
+ * The `label` field is SHOWN as "Tag". Every other surface — the lesson detail
+ * sheet, the docs, the MCP tools, the CLI's `--tags` — calls these tags, and a
+ * menu that said "Label" read as "this Explorer cannot filter by tags". The
+ * field id stays `label` because it is serialised into `?filters=` links, so
+ * renaming it would break every link already shared; "label" stays searchable
+ * as an alias for anyone who learned the old word.
  */
 export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
   {
     field: 'label',
-    label: 'Label',
-    searchPlaceholder: 'Search labels…',
+    label: 'Tag',
+    aliases: ['tags', 'label', 'labels'],
+    searchPlaceholder: 'Search tags…',
     facet: 'tag',
     operators: ['all', 'in', 'nin'],
     format: (v) => v,
@@ -646,13 +659,17 @@ export function rootSuggestions(
 
   if (!needle) return FILTER_FIELDS.map((d) => ({ kind: 'field' as const, field: d.field }));
 
-  const fieldRank = (d: FilterFieldDescriptor): number => {
-    const name = d.label.toLowerCase();
+  const nameRank = (word: string): number => {
+    const name = word.toLowerCase();
     if (name === needle) return 0;
     if (name.startsWith(needle)) return 1;
     if (name.includes(needle)) return 2;
     return Number.POSITIVE_INFINITY;
   };
+  // The best rank across the shown word and its aliases, so typing `tags` or
+  // `label` finds the Tag dimension as surely as typing `tag` does.
+  const fieldRank = (d: FilterFieldDescriptor): number =>
+    Math.min(nameRank(d.label), ...(d.aliases ?? []).map(nameRank));
 
   const fieldHits: RootSuggestion[] = FILTER_FIELDS
     .map((d) => ({ d, rank: fieldRank(d) }))

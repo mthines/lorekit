@@ -321,6 +321,30 @@ test('LOREKIT_DENY=remote suppresses the remote section, offline still matches',
   assert.equal(out.offline.total, 2);
 });
 
+test('search --tags only matches memories carrying the tag', () => {
+  const { root, home } = seedProject();
+  // `early` hits only the `style`-tagged memory; `build` hits two memories,
+  // neither of which carries `style`.
+  const tagged = runSearch(root, home, ['early', '--tags', 'style', '--json']);
+  assert.equal(tagged.status, 0, tagged.stderr);
+  assert.equal(JSON.parse(tagged.stdout).offline.total, 1);
+
+  const excluded = runSearch(root, home, ['build', '--tags', 'style', '--json']);
+  assert.equal(excluded.status, 0, excluded.stderr);
+  assert.equal(JSON.parse(excluded.stdout).offline.total, 0);
+
+  const negated = runSearch(root, home, ['build', '--tags', 'style', '--tags-mode', 'none', '--json']);
+  assert.equal(negated.status, 0, negated.stderr);
+  assert.equal(JSON.parse(negated.stdout).offline.total, 2);
+});
+
+test('search rejects an invalid --tags-mode', () => {
+  const { root, home } = seedProject();
+  const res = runSearch(root, home, ['build', '--tags', 'style', '--tags-mode', 'xor']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /--tags-mode must be one of any\|all\|none/);
+});
+
 // ── integration: a configured (mock) remote ───────────────────────────────────
 
 // A mock LoreKit REST endpoint answering GET /memories?scope=... from a fixture.

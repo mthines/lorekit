@@ -13,10 +13,11 @@ import { resolveProjectRoot } from '../shared/config.mjs';
 import { deriveScope } from '../shared/scope.mjs';
 import { resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
-import { scopeList, gather, gatherStream, renderSection, DEFAULT_MAX } from '../shared/lessons-view.mjs';
+import { scopeList, gather, gatherStream, renderSection, entryFilter, DEFAULT_MAX } from '../shared/lessons-view.mjs';
 import { resolveAppBase, mostSpecificScope } from '../shared/deeplink-pure.mjs';
+import { parseTagsFilter } from '../shared/flags.mjs';
 import { emitLink } from './link.mjs';
-import { log, heading, c } from '../shared/util.mjs';
+import { log, err, heading, c } from '../shared/util.mjs';
 
 // Abbreviate the user's home directory to `~` for readable paths.
 function prettyPath(p) {
@@ -46,6 +47,13 @@ export async function list(args) {
   const filters = {};
   if (typeof args.kind === 'string') filters.kind = args.kind;
   if (typeof args.host === 'string') filters.host = args.host;
+  // `--tags a,b [--tags-mode any|all|none]` — same semantics as `memory.list`.
+  const tagFilter = parseTagsFilter(args);
+  if (tagFilter.error) {
+    err(`${c.red('Error:')} ${tagFilter.error}`);
+    return 1;
+  }
+  Object.assign(filters, tagFilter.filters);
 
   // `--link` short-circuits: print the Explorer deep link for the current
   // context (the most-specific applicable scope, or `--scope`), no store reads.
@@ -77,16 +85,10 @@ export async function list(args) {
   const surveySince = args.since || undefined;
   const surveyUntil = args.until || undefined;
 
-  // Taxonomy `keep` predicate mirroring `gather()`'s: `gatherStream` neither
-  // forwards `kind`/`host` to the store nor post-filters, so a `--all` drain
-  // must apply the same narrowing here or `list --all --kind X` would ignore X.
-  const wanted = (v) =>
-    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
-  const kindSet = wanted(filters.kind);
-  const hostSet = wanted(filters.host);
-  const keep = (e) =>
-    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
-    (!hostSet || (e.host != null && hostSet.has(e.host)));
+  // The SAME `keep` predicate `gather()` applies: `gatherStream` neither
+  // forwards the filters to the store nor post-filters, so a `--all` drain must
+  // apply the narrowing here or `list --all --tags X` would ignore X.
+  const keep = entryFilter(filters);
 
   const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes, filters);
   const remoteAvailable = !remoteDenied && remote.usable();
@@ -157,6 +159,7 @@ export async function list(args) {
     'lorekit.cli.list.offline_count': offline.total,
     'lorekit.cli.list.remote_count': remoteResult.total,
     'lorekit.cli.list.remote_available': remoteAvailable,
+    'lorekit.cli.list.tags_filtered': Boolean(filters.tags),
   };
 }
 

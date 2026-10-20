@@ -12,6 +12,7 @@ import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
 import { seenCountOf, withReadFields, updatedAtOf } from './entry-fields.mjs';
 import { pickScopeWinner } from '../shared/scope-precedence.mjs';
+import { matchesTags } from '../shared/lessons-pure.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -79,13 +80,16 @@ class LocalStore {
 
   // list({ scope, tags, limit }) → { ok, entries } — newest-first, tag-filtered,
   // archived hidden, expired hidden (lazily, mirroring the remote read paths).
-  async list({ scope, tags, limit } = {}) {
+  // `tags_mode` defaults to `all` here — what this store has always done with
+  // `tags`, and what `search()` below relies on. The read commands pass the
+  // mode explicitly (`any` unless told otherwise), matching the hosted list.
+  async list({ scope, tags, tags_mode = 'all', limit } = {}) {
     const now = new Date();
     let rows = this._readAll(scope)
       .map((r) => r.entry)
       .filter((e) => isLive(e, now));
     if (Array.isArray(tags) && tags.length) {
-      rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
+      rows = rows.filter((e) => matchesTags(e.tags, tags, tags_mode));
     }
     rows.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     if (limit) rows = rows.slice(0, limit);
@@ -446,10 +450,10 @@ class TwoTierStore {
     return this.projectActive() ? this.project : this.home;
   }
 
-  async list({ scope, tags, limit } = {}) {
-    const homeRes = await this.home.list({ scope, tags });
+  async list({ scope, tags, tags_mode, limit } = {}) {
+    const homeRes = await this.home.list({ scope, tags, tags_mode });
     const projRes = this.projectActive()
-      ? await this.project.list({ scope, tags })
+      ? await this.project.list({ scope, tags, tags_mode })
       : { entries: [] };
     const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
     merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));

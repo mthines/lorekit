@@ -189,10 +189,14 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, kind, host, limit, cursor, created_since, created_until, key_prefix } = {}) {
+  async list({ scope, tags, tags_mode, kind, host, limit, cursor, created_since, created_until, key_prefix } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
-    if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
+    if (tags?.length) {
+      p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
+      // Omitted → the route's own default (`any`).
+      if (tags_mode) p.set('tags_mode', tags_mode);
+    }
     if (kind) p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
     if (host) p.set('host', Array.isArray(host) ? host.join(',') : host);
     if (limit) p.set('limit', String(limit));

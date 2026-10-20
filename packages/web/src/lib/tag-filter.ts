@@ -1,9 +1,9 @@
 /**
  * Pure logic for the Lore Explorer's label (tag) filter.
  *
- * "Label" is the user-facing word for what the database stores as
- * `memories.tags` — the dashboard copy says Labels, the schema says tags, and
- * this module is the seam between the two vocabularies.
+ * The code here says "label" for what the database stores as `memories.tags`.
+ * The dashboard now shows the word "Tag" for them too (see `FILTER_FIELDS` in
+ * `filters.ts`), so "label" survives only as an internal name.
  *
  * Kept dependency-free (no React, no Supabase) so every decision the filter
  * makes is unit-testable in the node vitest project, mirroring `org-ui.ts`
