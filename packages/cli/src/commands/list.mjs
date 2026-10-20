@@ -15,7 +15,7 @@ import { resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import { scopeList, gather, gatherStream, renderSection, entryFilter, DEFAULT_MAX } from '../shared/lessons-view.mjs';
 import { resolveAppBase, mostSpecificScope } from '../shared/deeplink-pure.mjs';
-import { parseTagsFilter } from '../shared/flags.mjs';
+import { parseReadFilters } from '../shared/flags.mjs';
 import { emitLink } from './link.mjs';
 import { log, err, heading, c } from '../shared/util.mjs';
 
@@ -42,18 +42,15 @@ export async function list(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
-  // Optional taxonomy filters — `--kind lesson --host reviewer` narrows to one
-  // family/owner. Comma lists are honoured by the remote store's query builder.
-  const filters = {};
-  if (typeof args.kind === 'string') filters.kind = args.kind;
-  if (typeof args.host === 'string') filters.host = args.host;
-  // `--tags a,b [--tags-mode any|all|none]` — same semantics as `memory.list`.
-  const tagFilter = parseTagsFilter(args);
-  if (tagFilter.error) {
-    err(`${c.red('Error:')} ${tagFilter.error}`);
+  // Optional dimension filters, ANDed — `--kind lesson --host reviewer` narrows
+  // to one family/owner, `--kind-mode nin` / `--host-mode nin` negate, and
+  // `--tags a,b [--tags-mode any|all|none]` matches `memory.list`'s semantics.
+  const parsed = parseReadFilters(args);
+  if (parsed.error) {
+    err(`${c.red('Error:')} ${parsed.error}`);
     return 1;
   }
-  Object.assign(filters, tagFilter.filters);
+  const filters = parsed.filters;
 
   // `--link` short-circuits: print the Explorer deep link for the current
   // context (the most-specific applicable scope, or `--scope`), no store reads.
@@ -160,6 +157,8 @@ export async function list(args) {
     'lorekit.cli.list.remote_count': remoteResult.total,
     'lorekit.cli.list.remote_available': remoteAvailable,
     'lorekit.cli.list.tags_filtered': Boolean(filters.tags),
+    'lorekit.cli.list.kind_filtered': Boolean(filters.kind),
+    'lorekit.cli.list.host_filtered': Boolean(filters.host),
   };
 }
 

@@ -20,7 +20,7 @@ import { resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
 import { scopeList, gather, filterGroups, renderSection } from '../shared/lessons-view.mjs';
 import { resolveAppBase, mostSpecificScope } from '../shared/deeplink-pure.mjs';
-import { parseTagsFilter } from '../shared/flags.mjs';
+import { parseReadFilters } from '../shared/flags.mjs';
 import { emitLink } from './link.mjs';
 import { log, err, heading, c } from '../shared/util.mjs';
 
@@ -34,7 +34,7 @@ export async function search(args) {
   // and would otherwise degrade to `list`.
   const query = typeof args._[1] === 'string' ? args._[1] : '';
   if (!query.trim()) {
-    err(`${c.red('Usage:')} lorekit search <query> [--scope <s>] [--tags <a,b> [--tags-mode any|all|none]] [--json]`);
+    err(`${c.red('Usage:')} lorekit search <query> [--scope <s>] [--kind|--host <a,b> [--kind-mode|--host-mode in|nin]] [--tags <a,b> [--tags-mode any|all|none]] [--json]`);
     err(`Provide a search term. Run ${c.cyan('lorekit search --help')} for options.`);
     return 1;
   }
@@ -44,14 +44,15 @@ export async function search(args) {
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
 
-  // `--tags a,b [--tags-mode any|all|none]` narrows the candidate set before the
-  // query is matched — the same filter, and the same semantics, as `list`.
-  const tagFilter = parseTagsFilter(args);
-  if (tagFilter.error) {
-    err(`${c.red('Error:')} ${tagFilter.error}`);
+  // `--kind`/`--host` (+ `--kind-mode`/`--host-mode in|nin`) and `--tags`
+  // (+ `--tags-mode any|all|none`) narrow the candidate set before the query is
+  // matched — the same filters, with the same semantics, as `list`.
+  const parsed = parseReadFilters(args);
+  if (parsed.error) {
+    err(`${c.red('Error:')} ${parsed.error}`);
     return 1;
   }
-  const filters = tagFilter.filters;
+  const filters = parsed.filters;
 
   // `--link` short-circuits: print the Explorer deep link for this search
   // (`?q=…` plus the most-specific applicable scope), without touching a store.
@@ -119,6 +120,8 @@ export async function search(args) {
     'lorekit.cli.search.remote_matches': remoteResult.total,
     'lorekit.cli.search.remote_available': remoteAvailable,
     'lorekit.cli.search.tags_filtered': Boolean(filters.tags),
+    'lorekit.cli.search.kind_filtered': Boolean(filters.kind),
+    'lorekit.cli.search.host_filtered': Boolean(filters.host),
   };
 }
 

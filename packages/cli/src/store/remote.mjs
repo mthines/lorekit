@@ -189,16 +189,27 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, tags_mode, kind, host, limit, cursor, created_since, created_until, key_prefix } = {}) {
+  async list({
+    scope, tags, tags_mode, kind, kind_mode, host, host_mode,
+    limit, cursor, created_since, created_until, key_prefix,
+  } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
+    // Each mode travels only with its dimension (a mode alone means nothing);
+    // an omitted mode is the route's own default — `any` for tags, `in` for
+    // kind/host.
     if (tags?.length) {
       p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
-      // Omitted → the route's own default (`any`).
       if (tags_mode) p.set('tags_mode', tags_mode);
     }
-    if (kind) p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
-    if (host) p.set('host', Array.isArray(host) ? host.join(',') : host);
+    if (kind?.length) {
+      p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
+      if (kind_mode) p.set('kind_mode', kind_mode);
+    }
+    if (host?.length) {
+      p.set('host', Array.isArray(host) ? host.join(',') : host);
+      if (host_mode) p.set('host_mode', host_mode);
+    }
     if (limit) p.set('limit', String(limit));
     if (cursor) p.set('cursor', cursor);
     if (created_since) p.set('created_since', created_since);

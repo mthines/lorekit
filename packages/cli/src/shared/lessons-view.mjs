@@ -600,20 +600,31 @@ function valueSet(v) {
   return set.size > 0 ? set : null;
 }
 
+// Whether a scalar value (kind, host) satisfies a value-set filter under `mode`
+// — the hosted `lorekit_match_text` rule (migration 00066): `in` = is one of
+// them, `nin` = is set AND is none of them. A row with no value matches
+// NEITHER mode, so `--kind-mode nin` never surfaces an unclassified row the
+// remote would have excluded. A missing filter matches everything. Pure.
+export function matchesScalar(value, wanted, mode = 'in') {
+  if (!wanted) return true;
+  if (value == null) return false;
+  return mode === 'nin' ? !wanted.has(value) : wanted.has(value);
+}
+
 // The `keep` predicate for normalized entries under the read commands' filters
-// (`kind`, `host`, `tags` + `tags_mode`). ONE predicate for every path that
-// narrows a listing — `gather()`, and `list --all`'s streamed drain — so the
-// offline store, the remote store and a full drain can never disagree about
-// what a filter means. Kind/host match the taxonomy `normalizeEntry` inferred
-// for a row without explicit columns. Pure.
+// (`kind` + `kind_mode`, `host` + `host_mode`, `tags` + `tags_mode`), ANDed.
+// ONE predicate for every path that narrows a listing — `gather()`, and
+// `list --all`'s streamed drain — so the offline store, the remote store and a
+// full drain can never disagree about what a filter means. Kind/host match the
+// taxonomy `normalizeEntry` inferred for a row without explicit columns. Pure.
 export function entryFilter(filters = {}) {
   const kindSet = valueSet(filters.kind);
   const hostSet = valueSet(filters.host);
   const tagSet = valueSet(filters.tags);
   const tagsMode = filters.tags_mode ?? DEFAULT_TAGS_MODE;
   return (e) =>
-    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
-    (!hostSet || (e.host != null && hostSet.has(e.host))) &&
+    matchesScalar(e.kind, kindSet, filters.kind_mode) &&
+    matchesScalar(e.host, hostSet, filters.host_mode) &&
     matchesTags(e.tags, tagSet, tagsMode);
 }
 

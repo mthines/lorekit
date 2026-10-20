@@ -15,9 +15,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { scopeList, normalizeEntry, preview, shortDate, gather, matchesTags, entryFilter } from '../src/shared/lessons-view.mjs';
+import { scopeList, normalizeEntry, preview, shortDate, gather, matchesTags, matchesScalar, entryFilter } from '../src/shared/lessons-view.mjs';
 import { remoteUnavailableReason } from '../src/shared/stores.mjs';
-import { parseTagsFilter } from '../src/shared/flags.mjs';
+import { parseReadFilters } from '../src/shared/flags.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
 import { createRemoteStore } from '../src/store/remote.mjs';
 
@@ -113,7 +113,7 @@ test('gather captures a per-scope read failure instead of throwing', async () =>
   assert.equal(groups[0].error, 'fetch failed');
 });
 
-// ── unit: the --tags filter ───────────────────────────────────────────────────
+// ── unit: the --tags / --kind / --host filters ────────────────────────────────
 
 test('matchesTags applies the hosted any/all/none semantics', () => {
   const tags = ['perf', 'ci'];
@@ -130,6 +130,20 @@ test('matchesTags applies the hosted any/all/none semantics', () => {
   assert.equal(matchesTags(undefined, ['perf'], 'any'), false);
 });
 
+test('matchesScalar applies the hosted in/nin rule, excluding unset values from both', () => {
+  const wanted = new Set(['bus', 'signal']);
+  assert.equal(matchesScalar('bus', wanted, 'in'), true);
+  assert.equal(matchesScalar('lesson', wanted, 'in'), false);
+  assert.equal(matchesScalar('lesson', wanted, 'nin'), true);
+  assert.equal(matchesScalar('bus', wanted, 'nin'), false);
+  // `lorekit_match_text` (migration 00066): a row with no value matches neither.
+  assert.equal(matchesScalar(null, wanted, 'in'), false);
+  assert.equal(matchesScalar(null, wanted, 'nin'), false);
+  // `in` is the default; no filter matches everything, unset values included.
+  assert.equal(matchesScalar('bus', wanted), true);
+  assert.equal(matchesScalar(null, null, 'nin'), true);
+});
+
 test('entryFilter combines kind, host and tags with AND', () => {
   const keep = entryFilter({ kind: 'lesson', tags: ['perf'], tags_mode: 'any' });
   assert.equal(keep({ kind: 'lesson', host: null, tags: ['perf'] }), true);
@@ -139,18 +153,39 @@ test('entryFilter combines kind, host and tags with AND', () => {
   assert.equal(entryFilter({})({ kind: null, host: null, tags: [] }), true);
 });
 
-test('parseTagsFilter defaults to any, validates the mode, and refuses a silent no-op', () => {
-  assert.deepEqual(parseTagsFilter({}), { filters: {} });
-  assert.deepEqual(parseTagsFilter({ tags: ' perf, ci ,perf' }), {
+test('entryFilter negates kind and host independently with nin', () => {
+  const keep = entryFilter({ kind: ['bus'], kind_mode: 'nin', host: ['ci', 'review'], host_mode: 'nin' });
+  assert.equal(keep({ kind: 'lesson', host: 'reviewer', tags: [] }), true);
+  assert.equal(keep({ kind: 'bus', host: 'reviewer', tags: [] }), false);
+  assert.equal(keep({ kind: 'lesson', host: 'ci', tags: [] }), false);
+  assert.equal(keep({ kind: null, host: 'reviewer', tags: [] }), false);
+
+  const mixed = entryFilter({ kind: ['lesson'], kind_mode: 'in', host: ['ci'], host_mode: 'nin' });
+  assert.equal(mixed({ kind: 'lesson', host: 'aw', tags: [] }), true);
+  assert.equal(mixed({ kind: 'lesson', host: 'ci', tags: [] }), false);
+});
+
+test('parseReadFilters defaults each mode, validates it, and refuses a silent no-op', () => {
+  assert.deepEqual(parseReadFilters({}), { filters: {} });
+  assert.deepEqual(parseReadFilters({ tags: ' perf, ci ,perf' }), {
     filters: { tags: ['perf', 'ci'], tags_mode: 'any' },
   });
-  assert.deepEqual(parseTagsFilter({ tags: 'perf', 'tags-mode': 'none' }), {
+  assert.deepEqual(parseReadFilters({ tags: 'perf', 'tags-mode': 'none' }), {
     filters: { tags: ['perf'], tags_mode: 'none' },
   });
-  assert.match(parseTagsFilter({ tags: 'perf', 'tags-mode': 'some' }).error, /--tags-mode must be one of any\|all\|none/);
-  assert.match(parseTagsFilter({ tags: true }).error, /--tags needs a comma-separated list/);
-  assert.match(parseTagsFilter({ tags: ' , ' }).error, /--tags needs a comma-separated list/);
-  assert.match(parseTagsFilter({ 'tags-mode': 'all' }).error, /--tags-mode needs --tags/);
+  assert.deepEqual(parseReadFilters({ kind: 'lesson,bus', host: 'ci', 'host-mode': 'nin' }), {
+    filters: { kind: ['lesson', 'bus'], kind_mode: 'in', host: ['ci'], host_mode: 'nin' },
+  });
+  assert.match(parseReadFilters({ tags: 'perf', 'tags-mode': 'some' }).error, /--tags-mode must be one of any\|all\|none/);
+  assert.match(parseReadFilters({ tags: true }).error, /--tags needs a comma-separated list/);
+  assert.match(parseReadFilters({ tags: ' , ' }).error, /--tags needs a comma-separated list/);
+  assert.match(parseReadFilters({ 'tags-mode': 'all' }).error, /--tags-mode needs --tags/);
+  // kind/host accept only in|nin — `all` is a tags-only mode.
+  assert.match(parseReadFilters({ kind: 'bus', 'kind-mode': 'all' }).error, /--kind-mode must be one of in\|nin/);
+  assert.match(parseReadFilters({ host: 'ci', 'host-mode': 'none' }).error, /--host-mode must be one of in\|nin/);
+  assert.match(parseReadFilters({ 'kind-mode': 'nin' }).error, /--kind-mode needs --kind/);
+  assert.match(parseReadFilters({ 'host-mode': 'in' }).error, /--host-mode needs --host/);
+  assert.match(parseReadFilters({ kind: true }).error, /--kind needs a comma-separated list/);
 });
 
 test('gather narrows a local store by tags under each mode', async () => {
@@ -193,6 +228,23 @@ test('RemoteStore.list forwards tags and tags_mode to GET /memories', async () =
   assert.equal(new URL(seen[1], 'https://x').searchParams.has('tags_mode'), false);
 });
 
+test('RemoteStore.list forwards kind_mode and host_mode only with their dimension', async () => {
+  const store = createRemoteStore({ endpoint: 'https://example.test/functions/v1/mcp', token: 'lk_ro_x' });
+  const seen = [];
+  store._rest = async (p) => { seen.push(p); return { ok: true, data: { entries: [] } }; };
+
+  await store.list({ scope: 'global', kind: ['bus', 'signal'], kind_mode: 'nin', host: ['ci'], host_mode: 'in' });
+  const params = new URL(seen[0], 'https://x').searchParams;
+  assert.equal(params.get('kind'), 'bus,signal');
+  assert.equal(params.get('kind_mode'), 'nin');
+  assert.equal(params.get('host'), 'ci');
+  assert.equal(params.get('host_mode'), 'in');
+
+  await store.list({ scope: 'global', kind_mode: 'nin', host_mode: 'nin', kind: [] });
+  const bare = new URL(seen[1], 'https://x').searchParams;
+  for (const key of ['kind', 'kind_mode', 'host', 'host_mode']) assert.equal(bare.has(key), false, key);
+});
+
 // ── integration: the real binary, no remote configured ────────────────────────
 
 // A project with an opted-in project-tier store (.lorekit/) holding two lessons.
@@ -209,20 +261,22 @@ function seedProject() {
   fs.mkdirSync(path.join(store, 'project', projectName), { recursive: true });
   fs.writeFileSync(
     path.join(store, 'global', 'a.md'),
-    entry({ scope: 'global', key: 'prefer-guard-clauses', value: 'Use early returns.', tags: ['style'] }),
+    entry({ scope: 'global', key: 'prefer-guard-clauses', value: 'Use early returns.', tags: ['style'], kind: 'lesson', host: 'reviewer' }),
   );
   fs.writeFileSync(
     path.join(store, 'project', projectName, 'b.md'),
-    entry({ scope: `project::${projectName}`, key: 'widget-build-flags', value: 'Needs --no-sandbox.' }),
+    entry({ scope: `project::${projectName}`, key: 'widget-build-flags', value: 'Needs --no-sandbox.', kind: 'bus', host: 'ci' }),
   );
   return { root, home };
 }
 
-function entry({ scope, key, value, tags = [] }) {
+function entry({ scope, key, value, tags = [], kind, host }) {
   const fm = {
     scope,
     key,
     tags,
+    ...(kind ? { kind } : {}),
+    ...(host ? { host } : {}),
     source_agent: 'aw',
     trigger: 'manual',
     created: '2026-07-20T10:00:00.000Z',
@@ -348,4 +402,28 @@ test('list rejects an invalid --tags-mode and a bare --tags instead of listing e
   const bare = runList(root, home, ['--tags', '--json']);
   assert.notEqual(bare.status, 0);
   assert.match(bare.stderr, /--tags needs a comma-separated list/);
+});
+
+test('list --kind / --host narrow, and --kind-mode / --host-mode nin negate', () => {
+  const { root, home } = seedProject();
+  const keysFor = (args) => {
+    const res = runList(root, home, [...args, '--json']);
+    assert.equal(res.status, 0, res.stderr);
+    return JSON.parse(res.stdout).offline.groups.flatMap((g) => g.entries.map((e) => e.key));
+  };
+  assert.deepEqual(keysFor(['--kind', 'bus']), ['widget-build-flags']);
+  assert.deepEqual(keysFor(['--kind', 'bus', '--kind-mode', 'nin']), ['prefer-guard-clauses']);
+  assert.deepEqual(keysFor(['--host', 'ci,reviewer', '--host-mode', 'nin']), []);
+  assert.deepEqual(keysFor(['--kind', 'lesson', '--host', 'ci', '--host-mode', 'nin']), ['prefer-guard-clauses']);
+});
+
+test('list rejects a tags-only mode on --kind-mode and a mode without its flag', () => {
+  const { root, home } = seedProject();
+  const badMode = runList(root, home, ['--kind', 'bus', '--kind-mode', 'all']);
+  assert.notEqual(badMode.status, 0);
+  assert.match(badMode.stderr, /--kind-mode must be one of in\|nin/);
+
+  const orphan = runList(root, home, ['--host-mode', 'nin']);
+  assert.notEqual(orphan.status, 0);
+  assert.match(orphan.stderr, /--host-mode needs --host/);
 });

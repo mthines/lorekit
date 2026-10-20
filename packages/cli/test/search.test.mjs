@@ -79,11 +79,13 @@ test('filterGroups preserves a per-scope read error and never counts it', () => 
 
 // ── integration fixtures ──────────────────────────────────────────────────────
 
-function entry({ scope, key, value, tags = [] }) {
+function entry({ scope, key, value, tags = [], kind, host }) {
   const fm = {
     scope,
     key,
     tags,
+    ...(kind ? { kind } : {}),
+    ...(host ? { host } : {}),
     source_agent: 'aw',
     trigger: 'manual',
     created: '2026-07-20T10:00:00.000Z',
@@ -116,11 +118,15 @@ function seedProject() {
     scope: 'global',
     key: 'build-cache-tip',
     value: 'The build cache is flaky on CI.',
+    kind: 'bus',
+    host: 'ci',
   });
   write(`project/${projectName}/c.md`, {
     scope: `project::${projectName}`,
     key: 'widget-build-flags',
     value: 'Needs --no-sandbox to build.',
+    kind: 'lesson',
+    host: 'reviewer',
   });
   write(`project/${projectName}/d.md`, {
     scope: `project::${projectName}`,
@@ -336,6 +342,28 @@ test('search --tags only matches memories carrying the tag', () => {
   const negated = runSearch(root, home, ['build', '--tags', 'style', '--tags-mode', 'none', '--json']);
   assert.equal(negated.status, 0, negated.stderr);
   assert.equal(JSON.parse(negated.stdout).offline.total, 2);
+});
+
+test('search --kind / --host narrow the matches, and nin negates them', () => {
+  const { root, home } = seedProject();
+  const keysFor = (args) => {
+    const res = runSearch(root, home, ['build', ...args, '--json']);
+    assert.equal(res.status, 0, res.stderr);
+    return JSON.parse(res.stdout).offline.groups.flatMap((g) => g.entries.map((e) => e.key));
+  };
+  // `build` hits build-cache-tip (bus/ci) and widget-build-flags (lesson/reviewer).
+  assert.deepEqual(keysFor(['--kind', 'lesson']), ['widget-build-flags']);
+  assert.deepEqual(keysFor(['--kind', 'lesson', '--kind-mode', 'nin']), ['build-cache-tip']);
+  assert.deepEqual(keysFor(['--host', 'ci']), ['build-cache-tip']);
+  assert.deepEqual(keysFor(['--host', 'ci', '--host-mode', 'nin']), ['widget-build-flags']);
+  assert.deepEqual(keysFor(['--kind', 'bus', '--host', 'reviewer']), []);
+});
+
+test('search rejects an invalid --kind-mode', () => {
+  const { root, home } = seedProject();
+  const res = runSearch(root, home, ['build', '--kind', 'bus', '--kind-mode', 'none']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /--kind-mode must be one of in\|nin/);
 });
 
 test('search rejects an invalid --tags-mode', () => {
