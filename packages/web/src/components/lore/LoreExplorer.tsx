@@ -1179,10 +1179,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
               // `pages.length` is how many are already loaded, so it IS the index
               // of the one about to arrive: 1 for the second page.
               const page = data?.pages.length ?? 1;
-              // Tracked once the page lands: the event means "a page was appended",
-              // so a failed attempt and its retry must not count twice.
+              // Tracked only if exactly this page landed: a failed attempt appends
+              // nothing, and a filter change mid-load resolves with the new query.
               void fetchNextPage().then((result) => {
-                if (!result.isFetchNextPageError) track({ name: 'lore.results_paged', page });
+                if (result.data?.pages.length === page + 1) track({ name: 'lore.results_paged', page });
               });
             }}
             disabled={isFetchingNextPage}
