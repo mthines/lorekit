@@ -23,7 +23,13 @@ import { Sparkbar } from '@/components/dashboard/Sparkbar';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { StatTrend } from '@/lib/aggregations';
-import { formatPercentDelta, isPercentDeltaAbbreviated } from '@/lib/format-number';
+import {
+  formatExact,
+  formatHeadline,
+  formatPercentDelta,
+  isHeadlineAbbreviated,
+  isPercentDeltaAbbreviated,
+} from '@/lib/format-number';
 
 /** The small uppercase dimension tag in a card's header. */
 export function UnitTag({ label }: { label: string }) {
@@ -193,13 +199,18 @@ export function StatCard({
   // and the caption around it are all ≤12px, so the number carries the hierarchy
   // on its own. It COUNTS to a new value rather than swapping: see AnimatedNumber
   // for why that is a change indicator.
+  //
+  // From five digits up it abbreviates (`1.57M`), so it never outgrows the row it
+  // shares with the trend chip — a `1,566,285` pushed the chip off the card. The
+  // exact figure stays on hover here and in AnimatedNumber's announced twin.
   const numberEl = (
     <p
       className={`font-bold leading-tight tabular-nums text-[var(--color-content-primary)] ${
         compact ? 'text-lg sm:text-xl' : 'text-2xl sm:text-3xl'
       }`}
+      title={isHeadlineAbbreviated(value) ? formatExact(value) : undefined}
     >
-      <AnimatedNumber value={value} />
+      <AnimatedNumber value={value} format={formatHeadline} />
     </p>
   );
   const labelEl = (

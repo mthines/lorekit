@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   formatCompact,
   formatExact,
+  formatHeadline,
   formatPercentDelta,
+  isHeadlineAbbreviated,
   isPercentDeltaAbbreviated,
 } from './format-number';
 
@@ -47,7 +49,9 @@ describe('formatCompact', () => {
   it('switches to compact notation at the threshold', () => {
     expect(formatCompact(10_000)).toBe('10K');
     expect(formatCompact(12_345)).toBe('12.3K');
-    expect(formatCompact(1_234_567)).toBe('1.2M');
+    expect(formatCompact(1_234_567)).toBe('1.23M');
+    // Three significant digits, so the hundreds band never grows to `883.4K`.
+    expect(formatCompact(883_400)).toBe('883K');
   });
 
   /**
@@ -65,6 +69,51 @@ describe('formatCompact', () => {
   it('agrees with formatExact below the threshold, separators aside', () => {
     for (const n of [0, 7, 42, 999, 9999]) {
       expect(formatCompact(n)).toBe(formatExact(n).replace(/,/g, ''));
+    }
+  });
+});
+
+/**
+ * A stat card's headline shares its row with the trend chip. `1,566,285` pushed
+ * the chip off the card, so from five digits up it abbreviates.
+ */
+describe('formatHeadline', () => {
+  it('keeps figures below 10,000 exact and grouped', () => {
+    // Same width as compact notation tops out at, so abbreviating here would
+    // drop precision for no room.
+    expect(formatHeadline(0)).toBe('0');
+    expect(formatHeadline(541)).toBe('541');
+    expect(formatHeadline(2800)).toBe('2,800');
+    expect(formatHeadline(9999)).toBe('9,999');
+  });
+
+  it('abbreviates from 10,000 up to three significant digits', () => {
+    expect(formatHeadline(10_000)).toBe('10K');
+    expect(formatHeadline(12_345)).toBe('12.3K');
+    expect(formatHeadline(883_400)).toBe('883K');
+    expect(formatHeadline(1_566_285)).toBe('1.57M');
+    expect(formatHeadline(12_345_678)).toBe('12.3M');
+    expect(formatHeadline(1_000_000_000)).toBe('1B');
+  });
+
+  it('rounds across a magnitude instead of growing a digit', () => {
+    expect(formatHeadline(99_950)).toBe('100K');
+    expect(formatHeadline(999_500)).toBe('1M');
+  });
+
+  /** The property the rule exists for: the chip's row always has room. */
+  it('never exceeds five characters at any magnitude', () => {
+    const magnitudes = [0, 9, 99, 999, 9999, 10_000, 99_999, 883_400, 999_999, 1_566_285, 99_999_999, 1e9, 1e12];
+    for (const n of magnitudes) {
+      expect(formatHeadline(n).length).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it('agrees with isHeadlineAbbreviated at the boundary', () => {
+    expect(isHeadlineAbbreviated(9999)).toBe(false);
+    expect(isHeadlineAbbreviated(10_000)).toBe(true);
+    for (const n of [0, 541, 9999, 10_000, 1_566_285]) {
+      expect(formatHeadline(n) === formatExact(n)).toBe(!isHeadlineAbbreviated(n));
     }
   });
 });

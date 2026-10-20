@@ -22,21 +22,27 @@
 /** Grouped and exact: `1247` → `1,247`. The canonical rendering of a figure. */
 const EXACT = new Intl.NumberFormat('en-US');
 
-/** Compact: `12345` → `12.3K`. Mirrors `formatLikeCount`'s options. */
+/**
+ * Compact, capped at THREE significant digits: `12345` → `12.3K`, `1566285` →
+ * `1.57M`, `883400` → `883K`.
+ *
+ * Significant digits rather than `maximumFractionDigits: 1`, because a fraction
+ * cap is unbounded in the hundreds band (`883400` → `883.4K`, six characters),
+ * while three significant digits is never more than five characters at any
+ * magnitude — which is the width the headline slot is sized for.
+ */
 const COMPACT = new Intl.NumberFormat('en-US', {
   notation: 'compact',
-  maximumFractionDigits: 1,
+  maximumSignificantDigits: 3,
 });
 
 /**
  * Compact, capped at TWO significant digits: `883400` → `880K`, `8834` → `8.8K`.
  *
  * Same vocabulary as {@link COMPACT} — same locale, same `K`/`M`/`B` — carrying
- * one fewer digit of precision, because the slot that uses it is tighter. It is
- * a real difference and not a stylistic one: `maximumFractionDigits: 1` is
- * unbounded in the hundreds band (`883400` → `883.4K`, six characters, LONGER
- * than the four-digit percentages this exists to shorten), while two significant
- * digits is never more than four characters at any magnitude.
+ * one fewer digit of precision, because the slot that uses it is tighter: two
+ * significant digits is never more than four characters at any magnitude, which
+ * a trend chip's sign and `%` then stretch to six.
  */
 const COMPACT_TERSE = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -53,6 +59,16 @@ const COMPACT_TERSE = new Intl.NumberFormat('en-US', {
  * above it, compact notation is never longer than five characters ("1.2M").
  */
 const COMPACT_THRESHOLD = 10_000;
+
+/**
+ * Above this, a stat card's HEADLINE is abbreviated.
+ *
+ * Below it the exact, grouped figure is at most five characters (`9,999`) — the
+ * same width compact notation tops out at (`12.3K`, `1.57M`) — so abbreviating
+ * earlier would drop precision and buy no room. At it, `10,000` is six and the
+ * figures only grow: `1,566,285` pushed the trend chip beside it off the card.
+ */
+const HEADLINE_COMPACT_THRESHOLD = 10_000;
 
 /**
  * Above this, a PERCENTAGE is abbreviated.
@@ -99,10 +115,7 @@ function compactAbove(value: number, threshold: number, formatter: Intl.NumberFo
  * The figure as it should appear in a narrow, dense slot.
  *
  * Ungrouped below the threshold and compact above it, so the result is at most
- * five characters through the magnitudes a memory count reaches. (It carries one
- * fraction digit, so the hundreds-of-thousands band can run to six — `883.4K`.
- * {@link formatPercentDelta} uses {@link COMPACT_TERSE} where that matters.)
- * Grouping is dropped rather than kept because the separator is the character
+ * five characters at any magnitude. Grouping is dropped rather than kept because the separator is the character
  * that pushes a four-digit figure past its column, and it buys little there.
  *
  * The exact value is never lost: `AnimatedNumber` announces {@link formatExact}
@@ -110,6 +123,24 @@ function compactAbove(value: number, threshold: number, formatter: Intl.NumberFo
  */
 export function formatCompact(value: number): string {
   return compactAbove(value, COMPACT_THRESHOLD, COMPACT);
+}
+
+/**
+ * A stat card's headline figure: `5,341`, `12.3K`, `1.57M`.
+ *
+ * Exact and grouped below {@link HEADLINE_COMPACT_THRESHOLD}, compact above it,
+ * so a headline is never wider than five characters and always leaves the trend
+ * chip on its row room to sit beside it. The exact value stays reachable:
+ * `AnimatedNumber` announces {@link formatExact}, and `StatCard` puts it in the
+ * hover title when {@link isHeadlineAbbreviated}.
+ */
+export function formatHeadline(value: number): string {
+  return Math.abs(value) < HEADLINE_COMPACT_THRESHOLD ? EXACT.format(value) : COMPACT.format(value);
+}
+
+/** Whether {@link formatHeadline} lost precision on this value. */
+export function isHeadlineAbbreviated(value: number): boolean {
+  return Math.abs(value) >= HEADLINE_COMPACT_THRESHOLD;
 }
 
 /**
