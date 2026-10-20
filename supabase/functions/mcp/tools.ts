@@ -889,7 +889,11 @@ export async function toolListArchived(
   span: Span,
   keyScoping?: KeyRestriction,
 ) {
-  const { scope: rawScope, limit = 50 } = params;
+  const { scope: rawScope, tags: rawTags, limit = 50 } = params;
+  // `tags` narrows exactly as it does on `memory.list` (ANY of them, OR) — the
+  // archived twin used to take no tag filter, so finding one archived lesson
+  // among many meant paging the whole archive.
+  const tags = toTagList(rawTags);
   // Optional for the same reason as `memory.list`, whose `?archived=true` form
   // this is the MCP twin of — the two must not disagree about whether a scope
   // is needed to look at the same rows.
@@ -909,6 +913,8 @@ export async function toolListArchived(
     'lorekit.list.unscoped': scope === null,
     'lorekit.requested_limit': limit,
     'lorekit.limit_capped': limit > pageLimit,
+    // A count, never the tag values — bounded, and no lesson content leaks.
+    'lorekit.tags.count': tags.length,
   });
 
   const tracedDb = createTracedClient(db, span);
@@ -924,6 +930,7 @@ export async function toolListArchived(
     .limit(pageLimit);
   if (scope) query = query.eq('scope', scope);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const rows = data ?? [];
