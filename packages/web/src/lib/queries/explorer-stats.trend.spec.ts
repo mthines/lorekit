@@ -19,12 +19,12 @@ const NOW = '2026-10-20T12:34:56.000Z';
 const FALLBACK = { unit: 'hour' as const, count: 24 };
 
 const MINUTE = 60_000;
-// One write + one read every minute of the last 72h: a uniform rate, so two
+// One write + one read every minute of the last 61 days: a uniform rate, so two
 // equal-length windows hold equal counts and the honest change is exactly 0%.
 // (An hourly series would not do: equal windows can catch 24 vs 23 events.)
 const anchor = Math.floor(Date.parse(NOW) / HOUR) * HOUR;
 const lastMinute = Math.floor(Date.parse(NOW) / MINUTE) * MINUTE;
-const EVENTS = Array.from({ length: 72 * 60 }, (_, i) => lastMinute - i * MINUTE);
+const EVENTS = Array.from({ length: 61 * 24 * 60 }, (_, i) => lastMinute - i * MINUTE);
 const eventsIn = (from: string, to: string) =>
   EVENTS.filter((t) => t >= Date.parse(from) && t < Date.parse(to)).length;
 
@@ -60,10 +60,10 @@ vi.mock('@/lib/api/memories', () => ({
 
 const { fetchExplorerStats, statsWindow } = await import('./explorer-stats');
 
-async function trendsFor(range: TimeRange) {
-  const plan = bucketPlanForRange(range, NOW) ?? FALLBACK;
-  const gridNow = gridAnchor(range, NOW);
-  const { since, until } = statsWindow(range, NOW);
+async function trendsFor(range: TimeRange, now = NOW) {
+  const plan = bucketPlanForRange(range, now) ?? FALLBACK;
+  const gridNow = gridAnchor(range, now);
+  const { since, until } = statsWindow(range, now);
   const comparison = comparisonWindow(plan, gridNow, { since, until });
   const data = await fetchExplorerStats(null, {}, plan.unit, since, until, comparison);
   return {
@@ -109,17 +109,13 @@ describe('Explorer stat trends compare against a FETCHED preceding period', () =
     ['24h at hh:05', '2026-10-20T12:05:00.000Z', { preset: '24h' }],
     ['7d at 00:30', '2026-10-20T00:30:00.000Z', { preset: '7d' }],
     ['30d at 00:30', '2026-10-20T00:30:00.000Z', { preset: '30d' }],
-  ] as const)('a perfectly uniform rate trends 0%% on %s', (_label, now, range) => {
+  ] as const)('a uniform rate trends 0%% end-to-end on %s', async (_label, now, range) => {
     // The charted half ends at now, mid-bucket; a comparison a whole bucket
-    // longer would read a flat account as a decline. Uniform-rate rows (one per
-    // minute) make any length mismatch show up in the percentage.
-    const plan = bucketPlanForRange(range, now) ?? FALLBACK;
-    const gridNow = gridAnchor(range, now);
-    const selection = statsWindow(range, now);
-    const cmp = comparisonWindow(plan, gridNow, selection);
-    const chartStart = Date.parse(cmp.until);
-    const charted = Date.parse(selection.until) - Math.max(Date.parse(selection.since), chartStart);
-    expect(chartStart - Date.parse(cmp.since)).toBe(charted);
+    // longer would read a flat account as a decline (-4% to -14% here).
+    const { written, read } = await trendsFor(range, now);
+    expect(written.lessons.changePct).toBe(0);
+    expect(written.scopes.changePct).toBe(0);
+    expect(read.changePct).toBe(0);
   });
 
   it('keeps the account-wide usage summary on the SELECTED window', async () => {
