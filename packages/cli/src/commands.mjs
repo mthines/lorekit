@@ -44,6 +44,7 @@ import { write } from './commands/write.mjs';
 import { archive, del, restore } from './commands/remove.mjs';
 import { stats } from './commands/stats.mjs';
 import { scopes } from './commands/scopes.mjs';
+import { quota } from './commands/quota.mjs';
 import { diff } from './commands/diff.mjs';
 import { tree } from './commands/tree.mjs';
 import { lint } from './commands/lint.mjs';
@@ -81,6 +82,7 @@ export const COMMANDS = [
   { name: 'show', run: show, traced: true, strictFlags: true, tool: 'memory.read' },
   { name: 'stats', run: stats, traced: true, strictFlags: true, native: 'local rollup over the resolved store' },
   { name: 'scopes', run: scopes, traced: true, strictFlags: true, tool: 'memory.scopes' },
+  { name: 'quota', run: quota, traced: true, strictFlags: true, tool: 'memory.quota' },
   { name: 'diff', run: diff, traced: true, strictFlags: true, native: 'compares two scopes' },
   { name: 'tree', run: tree, traced: true, strictFlags: true, native: 'resolves the scope hierarchy for a directory', aliases: ['resolve'] },
   { name: 'lint', run: lint, traced: true, strictFlags: true, native: 'quality pass over stored lessons' },

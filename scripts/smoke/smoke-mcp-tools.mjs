@@ -711,6 +711,20 @@ check('scopes reports each scope this run wrote, with counts', async () => {
   }
 });
 
+check('quota reports the personal pair against the cap', async () => {
+  requireUserScoped('a per-user quota');
+  const r = await call('memory.quota');
+  const q = r.value ?? {};
+  ok(typeof q.plan === 'string' && q.plan.length > 0, 'quota has no plan');
+  ok(Number.isInteger(q.personal?.count) && q.personal.count >= 0, 'quota has no personal count');
+  ok(Number.isInteger(q.personal?.limit) && q.personal.limit > 0, 'quota has no personal limit');
+  ok(
+    q.personal.remaining === Math.max(q.personal.limit - q.personal.count, 0),
+    `remaining ${q.personal.remaining} is not limit ${q.personal.limit} minus personal count ${q.personal.count}`,
+  );
+  ok(q.total === q.personal.count + q.org_count, 'total is not personal count + org count');
+});
+
 check('purge and purge_expired answer with a count', async () => {
   requireUserScoped('an account-wide purge');
   const purged = await call('memory.purge', { retention_days: 365 });

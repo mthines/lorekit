@@ -157,6 +157,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | `memory.search` | ✓ | ✓ | ✗ |
 | `memory.archive` | ✓ | ✗ | ✓ |
 | `memory.scopes` | ✓ | ✓ | ✗ |
+| `memory.quota` | ✓ | ✓ | ✗ |
 | `memory.list_archived` | ✓ | ✓ | ✗ |
 | `memory.restore` | ✓ | ✗ | ✓ |
 | `memory.purge` | ✓ | ✗ | ✓ |
@@ -361,6 +362,20 @@ Requires **read** permission.
 MCP annotations: read-only, closed-world.
 
 Returns: `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first). `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.
+
+---
+
+### memory.quota
+
+How many active memories you hold against your plan's cap, and how many writes are left before memory.write is refused with memory_cap. Takes no arguments. Check it before a bulk write or a migration instead of discovering the cap from a failed write.
+
+No arguments.
+
+Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
+
+Returns: `{ "plan", "personal": { "count", "limit", "remaining" }, "org_count", "total" }`. `personal` is the pair the cap enforces; org-owned memories count against each org's own cap, so `org_count` is reported beside it and not subtracted from `remaining`. A service-role caller has no user and is refused.
 
 ---
 

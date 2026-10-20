@@ -508,6 +508,28 @@ export const MCP_TOOLS = [
     returns: '`{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first). `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.',
   },
   {
+    name: 'memory.quota',
+    description:
+      'How many active memories you hold against your plan\'s cap, and how many writes are left before '
+      + 'memory.write is refused with memory_cap. Takes no arguments. Check it before a bulk write or '
+      + 'a migration instead of discovering the cap from a failed write.',
+    permission: 'read',
+    annotations: READ_ONLY,
+    auth: 'token-or-jwt',
+    surfaces: {
+      mcp: true,
+      cli: 'quota',
+      rest: 'GET /quota',
+      handler: 'toolQuota',
+      localMcpExempt: 'server-side plan and memory cap; the offline store has no limit',
+    },
+    inputSchema: { type: 'object', properties: {} },
+    returns:
+      '`{ "plan", "personal": { "count", "limit", "remaining" }, "org_count", "total" }`. `personal` is the '
+      + 'pair the cap enforces; org-owned memories count against each org\'s own cap, so `org_count` is '
+      + 'reported beside it and not subtracted from `remaining`. A service-role caller has no user and is refused.',
+  },
+  {
     name: 'memory.list_archived',
     description: 'List archived (soft-deleted) lessons, for one scope or across every scope you can see',
     permission: 'read',

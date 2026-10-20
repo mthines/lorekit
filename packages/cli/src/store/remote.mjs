@@ -786,6 +786,40 @@ class RemoteStore {
     };
   }
 
+  // The caller's memory quota — `GET /memories/quota` (the REST twin of the
+  // `memory.quota` MCP tool): `{ plan, personal: { count, limit, remaining },
+  // org_count, total }`. `personal` is the pair the cap trigger enforces; org
+  // memories count against each org's own cap, which is why they sit beside it.
+  // Remote-only by nature: the offline store has no plan and no cap. Failures
+  // use this store's standard `{ ok:false, error, networkError }` envelope.
+  async quota() {
+    const res = await this._rest('/memories/quota');
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error,
+        httpStatus: res.httpStatus,
+        networkError: res.networkError,
+        unusable: res.unusable,
+      };
+    }
+    const q = res.data ?? {};
+    const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    return {
+      ok: true,
+      quota: {
+        plan: typeof q.plan === 'string' ? q.plan : 'free',
+        personal: {
+          count: count(q.personal?.count),
+          limit: count(q.personal?.limit),
+          remaining: count(q.personal?.remaining),
+        },
+        org_count: count(q.org_count),
+        total: count(q.total),
+      },
+    };
+  }
+
   // ── Retention policies ("grooming") → REST ────────────────────────────────
   // Server-side only (retention_policies table + pg_cron sweep) — v1 has no
   // local-store equivalent, matching the account-wide sweeps just above.

@@ -28,6 +28,7 @@ import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/limits/created-at.ts';
+import { memoryQuotaFromRow, type MemoryCountRow } from '../_shared/limits/memory-quota.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/provenance/origin.ts';
 import { recordAuditDeferred } from '../_shared/audit/audit.ts';
@@ -1357,6 +1358,37 @@ export async function toolScopes(
 
   span.setAttributes({ 'lorekit.result_count': scopes.length });
   return { scopes };
+}
+
+/**
+ * `memory.quota` — the caller's active memories against their plan's cap.
+ *
+ * The same RPC and the same shaping as `GET /memories/quota`
+ * (`memories/handlers/quota.ts`): `lorekit_memory_count` is actor-guarded by
+ * 00047, and `memoryQuotaFromRow` reports the PERSONAL pair the cap trigger
+ * enforces rather than the RPC's combined count. Counts only, so a scoped key
+ * may call it — there is no scope or key name to narrow.
+ */
+export async function toolQuota(
+  db: DbClient,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+  _keyScoping?: KeyRestriction,
+) {
+  if (!userId) throw new UserInputError('memory.quota requires a user-scoped credential (service-role tokens have no user and no cap)');
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc<MemoryCountRow>('lorekit_memory_count', { p_user_id: userId });
+  if (error) throw new Error((error as { message: string }).message);
+
+  const quota = memoryQuotaFromRow(data);
+  span.setAttributes({
+    'lorekit.plan': quota.plan,
+    'lorekit.memory.count': quota.personal.count,
+    'lorekit.memory.limit': quota.personal.limit,
+  });
+  return quota;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

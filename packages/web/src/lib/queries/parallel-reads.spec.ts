@@ -27,13 +27,12 @@ interface RecordedOptions {
 
 const harness = vi.hoisted(() => ({ recorded: [] as RecordedOptions[] }));
 
-const api = vi.hoisted(() => ({ listMemoriesPostRequest: vi.fn() }));
+const api = vi.hoisted(() => ({ listMemoriesPostRequest: vi.fn(), quotaRequest: vi.fn() }));
 
 const calledServerAction = vi.hoisted(() => () => {
   throw new Error('a read went through a server action');
 });
 
-vi.mock('@/lib/plan', () => ({ getPlanUsage: calledServerAction }));
 vi.mock('@/lib/org-invites', () => ({ listPendingInvitesForMe: calledServerAction }));
 vi.mock('@/lib/lore', () => ({
   archiveLesson: calledServerAction,
@@ -47,6 +46,7 @@ vi.mock('@/lib/api/session-browser', () => ({
 vi.mock('@/lib/api/memories', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api/memories')>()),
   listMemoriesPostRequest: api.listMemoriesPostRequest,
+  quotaRequest: api.quotaRequest,
 }));
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
@@ -59,7 +59,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 });
 
 const { useMemories } = await import('./lore');
-const { useMemoryTotal, PLAN_USAGE_PATH } = await import('./plan');
+const { useMemoryTotal } = await import('./plan');
 const { usePendingInvitesForMe, PENDING_INVITES_PATH } = await import('./pending-invites');
 
 /** The options a hook hands React Query, captured by running it once. */
@@ -130,31 +130,25 @@ describe('useMemories', () => {
 });
 
 describe('useMemoryTotal', () => {
-  it('reads the count from GET /api/plan/usage with the query signal', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ count: 3318, limit: 5000, plan: 'free' }));
+  it('reads the total from GET /memories/quota with the query signal', async () => {
+    api.quotaRequest.mockResolvedValue({
+      plan: 'free',
+      personal: { count: 3318, limit: 5000, remaining: 1682 },
+      org_count: 982,
+      total: 4300,
+    });
     const { signal } = new AbortController();
 
-    await expect(optionsOf(() => useMemoryTotal()).queryFn({ signal })).resolves.toBe(3318);
-    expect(fetchMock).toHaveBeenCalledWith(
-      PLAN_USAGE_PATH,
-      expect.objectContaining({ method: 'GET', cache: 'no-store', signal }),
-    );
+    await expect(optionsOf(() => useMemoryTotal()).queryFn({ signal })).resolves.toBe(4300);
+    expect(api.quotaRequest).toHaveBeenCalledWith('test-token', signal);
   });
 
-  it('degrades to 0 when the route answers null (no session, or the RPC failed)', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(null));
+  it('rejects on an API failure so React Query can retry it', async () => {
+    api.quotaRequest.mockRejectedValue(new Error('upstream 503'));
 
     await expect(
       optionsOf(() => useMemoryTotal()).queryFn({ signal: new AbortController().signal }),
-    ).resolves.toBe(0);
-  });
-
-  it('rejects on a non-2xx answer so React Query can retry it', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ error: 'boom' }, 500));
-
-    await expect(
-      optionsOf(() => useMemoryTotal()).queryFn({ signal: new AbortController().signal }),
-    ).rejects.toThrow(`GET ${PLAN_USAGE_PATH} failed with HTTP 500`);
+    ).rejects.toThrow('upstream 503');
   });
 });
 
@@ -175,7 +169,7 @@ describe('usePendingInvitesForMe', () => {
 });
 
 describe('the paths the hooks read', () => {
-  it.each([PLAN_USAGE_PATH, PENDING_INVITES_PATH])('%s is served by a GET route handler', (path) => {
+  it.each([PENDING_INVITES_PATH])('%s is served by a GET route handler', (path) => {
     const file = fileURLToPath(new URL(`../../app${path}/route.ts`, import.meta.url));
 
     expect(existsSync(file)).toBe(true);

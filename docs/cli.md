@@ -180,6 +180,19 @@ a denied/unconfigured/unreachable/erroring remote degrades to a short, accurate 
 `describeError` at exit 0 [the old `REMOTE_SCOPES_UNSUPPORTED` sentinel is gone — the surface
 supports enumeration now]
 
+### `quota`
+
+Remote-only: your active memories against your plan's cap and how many writes are left, from
+`GET /memories/quota` (the same answer as the `memory.quota` MCP tool). `personal` is the pair the
+cap trigger enforces — personal memories against the personal limit, `remaining` = limit − count,
+never negative; org-owned memories count against each org's own cap, so they are shown beside it
+(`org_count`) and never subtracted. The shaping is the pure `memoryQuotaFromRow`
+(`packages/mcp-core/src/limits/memory-quota.ts`, mirrored to `_shared/limits/`). Warns at the cap
+and under 10 % headroom. Unlike the other read commands it **exits 1** when the remote is
+denied/unconfigured/unreachable/erroring, because there is no offline answer to fall back to and a
+script gating a bulk write needs to see the failure; `--json` emits
+`{ available, endpoint, plan, personal, org_count, total }` or `{ available: false, reason }`
+
 ### `diff`
 
 Compare offline vs remote for the applicable scopes and report **local-only** / **remote-only** /

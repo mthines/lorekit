@@ -438,6 +438,31 @@ export type ScopeCount = z.infer<typeof ScopeCountSchema>;
 export const ScopesResponseSchema = z.object({ scopes: z.array(ScopeCountSchema) });
 export type ScopesResponse = z.infer<typeof ScopesResponseSchema>;
 
+// ── GET /memories/quota ──────────────────────────────────────────────────────
+
+/**
+ * `GET /memories/quota` — the caller's active memories against their plan's
+ * cap. Shaped by `memoryQuotaFromRow` (`packages/mcp-core/src/limits/memory-quota.ts`),
+ * which explains why it reports the PERSONAL pair rather than the combined
+ * count: the cap trigger counts personal rows against the personal limit and
+ * org rows against each org's own limit.
+ */
+export const MemoryQuotaResponseSchema = z.object({
+  /** Plan name; `free` when the caller has no plan row. */
+  plan: z.string(),
+  /** Personal active memories, the personal cap, and the writes left under it. */
+  personal: z.object({
+    count: z.number().int().nonnegative(),
+    limit: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+  }),
+  /** Active org-owned memories across the caller's orgs (each org has its own cap). */
+  org_count: z.number().int().nonnegative(),
+  /** `personal.count + org_count` — every active memory the caller can see. */
+  total: z.number().int().nonnegative(),
+});
+export type MemoryQuotaResponse = z.infer<typeof MemoryQuotaResponseSchema>;
+
 // ── GET /memories/tags ───────────────────────────────────────────────────────
 
 /**

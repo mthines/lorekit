@@ -28,6 +28,7 @@ import {
   RestoreResponseSchema,
   PurgeResponseSchema,
   ScopesResponseSchema,
+  MemoryQuotaResponseSchema,
   ListTagsQuerySchema,
   TagsResponseSchema,
   ListFacetsQuerySchema,
@@ -137,6 +138,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('RestoreResponse', RestoreResponseSchema);
   registry.register('PurgeResponse', PurgeResponseSchema);
   registry.register('ScopesResponse', ScopesResponseSchema);
+  registry.register('MemoryQuotaResponse', MemoryQuotaResponseSchema);
   registry.register('UsageStatsResponse', UsageStatsResponseSchema);
   registry.register('Org', OrgResponseSchema);
   registry.register('OrgList', OrgListResponseSchema);
@@ -271,6 +273,21 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security,
     responses: {
       200: { description: 'Scopes', content: { 'application/json': { schema: ScopesResponseSchema } } },
+      401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/quota',
+    summary: 'Your active memories against your plan cap, and how many you can still write', tags: ['Memories'],
+    description:
+      '`personal` is the pair the memory cap enforces: personal memories against the personal limit, '
+      + 'with `remaining` writes left before `POST /memories` is refused with `memory_cap`. Org-owned '
+      + 'memories count against each org\'s own cap, so they are reported as `org_count` and are not '
+      + 'subtracted from `remaining`. Requires a user-scoped credential; a service-role token has no '
+      + 'user and gets 403.',
+    security,
+    responses: {
+      200: { description: 'Quota', content: { 'application/json': { schema: MemoryQuotaResponseSchema } } },
       401: errorResponse, 403: errorResponse,
     },
   });

@@ -349,6 +349,15 @@ for (const [command, args] of REMOTE_ONLY) {
 // smoke does for the same tools. Preview's smoke token is service-role.
 const OWNERLESS = 'skipped: owner-keyed — a service-role credential has no owner';
 
+smoke('quota', 'reports the personal count against the plan cap', REMOTE, async ({ cli, ctx }) => {
+  if (ctx.tier === 'service') return OWNERLESS;
+  const q = cli.json(['quota']);
+  assert.equal(q.available, true, `quota is unavailable: ${q.reason}`);
+  assert.ok(q.personal.limit > 0, 'quota reports no personal limit');
+  assert.equal(q.personal.remaining, Math.max(q.personal.limit - q.personal.count, 0), 'remaining is not limit minus count');
+  assert.equal(q.total, q.personal.count + q.org_count, 'total is not personal + org');
+});
+
 smoke('protect', 'protects and unprotects a lesson', REMOTE, async ({ cli, ctx }) => {
   if (ctx.tier === 'service') return OWNERLESS;
   assert.equal(cli.json(['protect', `${ctx.scope}::${ctx.key('alpha')}`]).protected, true);

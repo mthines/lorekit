@@ -1,7 +1,13 @@
-import type { PlanUsage } from '@/lib/plan';
+import type { MemoryQuotaResponse } from '@lorekit/schemas/memory';
 
 interface PlanUsageBarProps {
-  usage: PlanUsage;
+  /**
+   * The personal pair from `GET /memories/quota`: personal memories against the
+   * personal cap. Deliberately not the combined total — org-owned memories
+   * count against each org's own cap, so adding them here would show a bar
+   * that fills faster than the cap that will actually refuse a write.
+   */
+  usage: Pick<MemoryQuotaResponse['personal'], 'count' | 'limit'>;
 }
 
 /**
