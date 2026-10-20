@@ -86,6 +86,24 @@ describe('validateClientRegistration', () => {
     ).toMatchObject({ error: 'invalid_client_metadata' });
   });
 
+  it('narrows a refresh_token request to authorization_code instead of rejecting it', () => {
+    // The MCP SDK's default registration, and so mcp-remote's.
+    const registration = ok({
+      redirect_uris: ['http://127.0.0.1:51703/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+    });
+    expect(registration.grant_types).toEqual(['authorization_code']);
+  });
+
+  it('rejects a non-string grant_type', () => {
+    expect(
+      validateClientRegistration({
+        redirect_uris: ['https://a.example/cb'],
+        grant_types: ['authorization_code', 42],
+      }),
+    ).toMatchObject({ error: 'invalid_client_metadata' });
+  });
+
   it('rejects a non-code response_type', () => {
     expect(
       validateClientRegistration({

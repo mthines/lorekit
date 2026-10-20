@@ -12,6 +12,13 @@
  * else is rejected rather than silently downgraded — a client that believes it
  * authenticated with a secret when it did not is worse than one that got an
  * honest error.
+ *
+ * `grant_types` is the one field narrowed rather than refused. A request that
+ * includes `authorization_code` is registered for that grant alone, whatever
+ * else it asked for, and the route echoes the registered `grant_types` back —
+ * RFC 7591 §3.2.1 lets the server replace requested metadata that way. The
+ * MCP SDK (and so mcp-remote) asks for `refresh_token` too by default, so
+ * refusing it would dead-end the Authorize flow before the consent screen.
  */
 
 import { checkRedirectUri } from './redirect-uri';
@@ -76,15 +83,17 @@ export function validateClientRegistration(body: unknown): RegistrationResult {
   if (!Array.isArray(rawGrants) || rawGrants.length === 0) {
     return reject('invalid_client_metadata', 'grant_types must be a non-empty array when present.');
   }
-  const unsupported = rawGrants.find(
-    (grant) => typeof grant !== 'string' || !SUPPORTED_GRANT_TYPES.includes(grant as never),
-  );
-  if (unsupported !== undefined) {
+  if (!rawGrants.every((grant): grant is string => typeof grant === 'string')) {
+    return reject('invalid_client_metadata', 'Every grant_type must be a string.');
+  }
+  // Narrowed, not refused — see the header comment.
+  if (!rawGrants.includes('authorization_code')) {
     return reject(
       'invalid_client_metadata',
-      `Unsupported grant_type: ${String(unsupported)}. Supported: ${SUPPORTED_GRANT_TYPES.join(', ')}.`,
+      `grant_types must include authorization_code. Supported: ${SUPPORTED_GRANT_TYPES.join(', ')}.`,
     );
   }
+  const grant_types: string[] = [...SUPPORTED_GRANT_TYPES];
 
   const rawResponseTypes = input['response_types'];
   if (Array.isArray(rawResponseTypes) && !rawResponseTypes.every((t) => t === 'code')) {
@@ -102,7 +111,7 @@ export function validateClientRegistration(body: unknown): RegistrationResult {
     registration: {
       client_name,
       redirect_uris,
-      grant_types: rawGrants as string[],
+      grant_types,
       token_endpoint_auth_method: 'none',
     },
   };
