@@ -89,6 +89,7 @@ describe('every op declares its surfaces', () => {
       'memory.protect',
       'memory.purge',
       'memory.purge_expired',
+      'memory.quota',
       'policy.create',
       'policy.delete',
       'policy.list',
