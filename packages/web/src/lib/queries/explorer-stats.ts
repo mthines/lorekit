@@ -161,10 +161,10 @@ export async function fetchExplorerStats(
   ]);
 
   // Each half is clipped to its side of the first charted bucket. The
-  // selection's leading partial bucket (a preset's `since` is mid-bucket) sits
-  // in the comparison half, which the second request already covers; and a
-  // backend that ignores the bounds (the Storybook mocks) must not count a
-  // charted bar twice.
+  // selection's leading partial bucket (a preset's `since` is mid-bucket) is
+  // dropped from both halves: the second request stops at the same time of day
+  // one grid earlier. And a backend that ignores the bounds (the Storybook
+  // mocks) must not count a charted bar twice.
   const chartStart = Date.parse(comparison.chartStart);
   const charted = <T extends { bucket: string }>(rows: T[]) =>
     rows.filter((r) => Date.parse(r.bucket) >= chartStart);
