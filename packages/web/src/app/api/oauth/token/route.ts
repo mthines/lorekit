@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 import { SupabaseAdminConfigError } from '@/lib/supabase/admin';
 import { oauthErrorBody, oauthErrorStatus, type OAuthErrorCode } from '@/lib/oauth/errors';
 import { consumeAuthorizationCode, getClient, issueAccessToken } from '@/lib/oauth/store';
+import { logger, SpanStatusCode, withSpan } from '@/lib/telemetry';
 
 const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' } as const;
 
@@ -54,48 +56,62 @@ export async function POST(request: NextRequest) {
     return tokenError('invalid_request', 'code_verifier is required (PKCE is mandatory).');
   }
 
-  try {
-    const client = await getClient(clientId);
-    if (!client) return tokenError('invalid_client', 'Unknown client_id.');
+  return withSpan('lorekit.oauth.token', {}, async (span) => {
+    try {
+      const client = await getClient(clientId);
+      if (!client) return tokenError('invalid_client', 'Unknown client_id.');
 
-    const result = await consumeAuthorizationCode({
-      code,
-      clientId,
-      redirectUri,
-      codeVerifier,
-    });
+      const result = await consumeAuthorizationCode({
+        code,
+        clientId,
+        redirectUri,
+        codeVerifier,
+      });
 
-    if (!result.ok) {
-      console.warn('[oauth/token] grant rejected', { client_id: clientId, reason: result.reason });
-      return tokenError('invalid_grant', 'The authorization code is invalid, expired or already used.');
-    }
+      if (!result.ok) {
+        // A bounded enum, and telemetry only: the response below is the same
+        // opaque invalid_grant for every reason.
+        span.setAttribute('lorekit.oauth.grant_rejection_reason', result.reason);
+        logger.warn('lorekit.oauth.token.grant_rejected', { client_id: clientId, reason: result.reason });
+        return tokenError('invalid_grant', 'The authorization code is invalid, expired or already used.');
+      }
 
-    const issued = await issueAccessToken(result.grant, client.client_name);
+      const issued = await issueAccessToken(result.grant, client.client_name);
 
-    return NextResponse.json(
-      {
-        access_token: issued.accessToken,
-        token_type: 'Bearer',
-        expires_in: issued.expiresIn,
-        scope: result.grant.permissions.join(' '),
-      },
-      {
-        // RFC 6749 §5.1 — a token response must never be cached.
-        headers: {
-          'Cache-Control': 'no-store',
-          Pragma: 'no-cache',
-          ...CORS_HEADERS,
+      return NextResponse.json(
+        {
+          access_token: issued.accessToken,
+          token_type: 'Bearer',
+          expires_in: issued.expiresIn,
+          scope: result.grant.permissions.join(' '),
         },
-      },
-    );
-  } catch (error) {
-    if (error instanceof SupabaseAdminConfigError) {
-      console.error('[oauth/token] server misconfigured', error.missingEnv);
-      return tokenError('temporarily_unavailable', 'The authorization server is misconfigured.');
+        {
+          // RFC 6749 §5.1 — a token response must never be cached.
+          headers: {
+            'Cache-Control': 'no-store',
+            Pragma: 'no-cache',
+            ...CORS_HEADERS,
+          },
+        },
+      );
+    } catch (error) {
+      const failure = error as Error;
+      span.setAttribute(ATTR_ERROR_TYPE, failure.name);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: `${failure.name}: ${failure.message}` });
+      if (error instanceof SupabaseAdminConfigError) {
+        logger.error('lorekit.oauth.token.failed', {
+          'exception.type': 'SupabaseAdminConfigError',
+          missing_env: error.missingEnv,
+        });
+        return tokenError('temporarily_unavailable', 'The authorization server is misconfigured.');
+      }
+      logger.error('lorekit.oauth.token.failed', {
+        'exception.type': failure.name,
+        'exception.message': failure.message,
+      });
+      return tokenError('server_error', 'Token exchange failed.');
     }
-    console.error('[oauth/token] exchange failed', (error as Error).message);
-    return tokenError('server_error', 'Token exchange failed.');
-  }
+  });
 }
 
 export async function OPTIONS() {
