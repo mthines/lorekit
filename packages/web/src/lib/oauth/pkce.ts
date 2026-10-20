@@ -52,7 +52,7 @@ export function isValidCodeVerifier(value: string | null | undefined): boolean {
  * column CHECK) rather than over-constraining a client that pads.
  */
 export function isValidCodeChallenge(value: string | null | undefined): boolean {
-  return typeof value === 'string' && /^[A-Za-z0-9\-._~]{43,128}$/.test(value);
+  return typeof value === 'string' && VERIFIER_PATTERN.test(value);
 }
 
 /**

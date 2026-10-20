@@ -3,6 +3,8 @@ import { SupabaseAdminConfigError } from '@/lib/supabase/admin';
 import { oauthErrorBody, oauthErrorStatus, type OAuthErrorCode } from '@/lib/oauth/errors';
 import { consumeAuthorizationCode, getClient, issueAccessToken } from '@/lib/oauth/store';
 
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' } as const;
+
 /**
  * POST /api/oauth/token  (RFC 6749 §4.1.3, OAuth 2.1 profile)
  *
@@ -82,7 +84,7 @@ export async function POST(request: NextRequest) {
         headers: {
           'Cache-Control': 'no-store',
           Pragma: 'no-cache',
-          'Access-Control-Allow-Origin': '*',
+          ...CORS_HEADERS,
         },
       },
     );
@@ -100,7 +102,7 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      ...CORS_HEADERS,
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
@@ -129,6 +131,6 @@ async function readParams(request: NextRequest): Promise<URLSearchParams | null>
 function tokenError(code: OAuthErrorCode, description: string) {
   return NextResponse.json(oauthErrorBody(code, description), {
     status: oauthErrorStatus(code),
-    headers: { 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' },
+    headers: { 'Cache-Control': 'no-store', ...CORS_HEADERS },
   });
 }

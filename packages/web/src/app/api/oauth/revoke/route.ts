@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { SupabaseAdminConfigError } from '@/lib/supabase/admin';
 import { revokeAccessToken } from '@/lib/oauth/store';
 
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' } as const;
+
 /**
  * POST /api/oauth/revoke  (RFC 7009)
  *
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
 
   return new NextResponse(null, {
     status: 200,
-    headers: { 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' },
+    headers: { 'Cache-Control': 'no-store', ...CORS_HEADERS },
   });
 }
 
@@ -47,7 +49,7 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      ...CORS_HEADERS,
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',

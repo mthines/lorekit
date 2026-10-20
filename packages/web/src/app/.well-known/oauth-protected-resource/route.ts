@@ -3,6 +3,8 @@ import { resolveMcpUrl } from '@/lib/mcp-url';
 import { protectedResourceMetadata } from '@/lib/oauth/metadata';
 import { issuerCacheControl, resolveIssuer } from '@/lib/oauth/issuer';
 
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' } as const;
+
 /**
  * GET /.well-known/oauth-protected-resource  (RFC 9728)
  *
@@ -41,7 +43,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(protectedResourceMetadata(resolveMcpUrl(), resolved.issuer), {
     headers: {
       'Cache-Control': issuerCacheControl(resolved),
-      'Access-Control-Allow-Origin': '*',
+      ...CORS_HEADERS,
     },
   });
 }
@@ -51,7 +53,7 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      ...CORS_HEADERS,
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
