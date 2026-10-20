@@ -189,6 +189,11 @@ npx @lorekit/cli list --tags loop::aw-lessons
 npx @lorekit/cli list --kind lesson --host reviewer
 npx @lorekit/cli list --kind bus --kind-mode nin
 
+# The rest of the Explorer's dimensions: who wrote it, why, and where it came from
+npx @lorekit/cli list --source-agent claude --trigger stuck-loop
+npx @lorekit/cli list --origin-repo mthines/my-app --origin-pr 482
+npx @lorekit/cli list --origin-branch main --origin-branch-mode nin
+
 # Full-text search, optionally narrowed by tag
 npx @lorekit/cli search "worktree"
 npx @lorekit/cli search "worktree" --tags skill::aw
