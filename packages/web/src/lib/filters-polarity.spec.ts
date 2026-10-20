@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { ListMemoriesBodySchema, ListMemoriesQuerySchema } from '@lorekit/schemas/memory';
 import {
   applyValueFilter,
-  filterKey,
+  filterPillKey,
   filtersToBody,
   filtersToQueryParams,
   findFilter,
@@ -46,9 +46,12 @@ describe('normalizeFilters — the tag dimension keeps two slots', () => {
     expect(normalizeFilters([hostIs('a'), hostNot('b')])).toEqual([hostIs('a', 'b')]);
   });
 
-  it('gives each pill its own key', () => {
-    expect(filterKey(tagIn('a'))).not.toBe(filterKey(tagOut('b')));
-    expect(filterKey(hostIs('a'))).toBe(filterKey(hostNot('b')));
+  it('keys a field\'s first pill by the field, so an operator change rewrites it in place', () => {
+    const include = tagIn('a');
+    const exclude = tagOut('a');
+    expect(filterPillKey(include, [include])).toBe(filterPillKey(exclude, [exclude]));
+    const second = tagOut('b');
+    expect(filterPillKey(include, [include, second])).not.toBe(filterPillKey(second, [include, second]));
   });
 });
 

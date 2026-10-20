@@ -43,7 +43,7 @@ import { FilterMenu } from './FilterMenu';
 import { FilterPill } from './FilterPill';
 import { RetentionPill } from './RetentionPill';
 import {
-  filterKey,
+  filterPillKey,
   filterPolarity,
   filtersPhrase,
   type FacetValue,
@@ -207,7 +207,7 @@ export function FilterPillRow({
       <AnimatePresence initial={false}>
         {filters.map((filter) => (
           <FilterPill
-            key={filterKey(filter)}
+            key={filterPillKey(filter, filters)}
             filter={filter}
             onOperatorChange={(op) => onOperatorChange(filter.field, op, filterPolarity(filter))}
             onEditValues={() => onEditField(filter.field)}

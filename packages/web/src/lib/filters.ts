@@ -356,9 +356,15 @@ function slotKey(field: FilterField, operator: FilterOperator): string {
   return requireField(field).multiValued && operator === 'nin' ? `${field}:exclude` : field;
 }
 
-/** A stable identity for a committed condition — one pill, one key. */
-export function filterKey(filter: Pick<Filter, 'field' | 'operator'>): string {
-  return slotKey(filter.field, filter.operator);
+/**
+ * A pill's React key. A field's FIRST pill is keyed by the field alone, so a
+ * pill whose operator changes ("includes all" → "includes none") is rewritten
+ * in place rather than remounted with an exit animation; only a tag's SECOND
+ * pill — the exclude beside an include — gets a key of its own.
+ */
+export function filterPillKey(filter: Filter, filters: readonly Filter[]): string {
+  const first = filters.find((f) => f.field === filter.field);
+  return first === filter ? filter.field : slotKey(filter.field, filter.operator);
 }
 
 /**
