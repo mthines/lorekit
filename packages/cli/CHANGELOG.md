@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.0](https://github.com/mthines/lorekit/compare/cli-v1.72.2...cli-v1.73.0) (2026-10-20)
+
+
+### Features
+
+* tag filters in the Explorer, list/search and memory.list_archived; all dimension filters on list/search ([#709](https://github.com/mthines/lorekit/issues/709)) ([4492e98](https://github.com/mthines/lorekit/commit/4492e98705543d43794c3dbda4f50e2abdbd8bc4))
+
 ## [1.72.2](https://github.com/mthines/lorekit/compare/cli-v1.72.1...cli-v1.72.2) (2026-10-17)
 
 
