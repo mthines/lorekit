@@ -632,8 +632,10 @@ function mergedFilters(filters: UseMemoriesFilters): Filter[] {
  *
  * Unlike the old action it does not fail closed to an empty page: an API error
  * throws, so the Explorer shows "Failed to load memories" instead of passing an
- * outage off as "No memories", and a lapsed session is a
- * `NotAuthenticatedError`, like every other read hook in this file.
+ * outage off as "No memories" (only while nothing is loaded — a failed "Load
+ * more" keeps the loaded rows and offers a retry beside the button), and a
+ * lapsed session is a `NotAuthenticatedError`, like every other read hook in
+ * this file.
  */
 async function fetchMemoryPage(filters: MemoryFilters, signal?: AbortSignal): Promise<MemoryPage> {
   const token = await requireBrowserToken();
