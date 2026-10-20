@@ -1267,11 +1267,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
-    // Only a failure with NOTHING loaded replaces the list. A failed "Load
-    // more" or focus refetch leaves the cached pages in `data` while the
-    // query sits in its error state; wiping those rows would turn one bad
-    // request into a blank Explorer. A failed next page is reported beside
-    // the button instead (`loadMore`).
+    // Only a failure with NOTHING loaded replaces the list: a failed "Load more"
+    // or focus refetch keeps the cached pages in `data`, and wiping them would
+    // turn one bad request into a blank Explorer.
     if (isError && lessons.length === 0) {
       return (
         <div className="flex items-center justify-center p-8">
