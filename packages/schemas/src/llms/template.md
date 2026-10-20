@@ -336,8 +336,12 @@ these as successes.
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown tool name |
 
-Auth errors always arrive as HTTP `200` + a JSON-RPC error with the real request
-id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
+A request with **no** credential gets HTTP `401` +
+`WWW-Authenticate: Bearer resource_metadata="…"` — the OAuth discovery trigger
+behind an MCP client's Authorize action. Every other auth error (an invalid,
+expired, rotated or wrong-tier token) arrives as HTTP `200` + a JSON-RPC error
+with the real request id: a `401` there makes streamable-HTTP clients retry a
+session handshake and hang.
 
 ## Architecture
 
