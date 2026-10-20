@@ -182,8 +182,12 @@ The CLI offers several commands that respect the same scope/tag logic. You can a
 # Human-readable view of all applicable memories
 npx @lorekit/cli list
 
-# Full-text search
+# Only memories carrying a tag (any of a comma list; --tags-mode all|none to change that)
+npx @lorekit/cli list --tags loop::aw-lessons
+
+# Full-text search, optionally narrowed by tag
 npx @lorekit/cli search "worktree"
+npx @lorekit/cli search "worktree" --tags skill::aw
 
 # Inspect one memory in full
 npx @lorekit/cli show --scope global --key aw-lessons::worktree-naming

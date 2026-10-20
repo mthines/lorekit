@@ -536,6 +536,7 @@ List soft-archived lessons for a scope, newest archived first. Requires a token 
     "name": "memory.list_archived",
     "arguments": {
       "scope": "global",
+      "tags": ["loop::aw-lessons"],
       "limit": 20
     }
   }
@@ -545,6 +546,7 @@ List soft-archived lessons for a scope, newest archived first. Requires a token 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `scope` | all visible scopes | Scope to list archived entries for. Omit to list across every scope you can see |
+| `tags` | | Only entries carrying ANY of these tags (OR) — the same semantics as `memory.list` |
 | `limit` | `50` | Max results (cap: 100) |
 
 **Returns:** `{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "archived_at" }] }`

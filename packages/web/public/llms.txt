@@ -371,6 +371,7 @@ List archived (soft-deleted) lessons, for one scope or across every scope you ca
 | Argument | Required | Type | Description |
 |----------|----------|------|-------------|
 | `scope` |  | string | Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see. |
+| `tags` |  | array | Filter to entries carrying ANY of these labels (OR). _(array of string)_ |
 | `limit` |  | integer | Maximum entries to return. _(1–100, default `50`)_ |
 
 Requires **read** permission.
@@ -720,7 +721,7 @@ view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
-| Label | `tags` | includes all (default), includes any, includes none |
+| Tag | `tags` | includes all (default), includes any, includes none |
 | Kind | `kind` | is / is either of, is not |
 | Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |
