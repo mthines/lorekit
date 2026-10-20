@@ -234,17 +234,24 @@ function bucketAnchor(now: number, unit: 'hour' | 'day'): number {
  * mid-bucket. The LENGTH is the charted coverage, not `count` whole buckets: a
  * preset's charted half ends at now, partway through the current bucket, and a
  * comparison a full bucket longer would read a flat series as a decline.
+ *
+ * Coverage stops at `clockIso` as well, because nothing is charted after it. An
+ * absolute selection can end in the future — today's heatmap cell runs to
+ * tomorrow's midnight — and sizing its comparison by that end read a flat
+ * account as -48%. `gridNowIso` is where the grid is anchored, which for an
+ * absolute range is its own end (`gridAnchor`), not the clock.
  */
 export function comparisonWindow(
   plan: BucketPlan,
-  nowIso: string,
+  gridNowIso: string,
   selection: { since: string; until: string },
+  clockIso: string,
 ): { since: string; until: string } {
   const unitMs = plan.unit === 'hour' ? HOUR_MS : DAY_MS;
-  const gridEnd = bucketAnchor(Date.parse(nowIso), plan.unit) + unitMs;
+  const gridEnd = bucketAnchor(Date.parse(gridNowIso), plan.unit) + unitMs;
   const chartStart = gridEnd - plan.count * unitMs;
-  const covered =
-    Math.min(Date.parse(selection.until), gridEnd) - Math.max(Date.parse(selection.since), chartStart);
+  const chartedEnd = Math.min(Date.parse(selection.until), Date.parse(clockIso), gridEnd);
+  const covered = chartedEnd - Math.max(Date.parse(selection.since), chartStart);
   return {
     since: new Date(chartStart - Math.max(0, covered)).toISOString(),
     until: new Date(chartStart).toISOString(),

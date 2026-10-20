@@ -64,7 +64,7 @@ async function trendsFor(range: TimeRange, now = NOW) {
   const plan = bucketPlanForRange(range, now) ?? FALLBACK;
   const gridNow = gridAnchor(range, now);
   const { since, until } = statsWindow(range, now);
-  const comparison = comparisonWindow(plan, gridNow, { since, until });
+  const comparison = comparisonWindow(plan, gridNow, { since, until }, now);
   const data = await fetchExplorerStats(null, {}, plan.unit, since, until, comparison);
   return {
     since,
@@ -103,6 +103,16 @@ describe('Explorer stat trends compare against a FETCHED preceding period', () =
     expect(sum(read.points)).toBe(eventsIn(from, to));
     // …and the comparison is the same 90 minutes, so a uniform rate reads 0%.
     expect(written.lessons.changePct).toBe(0);
+  });
+
+  it('stops the comparison at now when the selection ends after it', async () => {
+    // Today's heatmap cell runs to tomorrow's midnight but has rows only up to
+    // now; a comparison sized by that future end read a flat account as -48%.
+    const today = NOW.slice(0, 10);
+    const { written, read } = await trendsFor({ from: today, to: today });
+    expect(written.lessons.changePct).toBe(0);
+    expect(written.scopes.changePct).toBe(0);
+    expect(read.changePct).toBe(0);
   });
 
   it.each([

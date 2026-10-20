@@ -158,10 +158,11 @@ export function ExplorerStats({
   // The absolute arm anchors its grid at its own end, not at the clock — see
   // `gridAnchor`.
   const gridNowIso = useMemo(() => gridAnchor(shown, nowIso), [shown, nowIso]);
-  // The trend chip's preceding period — see `comparisonWindow`.
+  // The trend chip's preceding period — see `comparisonWindow`. It takes the
+  // clock too: an absolute range can end after now, and nothing past now is charted.
   const comparison = useMemo(
-    () => comparisonWindow(plan, gridNowIso, queryWindow),
-    [plan, gridNowIso, queryWindow],
+    () => comparisonWindow(plan, gridNowIso, queryWindow, nowIso),
+    [plan, gridNowIso, queryWindow, nowIso],
   );
 
   const { data, isLoading, isError, isFetching } = useExplorerStats(
