@@ -115,11 +115,12 @@ function compactAbove(value: number, threshold: number, formatter: Intl.NumberFo
  * The figure as it should appear in a narrow, dense slot.
  *
  * Ungrouped below the threshold and compact above it, so the result is at most
- * five characters at any magnitude. Grouping is dropped rather than kept because the separator is the character
- * that pushes a four-digit figure past its column, and it buys little there.
+ * five characters at any magnitude. Grouping is dropped rather than kept
+ * because the separator is the character that pushes a four-digit figure past
+ * its column, and it buys little there.
  *
  * The exact value is never lost: `AnimatedNumber` announces {@link formatExact}
- * regardless of how it renders, and the expanded stat card shows it in full.
+ * regardless of how it renders.
  */
 export function formatCompact(value: number): string {
   return compactAbove(value, COMPACT_THRESHOLD, COMPACT);
