@@ -450,12 +450,17 @@ class TwoTierStore {
     return this.projectActive() ? this.project : this.home;
   }
 
-  async list({ scope, tags, tags_mode, limit } = {}) {
-    const homeRes = await this.home.list({ scope, tags, tags_mode });
-    const projRes = this.projectActive()
-      ? await this.project.list({ scope, tags, tags_mode })
-      : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+  // Tags are matched AFTER the tiers merge, never per tier: filtering each
+  // tier first would let a home copy through whenever the project copy that
+  // shadows it fails the filter — listing a stale lesson the unfiltered view
+  // hides. `tags_mode` defaults to `all`, LocalStore.list's own default.
+  async list({ scope, tags, tags_mode = 'all', limit } = {}) {
+    const homeRes = await this.home.list({ scope });
+    const projRes = this.projectActive() ? await this.project.list({ scope }) : { entries: [] };
+    let merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+    if (Array.isArray(tags) && tags.length) {
+      merged = merged.filter((e) => matchesTags(e.tags, tags, tags_mode));
+    }
     merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     return { ok: true, entries: limit ? merged.slice(0, limit) : merged };
   }

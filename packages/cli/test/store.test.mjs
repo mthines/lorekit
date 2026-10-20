@@ -319,6 +319,43 @@ test('two-tier read merges both tiers; project wins on key collision', async () 
   assert.equal((await store.read({ scope: 'repo::o/r', key: 'shared' })).entry.value, 'project-val');
 });
 
+test('two-tier list matches tags after the merge, so a shadowed home copy never surfaces', async () => {
+  // Filtering each tier before the merge would drop the project copy that fails
+  // the filter and then let the home copy it shadows win the key — listing a
+  // stale lesson the unfiltered view hides. Every assertion checks the VALUE so
+  // it proves which tier won, not just how many rows came back.
+  const home = tmpDir();
+  const project = tmpDir(); // exists → opted-in
+  const scope = 'project::widget';
+  await createLocalStore(home).write({ scope, key: 'shared', tags: ['perf'], value: 'stale home' });
+  await createLocalStore(project).write({ scope, key: 'shared', tags: ['ci'], value: 'fresh project' });
+  const store = createTwoTierStore({ home, project });
+  const valuesFor = async (args) =>
+    (await store.list({ scope, ...args })).entries.filter((e) => e.key === 'shared').map((e) => e.value);
+
+  assert.deepEqual(await valuesFor({}), ['fresh project'], 'unfiltered: the project copy shadows home');
+  assert.deepEqual(
+    await valuesFor({ tags: ['perf'], tags_mode: 'any' }),
+    [],
+    'any: the project copy fails the filter, and its shadowed home copy is not listed instead',
+  );
+  assert.deepEqual(
+    await valuesFor({ tags: ['ci'], tags_mode: 'none' }),
+    [],
+    'none: the project copy fails the filter, and its shadowed home copy is not listed instead',
+  );
+  assert.deepEqual(
+    await valuesFor({ tags: ['ci'], tags_mode: 'any' }),
+    ['fresh project'],
+    'any: the project copy matches and is returned',
+  );
+  assert.deepEqual(
+    await valuesFor({ tags: ['perf'] }),
+    [],
+    'no mode (all): the shadowed home copy is not listed',
+  );
+});
+
 test('two-tier write-routing: global→home; repo→project when opted-in, else home', async () => {
   const home = tmpDir();
   const project = path.join(tmpDir(), '.lorekit'); // does NOT exist yet → not opted-in
