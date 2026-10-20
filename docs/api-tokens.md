@@ -5,7 +5,7 @@ LoreKit has **two** ways to authenticate an agent:
 | | Where it comes from | Expires | Org access | Best for |
 |---|---|---|---|---|
 | **OAuth ("Authorize")** | Your MCP client's Authorize button | 30 days | Only the orgs you tick on the consent screen | Attaching an editor / agent on a machine you use interactively |
-| **Personal token** | Dashboard → Settings → API keys | Never (until revoked) | Every org you belong to | CI, scripts, headless jobs |
+| **Personal token** | Dashboard → Settings → API keys | Never (until revoked) | All your orgs, unless scoped in the dashboard | CI, scripts, headless jobs |
 
 Both produce the same `lk_*` credential and are listed and revoked in the same place. Start with OAuth unless you need a token that never expires. The OAuth flow is described in [Authorizing an MCP client](#authorizing-an-mcp-client-oauth) below; the rest of this page covers personal tokens.
 
