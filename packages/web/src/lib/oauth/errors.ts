@@ -41,19 +41,3 @@ export function oauthErrorStatus(code: OAuthErrorCode): number {
 export function oauthErrorBody(code: OAuthErrorCode, description?: string): OAuthErrorBody {
   return description ? { error: code, error_description: description } : { error: code };
 }
-
-/**
- * Whether an authorize-endpoint error may be reported by redirecting back to
- * the client, or must be rendered to the user instead.
- *
- * RFC 6749 §4.1.2.1 draws the line at the redirect target, NOT at the error
- * code: once the `redirect_uri` has been validated against a registered
- * client, every error is reported by redirecting (that is how the client
- * learns the request failed). Before that — an unknown `client_id`, a missing
- * or unregistered `redirect_uri` — redirecting would turn the endpoint into an
- * open redirector that also hands the error to an attacker-chosen
- * destination, so the error must be rendered in the browser.
- */
-export function canRedirectError(redirectUriValidated: boolean): boolean {
-  return redirectUriValidated;
-}
