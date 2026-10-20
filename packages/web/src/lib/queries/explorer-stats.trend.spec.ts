@@ -27,12 +27,20 @@ const lastMinute = Math.floor(Date.parse(NOW) / MINUTE) * MINUTE;
 const EVENTS = Array.from({ length: 61 * 24 * 60 }, (_, i) => lastMinute - i * MINUTE);
 const eventsIn = (from: string, to: string) =>
   EVENTS.filter((t) => t >= Date.parse(from) && t < Date.parse(to)).length;
+// The same minutes, kept only between 09:00 and 18:00 UTC: identical days with
+// a daily rhythm. A uniform rate cannot tell a comparison that keeps the time
+// of day from one that does not; this fixture can.
+const WORKDAY_EVENTS = EVENTS.filter((t) => {
+  const hour = new Date(t).getUTCHours();
+  return hour >= 9 && hour < 18;
+});
+let served = EVENTS;
 
 function serve(since?: string, until?: string) {
   const lo = since ? Date.parse(since) : -Infinity;
   const hi = until ? Date.parse(until) : Infinity;
   const perBucket = new Map<number, number>();
-  for (const t of EVENTS) {
+  for (const t of served) {
     if (t < lo || t >= hi) continue;
     const b = Math.floor(t / HOUR) * HOUR;
     perBucket.set(b, (perBucket.get(b) ?? 0) + 1);
@@ -69,7 +77,7 @@ async function trendsFor(range: TimeRange, now = NOW) {
   return {
     since,
     until,
-    chartStart: comparison.until,
+    chartStart: comparison.chartStart,
     written: computeRangeTrends(data.rows, gridNow, plan),
     read: computeCountTrend(data.readBuckets, gridNow, plan),
   };
@@ -113,6 +121,23 @@ describe('Explorer stat trends compare against a FETCHED preceding period', () =
     expect(written.lessons.changePct).toBe(0);
     expect(written.scopes.changePct).toBe(0);
     expect(read.changePct).toBe(0);
+  });
+
+  it.each([
+    ['today', { from: NOW.slice(0, 10), to: NOW.slice(0, 10) }],
+    ['the 7d preset', { preset: '7d' }],
+  ] as const)('a daily rhythm trends 0%% on %s: the comparison keeps the time of day', async (_label, range) => {
+    // Today until 12:34 is compared with yesterday until 12:34. Placed directly
+    // before the chart, the comparison weighed this morning against yesterday
+    // afternoon and read identical days as a decline.
+    served = WORKDAY_EVENTS;
+    try {
+      const { written, read } = await trendsFor(range);
+      expect(written.lessons.changePct).toBe(0);
+      expect(read.changePct).toBe(0);
+    } finally {
+      served = EVENTS;
+    }
   });
 
   it.each([

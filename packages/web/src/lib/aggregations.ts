@@ -219,42 +219,54 @@ function bucketAnchor(now: number, unit: 'hour' | 'day'): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
+/** The fetch window {@link comparisonWindow} returns, plus where its rows end. */
+export interface ComparisonWindow {
+  since: string;
+  until: string;
+  /** The first charted bucket's start: rows before it are the comparison half. */
+  chartStart: string;
+}
+
 /**
- * The COMPARISON half of a grid as a fetch window `[since, until)`: the span
- * immediately before the first charted bucket, as long as the charted half
- * actually covers.
+ * The COMPARISON half of a grid: the charted span moved back one whole grid
+ * length, as a fetch window `[since, until)`, plus `chartStart`, the first
+ * charted bucket's start, where fetched rows split into the two halves.
  *
  * {@link computeRangeTrends} / {@link computeCountTrend} tally `2 × count`
  * buckets and compare the charted half against the preceding one, so a caller
  * that fetched only the charted window hands them an empty comparison half —
  * and `pctChange(n, 0)` reads +100% for every n.
  *
- * `until` is the first charted bucket's start (from the same `bucketAnchor` the
- * grid uses), never the selection's `since`, which an unaligned range puts
- * mid-bucket. The LENGTH is the charted coverage, not `count` whole buckets: a
- * preset's charted half ends at now, partway through the current bucket, and a
- * comparison a full bucket longer would read a flat series as a decline.
+ * The charted span runs from the selection's `since` or `chartStart`, whichever
+ * is later, to the selection's `until`, the clock, or the grid's end, whichever
+ * is earliest: nothing after now is charted, and an absolute selection such as
+ * today's heatmap cell ends in the future. Moving that span back a WHOLE grid
+ * length, rather than placing it directly before `chartStart`, keeps the time
+ * of day: today until 13:00 is compared with yesterday until 13:00, not with
+ * yesterday afternoon, which reads any daily rhythm as a decline.
  *
- * Coverage stops at `clockIso` as well, because nothing is charted after it. An
- * absolute selection can end in the future — today's heatmap cell runs to
- * tomorrow's midnight — and sizing its comparison by that end read a flat
- * account as -48%. `gridNowIso` is where the grid is anchored, which for an
- * absolute range is its own end (`gridAnchor`), not the clock.
+ * `gridNowIso` is where the grid is anchored: the clock for a preset, the
+ * range's own end for an absolute range (`gridAnchor`).
  */
 export function comparisonWindow(
   plan: BucketPlan,
   gridNowIso: string,
   selection: { since: string; until: string },
   clockIso: string,
-): { since: string; until: string } {
+): ComparisonWindow {
   const unitMs = plan.unit === 'hour' ? HOUR_MS : DAY_MS;
+  const gridMs = plan.count * unitMs;
   const gridEnd = bucketAnchor(Date.parse(gridNowIso), plan.unit) + unitMs;
-  const chartStart = gridEnd - plan.count * unitMs;
-  const chartedEnd = Math.min(Date.parse(selection.until), Date.parse(clockIso), gridEnd);
-  const covered = chartedEnd - Math.max(Date.parse(selection.since), chartStart);
+  const chartStart = gridEnd - gridMs;
+  const chartedFrom = Math.max(Date.parse(selection.since), chartStart);
+  const chartedTo = Math.max(
+    chartedFrom,
+    Math.min(Date.parse(selection.until), Date.parse(clockIso), gridEnd),
+  );
   return {
-    since: new Date(chartStart - Math.max(0, covered)).toISOString(),
-    until: new Date(chartStart).toISOString(),
+    since: new Date(chartedFrom - gridMs).toISOString(),
+    until: new Date(chartedTo - gridMs).toISOString(),
+    chartStart: new Date(chartStart).toISOString(),
   };
 }
 
