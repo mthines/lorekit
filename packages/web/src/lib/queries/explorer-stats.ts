@@ -115,7 +115,23 @@ export function statsWindow(
   return { since: new Date(now).toISOString(), until: new Date(now).toISOString() };
 }
 
-async function fetchExplorerStats(
+/**
+ * The start of the window the two SERIES are fetched over: the selected window
+ * plus the equal-length window immediately before it.
+ *
+ * `computeRangeTrends` / `computeCountTrend` chart the recent half of a
+ * `2 × count` grid and compare it against the preceding half, so their rows
+ * must cover both. Fetching only `[since, until)` left the comparison half
+ * empty and every trend chip read +100% (growth from zero). The charted half
+ * and the headline totals are unaffected — they only read the recent half.
+ */
+export function comparisonSince(since: string, until: string): string {
+  const from = Date.parse(since);
+  return new Date(from - (Date.parse(until) - from)).toISOString();
+}
+
+/** Exported for the trend regression spec; the hook below is the only caller. */
+export async function fetchExplorerStats(
   scope: string | null,
   filters: Partial<ActivityBody>,
   bucket: BucketUnit,
@@ -126,18 +142,23 @@ async function fetchExplorerStats(
   const token = await browserAccessToken();
   if (!token) return EMPTY;
 
+  // Written / Scopes / Read carry a trend, so they reach one window further
+  // back (see `comparisonSince`). The usage summary has no trend and stays on
+  // the selected window — widening it would double the Archived/Expired totals.
+  const seriesSince = comparisonSince(since, until);
+
   const [activity, readActivity, usage] = await Promise.all([
     // Scope AND the dimension filters go to the SERVER now (migration 00063):
     // the response is aggregated per (bucket, scope) and carries no per-memory
     // tag/agent/repo, so a dimension filter CANNOT be applied client-side — the
     // written/scopes counts have to be narrowed in the RPC to agree with the list.
-    activityPostRequest(token, { bucket, since, until, ...(scope ? { scope } : {}), ...filters }, signal),
+    activityPostRequest(token, { bucket, since: seriesSince, until, ...(scope ? { scope } : {}), ...filters }, signal),
     // Read follows scope + range ONLY: usage_events has no per-memory dimension,
     // so a label/repo filter is unanswerable for reads (the Read card is
     // scope-level by design). `scope` still goes server-side (00058) because the
     // read series carries a NULL-scope remainder that client filtering would fold
     // in or out depending on how the predicate was written.
-    readActivityRequest(token, { bucket, since, until, ...(scope ? { scope } : {}) }, signal),
+    readActivityRequest(token, { bucket, since: seriesSince, until, ...(scope ? { scope } : {}) }, signal),
     usageRequest(token, { since, until }, signal),
   ]);
 
