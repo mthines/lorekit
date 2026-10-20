@@ -23,8 +23,8 @@ import { FormActionBar } from '@/components/ui/FormActionBar';
 import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { tryParseJsonContainer } from '@/lib/json-tree';
 import { isTypingTarget } from '@/lib/lesson-list-nav';
-import { metadataFilterTargets, applyMetadataFilterHref, isMetaValueActiveFilter, type MetadataFilterTarget } from '@/lib/filter-from-metadata';
-import { resolveFilters, isValueSelected, type Filter, type FilterField } from '@/lib/filters';
+import { metadataFilterTargets, applyMetadataFilterHref, metaValueFilterState, type MetadataFilterTarget } from '@/lib/filter-from-metadata';
+import { resolveFilters, valuePolarity, type Filter, type FilterField, type FilterPolarity } from '@/lib/filters';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
@@ -365,7 +365,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
     [rawFilters, legacyTags, legacyOwner],
   );
 
-  function handleApplyFilterTarget(target: MetadataFilterTarget) {
+  function handleApplyFilterTarget(target: MetadataFilterTarget, polarity: FilterPolarity = 'include') {
     const href = applyMetadataFilterHref(
       {
         filters: resolvedFilters,
@@ -378,40 +378,44 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
         q: searchParam,
       },
       target,
+      polarity,
     );
     router.push(href);
   }
 
-  // Wraps a metadata row's VALUE in the hover-reveal filter affordance when a
-  // target exists for it, else renders the bare value — the one shape every
-  // metadata row below shares, so a fifth filterable field costs one call
-  // site rather than a fifth copy of this ternary. Also carries the passive
-  // "is this already applied" accent (`isMetaValueActiveFilter`), computed
-  // against the SAME `resolvedFilters`/`scopeParam` the Explorer's own filter
-  // bar reads — this panel has no separate notion of "applied".
+  // Wraps a metadata row's VALUE in the hover-reveal filter in / filter out
+  // affordance when a target exists for it, else renders the bare value — the
+  // one shape every metadata row below shares, so a fifth filterable field
+  // costs one call site rather than a fifth copy of this ternary. Also carries
+  // the passive "already filtered in / out" cue (`metaValueFilterState`),
+  // computed against the SAME `resolvedFilters`/`scopeParam` the Explorer's own
+  // filter bar reads — this panel has no separate notion of "applied". The
+  // scope has no "out" (there is no "every scope but this one" filter), so its
+  // flyout offers filter in alone.
   function metaFilterValue(
     target: MetadataFilterTarget | undefined,
-    label: string,
+    subject: string,
     value: ReactNode,
   ): ReactNode {
     if (!target) return value;
     return (
       <FilterableMetaValue
-        label={label}
-        onFilter={() => handleApplyFilterTarget(target)}
-        active={isMetaValueActiveFilter(target, resolvedFilters, scopeParam)}
+        subject={subject}
+        onFilterIn={() => handleApplyFilterTarget(target, 'include')}
+        onFilterOut={target.kind === 'filter' ? () => handleApplyFilterTarget(target, 'exclude') : undefined}
+        state={metaValueFilterState(target, resolvedFilters, scopeParam)}
       >
         {value}
       </FilterableMetaValue>
     );
   }
 
-  // Same active-filter check, keyed by field directly rather than a
-  // precomputed target — used by the two callers below (`TagsField`,
-  // `MemoryOrigin`) that build their own per-row targets internally instead
-  // of going through `metadataFilterTargets`.
-  function isFieldValueActive(field: FilterField, value: string): boolean {
-    return isValueSelected(resolvedFilters, field, value);
+  // Same filter-state read, keyed by field directly rather than a precomputed
+  // target — used by the two callers below (`TagsField`, `MemoryOrigin`) that
+  // build their own per-row targets internally instead of going through
+  // `metadataFilterTargets`.
+  function fieldValueFilterState(field: FilterField, value: string): FilterPolarity | null {
+    return valuePolarity(resolvedFilters, field, value);
   }
 
   // The applicable filter/scope targets for THIS lesson's metadata — computed
@@ -794,7 +798,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                 <div className="flex items-center gap-2">
                   {metaFilterValue(
                     scopeTarget,
-                    `Filter by scope "${lesson.scope}"`,
+                    `scope "${lesson.scope}"`,
                     <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath linkRepo />,
                   )}
                   <OwnershipBadge org={lesson.org} />
@@ -878,15 +882,18 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                       tags={field.value}
                       onChange={field.onChange}
                       editable={!isArchived}
-                      onTagFilter={(tag) =>
-                        handleApplyFilterTarget({
-                          kind: 'filter',
-                          field: 'label',
-                          value: tag,
-                          label: `Filter by label "${tag}"`,
-                        })
+                      onTagFilter={(tag, polarity) =>
+                        handleApplyFilterTarget(
+                          {
+                            kind: 'filter',
+                            field: 'label',
+                            value: tag,
+                            label: `Filter by label "${tag}"`,
+                          },
+                          polarity,
+                        )
                       }
-                      isTagActive={(tag) => isFieldValueActive('label', tag)}
+                      tagFilterState={(tag) => fieldValueFilterState('label', tag)}
                     />
                   )}
                 />
@@ -965,7 +972,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Layers className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Kind</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {metaFilterValue(kindTarget, `Filter by kind "${lesson.kind}"`, lesson.kind)}
+                                  {metaFilterValue(kindTarget, `kind "${lesson.kind}"`, lesson.kind)}
                                 </dd>
                               </div>
                             )}
@@ -974,7 +981,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Cpu className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Host</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {metaFilterValue(hostTarget, `Filter by host "${lesson.host}"`, lesson.host)}
+                                  {metaFilterValue(hostTarget, `host "${lesson.host}"`, lesson.host)}
                                 </dd>
                               </div>
                             )}
@@ -985,7 +992,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
                                   {metaFilterValue(
                                     agentTarget,
-                                    `Filter by agent "${lesson.source_agent}"`,
+                                    `agent "${lesson.source_agent}"`,
                                     lesson.source_agent,
                                   )}
                                 </dd>
@@ -996,7 +1003,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                 <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                                  {metaFilterValue(triggerTarget, `Filter by trigger "${lesson.trigger}"`, lesson.trigger)}
+                                  {metaFilterValue(triggerTarget, `trigger "${lesson.trigger}"`, lesson.trigger)}
                                 </dd>
                               </div>
                             )}
@@ -1263,7 +1270,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                                       header's ScopeBadge chip uses. */}
                                   {metaFilterValue(
                                     scopeTarget,
-                                    `Filter by scope "${lesson.scope}"`,
+                                    `scope "${lesson.scope}"`,
                                     <a
                                       href={repoUrl}
                                       target="_blank"
@@ -1288,15 +1295,18 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
                             <MemoryOrigin
                               origin={lesson}
                               scope={lesson.scope}
-                              onFilterOrigin={(field, value) =>
-                                handleApplyFilterTarget({
-                                  kind: 'filter',
-                                  field,
-                                  value,
-                                  label: `Filter by ${field} "${value}"`,
-                                })
+                              onFilterOrigin={(field, value, polarity) =>
+                                handleApplyFilterTarget(
+                                  {
+                                    kind: 'filter',
+                                    field,
+                                    value,
+                                    label: `Filter by ${field} "${value}"`,
+                                  },
+                                  polarity,
+                                )
                               }
-                              isValueActive={isFieldValueActive}
+                              valueFilterState={fieldValueFilterState}
                             />
                           </>
                         )}

@@ -1,9 +1,23 @@
 'use client';
 
 /**
- * FilterableMetaValue — hover/focus-reveal "Filter by this" affordance for a
- * detail-panel metadata VALUE (R3, `lore-explorer-panel-nav-facets`; floating
- * presentation added by the panel's UI-polish follow-up).
+ * FilterableMetaValue — hover/focus-reveal "filter in / filter out" affordance
+ * for a detail-panel metadata VALUE (R3, `lore-explorer-panel-nav-facets`;
+ * floating presentation added by the panel's UI-polish follow-up; the in/out
+ * pair by the filter-out follow-up).
+ *
+ * ## Two icons, each explained by its own tooltip
+ *
+ * The flyout is a compact pair of icon buttons — magnifier-plus "filter in",
+ * magnifier-minus "filter out", the pair Kibana and Grafana use for "filter for
+ * value" / "filter out value" — rather than a sentence-long text button. The
+ * words moved into a second-level {@link Tooltip} on each icon, so the resting
+ * flyout stays small and the explanation is one hover away. A value that is
+ * already filtered in or out shows that button pressed, and its tooltip says
+ * how to take the filter back off (pressing it again does exactly that).
+ *
+ * `onFilterOut` is optional: the scope has no "not this" on the API, so its
+ * flyout offers filter in alone rather than a button that could not work.
  *
  * ## Why a floating panel, not an inline icon
  *
@@ -20,8 +34,8 @@
  * the same `computeTooltipPosition` math {@link Tooltip} and
  * `AnchoredTooltip` already share — anchored ABOVE the hovered/focused value,
  * mounted to `document.body` only while open. A closed row costs the metadata
- * list nothing; an open one floats a small clickable "Filter by this …" pill
- * above the value without disturbing its layout.
+ * list nothing; an open one floats the icon pair above the value without
+ * disturbing its layout.
  *
  * ## Two independent activation paths, not one
  *
@@ -30,41 +44,52 @@
  * pointer crossing that gap can leave the anchor's hover box before it lands
  * on the panel. `CLOSE_DELAY_MS` bridges that (a short grace period before
  * closing, cancelled by re-entering either the anchor OR the panel), so a
- * normal mouse move reaches the panel's button before it disappears.
+ * normal mouse move reaches the panel's buttons before it disappears.
  *
  * Keyboard access does NOT depend on that bridge at all: the anchor itself is
  * a `tabIndex={0}` "button" — focusing it (Tab) reveals the panel as a visual
- * confirmation, and Enter/Space activates the filter immediately, with no
- * need to Tab again into a portaled element sitting at the end of the DOM
- * (which would be a legitimate but out-of-order stop). The panel's own button
- * remains a second, mouse-convenient path to the exact same action.
+ * confirmation, Enter/Space filters in and Shift+Enter/Shift+Space filters
+ * out, with no need to Tab again into a portaled element sitting at the end of
+ * the DOM (which would be a legitimate but out-of-order stop). The anchor's
+ * accessible name states both keys. The panel's buttons remain a second,
+ * mouse-convenient path to the exact same actions.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ListFilter } from 'lucide-react';
+import { ZoomIn, ZoomOut, type LucideIcon } from 'lucide-react';
 
 import { track } from '@/lib/analytics/track';
-import { computeTooltipPosition } from './Tooltip';
+import { filterActionLabel, filterAnchorLabel } from '@/lib/filter-from-metadata';
+import type { FilterPolarity } from '@/lib/filters';
+import { Tooltip, computeTooltipPosition } from './Tooltip';
 
 interface FilterableMetaValueProps {
   /** The rendered value — a chip, a link, or plain text. */
   children: ReactNode;
-  /** Accessible name / floating label for the affordance, e.g. `Filter by host "reviewer"`. */
-  label: string;
-  onFilter: () => void;
+  /** The value in words, used in every label and tooltip — e.g. `tag "perf"`, `host "reviewer"`. */
+  subject: string;
+  onFilterIn: () => void;
+  /** Omit where there is no "not this" filter (the scope); the flyout then offers filter in alone. */
+  onFilterOut?: () => void;
   /**
-   * Whether this value is already part of the currently-applied filter/scope
-   * state (`isMetaValueActiveFilter`, `lib/filter-from-metadata.ts`) — i.e.
-   * whether ACTIVATING this affordance would be a no-op. Renders the value
-   * with the same subtle accent-orange "this is applied" cue the filter
-   * bar's own committed pills use, so the panel answers "which of this
-   * memory's attributes am I already filtering by" independent of hover/
-   * focus. Purely a passive visual state — it never disables the affordance
-   * (toggling it back OFF is still exactly what activating does).
-   * @default false
+   * Whether this value is currently filtered in or out by the applied filter/
+   * scope state (`metaValueFilterState`, `lib/filter-from-metadata.ts`), or
+   * neither. Renders the value with the accent "applied" cue a committed
+   * `FilterPill` uses when it is IN, and struck through and muted when it is
+   * OUT — so the panel answers "which of this memory's attributes am I
+   * filtering by" independent of hover/focus — and presses the matching
+   * button. Purely a visual state: it never disables anything.
+   * @default null
    */
-  active?: boolean;
+  state?: FilterPolarity | null;
+  /**
+   * Whether the value itself carries the in/out cue. A caller that already
+   * styles a larger container for it (a tag chip) turns this off and keeps only
+   * the pressed button, rather than drawing a box inside its own box.
+   * @default true
+   */
+  cueOnValue?: boolean;
 }
 
 /** Matches `Tooltip`/`AnchoredTooltip`'s gap, so the two read as one system. */
@@ -72,7 +97,20 @@ const GAP = 6;
 /** Bridges the visual gap between the value and the floating panel above it. */
 const CLOSE_DELAY_MS = 200;
 
-export function FilterableMetaValue({ children, label, onFilter, active = false }: FilterableMetaValueProps) {
+const ANCHOR_STATE_CLASS: Record<FilterPolarity, string> = {
+  include: 'rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] px-1 py-0.5 -mx-1 -my-0.5',
+  exclude:
+    'rounded-md border border-dashed border-[var(--color-border)] px-1 py-0.5 -mx-1 -my-0.5 opacity-70 line-through decoration-[var(--color-content-tertiary)]',
+};
+
+export function FilterableMetaValue({
+  children,
+  subject,
+  onFilterIn,
+  onFilterOut,
+  state = null,
+  cueOnValue = true,
+}: FilterableMetaValueProps) {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -131,16 +169,24 @@ export function FilterableMetaValue({ children, label, onFilter, active = false 
     };
   }, [open, reposition]);
 
-  const activate = useCallback(() => {
-    track({ name: 'ui.button_click', buttonId: 'lesson-detail.filter-by-metadata' });
-    onFilter();
-    setOpen(false);
-  }, [onFilter]);
+  const activate = useCallback(
+    (polarity: FilterPolarity) => {
+      const apply = polarity === 'exclude' ? onFilterOut : onFilterIn;
+      if (!apply) return;
+      track({
+        name: 'ui.button_click',
+        buttonId: polarity === 'exclude' ? 'lesson-detail.filter-out-by-metadata' : 'lesson-detail.filter-by-metadata',
+      });
+      apply();
+      setOpen(false);
+    },
+    [onFilterIn, onFilterOut],
+  );
 
   function handleAnchorKeyDown(event: KeyboardEvent<HTMLSpanElement>) {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    activate();
+    activate(event.shiftKey && onFilterOut ? 'exclude' : 'include');
   }
 
   return (
@@ -148,17 +194,17 @@ export function FilterableMetaValue({ children, label, onFilter, active = false 
       ref={anchorRef}
       role="button"
       tabIndex={0}
-      aria-label={label}
-      // The active-filter cue is a passive style on the anchor itself, not an
-      // extra wrapping element — same "border-accent/40 + bg-accent-subtle"
-      // combo `FilterPill`/`FilterMenu`'s trigger use for their own applied
-      // state (see `isMetaValueActiveFilter`), just scaled down to a value's
-      // inline footprint. Independent of hover/focus (the flyout below).
+      aria-label={filterAnchorLabel(subject, onFilterOut !== undefined)}
+      aria-keyshortcuts={onFilterOut ? 'Enter Shift+Enter' : 'Enter'}
+      // The applied-filter cue is a passive style on the anchor itself, not an
+      // extra wrapping element — "in" is the same "border-accent/40 +
+      // bg-accent-subtle" combo `FilterPill`/`FilterMenu`'s trigger use for
+      // their own applied state, scaled down to a value's inline footprint;
+      // "out" is struck through, the universal "not this". Independent of
+      // hover/focus (the flyout below).
       className={[
         'inline-flex min-w-0 items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
-        active
-          ? 'rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] px-1 py-0.5 -mx-1 -my-0.5'
-          : '',
+        state && cueOnValue ? ANCHOR_STATE_CLASS[state] : '',
       ].join(' ')}
       onMouseEnter={openNow}
       onMouseLeave={scheduleClose}
@@ -172,31 +218,91 @@ export function FilterableMetaValue({ children, label, onFilter, active = false 
           <div
             ref={panelRef}
             data-testid="filterable-meta-value-flyout"
+            role="group"
+            aria-label={`Filter on ${subject}`}
             onMouseEnter={cancelClose}
             onMouseLeave={scheduleClose}
             style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: -9999 }}
             className={[
-              'fixed z-50 transition-opacity duration-150 motion-reduce:transition-none',
+              'fixed z-50 flex items-center gap-0.5 rounded-md border p-0.5 shadow-md',
+              'border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
+              'transition-opacity duration-150 motion-reduce:transition-none',
               open && pos ? 'opacity-100' : 'pointer-events-none opacity-0',
             ].join(' ')}
           >
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={activate}
-              className={[
-                'inline-flex items-center gap-1 whitespace-nowrap rounded-md border',
-                'border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-1',
-                'text-[10px] leading-snug text-[var(--color-content-secondary)] shadow-md',
-                'transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]',
-              ].join(' ')}
-            >
-              <ListFilter className="size-3" aria-hidden />
-              {label}
-            </button>
+            <FilterActionButton
+              polarity="include"
+              subject={subject}
+              state={state}
+              icon={ZoomIn}
+              onActivate={() => activate('include')}
+            />
+            {onFilterOut && (
+              <>
+                <span aria-hidden className="h-4 w-px bg-[var(--color-border)]" />
+                <FilterActionButton
+                  polarity="exclude"
+                  subject={subject}
+                  state={state}
+                  icon={ZoomOut}
+                  onActivate={() => activate('exclude')}
+                />
+              </>
+            )}
           </div>,
           document.body,
         )}
     </span>
+  );
+}
+
+/** Hover colour, and the pressed look, per polarity: accent for in, error red for out. */
+const ACTION_TONE: Record<FilterPolarity, { hover: string; pressed: string }> = {
+  include: {
+    hover: 'hover:text-[var(--color-accent)]',
+    pressed: 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]',
+  },
+  exclude: {
+    hover: 'hover:text-[var(--color-error)]',
+    pressed: 'bg-[var(--color-error)]/15 text-[var(--color-error)]',
+  },
+};
+
+function FilterActionButton({
+  polarity,
+  subject,
+  state,
+  icon: Icon,
+  onActivate,
+}: {
+  polarity: FilterPolarity;
+  subject: string;
+  state: FilterPolarity | null;
+  icon: LucideIcon;
+  onActivate: () => void;
+}) {
+  const explanation = filterActionLabel(polarity, subject, state);
+  const pressed = state === polarity;
+  const tone = ACTION_TONE[polarity];
+  return (
+    <Tooltip content={explanation}>
+      <button
+        type="button"
+        // Pointer-only: keyboard users act from the anchor (see the header).
+        tabIndex={-1}
+        aria-label={explanation}
+        aria-pressed={pressed}
+        onClick={onActivate}
+        className={[
+          // 24px — the WCAG 2.2 AA target-size floor this package holds inline actions to.
+          'flex size-6 items-center justify-center rounded transition-colors duration-150',
+          pressed
+            ? tone.pressed
+            : `text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)] ${tone.hover}`,
+        ].join(' ')}
+      >
+        <Icon className="size-3.5" aria-hidden />
+      </button>
+    </Tooltip>
   );
 }

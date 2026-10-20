@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyMetadataFilterHref,
-  isMetaValueActiveFilter,
+  filterActionLabel,
+  filterAnchorLabel,
+  metaValueFilterState,
   metadataFilterTargets,
   type CurrentExplorerParams,
   type MetadataFilterTarget,
@@ -185,7 +187,59 @@ describe('applyMetadataFilterHref', () => {
   });
 });
 
-describe('isMetaValueActiveFilter', () => {
+describe('applyMetadataFilterHref — filter out', () => {
+  const tagTarget = (value: string): MetadataFilterTarget => ({
+    kind: 'filter',
+    field: 'label',
+    value,
+    label: `Filter by label "${value}"`,
+  });
+  const filtersOf = (href: string) =>
+    JSON.parse(new URLSearchParams(href.split('?')[1]).get('filters') ?? 'null');
+
+  it('writes a NOT condition for the value', () => {
+    expect(filtersOf(applyMetadataFilterHref(baseParams, tagTarget('flaky'), 'exclude'))).toEqual([
+      { field: 'label', operator: 'nin', values: ['flaky'] },
+    ]);
+  });
+
+  it('ANDs the exclusion with a tag already filtered in', () => {
+    const current: CurrentExplorerParams = {
+      ...baseParams,
+      filters: [{ field: 'label', operator: 'all', values: ['perf'] }],
+    };
+    expect(filtersOf(applyMetadataFilterHref(current, tagTarget('flaky'), 'exclude'))).toEqual([
+      { field: 'label', operator: 'all', values: ['perf'] },
+      { field: 'label', operator: 'nin', values: ['flaky'] },
+    ]);
+  });
+
+  it('filter in still defaults when no polarity is given', () => {
+    expect(filtersOf(applyMetadataFilterHref(baseParams, tagTarget('perf')))).toEqual([
+      { field: 'label', operator: 'all', values: ['perf'] },
+    ]);
+  });
+});
+
+describe('filterActionLabel / filterAnchorLabel', () => {
+  it('explains each button, and how to undo a pressed one', () => {
+    expect(filterActionLabel('include', 'tag "perf"', null)).toBe('Filter in — show only memories with tag "perf"');
+    expect(filterActionLabel('exclude', 'tag "perf"', null)).toBe('Filter out — hide memories with tag "perf"');
+    expect(filterActionLabel('include', 'tag "perf"', 'include')).toBe(
+      'Filtered in — click to remove tag "perf" from the filter',
+    );
+    expect(filterActionLabel('exclude', 'tag "perf"', 'exclude')).toBe('Filtered out — click to stop hiding tag "perf"');
+    // The OTHER polarity being active does not make this button pressed.
+    expect(filterActionLabel('include', 'tag "perf"', 'exclude')).toBe('Filter in — show only memories with tag "perf"');
+  });
+
+  it('names the keyboard path on the value itself', () => {
+    expect(filterAnchorLabel('host "aw"', true)).toBe('host "aw" — press Enter to filter in, Shift+Enter to filter out');
+    expect(filterAnchorLabel('scope "global"', false)).toBe('scope "global" — press Enter to filter in');
+  });
+});
+
+describe('metaValueFilterState', () => {
   const labelTarget: MetadataFilterTarget = {
     kind: 'filter',
     field: 'label',
@@ -195,19 +249,30 @@ describe('isMetaValueActiveFilter', () => {
 
   it('matches a label target whose value is selected under `all` (AC-25)', () => {
     const filters: Filter[] = [{ field: 'label', operator: 'all', values: ['agent0::incident-memory'] }];
-    expect(isMetaValueActiveFilter(labelTarget, filters, null)).toBe(true);
+    expect(metaValueFilterState(labelTarget, filters, null)).toBe('include');
   });
 
   it('does not match a label target whose value is not selected', () => {
     const filters: Filter[] = [{ field: 'label', operator: 'all', values: ['dataset::default'] }];
-    expect(isMetaValueActiveFilter(labelTarget, filters, null)).toBe(false);
+    expect(metaValueFilterState(labelTarget, filters, null)).toBeNull();
   });
 
-  it('matches regardless of operator — `in`, `nin`, and `all` all count as applied', () => {
-    for (const operator of ['in', 'nin', 'all'] as const) {
+  it('reads `in` and `all` as filtered in, and `nin` as filtered out', () => {
+    for (const operator of ['in', 'all'] as const) {
       const filters: Filter[] = [{ field: 'label', operator, values: ['agent0::incident-memory'] }];
-      expect(isMetaValueActiveFilter(labelTarget, filters, null)).toBe(true);
+      expect(metaValueFilterState(labelTarget, filters, null)).toBe('include');
     }
+    const excluded: Filter[] = [{ field: 'label', operator: 'nin', values: ['agent0::incident-memory'] }];
+    expect(metaValueFilterState(labelTarget, excluded, null)).toBe('exclude');
+  });
+
+  it('reads each tag slot separately when a tag is included and another excluded', () => {
+    const filters: Filter[] = [
+      { field: 'label', operator: 'all', values: ['perf'] },
+      { field: 'label', operator: 'nin', values: ['agent0::incident-memory'] },
+    ];
+    expect(metaValueFilterState(labelTarget, filters, null)).toBe('exclude');
+    expect(metaValueFilterState({ ...labelTarget, value: 'perf' }, filters, null)).toBe('include');
   });
 
   it('matches a scope target iff it equals the current ?scope= exactly', () => {
@@ -216,9 +281,9 @@ describe('isMetaValueActiveFilter', () => {
       scope: 'repo::mthines/lorekit',
       label: 'Filter by scope repo::mthines/lorekit',
     };
-    expect(isMetaValueActiveFilter(target, [], 'repo::mthines/lorekit')).toBe(true);
-    expect(isMetaValueActiveFilter(target, [], 'repo::other/repo')).toBe(false);
-    expect(isMetaValueActiveFilter(target, [], null)).toBe(false);
+    expect(metaValueFilterState(target, [], 'repo::mthines/lorekit')).toBe('include');
+    expect(metaValueFilterState(target, [], 'repo::other/repo')).toBeNull();
+    expect(metaValueFilterState(target, [], null)).toBeNull();
   });
 
   it('matches repo/branch/pr filter targets the same way as label', () => {
@@ -245,10 +310,10 @@ describe('isMetaValueActiveFilter', () => {
       { field: 'branch', operator: 'in', values: ['main'] },
       { field: 'pr', operator: 'in', values: ['482'] },
     ];
-    expect(isMetaValueActiveFilter(repoTarget, filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter(branchTarget, filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter(prTarget, filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter({ ...prTarget, value: '999' }, filters, null)).toBe(false);
+    expect(metaValueFilterState(repoTarget, filters, null)).toBe('include');
+    expect(metaValueFilterState(branchTarget, filters, null)).toBe('include');
+    expect(metaValueFilterState(prTarget, filters, null)).toBe('include');
+    expect(metaValueFilterState({ ...prTarget, value: '999' }, filters, null)).toBeNull();
   });
 
   it('matches kind/host/agent/trigger filter targets the same way as label', () => {
@@ -264,14 +329,14 @@ describe('isMetaValueActiveFilter', () => {
       value,
       label: `Filter by ${field} "${value}"`,
     });
-    expect(isMetaValueActiveFilter(target('kind', 'lesson'), filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter(target('host', 'reviewer'), filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter(target('agent', 'aw'), filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter(target('trigger', 'stuck-loop'), filters, null)).toBe(true);
-    expect(isMetaValueActiveFilter(target('kind', 'bus'), filters, null)).toBe(false);
+    expect(metaValueFilterState(target('kind', 'lesson'), filters, null)).toBe('include');
+    expect(metaValueFilterState(target('host', 'reviewer'), filters, null)).toBe('include');
+    expect(metaValueFilterState(target('agent', 'aw'), filters, null)).toBe('include');
+    expect(metaValueFilterState(target('trigger', 'stuck-loop'), filters, null)).toBe('include');
+    expect(metaValueFilterState(target('kind', 'bus'), filters, null)).toBeNull();
   });
 
   it('returns false when no filter is applied at all', () => {
-    expect(isMetaValueActiveFilter(labelTarget, [], null)).toBe(false);
+    expect(metaValueFilterState(labelTarget, [], null)).toBeNull();
   });
 });
