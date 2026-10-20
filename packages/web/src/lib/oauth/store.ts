@@ -243,9 +243,10 @@ function randomAlphanumeric(length: number): string {
  * Mint the access token for a redeemed grant.
  *
  * The token is an ordinary `api_tokens` row in the same `lk_{rw|ro|wo}_` format
- * the dashboard mints, so the three `resolveAuth` implementations, the
- * dashboard token list and the revoke path all keep working with no new code
- * path. What is new is `kind='oauth'`, an expiry, and the org allow-list.
+ * the dashboard mints, so both token-verification paths (`resolveAuth` and
+ * `resolveRestAuth`), the dashboard token list and the revoke path all keep
+ * working with no new code path. What is new is `kind='oauth'`, an expiry, and
+ * the org allow-list.
  *
  * Re-authorizing the same client REPLACES its previous token. Without that, a
  * user who reconnects Claude Code a few times would silently consume their
