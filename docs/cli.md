@@ -96,12 +96,16 @@ without moving its version. See
 
 Alias `ls` — read-only human view of the lessons for the cwd's scopes, project/branch/repo/global,
 split into an **Offline** local-store section and a **Remote** hosted section that degrades
-gracefully when unconfigured; `--json`/`--scope`; `--kind`/`--host` narrow by taxonomy;
-`--tags a,b` narrows by tags, combined by `--tags-mode any|all|none` [default `any`, the hosted
-`GET /memories` default] — forwarded to the remote AND applied to both stores by the one
-`entryFilter` predicate in `lessons-view.mjs` (the pure `matchesTags` lives in `lessons-pure.mjs`
-because the local store applies it too), and a bare `--tags` or a `--tags-mode` without `--tags`
-is a usage error rather than an unfiltered listing; `--all` drains all pages via `gatherStream`
+gracefully when unconfigured; `--json`/`--scope`; `--kind a,b`/`--host a,b` narrow by taxonomy,
+each with `--kind-mode`/`--host-mode in|nin` [default `in`] — `nin` follows the hosted
+`lorekit_match_text` rule (migration 00066): the value must be SET and none of the list, so an
+unclassified row matches neither mode; `--tags a,b` narrows by tags, combined by
+`--tags-mode any|all|none` [default `any`, the hosted `GET /memories` default]. All three are
+parsed by `parseReadFilters` (`src/shared/flags.mjs`, reusing the `policy`/`groom` dimension
+table), forwarded to the remote, AND applied to both stores by the one `entryFilter` predicate in
+`lessons-view.mjs` (the pure `matchesTags` lives in `lessons-pure.mjs` because the local store
+applies it too); a bare value flag, or a mode without its value flag, is a usage error rather than
+an unfiltered listing; `--all` drains all pages via `gatherStream`
 [default is single-page `gather()`]; `--max <n>` hard-caps entries surveyed [default 5000];
 `--since`/`--until <iso-date>` forward `created_since`/`created_until` to the REST request;
 independently builds BOTH stores via `src/shared/stores.mjs` + renders via the reusable
@@ -116,8 +120,9 @@ case-insensitive** substring against a lesson's key OR value, via the pure `matc
 dependency-free `lessons-pure.mjs`, re-exported by `lessons-view.mjs`)/`filterGroups` helpers over
 the shared `gather()` output — NOT each store's native `search` method, whose semantics diverge
 (local literal-substring vs remote server-FTS); regex metachars are matched verbatim, never
-compiled; `--json`/`--scope`; `--tags a,b [--tags-mode any|all|none]` narrows the candidates
-before the query is matched, exactly as on `list`
+compiled; `--json`/`--scope`; `--kind`/`--host` (+ `--kind-mode`/`--host-mode in|nin`) and
+`--tags` (+ `--tags-mode any|all|none`) narrow the candidates before the query is matched, exactly
+as on `list`
 
 ### `show`
 

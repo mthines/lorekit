@@ -185,9 +185,14 @@ npx @lorekit/cli list
 # Only memories carrying a tag (any of a comma list; --tags-mode all|none to change that)
 npx @lorekit/cli list --tags loop::aw-lessons
 
+# One bucket family and owner, or everything except one (--kind-mode / --host-mode nin)
+npx @lorekit/cli list --kind lesson --host reviewer
+npx @lorekit/cli list --kind bus --kind-mode nin
+
 # Full-text search, optionally narrowed by tag
 npx @lorekit/cli search "worktree"
 npx @lorekit/cli search "worktree" --tags skill::aw
+npx @lorekit/cli search "worktree" --kind lesson --host-mode nin --host ci
 
 # Inspect one memory in full
 npx @lorekit/cli show --scope global --key aw-lessons::worktree-naming
