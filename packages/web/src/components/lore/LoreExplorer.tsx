@@ -10,7 +10,7 @@
  * - Default view is "all scopes" (no scope selected). The scope selector's first
  *   chip is "All scopes", which clears the scope filter.
  * - Filtering (scope / search / date) is server-side, not client-side.
- *   `useMemories` (`useInfiniteQuery` over `listMemories`) is the data source.
+ *   `useMemories` (`useInfiniteQuery` over `POST /memories/list`) is the data source.
  * - Pagination: "Load more" button appends the next keyset page, identical to
  *   the audit log feed (`AuditLogFeed.tsx`).
  * - Scope is a persistent chip row (`ScopeSelector`) at the top of the page,

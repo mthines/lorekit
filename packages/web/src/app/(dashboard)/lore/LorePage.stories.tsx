@@ -17,19 +17,15 @@ import {
  * mirroring `/insights`) that a server component cannot render in the browser —
  * so this story mounts its extracted `'use client'` body, `LorePageClient`,
  * directly, the same convention `/insights` uses for `InsightsPage`.
- * `LorePageClient` drives its scope tree and contribution heatmap from
- * `useScopeTree` / `useLoreData` — TanStack Query hooks that call the Supabase
- * *browser* client (PostgREST over HTTP), which MSW mocks. So the component
- * renders end-to-end here, not a hand-assembled subtree.
+ * `LorePageClient` drives its scope tree, contribution heatmap and lesson list
+ * from TanStack Query hooks (`useScopeTree`, `useLoreData`, `useMemories`) that
+ * call the `memories` REST function from the browser, which MSW mocks. So the
+ * component renders end-to-end here, not a hand-assembled subtree.
  *
- * The lesson list inside `LoreExplorer` reads the `listMemories` **server
- * action**. With `next/headers` auto-mocked by `@storybook/nextjs-vite` it does
- * execute in the browser, but it is gated on `supabase.auth.getUser()`, which
- * short-circuits to no session in the mocked context and returns an empty page —
- * so the results panel renders its "No memories in this scope" empty state while
- * the scope tree + heatmap populate from the MSW-mocked PostgREST reads. That is
- * the honest edge of the mixed rendering model: the component renders end-to-end,
- * and every part that is driven by a *browser* fetch is populated.
+ * The lesson list used to read the `listMemories` server action, which had no
+ * session in the mocked context and returned an empty page, so this story
+ * showed "No memories in this scope". The list is a browser request now
+ * (`POST /memories/list`), so it populates from the same fixtures as the tree.
  *
  * Determinism: the clock is frozen to {@link FROZEN_NOW} (heatmap + freshness are
  * time-relative) and the query client retries off / never refetches.
@@ -63,8 +59,7 @@ type Story = StoryObj<typeof LorePageClient>;
 
 /**
  * Populated Lore Explorer: the scope tree, contribution heatmap, view-mode tabs,
- * and filter bars all resolve from the MSW-mocked dataset. The lesson results
- * panel shows its empty state (see the auth-gate note above).
+ * filter bars and the lesson list all resolve from the MSW-mocked dataset.
  */
 export const Default: Story = {};
 

@@ -3,11 +3,9 @@
  * Query hooks call.
  *
  * These back the full-page / full-view visual-regression stories. The hooks
- * (`useScopeTree`, `useFacetCatalog`, `useLoreData`, and the
- * `listMemories` server action, which — with `next/headers` auto-mocked by
- * `@storybook/nextjs-vite` — executes in the browser) all talk to the
- * `memories` edge function now rather than to PostgREST directly, so the
- * handlers below mock `…/functions/v1/memories*`.
+ * (`useScopeTree`, `useFacetCatalog`, `useLoreData`, `useMemories`) all talk to
+ * the `memories` edge function from the browser rather than to PostgREST
+ * directly, so the handlers below mock `…/functions/v1/memories*`.
  *
  * ONE fixture set drives every consumer: `MEMORY_ROWS` is the "database", and
  * each handler derives its own response from it exactly as the real endpoint
@@ -429,8 +427,8 @@ function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
 function listFrom(rows: MemoryRow[], url: URL) {
   const limit = Number(url.searchParams.get('limit') ?? 50);
   // Honour `sort` rather than pinning one: the route defaults to `updated_at`,
-  // but `listMemories` (lib/lore.ts) always sends `sort: 'created_at'`, so the
-  // Explorer reads in creation order. A mock that pinned EITHER value would
+  // but `memoryListBody` (lib/memory-list.ts) always sends one, `created_at`
+  // by default, so the Explorer reads in creation order. A mock that pinned EITHER value would
   // render one order while the caller asked for another, which is the sort of
   // difference a screenshot baseline then freezes in place.
   const sort = url.searchParams.get('sort') === 'created_at' ? 'created_at' : 'updated_at';
