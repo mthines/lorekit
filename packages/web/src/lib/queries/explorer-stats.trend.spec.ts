@@ -18,10 +18,15 @@ const HOUR = 3_600_000;
 const NOW = '2026-10-20T12:34:56.000Z';
 const FALLBACK = { unit: 'hour' as const, count: 24 };
 
-// One write + one read at :10 past every hour of the last 72h: a flat series,
-// so the honest period-over-period change is exactly 0%.
+const MINUTE = 60_000;
+// One write + one read every minute of the last 72h: a uniform rate, so two
+// equal-length windows hold equal counts and the honest change is exactly 0%.
+// (An hourly series would not do: equal windows can catch 24 vs 23 events.)
 const anchor = Math.floor(Date.parse(NOW) / HOUR) * HOUR;
-const EVENTS = Array.from({ length: 72 }, (_, i) => anchor - i * HOUR + 10 * 60_000);
+const lastMinute = Math.floor(Date.parse(NOW) / MINUTE) * MINUTE;
+const EVENTS = Array.from({ length: 72 * 60 }, (_, i) => lastMinute - i * MINUTE);
+const eventsIn = (from: string, to: string) =>
+  EVENTS.filter((t) => t >= Date.parse(from) && t < Date.parse(to)).length;
 
 function serve(since?: string, until?: string) {
   const lo = since ? Date.parse(since) : -Infinity;
@@ -59,9 +64,12 @@ async function trendsFor(range: TimeRange) {
   const plan = bucketPlanForRange(range, NOW) ?? FALLBACK;
   const gridNow = gridAnchor(range, NOW);
   const { since, until } = statsWindow(range, NOW);
-  const data = await fetchExplorerStats(null, {}, plan.unit, since, until, comparisonWindow(plan, gridNow));
+  const comparison = comparisonWindow(plan, gridNow, { since, until });
+  const data = await fetchExplorerStats(null, {}, plan.unit, since, until, comparison);
   return {
     since,
+    until,
+    chartStart: comparison.until,
     written: computeRangeTrends(data.rows, gridNow, plan),
     read: computeCountTrend(data.readBuckets, gridNow, plan),
   };
@@ -75,22 +83,43 @@ describe('Explorer stat trends compare against a FETCHED preceding period', () =
   });
 
   it('a flat 24h series trends 0%, not +100%', async () => {
-    const { written, read } = await trendsFor({ preset: '24h' });
+    const { written, read, until, chartStart } = await trendsFor({ preset: '24h' });
     expect(written.lessons.changePct).toBe(0);
     expect(written.scopes.changePct).toBe(0);
     expect(read.changePct).toBe(0);
-    // The charted half still describes only the selected window.
-    expect(sum(written.lessons.points)).toBe(24);
-    expect(sum(read.points)).toBe(24);
+    // The charted half still describes only the charted buckets.
+    expect(sum(written.lessons.points)).toBe(eventsIn(chartStart, until));
+    expect(sum(read.points)).toBe(eventsIn(chartStart, until));
   });
 
   it('never lets a row from before an UNALIGNED since into a charted bar', async () => {
-    // 10:30→12:00 charts the 10:00 and 11:00 bars. The 10:10 event precedes the
-    // selection, so the headline must count only the 11:10 one.
+    // 10:30→12:00 charts the 10:00 and 11:00 bars; the 10:00–10:29 events
+    // precede the selection and must not reach the headline.
     const day = new Date(anchor).toISOString().slice(0, 10);
-    const { written, read } = await trendsFor({ from: `${day}T10:30:00.000Z`, to: `${day}T12:00:00.000Z` });
-    expect(sum(written.lessons.points)).toBe(1);
-    expect(sum(read.points)).toBe(1);
+    const from = `${day}T10:30:00.000Z`;
+    const to = `${day}T12:00:00.000Z`;
+    const { written, read } = await trendsFor({ from, to });
+    expect(sum(written.lessons.points)).toBe(eventsIn(from, to));
+    expect(sum(read.points)).toBe(eventsIn(from, to));
+    // …and the comparison is the same 90 minutes, so a uniform rate reads 0%.
+    expect(written.lessons.changePct).toBe(0);
+  });
+
+  it.each([
+    ['24h at hh:05', '2026-10-20T12:05:00.000Z', { preset: '24h' }],
+    ['7d at 00:30', '2026-10-20T00:30:00.000Z', { preset: '7d' }],
+    ['30d at 00:30', '2026-10-20T00:30:00.000Z', { preset: '30d' }],
+  ] as const)('a perfectly uniform rate trends 0%% on %s', (_label, now, range) => {
+    // The charted half ends at now, mid-bucket; a comparison a whole bucket
+    // longer would read a flat account as a decline. Uniform-rate rows (one per
+    // minute) make any length mismatch show up in the percentage.
+    const plan = bucketPlanForRange(range, now) ?? FALLBACK;
+    const gridNow = gridAnchor(range, now);
+    const selection = statsWindow(range, now);
+    const cmp = comparisonWindow(plan, gridNow, selection);
+    const chartStart = Date.parse(cmp.until);
+    const charted = Date.parse(selection.until) - Math.max(Date.parse(selection.since), chartStart);
+    expect(chartStart - Date.parse(cmp.since)).toBe(charted);
   });
 
   it('keeps the account-wide usage summary on the SELECTED window', async () => {

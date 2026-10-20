@@ -220,22 +220,33 @@ function bucketAnchor(now: number, unit: 'hour' | 'day'): number {
 }
 
 /**
- * The COMPARISON half of a grid as a fetch window: the `count` whole buckets
- * immediately before the first charted one, `[since, until)`.
+ * The COMPARISON half of a grid as a fetch window `[since, until)`: the span
+ * immediately before the first charted bucket, as long as the charted half
+ * actually covers.
  *
  * {@link computeRangeTrends} / {@link computeCountTrend} tally `2 × count`
- * buckets and compare the charted half against this one, so a caller that
- * fetched only the charted window hands them an empty comparison half — and
- * `pctChange(n, 0)` reads +100% for every n. Derived from the same
- * `bucketAnchor` the grid uses, so the window covers exactly those buckets:
- * `until` is the first charted bucket's start, never the selection's `since`,
- * which an unaligned absolute range would put mid-bucket.
+ * buckets and compare the charted half against the preceding one, so a caller
+ * that fetched only the charted window hands them an empty comparison half —
+ * and `pctChange(n, 0)` reads +100% for every n.
+ *
+ * `until` is the first charted bucket's start (from the same `bucketAnchor` the
+ * grid uses), never the selection's `since`, which an unaligned range puts
+ * mid-bucket. The LENGTH is the charted coverage, not `count` whole buckets: a
+ * preset's charted half ends at now, partway through the current bucket, and a
+ * comparison a full bucket longer would read a flat series as a decline.
  */
-export function comparisonWindow(plan: BucketPlan, nowIso: string): { since: string; until: string } {
+export function comparisonWindow(
+  plan: BucketPlan,
+  nowIso: string,
+  selection: { since: string; until: string },
+): { since: string; until: string } {
   const unitMs = plan.unit === 'hour' ? HOUR_MS : DAY_MS;
-  const chartStart = bucketAnchor(Date.parse(nowIso), plan.unit) - (plan.count - 1) * unitMs;
+  const gridEnd = bucketAnchor(Date.parse(nowIso), plan.unit) + unitMs;
+  const chartStart = gridEnd - plan.count * unitMs;
+  const covered =
+    Math.min(Date.parse(selection.until), gridEnd) - Math.max(Date.parse(selection.since), chartStart);
   return {
-    since: new Date(chartStart - plan.count * unitMs).toISOString(),
+    since: new Date(chartStart - Math.max(0, covered)).toISOString(),
     until: new Date(chartStart).toISOString(),
   };
 }

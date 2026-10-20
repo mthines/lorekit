@@ -152,18 +152,22 @@ export async function fetchExplorerStats(
     usageRequest(token, { since, until }, signal),
   ]);
 
-  // The selection's leading partial bucket (a preset's `since` is mid-bucket)
-  // sits in the comparison half, which the second request already covers in
-  // full — drop it here so it is not counted twice.
+  // Each half is clipped to its side of the first charted bucket. The
+  // selection's leading partial bucket (a preset's `since` is mid-bucket) sits
+  // in the comparison half, which the second request already covers; and a
+  // backend that ignores the bounds (the Storybook mocks) must not count a
+  // charted bar twice.
   const chartStart = Date.parse(comparison.until);
   const charted = <T extends { bucket: string }>(rows: T[]) =>
     rows.filter((r) => Date.parse(r.bucket) >= chartStart);
+  const preceding = <T extends { bucket: string }>(rows: T[]) =>
+    rows.filter((r) => Date.parse(r.bucket) < chartStart);
 
   return {
     // No client-side scope filter: the server already returns exactly the scope
     // (and dimension) selection, so re-filtering here would double-apply it.
-    rows: trendRowsFromActivity([...prevActivity.buckets, ...charted(activity.buckets)]),
-    readBuckets: [...prevReadActivity.buckets, ...charted(readActivity.buckets)],
+    rows: trendRowsFromActivity([...preceding(prevActivity.buckets), ...charted(activity.buckets)]),
+    readBuckets: [...preceding(prevReadActivity.buckets), ...charted(readActivity.buckets)],
     archived: usage.summary.archived,
     expired: usage.summary.expired,
   };

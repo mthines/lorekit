@@ -158,8 +158,11 @@ export function ExplorerStats({
   // The absolute arm anchors its grid at its own end, not at the clock — see
   // `gridAnchor`.
   const gridNowIso = useMemo(() => gridAnchor(shown, nowIso), [shown, nowIso]);
-  // The trend chip's preceding period, as whole grid buckets — see `comparisonWindow`.
-  const comparison = useMemo(() => comparisonWindow(plan, gridNowIso), [plan, gridNowIso]);
+  // The trend chip's preceding period — see `comparisonWindow`.
+  const comparison = useMemo(
+    () => comparisonWindow(plan, gridNowIso, queryWindow),
+    [plan, gridNowIso, queryWindow],
+  );
 
   const { data, isLoading, isError, isFetching } = useExplorerStats(
     scope,
