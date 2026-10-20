@@ -1,7 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { getPlanUsage } from '@/lib/plan';
+import type { PlanUsage } from '@/lib/plan';
+import { getAppRoute } from '@/lib/app-route';
+
+/** The route handler (`app/api/plan/usage/route.ts`) the badge reads. */
+export const PLAN_USAGE_PATH = '/api/plan/usage';
 
 /**
  * The caller's total memory count — the SAME figure the /settings/plan page
@@ -18,11 +22,17 @@ import { getPlanUsage } from '@/lib/plan';
  * `getPlanUsage` returns count + limit + plan in one round-trip; the badge needs
  * only the count. Degrades to 0 when there is no session / the RPC fails, matching
  * the plan page's graceful-null handling.
+ *
+ * Read through `GET /api/plan/usage` rather than by calling the server action:
+ * Next runs server actions one at a time per client, so this badge used to hold
+ * the Explorer's list and the invites read behind it on every `/lore` load and
+ * window focus, and none of them could be cancelled (see `lib/app-route.ts`).
  */
 export function useMemoryTotal() {
   return useQuery<number>({
     queryKey: ['memory-total'],
-    queryFn: async () => (await getPlanUsage())?.count ?? 0,
+    queryFn: async ({ signal }) =>
+      (await getAppRoute<PlanUsage | null>(PLAN_USAGE_PATH, signal))?.count ?? 0,
     // Changes only when an agent writes — align with the other read-heavy hooks.
     staleTime: 60_000,
   });

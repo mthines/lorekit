@@ -16,7 +16,13 @@ import { dayCountsFromActivity } from '@/lib/aggregations';
 import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
-import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
+import { archiveLesson, restoreLesson } from '@/lib/lore';
+import {
+  memoryListBody,
+  memoryPageFromResponse,
+  type MemoryFilters,
+  type MemoryPage,
+} from '@/lib/memory-list';
 import { DEFAULT_EXPLORER_SORT, type ExplorerSort } from '@/lib/explorer-sort';
 import {
   NO_RETENTION_CONDITIONS,
@@ -33,6 +39,7 @@ import {
   getMemoryByIdRequest,
   getMemoryByRefRequest,
   listFacetsPostRequest,
+  listMemoriesPostRequest,
   listMemoriesRequest,
   listScopesRequest,
   pivotPostRequest,
@@ -613,7 +620,29 @@ function mergedFilters(filters: UseMemoriesFilters): Filter[] {
 }
 
 /**
- * `useInfiniteQuery` over the `listMemories` server action.
+ * One page of the Explorer's list, straight from `POST /memories/list`.
+ *
+ * A browser request, not a server action, and that is the point. Next runs
+ * server actions one at a time per client, so the list used to queue behind
+ * the top bar's plan-usage and invites reads on every load and every window
+ * focus, arriving last while the header's activity bar stayed lit. A server
+ * action also cannot take an AbortSignal, so a page superseded by a filter
+ * change ran to completion anyway. This one runs in parallel with the other
+ * reads and is cancelled when React Query drops it.
+ *
+ * Unlike the old action it does not fail closed to an empty page: an API error
+ * throws, so the Explorer shows "Failed to load memories" instead of passing an
+ * outage off as "No memories", and a lapsed session is a
+ * `NotAuthenticatedError`, like every other read hook in this file.
+ */
+async function fetchMemoryPage(filters: MemoryFilters, signal?: AbortSignal): Promise<MemoryPage> {
+  const token = await requireBrowserToken();
+  const page = await listMemoriesPostRequest(token, memoryListBody(filters), signal);
+  return memoryPageFromResponse(page);
+}
+
+/**
+ * `useInfiniteQuery` over `POST /memories/list` ({@link fetchMemoryPage}).
  *
  * Changing any filter key resets pagination automatically because the query
  * key changes — no manual "reset cursor on filter change" bookkeeping needed.
@@ -649,7 +678,7 @@ export function useMemories(filters: UseMemoriesFilters) {
       // under another — so the sort must split the cache, not share it.
       filters.sort ?? DEFAULT_EXPLORER_SORT,
     ],
-    queryFn: ({ pageParam }) => {
+    queryFn: ({ pageParam, signal }) => {
       const args: MemoryFilters = {
         scope: filters.scope ?? undefined,
         search: filters.search || undefined,
@@ -661,12 +690,13 @@ export function useMemories(filters: UseMemoriesFilters) {
         showArchived: filters.showArchived,
         expiringWithinDays: filters.expiringWithinDays,
       };
-      return listMemories(args);
+      return fetchMemoryPage(args, signal);
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
     // Lore explorer is read-heavy — 90 s matches the scope-tree stale time.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
