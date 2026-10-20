@@ -5,6 +5,7 @@ import {
   filterAnchorLabel,
   metaValueFilterState,
   metadataFilterTargets,
+  nextMetadataFilterState,
   type CurrentExplorerParams,
   type MetadataFilterTarget,
 } from './filter-from-metadata';
@@ -218,6 +219,59 @@ describe('applyMetadataFilterHref — filter out', () => {
     expect(filtersOf(applyMetadataFilterHref(baseParams, tagTarget('perf')))).toEqual([
       { field: 'label', operator: 'all', values: ['perf'] },
     ]);
+  });
+});
+
+describe('nextMetadataFilterState — the values the panel writes in place on /lore', () => {
+  const tag = (value: string): MetadataFilterTarget => ({
+    kind: 'filter',
+    field: 'label',
+    value,
+    label: `Filter by label "${value}"`,
+  });
+
+  it('a filter target changes ?filters= and carries the scope through', () => {
+    const current: CurrentExplorerParams = {
+      ...baseParams,
+      scope: 'project::acme',
+      filters: [{ field: 'label', operator: 'all', values: ['perf'] }],
+    };
+    expect(nextMetadataFilterState(current, tag('flaky'), 'exclude')).toEqual({
+      filters: [
+        { field: 'label', operator: 'all', values: ['perf'] },
+        { field: 'label', operator: 'nin', values: ['flaky'] },
+      ],
+      scope: 'project::acme',
+    });
+  });
+
+  it('a scope target changes ?scope= and leaves the filters as they are', () => {
+    const current: CurrentExplorerParams = {
+      ...baseParams,
+      filters: [{ field: 'host', operator: 'in', values: ['aw'] }],
+    };
+    expect(
+      nextMetadataFilterState(current, { kind: 'scope', scope: 'global', label: 'Filter by scope global' }),
+    ).toEqual({ filters: [{ field: 'host', operator: 'in', values: ['aw'] }], scope: 'global' });
+  });
+
+  it('removing the last filter drops the param — null, not an empty list', () => {
+    const current: CurrentExplorerParams = {
+      ...baseParams,
+      filters: [{ field: 'label', operator: 'all', values: ['perf'] }],
+    };
+    expect(nextMetadataFilterState(current, tag('perf'), 'include').filters).toBeNull();
+  });
+
+  it('on a legacy ?tags= link, an emptied bar is written explicitly so the old param cannot speak over it', () => {
+    // Writing in place keeps every other param — `?tags=` included — so the
+    // empty bar has to be a statement, or the legacy fallback resurrects the pill.
+    const current: CurrentExplorerParams = {
+      ...baseParams,
+      filters: [{ field: 'label', operator: 'all', values: ['perf'] }],
+      legacyTags: ['perf'],
+    };
+    expect(nextMetadataFilterState(current, tag('perf'), 'include').filters).toEqual([]);
   });
 });
 

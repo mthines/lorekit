@@ -54,6 +54,15 @@
  * the DOM (which would be a legitimate but out-of-order stop). The anchor's
  * accessible name states both keys. The panel's buttons remain a second,
  * mouse-convenient path to the exact same actions.
+ *
+ * ## A portal is outside the DOM, not outside React
+ *
+ * React bubbles a portaled element's events up the COMPONENT tree, so a click
+ * on a flyout button reaches the anchor's ancestors as if it happened inside
+ * them — `TagsField`'s "click anywhere to focus the input" container among
+ * them, which moved focus into the tag input on every filter click. The flyout
+ * stops click propagation at its root, and its buttons take no focus on
+ * mousedown, so pressing one applies the filter and leaves focus where it was.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
@@ -238,6 +247,8 @@ export function FilterableMetaValue({
             data-testid="filterable-meta-value-flyout"
             role="group"
             aria-label={`Filter on ${subject}`}
+            // See "A portal is outside the DOM, not outside React" above.
+            onClick={(event) => event.stopPropagation()}
             onMouseEnter={cancelClose}
             onMouseLeave={scheduleClose}
             style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: -9999 }}
@@ -310,6 +321,9 @@ function FilterActionButton({
         tabIndex={-1}
         aria-label={explanation}
         aria-pressed={pressed}
+        // Keep focus where it was: a mouse press should act, not move focus
+        // onto a button that is about to fade out.
+        onMouseDown={(event) => event.preventDefault()}
         onClick={onActivate}
         className={[
           // 24px — the WCAG 2.2 AA target-size floor this package holds inline actions to.

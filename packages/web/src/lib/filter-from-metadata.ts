@@ -192,20 +192,12 @@ export function applyMetadataFilterHref(
   target: MetadataFilterTarget,
   polarity: FilterPolarity = 'include',
 ): string {
+  const next = nextMetadataFilterState(current, target, polarity);
   const params = new URLSearchParams();
 
-  if (target.kind === 'scope') {
-    // `useUrlState`'s wire format — see the field docblock above.
-    params.set('scope', JSON.stringify(target.scope));
-    const filtersValue = filtersParamValue(current.filters, current.legacyTags, current.legacyOwner);
-    if (filtersValue !== null) params.set('filters', JSON.stringify(filtersValue));
-  } else {
-    const nextFilters = applyValueFilter(current.filters, target.field, target.value, polarity);
-    const filtersValue = filtersParamValue(nextFilters, current.legacyTags, current.legacyOwner);
-    if (filtersValue !== null) params.set('filters', JSON.stringify(filtersValue));
-    if (current.scope !== null) params.set('scope', JSON.stringify(current.scope));
-  }
-
+  // `useUrlState`'s wire format — see the field docblock above.
+  if (next.scope !== null) params.set('scope', JSON.stringify(next.scope));
+  if (next.filters !== null) params.set('filters', JSON.stringify(next.filters));
   if (current.lesson !== null) params.set('lesson', current.lesson);
   if (current.memoryId) params.set('memoryId', current.memoryId);
   // `useUrlState`'s wire format again — the Explorer reads `?q=` as a JSON
@@ -214,6 +206,40 @@ export function applyMetadataFilterHref(
 
   const qs = params.toString();
   return qs ? `/lore?${qs}` : '/lore';
+}
+
+/** The `?filters=` and `?scope=` values applying a target produces — `null` meaning "no param". */
+export interface MetadataFilterState {
+  filters: Filter[] | null;
+  scope: string | null;
+}
+
+/**
+ * What applying `target` sets `?filters=` and `?scope=` to — the pure core of
+ * both ways the panel applies a filter: {@link applyMetadataFilterHref} builds
+ * a `/lore` link from it when the panel is open elsewhere, and on the Explorer
+ * itself the panel writes these two values straight into the URL state the
+ * Explorer reads, so the change shows at once rather than after a navigation.
+ *
+ * `filters` is already the PARAM value (`filtersParamValue`): `null` drops the
+ * param, and `[]` survives only to override a legacy `?tags=` link.
+ */
+export function nextMetadataFilterState(
+  current: CurrentExplorerParams,
+  target: MetadataFilterTarget,
+  polarity: FilterPolarity = 'include',
+): MetadataFilterState {
+  if (target.kind === 'scope') {
+    return {
+      filters: filtersParamValue(current.filters, current.legacyTags, current.legacyOwner),
+      scope: target.scope,
+    };
+  }
+  const nextFilters = applyValueFilter(current.filters, target.field, target.value, polarity);
+  return {
+    filters: filtersParamValue(nextFilters, current.legacyTags, current.legacyOwner),
+    scope: current.scope,
+  };
 }
 
 // ── Active-filter matching (R9 — "which of this memory's values am I already filtering by") ──

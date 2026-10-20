@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick, Quote } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
@@ -23,9 +23,15 @@ import { FormActionBar } from '@/components/ui/FormActionBar';
 import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { tryParseJsonContainer } from '@/lib/json-tree';
 import { isTypingTarget } from '@/lib/lesson-list-nav';
-import { metadataFilterTargets, applyMetadataFilterHref, metaValueFilterState, type MetadataFilterTarget } from '@/lib/filter-from-metadata';
+import {
+  metadataFilterTargets,
+  applyMetadataFilterHref,
+  metaValueFilterState,
+  nextMetadataFilterState,
+  type MetadataFilterTarget,
+} from '@/lib/filter-from-metadata';
 import { resolveFilters, valuePolarity, type Filter, type FilterField, type FilterPolarity } from '@/lib/filters';
-import { useUrlState } from '@/lib/hooks/useUrlState';
+import { isPathnameAllowed, useUrlState } from '@/lib/hooks/useUrlState';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -343,17 +349,20 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   const queryClient = useQueryClient();
   const router = useRouter();
 
-  // R3: applying a metadata filter from the panel is a NAVIGATION — filter
-  // state lives entirely in the URL (`?filters=`/`?scope=`), and this panel is
-  // rendered globally by `MemorySidebarProvider`, outside the Explorer's own
-  // state. So it reads the SAME URL params the Explorer does (mirroring
-  // `LoreExplorer.tsx`'s own `useUrlState` calls exactly, legacy `?tags=`/
-  // `?owner=` included, so a value toggled from here folds in whatever a
-  // shared legacy link already selected) and computes the next href with the
-  // pure `applyMetadataFilterHref` (`lib/filter-from-metadata.ts`).
+  // R3: filter state lives entirely in the URL (`?filters=`/`?scope=`), and
+  // this panel is rendered globally by `MemorySidebarProvider`, outside the
+  // Explorer's own state. So it reads the SAME URL params the Explorer does
+  // (mirroring `LoreExplorer.tsx`'s own `useUrlState` calls exactly — options
+  // included, so a filter written from here is a Back-button step just like one
+  // from the menu — and legacy `?tags=`/`?owner=` too, so a value toggled from
+  // here folds in whatever a shared legacy link already selected).
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [scopeParam] = useUrlState<string | null>('scope', null, { cleanOnPathname: '/lore' });
-  const [rawFilters] = useUrlState<Filter[] | null>('filters', null, { cleanOnPathname: '/lore' });
+  const [scopeParam, setScopeParam] = useUrlState<string | null>('scope', null, { cleanOnPathname: '/lore' });
+  const [rawFilters, setRawFilters] = useUrlState<Filter[] | null>('filters', null, {
+    cleanOnPathname: '/lore',
+    navigationMode: 'push',
+  });
   const [legacyTags] = useUrlState<string[]>('tags', NO_TAGS, { cleanOnPathname: '/lore' });
   const [legacyOwner] = useUrlState<unknown>('owner', 'all', { cleanOnPathname: '/lore' });
   // The COMMITTED search, mirroring `LoreExplorer`'s own non-debounced read of
@@ -366,21 +375,35 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   );
 
   function handleApplyFilterTarget(target: MetadataFilterTarget, polarity: FilterPolarity = 'include') {
-    const href = applyMetadataFilterHref(
-      {
-        filters: resolvedFilters,
-        scope: scopeParam,
-        // `?lesson=`/`?memoryId=` are opaque pass-through strings —
-        // `searchParams.get` already decodes them, matching what
-        // `applyMetadataFilterHref` expects (see its own docblock).
-        lesson: searchParams.get('lesson'),
-        memoryId: searchParams.get('memoryId'),
-        q: searchParam,
-      },
-      target,
-      polarity,
-    );
-    router.push(href);
+    const current = {
+      filters: resolvedFilters,
+      scope: scopeParam,
+      // `?lesson=`/`?memoryId=` are opaque pass-through strings —
+      // `searchParams.get` already decodes them, matching what
+      // `applyMetadataFilterHref` expects (see its own docblock).
+      lesson: searchParams.get('lesson'),
+      memoryId: searchParams.get('memoryId'),
+      q: searchParam,
+      legacyTags,
+      legacyOwner,
+    };
+
+    // On the Explorer itself, write the one param that changes through the
+    // same URL state the Explorer reads. `useUrlState` shares a pending write
+    // across every instance of the key, so the pill, the list query and this
+    // panel all update at once instead of after the navigation's server round
+    // trip — and every other param in the URL (sort, retention, the open
+    // lesson) is left exactly as it was.
+    if (isPathnameAllowed(pathname, '/lore')) {
+      const next = nextMetadataFilterState(current, target, polarity);
+      if (target.kind === 'scope') setScopeParam(next.scope);
+      else setRawFilters(next.filters);
+      return;
+    }
+
+    // Anywhere else the panel can be open, applying a filter means going to the
+    // Explorer, so it is a real navigation to the `/lore` link it builds.
+    router.push(applyMetadataFilterHref(current, target, polarity));
   }
 
   // Wraps a metadata row's VALUE in the hover-reveal filter in / filter out
