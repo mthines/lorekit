@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useId, useState, useTransition } from 'react';
 import { Building2, KeyRound, Loader2, User } from 'lucide-react';
 import type { TokenPermission } from '@/lib/tokens';
 import { approveAuthorization, denyAuthorization } from './actions';
@@ -59,6 +59,7 @@ export function AuthorizeConsent({
   const [permissions, setPermissions] = useState<TokenPermission[]>(['read', 'write']);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const accessLevelHeadingId = useId();
 
   const toggleOrg = (id: string) =>
     setSelectedOrgs((current) =>
@@ -114,10 +115,13 @@ export function AuthorizeConsent({
         </header>
 
         <section className="mb-6">
-          <h2 className="mb-2 font-mono text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+          <h2
+            id={accessLevelHeadingId}
+            className="mb-2 font-mono text-xs uppercase tracking-wide text-[var(--color-text-muted)]"
+          >
             Access level
           </h2>
-          <div className="flex flex-col gap-2">
+          <div role="radiogroup" aria-labelledby={accessLevelHeadingId} className="flex flex-col gap-2">
             <PermissionOption
               label="Read and write"
               description="The agent can read your lore and record new lessons."
