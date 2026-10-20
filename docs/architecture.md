@@ -112,7 +112,7 @@ Authorization: Bearer <token>
        │    → look up SHA-256(token) in api_tokens table
        │    → reject if expires_at has passed (OAuth-issued tokens only)
        │    → returns user_id + permissions (read | write | read+write)
-       │      + org_ids (the OAuth consent allow-list, or null = unrestricted)
+       │      + the key restriction: scopes, org_access (all | personal | selected), org_ids
        │    → service-role DB client + explicit user_id filter on every query
        │
        └─ else: validate as Supabase JWT via auth.getUser()
@@ -125,7 +125,8 @@ Authorization: Bearer <token>
 
 Two paths, one credential type:
 
-- **Dashboard** → Settings → API keys. Never expires, no org restriction.
+- **Dashboard** → Settings → API keys. Never expires; its scope allowlist and
+  org access are set in the dashboard.
 - **OAuth 2.1 authorization code + PKCE** — the flow behind an MCP client's
   "Authorize" button. Expires after 30 days and carries the org allow-list the
   user chose on the consent screen.
@@ -161,10 +162,12 @@ The authorization server lives in the dashboard because it needs the
 Supabase-Auth session, the user's org list, and the `api_tokens` write path —
 all of which already exist in `packages/web`.
 
-`api_tokens.org_ids` is **narrowing only**: it is intersected with
-`lorekit_member_org_ids` (via `intersectTokenOrgIds` / `tokenAllowsOrgId` in
-`tenant-scope.ts`), never substituted for it, so a token can never reach an org
-its holder has left. Tables and columns: `supabase/migrations/00095_oauth.sql`.
+`api_tokens.org_ids` is **narrowing only**: under `org_access = 'selected'`,
+`effectiveOrgIds` in `tenant-scope.ts` intersects it with
+`lorekit_member_org_ids`, never substituting it, so a token can never reach an
+org its holder has left. OAuth tables and columns:
+`supabase/migrations/00095_oauth.sql`; the scoping columns:
+`supabase/migrations/00068_api_token_scoping.sql`.
 
 ---
 
