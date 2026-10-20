@@ -128,11 +128,13 @@ alter table oauth_authorization_codes enable row level security;
 -- All three are nullable/defaulted so every existing row keeps its exact
 -- current meaning: kind='personal', no expiry, no client. Org scoping reuses
 -- 00068's `org_access`/`org_ids` columns — see the DESIGN NOTES above — so
--- this migration does not touch them.
+-- this migration does not touch them. Deleting a client deletes its tokens,
+-- as it does its authorization codes: `api_tokens_oauth_client_check` forbids
+-- an oauth row without a client, so `on delete set null` would abort instead.
 alter table api_tokens
   add column if not exists kind       text not null default 'personal',
   add column if not exists expires_at timestamptz,
-  add column if not exists client_id  text references oauth_clients(client_id) on delete set null;
+  add column if not exists client_id  text references oauth_clients(client_id) on delete cascade;
 
 do $$
 begin
