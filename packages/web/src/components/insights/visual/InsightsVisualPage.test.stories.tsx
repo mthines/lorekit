@@ -85,9 +85,26 @@ export const RecallFlowSwapsToATable: Story = {
       await expect(firstRow).toHaveTextContent('640');
       // memory.write is not a recall, so it never appears.
       await expect(within(table).queryByText('memory.write')).toBeNull();
-      // Successful reads only: 640 + 210 + 380 + 44 + 90 + 30 = 1,394. The fixture's
-      // 6 failed memory.read calls would make it 1,400 — a failed read recalled nothing.
-      await expect(canvas.getByText('1,394 successful lore-read calls')).toBeInTheDocument();
+      // Successful reads only: 640 + 210 + 380 + 44 + 90 + 30 + 120 = 1,514. The fixture's
+      // 6 failed memory.read calls would make it 1,520 — a failed read recalled nothing.
+      await expect(canvas.getByText('1,514 successful lore-read calls')).toBeInTheDocument();
+      // A call with no scope type is named "unattributed", not folded into "other".
+      await expect(within(table).getByText('unattributed')).toBeInTheDocument();
+      await expect(within(table).queryByText('other')).toBeNull();
+    });
+  },
+};
+
+export const BelowTheFoldSectionsLoadOnScroll: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const heading = await waitFor(() => canvas.getByRole('heading', { name: 'Runs' }));
+    await step('the runs panel mounts once its section is scrolled near the viewport', async () => {
+      heading.scrollIntoView();
+      // Fixture: 5 local sessions, 4 CI jobs, 2 PR automations, 1 unlabelled run.
+      await waitFor(() => expect(canvas.getByText('Local sessions')).toBeInTheDocument());
+      await expect(canvas.getByText('CI jobs')).toBeInTheDocument();
+      await expect(canvas.getByText('PR automations')).toBeInTheDocument();
     });
   },
 };

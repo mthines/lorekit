@@ -35,6 +35,15 @@
  * While a new range loads, the previous result stays on screen, dimmed and
  * `aria-busy`, and every grid is drawn from the window that result was fetched
  * for (`data.window`), never from the newly selected one.
+ *
+ * ## Load fan-out is bounded
+ *
+ * Above the fold the page issues the loop fetch (activity, read-activity and
+ * usage for the window and the one before it) and ONE `/memories/utility`
+ * request shared by the cost line, the strip and the grid. Runs, the run list
+ * and the scope leaderboard mount only when scrolled near (`Deferred`): every
+ * one of these hits the same database, and firing all of them at once on each
+ * load or range switch pushed the slowest aggregate past its statement timeout.
  */
 
 import { useMemo, useState } from 'react';
@@ -49,16 +58,16 @@ import { RangePicker } from '@/components/ui/RangePicker';
 import { track } from '@/lib/analytics/track';
 import { rangeTelemetry } from '@/lib/analytics/lore-events';
 import { loopStages, pulseBuckets, pulseTotals, rawTotals } from '@/lib/insights-loop';
-import { useInsightsLoop, useWindowRuns, MAX_RUN_PAGES } from '@/lib/queries/insights-loop';
-import { useLoreUtility } from '@/lib/queries/lore-utility';
+import { useInsightsLoop } from '@/lib/queries/insights-loop';
+import { useLoreUtilitySummary } from '@/lib/queries/lore-utility';
 import { excludeDashboardReads, failuresByToolOutcome } from '@/lib/usage-health';
 import { rangeCaption, resolveRange, type RangePreset, type TimeRange } from '@/lib/time-range';
 import { LoopStageStrip } from './LoopStageStrip';
 import { PulseTimeline } from './PulseTimeline';
 import { RecallFlowChart } from './RecallFlowChart';
-import { RunsRhythm } from './RunsRhythm';
-import { RunsSwimlanes } from './RunsSwimlanes';
+import { RunsPanel } from './RunsPanel';
 import { viewerTimeZone } from './format';
+import { useInView } from './use-in-view';
 
 const PRESETS: readonly RangePreset[] = ['24h', '7d', '30d', '90d'];
 const DEFAULT_RANGE: TimeRange = { preset: '7d' };
@@ -108,6 +117,17 @@ function Notice({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Mounts `children` only once the placeholder has come near the viewport, so
+ * below-the-fold sections do not fetch on load or on every range switch — see
+ * `use-in-view.ts` for why the burst matters.
+ */
+function Deferred({ children, placeholderClassName = 'h-40' }: { children: React.ReactNode; placeholderClassName?: string }) {
+  const { ref, inView } = useInView<HTMLDivElement>();
+  if (inView) return <>{children}</>;
+  return <div ref={ref} className={`${placeholderClassName} rounded-xl border border-dashed border-[var(--color-border)]`} aria-hidden />;
+}
+
 const LOAD_ERROR = 'Failed to load usage data. Please refresh the page to try again.';
 
 export function InsightsVisualPage() {
@@ -127,9 +147,10 @@ export function InsightsVisualPage() {
     setRange(next);
   }
 
+  // Above the fold: the loop data and ONE utility request, shared with the cost
+  // line and the utility grid. Runs and the scope leaderboard load on scroll.
   const loop = useInsightsLoop(window);
-  const runs = useWindowRuns(window);
-  const census = useLoreUtility({});
+  const census = useLoreUtilitySummary();
 
   // Gridded from the window the rows were FETCHED for — see the module docblock.
   const pulse = useMemo(
@@ -146,10 +167,9 @@ export function InsightsVisualPage() {
       currentCapped || previousCapped,
     );
   }, [loop.data, census.data]);
-  const updating = loop.isPlaceholderData || runs.isPlaceholderData;
+  const updating = loop.isPlaceholderData;
 
   const data = loop.data;
-  const runData = runs.data;
   const pulseIsEmpty = useMemo(() => {
     const t = pulseTotals(pulse);
     return t.written + t.chosen + t.bulk === 0;
@@ -222,29 +242,14 @@ export function InsightsVisualPage() {
           title="Runs"
           description={`When sessions, CI jobs and PR automations start work with your lore, and the shape of each run, in ${caption}. Only calls that carry a run id are placed. The audit-trail list below keeps its own 90-day window.`}
         >
-          {runs.isLoading ? (
-            <Skeleton />
-          ) : runs.isError ? (
-            <Notice>Failed to load runs. Please refresh the page to try again.</Notice>
-          ) : !runData || runData.runs.length === 0 ? (
-            <Notice>No runs recorded in {caption}.</Notice>
-          ) : (
+          <Deferred>
+            <RunsPanel window={window} rangeCaption={caption} timeZone={timeZone} />
+          </Deferred>
+          <Deferred placeholderClassName="h-24">
             <Card>
-              <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-                <RunsRhythm runs={runData.runs} timeZone={timeZone} />
-                <RunsSwimlanes runs={runData.runs} window={runData.window} timeZone={timeZone} />
-              </div>
-              {runData.truncated && (
-                <p className="mt-3 text-xs text-[var(--color-content-tertiary)]">
-                  Showing the {runData.runs.length.toLocaleString('en-US')} most recent runs ({MAX_RUN_PAGES} pages), so the
-                  start of the window may look emptier than it was — pick a shorter range to see them all.
-                </p>
-              )}
+              <RunsList />
             </Card>
-          )}
-          <Card>
-            <RunsList />
-          </Card>
+          </Deferred>
         </Section>
 
         <Section
@@ -263,9 +268,11 @@ export function InsightsVisualPage() {
           title="Where it is read"
           description={`Scopes ranked by memory records read in ${caption} — including the unattributed bucket. Pick a scope to open it in the Explorer.`}
         >
-          <Card>
-            <ScopeConsumption since={window.from} until={window.to} />
-          </Card>
+          <Deferred placeholderClassName="h-48">
+            <Card>
+              <ScopeConsumption since={window.from} until={window.to} />
+            </Card>
+          </Deferred>
         </Section>
 
         <Section

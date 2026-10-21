@@ -37,9 +37,29 @@ describe('recallFlow', () => {
     expect(flow.totalCalls).toBe(5);
   });
 
-  it('names an unattributed client and buckets unknown scope types', () => {
-    const flow = recallFlow([row({ client: null, scope_type: null, event_count: 3 })]);
-    expect(flow.rows[0]).toMatchObject({ client: 'unattributed', scopeType: 'other' });
+  it('names a missing client or scope type "unattributed", and an unknown scope type "other"', () => {
+    const flow = recallFlow([
+      row({ client: null, scope_type: null, event_count: 3 }),
+      row({ client: 'mcp', scope_type: 'not-a-scope-type', event_count: 2 }),
+    ]);
+    expect(flow.rows).toEqual([
+      { client: 'unattributed', tool: 'memory.list', scopeType: 'unattributed', calls: 3 },
+      { client: 'mcp', tool: 'memory.list', scopeType: 'other', calls: 2 },
+    ]);
+  });
+
+  it('never folds "unattributed" into "other", and ranks it after the named values', () => {
+    const flow = recallFlow(
+      [
+        row({ scope_type: 'repo', event_count: 9 }),
+        row({ scope_type: 'global', event_count: 8 }),
+        row({ scope_type: 'branch', event_count: 7 }),
+        row({ scope_type: null, event_count: 1 }),
+      ],
+      1,
+    );
+    const scopes = flow.nodes.filter((n) => n.layer === 2).map((n) => n.label);
+    expect(scopes).toEqual(['repo', 'unattributed', 'other']);
   });
 
   it('conserves flow through the middle column', () => {

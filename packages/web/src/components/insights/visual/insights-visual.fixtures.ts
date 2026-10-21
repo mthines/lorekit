@@ -57,6 +57,8 @@ export const VISUAL_BY_TOOL: UsageStatRow[] = [
   row({ client: 'cli', tool_name: 'memory.read', scope_type: 'repo', event_count: 44, record_count: 44, total_duration_ms: 3_900, host: 'aw' }),
   row({ client: 'dashboard', tool_name: 'memory.read', scope_type: 'project', event_count: 90, record_count: 90, total_duration_ms: 8_100, host: 'dashboard' }),
   row({ client: 'api', tool_name: 'memory.search', scope_type: 'repo', event_count: 30, record_count: 300, total_duration_ms: 9_000 }),
+  // memory.search carries a scopes[] array, so no single scope type is recorded — the "unattributed" bucket.
+  row({ client: 'mcp', tool_name: 'memory.search', scope_type: null, event_count: 120, record_count: 1_500, total_duration_ms: 30_000 }),
   row({ client: 'mcp', tool_name: 'memory.write', scope_type: 'repo', event_count: 26, record_count: 26, total_duration_ms: 5_200 }),
   row({ client: 'mcp', tool_name: 'memory.read', outcome: 'error', scope_type: 'branch', event_count: 6, record_count: 0, total_duration_ms: 600 }),
 ];

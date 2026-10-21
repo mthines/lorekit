@@ -15,7 +15,7 @@
  *
  * No new API surface: `/activity`, `/read-activity` and `/usage` all accept
  * explicit `since`/`until`, and the census comes from the same cached
- * `useLoreUtility({})` call the utility grid already makes.
+ * `useLoreUtilitySummary()` request the cost line and the utility grid share.
  *
  * ## The row cap is reported, not hidden
  *

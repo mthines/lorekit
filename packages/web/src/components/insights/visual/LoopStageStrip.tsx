@@ -65,7 +65,12 @@ function Stage({
           {name}
         </p>
         {changePct !== undefined && changePct !== null && (
-          <TrendChip changePct={changePct} title="Vs. the immediately preceding period of equal length" />
+          // Neutral: more learning, recall or pruning is not good or bad on its own.
+          <TrendChip
+            changePct={changePct}
+            tone="neutral"
+            title="Vs. the immediately preceding period of equal length"
+          />
         )}
       </div>
       <p className="flex items-baseline gap-1.5">

@@ -27,6 +27,28 @@ import { CHARS_PER_TOKEN_ESTIMATE, type UtilityCost } from '@lorekit/schemas/mem
 
 export { CHARS_PER_TOKEN_ESTIMATE };
 
+/** The cost line's window, in days — "the last 30 days", rolling, not a calendar month. */
+export const COST_WINDOW_DAYS = 30;
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * The `since` every `/memories/utility` census caller sends: 30 days back,
+ * floored to the start of the UTC hour.
+ *
+ * ONE value so the cost line, the utility grid and the Insights strip share ONE
+ * request (same query key). Every `/utility` call runs the census AND the
+ * delivery-cost aggregate server-side, and the cost aggregate is the slowest
+ * query on the page — a census-only caller that omitted `since` used to pay
+ * for the ALL-HISTORY variant of it just to read the census. Flooring to the
+ * hour keeps the key stable across renders and remounts; the window it names
+ * is at most an hour longer than 30 days, well inside the estimate's precision.
+ */
+export function costWindowSince(nowMs: number): string {
+  const since = nowMs - COST_WINDOW_DAYS * 86_400_000;
+  return new Date(Math.floor(since / HOUR_MS) * HOUR_MS).toISOString();
+}
+
 /**
  * `602M`, `1.2M`, `84K`, `840`.
  *

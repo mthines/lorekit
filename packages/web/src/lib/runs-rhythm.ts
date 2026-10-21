@@ -102,12 +102,58 @@ export interface SwimlaneRun {
   /** Start and end as fractions of the window, clamped to [0, 1]. */
   x0: number;
   x1: number;
+  /** Sub-row inside the lane (0 = top), so overlapping runs sit side by side, not on top of each other. */
+  row: number;
+}
+
+export interface SwimlaneLane {
+  lane: RunLane;
+  runs: SwimlaneRun[];
+  /** How many sub-rows the lane needs — its drawn height. */
+  rows: number;
 }
 
 export interface Swimlanes {
-  lanes: { lane: RunLane; runs: SwimlaneRun[] }[];
+  lanes: SwimlaneLane[];
   /** The largest `records_read` of any placed run — the bar-thickness scale. */
   maxRecordsRead: number;
+}
+
+/**
+ * The most sub-rows one lane may grow to. Past it, a run goes into the row that
+ * frees up first and overlaps there — a 40-row lane would push the rest of the
+ * page off screen to show runs that are better read in the list below.
+ */
+export const MAX_LANE_ROWS = 6;
+
+/**
+ * The narrowest a run counts as when packing, as a fraction of the window.
+ *
+ * Bars have a minimum drawn width (a run shorter than a pixel still has to be
+ * seen), so two instant runs a hair apart would overlap on screen while their
+ * real intervals do not. Packing by this floor keeps what is DRAWN from
+ * overlapping, not just what is measured.
+ */
+export const MIN_PACKED_SPAN = 0.012;
+
+/**
+ * Assign each run a sub-row: greedy interval packing, earliest start first, into
+ * the first row whose last run has ended. Runs are placed in time order, so the
+ * result is stable for a given input.
+ */
+export function packRows(runs: readonly Omit<SwimlaneRun, 'row'>[], maxRows = MAX_LANE_ROWS): SwimlaneRun[] {
+  const rowEnds: number[] = [];
+  return [...runs]
+    .sort((a, b) => a.x0 - b.x0 || a.x1 - b.x1)
+    .map((r) => {
+      const end = Math.max(r.x1, r.x0 + MIN_PACKED_SPAN);
+      let row = rowEnds.findIndex((rowEnd) => rowEnd <= r.x0);
+      if (row === -1 && rowEnds.length < maxRows) row = rowEnds.length;
+      // Every row is busy and the lane is full: overlap in the row that frees up first.
+      if (row === -1) row = rowEnds.indexOf(Math.min(...rowEnds));
+      rowEnds[row] = Math.max(rowEnds[row] ?? 0, end);
+      return { ...r, row };
+    });
 }
 
 /**
@@ -125,6 +171,7 @@ export function swimlanes(runs: readonly UsageRun[], window: AbsoluteRange): Swi
   if (Number.isNaN(from) || !(span > 0)) return { lanes: [], maxRecordsRead };
 
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const byLaneUnpacked = new Map<RunLane, Omit<SwimlaneRun, 'row'>[]>();
   for (const run of runs) {
     const start = Date.parse(run.first_seen);
     const end = Date.parse(run.last_seen);
@@ -132,16 +179,18 @@ export function swimlanes(runs: readonly UsageRun[], window: AbsoluteRange): Swi
     const x0 = clamp((start - from) / span);
     const x1 = clamp((Math.max(start, end) - from) / span);
     const lane = runLane(run.session_kind);
-    const list = byLane.get(lane) ?? [];
+    const list = byLaneUnpacked.get(lane) ?? [];
     list.push({ run, lane, x0, x1 });
-    byLane.set(lane, list);
+    byLaneUnpacked.set(lane, list);
     maxRecordsRead = Math.max(maxRecordsRead, run.records_read);
   }
+  for (const [lane, list] of byLaneUnpacked) byLane.set(lane, packRows(list));
 
   return {
     lanes: RUN_LANES.flatMap((lane) => {
       const laneRuns = byLane.get(lane);
-      return laneRuns ? [{ lane, runs: laneRuns.sort((a, b) => a.x0 - b.x0) }] : [];
+      if (!laneRuns) return [];
+      return [{ lane, runs: laneRuns, rows: Math.max(1, ...laneRuns.map((r) => r.row + 1)) }];
     }),
     maxRecordsRead,
   };

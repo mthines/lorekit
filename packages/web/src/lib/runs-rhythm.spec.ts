@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { UsageRun } from '@lorekit/schemas/usage';
-import { localParts, rhythmGrid, runLane, swimlanes } from './runs-rhythm';
+import { MAX_LANE_ROWS, localParts, packRows, rhythmGrid, runLane, swimlanes } from './runs-rhythm';
 
 function run(overrides: Partial<UsageRun>): UsageRun {
   return {
@@ -83,7 +83,44 @@ describe('swimlanes', () => {
     expect(result.lanes[0]?.runs[0]).toMatchObject({ x0: 0, x1: 0.25 });
   });
 
+  it('stacks overlapping runs into sub-rows and reports how many rows the lane needs', () => {
+    const result = swimlanes(
+      [
+        run({ correlation_id: 'a', first_seen: '2026-06-15T01:00:00.000Z', last_seen: '2026-06-15T20:00:00.000Z' }),
+        run({ correlation_id: 'b', first_seen: '2026-06-15T02:00:00.000Z', last_seen: '2026-06-15T03:00:00.000Z' }),
+        run({ correlation_id: 'c', first_seen: '2026-06-15T06:00:00.000Z', last_seen: '2026-06-15T07:00:00.000Z' }),
+      ],
+      window,
+    );
+    const lane = result.lanes[0];
+    expect(lane?.rows).toBe(2);
+    const rowOf = (id: string) => lane?.runs.find((r) => r.run.correlation_id === id)?.row;
+    expect(rowOf('a')).toBe(0);
+    // b overlaps a, so it goes below; c starts after b ends, so it reuses b's row.
+    expect(rowOf('b')).toBe(1);
+    expect(rowOf('c')).toBe(1);
+  });
+
   it('returns no lanes for a degenerate window', () => {
     expect(swimlanes([run({})], { from: window.to, to: window.from }).lanes).toEqual([]);
+  });
+});
+
+describe('packRows', () => {
+  const r = (x0: number, x1: number) => ({ run: run({}), lane: 'local' as const, x0, x1 });
+
+  it('caps a lane at MAX_LANE_ROWS, overlapping in the row that frees up first', () => {
+    const many = Array.from({ length: MAX_LANE_ROWS + 2 }, (_, i) => r(0.1 + i * 0.001, 0.9 - i * 0.01));
+    const packed = packRows(many);
+    expect(Math.max(...packed.map((p) => p.row))).toBe(MAX_LANE_ROWS - 1);
+  });
+
+  it('counts an instant run as its drawn width, so two near-simultaneous bars do not overlap on screen', () => {
+    const packed = packRows([r(0.5, 0.5), r(0.505, 0.505)]);
+    expect(packed.map((p) => p.row)).toEqual([0, 1]);
+  });
+
+  it('reuses a row once its last run has ended', () => {
+    expect(packRows([r(0.1, 0.2), r(0.3, 0.4)]).map((p) => p.row)).toEqual([0, 0]);
   });
 });

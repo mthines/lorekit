@@ -19,6 +19,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import { utilityRequest } from '@/lib/api/memories';
 import type { LessonUtilityName, UtilityResponse } from '@lorekit/schemas/memory';
+import { costWindowSince } from '@/lib/lore-cost';
 
 /**
  * The shape a signed-out render sees.
@@ -62,6 +63,18 @@ export function useLoreUtility(window: { since?: string; until?: string }, scope
 }
 
 /**
+ * The census plus the cost line's 30-day cost — the ONE utility request the
+ * cost headline, the utility grid and the Insights loop strip share.
+ *
+ * Use this rather than `useLoreUtility({})`: an omitted `since` asks the server
+ * for the all-history cost, the most expensive variant of its slowest query,
+ * and a second distinct key doubles the requests. See `costWindowSince`.
+ */
+export function useLoreUtilitySummary() {
+  return useLoreUtility({ since: costWindowSince(Date.now()) });
+}
+
+/**
  * One quadrant's rows.
  *
  * `enabled` is what makes the pair cheap: with no quadrant selected the grid
@@ -69,10 +82,14 @@ export function useLoreUtility(window: { since?: string; until?: string }, scope
  * clusters sidebar takes (a closed panel issues no request).
  */
 export function useLoreUtilityRows(quadrant: LessonUtilityName | null, scope?: string, limit = 20) {
+  // The server computes the cost on this call too and it is discarded here, so
+  // bound it to the shared 30-day window rather than letting an omitted `since`
+  // request the all-history variant on every quadrant click.
+  const since = costWindowSince(Date.now());
   return useQuery<UtilityResponse>({
-    queryKey: ['lore-utility', 'rows', quadrant, scope ?? null, limit],
+    queryKey: ['lore-utility', 'rows', quadrant, scope ?? null, limit, since],
     queryFn: ({ signal }) =>
-      fetchUtility({ quadrant: quadrant as LessonUtilityName, ...(scope ? { scope } : {}), limit }, signal),
+      fetchUtility({ quadrant: quadrant as LessonUtilityName, ...(scope ? { scope } : {}), limit, since }, signal),
     enabled: quadrant !== null,
     placeholderData: keepPreviousData,
     staleTime: 90_000,

@@ -27,32 +27,26 @@
  * census that never moved.
  */
 
-import { useMemo } from 'react';
 import { Coins } from 'lucide-react';
-import { useLoreUtility } from '@/lib/queries/lore-utility';
-import { readDeliveryCost, CHARS_PER_TOKEN_ESTIMATE } from '@/lib/lore-cost';
+import { useLoreUtilitySummary } from '@/lib/queries/lore-utility';
+import { readDeliveryCost, CHARS_PER_TOKEN_ESTIMATE, COST_WINDOW_DAYS } from '@/lib/lore-cost';
 
 /**
- * The window, in days.
- *
- * A rolling 30 days rather than the calendar month the phrase "this month"
- * suggests: on the 2nd of a month the calendar figure is two days of data
- * under a label a reader will compare against last month's thirty, and a bill
- * that collapses at the start of every month is a bill nobody trusts. The
- * caption says "the last 30 days" so the label matches the arithmetic.
+ * The window is `COST_WINDOW_DAYS` (30), rolling rather than the calendar month
+ * "this month" suggests: on the 2nd of a month the calendar figure is two days
+ * of data under a label a reader will compare against last month's thirty, and
+ * a bill that collapses at the start of every month is a bill nobody trusts.
+ * The caption says "the last 30 days" so the label matches the arithmetic. The
+ * `since` is shared with the utility grid (`useLoreUtilitySummary`) so the two
+ * read ONE request.
  */
-const WINDOW_DAYS = 30;
+const WINDOW_DAYS = COST_WINDOW_DAYS;
 
 export function LoreCostHeadline() {
-  // Mount-stable, so the query key and the caption describe one instant.
-  const since = useMemo(
-    () => new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString(),
-    [],
-  );
   // No `until`: the cost sum's upper bound is exclusive of the whole day it
   // names (its source is a daily rollup), so passing `now` would silently drop
   // today. Omitting it is how a caller says "through right now".
-  const { data, isLoading, isError } = useLoreUtility({ since });
+  const { data, isLoading, isError } = useLoreUtilitySummary();
 
   if (isError) {
     // Not folded into an empty state: "0 tokens delivered" is a claim, and a

@@ -10,6 +10,10 @@
  * every other run into a hairline. A run shorter than a pixel still gets a
  * visible minimum width — "it happened" is the information there.
  *
+ * Overlapping runs stack into sub-rows (`packRows`), so 26 concurrent local
+ * sessions read as 26 bars rather than one thick line; a lane is as tall as the
+ * rows it needs, capped at `MAX_LANE_ROWS`.
+ *
  * Same interaction contract as the other charts (`use-chart-cursor.ts`): one
  * tab stop walks every run in time order across lanes, and one portaled
  * readout names it. The audit-trail list below this chart keeps the drill-down
@@ -29,8 +33,15 @@ interface RunsSwimlanesProps {
   timeZone: string;
 }
 
-const MIN_THICKNESS = 4;
-const MAX_THICKNESS = 16;
+/** One sub-row's height in px; thickness is scaled inside it so stacked bars never touch. */
+const ROW_HEIGHT = 14;
+const LANE_PADDING = 6;
+const MIN_THICKNESS = 3;
+const MAX_THICKNESS = ROW_HEIGHT - 4;
+
+function laneHeight(rows: number): number {
+  return rows * ROW_HEIGHT + LANE_PADDING;
+}
 
 export function RunsSwimlanes({ runs, window, timeZone }: RunsSwimlanesProps) {
   const layout = swimlanes(runs, window);
@@ -54,7 +65,7 @@ export function RunsSwimlanes({ runs, window, timeZone }: RunsSwimlanesProps) {
       <div className="flex gap-3">
         <div className="flex w-28 shrink-0 flex-col text-[11px] text-[var(--color-content-secondary)]" aria-hidden>
           {layout.lanes.map((l) => (
-            <span key={l.lane} className="flex h-8 items-center">
+            <span key={l.lane} className="flex items-start pt-1" style={{ height: laneHeight(l.rows) }}>
               {RUN_LANE_LABEL[l.lane]}
               <span className="ml-1 tabular-nums text-[var(--color-content-tertiary)]">{l.runs.length}</span>
             </span>
@@ -69,7 +80,11 @@ export function RunsSwimlanes({ runs, window, timeZone }: RunsSwimlanesProps) {
           {...cursor.rootProps}
         >
           {layout.lanes.map((l) => (
-            <div key={l.lane} className="relative h-8 border-b border-[var(--color-border-subtle)] last:border-b-0">
+            <div
+              key={l.lane}
+              className="relative border-b border-[var(--color-border-subtle)] last:border-b-0"
+              style={{ height: laneHeight(l.rows) }}
+            >
               {l.runs.map((r) => {
                 const i = indexOf.get(r.run.correlation_id + r.run.first_seen) ?? -1;
                 const h = thickness(r.run.records_read);
@@ -79,8 +94,9 @@ export function RunsSwimlanes({ runs, window, timeZone }: RunsSwimlanesProps) {
                     key={r.run.correlation_id + r.run.first_seen}
                     ref={cursor.itemRef(i)}
                     {...cursor.itemHandlers(i)}
-                    className="absolute top-1/2 -translate-y-1/2 rounded-full bg-[var(--color-accent)] transition-opacity duration-150"
+                    className="absolute -translate-y-1/2 rounded-full bg-[var(--color-accent)] transition-opacity duration-150"
                     style={{
+                      top: LANE_PADDING / 2 + r.row * ROW_HEIGHT + ROW_HEIGHT / 2,
                       left: `${r.x0 * 100}%`,
                       width: `max(6px, ${(r.x1 - r.x0) * 100}%)`,
                       height: `${h}px`,
