@@ -158,3 +158,72 @@ export const ChipAndHeadlineShareOneRowWithoutColliding: Story = {
     });
   },
 };
+
+/**
+ * The reported overlap: in the Explorer's card (icon LEFT of the number, chip on
+ * the number's row) a `1,566,285` headline pushed `+10K%` past the card's edge.
+ * The headline now abbreviates from five digits up, so the two share the row at
+ * the card's real width — asserted from measured geometry.
+ */
+export const LargeHeadlineAbbreviatesAndLeavesTheChipRoom: Story = {
+  render: () => (
+    <div style={{ width: '16rem' }}>
+      <StatCard
+        icon={BookOpenCheck}
+        label="Memories retrieved"
+        tag="Memory reads"
+        tooltip="Memory records read in the selected range."
+        value={1_566_285}
+        description="in the last 90 days"
+        trend={trendWith(10_400)}
+        trendTitle="Last 90 days vs. the preceding 90 days"
+        rangeTitle="the last 90 days"
+        unit="memories"
+        collapsible
+      />
+    </div>
+  ),
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const card = canvasElement.querySelector('[data-stat-card]') as HTMLElement;
+    const headline = canvas.getByText('1.57M');
+    const chip = canvas.getByText('+10K%');
+
+    await step('the headline is abbreviated, the exact figure kept', async () => {
+      await expect(headline).toHaveAttribute('aria-hidden', 'true');
+      const number = headline.closest('p');
+      await expect(number?.querySelector('.sr-only')?.textContent).toBe('1,566,285');
+      await expect(number).toHaveAttribute('title', '1,566,285');
+    });
+
+    await step('the chip sits beside the headline, inside the card', async () => {
+      const cardBox = card.getBoundingClientRect();
+      const headlineBox = headline.getBoundingClientRect();
+      const chipBox = chip.getBoundingClientRect();
+      await expect(chipBox.left).toBeGreaterThanOrEqual(headlineBox.right);
+      await expect(chipBox.right).toBeLessThanOrEqual(cardBox.right);
+    });
+  },
+};
+
+/** Below five digits nothing changed: exact, grouped, and no hover title. */
+export const SmallHeadlineStaysExact: Story = {
+  render: () => (
+    <div style={{ width: '16rem' }}>
+      <StatCard
+        icon={BookOpenCheck}
+        label="Memories opened"
+        tag="Memory reads"
+        tooltip="Memory records opened in the selected range."
+        value={5_341}
+        description="in the last 90 days"
+        collapsible
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const number = canvas.getByText('5,341', { selector: '[aria-hidden]' }).closest('p');
+    await expect(number).not.toHaveAttribute('title');
+  },
+};
