@@ -38,6 +38,7 @@ const ROW_HEIGHT = 14;
 const LANE_PADDING = 6;
 const MIN_THICKNESS = 3;
 const MAX_THICKNESS = ROW_HEIGHT - 4;
+const MIN_BAR_WIDTH_PX = 6;
 
 function laneHeight(rows: number): number {
   return rows * ROW_HEIGHT + LANE_PADDING;
@@ -97,8 +98,9 @@ export function RunsSwimlanes({ runs, window, timeZone }: RunsSwimlanesProps) {
                     className="absolute -translate-y-1/2 rounded-full bg-[var(--color-accent)] transition-opacity duration-150"
                     style={{
                       top: LANE_PADDING / 2 + r.row * ROW_HEIGHT + ROW_HEIGHT / 2,
-                      left: `${r.x0 * 100}%`,
-                      width: `max(6px, ${(r.x1 - r.x0) * 100}%)`,
+                      // Clamp so a run starting at the window's end keeps its minimum width inside the track.
+                      left: `min(${r.x0 * 100}%, calc(100% - ${MIN_BAR_WIDTH_PX}px))`,
+                      width: `max(${MIN_BAR_WIDTH_PX}px, ${(r.x1 - r.x0) * 100}%)`,
                       height: `${h}px`,
                       opacity: cursor.active === null || isActive ? 0.85 : 0.3,
                     }}
