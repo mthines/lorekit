@@ -145,14 +145,14 @@ export function packRows(runs: readonly Omit<SwimlaneRun, 'row'>[], maxRows = MA
   const rowEnds: number[] = [];
   return [...runs]
     .sort((a, b) => a.x0 - b.x0 || a.x1 - b.x1)
-    .map((r) => {
-      const end = Math.max(r.x1, r.x0 + MIN_PACKED_SPAN);
-      let row = rowEnds.findIndex((rowEnd) => rowEnd <= r.x0);
+    .map((bar) => {
+      const end = Math.max(bar.x1, bar.x0 + MIN_PACKED_SPAN);
+      let row = rowEnds.findIndex((rowEnd) => rowEnd <= bar.x0);
       if (row === -1 && rowEnds.length < maxRows) row = rowEnds.length;
       // Every row is busy and the lane is full: overlap in the row that frees up first.
       if (row === -1) row = rowEnds.indexOf(Math.min(...rowEnds));
       rowEnds[row] = Math.max(rowEnds[row] ?? 0, end);
-      return { ...r, row };
+      return { ...bar, row };
     });
 }
 
@@ -166,12 +166,11 @@ export function packRows(runs: readonly Omit<SwimlaneRun, 'row'>[], maxRows = MA
 export function swimlanes(runs: readonly UsageRun[], window: AbsoluteRange): Swimlanes {
   const from = Date.parse(window.from);
   const span = Date.parse(window.to) - from;
-  const byLane = new Map<RunLane, SwimlaneRun[]>();
   let maxRecordsRead = 0;
   if (Number.isNaN(from) || !(span > 0)) return { lanes: [], maxRecordsRead };
 
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
-  const byLaneUnpacked = new Map<RunLane, Omit<SwimlaneRun, 'row'>[]>();
+  const byLane = new Map<RunLane, Omit<SwimlaneRun, 'row'>[]>();
   for (const run of runs) {
     const start = Date.parse(run.first_seen);
     const end = Date.parse(run.last_seen);
@@ -179,18 +178,18 @@ export function swimlanes(runs: readonly UsageRun[], window: AbsoluteRange): Swi
     const x0 = clamp((start - from) / span);
     const x1 = clamp((Math.max(start, end) - from) / span);
     const lane = runLane(run.session_kind);
-    const list = byLaneUnpacked.get(lane) ?? [];
+    const list = byLane.get(lane) ?? [];
     list.push({ run, lane, x0, x1 });
-    byLaneUnpacked.set(lane, list);
+    byLane.set(lane, list);
     maxRecordsRead = Math.max(maxRecordsRead, run.records_read);
   }
-  for (const [lane, list] of byLaneUnpacked) byLane.set(lane, packRows(list));
 
   return {
     lanes: RUN_LANES.flatMap((lane) => {
-      const laneRuns = byLane.get(lane);
-      if (!laneRuns) return [];
-      return [{ lane, runs: laneRuns, rows: Math.max(1, ...laneRuns.map((r) => r.row + 1)) }];
+      const unpacked = byLane.get(lane);
+      if (!unpacked) return [];
+      const laneRuns = packRows(unpacked);
+      return [{ lane, runs: laneRuns, rows: Math.max(1, ...laneRuns.map((bar) => bar.row + 1)) }];
     }),
     maxRecordsRead,
   };
