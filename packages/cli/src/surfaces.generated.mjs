@@ -14,6 +14,7 @@ export const MCP_TOOL_NAMES = [
   "memory.search",
   "memory.archive",
   "memory.scopes",
+  "memory.quota",
   "memory.list_archived",
   "memory.restore",
   "memory.purge",
@@ -40,6 +41,7 @@ export const MEMORY_TOOL_NAMES = [
   "memory.search",
   "memory.archive",
   "memory.scopes",
+  "memory.quota",
   "memory.list_archived",
   "memory.restore",
   "memory.purge",
@@ -388,6 +390,20 @@ export const MCP_TOOL_DEFS = [
     }
   },
   {
+    "name": "memory.quota",
+    "description": "How many active memories you hold against your plan's cap, and how many writes are left before memory.write is refused with memory_cap. Takes no arguments. Check it before a bulk write or a migration instead of discovering the cap from a failed write.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "memory.list_archived",
     "description": "List archived (soft-deleted) lessons, for one scope or across every scope you can see",
     "inputSchema": {
@@ -396,6 +412,13 @@ export const MCP_TOOL_DEFS = [
         "scope": {
           "type": "string",
           "description": "Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter to entries carrying ANY of these labels (OR)."
         },
         "limit": {
           "type": "integer",
@@ -1406,6 +1429,7 @@ export const CLI_BINDINGS = {
   "search": "memory.search",
   "archive": "memory.archive",
   "scopes": "memory.scopes",
+  "quota": "memory.quota",
   "restore": "memory.restore",
   "purge": "memory.purge",
   "purge-expired": "memory.purge_expired",
@@ -1439,6 +1463,7 @@ export const CLI_EXEMPT = {
 
 /** Op -> why the local stdio MCP server does not dispatch it. */
 export const LOCAL_MCP_EXEMPT = {
+  "memory.quota": "server-side plan and memory cap; the offline store has no limit",
   "memory.list_archived": "reachable through memory.list's archived filter on the offline store",
   "memory.purge": "account-wide sweep against server-side state; the offline store has no equivalent",
   "memory.purge_expired": "account-wide sweep against server-side state; the offline store has no equivalent",

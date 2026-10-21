@@ -83,7 +83,7 @@ The [Explorer](/lore) filters on nine dimensions, not just tags. Press the **Fil
 
 | Dimension | Comes from | Example |
 | --- | --- | --- |
-| Label | `tags` | `loop::aw-lessons` |
+| Tag | `tags` | `loop::aw-lessons` |
 | Kind | `kind` | `lesson` (also `bus`, `signal`) |
 | Host | `host` | `reviewer` |
 | Owner | `org_id` | `Personal` (or an org you belong to) |
@@ -96,6 +96,10 @@ The [Explorer](/lore) filters on nine dimensions, not just tags. Press the **Fil
 **Owner** partitions lore by who it belongs to — your own `Personal` lore, or one of the organizations you are a member of (shown by its slug). It filters server-side like every other dimension, so the list, the filter-menu counts and the stats header all agree.
 
 Values inside one dimension combine with **OR**; dimensions combine with **AND**. So "Agent is either of `aw`, `claude`" **and** "Branch is `main`" is one filter set, and every filter is in the URL — copy the address to share the exact view.
+
+Tags are the one dimension that can hold **two pills at once** — one that includes and one that excludes — because a memory carries many tags. "Tag includes all `perf`" **and** "Tag includes none `flaky`" shows memories tagged `perf` that are not tagged `flaky`. Every other dimension has a single value per memory, so its include and exclude collapse into one pill.
+
+You can also filter straight from a memory's detail panel. Hover any tag, kind, host, agent, trigger, repository, branch or pull request and two icons appear: **filter in** (funnel +) shows only memories with that value, **filter out** (funnel −) hides them. Hover an icon to see exactly what it will do. The filter is added to whatever is already applied — filtering out a tag while another tag is filtered in gives you both conditions — and a value you have already filtered in or out shows that icon pressed, so clicking it again takes the filter back off. From the keyboard, focus the value and press `Enter` to filter in or `Shift+Enter` to filter out. The scope offers filter in only.
 
 Two shortcuts worth knowing:
 
@@ -182,8 +186,22 @@ The CLI offers several commands that respect the same scope/tag logic. You can a
 # Human-readable view of all applicable memories
 npx @lorekit/cli list
 
-# Full-text search
+# Only memories carrying a tag (any of a comma list; --tags-mode all|none to change that)
+npx @lorekit/cli list --tags loop::aw-lessons
+
+# One bucket family and owner, or everything except one (--kind-mode / --host-mode nin)
+npx @lorekit/cli list --kind lesson --host reviewer
+npx @lorekit/cli list --kind bus --kind-mode nin
+
+# The rest of the Explorer's dimensions: who wrote it, why, and where it came from
+npx @lorekit/cli list --source-agent claude --trigger stuck-loop
+npx @lorekit/cli list --origin-repo mthines/my-app --origin-pr 482
+npx @lorekit/cli list --origin-branch main --origin-branch-mode nin
+
+# Full-text search, optionally narrowed by tag
 npx @lorekit/cli search "worktree"
+npx @lorekit/cli search "worktree" --tags skill::aw
+npx @lorekit/cli search "worktree" --kind lesson --host-mode nin --host ci
 
 # Inspect one memory in full
 npx @lorekit/cli show --scope global --key aw-lessons::worktree-naming

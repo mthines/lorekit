@@ -46,9 +46,10 @@ describe('edge MCP tag filters', () => {
 
   it('coerces the raw JSON-RPC tags param through toTagList', () => {
     expect(source).toContain("import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';");
-    // Both read handlers destructure the untrusted value under a `rawTags`
-    // alias and normalise it, so no `tags` identifier in a query is unchecked.
+    // Every tag-filtering read handler — `toolList`, `toolSearch` and
+    // `toolListArchived` — destructures the untrusted value under a `rawTags`
+    // alias and normalises it, so no `tags` identifier in a query is unchecked.
     const coercions = [...source.matchAll(/const tags = toTagList\(rawTags\);/g)];
-    expect(coercions.length).toBe(2);
+    expect(coercions.length).toBe(3);
   });
 });

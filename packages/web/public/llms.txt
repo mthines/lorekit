@@ -134,8 +134,11 @@ behaves exactly as it always has.
 A request that NAMES a scope outside the allowlist is refused (`-32003` on MCP,
 `403` on REST) rather than answered with an empty list. A request that names no
 scope is narrowed instead. `memory.scopes` is narrowed too, so a scoped token
-cannot enumerate scope names it may not read. An operation that carries no scope
-at all (`memory.purge_expired`) is refused for a token that has an allowlist.
+cannot enumerate scope names it may not read. An account-wide sweep, which
+carries no scope at all (`memory.purge`, `memory.purge_expired`), is refused for a
+token that has an allowlist. `memory.quota` is answered for every token: it
+returns counts only, `org_count` and `total` cover just the orgs the tenancy
+reaches (`0` under `personal`), and `personal` stays account-wide because the cap is.
 
 For a scope INSIDE the allowlist, a scoped token can archive, delete, or restore any writer's row for that scope+key — the management authority the owner granted by scoping the key — reporting `404` (nothing there) vs `403` (present, but not this token's to touch); an unscoped token stays own-rows-only.
 
@@ -157,6 +160,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | `memory.search` | ✓ | ✓ | ✗ |
 | `memory.archive` | ✓ | ✗ | ✓ |
 | `memory.scopes` | ✓ | ✓ | ✗ |
+| `memory.quota` | ✓ | ✓ | ✗ |
 | `memory.list_archived` | ✓ | ✓ | ✗ |
 | `memory.restore` | ✓ | ✗ | ✓ |
 | `memory.purge` | ✓ | ✗ | ✓ |
@@ -364,6 +368,20 @@ Returns: `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by coun
 
 ---
 
+### memory.quota
+
+How many active memories you hold against your plan's cap, and how many writes are left before memory.write is refused with memory_cap. Takes no arguments. Check it before a bulk write or a migration instead of discovering the cap from a failed write.
+
+No arguments.
+
+Requires **read** permission.
+
+MCP annotations: read-only, closed-world.
+
+Returns: `{ "plan", "personal": { "count", "limit", "remaining" }, "org_count", "total" }`. `personal` is the pair the cap enforces; org-owned memories count against each org's own cap, so `org_count` is reported beside it and not subtracted from `remaining`. A token narrowed to `personal` or to selected orgs sees `org_count` and `total` over only the orgs it reaches. A service-role caller has no user and is refused.
+
+---
+
 ### memory.list_archived
 
 List archived (soft-deleted) lessons, for one scope or across every scope you can see.
@@ -371,6 +389,7 @@ List archived (soft-deleted) lessons, for one scope or across every scope you ca
 | Argument | Required | Type | Description |
 |----------|----------|------|-------------|
 | `scope` |  | string | Canonical scope string, e.g. `repo::mthines/lorekit`. OPTIONAL — omit it to search every scope you can see. |
+| `tags` |  | array | Filter to entries carrying ANY of these labels (OR). _(array of string)_ |
 | `limit` |  | integer | Maximum entries to return. _(1–100, default `50`)_ |
 
 Requires **read** permission.
@@ -720,7 +739,7 @@ view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
-| Label | `tags` | includes all (default), includes any, includes none |
+| Tag | `tags` | includes all (default), includes any, includes none |
 | Kind | `kind` | is / is either of, is not |
 | Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |
@@ -741,6 +760,11 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
+`exclude_tags` (comma-separated) is a separate "carries none of these labels" condition ANDed with
+`tags` in any mode, so `tags=perf&tags_mode=all&exclude_tags=flaky` is "tagged perf, not tagged
+flaky". `GET /memories/facets`, `/activity` and `/pivot` (and their `POST` body forms) take it too.
+In the Explorer, tags can carry an include pill and an exclude pill at once, and a memory's detail
+panel offers filter in / filter out on every metadata value.
 
 `kind` and `host` are the memory TAXONOMY: `kind` is the bucket type — a closed vocabulary of
 `lesson`, `bus` and `signal` — and `host` is the skill or agent that owns the bucket. Together they

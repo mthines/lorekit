@@ -116,6 +116,7 @@ const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
   'memory.list',
   'memory.search',
   'memory.scopes',
+  'memory.quota',
   'memory.list_archived',
   'memory.usage',
   'org.list',

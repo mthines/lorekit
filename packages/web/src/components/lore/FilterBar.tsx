@@ -42,7 +42,16 @@ import { Archive } from 'lucide-react';
 import { FilterMenu } from './FilterMenu';
 import { FilterPill } from './FilterPill';
 import { RetentionPill } from './RetentionPill';
-import { filtersPhrase, type FacetValue, type Filter, type FilterField, type FilterOperator } from '@/lib/filters';
+import {
+  filterPillKey,
+  filterPolarity,
+  filtersPhrase,
+  type FacetValue,
+  type Filter,
+  type FilterField,
+  type FilterOperator,
+  type FilterPolarity,
+} from '@/lib/filters';
 import {
   NO_RETENTION_CONDITIONS,
   RETENTION_FIELDS,
@@ -58,8 +67,12 @@ interface FilterBarProps {
   facets: FacetValue[];
   filters: Filter[];
   onToggleValue: (field: FilterField, value: string) => void;
-  onOperatorChange: (field: FilterField, operator: FilterOperator) => void;
-  onRemove: (field: FilterField) => void;
+  /**
+   * `polarity` names WHICH pill when a field has two (a tag include and a tag
+   * exclude); a caller whose bar can never hold both may ignore it.
+   */
+  onOperatorChange: (field: FilterField, operator: FilterOperator, polarity: FilterPolarity) => void;
+  onRemove: (field: FilterField, polarity: FilterPolarity) => void;
   onClearAll: () => void;
   /** Set by a pill's value segment to reopen the menu at that dimension. */
   editingField: FilterField | null;
@@ -194,11 +207,11 @@ export function FilterPillRow({
       <AnimatePresence initial={false}>
         {filters.map((filter) => (
           <FilterPill
-            key={filter.field}
+            key={filterPillKey(filter, filters)}
             filter={filter}
-            onOperatorChange={(op) => onOperatorChange(filter.field, op)}
+            onOperatorChange={(op) => onOperatorChange(filter.field, op, filterPolarity(filter))}
             onEditValues={() => onEditField(filter.field)}
-            onRemove={() => onRemove(filter.field)}
+            onRemove={() => onRemove(filter.field, filterPolarity(filter))}
           />
         ))}
         {retentionPills.map(({ field, value }) => (

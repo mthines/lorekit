@@ -166,8 +166,12 @@ export type MemoryMutationOutcome = 'success' | 'error';
 /** Archive is a toggle, so the direction is part of the fact. */
 export type MemoryArchiveAction = 'archive' | 'restore';
 
-/** Insights has two independent windows; a bare preset would not say which moved. */
-export type InsightsRangeSection = 'agent-activity' | 'scope-consumption';
+/**
+ * Which Insights window moved. The original page has two independent windows,
+ * so a bare preset would not say which; the flag-gated visual page
+ * (`insights-visual`) has ONE, reported as `page`.
+ */
+export type InsightsRangeSection = 'agent-activity' | 'scope-consumption' | 'page';
 
 /** Where a click into the Explorer came from on the Insights page. */
 export type InsightsScopeSource = 'scope-consumption' | 'utility-row';

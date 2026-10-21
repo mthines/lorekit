@@ -89,10 +89,28 @@ describe('normalizeFilters', () => {
   it('merges a duplicated field into one filter rather than dropping half of it', () => {
     expect(
       normalizeFilters([
+        { field: 'host', operator: 'in', values: ['aw'] },
+        { field: 'host', operator: 'nin', values: ['reviewer'] },
+      ]),
+    ).toEqual([{ field: 'host', operator: 'in', values: ['aw', 'reviewer'] }]);
+    expect(
+      normalizeFilters([
+        { field: 'label', operator: 'in', values: ['perf'] },
+        { field: 'label', operator: 'all', values: ['ci'] },
+      ]),
+    ).toEqual([{ field: 'label', operator: 'in', values: ['perf', 'ci'] }]);
+  });
+
+  it('keeps a tag include and a tag exclude as two conditions — both hold (00114)', () => {
+    expect(
+      normalizeFilters([
         { field: 'label', operator: 'in', values: ['perf'] },
         { field: 'label', operator: 'nin', values: ['ci'] },
       ]),
-    ).toEqual([{ field: 'label', operator: 'in', values: ['perf', 'ci'] }]);
+    ).toEqual([
+      { field: 'label', operator: 'in', values: ['perf'] },
+      { field: 'label', operator: 'nin', values: ['ci'] },
+    ]);
   });
 
   it('emits in FILTER_FIELDS order so a shared link renders identically', () => {
@@ -284,7 +302,7 @@ describe('valueSummary / filterPhrase', () => {
   it('never truncates the phrase — an AT user has no +2 to hover', () => {
     expect(
       filterPhrase({ field: 'label', operator: 'all', values: ['a', 'b', 'c', 'd'] }),
-    ).toBe('Label includes all a, b, c, d');
+    ).toBe('Tag includes all a, b, c, d');
   });
 
   it('joins the whole bar for the trigger name', () => {
@@ -293,7 +311,7 @@ describe('valueSummary / filterPhrase', () => {
         { field: 'label', operator: 'all', values: ['perf'] },
         { field: 'branch', operator: 'nin', values: ['main'] },
       ]),
-    ).toBe('Label includes all perf; Branch is not main');
+    ).toBe('Tag includes all perf; Branch is not main');
     expect(filtersPhrase([])).toBe('Add filter');
   });
 });
@@ -353,6 +371,20 @@ describe('rootSuggestions', () => {
   it('ranks a matching dimension name above any value', () => {
     const hits = rootSuggestions(FACETS, 'branch');
     expect(hits[0]).toEqual({ kind: 'field', field: 'branch' });
+  });
+
+  // The `label` field is shown as "Tag". Someone typing `tags` (the API's word)
+  // or `label` (the menu's old word) must still land on it.
+  it.each(['tag', 'tags', 'Tags', 'label', 'labels'])(
+    'finds the Tag dimension when the query is %s',
+    (query) => {
+      expect(rootSuggestions(FACETS, query)[0]).toEqual({ kind: 'field', field: 'label' });
+    },
+  );
+
+  it('shows the label field as "Tag" while keeping its serialised id', () => {
+    expect(fieldDescriptor('label')?.label).toBe('Tag');
+    expect(fieldDescriptor('tag')).toBeUndefined();
   });
 
   it('caps the value hits so an unbounded catalog cannot flood the menu', () => {

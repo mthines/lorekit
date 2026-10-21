@@ -668,6 +668,21 @@ check('archive hides a row from reads but keeps it listable and restorable', asy
   );
 });
 
+check('list_archived narrows by tags, matching ANY of them like memory.list', async () => {
+  await write(SCOPE, 'archived-tagged', { tags: ['smoke::archived-tag'] });
+  await write(SCOPE, 'archived-untagged');
+  await call('memory.archive', { scope: SCOPE, key: 'archived-tagged' });
+  await call('memory.archive', { scope: SCOPE, key: 'archived-untagged' });
+
+  const r = await call('memory.list_archived', {
+    scope: SCOPE,
+    tags: ['smoke::archived-tag', 'smoke::no-such-tag'],
+  });
+  const keys = (r.value?.entries ?? []).map((e) => e.key);
+  ok(keys.includes('archived-tagged'), 'the tagged archived row is missing from a tags-filtered list_archived');
+  ok(!keys.includes('archived-untagged'), 'an untagged archived row survived the tags filter');
+});
+
 check('restoring a row that is not archived reports not_found, not success', async () => {
   const r = await call('memory.restore', { scope: SCOPE, key: 'archivable' });
   eq(r.value?.restored, false, 'restored');
@@ -694,6 +709,20 @@ check('scopes reports each scope this run wrote, with counts', async () => {
     ok(byScope.has(scope), `${scope} is missing from the inventory`);
     ok(byScope.get(scope).count > 0, `${scope} reports a zero count`);
   }
+});
+
+check('quota reports the personal pair against the cap', async () => {
+  requireUserScoped('a per-user quota');
+  const r = await call('memory.quota');
+  const q = r.value ?? {};
+  ok(typeof q.plan === 'string' && q.plan.length > 0, 'quota has no plan');
+  ok(Number.isInteger(q.personal?.count) && q.personal.count >= 0, 'quota has no personal count');
+  ok(Number.isInteger(q.personal?.limit) && q.personal.limit > 0, 'quota has no personal limit');
+  ok(
+    q.personal.remaining === Math.max(q.personal.limit - q.personal.count, 0),
+    `remaining ${q.personal.remaining} is not limit ${q.personal.limit} minus personal count ${q.personal.count}`,
+  );
+  ok(q.total === q.personal.count + q.org_count, 'total is not personal count + org count');
 });
 
 check('purge and purge_expired answer with a count', async () => {

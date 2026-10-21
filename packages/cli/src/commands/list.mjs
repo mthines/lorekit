@@ -13,10 +13,11 @@ import { resolveProjectRoot } from '../shared/config.mjs';
 import { deriveScope } from '../shared/scope.mjs';
 import { resolveDenies } from '../shared/control.mjs';
 import { resolveStores, remoteUnavailableReason } from '../shared/stores.mjs';
-import { scopeList, gather, gatherStream, renderSection, DEFAULT_MAX } from '../shared/lessons-view.mjs';
+import { scopeList, gather, gatherStream, renderSection, entryFilter, DEFAULT_MAX } from '../shared/lessons-view.mjs';
 import { resolveAppBase, mostSpecificScope } from '../shared/deeplink-pure.mjs';
+import { parseReadFilters } from '../shared/flags.mjs';
 import { emitLink } from './link.mjs';
-import { log, heading, c } from '../shared/util.mjs';
+import { log, err, heading, c } from '../shared/util.mjs';
 
 // Abbreviate the user's home directory to `~` for readable paths.
 function prettyPath(p) {
@@ -41,11 +42,16 @@ export async function list(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
-  // Optional taxonomy filters — `--kind lesson --host reviewer` narrows to one
-  // family/owner. Comma lists are honoured by the remote store's query builder.
-  const filters = {};
-  if (typeof args.kind === 'string') filters.kind = args.kind;
-  if (typeof args.host === 'string') filters.host = args.host;
+  // Optional dimension filters, ANDed — the eight `policy`/`groom` take:
+  // `--tags a,b [--tags-mode any|all|none]` (`memory.list`'s semantics), and
+  // `--kind`/`--host`/`--trigger`/`--source-agent`/`--origin-repo`/
+  // `--origin-branch`/`--origin-pr a,b`, each negated by `--<dim>-mode nin`.
+  const parsed = parseReadFilters(args);
+  if (parsed.error) {
+    err(`${c.red('Error:')} ${parsed.error}`);
+    return 1;
+  }
+  const filters = parsed.filters;
 
   // `--link` short-circuits: print the Explorer deep link for the current
   // context (the most-specific applicable scope, or `--scope`), no store reads.
@@ -77,16 +83,10 @@ export async function list(args) {
   const surveySince = args.since || undefined;
   const surveyUntil = args.until || undefined;
 
-  // Taxonomy `keep` predicate mirroring `gather()`'s: `gatherStream` neither
-  // forwards `kind`/`host` to the store nor post-filters, so a `--all` drain
-  // must apply the same narrowing here or `list --all --kind X` would ignore X.
-  const wanted = (v) =>
-    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
-  const kindSet = wanted(filters.kind);
-  const hostSet = wanted(filters.host);
-  const keep = (e) =>
-    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
-    (!hostSet || (e.host != null && hostSet.has(e.host)));
+  // The SAME `keep` predicate `gather()` applies: `gatherStream` neither
+  // forwards the filters to the store nor post-filters, so a `--all` drain must
+  // apply the narrowing here or `list --all --tags X` would ignore X.
+  const keep = entryFilter(filters);
 
   const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes, filters);
   const remoteAvailable = !remoteDenied && remote.usable();
@@ -157,6 +157,9 @@ export async function list(args) {
     'lorekit.cli.list.offline_count': offline.total,
     'lorekit.cli.list.remote_count': remoteResult.total,
     'lorekit.cli.list.remote_available': remoteAvailable,
+    // How many of the eight dimension filters were applied (0–8) — a count,
+    // never a value.
+    'lorekit.cli.list.filter_count': Object.keys(filters).filter((k) => !k.endsWith('_mode')).length,
   };
 }
 

@@ -57,10 +57,12 @@
  * - `lore.results_paged`               — "Load more" appended a page.
  *
  * ### Insights (`insights.*`)
- * - `insights.range_changed`           — one of the page's TWO independent windows moved.
+ * - `insights.range_changed`           — one of the page's TWO independent windows moved
+ *                                        (`section: 'page'` — the visual page's single window).
  * - `insights.utility_quadrant_selected` — a utility quadrant was opened or closed.
  * - `insights.utility_prompt_copied`   — a grooming prompt reached the clipboard.
  * - `insights.scope_opened`            — a row handed off to the Explorer.
+ * - `insights.recall_flow_view_changed` — the visual page's recall flow swapped between chart and table.
  *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
@@ -343,7 +345,7 @@ export type AnalyticsEvent =
   // ── Insights ──────────────────────────────────────────────────────────────
   | {
       name: 'insights.range_changed';
-      /** The page carries TWO independent windows; a bare preset would not say which moved. */
+      /** The original page carries TWO independent windows; a bare preset would not say which moved. The visual page's one window is `page`. */
       section: InsightsRangeSection;
       preset: RangeTelemetryPreset;
       spanDays?: number;
@@ -366,7 +368,8 @@ export type AnalyticsEvent =
        */
       succeeded: boolean;
     }
-  | { name: 'insights.scope_opened'; scopeType: ScopeSelectionType; source: InsightsScopeSource };
+  | { name: 'insights.scope_opened'; scopeType: ScopeSelectionType; source: InsightsScopeSource }
+  | { name: 'insights.recall_flow_view_changed'; view: 'chart' | 'table' };
 
 /**
  * Dynamic lesson commands embed `scope::key` in their id (user content +
@@ -590,6 +593,8 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
         'lorekit.insights.scope.type': event.scopeType,
         'lorekit.insights.scope.source': event.source,
       };
+    case 'insights.recall_flow_view_changed':
+      return { 'lorekit.insights.recall_flow.view': event.view };
   }
 }
 

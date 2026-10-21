@@ -29,6 +29,9 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   // with records that are not lore. Permission gating and the records-read
   // metric are different questions about the same family.
   'memory.scopes',
+  // Your own counts against your cap. Read-gated like every other read: a
+  // write-only token has no business learning the account's size.
+  'memory.quota',
   // `org.list` is a read like any other. It used to be ungated because the org
   // tools were JWT-only; they now serve `lk_*` tokens, and listing the orgs you
   // belong to is exactly the shape of thing a read token should be able to do.

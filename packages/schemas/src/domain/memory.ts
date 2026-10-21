@@ -260,6 +260,16 @@ export const ListMemoriesQuerySchema = z.object({
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
   /**
+   * Labels the row must carry NONE of (comma-separated, like `tags`).
+   *
+   * An independent conjunct, ANDed with whatever `tags`/`tags_mode` ask — which
+   * is what makes "tagged `perf` AND NOT tagged `flaky`" expressible: one
+   * `tags` list has one mode, so it can include or exclude but never both.
+   * Same `not.ov` semantics as `tags_mode=none` (carries none of them), never
+   * the negation of containment. Migration 00114.
+   */
+  exclude_tags: z.string().optional(),
+  /**
    * Case-insensitive substring match against `key` OR `value`.
    *
    * Deliberately NOT the full-text `q` of `POST /memories/search`: that one is
@@ -433,6 +443,31 @@ export type ScopeCount = z.infer<typeof ScopeCountSchema>;
 export const ScopesResponseSchema = z.object({ scopes: z.array(ScopeCountSchema) });
 export type ScopesResponse = z.infer<typeof ScopesResponseSchema>;
 
+// ── GET /memories/quota ──────────────────────────────────────────────────────
+
+/**
+ * `GET /memories/quota` — the caller's active memories against their plan's cap,
+ * shaped by `memoryQuotaFromRow` (`packages/mcp-core/src/limits/memory-quota.ts`).
+ */
+export const MemoryQuotaResponseSchema = z.object({
+  /** Plan name; `free` when the caller has no plan row. */
+  plan: z.string(),
+  /** Personal active memories, the personal cap, and the writes left under it. */
+  personal: z.object({
+    count: z.number().int().nonnegative(),
+    limit: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+  }),
+  /**
+   * Active org-owned memories across the orgs the caller reaches (each org has its own cap):
+   * every org it belongs to, or only those its token's tenancy admits (`0` under `personal`).
+   */
+  org_count: z.number().int().nonnegative(),
+  /** `personal.count + org_count` — every active memory the caller can see. */
+  total: z.number().int().nonnegative(),
+});
+export type MemoryQuotaResponse = z.infer<typeof MemoryQuotaResponseSchema>;
+
 // ── GET /memories/tags ───────────────────────────────────────────────────────
 
 /**
@@ -547,6 +582,8 @@ export const ListFacetsQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: z.string().optional(),
   source_agent: ValueListSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
@@ -638,6 +675,8 @@ export const PivotQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: z.string().optional(),
   source_agent: ValueListSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
@@ -722,6 +761,8 @@ export const ActivityQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: z.string().optional(),
   source_agent: ValueListSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
@@ -1065,6 +1106,8 @@ const DimensionValuesSchema = z
 const dimensionBodyFields = {
   tags: DimensionValuesSchema.optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: DimensionValuesSchema.optional(),
   source_agent: DimensionValuesSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: DimensionValuesSchema.optional(),

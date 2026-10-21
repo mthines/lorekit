@@ -42,6 +42,21 @@ When a write would exceed the cap, the DB raises a custom error (SQLSTATE
 > delete unused memories, or upgrade your plan — see
 > https://lorekit.io (or contact support) to increase it."
 
+### Reading your headroom before you hit it
+
+`GET /memories/quota` (REST), `memory.quota` (MCP) and `lorekit quota` (CLI)
+all answer `{ plan, personal: { count, limit, remaining }, org_count, total }`
+from `lorekit_memory_count` (00047), shaped by the pure `memoryQuotaFromRow`
+(`packages/mcp-core/src/limits/memory-quota.ts`). `personal` is exactly the
+pair the trigger above enforces — personal active rows against the personal
+limit — so `remaining` is the number of new personal writes left. Org-owned
+rows count against each org's own cap (`00018_org_limits.sql`), so they are
+reported as `org_count` beside it and never subtracted. A token narrowed to
+`personal` or to selected orgs gets `org_count` and `total` recounted over only
+the orgs it reaches (`quotaForKey`, same file, applying `effectiveOrgIds`); the
+personal pair is never narrowed, because the cap is account-wide. A service-role
+caller has no user and is refused. Per-org quotas are not reported yet.
+
 ### The cap is also a WRITE-COST parameter
 
 Raising it is not free, and not for the reason you would expect. The trigger

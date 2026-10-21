@@ -96,7 +96,20 @@ without moving its version. See
 
 Alias `ls` — read-only human view of the lessons for the cwd's scopes, project/branch/repo/global,
 split into an **Offline** local-store section and a **Remote** hosted section that degrades
-gracefully when unconfigured; `--json`/`--scope`; `--all` drains all pages via `gatherStream`
+gracefully when unconfigured; `--json`/`--scope`; the eight dimension filters `policy`/`groom`
+take — `--tags a,b` combined by `--tags-mode any|all|none` [default `any`, the hosted
+`GET /memories` default], and `--kind`/`--host`/`--trigger`/`--source-agent`/`--origin-repo`/
+`--origin-branch`/`--origin-pr a,b`, each with `--<dim>-mode in|nin` [default `in`]; `nin` follows
+the hosted `lorekit_match_text`/`lorekit_match_int` rule (migration 00066): the value must be SET
+and none of the list, so a row without that field matches neither mode; `--origin-pr` takes PR
+numbers only (`#482` accepted, `007` reads as 7), because the hosted route DROPS a non-numeric
+value and then applies no PR filter. All are parsed by `parseReadFilters` (`src/shared/flags.mjs`,
+reusing the `policy`/`groom` `DIMENSIONS` table), forwarded to the remote, AND applied to both
+stores by the one `entryFilter` predicate in `lessons-view.mjs` over `normalizeEntry`'s output,
+which carries `source_agent`/`trigger`/`origin_*` for that reason (so `--json` shows them too; the
+pure `matchesTags` lives in `lessons-pure.mjs` because the local store applies it too); a bare
+value flag, or a mode without its value flag, is a usage error rather than an unfiltered listing;
+`--all` drains all pages via `gatherStream`
 [default is single-page `gather()`]; `--max <n>` hard-caps entries surveyed [default 5000];
 `--since`/`--until <iso-date>` forward `created_since`/`created_until` to the REST request;
 independently builds BOTH stores via `src/shared/stores.mjs` + renders via the reusable
@@ -111,7 +124,9 @@ case-insensitive** substring against a lesson's key OR value, via the pure `matc
 dependency-free `lessons-pure.mjs`, re-exported by `lessons-view.mjs`)/`filterGroups` helpers over
 the shared `gather()` output — NOT each store's native `search` method, whose semantics diverge
 (local literal-substring vs remote server-FTS); regex metachars are matched verbatim, never
-compiled; `--json`/`--scope`
+compiled; `--json`/`--scope`; the same eight dimension filters as `list` (`--tags` +
+`--tags-mode any|all|none`; `--kind`/`--host`/`--trigger`/`--source-agent`/`--origin-*` +
+`--<dim>-mode in|nin`) narrow the candidates before the query is matched
 
 ### `show`
 
@@ -164,6 +179,20 @@ REAL inventory through the same `filterScopeInventory`/`summarizeScopeInventory`
 a denied/unconfigured/unreachable/erroring remote degrades to a short, accurate note via the shared
 `describeError` at exit 0 [the old `REMOTE_SCOPES_UNSUPPORTED` sentinel is gone — the surface
 supports enumeration now]
+
+### `quota`
+
+Remote-only: your active memories against your plan's cap and how many writes are left, from
+`GET /memories/quota` (the same answer as the `memory.quota` MCP tool). `personal` is the pair the
+cap trigger enforces — personal memories against the personal limit, `remaining` = limit − count,
+never negative; org-owned memories count against each org's own cap, so they are shown beside it
+(`org_count`) and never subtracted; a token narrowed to `personal` or selected orgs sees `org_count` and
+`total` over only the orgs it reaches. The shaping is the pure `memoryQuotaFromRow`
+(`packages/mcp-core/src/limits/memory-quota.ts`, mirrored to `_shared/limits/`). Warns at the cap
+and under 10 % headroom. Unlike the other read commands it **exits 1** when the remote is
+denied/unconfigured/unreachable/erroring, because there is no offline answer to fall back to and a
+script gating a bulk write needs to see the failure; `--json` emits
+`{ available, endpoint, plan, personal, org_count, total }` or `{ available: false, reason }`
 
 ### `diff`
 

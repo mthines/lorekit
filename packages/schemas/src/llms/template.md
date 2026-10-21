@@ -123,8 +123,11 @@ behaves exactly as it always has.
 A request that NAMES a scope outside the allowlist is refused (`-32003` on MCP,
 `403` on REST) rather than answered with an empty list. A request that names no
 scope is narrowed instead. `memory.scopes` is narrowed too, so a scoped token
-cannot enumerate scope names it may not read. An operation that carries no scope
-at all (`memory.purge_expired`) is refused for a token that has an allowlist.
+cannot enumerate scope names it may not read. An account-wide sweep, which
+carries no scope at all (`memory.purge`, `memory.purge_expired`), is refused for a
+token that has an allowlist. `memory.quota` is answered for every token: it
+returns counts only, `org_count` and `total` cover just the orgs the tenancy
+reaches (`0` under `personal`), and `personal` stays account-wide because the cap is.
 
 For a scope INSIDE the allowlist, a scoped token can archive, delete, or restore any writer's row for that scope+key — the management authority the owner granted by scoping the key — reporting `404` (nothing there) vs `403` (present, but not this token's to touch); an unscoped token stays own-rows-only.
 
@@ -193,7 +196,7 @@ view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
-| Label | `tags` | includes all (default), includes any, includes none |
+| Tag | `tags` | includes all (default), includes any, includes none |
 | Kind | `kind` | is / is either of, is not |
 | Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |
@@ -214,6 +217,11 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
+`exclude_tags` (comma-separated) is a separate "carries none of these labels" condition ANDed with
+`tags` in any mode, so `tags=perf&tags_mode=all&exclude_tags=flaky` is "tagged perf, not tagged
+flaky". `GET /memories/facets`, `/activity` and `/pivot` (and their `POST` body forms) take it too.
+In the Explorer, tags can carry an include pill and an exclude pill at once, and a memory's detail
+panel offers filter in / filter out on every metadata value.
 
 `kind` and `host` are the memory TAXONOMY: `kind` is the bucket type — a closed vocabulary of
 `lesson`, `bus` and `signal` — and `host` is the skill or agent that owns the bucket. Together they

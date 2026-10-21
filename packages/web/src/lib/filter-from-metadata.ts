@@ -11,19 +11,20 @@
  * the component.
  *
  * Deliberately delegates to `filters.ts` rather than re-deriving any of its
- * logic (code-quality: one source of truth) — `toggleFilterValue`,
+ * logic (code-quality: one source of truth) — `applyValueFilter`,
  * `resolveFilters`, and `filtersParamValue` are the SAME functions the
- * Explorer's own filter bar uses, so a value toggled from the panel produces
- * the exact `?filters=` shape the bar would have written itself.
+ * Explorer's own filter bar uses, so a value filtered in or out from the panel
+ * produces the exact `?filters=` shape the bar would have written itself.
  */
 
 import {
+  applyValueFilter,
   filtersParamValue,
-  isValueSelected,
   requireField,
-  toggleFilterValue,
+  valuePolarity,
   type Filter,
   type FilterField,
+  type FilterPolarity,
 } from './filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
@@ -177,31 +178,26 @@ export interface CurrentExplorerParams {
 /**
  * The next `/lore?…` href for applying `target` from the panel.
  *
- * A `filter` target toggles the value into the SAME `Filter[]` shape the
- * Explorer's filter bar writes (`toggleFilterValue` + `filtersParamValue` —
- * no new URL param, AC-6); a `scope` target replaces `?scope=` instead
- * (AC-7). Either way `?lesson=` is preserved when present, so the panel
- * stays open on the SAME memory after the navigation (Decision D3/AC-8) even
- * if that memory no longer matches the newly-narrowed list.
+ * A `filter` target filters the value in or out (`polarity`) in the SAME
+ * `Filter[]` shape the Explorer's filter bar writes (`applyValueFilter` +
+ * `filtersParamValue` — no new URL param, AC-6); a `scope` target replaces
+ * `?scope=` instead (AC-7) and has no "out": the API has no "every scope but
+ * this one" filter, so the panel never offers it. Either way `?lesson=` is
+ * preserved when present, so the panel stays open on the SAME memory after the
+ * navigation (Decision D3/AC-8) even if that memory no longer matches the
+ * newly-narrowed list.
  */
 export function applyMetadataFilterHref(
   current: CurrentExplorerParams,
   target: MetadataFilterTarget,
+  polarity: FilterPolarity = 'include',
 ): string {
+  const next = nextMetadataFilterState(current, target, polarity);
   const params = new URLSearchParams();
 
-  if (target.kind === 'scope') {
-    // `useUrlState`'s wire format — see the field docblock above.
-    params.set('scope', JSON.stringify(target.scope));
-    const filtersValue = filtersParamValue(current.filters, current.legacyTags, current.legacyOwner);
-    if (filtersValue !== null) params.set('filters', JSON.stringify(filtersValue));
-  } else {
-    const nextFilters = toggleFilterValue(current.filters, target.field, target.value);
-    const filtersValue = filtersParamValue(nextFilters, current.legacyTags, current.legacyOwner);
-    if (filtersValue !== null) params.set('filters', JSON.stringify(filtersValue));
-    if (current.scope !== null) params.set('scope', JSON.stringify(current.scope));
-  }
-
+  // `useUrlState`'s wire format — see the field docblock above.
+  if (next.scope !== null) params.set('scope', JSON.stringify(next.scope));
+  if (next.filters !== null) params.set('filters', JSON.stringify(next.filters));
   if (current.lesson !== null) params.set('lesson', current.lesson);
   if (current.memoryId) params.set('memoryId', current.memoryId);
   // `useUrlState`'s wire format again — the Explorer reads `?q=` as a JSON
@@ -212,35 +208,98 @@ export function applyMetadataFilterHref(
   return qs ? `/lore?${qs}` : '/lore';
 }
 
+/** The `?filters=` and `?scope=` values applying a target produces — `null` meaning "no param". */
+export interface MetadataFilterState {
+  filters: Filter[] | null;
+  scope: string | null;
+}
+
+/**
+ * What applying `target` sets `?filters=` and `?scope=` to — the pure core of
+ * both ways the panel applies a filter: {@link applyMetadataFilterHref} builds
+ * a `/lore` link from it when the panel is open elsewhere, and on the Explorer
+ * itself the panel writes these two values straight into the URL state the
+ * Explorer reads, so the change shows at once rather than after a navigation.
+ *
+ * `filters` is already the PARAM value (`filtersParamValue`): `null` drops the
+ * param, and `[]` survives only to override a legacy `?tags=` link.
+ */
+export function nextMetadataFilterState(
+  current: CurrentExplorerParams,
+  target: MetadataFilterTarget,
+  polarity: FilterPolarity = 'include',
+): MetadataFilterState {
+  if (target.kind === 'scope') {
+    return {
+      filters: filtersParamValue(current.filters, current.legacyTags, current.legacyOwner),
+      scope: target.scope,
+    };
+  }
+  const nextFilters = applyValueFilter(current.filters, target.field, target.value, polarity);
+  return {
+    filters: filtersParamValue(nextFilters, current.legacyTags, current.legacyOwner),
+    scope: current.scope,
+  };
+}
+
 // ── Active-filter matching (R9 — "which of this memory's values am I already filtering by") ──
 
 /**
- * Whether `target` matches the currently-applied filter/scope state — i.e.
- * whether ACTIVATING it would be a no-op because it is already applied. Used
- * to render the metadata value it came from (a tag chip, the scope badge, a
- * kind/host/agent/trigger value, an origin repo/branch/PR chip) with the same
- * "this is active" accent the filter bar's own committed pills use, so the
- * panel answers "which of THIS memory's attributes are the ones I'm filtering
- * by" without a parallel matching scheme.
+ * Whether `target`'s value is currently filtered IN, filtered OUT, or neither
+ * (`null`). Drives two things: the value's own cue in the panel (the accent
+ * tint a committed `FilterPill` uses for "in", a struck-through muted style for
+ * "out"), and which of the panel's two buttons reads as pressed — pressing it
+ * again is how the reader takes that filter back off.
  *
- * A `filter` target matches when its value is currently selected for its
- * field — reusing {@link isValueSelected}, the SAME membership check
- * `FilterMenu`'s value checkboxes use, so a value that reads "selected" in
- * the menu reads "active" here too. Deliberately operator-agnostic: whether
- * the field is combined with `in` (is/is either of), `nin` (is not), or
- * `all` (includes all) does not change whether THIS value is part of the
- * set the field currently names — the panel is answering "is this among
- * what's applied", not restating the qualifier a `FilterPill` already shows.
+ * A `filter` target reads its polarity from {@link valuePolarity}: the slot
+ * that names the value, so a tag in "includes none" reads as out and a host in
+ * "is either of" reads as in. A value no condition names is `null`, even when
+ * a condition happens to rule it out — nothing on screen says so.
  *
- * A `scope` target matches when it equals the current `?scope=` EXACTLY —
- * scope is a single value, not a set, so there is no operator to consider,
- * and `null` (no scope filter active) never matches any scope string.
+ * A `scope` target is `include` when it equals the current `?scope=` EXACTLY —
+ * scope is a single value with no "out", and `null` (no scope filter active)
+ * never matches any scope string.
  */
-export function isMetaValueActiveFilter(
+export function metaValueFilterState(
   target: MetadataFilterTarget,
   filters: readonly Filter[],
   scope: string | null,
-): boolean {
-  if (target.kind === 'scope') return scope !== null && scope === target.scope;
-  return isValueSelected(filters, target.field, target.value);
+): FilterPolarity | null {
+  if (target.kind === 'scope') return scope !== null && scope === target.scope ? 'include' : null;
+  return valuePolarity(filters, target.field, target.value);
+}
+
+// ── Copy for the panel's two buttons ─────────────────────────────────────────
+
+/**
+ * The explanation shown in each button's tooltip (and used as its accessible
+ * name). `subject` names the value in words — `tag "perf"`, `host "reviewer"`.
+ * A pressed button says how to take the filter back off, since pressing it
+ * again is exactly that.
+ */
+export function filterActionLabel(
+  polarity: FilterPolarity,
+  subject: string,
+  state: FilterPolarity | null,
+): string {
+  const pressed = state === polarity;
+  if (polarity === 'include') {
+    return pressed
+      ? `Filtered in — click to remove ${subject} from the filter`
+      : `Filter in — show only memories with ${subject}`;
+  }
+  return pressed
+    ? `Filtered out — click to stop hiding ${subject}`
+    : `Filter out — hide memories with ${subject}`;
+}
+
+/**
+ * The hovered value's own accessible name: what it is, and the two keys that
+ * act on it without the mouse (the flyout's buttons are pointer-only, because a
+ * portaled panel at the end of the DOM is an out-of-order Tab stop).
+ */
+export function filterAnchorLabel(subject: string, canFilterOut: boolean): string {
+  return canFilterOut
+    ? `${subject} — press Enter to filter in, Shift+Enter to filter out`
+    : `${subject} — press Enter to filter in`;
 }

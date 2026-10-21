@@ -73,6 +73,7 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/limits/dry-run.ts', edge: 'supabase/functions/_shared/limits/dry-run.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/telemetry/usage-stats.ts', edge: 'supabase/functions/_shared/telemetry/usage-stats.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/limits/expiring-window.ts', edge: 'supabase/functions/_shared/limits/expiring-window.ts', driftChecked: true },
+  { core: 'packages/mcp-core/src/limits/memory-quota.ts', edge: 'supabase/functions/_shared/limits/memory-quota.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/cors-origins.ts', edge: 'supabase/functions/_shared/api/cors-origins.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/count-cursor.ts', edge: 'supabase/functions/_shared/api/count-cursor.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/scope/scope-type-attribute.ts', edge: 'supabase/functions/_shared/scope/scope-type-attribute.ts', driftChecked: true },

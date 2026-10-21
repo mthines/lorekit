@@ -28,6 +28,8 @@ import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/limits/created-at.ts';
+import { memoryQuotaFromRow, quotaForKey, type MemoryCountRow } from '../_shared/limits/memory-quota.ts';
+import { countActiveOrgMemories } from '../_shared/limits/org-memory-count.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/provenance/origin.ts';
 import { recordAuditDeferred } from '../_shared/audit/audit.ts';
@@ -889,7 +891,11 @@ export async function toolListArchived(
   span: Span,
   keyScoping?: KeyRestriction,
 ) {
-  const { scope: rawScope, limit = 50 } = params;
+  const { scope: rawScope, tags: rawTags, limit = 50 } = params;
+  // `tags` narrows exactly as it does on `memory.list` (ANY of them, OR) — the
+  // archived twin used to take no tag filter, so finding one archived lesson
+  // among many meant paging the whole archive.
+  const tags = toTagList(rawTags);
   // Optional for the same reason as `memory.list`, whose `?archived=true` form
   // this is the MCP twin of — the two must not disagree about whether a scope
   // is needed to look at the same rows.
@@ -909,6 +915,8 @@ export async function toolListArchived(
     'lorekit.list.unscoped': scope === null,
     'lorekit.requested_limit': limit,
     'lorekit.limit_capped': limit > pageLimit,
+    // A count, never the tag values — bounded, and no lesson content leaks.
+    'lorekit.tags.count': tags.length,
   });
 
   const tracedDb = createTracedClient(db, span);
@@ -924,6 +932,7 @@ export async function toolListArchived(
     .limit(pageLimit);
   if (scope) query = query.eq('scope', scope);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
+  if (tags.length) query = query.overlaps('tags', pgArrayLiteral(tags));
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const rows = data ?? [];
@@ -1350,6 +1359,36 @@ export async function toolScopes(
 
   span.setAttributes({ 'lorekit.result_count': scopes.length });
   return { scopes };
+}
+
+/**
+ * `memory.quota` — the caller's active memories against their plan's cap.
+ * Same RPC and shaping as `GET /memories/quota`; counts only, so a scoped key may call it.
+ */
+export async function toolQuota(
+  db: DbClient,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+  keyScoping?: KeyRestriction,
+) {
+  if (!userId) throw new UserInputError('memory.quota requires a user-scoped credential (service-role tokens have no user and no cap)');
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc<MemoryCountRow>('lorekit_memory_count', { p_user_id: userId });
+  if (error) throw new Error((error as { message: string }).message);
+
+  // A key narrowed to `personal` or selected orgs sees only the orgs it reaches (00068).
+  const quota = await quotaForKey(memoryQuotaFromRow(data), keyScoping, {
+    memberOrgIds: () => memberOrgIds(db, userId),
+    countOrgMemories: (orgIds) => countActiveOrgMemories(db, span, orgIds),
+  });
+  span.setAttributes({
+    'lorekit.plan': quota.plan,
+    'lorekit.memory.count': quota.personal.count,
+    'lorekit.memory.limit': quota.personal.limit,
+  });
+  return quota;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

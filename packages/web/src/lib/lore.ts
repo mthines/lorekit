@@ -2,7 +2,13 @@
 
 /**
  * Server actions for memory (lore) management.
- * Update, archive, restore, purge, and paginated list — all user-scoped.
+ * Update, archive, restore and purge — all user-scoped MUTATIONS.
+ *
+ * Reads do not belong here. Next's app router runs server actions one at a
+ * time per client, so a read served by one queues behind every other action in
+ * flight and cannot be aborted. The paginated list used to live in this file as
+ * `listMemories`; it is now a browser request (`fetchMemoryPage` in
+ * `queries/lore.ts`, body built by `lib/memory-list.ts`).
  *
  * Every one of these goes through LoreKit's own REST API (the `memories` edge
  * function) rather than querying PostgREST directly. They used to do the
@@ -12,31 +18,18 @@
  * contract drift, and these had. The dashboard is now a client of the same
  * documented surface the CLI and every agent use.
  *
- * They stay SERVER actions (rather than moving into the client hooks) so the
- * Explorer's data path is unchanged from the components' point of view, and so
- * the access token is read from the cookie session rather than handed to the
- * browser bundle.
+ * The mutations stay SERVER actions, reading the access token from the cookie
+ * session. A mutation is a single user gesture, so the one-at-a-time queue costs
+ * nothing here. The read hooks in `queries/lore.ts` use the browser session's
+ * token (`session-browser.ts`), which is the same user JWT.
  */
 
 import { revalidatePath } from 'next/cache';
-import type { Page } from '@/lib/pagination/keyset';
-import { clampPageSize } from '@/lib/pagination/keyset';
-import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
-import type { LessonEntry } from '@/components/lore/LessonCard';
-import { normalizeTags } from '@/lib/tag-filter';
-import { filtersToBody, normalizeFilters, type Filter } from '@/lib/filters';
-import { DEFAULT_EXPLORER_SORT, type ExplorerSort } from '@/lib/explorer-sort';
-import {
-  retentionConditionsToListBody,
-  type RetentionConditions,
-} from '@/lib/retention-filter';
-import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { serverAccessToken } from '@/lib/api/session-server';
 import { RestApiError } from '@/lib/api/rest';
 import {
   archiveMemoryRequest,
   listMemoriesRequest,
-  listMemoriesPostRequest,
   purgeMemoriesRequest,
   restoreMemoryRequest,
   updateMemoryRequest,
@@ -158,144 +151,5 @@ export async function purgeArchivedLessons(
     return { purged };
   } catch (err) {
     return { purged: 0, error: messageFor(err) };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Paginated memory listing
-// ---------------------------------------------------------------------------
-
-export interface MemoryFilters {
-  /** Filter to a single scope. Omit or pass null to return all scopes. */
-  scope?: string | null;
-  /** Case-insensitive substring match against `key` or `value`. */
-  search?: string;
-  /** Inclusive `from` / exclusive-day-end `to` interval on `created_at`. */
-  range?: DateRangeInput | null;
-  /**
-   * Labels (`memories.tags`) a row must carry — ALL of them, not any.
-   * Absent or empty means "no label filter".
-   *
-   * @deprecated Superseded by {@link MemoryFilters.filters}. Folded into it
-   * below (as a `label` filter with the `all` operator) so there is one
-   * translation to the wire.
-   */
-  tags?: string[];
-  /**
-   * The Explorer's filter bar: one condition per dimension (label / agent /
-   * trigger / repo / branch / pull request), OR within a dimension and AND
-   * across them. Translated by the pure `filtersToBody`, which is the
-   * single place the UI vocabulary meets the wire vocabulary.
-   */
-  filters?: Filter[];
-  /**
-   * The retention-preview trio (`lib/retention-filter.ts`) — the same three
-   * conditions a saved retention policy matches on, narrowing the list to
-   * what that policy would catch. Absent/empty means no narrowing.
-   */
-  retentionConditions?: RetentionConditions;
-  /**
-   * The list order (`lib/explorer-sort.ts`) — `created_at` (Newest, the
-   * default) or `opened_count` (Most chosen, migration 00113). A cursor is only
-   * valid for the order that minted it; the route restarts at page one if the
-   * two disagree, and the Explorer's query key changes with the sort anyway.
-   */
-  sort?: ExplorerSort;
-  /** Page size, default 50, hard max 100. */
-  pageSize?: number;
-  /** Opaque keyset cursor from a previous page's `nextCursor`. */
-  cursor?: string | null;
-  /**
-   * When true, returns only archived memories (archived_at IS NOT NULL).
-   * When false/absent, returns only active memories (archived_at IS NULL).
-   */
-  showArchived?: boolean;
-  /**
-   * Narrow to memories whose TTL runs out within N days — the route's
-   * `expiring_within_days` (1–365). Absent means no expiry narrowing.
-   *
-   * Passed straight through and bounded by the route, not here: an
-   * out-of-range value is a 400 the caller should see, and re-implementing the
-   * bound in the dashboard would be a second copy of it to keep in step.
-   */
-  expiringWithinDays?: number;
-}
-
-/**
- * `total` — exact count of every memory the request's filters matched,
- * ignoring pagination (`MemoryPageResponseSchema`'s optional field,
- * `lorekit_memory_list`'s `total_count` column, migration 00094). `Page<T>`
- * itself stays total-less: it is shared with `useAuditLog`, which has no
- * equivalent aggregate, so this is `MemoryPage`'s own addition rather than a
- * field every keyset page now carries.
- */
-export type MemoryPage = Page<LessonEntry> & { total?: number };
-
-const DEFAULT_PAGE_SIZE = 50;
-const MAX_PAGE_SIZE = 100;
-const EMPTY_PAGE: MemoryPage = { rows: [], nextCursor: null, hasMore: false };
-
-/**
- * List a keyset page of the memories the caller can see, newest first, with
- * optional combinable filters (scope / substring / date interval / labels).
- *
- * Ordering defaults to `created_at desc` — `sort: 'created_at'` — not the
- * route's `updated_at` default: a memory migrated with a backdated `created_at`
- * belongs at its original position in the Explorer, which is the order the list
- * has always been in. `filters.sort` swaps in `opened_count` ("Most chosen").
- *
- * Sent over `POST /memories/list` rather than `GET /memories`: the filter bar's
- * dimensions are unbounded, and the query transport caps each one at 2048
- * characters — the ceiling that made the Explorer stop loading past ~50-75
- * selected values in a dimension. The BODY carries the filters; the ordering,
- * the page size and the cursor are unchanged.
- *
- * Fails closed to an empty page on auth failure or API error — read-only, so
- * failing closed is safe.
- */
-export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryPage> {
-  const token = await serverAccessToken();
-  if (!token) return EMPTY_PAGE;
-
-  const pageSize = clampPageSize(filters.pageSize, { def: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE });
-  const bounds = dateRangeBounds(filters.range);
-
-  // The deprecated `tags` shorthand becomes a `label` filter with the `all`
-  // operator — exactly what it has always meant — unless the caller already
-  // supplied one, in which case the explicit bar wins.
-  const legacyTags = normalizeTags(filters.tags);
-  const explicit = normalizeFilters(filters.filters ?? []);
-  const bar =
-    legacyTags.length === 0 || explicit.some((f) => f.field === 'label')
-      ? explicit
-      : normalizeFilters([...explicit, { field: 'label', operator: 'all', values: legacyTags }]);
-
-  try {
-    const page = await listMemoriesPostRequest(token, {
-      limit: pageSize,
-      sort: filters.sort ?? DEFAULT_EXPLORER_SORT,
-      archived: filters.showArchived ?? false,
-      ...(filters.expiringWithinDays !== undefined
-        ? { expiring_within_days: filters.expiringWithinDays }
-        : {}),
-      ...(filters.scope ? { scope: filters.scope } : {}),
-      ...(filters.search ? { q: filters.search } : {}),
-      ...(bounds.gte ? { created_since: bounds.gte } : {}),
-      ...(bounds.lt ? { created_until: bounds.lt } : {}),
-      // OR within a dimension, AND across dimensions — see `filtersToBody`.
-      ...filtersToBody(bar),
-      ...retentionConditionsToListBody(filters.retentionConditions ?? {}),
-      ...(filters.cursor ? { cursor: filters.cursor } : {}),
-    });
-
-    return {
-      rows: page.entries.map(lessonFromMemoryEntry),
-      nextCursor: page.nextCursor,
-      hasMore: page.hasMore,
-      total: page.total,
-    };
-  } catch (err) {
-    console.error('[listMemories] REST error:', messageFor(err));
-    return EMPTY_PAGE;
   }
 }

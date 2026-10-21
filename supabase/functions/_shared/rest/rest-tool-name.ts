@@ -55,6 +55,7 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories POST /purge': 'memory.purge',
   'memories POST /purge-expired': 'memory.purge_expired',
   'memories GET /scopes': 'memory.scopes',
+  'memories GET /quota': 'memory.quota',
   'memories GET /usage': 'memory.usage',
   'memories GET /usage/runs': 'memory.usage-runs',
   'memories GET /tags': 'memory.tags',

@@ -12,6 +12,7 @@ import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
 import { seenCountOf, withReadFields, updatedAtOf } from './entry-fields.mjs';
 import { pickScopeWinner } from '../shared/scope-precedence.mjs';
+import { matchesTags } from '../shared/lessons-pure.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -79,13 +80,16 @@ class LocalStore {
 
   // list({ scope, tags, limit }) → { ok, entries } — newest-first, tag-filtered,
   // archived hidden, expired hidden (lazily, mirroring the remote read paths).
-  async list({ scope, tags, limit } = {}) {
+  // `tags_mode` defaults to `all` here — what this store has always done with
+  // `tags`, and what `search()` below relies on. The read commands pass the
+  // mode explicitly (`any` unless told otherwise), matching the hosted list.
+  async list({ scope, tags, tags_mode = 'all', limit } = {}) {
     const now = new Date();
     let rows = this._readAll(scope)
       .map((r) => r.entry)
       .filter((e) => isLive(e, now));
     if (Array.isArray(tags) && tags.length) {
-      rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
+      rows = rows.filter((e) => matchesTags(e.tags, tags, tags_mode));
     }
     rows.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     if (limit) rows = rows.slice(0, limit);
@@ -446,12 +450,17 @@ class TwoTierStore {
     return this.projectActive() ? this.project : this.home;
   }
 
-  async list({ scope, tags, limit } = {}) {
-    const homeRes = await this.home.list({ scope, tags });
-    const projRes = this.projectActive()
-      ? await this.project.list({ scope, tags })
-      : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+  // Tags are matched AFTER the tiers merge, never per tier: filtering each
+  // tier first would let a home copy through whenever the project copy that
+  // shadows it fails the filter — listing a stale lesson the unfiltered view
+  // hides. `tags_mode` defaults to `all`, LocalStore.list's own default.
+  async list({ scope, tags, tags_mode = 'all', limit } = {}) {
+    const homeRes = await this.home.list({ scope });
+    const projRes = this.projectActive() ? await this.project.list({ scope }) : { entries: [] };
+    let merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+    if (Array.isArray(tags) && tags.length) {
+      merged = merged.filter((e) => matchesTags(e.tags, tags, tags_mode));
+    }
     merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     return { ok: true, entries: limit ? merged.slice(0, limit) : merged };
   }

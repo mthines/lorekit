@@ -16,6 +16,13 @@
  * precedence grammar. Anything richer belongs in `POST /memories/search`'s
  * filter tree.
  *
+ * The one exception to "one pill per dimension" is a MULTI-VALUED dimension
+ * (`label`): a row carries many labels, so "includes perf" and "includes none
+ * of flaky" are independent conditions that can both hold, and the bar keeps
+ * them as two pills — an include slot and an exclude slot — ANDed together
+ * (`exclude_tags`, migration 00114). For a single-valued column the two
+ * collapse exactly into one condition, so every other dimension keeps one pill.
+ *
  * Kept dependency-free (no React, no network) so every decision the bar makes
  * is unit-testable in the node vitest project, mirroring `tag-filter.ts` and
  * `org-ui.ts`. The impure shells are `components/lore/FilterMenu.tsx` (the
@@ -81,6 +88,17 @@ export interface Filter {
 }
 
 /**
+ * Whether a condition keeps rows that match its values (`include`) or rows
+ * that do not (`exclude` — the `nin` operator). The detail panel's "filter in"
+ * and "filter out" buttons are the two polarities.
+ */
+export type FilterPolarity = 'include' | 'exclude';
+
+export function filterPolarity(filter: Pick<Filter, 'operator'>): FilterPolarity {
+  return filter.operator === 'nin' ? 'exclude' : 'include';
+}
+
+/**
  * The `GET /memories/facets` dimension a field's values are catalogued under.
  *
  * This mirrors `MemoryFacetSchema` (`@lorekit/schemas/memory`) exactly — the
@@ -111,6 +129,11 @@ export interface FilterFieldDescriptor {
   field: FilterField;
   /** The word in the type list and in the pill's first segment. */
   label: string;
+  /**
+   * Other words a user may type for this dimension in the menu's search box.
+   * Matched exactly like {@link FilterFieldDescriptor.label}, never shown.
+   */
+  aliases?: readonly string[];
   /** Placeholder for the value-list search box. */
   searchPlaceholder: string;
   /** The facet whose values populate this field. */
@@ -119,6 +142,14 @@ export interface FilterFieldDescriptor {
   operators: readonly FilterOperator[];
   /** How a raw value is rendered (a PR number reads as `#482`, not `482`). */
   format: (value: string) => string;
+  /**
+   * A row carries MANY values of this dimension (only `label`). Including some
+   * values and excluding others are then independent conditions that can both
+   * hold, so the bar keeps one include slot AND one exclude slot for it. For a
+   * single-valued column "is A or B" and "is not X" collapse into one exact
+   * condition, so it never needs a second slot.
+   */
+  multiValued?: boolean;
 }
 
 /**
@@ -135,15 +166,24 @@ export interface FilterFieldDescriptor {
  * memories with every selected label"), and silently flipping a live filter's
  * semantics on upgrade would change what an already-shared `?tags=` link
  * returns. `includes any` is one click away in the operator menu.
+ *
+ * The `label` field is SHOWN as "Tag". Every other surface — the lesson detail
+ * sheet, the docs, the MCP tools, the CLI's `--tags` — calls these tags, and a
+ * menu that said "Label" read as "this Explorer cannot filter by tags". The
+ * field id stays `label` because it is serialised into `?filters=` links, so
+ * renaming it would break every link already shared; "label" stays searchable
+ * as an alias for anyone who learned the old word.
  */
 export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
   {
     field: 'label',
-    label: 'Label',
-    searchPlaceholder: 'Search labels…',
+    label: 'Tag',
+    aliases: ['tags', 'label', 'labels'],
+    searchPlaceholder: 'Search tags…',
     facet: 'tag',
     operators: ['all', 'in', 'nin'],
     format: (v) => v,
+    multiValued: true,
   },
   {
     // The coarsest partition of the store, so it sits high: `bus` events are
@@ -259,9 +299,11 @@ export function requireField(field: FilterField): FilterFieldDescriptor {
  * malformed URL. The invariants it establishes, which every consumer below may
  * then assume:
  *
- * - at most one filter per field (a second one for the same field is merged
- *   into the first, because two pills of one dimension have no rendering in a
- *   flat bar and no meaning the operator cannot already express);
+ * - at most one filter per field — or, for a {@link FilterFieldDescriptor.multiValued}
+ *   field, at most one per polarity (an include slot and an exclude slot). A
+ *   second filter for the same slot is merged into the first, because two pills
+ *   of one condition have no rendering in a flat bar and no meaning the
+ *   operator cannot already express;
  * - values are trimmed, de-duplicated and non-empty;
  * - a filter with no values is removed entirely — an empty pill is a control
  *   that filters nothing and cannot be cleared by the thing it looks like;
@@ -270,7 +312,7 @@ export function requireField(field: FilterField): FilterFieldDescriptor {
 export function normalizeFilters(raw: unknown): Filter[] {
   if (!Array.isArray(raw)) return [];
 
-  const byField = new Map<FilterField, Filter>();
+  const bySlot = new Map<string, Filter>();
 
   for (const candidate of raw) {
     if (!candidate || typeof candidate !== 'object') continue;
@@ -286,20 +328,43 @@ export function normalizeFilters(raw: unknown): Filter[] {
         ? (operator as FilterOperator)
         : (descriptor.operators[0] as FilterOperator);
 
-    const existing = byField.get(descriptor.field);
+    const slot = slotKey(descriptor.field, op);
+    const existing = bySlot.get(slot);
     if (existing) {
       // Merge rather than drop: a duplicated field in a hand-edited URL most
       // likely means "all of these values", and losing half of them silently
       // is the worse failure.
       existing.values = normalizeTagList([...existing.values, ...cleanValues]);
     } else {
-      byField.set(descriptor.field, { field: descriptor.field, operator: op, values: cleanValues });
+      bySlot.set(slot, { field: descriptor.field, operator: op, values: cleanValues });
     }
   }
 
-  // Emit in FILTER_FIELDS order so the pill row is stable across reloads and
-  // shared links, rather than reflecting the order values happened to be added.
-  return FILTER_FIELDS.map((d) => byField.get(d.field)).filter((f): f is Filter => f !== undefined);
+  // Emit in FILTER_FIELDS order — include slot before exclude slot — so the
+  // pill row is stable across reloads and shared links, rather than reflecting
+  // the order values happened to be added.
+  return FILTER_FIELDS.flatMap((d) =>
+    [bySlot.get(d.field), bySlot.get(`${d.field}:exclude`)].filter((f): f is Filter => f !== undefined),
+  );
+}
+
+/**
+ * The slot a condition occupies: the field itself, or `<field>:exclude` for
+ * the exclude slot of a multi-valued field. Two conditions in one slot merge.
+ */
+function slotKey(field: FilterField, operator: FilterOperator): string {
+  return requireField(field).multiValued && operator === 'nin' ? `${field}:exclude` : field;
+}
+
+/**
+ * A pill's React key. A field's FIRST pill is keyed by the field alone, so a
+ * pill whose operator changes ("includes all" → "includes none") is rewritten
+ * in place rather than remounted with an exit animation; only a tag's SECOND
+ * pill — the exclude beside an include — gets a key of its own.
+ */
+export function filterPillKey(filter: Filter, filters: readonly Filter[]): string {
+  const first = filters.find((f) => f.field === filter.field);
+  return first === filter ? filter.field : slotKey(filter.field, filter.operator);
 }
 
 /**
@@ -390,13 +455,44 @@ export function filtersParamValue(
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
-export function findFilter(filters: readonly Filter[], field: FilterField): Filter | undefined {
-  return filters.find((f) => f.field === field);
+/**
+ * The field's condition — or, given a polarity, the condition of that polarity
+ * (a multi-valued field can hold one of each).
+ */
+export function findFilter(
+  filters: readonly Filter[],
+  field: FilterField,
+  polarity?: FilterPolarity,
+): Filter | undefined {
+  return filters.find(
+    (f) => f.field === field && (polarity === undefined || filterPolarity(f) === polarity),
+  );
 }
 
-/** The values currently selected for a field. Empty when the field has no filter. */
+/**
+ * The values currently named for a field, across BOTH slots of a multi-valued
+ * field — so the menu shows an excluded value as checked, and unchecking it
+ * takes the exclusion off. Empty when the field has no filter.
+ */
 export function selectedValues(filters: readonly Filter[], field: FilterField): string[] {
-  return findFilter(filters, field)?.values ?? [];
+  return filters.filter((f) => f.field === field).flatMap((f) => f.values);
+}
+
+/**
+ * Whether a value is currently included or excluded for its field, or `null`
+ * when no condition names it. A scalar `is` condition names its values as
+ * included and an `is not` one as excluded; a value it does not name is
+ * `null` even when the condition happens to rule it out, because nothing on
+ * screen says so.
+ */
+export function valuePolarity(
+  filters: readonly Filter[],
+  field: FilterField,
+  value: string,
+): FilterPolarity | null {
+  const trimmed = value.trim();
+  const holder = filters.find((f) => f.field === field && f.values.includes(trimmed));
+  return holder ? filterPolarity(holder) : null;
 }
 
 export function isValueSelected(
@@ -430,37 +526,162 @@ export function toggleFilterValue(
   const trimmed = value.trim();
   if (!trimmed) return normalizeFilters(filters as unknown[]);
 
-  const current = findFilter(filters, field);
-  if (!current) {
+  if (valuePolarity(filters, field, trimmed) !== null) return withoutValue(filters, field, trimmed);
+
+  // A new value joins the include slot when there is one, else the field's
+  // only condition (an exclude-only tag filter grows its exclusion, as it
+  // always has), else starts a condition with the field's default operator.
+  const target = findFilter(filters, field, 'include') ?? findFilter(filters, field);
+  if (!target) {
     return normalizeFilters([
       ...filters,
       { field, operator: requireField(field).operators[0], values: [trimmed] },
     ]);
   }
+  return withValueAdded(filters, target, trimmed);
+}
 
-  const nextValues = current.values.includes(trimmed)
-    ? current.values.filter((v) => v !== trimmed)
-    : [...current.values, trimmed];
+/**
+ * The detail panel's "filter in" / "filter out" for one value — and, pressed
+ * again while that value is already included / excluded, the way back off.
+ *
+ * Every result is the existing bar ANDed with the click, expressed in the
+ * bar's own shape:
+ *
+ * - **Exclude, value not yet named.** `bar AND NOT value`. A tag joins the
+ *   exclude slot ("includes none of a, b" = NOT a AND NOT b); a scalar `is not`
+ *   grows the same way; a scalar `is` that already rules the value out is
+ *   unchanged, because `(is A) AND (is not X)` is just `is A`.
+ * - **Include, value not yet named.** Joins the include slot — OR within the
+ *   dimension for `is either of` / `includes any`, AND for `includes all`,
+ *   which is what every other way of adding a value to that pill means. A
+ *   scalar `is not` is replaced by `is value`: for a single-valued column,
+ *   `(is not A) AND (is X)` is exactly `is X`.
+ * - **The value currently has the OTHER polarity.** It moves: a value can never
+ *   be both required and forbidden (that is the empty set, which no click asks
+ *   for). Excluding a scalar's ONLY included value therefore flips `is X` to
+ *   `is not X`, and excluding a required tag moves it to the exclude slot.
+ */
+export function applyValueFilter(
+  filters: readonly Filter[],
+  field: FilterField,
+  value: string,
+  polarity: FilterPolarity,
+): Filter[] {
+  const trimmed = value.trim();
+  if (!trimmed) return normalizeFilters(filters as unknown[]);
 
+  const current = valuePolarity(filters, field, trimmed);
+  if (current === polarity) return withoutValue(filters, field, trimmed);
+
+  if (requireField(field).multiValued) {
+    // Independent slots: take the value out of the other one (if it was there),
+    // then add it to this one.
+    const rest = withoutValue(filters, field, trimmed);
+    const slot = findFilter(rest, field, polarity);
+    if (slot) return withValueAdded(rest, slot, trimmed);
+    const operator = polarity === 'exclude' ? 'nin' : requireField(field).operators[0];
+    return normalizeFilters([...rest, { field, operator, values: [trimmed] }]);
+  }
+
+  // Single-valued: one condition per field, simplified exactly.
+  const condition = findFilter(filters, field);
+  if (!condition) {
+    return normalizeFilters([
+      ...filters,
+      { field, operator: polarity === 'exclude' ? 'nin' : 'in', values: [trimmed] },
+    ]);
+  }
+  if (polarity === 'include') {
+    return condition.operator === 'in'
+      ? withValueAdded(filters, condition, trimmed)
+      : replaceCondition(filters, condition, { field, operator: 'in', values: [trimmed] });
+  }
+  if (condition.operator === 'nin') return withValueAdded(filters, condition, trimmed);
+  if (current === null) return normalizeFilters(filters as unknown[]);
+  const remaining = condition.values.filter((v) => v !== trimmed);
+  return remaining.length > 0
+    ? replaceCondition(filters, condition, { ...condition, values: remaining })
+    : replaceCondition(filters, condition, { field, operator: 'nin', values: [trimmed] });
+}
+
+/** Remove a value from whichever condition names it; a condition left empty goes. */
+function withoutValue(filters: readonly Filter[], field: FilterField, value: string): Filter[] {
   return normalizeFilters(
-    filters.map((f) => (f.field === field ? { ...f, values: nextValues } : f)),
+    filters.map((f) => (f.field === field ? { ...f, values: f.values.filter((v) => v !== value) } : f)),
   );
 }
 
-/** Replace a field's operator. A no-op for an operator the field does not offer. */
+function withValueAdded(filters: readonly Filter[], target: Filter, value: string): Filter[] {
+  return replaceCondition(filters, target, { ...target, values: [...target.values, value] });
+}
+
+function replaceCondition(filters: readonly Filter[], target: Filter, next: Filter): Filter[] {
+  return normalizeFilters(filters.map((f) => (f === target ? next : f)));
+}
+
+/**
+ * Replace a condition's operator — the field's only condition, or the one of
+ * `polarity` when a multi-valued field holds both. A no-op for an operator the
+ * field does not offer.
+ *
+ * Moving a tag condition onto the OTHER slot (an include switched to "includes
+ * none", or the reverse) merges it into the condition already there, and the
+ * operator just picked wins: the pill the reader changed is the one that says
+ * what they meant.
+ */
 export function setFilterOperator(
   filters: readonly Filter[],
   field: FilterField,
   operator: FilterOperator,
+  polarity?: FilterPolarity,
 ): Filter[] {
-  if (!(requireField(field).operators as readonly string[]).includes(operator)) {
+  const target = findFilter(filters, field, polarity);
+  if (!target || !(requireField(field).operators as readonly string[]).includes(operator)) {
     return normalizeFilters(filters as unknown[]);
   }
-  return normalizeFilters(filters.map((f) => (f.field === field ? { ...f, operator } : f)));
+  // First in the list, so `normalizeFilters`' "first operator wins" merge keeps it.
+  return normalizeFilters([{ ...target, operator }, ...filters.filter((f) => f !== target)]);
 }
 
-export function removeFilter(filters: readonly Filter[], field: FilterField): Filter[] {
-  return normalizeFilters(filters.filter((f) => f.field !== field));
+/** Remove a field's conditions — or only the one of `polarity`. */
+export function removeFilter(
+  filters: readonly Filter[],
+  field: FilterField,
+  polarity?: FilterPolarity,
+): Filter[] {
+  return normalizeFilters(
+    filters.filter((f) => f.field !== field || (polarity !== undefined && filterPolarity(f) !== polarity)),
+  );
+}
+
+/**
+ * Whether the bar holds a condition only the Explorer can run: a tag include
+ * AND a tag exclude at once. A retention policy carries one `tags` list with
+ * one `tags_mode`, so it has no way to say both — handing such a bar to a
+ * policy would silently drop half of it and archive more than the reader saw.
+ */
+export function hasExplorerOnlyFilters(filters: readonly Filter[]): boolean {
+  return FILTER_FIELDS.some(
+    (d) => d.multiValued && findFilter(filters, d.field, 'include') && findFilter(filters, d.field, 'exclude'),
+  );
+}
+
+/**
+ * The bar minus what a policy cannot express — a multi-valued field's exclude
+ * slot when its include slot is also set. For a prefill that arrived anyway
+ * (a hand-edited link): the builder then SHOWS only the conditions the saved
+ * policy will match, rather than a pill it would quietly ignore.
+ */
+export function policyExpressibleFilters(filters: readonly Filter[]): Filter[] {
+  return normalizeFilters(
+    filters.filter(
+      (f) =>
+        !(requireField(f.field).multiValued &&
+          filterPolarity(f) === 'exclude' &&
+          findFilter(filters, f.field, 'include')),
+    ),
+  );
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -646,13 +867,17 @@ export function rootSuggestions(
 
   if (!needle) return FILTER_FIELDS.map((d) => ({ kind: 'field' as const, field: d.field }));
 
-  const fieldRank = (d: FilterFieldDescriptor): number => {
-    const name = d.label.toLowerCase();
+  const nameRank = (word: string): number => {
+    const name = word.toLowerCase();
     if (name === needle) return 0;
     if (name.startsWith(needle)) return 1;
     if (name.includes(needle)) return 2;
     return Number.POSITIVE_INFINITY;
   };
+  // The best rank across the shown word and its aliases, so typing `tags` or
+  // `label` finds the Tag dimension as surely as typing `tag` does.
+  const fieldRank = (d: FilterFieldDescriptor): number =>
+    Math.min(nameRank(d.label), ...(d.aliases ?? []).map(nameRank));
 
   const fieldHits: RootSuggestion[] = FILTER_FIELDS
     .map((d) => ({ d, rank: fieldRank(d) }))
@@ -710,6 +935,22 @@ function scalarModeFor(operator: FilterOperator): ScalarFilterMode {
 }
 
 /**
+ * Whether a tag condition travels as `exclude_tags` rather than as `tags`.
+ *
+ * Only the exclude slot, and only beside an include slot: `tags` has one mode,
+ * so it can carry one of the two. A LONE exclusion keeps its historical
+ * encoding (`tags_mode=none`) — identical rows, and the shape retention
+ * policies and existing links already speak.
+ */
+function travelsAsExcludeTags(filter: Filter, filters: readonly Filter[]): boolean {
+  return (
+    filter.field === 'label' &&
+    filterPolarity(filter) === 'exclude' &&
+    findFilter(filters, 'label', 'include') !== undefined
+  );
+}
+
+/**
  * Translate the bar into `GET /memories` query params.
  *
  * The only place the UI vocabulary (`label`, `includes all`) meets the wire
@@ -726,11 +967,16 @@ export function filtersToQueryParams(
   filters: readonly Filter[],
 ): Partial<ListMemoriesQuery> {
   const params: Partial<ListMemoriesQuery> = {};
+  const normalized = normalizeFilters(filters as unknown[]);
 
-  for (const filter of normalizeFilters(filters as unknown[])) {
+  for (const filter of normalized) {
     const joined = filter.values.join(',');
     switch (filter.field) {
       case 'label':
+        if (travelsAsExcludeTags(filter, normalized)) {
+          params.exclude_tags = joined;
+          break;
+        }
         params.tags = joined;
         params.tags_mode = tagsModeFor(filter.operator);
         break;
@@ -840,11 +1086,16 @@ export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFa
  */
 export function filtersToBody(filters: readonly Filter[]): Partial<ListMemoriesBody> {
   const body: Partial<ListMemoriesBody> = {};
+  const normalized = normalizeFilters(filters as unknown[]);
 
-  for (const filter of normalizeFilters(filters as unknown[])) {
+  for (const filter of normalized) {
     const values = [...filter.values];
     switch (filter.field) {
       case 'label':
+        if (travelsAsExcludeTags(filter, normalized)) {
+          body.exclude_tags = values;
+          break;
+        }
         body.tags = values;
         body.tags_mode = tagsModeFor(filter.operator);
         break;

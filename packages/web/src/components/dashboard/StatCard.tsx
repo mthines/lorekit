@@ -62,16 +62,32 @@ export function UnitTag({ label }: { label: string }) {
  * assistive tech — the same two-node pattern `AnimatedNumber` uses, for the same
  * reason. Below the threshold there is no twin, so nothing changes for the
  * overwhelming majority of chips.
+ *
+ * ## `tone="neutral"` when up is not "good"
+ *
+ * Green-for-up says more is better. For a figure where neither direction is a
+ * verdict — more pruning, more reads — `neutral` keeps the arrow and the sign
+ * (direction stays readable without colour) and drops the green/red judgment.
  */
-export function TrendChip({ changePct, title }: { changePct: number; title: string }) {
+export function TrendChip({
+  changePct,
+  title,
+  tone = 'semantic',
+}: {
+  changePct: number;
+  title: string;
+  tone?: 'semantic' | 'neutral';
+}) {
   const dir = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
   const Icon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus;
   const color =
-    dir === 'up'
-      ? 'text-[var(--color-success)]'
-      : dir === 'down'
-        ? 'text-[var(--color-error)]'
-        : 'text-[var(--color-content-tertiary)]';
+    tone === 'neutral' && dir !== 'flat'
+      ? 'text-[var(--color-content-secondary)]'
+      : dir === 'up'
+        ? 'text-[var(--color-success)]'
+        : dir === 'down'
+          ? 'text-[var(--color-error)]'
+          : 'text-[var(--color-content-tertiary)]';
 
   const abbreviated = isPercentDeltaAbbreviated(changePct);
   const exact = `${changePct > 0 ? '+' : ''}${changePct}%`;

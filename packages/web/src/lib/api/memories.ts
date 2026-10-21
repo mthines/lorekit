@@ -25,6 +25,7 @@ import type {
   ListMemoriesQuery,
   MemoryEntry,
   MemoryPageResponse,
+  MemoryQuotaResponse,
   PurgeResponse,
   ReadActivityQuery,
   ReadActivityResponse,
@@ -95,6 +96,18 @@ export function getMemoryByRefRequest(
   return listMemoriesRequest(accessToken, { scope, key, limit: 1 }, signal).then(
     (page) => page.entries[0] ?? null,
   );
+}
+
+/**
+ * `GET /memories/quota` — the caller's active memories against their plan's cap.
+ * `personal` is the pair the cap enforces; `total` adds org-owned memories,
+ * which count against each org's own cap.
+ */
+export function quotaRequest(accessToken: string, signal?: AbortSignal): Promise<MemoryQuotaResponse> {
+  return restFetch<MemoryQuotaResponse>('/memories/quota', {
+    accessToken,
+    ...(signal ? { signal } : {}),
+  });
 }
 
 export function listScopesRequest(accessToken: string, signal?: AbortSignal): Promise<ScopesResponse> {

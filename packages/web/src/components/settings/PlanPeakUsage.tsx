@@ -4,13 +4,10 @@
  * PlanPeakUsage — "peaked at N in the last 30 days", from
  * `GET /memories/usage`'s `summary.peak_memory_count` (migration 00081).
  *
- * Complements {@link PlanUsageBar}, which shows the LIVE count via the
- * pre-existing `lorekit_memory_count()` server action — that answers "how
- * full am I right now"; this answers "how full WAS I over the last month",
- * from `usage_events.memory_count`'s write-time snapshots. Goes through the
- * REST API (`usageRequest`), unlike the legacy `getPlanUsage()` server
- * action, which predates the "dashboard is a REST client" rule and is not
- * this PR's job to migrate.
+ * Complements {@link PlanUsageBar}, which shows the LIVE personal count from
+ * `GET /memories/quota` — that answers "how full am I right now"; this answers
+ * "how full WAS I over the last month", from `usage_events.memory_count`'s
+ * write-time snapshots.
  *
  * Renders nothing while loading or when the window has no write events —
  * this is a bonus caption, not a load-bearing figure worth a skeleton.

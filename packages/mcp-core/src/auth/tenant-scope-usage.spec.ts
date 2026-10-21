@@ -585,3 +585,30 @@ describe('scope-authorized removal surfaces existed → reason (00071 / 00072)',
     expect(body).toContain("'not_found'");
   });
 });
+
+// `lorekit_memory_count` takes no key, so tenancy narrowing lives in `quotaForKey` (behaviour-tested in
+// `limits/memory-quota.spec.ts`). A surface returning `memoryQuotaFromRow(data)` directly would show a
+// `personal` key every org's count, and no vitest harness runs the Deno edge, hence a source guard.
+describe('key-tenancy usage guard (quota org count)', () => {
+  it('GET /memories/quota narrows through quotaForKey with the calling key', () => {
+    const src = readHandlerSource('quota');
+    expect(src).toMatch(/quotaForKey\(memoryQuotaFromRow\(data\),\s*keyRestriction\(auth\),/);
+    expect(src).toContain('countActiveOrgMemories(db, span, orgIds)');
+  });
+
+  it('memory.quota narrows through quotaForKey with the calling key', () => {
+    const body = extractFunctionBody(source, 'toolQuota');
+    expect(body).toMatch(/quotaForKey\(memoryQuotaFromRow\(data\),\s*keyScoping,/);
+    expect(body).toContain('countActiveOrgMemories(db, span, orgIds)');
+  });
+
+  it('the shared org count reads only the org ids it is given, and only active rows', () => {
+    // The api_key path runs on a service-role client, so this filter is the boundary.
+    const src = readFileSync(
+      path.resolve(here, '../../../../supabase/functions/_shared/limits/org-memory-count.ts'),
+      'utf8',
+    );
+    expect(src).toContain(".in('org_id', orgIds)");
+    expect(src).toContain(".is('archived_at', null)");
+  });
+});

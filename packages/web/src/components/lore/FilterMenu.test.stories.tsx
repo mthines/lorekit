@@ -102,7 +102,7 @@ export const ListsEveryDimensionFirst: Story = {
       // literals because menu ORDER is a deliberate design decision, not an
       // artefact of the array.
       await expect(rows).toHaveLength(FILTER_FIELDS.length);
-      await expect(rows[0]).toHaveTextContent('Label');
+      await expect(rows[0]).toHaveTextContent('Tag');
       await expect(rows[rows.length - 1]).toHaveTextContent('Pull request');
     });
 
@@ -310,10 +310,10 @@ export const BackspaceAndStagedEscape: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = await openMenu(canvasElement);
 
-    await step('drill into Label and type a query', async () => {
-      await userEvent.click(await canvas.findByRole('option', { name: /^label/i }));
+    await step('drill into Tag and type a query', async () => {
+      await userEvent.click(await canvas.findByRole('option', { name: /^tag/i }));
       await userEvent.type(
-        canvas.getByRole('combobox', { name: /search label values/i }),
+        canvas.getByRole('combobox', { name: /search tag values/i }),
         'auth',
       );
       await waitFor(() => expect(canvas.getAllByRole('option')).toHaveLength(1));
@@ -322,7 +322,7 @@ export const BackspaceAndStagedEscape: Story = {
     await step('Escape clears the query first, keeping the level and the results', async () => {
       await userEvent.keyboard('{Escape}');
       await waitFor(() => expect(canvas.getAllByRole('option').length).toBeGreaterThan(1));
-      await expect(canvas.getByRole('listbox', { name: /label values/i })).toBeInTheDocument();
+      await expect(canvas.getByRole('listbox', { name: /tag values/i })).toBeInTheDocument();
     });
 
     await step('Backspace on an empty query pops back to the dimension list', async () => {
@@ -362,10 +362,10 @@ export const PillOperatorAndValueEditing: Story = {
 
     await step('a set-valued dimension gets its own operator vocabulary', async () => {
       const operator = await canvas.findByRole('button', {
-        name: /label includes all — change operator/i,
+        name: /tag includes all — change operator/i,
       });
       await userEvent.click(operator);
-      const menu = await canvas.findByRole('listbox', { name: /label operator/i });
+      const menu = await canvas.findByRole('listbox', { name: /tag operator/i });
       await expect(within(menu).getAllByRole('option').map((o) => o.textContent)).toEqual([
         'includes all',
         'includes any',
@@ -376,7 +376,7 @@ export const PillOperatorAndValueEditing: Story = {
     await step('choosing an operator rewrites the pill in place', async () => {
       await userEvent.click(canvas.getByRole('option', { name: 'includes none' }));
       await waitFor(() =>
-        expect(canvas.getByLabelText('Label includes none performance, auth')).toBeInTheDocument(),
+        expect(canvas.getByLabelText('Tag includes none performance, auth')).toBeInTheDocument(),
       );
     });
 
@@ -384,7 +384,7 @@ export const PillOperatorAndValueEditing: Story = {
       await userEvent.click(
         canvas.getByRole('button', { name: /change values/i }),
       );
-      await canvas.findByRole('listbox', { name: /label values/i });
+      await canvas.findByRole('listbox', { name: /tag values/i });
       await expect(await canvas.findByRole('option', { name: /performance/i })).toHaveAttribute(
         'aria-selected',
         'true',
@@ -412,7 +412,7 @@ export const RemovingAndClearingFilters: Story = {
     const canvas = within(canvasElement);
 
     await step('the type segment is inert — it is text, not a control', async () => {
-      const typeSegments = canvas.queryAllByRole('button', { name: /^label$/i });
+      const typeSegments = canvas.queryAllByRole('button', { name: /^tag$/i });
       await expect(typeSegments).toHaveLength(0);
     });
 
@@ -423,7 +423,7 @@ export const RemovingAndClearingFilters: Story = {
       await waitFor(() =>
         expect(canvas.queryByLabelText('Agent is claude')).not.toBeInTheDocument(),
       );
-      await expect(canvas.getByLabelText('Label includes all performance')).toBeInTheDocument();
+      await expect(canvas.getByLabelText('Tag includes all performance')).toBeInTheDocument();
     });
 
     await step('"Clear all" only exists while more than one condition does', async () => {
@@ -450,13 +450,13 @@ export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
     const canvas = within(document.body);
 
     const trigger = await canvas.findByRole('button', {
-      name: /label includes all — change operator/i,
+      name: /tag includes all — change operator/i,
     });
 
     await step('the operator segment opens its listbox', async () => {
       await userEvent.click(trigger);
       await expect(
-        await canvas.findByRole('listbox', { name: /label operator/i }),
+        await canvas.findByRole('listbox', { name: /tag operator/i }),
       ).toBeInTheDocument();
     });
 
@@ -471,7 +471,7 @@ export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
       try {
         await userEvent.keyboard('{Escape}');
         await waitFor(() =>
-          expect(canvas.queryByRole('listbox', { name: /label operator/i })).not.toBeInTheDocument(),
+          expect(canvas.queryByRole('listbox', { name: /tag operator/i })).not.toBeInTheDocument(),
         );
         await expect(docEscape).not.toHaveBeenCalled();
       } finally {
@@ -484,7 +484,7 @@ export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
     });
 
     await step('the condition itself is untouched by the dismissal', async () => {
-      await expect(canvas.getByLabelText('Label includes all performance')).toBeInTheDocument();
+      await expect(canvas.getByLabelText('Tag includes all performance')).toBeInTheDocument();
     });
   },
 };
@@ -515,7 +515,7 @@ export const DimensionListShowsPerGroupSelectionCount: Story = {
 
     await step('each filtered group announces its selection count', async () => {
       await expect(
-        canvas.getByRole('option', { name: /label, 2 selected/i }),
+        canvas.getByRole('option', { name: /tag, 2 selected/i }),
       ).toBeInTheDocument();
       await expect(
         canvas.getByRole('option', { name: /agent, 1 selected/i }),
@@ -1081,7 +1081,7 @@ export const CreatePolicyActionFollowsItsDestination: StoryObj<typeof FilterPill
     await step('a dimension pill and a threshold pill share one row', async () => {
       // Exact names: each pill's value segment repeats its phrase with a
       // "— change value" suffix, so a prefix match returns two per pill.
-      await expect(canvas.getByLabelText('Label includes any performance')).toBeInTheDocument();
+      await expect(canvas.getByLabelText('Tag includes any performance')).toBeInTheDocument();
       await expect(canvas.getByLabelText('Chosen: Never chosen')).toBeInTheDocument();
     });
 

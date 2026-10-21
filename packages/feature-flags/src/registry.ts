@@ -78,6 +78,16 @@ const REGISTRY_INPUT = [
     owner: '@lorekit/web',
     tags: ['dashboard', 'web', 'lore-explorer', 'rollout'],
   },
+  {
+    key: 'insights-visual',
+    description:
+      "Insights — the visual first version of `/insights`: ONE page-wide window, the Learn → Recall → Promote → Prune loop strip, the Pulse timeline (lessons written and records read on a shared time axis, chosen vs bulk), the recall flow (client → tool → scope type), and runs drawn as a weekday × hour rhythm plus swimlanes — with the existing 'earning its place' grid, runs list and operational health kept below. Gates the whole page body through the `InsightsView` resolver; with it off `/insights` renders exactly as before. Reads only routes that already ship (`/memories/activity`, `/read-activity`, `/usage`, `/usage/runs`, `/utility`), so there is no backend prerequisite and flipping it is a pure UI decision.",
+    type: 'boolean',
+    variants: { off: false, on: true },
+    defaultVariant: 'off',
+    owner: '@lorekit/web',
+    tags: ['dashboard', 'web', 'insights', 'rollout'],
+  },
 ] satisfies unknown[];
 
 function parseRegistry(input: unknown): readonly FlagDefinition[] {

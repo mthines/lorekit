@@ -1046,14 +1046,16 @@ Three of these are load-bearing in a way a name does not convey:
 
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
-| `insights.range_changed` | One of the page's two independent windows moved | `lorekit.insights.range.section` (`agent-activity`/`scope-consumption`), `.preset`, `.span_days` (optional) |
+| `insights.range_changed` | An Insights window moved (`page` = the visual page's one window) | `lorekit.insights.range.section` (`agent-activity`/`scope-consumption`/`page`), `.preset`, `.span_days` (optional) |
 | `insights.utility_quadrant_selected` | A utility quadrant was opened or closed | `lorekit.insights.utility.quadrant`, `.selected` |
 | `insights.utility_prompt_copied` | A grooming prompt reached the clipboard | `lorekit.insights.utility.quadrant`, `.entry_count`, `.succeeded` |
 | `insights.scope_opened` | A row handed off to the Explorer | `lorekit.insights.scope.type`, `.source` |
+| `insights.recall_flow_view_changed` | The visual page's recall flow swapped between chart and table | `lorekit.insights.recall_flow.view` (`chart`/`table`) |
 
 `insights.range_changed` names its SECTION because the page deliberately carries
 two independent windows (see `InsightsPage.tsx`); a bare preset could not say
-which one a reader moved. `insights.scope_opened` is the only evidence that the
+which one a reader moved. The flag-gated visual page (`insights-visual`) has a
+single window, reported as `page`. `insights.scope_opened` is the only evidence that the
 leaderboard's and the grid's "pick a row to open it in the Explorer" promise is
 ever taken.
 

@@ -44,7 +44,7 @@ used to show up as write + destructive in MCP clients.
 
 | Class | Tools |
 |-------|-------|
-| Read-only | `memory.read`, `memory.list`, `memory.search`, `memory.scopes`, `memory.list_archived`, `org.list`, `policy.list`, `groom.preview` |
+| Read-only | `memory.read`, `memory.list`, `memory.search`, `memory.scopes`, `memory.quota`, `memory.list_archived`, `org.list`, `policy.list`, `groom.preview` |
 | Write, non-destructive | `memory.archive`, `memory.restore`, `memory.protect`, `groom.run`, `org.create`, `policy.create` |
 | Write, destructive | `memory.write`, `memory.delete`, `memory.purge`, `memory.purge_expired`, `org.rename`, `org.delete`, `policy.update`, `policy.delete` |
 
@@ -526,6 +526,42 @@ so whole scopes go missing for exactly the accounts with the most lore.
 
 ---
 
+## memory.quota
+
+How many active memories you hold against your plan's cap, and how many writes are left before
+`memory.write` is refused with `memory_cap`. Takes no arguments. Requires a token with read
+permission (`lk_rw_*` or `lk_ro_*`); a service-role token has no user and is refused.
+
+`personal` is the pair the cap enforces: your personal memories against your personal limit, with
+`remaining` = limit − count (never negative). Org-owned memories count against each org's own cap,
+so they are reported as `org_count` beside it and never subtracted. It is the same answer
+`GET /memories/quota` and the `lorekit quota` command return.
+
+A token narrowed to `personal` or to selected orgs sees `org_count` and `total` over only the
+orgs it reaches: `0` under `personal`. `personal` is never narrowed, by tenancy or by a scope
+allowlist, because the cap it is measured against is account-wide
+([what a scoped token sees](./api-tokens.md#what-a-scoped-token-sees)).
+
+```json
+{
+  "params": {
+    "name": "memory.quota",
+    "arguments": {}
+  }
+}
+```
+
+```json
+{
+  "plan": "free",
+  "personal": { "count": 3318, "limit": 5000, "remaining": 1682 },
+  "org_count": 982,
+  "total": 4300
+}
+```
+
+---
+
 ## memory.list_archived
 
 List soft-archived lessons for a scope, newest archived first. Requires a token with read permission (`lk_rw_*` or `lk_ro_*`). `scope` is **optional** — omit it to list the archive across every scope you can see.
@@ -536,6 +572,7 @@ List soft-archived lessons for a scope, newest archived first. Requires a token 
     "name": "memory.list_archived",
     "arguments": {
       "scope": "global",
+      "tags": ["loop::aw-lessons"],
       "limit": 20
     }
   }
@@ -545,6 +582,7 @@ List soft-archived lessons for a scope, newest archived first. Requires a token 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `scope` | all visible scopes | Scope to list archived entries for. Omit to list across every scope you can see |
+| `tags` | | Only entries carrying ANY of these tags (OR) — the same semantics as `memory.list` |
 | `limit` | `50` | Max results (cap: 100) |
 
 **Returns:** `{ "entries": [{ "scope", "key", "value", "tags", "updated_at", "archived_at" }] }`
