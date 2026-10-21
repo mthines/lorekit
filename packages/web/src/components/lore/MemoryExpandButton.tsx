@@ -83,9 +83,9 @@ export function MemoryExpandButton({
 
   // The badge count must NOT come from `data.lessons` — that is only the first
   // page of the list (capped at the API's 100-row maximum), so counting it stuck
-  // the badge at "100 memories" for any larger account. The unscoped total is the
-  // SAME figure the /settings/plan page shows (`useMemoryTotal` → the shared
-  // `lorekit_memory_count` RPC), so the two never disagree. A `scope`-filtered
+  // the badge at "100 memories" for any larger account. The unscoped total is
+  // personal + org (`useMemoryTotal` → `total` of GET /memories/quota), while
+  // /settings/plan shows only the personal pair against the cap. A `scope`-filtered
   // instance falls back to the exact per-scope aggregate from GET /memories/scopes.
   const total = useMemo(() => {
     if (scope) return data?.scopes.find((s) => s.scope === scope)?.count ?? 0;
