@@ -97,7 +97,7 @@ export function LoopStageStrip({ stages, censusFailed = false, pulse, unit, rang
     <p className="mb-1 text-[11px] text-[var(--color-warning)]">At least this many — the series hit the 1,000-row cap.</p>
   ) : null;
   const promoteVerb = stages.promote
-    ? `${stages.promote.specialist} specialists could reach further`
+    ? `${stages.promote.specialist} specialist${stages.promote.specialist === 1 ? '' : 's'} could reach further`
     : censusFailed
       ? 'Census unavailable — refresh to retry'
       : 'Loading census';
