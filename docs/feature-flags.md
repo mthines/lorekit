@@ -327,17 +327,34 @@ arm weighted `p`, that arm's share should stay within `p ± 3·√(p(1−p)/n)` 
 broken (a resolver that only one arm reaches, a cached page): stop reading
 outcomes until it is explained.
 
-Outcome per arm, overrides excluded — here every Insights interaction:
+Outcomes per exposed user, per arm, overrides excluded — here every Insights
+interaction. The exposure event names its arm `feature_flag_result_variant` and
+the outcome events `feature_flag_insights_visual`, so the denominator is
+relabelled before dividing:
 
 ```promql
 sum by (feature_flag_insights_visual) (
   increase({otel_metric_name="dash0.web.events", service_name="web",
     event_name=~"^insights[.].*", lorekit_feature_flag_reason_insights_visual="split"}[$__range])
 )
+/ on (feature_flag_insights_visual)
+sum by (feature_flag_insights_visual) (
+  label_replace(
+    clamp_max(
+      sum by (feature_flag_result_variant, user_id) (
+        increase({otel_metric_name="dash0.web.events", service_name="web",
+          event_name="feature_flag.exposed", feature_flag_key="insights-visual",
+          feature_flag_result_reason="split", user_id!="", user_id!~"anon:.*"}[$__range])
+      ),
+      1
+    ),
+    "feature_flag_insights_visual", "$1", "feature_flag_result_variant", "(.*)"
+  )
+)
 ```
 
-Divide by the exposed users above for a per-user rate. Server-side outcomes
-(errors, latency) group spans by `feature_flag.result.variant` instead.
+Server-side outcomes (errors, latency) group spans by
+`feature_flag.result.variant` instead.
 
 ### 5. Finish
 

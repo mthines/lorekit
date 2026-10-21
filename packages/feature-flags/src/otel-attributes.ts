@@ -40,9 +40,9 @@ export const METRIC_FEATURE_FLAG_EVALUATIONS = 'lorekit.feature_flag.evaluations
 
 /**
  * A resolution reason as a `feature_flag.result.reason` VALUE: OpenFeature's
- * UPPERCASE `StandardResolutionReasons` ("STATIC", "SPLIT", and this package's
- * "OVERRIDE") lowercased to the semantic conventions' well-known values
- * ("static", "split", "override").
+ * UPPERCASE reasons lowercased. "STATIC" and "SPLIT" become the semantic
+ * conventions' well-known `static` and `split`; this package's own "OVERRIDE"
+ * becomes `override`, a custom value the conventions permit but do not define.
  *
  * One function, because three surfaces carry the reason — server spans, the
  * browser's per-flag RUM attribute, and the exposure event — and an experiment

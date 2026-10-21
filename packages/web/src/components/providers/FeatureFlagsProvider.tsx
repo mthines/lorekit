@@ -139,10 +139,11 @@ export function useFeatureFlagReason(key: FlagKey): string {
  * exposures are half of the comparison.
  *
  * Deferred one task on purpose. React runs a child's effects before its
- * parents', so on a full page load an immediate event would leave before
- * `Dash0Provider` swaps the anonymous id for the user and before this
- * provider's own RUM sync — counting browsers instead of users. One
- * `setTimeout` lands after every effect of the commit.
+ * parents', so an immediate event would leave before this provider's own RUM
+ * sync — the provider wraps the page — and miss the per-flag attributes. One
+ * `setTimeout` lands after every effect of the commit, and so also after
+ * `Dash0Provider` has replaced the anonymous id with the user's in any order
+ * the tree might render them.
  */
 export function useFeatureFlagExposure(key: FlagKey): void {
   const variant = useFeatureFlagVariant(key);

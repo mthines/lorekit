@@ -20,6 +20,8 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateFlag, evaluateFlagDetails, resetFeatureFlagClientForTests } from './client.ts';
+import { FLAG_REGISTRY } from './registry.ts';
+import type { FlagKey } from './generated/flags.generated.ts';
 
 describe('evaluateFlag', () => {
   beforeEach(() => {
@@ -63,12 +65,16 @@ describe('evaluateFlagDetails', () => {
     expect(details).toMatchObject({ value: false, variant: 'off', reason: 'OVERRIDE' });
   });
 
-  it('keeps a declared-but-disabled experiment on its default for every user', async () => {
-    // `insights-visual` declares 50/50 arms with `enabled: false`: no user may
-    // land on `on`, and none is reported as SPLIT, until someone launches it.
-    for (const targetingKey of ['user-a', 'user-b', 'user-c', 'user-d']) {
-      const details = await evaluateFlagDetails('insights-visual', { targetingKey });
-      expect(details).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
+  it('keeps every declared-but-disabled experiment on its default for every user', async () => {
+    // A dark experiment must change nothing: no user lands on another arm and
+    // none is reported as SPLIT. Derived from the registry rather than naming a
+    // flag, so launching one is still a single `enabled: true` edit.
+    const dark = FLAG_REGISTRY.filter((flag) => flag.experiment && !flag.experiment.enabled);
+    for (const flag of dark) {
+      for (const targetingKey of ['user-a', 'user-b', 'user-c', 'user-d']) {
+        const details = await evaluateFlagDetails(flag.key as FlagKey, { targetingKey });
+        expect(details).toMatchObject({ variant: flag.defaultVariant, reason: 'STATIC' });
+      }
     }
   });
 });
