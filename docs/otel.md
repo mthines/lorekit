@@ -1075,6 +1075,18 @@ Both the command and the surface are reported as **bounded ids**, never the
 command string: `CopyCommand` takes arbitrary text, which would become unbounded
 the moment a call site interpolates into it.
 
+### Feature flags (`feature_flag.*`)
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `feature_flag.exposed` | A user reached a flag-gated surface, in either arm (once per mount, from the flag's resolver) | `feature_flag.key`, `feature_flag.result.variant`, `feature_flag.result.reason` (`static`/`split`/`override`) |
+
+The semantic-convention names rather than `lorekit.*`, because one event is one
+evaluation's outcome — what those names describe — and the server-side span hook
+uses the same three. Every RUM signal additionally carries
+`feature_flag.<flagKey>` (variant) and `lorekit.feature_flag.reason.<flagKey>`;
+see `docs/feature-flags.md` § Running an experiment.
+
 ---
 
 ## Browser auth events (`auth.*`)
