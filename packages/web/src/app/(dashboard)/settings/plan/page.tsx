@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import { CreditCard, ExternalLink } from 'lucide-react';
-import { getPlanUsage } from '@/lib/plan';
+import type { MemoryQuotaResponse } from '@lorekit/schemas/memory';
+import { quotaRequest } from '@/lib/api/memories';
+import { serverAccessToken } from '@/lib/api/session-server';
+import { logger } from '@/lib/telemetry';
 import { PlanUsageBar } from '@/components/settings/PlanUsageBar';
 import { PlanPeakUsage } from '@/components/settings/PlanPeakUsage';
 import { SectionPanel } from '@/components/ui/SectionPanel';
@@ -9,8 +12,28 @@ export const metadata: Metadata = { title: 'Plan — Settings' };
 
 const DISCORD_INVITE = 'https://discord.gg/SPa24vGa7R';
 
+/**
+ * The caller's quota from `GET /memories/quota`, or `null` when there is no
+ * session or the request fails — the page renders a skeleton bar rather than
+ * an error, as it always has. A failed request is logged
+ * (`lorekit.plan.quota_failed`) so the skeleton is never the only trace of it.
+ */
+async function loadQuota(): Promise<MemoryQuotaResponse | null> {
+  const token = await serverAccessToken();
+  if (!token) return null;
+  try {
+    return await quotaRequest(token);
+  } catch (err) {
+    logger.error('lorekit.plan.quota_failed', {
+      'exception.type': err instanceof Error ? err.name : 'Error',
+      'exception.message': err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 export default async function PlanSettingsPage() {
-  const usage = await getPlanUsage();
+  const quota = await loadQuota();
 
   return (
     <SectionPanel
@@ -26,7 +49,7 @@ export default async function PlanSettingsPage() {
               className="size-1.5 rounded-full bg-[var(--color-accent)]"
               aria-hidden
             />
-            {usage ? capitalize(usage.plan) : 'Free'} · Beta
+            {quota ? capitalize(quota.plan) : 'Free'} · Beta
           </span>
           <p className="text-xs text-[var(--color-content-secondary)]">
             During beta, LoreKit is completely free.
@@ -38,9 +61,9 @@ export default async function PlanSettingsPage() {
           <h3 className="text-sm font-medium text-[var(--color-content-primary)]">
             Memory usage
           </h3>
-          {usage ? (
+          {quota ? (
             <>
-              <PlanUsageBar usage={usage} />
+              <PlanUsageBar usage={quota.personal} />
               {/* A live count answers "how full am I now"; this answers "how
                   full WAS I over the last month" — usage_events.memory_count's
                   write-time snapshots (migration 00081). Renders nothing when

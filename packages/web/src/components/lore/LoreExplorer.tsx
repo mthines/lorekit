@@ -10,7 +10,7 @@
  * - Default view is "all scopes" (no scope selected). The scope selector's first
  *   chip is "All scopes", which clears the scope filter.
  * - Filtering (scope / search / date) is server-side, not client-side.
- *   `useMemories` (`useInfiniteQuery` over `listMemories`) is the data source.
+ *   `useMemories` (`useInfiniteQuery` over `POST /memories/list`) is the data source.
  * - Pagination: "Load more" button appends the next keyset page, identical to
  *   the audit log feed (`AuditLogFeed.tsx`).
  * - Scope is a persistent chip row (`ScopeSelector`) at the top of the page,
@@ -664,6 +664,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     isError,
     hasNextPage,
     isFetchingNextPage,
+    isFetchNextPageError,
     fetchNextPage,
   } = useMemories({
     scope: selectedScope,
@@ -1161,30 +1162,46 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     card?.scrollIntoView({ block: 'nearest' });
   }
 
+  // A failed next page keeps the rows already on screen (see `renderResults`)
+  // and is reported here instead. The query stays in its error state while a
+  // retry is in flight, so the message is hidden for the retry's duration.
+  const loadMoreFailed = isFetchNextPageError && !isFetchingNextPage;
+
   // Shared "Load more" / "all loaded" control — identical for both views so the
   // pagination affordance never differs between the scope list and the feed.
   const loadMore = (
     <div className="flex justify-center pt-2 pb-1">
       {hasNextPage ? (
-        <button
-          type="button"
-          onClick={() => {
-            // `pages.length` is how many are already loaded, so it IS the index
-            // of the one about to arrive: 1 for the second page.
-            track({ name: 'lore.results_paged', page: data?.pages.length ?? 1 });
-            void fetchNextPage();
-          }}
-          disabled={isFetchingNextPage}
-          className="flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-60"
-        >
-          {isFetchingNextPage && (
-            <Loader2
-              className={`size-3.5 ${reduceMotion ? '' : 'animate-spin'}`}
-              aria-hidden
-            />
+        <div className="flex flex-col items-center gap-1.5">
+          {loadMoreFailed && (
+            <p role="alert" className="text-xs text-[var(--color-content-secondary)]">
+              Couldn&apos;t load more memories.
+            </p>
           )}
-          {isFetchingNextPage ? 'Loading…' : 'Load more'}
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              // `pages.length` is how many are already loaded, so it IS the index
+              // of the one about to arrive: 1 for the second page.
+              const page = data?.pages.length ?? 1;
+              // Tracked only if exactly this page landed: a failed attempt appends
+              // nothing, and a filter change mid-load resolves with the new query.
+              void fetchNextPage().then((result) => {
+                if (result.data?.pages.length === page + 1) track({ name: 'lore.results_paged', page });
+              });
+            }}
+            disabled={isFetchingNextPage}
+            className="flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-60"
+          >
+            {isFetchingNextPage && (
+              <Loader2
+                className={`size-3.5 ${reduceMotion ? '' : 'animate-spin'}`}
+                aria-hidden
+              />
+            )}
+            {isFetchingNextPage ? 'Loading…' : loadMoreFailed ? 'Try again' : 'Load more'}
+          </button>
+        </div>
       ) : (
         <p className="text-[10px] text-[var(--color-content-tertiary)]">All memories loaded</p>
       )}
@@ -1259,7 +1276,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
-    if (isError) {
+    // Only a failure with NOTHING loaded replaces the list: a failed "Load more"
+    // or focus refetch keeps the cached pages in `data`, and wiping them would
+    // turn one bad request into a blank Explorer.
+    if (isError && lessons.length === 0) {
       return (
         <div className="flex items-center justify-center p-8">
           <p className="text-sm text-[var(--color-content-secondary)]">Failed to load memories. Please refresh.</p>

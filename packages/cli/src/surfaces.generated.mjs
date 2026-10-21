@@ -14,6 +14,7 @@ export const MCP_TOOL_NAMES = [
   "memory.search",
   "memory.archive",
   "memory.scopes",
+  "memory.quota",
   "memory.list_archived",
   "memory.restore",
   "memory.purge",
@@ -40,6 +41,7 @@ export const MEMORY_TOOL_NAMES = [
   "memory.search",
   "memory.archive",
   "memory.scopes",
+  "memory.quota",
   "memory.list_archived",
   "memory.restore",
   "memory.purge",
@@ -376,6 +378,20 @@ export const MCP_TOOL_DEFS = [
   {
     "name": "memory.scopes",
     "description": "List every scope in the store with how many active memories it holds and when it was last written to — the inventory to consult when you do not already know which scope to read. Takes no arguments and is store-wide, NOT limited to any working directory. The other read tools answer questions about lore; this one answers \"what is there?\" — reach for it when you want to NAME a scope, to narrow a list or to decide where a write belongs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "memory.quota",
+    "description": "How many active memories you hold against your plan's cap, and how many writes are left before memory.write is refused with memory_cap. Takes no arguments. Check it before a bulk write or a migration instead of discovering the cap from a failed write.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -1413,6 +1429,7 @@ export const CLI_BINDINGS = {
   "search": "memory.search",
   "archive": "memory.archive",
   "scopes": "memory.scopes",
+  "quota": "memory.quota",
   "restore": "memory.restore",
   "purge": "memory.purge",
   "purge-expired": "memory.purge_expired",
@@ -1446,6 +1463,7 @@ export const CLI_EXEMPT = {
 
 /** Op -> why the local stdio MCP server does not dispatch it. */
 export const LOCAL_MCP_EXEMPT = {
+  "memory.quota": "server-side plan and memory cap; the offline store has no limit",
   "memory.list_archived": "reachable through memory.list's archived filter on the offline store",
   "memory.purge": "account-wide sweep against server-side state; the offline store has no equivalent",
   "memory.purge_expired": "account-wide sweep against server-side state; the offline store has no equivalent",

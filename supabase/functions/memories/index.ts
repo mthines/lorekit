@@ -15,6 +15,7 @@ import { handleSearch } from './handlers/search.ts';
 import { handleRestore } from './handlers/restore.ts';
 import { handlePurge, handlePurgeExpired } from './handlers/purge.ts';
 import { handleScopes } from './handlers/scopes.ts';
+import { handleQuota } from './handlers/quota.ts';
 import { handleUsage } from './handlers/usage.ts';
 import { handleUsageRuns } from './handlers/usage-runs.ts';
 import { handleTags } from './handlers/tags.ts';
@@ -72,6 +73,7 @@ const router = createRouter([
   { method: 'POST',   path: '/purge',          handler: handlePurge,        requires: 'write' },
   { method: 'POST',   path: '/purge-expired',  handler: handlePurgeExpired, requires: 'write' },
   { method: 'GET',    path: '/scopes',         handler: handleScopes,       requires: 'read'  },
+  { method: 'GET',    path: '/quota',          handler: handleQuota,        requires: 'read'  },
   { method: 'GET',    path: '/usage',          handler: handleUsage,        requires: 'read'  },
   { method: 'GET',    path: '/usage/runs',     handler: handleUsageRuns,    requires: 'read'  },
   { method: 'GET',    path: '/tags',           handler: handleTags,         requires: 'read'  },

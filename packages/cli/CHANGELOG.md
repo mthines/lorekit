@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.0](https://github.com/mthines/lorekit/compare/cli-v1.73.0...cli-v1.74.0) (2026-10-21)
+
+
+### Features
+
+* memory.quota — your memories against your plan cap on REST, MCP and the CLI ([#713](https://github.com/mthines/lorekit/issues/713)) ([c4ea7ab](https://github.com/mthines/lorekit/commit/c4ea7ab4d67178c5f31e4c23be9838a0025e2c78))
+
 ## [1.73.0](https://github.com/mthines/lorekit/compare/cli-v1.72.2...cli-v1.73.0) (2026-10-20)
 
 

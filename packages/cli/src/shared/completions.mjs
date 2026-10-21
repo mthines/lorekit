@@ -137,6 +137,8 @@ const COMMANDS = [
     flags: ['dir', 'scope', 'json', 'endpoint', 'token', 'store'] },
   { name: 'scopes', summary: 'Inventory every distinct scope',
     flags: ['dir', 'scope', 'json', 'endpoint', 'token', 'store'] },
+  { name: 'quota', summary: 'Show your memories against your plan cap',
+    flags: ['dir', 'json', 'endpoint', 'token'] },
   { name: 'diff', summary: 'Compare the offline and remote stores',
     flags: ['dir', 'scope', 'json', 'endpoint', 'token', 'store'] },
   { name: 'tree', summary: 'Show scope precedence and which memory wins', aliases: ['resolve'],

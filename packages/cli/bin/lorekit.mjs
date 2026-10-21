@@ -66,6 +66,9 @@ ${c.bold('Commands')}
               with a memory count per scope — not cwd-scoped like the commands
               above (it lists scopes anywhere in the store). Offline is exact;
               the remote can't enumerate scopes (honest note). --json, --scope <s>.
+  quota       Show your active memories against your plan's cap and how many
+              writes are left (remote only). Exits 1 if the remote can't answer.
+              --json.
   diff        Compare the offline and remote stores for the applicable scopes and
               report divergence: local-only, remote-only, and conflicting keys
               (grouped by scope). Needs both stores readable. --json, --scope <s>.
@@ -553,6 +556,34 @@ ${c.bold('Examples')}
   npx @lorekit/cli scopes
   npx @lorekit/cli scopes --json
   npx @lorekit/cli scopes --scope repo::
+`,
+  quota: `${c.bold('lorekit quota')} — your memories against your plan's cap
+
+${c.bold('Usage')}
+  npx @lorekit/cli quota [options]
+
+Shows how many active memories you hold against your plan's cap and how many
+writes are left before the remote refuses one with \`memory_cap\` — from
+\`GET /memories/quota\`, the same answer the \`memory.quota\` MCP tool gives.
+
+"personal" is the pair the cap enforces: your personal memories against your
+personal limit. Org-owned memories count against each org's own cap, so they
+are shown beside it and never subtracted from what is left. A token narrowed to
+personal or selected orgs counts only the orgs it reaches.
+
+Remote only: the offline store has no plan and no cap. Exits 1 when the remote
+is denied, unconfigured, unreachable or erroring, so a script can gate a bulk
+write on it.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --json              Machine-readable output
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+
+${c.bold('Examples')}
+  npx @lorekit/cli quota
+  npx @lorekit/cli quota --json
 `,
   diff: `${c.bold('lorekit diff')} — compare the offline and remote stores
 

@@ -63,10 +63,11 @@ Shipped examples:
 
 Client pages (`'use client'`) render as true full-page stories under MSW. Server-component
 pages cannot — story their largest client subtree, don't refactor an RSC page to client just
-to story it. One honest edge: the `/lore` lesson list reads the `listMemories` **server
-action**, which is gated on `supabase.auth.getUser()`; with no session in the mocked browser
-context it returns an empty page, so the results panel shows its empty state while the rest of
-the page populates. Every part driven by a *browser* fetch is populated.
+to story it. Every part driven by a *browser* fetch is populated, which on `/lore` now includes
+the lesson list (`useMemories` reads `POST /memories/list` from the browser). A read that still
+goes through a **server action** cannot be served this way: the action runs with no session in
+the mocked context and returns its signed-out shape, so its panel shows an empty state. That is
+one more reason reads do not belong in server actions (see `packages/web/CLAUDE.md`).
 
 ### Determinism
 

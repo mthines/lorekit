@@ -786,6 +786,36 @@ class RemoteStore {
     };
   }
 
+  // `GET /memories/quota`, the REST twin of `memory.quota`. Remote-only: the
+  // offline store has no plan and no cap. Failures use the standard envelope.
+  async quota() {
+    const res = await this._rest('/memories/quota');
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error,
+        httpStatus: res.httpStatus,
+        networkError: res.networkError,
+        unusable: res.unusable,
+      };
+    }
+    const q = res.data ?? {};
+    const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    return {
+      ok: true,
+      quota: {
+        plan: typeof q.plan === 'string' ? q.plan : 'free',
+        personal: {
+          count: count(q.personal?.count),
+          limit: count(q.personal?.limit),
+          remaining: count(q.personal?.remaining),
+        },
+        org_count: count(q.org_count),
+        total: count(q.total),
+      },
+    };
+  }
+
   // ── Retention policies ("grooming") → REST ────────────────────────────────
   // Server-side only (retention_policies table + pg_cron sweep) — v1 has no
   // local-store equivalent, matching the account-wide sweeps just above.

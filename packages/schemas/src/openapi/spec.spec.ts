@@ -30,6 +30,7 @@ describe('generateSpec', () => {
       '/memories/pivot',
       '/memories/purge',
       '/memories/purge-expired',
+      '/memories/quota',
       '/memories/read',
       '/memories/read-activity',
       '/memories/read-ranking',
@@ -70,6 +71,7 @@ describe('generateSpec', () => {
       'RestoreResponse',
       'PurgeResponse',
       'ScopesResponse',
+      'MemoryQuotaResponse',
       'Org',
       'OrgList',
       'CreateOrgBody',
@@ -156,6 +158,7 @@ describe('generateSpec', () => {
       ['/memories/purge', 'post'],
       ['/memories/purge-expired', 'post'],
       ['/memories/scopes', 'get'],
+      ['/memories/quota', 'get'],
     ] as const) {
       const op = spec.paths[path]![method] as { responses: Record<string, { content?: unknown }> };
       expect(op.responses['200']?.content, `${method.toUpperCase()} ${path} has no 200 body`).toBeDefined();
