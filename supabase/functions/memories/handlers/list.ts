@@ -6,6 +6,7 @@ import { validateOptionalBody, validateQuery } from '../../_shared/api/validate.
 import { parseScopeFilter } from '../../_shared/scope/scope.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { buildCountPage, decodeCountCursor } from '../../_shared/api/count-cursor.ts';
+import { buildLastOpenedPage, decodeLastOpenedCursor } from '../../_shared/api/last-opened-cursor.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
 import type { Span } from '../../_shared/telemetry/otel.ts';
 import {
@@ -182,14 +183,18 @@ async function respondWithPage(
   // so it is ignored (→ first page) rather than silently mis-paging. Unchanged
   // contract; only the place the two halves are applied has moved.
   //
-  // Two cursor FORMATS since 00113: the date sorts keep `paginate.ts`'s
-  // timestamp cursor, and `opened_count` uses `count-cursor.ts`'s integer one.
-  // Each decoder rejects the other's format, so the same "wrong sort → first
-  // page" rule holds across the two families as well as within the dates.
+  // Three cursor FORMATS: the date sorts keep `paginate.ts`'s timestamp
+  // cursor, `opened_count` (00113) uses `count-cursor.ts`'s integer one, and
+  // `last_opened_at` (00115) uses `last-opened-cursor.ts`'s NULLABLE timestamp
+  // — a page can end inside the never-opened tail. Each decoder rejects the
+  // others' formats, so the same "wrong sort → first page" rule holds across
+  // the three families as well as within the dates.
   const countSort = params.sort === 'opened_count';
-  const dateCursor = !countSort && params.cursor ? decodeCursor(params.cursor) : null;
+  const lastOpenedSort = params.sort === 'last_opened_at';
+  const dateCursor = !countSort && !lastOpenedSort && params.cursor ? decodeCursor(params.cursor) : null;
   const usableCursor = dateCursor && dateCursor.sort === params.sort ? dateCursor : null;
   const countCursor = countSort && params.cursor ? decodeCountCursor(params.cursor) : null;
+  const lastOpenedCursor = lastOpenedSort && params.cursor ? decodeLastOpenedCursor(params.cursor) : null;
 
   // The asymmetric `(after, on_or_before]` window stays in TypeScript so the
   // `now`-relative boundary has exactly one implementation (edge-parity.spec.ts
@@ -251,8 +256,11 @@ async function respondWithPage(
     p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
     p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     p_sort: params.sort,
-    p_cursor_ts: usableCursor?.ts ?? null,
-    p_cursor_id: usableCursor?.id ?? countCursor?.id ?? null,
+    // 00115: under `last_opened_at` a NULL `p_cursor_ts` with a set
+    // `p_cursor_id` is meaningful — "the last page ended inside the
+    // never-opened tail" — so the id alone is what tells the RPC a cursor exists.
+    p_cursor_ts: usableCursor?.ts ?? lastOpenedCursor?.ts ?? null,
+    p_cursor_id: usableCursor?.id ?? countCursor?.id ?? lastOpenedCursor?.id ?? null,
     // 00113: the count sort's keyset bound. The RPC reads it only when
     // `p_sort` is `opened_count`, and `p_cursor_ts` only otherwise.
     p_cursor_count: countCursor?.count ?? null,
@@ -273,7 +281,9 @@ async function respondWithPage(
   const page =
     params.sort === 'opened_count'
       ? buildCountPage(rows, params.limit)
-      : buildPage(rows, params.limit, params.sort);
+      : params.sort === 'last_opened_at'
+        ? buildLastOpenedPage(rows, params.limit)
+        : buildPage(rows, params.limit, params.sort);
   // `total_count` is the SAME value on every row of `rows` (a `count(*) over
   // ()` — see migration 00094), so any row answers it; an empty result has no
   // row to read it from, and 0 matches is the exact total in that case too.

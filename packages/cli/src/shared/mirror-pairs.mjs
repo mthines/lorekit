@@ -76,6 +76,7 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/limits/memory-quota.ts', edge: 'supabase/functions/_shared/limits/memory-quota.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/cors-origins.ts', edge: 'supabase/functions/_shared/api/cors-origins.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/rest/count-cursor.ts', edge: 'supabase/functions/_shared/api/count-cursor.ts', driftChecked: true },
+  { core: 'packages/mcp-core/src/rest/last-opened-cursor.ts', edge: 'supabase/functions/_shared/api/last-opened-cursor.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/scope/scope-type-attribute.ts', edge: 'supabase/functions/_shared/scope/scope-type-attribute.ts', driftChecked: true },
   // Which row an UNSCOPED read resolves to. Import-free on both sides (it only
   // parses the scope prefix and compares strings), so the byte comparison
