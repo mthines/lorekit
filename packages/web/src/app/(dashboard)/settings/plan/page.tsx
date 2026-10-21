@@ -3,6 +3,7 @@ import { CreditCard, ExternalLink } from 'lucide-react';
 import type { MemoryQuotaResponse } from '@lorekit/schemas/memory';
 import { quotaRequest } from '@/lib/api/memories';
 import { serverAccessToken } from '@/lib/api/session-server';
+import { logger } from '@/lib/telemetry';
 import { PlanUsageBar } from '@/components/settings/PlanUsageBar';
 import { PlanPeakUsage } from '@/components/settings/PlanPeakUsage';
 import { SectionPanel } from '@/components/ui/SectionPanel';
@@ -14,14 +15,19 @@ const DISCORD_INVITE = 'https://discord.gg/SPa24vGa7R';
 /**
  * The caller's quota from `GET /memories/quota`, or `null` when there is no
  * session or the request fails — the page renders a skeleton bar rather than
- * an error, as it always has.
+ * an error, as it always has. A failed request is logged
+ * (`lorekit.plan.quota_failed`) so the skeleton is never the only trace of it.
  */
 async function loadQuota(): Promise<MemoryQuotaResponse | null> {
   const token = await serverAccessToken();
   if (!token) return null;
   try {
     return await quotaRequest(token);
-  } catch {
+  } catch (err) {
+    logger.error('lorekit.plan.quota_failed', {
+      'exception.type': err instanceof Error ? err.name : 'Error',
+      'exception.message': err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
