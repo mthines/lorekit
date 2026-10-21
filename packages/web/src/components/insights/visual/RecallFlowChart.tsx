@@ -29,6 +29,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Table2, Workflow } from 'lucide-react';
+import { track } from '@/lib/analytics/track';
 import { layoutFlow } from '@/lib/flow-layout';
 import { OTHER, RECALL_FLOW_COLUMNS, UNATTRIBUTED, recallFlow } from '@/lib/recall-flow';
 import type { UsageStatRow } from '@lorekit/schemas/usage';
@@ -154,7 +155,11 @@ export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
         </span>
         <button
           type="button"
-          onClick={() => setAsTable((v) => !v)}
+          onClick={() => {
+            const next = !asTable;
+            track({ name: 'insights.recall_flow_view_changed', view: next ? 'table' : 'chart' });
+            setAsTable(next);
+          }}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 text-xs text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
         >
           {asTable ? <Workflow className="size-3.5" aria-hidden /> : <Table2 className="size-3.5" aria-hidden />}

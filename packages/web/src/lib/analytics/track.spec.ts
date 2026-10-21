@@ -514,4 +514,11 @@ describe('track — insights events', () => {
       'lorekit.insights.scope.source': 'scope-consumption',
     });
   });
+
+  it('says which view the recall flow swapped to', () => {
+    track({ name: 'insights.recall_flow_view_changed', view: 'table' });
+    expect(lastCall().attributes).toEqual({
+      'lorekit.insights.recall_flow.view': 'table',
+    });
+  });
 });
