@@ -786,12 +786,8 @@ class RemoteStore {
     };
   }
 
-  // The caller's memory quota — `GET /memories/quota` (the REST twin of the
-  // `memory.quota` MCP tool): `{ plan, personal: { count, limit, remaining },
-  // org_count, total }`. `personal` is the pair the cap trigger enforces; org
-  // memories count against each org's own cap, which is why they sit beside it.
-  // Remote-only by nature: the offline store has no plan and no cap. Failures
-  // use this store's standard `{ ok:false, error, networkError }` envelope.
+  // `GET /memories/quota`, the REST twin of `memory.quota`. Remote-only: the
+  // offline store has no plan and no cap. Failures use the standard envelope.
   async quota() {
     const res = await this._rest('/memories/quota');
     if (!res.ok) {

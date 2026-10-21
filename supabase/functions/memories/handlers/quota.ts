@@ -6,19 +6,9 @@ import type { Span } from '../../_shared/telemetry/otel.ts';
 import { memoryQuotaFromRow, type MemoryCountRow } from '../../_shared/limits/memory-quota.ts';
 
 /**
- * GET /memories/quota — the caller's active memories against their plan's cap,
- * and how many writes are left before `POST /memories` is refused with
- * `memory_cap`. The REST twin of the `memory.quota` MCP tool and `lorekit quota`.
- *
- * The count lives in Postgres (`lorekit_memory_count`, actor-guarded by 00047:
- * a caller-supplied user id is honoured only on a service-role connection), so
- * this handler only shapes it — see `memoryQuotaFromRow` for why the answer is
- * the PERSONAL pair rather than the RPC's combined count.
- *
- * Counts only, never a scope or key name, so a scope-restricted key may read it:
- * there is nothing for `p_key_scopes` to narrow (the same reason `/usage` is not
- * name-bearing). A service-role caller has no user whose cap this could be, so
- * it is refused rather than answered with zeros that look like an empty account.
+ * GET /memories/quota — the caller's active memories against their plan's cap.
+ * Counts only, so a scope-restricted key may read it; a service-role caller has
+ * no cap and is refused rather than shown zeros that look like an empty account.
  */
 export async function handleQuota(
   _req: Request, auth: AuthContext, db: DbClient, span: Span,

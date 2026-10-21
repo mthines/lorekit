@@ -1,17 +1,6 @@
-// `lorekit quota` — how many active memories you hold against your plan's cap,
-// and how many writes are left before the remote refuses one with `memory_cap`.
-// The CLI face of `GET /memories/quota` and the `memory.quota` MCP tool.
-//
-// Remote-only, unlike the other read commands: the offline store has no plan
-// and no cap, so there is no Offline section to render. `personal` is the pair
-// the cap enforces; org-owned memories count against each org's own cap, so
-// they are shown beside it and never subtracted from what is left.
-//
-// Exits 1 when the remote cannot answer (denied, unconfigured, unreachable, or
-// erroring): a script that gates a bulk write on this needs a failure it can
-// see, and there is no partial answer to fall back to. `--json` emits
-// `{ available, endpoint, plan, personal, org_count, total }` or
-// `{ available: false, reason }`.
+// `lorekit quota` — your memories against your plan's cap (GET /memories/quota).
+// Remote-only, and exits 1 when the remote cannot answer: a script gating a bulk
+// write needs to see that failure, and there is no offline answer to fall back to.
 import process from 'node:process';
 import { resolveProjectRoot } from '../shared/config.mjs';
 import { resolveDenies } from '../shared/control.mjs';

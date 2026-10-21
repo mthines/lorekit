@@ -1362,12 +1362,7 @@ export async function toolScopes(
 
 /**
  * `memory.quota` — the caller's active memories against their plan's cap.
- *
- * The same RPC and the same shaping as `GET /memories/quota`
- * (`memories/handlers/quota.ts`): `lorekit_memory_count` is actor-guarded by
- * 00047, and `memoryQuotaFromRow` reports the PERSONAL pair the cap trigger
- * enforces rather than the RPC's combined count. Counts only, so a scoped key
- * may call it — there is no scope or key name to narrow.
+ * Same RPC and shaping as `GET /memories/quota`; counts only, so a scoped key may call it.
  */
 export async function toolQuota(
   db: DbClient,

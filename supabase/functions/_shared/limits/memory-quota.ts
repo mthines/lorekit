@@ -1,16 +1,6 @@
 /**
- * The caller's memory quota: how many active memories they hold against the
- * cap that will refuse their next write, and how many they can still write.
- *
- * Self-contained Deno mirror of `packages/mcp-core/src/limits/memory-quota.ts` —
- * the edge tree cannot cross-import the Node package. `edge-parity.spec.ts`
- * compares the two with comments stripped, so this file is free to say
- * something different here but must stay behaviourally identical below.
- *
- * Why the personal pair and not the RPC's combined `count`: the cap trigger
- * (00018) counts personal rows against the personal limit and org rows against
- * each org's own limit, so a "remaining" from the combined count would be wrong
- * for both.
+ * Self-contained Deno mirror of `packages/mcp-core/src/limits/memory-quota.ts`; `edge-parity.spec.ts`
+ * compares the two with comments stripped, so keep the code below behaviourally identical.
  */
 
 /**
