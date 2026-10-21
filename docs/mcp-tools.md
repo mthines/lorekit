@@ -44,7 +44,7 @@ used to show up as write + destructive in MCP clients.
 
 | Class | Tools |
 |-------|-------|
-| Read-only | `memory.read`, `memory.list`, `memory.search`, `memory.scopes`, `memory.list_archived`, `org.list`, `policy.list`, `groom.preview` |
+| Read-only | `memory.read`, `memory.list`, `memory.search`, `memory.scopes`, `memory.quota`, `memory.list_archived`, `org.list`, `policy.list`, `groom.preview` |
 | Write, non-destructive | `memory.archive`, `memory.restore`, `memory.protect`, `groom.run`, `org.create`, `policy.create` |
 | Write, destructive | `memory.write`, `memory.delete`, `memory.purge`, `memory.purge_expired`, `org.rename`, `org.delete`, `policy.update`, `policy.delete` |
 
@@ -523,6 +523,37 @@ so whole scopes go missing for exactly the accounts with the most lore.
 > walk order, so the server sorts before answering. When a store cannot enumerate — an
 > unreachable or unconfigured remote — it answers `{ "scopes": [], "note": "<reason>" }`
 > rather than failing the call, matching how the `lorekit scopes` command degrades.
+
+---
+
+## memory.quota
+
+How many active memories you hold against your plan's cap, and how many writes are left before
+`memory.write` is refused with `memory_cap`. Takes no arguments. Requires a token with read
+permission (`lk_rw_*` or `lk_ro_*`); a service-role token has no user and is refused.
+
+`personal` is the pair the cap enforces: your personal memories against your personal limit, with
+`remaining` = limit − count (never negative). Org-owned memories count against each org's own cap,
+so they are reported as `org_count` beside it and never subtracted. It is the same answer
+`GET /memories/quota` and the `lorekit quota` command return.
+
+```json
+{
+  "params": {
+    "name": "memory.quota",
+    "arguments": {}
+  }
+}
+```
+
+```json
+{
+  "plan": "free",
+  "personal": { "count": 3318, "limit": 5000, "remaining": 1682 },
+  "org_count": 982,
+  "total": 4300
+}
+```
 
 ---
 

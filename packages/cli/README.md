@@ -408,6 +408,21 @@ Offline one. A denied, unconfigured, unreachable, or erroring remote degrades to
 a short, accurate note (network error / HTTP status — never a faked listing) at
 exit 0. `--endpoint` / `--token` / `--store` behave as in `list`.
 
+### `lorekit quota`
+
+Your active memories against your plan's cap and how many writes are left —
+remote only, since the offline store has no plan and no cap.
+
+```bash
+lorekit quota
+lorekit quota --json   # { available, endpoint, plan, personal, org_count, total }
+```
+
+`personal` is the pair the cap enforces; org-owned memories count against each
+org's own cap and are shown beside it, never subtracted. Exits 1 when the remote
+is denied, unconfigured, unreachable or erroring, so a script can gate a bulk
+write on it.
+
 ### `lorekit diff`
 
 Compare the **offline** and **remote** stores for the applicable scopes and
