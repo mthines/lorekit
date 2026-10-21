@@ -237,7 +237,8 @@ export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
                 // Outer columns label into their gutter; the middle one labels over the bands, haloed.
                 const side = n.layer === 0 ? 'left' : n.layer === 2 ? 'right' : 'middle';
                 const x = side === 'left' ? n.x0 - LABEL_GAP : n.x1 + LABEL_GAP;
-                const maxPx = side === 'middle' ? middleX - LABEL_GAP : gutter - LABEL_GAP * 2;
+                // Middle labels start at middleX + NODE_WIDTH + LABEL_GAP and must stop a gap before the right nodes at 2 * middleX.
+                const maxPx = side === 'middle' ? middleX - NODE_WIDTH - LABEL_GAP * 2 : gutter - LABEL_GAP * 2;
                 const label = fitLabel(n.label, value, maxPx);
                 return (
                   <g
