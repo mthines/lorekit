@@ -822,6 +822,18 @@ curl -H "Authorization: Bearer lk_ro_…" \
 min_opened_count=5&sort=opened_count"
 ```
 
+`sort=last_opened_at` orders by the last DELIBERATE read instead — an agent's `memory.read` or
+the CLI's `read`, never a bulk `memory.list`/`memory.search` page nor a human opening the
+dashboard — most recent first (ties by id). Memories nothing has ever opened are not dropped:
+they follow every opened one, so `total` is the same as for any other sort. Its `nextCursor` is
+only valid for that sort. This is the Lore Explorer's **Recent read** order.
+
+```bash
+# What agents are reading right now, most recent first
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?sort=last_opened_at"
+```
+
 ### Finding lore that is about to expire
 
 `?expiring_within_days=N` (1–365) narrows the list to memories whose TTL runs out soon — those
