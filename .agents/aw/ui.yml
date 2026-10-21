@@ -1,0 +1,19 @@
+# .agents/aw/ui.yml — the browser witness (ui-verify, aw-tester). Committed.
+# Only keys that differ from the defaults are set; see the aw-verify skill's rules/config.md.
+version: 1
+# The default classifier misses packages/web/src/lib/** and middleware.ts (plain .ts
+# outside a UI directory) and counts the app/api route handlers as UI.
+surface:
+  include: ['packages/web/src/**']
+  exclude:
+    - 'packages/web/src/app/api/**'
+    - 'packages/web/src/mocks/**'
+    - '**/__screenshots__/**'
+    - '**/*.md'
+adversarial:
+  # Mutations may reach the local Supabase stack. The hosted production project
+  # (pqokxlhvnosogizsjztg) is deliberately absent — see notes.md.
+  allowed_origins: ['http://127.0.0.1:54321']
+  # Added to the built-in destructive pattern: never touch the shared test
+  # account's credentials.
+  deny_actions: ['/reset (your )?password/i', '/change password/i']
