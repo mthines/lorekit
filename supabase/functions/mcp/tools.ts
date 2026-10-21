@@ -28,7 +28,8 @@ import { createTracedClient, type Span } from '../_shared/telemetry/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/limits/created-at.ts';
-import { memoryQuotaFromRow, type MemoryCountRow } from '../_shared/limits/memory-quota.ts';
+import { memoryQuotaFromRow, quotaForKey, type MemoryCountRow } from '../_shared/limits/memory-quota.ts';
+import { countActiveOrgMemories } from '../_shared/limits/org-memory-count.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/provenance/origin.ts';
 import { recordAuditDeferred } from '../_shared/audit/audit.ts';
@@ -1369,7 +1370,7 @@ export async function toolQuota(
   _params: Params,
   userId: string | null,
   span: Span,
-  _keyScoping?: KeyRestriction,
+  keyScoping?: KeyRestriction,
 ) {
   if (!userId) throw new UserInputError('memory.quota requires a user-scoped credential (service-role tokens have no user and no cap)');
 
@@ -1377,7 +1378,11 @@ export async function toolQuota(
   const { data, error } = await tracedDb.rpc<MemoryCountRow>('lorekit_memory_count', { p_user_id: userId });
   if (error) throw new Error((error as { message: string }).message);
 
-  const quota = memoryQuotaFromRow(data);
+  // A key narrowed to `personal` or selected orgs sees only the orgs it reaches (00068).
+  const quota = await quotaForKey(memoryQuotaFromRow(data), keyScoping, {
+    memberOrgIds: () => memberOrgIds(db, userId),
+    countOrgMemories: (orgIds) => countActiveOrgMemories(db, span, orgIds),
+  });
   span.setAttributes({
     'lorekit.plan': quota.plan,
     'lorekit.memory.count': quota.personal.count,
