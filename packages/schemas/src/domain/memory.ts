@@ -443,6 +443,31 @@ export type ScopeCount = z.infer<typeof ScopeCountSchema>;
 export const ScopesResponseSchema = z.object({ scopes: z.array(ScopeCountSchema) });
 export type ScopesResponse = z.infer<typeof ScopesResponseSchema>;
 
+// ── GET /memories/quota ──────────────────────────────────────────────────────
+
+/**
+ * `GET /memories/quota` — the caller's active memories against their plan's cap,
+ * shaped by `memoryQuotaFromRow` (`packages/mcp-core/src/limits/memory-quota.ts`).
+ */
+export const MemoryQuotaResponseSchema = z.object({
+  /** Plan name; `free` when the caller has no plan row. */
+  plan: z.string(),
+  /** Personal active memories, the personal cap, and the writes left under it. */
+  personal: z.object({
+    count: z.number().int().nonnegative(),
+    limit: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+  }),
+  /**
+   * Active org-owned memories across the orgs the caller reaches (each org has its own cap):
+   * every org it belongs to, or only those its token's tenancy admits (`0` under `personal`).
+   */
+  org_count: z.number().int().nonnegative(),
+  /** `personal.count + org_count` — every active memory the caller can see. */
+  total: z.number().int().nonnegative(),
+});
+export type MemoryQuotaResponse = z.infer<typeof MemoryQuotaResponseSchema>;
+
 // ── GET /memories/tags ───────────────────────────────────────────────────────
 
 /**

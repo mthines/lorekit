@@ -109,7 +109,7 @@ The command checks the connection and the token **before** it writes anything, s
 
 <TutorialCallout variant="tip">
 
-Migrating a large store? The command paces itself under the hosted rate limit and waits out the ones it hits — it says when pacing starts, so a slow run is never a mystery — and it retries a passing server error rather than dropping the memory. A few retries is the budget, though: a memory that keeps failing is reported and the run exits non-zero, and five failures in a row stop it early with a count of what made it. Reaching the memory limit on your plan stops it the same way. In every case the migration is safe to re-run — it picks up where it left off.
+Migrating a large store? The command paces itself under the hosted rate limit and waits out the ones it hits — it says when pacing starts, so a slow run is never a mystery — and it retries a passing server error rather than dropping the memory. A few retries is the budget, though: a memory that keeps failing is reported and the run exits non-zero, and five failures in a row stop it early with a count of what made it. Reaching the memory limit on your plan stops it the same way, so check your headroom first with `npx @lorekit/cli quota` — it shows your memories against your plan's cap and how many writes are left (agents can ask the same with the `memory.quota` tool). In every case the migration is safe to re-run — it picks up where it left off.
 
 </TutorialCallout>
 

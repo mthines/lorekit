@@ -54,9 +54,11 @@ describe('READ_TOOLS / WRITE_TOOLS', () => {
       // project names — it is not exempt merely because it names no scope.
       // `org.list` joined the read family when the org tools stopped being
       // JWT-only: listing the orgs you belong to is exactly what a read token
-      // should be able to do.
+      // should be able to do. `memory.quota` is your own counts against your
+      // cap: read-gated, so a write-only token cannot learn the account's size.
       [
         'memory.list', 'memory.list_archived', 'memory.read', 'memory.scopes', 'memory.search', 'org.list',
+        'memory.quota',
         // Retention policies ("grooming") — listing saved rules and previewing
         // what one would archive are both reads, same family as memory.list_archived.
         'policy.list', 'groom.preview',

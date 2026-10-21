@@ -104,7 +104,9 @@ until the whole queue drains.
   `fetchScopes`). If the read still needs server-side code (a surface on the
   migration backlog), wrap it in a GET route handler under `app/api/**` and read
   it with `getAppRoute(path, signal)` (`lib/app-route.ts`), as
-  `/api/plan/usage` and `/api/invites/pending` do.
+  `/api/invites/pending` does — and treat that route as a stopgap until the
+  read has its own edge endpoint, the way plan usage moved from
+  `/api/plan/usage` to `GET /memories/quota`.
 - **Server actions stay for mutations**, which are one user gesture each, and
   for server components, where calling the function is a plain call with no
   queue.

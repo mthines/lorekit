@@ -19,6 +19,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | /purge | purge.ts | write |
 | POST | /purge-expired | purge.ts | write |
 | GET | /scopes | scopes.ts | read |
+| GET | /quota | quota.ts | read |
 | GET | /tags | tags.ts | read |
 | GET | /facets | facets.ts | read |
 | GET | /activity | activity.ts | read |

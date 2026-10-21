@@ -3,13 +3,14 @@
  * read as JSON.
  *
  * This exists for the reads that still need server-side code: there is no REST
- * endpoint for them yet (`packages/web/CLAUDE.md` lists invites and plan usage
- * as migration backlog). They used to be called as server actions straight from
- * React Query, and Next's app router runs server actions one at a time per
- * client. Every read queued behind whichever action was already in flight, and
- * none of them could be aborted, so the header's activity bar stayed lit until
- * the whole chain had drained. A route handler is an ordinary request: it runs
- * alongside the others and takes React Query's AbortSignal.
+ * endpoint for them yet (`packages/web/CLAUDE.md` lists invites as migration
+ * backlog; plan usage has since moved to `GET /memories/quota`). They used to
+ * be called as server actions straight from React Query, and Next's app router
+ * runs server actions one at a time per client. Every read queued behind
+ * whichever action was already in flight, and none of them could be aborted, so
+ * the header's activity bar stayed lit until the whole chain had drained. A
+ * route handler is an ordinary request: it runs alongside the others and takes
+ * React Query's AbortSignal.
  *
  * Same-origin, so the session cookie authenticates it; no token is passed.
  * `no-store` because these answer "what is true now": a refetch on window focus
