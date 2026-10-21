@@ -62,4 +62,13 @@ describe('evaluateFlagDetails', () => {
     });
     expect(details).toMatchObject({ value: false, variant: 'off', reason: 'OVERRIDE' });
   });
+
+  it('keeps a declared-but-disabled experiment on its default for every user', async () => {
+    // `insights-visual` declares 50/50 arms with `enabled: false`: no user may
+    // land on `on`, and none is reported as SPLIT, until someone launches it.
+    for (const targetingKey of ['user-a', 'user-b', 'user-c', 'user-d']) {
+      const details = await evaluateFlagDetails('insights-visual', { targetingKey });
+      expect(details).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
+    }
+  });
 });

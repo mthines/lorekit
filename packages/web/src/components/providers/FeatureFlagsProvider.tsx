@@ -28,19 +28,29 @@
  * (`server.ts`) — is forwarded to `syncFeatureFlagRumAttributes`
  * (`lib/dash0-rum.ts`) on mount and whenever it changes, so every subsequent
  * RUM signal (page view, click, custom event) in this session carries
- * `feature_flag.<key>` = variant. That is what makes "which flags were active
+ * `feature_flag.<key>` = variant, and `reasons` beside it as
+ * `lorekit.feature_flag.reason.<key>` = `static` | `split` | `override`. That is what makes "which flags were active
  * for this visitor" and "which experiment arm" answerable retrospectively
  * from the Web Events explorer — see `docs/feature-flags.md` §
  * "Feature flags in telemetry" for why this is a different mechanism than the
  * server-side OTel span hook (`otel-hook.ts`).
+ *
+ * ## Exposure: who actually reached a flagged surface
+ *
+ * Every RUM signal carries every flag, so "carries `feature_flag.x = on`" is not
+ * "saw the `on` arm". {@link useFeatureFlagExposure}, called from a flag's
+ * resolver, records `feature_flag.exposed` once per mount in BOTH arms — the
+ * population an experiment compares.
  */
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import type { FlagKey, FlagValueMap } from '@lorekit/feature-flags';
 import { syncFeatureFlagRumAttributes } from '@/lib/dash0-rum';
+import { track } from '@/lib/analytics/track';
 
 interface FeatureFlagsContextValue {
   values: FlagValueMap;
   variants: Readonly<Record<string, string>>;
+  reasons: Readonly<Record<string, string>>;
 }
 
 const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(null);
@@ -50,24 +60,26 @@ export interface FeatureFlagsProviderProps {
   flags: FlagValueMap;
   /** Flag key -> variant, from the SAME evaluation `flags` came from. */
   variants: Readonly<Record<string, string>>;
+  /** Flag key -> how that variant was decided (`static`, `split`, `override`), from the same evaluation. */
+  reasons: Readonly<Record<string, string>>;
   children: ReactNode;
 }
 
 /** Mount once near the dashboard root, seeded with a server-evaluated flag map. */
-export function FeatureFlagsProvider({ flags, variants, children }: FeatureFlagsProviderProps) {
+export function FeatureFlagsProvider({ flags, variants, reasons, children }: FeatureFlagsProviderProps) {
   // Keyed on a stable string, not the `variants` object identity — the
   // dashboard layout builds a fresh object every render, and re-tagging RUM
   // signals with identical content on every navigation would be pure churn.
-  const variantsKey = JSON.stringify(variants);
+  const stateKey = JSON.stringify([variants, reasons]);
   useEffect(() => {
-    syncFeatureFlagRumAttributes(variants);
-    // `variantsKey` (not `variants`) is the intentional dependency — content-based,
-    // since the dashboard layout builds a fresh `variants` object every render.
+    syncFeatureFlagRumAttributes(variants, reasons);
+    // `stateKey` (not the objects) is the intentional dependency — content-based,
+    // since the dashboard layout builds fresh objects every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantsKey]);
+  }, [stateKey]);
 
   return (
-    <FeatureFlagsContext.Provider value={{ values: flags, variants }}>
+    <FeatureFlagsContext.Provider value={{ values: flags, variants, reasons }}>
       {children}
     </FeatureFlagsContext.Provider>
   );
@@ -107,4 +119,36 @@ export function useFeatureFlag<K extends FlagKey>(key: K): FlagValueMap[K] {
  */
 export function useFeatureFlagVariant(key: FlagKey): string {
   return useFeatureFlagsContext().variants[key];
+}
+
+/**
+ * How one flag's variant was decided — `static` (the default), `split` (an
+ * experiment assigned it) or `override` (a developer forced it) — spelled as
+ * server spans spell `feature_flag.result.reason`. `unknown` when the
+ * evaluation reported none.
+ */
+export function useFeatureFlagReason(key: FlagKey): string {
+  return useFeatureFlagsContext().reasons[key] ?? 'unknown';
+}
+
+/**
+ * Record that this user reached the surface `key` gates: one
+ * `feature_flag.exposed` event per mount, and again if the variant changes.
+ *
+ * Call it from the flag's RESOLVER, not from one arm — the control arm's
+ * exposures are half of the comparison.
+ *
+ * Deferred one task on purpose. React runs a child's effects before its
+ * parents', so on a full page load an immediate event would leave before
+ * `Dash0Provider` swaps the anonymous id for the user and before this
+ * provider's own RUM sync — counting browsers instead of users. One
+ * `setTimeout` lands after every effect of the commit.
+ */
+export function useFeatureFlagExposure(key: FlagKey): void {
+  const variant = useFeatureFlagVariant(key);
+  const reason = useFeatureFlagReason(key);
+  useEffect(() => {
+    const timer = setTimeout(() => track({ name: 'feature_flag.exposed', flagKey: key, variant, reason }), 0);
+    return () => clearTimeout(timer);
+  }, [key, variant, reason]);
 }

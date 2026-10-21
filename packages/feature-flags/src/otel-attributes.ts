@@ -37,3 +37,18 @@ export const EVENT_FEATURE_FLAG_EVALUATION = 'feature_flag.evaluation';
 
 /** `lorekit.feature_flag.evaluations` — counter dimensioned by key + variant. */
 export const METRIC_FEATURE_FLAG_EVALUATIONS = 'lorekit.feature_flag.evaluations';
+
+/**
+ * A resolution reason as a `feature_flag.result.reason` VALUE: OpenFeature's
+ * UPPERCASE `StandardResolutionReasons` ("STATIC", "SPLIT", and this package's
+ * "OVERRIDE") lowercased to the semantic conventions' well-known values
+ * ("static", "split", "override").
+ *
+ * One function, because three surfaces carry the reason — server spans, the
+ * browser's per-flag RUM attribute, and the exposure event — and an experiment
+ * query filters all three with ONE vocabulary. An absent reason is `unknown`,
+ * never an empty string, so a query can still tell "not reported" from a value.
+ */
+export function flagReasonValue(reason: string | undefined): string {
+  return reason ? reason.toLowerCase() : 'unknown';
+}

@@ -522,3 +522,17 @@ describe('track — insights events', () => {
     });
   });
 });
+
+describe('track — feature flags', () => {
+  it('maps feature_flag.exposed onto the semantic-convention flag attributes', () => {
+    track({ name: 'feature_flag.exposed', flagKey: 'insights-visual', variant: 'on', reason: 'split' });
+    expect(lastCall()).toEqual({
+      name: 'feature_flag.exposed',
+      attributes: {
+        'feature_flag.key': 'insights-visual',
+        'feature_flag.result.variant': 'on',
+        'feature_flag.result.reason': 'split',
+      },
+    });
+  });
+});

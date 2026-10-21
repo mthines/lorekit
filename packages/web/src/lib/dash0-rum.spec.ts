@@ -49,6 +49,7 @@ const {
   installExtensionErrorFilter,
   syncFeatureFlagRumAttributes,
   FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX,
+  FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -292,19 +293,52 @@ describe('syncFeatureFlagRumAttributes', () => {
   });
 
   it('attaches one feature_flag.<key> attribute per entry, holding the variant', () => {
-    syncFeatureFlagRumAttributes({
-      'example-onboarding-flow': 'treatment',
-      'example-usage-charts': 'off',
-    });
+    syncFeatureFlagRumAttributes(
+      {
+        'example-onboarding-flow': 'treatment',
+        'example-usage-charts': 'off',
+      },
+      {},
+    );
     expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}example-onboarding-flow`)).toEqual([
       'treatment',
     ]);
     expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}example-usage-charts`)).toEqual(['off']);
   });
 
+  it("attaches each flag's assignment reason beside its variant", () => {
+    syncFeatureFlagRumAttributes(
+      { 'example-onboarding-flow': 'treatment' },
+      { 'example-onboarding-flow': 'split' },
+    );
+    expect(valuesOf(`${FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX}example-onboarding-flow`)).toEqual(['split']);
+  });
+
+  it('omits the reason attribute for a flag with no reported reason', () => {
+    syncFeatureFlagRumAttributes({ 'example-onboarding-flow': 'treatment' }, {});
+    expect(valuesOf(`${FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX}example-onboarding-flow`)).toEqual([]);
+  });
+
+  it('replaces the previous variant and reason on a re-sync instead of adding a second entry', () => {
+    // An override flip re-runs the sync; the SDK's append used to leave both
+    // `off` and `on` on every later signal — both arms at once.
+    syncFeatureFlagRumAttributes(
+      { 'example-onboarding-flow': 'off' },
+      { 'example-onboarding-flow': 'static' },
+    );
+    syncFeatureFlagRumAttributes(
+      { 'example-onboarding-flow': 'on' },
+      { 'example-onboarding-flow': 'override' },
+    );
+    expect(valuesOf(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}example-onboarding-flow`)).toEqual(['on']);
+    expect(valuesOf(`${FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX}example-onboarding-flow`)).toEqual([
+      'override',
+    ]);
+  });
+
   it('does nothing for an empty flag map', () => {
     const before = signalAttributes.length;
-    syncFeatureFlagRumAttributes({});
+    syncFeatureFlagRumAttributes({}, {});
     expect(signalAttributes).toHaveLength(before);
   });
 });
