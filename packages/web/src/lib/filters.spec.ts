@@ -89,10 +89,28 @@ describe('normalizeFilters', () => {
   it('merges a duplicated field into one filter rather than dropping half of it', () => {
     expect(
       normalizeFilters([
+        { field: 'host', operator: 'in', values: ['aw'] },
+        { field: 'host', operator: 'nin', values: ['reviewer'] },
+      ]),
+    ).toEqual([{ field: 'host', operator: 'in', values: ['aw', 'reviewer'] }]);
+    expect(
+      normalizeFilters([
+        { field: 'label', operator: 'in', values: ['perf'] },
+        { field: 'label', operator: 'all', values: ['ci'] },
+      ]),
+    ).toEqual([{ field: 'label', operator: 'in', values: ['perf', 'ci'] }]);
+  });
+
+  it('keeps a tag include and a tag exclude as two conditions — both hold (00114)', () => {
+    expect(
+      normalizeFilters([
         { field: 'label', operator: 'in', values: ['perf'] },
         { field: 'label', operator: 'nin', values: ['ci'] },
       ]),
-    ).toEqual([{ field: 'label', operator: 'in', values: ['perf', 'ci'] }]);
+    ).toEqual([
+      { field: 'label', operator: 'in', values: ['perf'] },
+      { field: 'label', operator: 'nin', values: ['ci'] },
+    ]);
   });
 
   it('emits in FILTER_FIELDS order so a shared link renders identically', () => {

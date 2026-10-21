@@ -40,6 +40,7 @@
 import { useState, useRef, useCallback, useId } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Tag } from 'lucide-react';
+import type { FilterPolarity } from '@/lib/filters';
 import { FilterableMetaValue } from './FilterableMetaValue';
 
 export interface TagsFieldProps {
@@ -59,20 +60,22 @@ export interface TagsFieldProps {
   className?: string;
   /**
    * R3 (lore-explorer-panel-nav-facets): when provided, every chip gets a
-   * hover-reveal "Filter by this label" affordance that calls back with the
-   * bare tag value. The sole caller today is `LessonDetailSheet` — an editing
-   * context (e.g. a future bulk-tag editor) would simply omit this.
+   * hover-reveal "filter in / filter out" affordance that calls back with the
+   * bare tag value and which of the two was pressed. The sole caller today is
+   * `LessonDetailSheet` — an editing context (e.g. a future bulk-tag editor)
+   * would simply omit this.
    */
-  onTagFilter?: (tag: string) => void;
+  onTagFilter?: (tag: string, polarity: FilterPolarity) => void;
   /**
-   * Whether a given tag is currently part of the applied Label filter
-   * (`isMetaValueActiveFilter`, `lib/filter-from-metadata.ts`). When it
-   * returns true the chip gets the same subtle accent-orange "applied" tint
-   * as a committed `FilterPill` — a passive visual state, independent of the
-   * `onTagFilter` hover affordance above. Omitted (or absent) renders every
-   * chip in its neutral style, matching the pre-existing look.
+   * Whether a given tag is currently filtered in or out by the applied tag
+   * filter (`metaValueFilterState`, `lib/filter-from-metadata.ts`), or neither.
+   * "In" gives the chip the same subtle accent-orange "applied" tint as a
+   * committed `FilterPill`; "out" strikes it through and mutes it — passive
+   * visual states, independent of the `onTagFilter` hover affordance above.
+   * Omitted (or absent) renders every chip in its neutral style, matching the
+   * pre-existing look.
    */
-  isTagActive?: (tag: string) => boolean;
+  tagFilterState?: (tag: string) => FilterPolarity | null;
 }
 
 export function TagsField({
@@ -84,7 +87,7 @@ export function TagsField({
   maxTags = 20,
   className = '',
   onTagFilter,
-  isTagActive,
+  tagFilterState,
 }: TagsFieldProps) {
   const [inputValue, setInputValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -141,7 +144,7 @@ export function TagsField({
       >
         <AnimatePresence initial={false} mode="popLayout">
           {tags.map((tag, i) => {
-            const active = isTagActive?.(tag) ?? false;
+            const filterState = tagFilterState?.(tag) ?? null;
             return (
             <motion.span
               key={tag}
@@ -153,15 +156,23 @@ export function TagsField({
               className={[
                 'flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs',
                 // Same subtle amber "applied" tint as a committed `FilterPill`
-                // — a tag that matches the currently-applied Label filter
-                // reads as active, everything else stays neutral.
-                active
+                // for a tag the filter includes; struck through and muted for
+                // one it excludes; everything else stays neutral.
+                filterState === 'include'
                   ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)]',
+                  : filterState === 'exclude'
+                    ? 'border-dashed border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)] line-through'
+                    : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)]',
               ].join(' ')}
             >
               {onTagFilter ? (
-                <FilterableMetaValue label={`Filter by label "${tag}"`} onFilter={() => onTagFilter(tag)}>
+                <FilterableMetaValue
+                  subject={`tag "${tag}"`}
+                  onFilterIn={() => onTagFilter(tag, 'include')}
+                  onFilterOut={() => onTagFilter(tag, 'exclude')}
+                  state={filterState}
+                  cueOnValue={false}
+                >
                   <span>{tag}</span>
                 </FilterableMetaValue>
               ) : (

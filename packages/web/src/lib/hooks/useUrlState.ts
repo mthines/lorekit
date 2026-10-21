@@ -23,9 +23,13 @@
  * synchronously on every `setState` call, while the URL write happens in the
  * background. When the URL finally reflects the new value (next render after
  * navigation), `optimistic` is reset to `UNSET` so the URL is once again the
- * source of truth. External URL changes (browser back/forward, direct link
- * visits) are reflected immediately because they change `searchParams`, which
- * resets the optimistic layer.
+ * source of truth.
+ *
+ * The optimistic value is shared by KEY across every mounted instance
+ * (`url-state-optimistic.ts`), not held per instance: a write from one
+ * component (the detail panel adding a filter) shows up at once in every other
+ * component reading the same param (the Explorer's filter bar and list), rather
+ * than only after the navigation lands.
  *
  * ## Usage (mirrors useState exactly)
  *
@@ -37,18 +41,25 @@
  *   });
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  UNSET,
+  readOptimistic,
+  retainOptimistic,
+  settleOptimistic,
+  subscribeOptimistic,
+  writeOptimistic,
+  type Unset,
+} from './url-state-optimistic';
 
 // ── Optimistic sentinel ────────────────────────────────────────────────────────
-// Using `null` as "no optimistic value" breaks when T itself is `string | null`
-// (e.g. `useUrlState<string | null>('org', null)`) because a legitimate `null`
-// value is indistinguishable from the "not set" sentinel, which causes the
-// optimistic layer to never clear and eventually triggers a React invalid-hook
-// call (React error #310) on the /settings page.
-// A module-scoped Symbol is unique and can never equal a real state value.
-const UNSET = Symbol('useUrlState/unset');
-type Unset = typeof UNSET;
+// `UNSET` (from `url-state-optimistic.ts`) means "no optimistic value". Using
+// `null` breaks when T itself is `string | null` (e.g.
+// `useUrlState<string | null>('org', null)`) because a legitimate `null` value is
+// indistinguishable from the "not set" sentinel, which causes the optimistic
+// layer to never clear and eventually triggers a React invalid-hook call (React
+// error #310) on the /settings page. A Symbol can never equal a real value.
 
 export type UrlStateDispatch<S> = (value: S | ((prev: S) => S)) => void;
 
@@ -155,14 +166,22 @@ export function useUrlState<T>(
   // NOTE: Do NOT use `null` as the sentinel — when T includes `null` (e.g.
   // `string | null`) the sentinel collides with a legitimate state value,
   // preventing the optimistic layer from ever clearing (React error #310).
-  const [optimisticValue, setOptimisticValue] = useState<T | Unset>(UNSET);
+  // Shared by key across instances — see `url-state-optimistic.ts`. The server
+  // snapshot is always UNSET: nothing has been written before hydration.
+  const getOptimistic = useCallback(() => readOptimistic(key) as T | Unset, [key]);
+  const getServerOptimistic = useCallback((): T | Unset => UNSET, []);
+  const optimisticValue = useSyncExternalStore<T | Unset>(subscribeOptimistic, getOptimistic, getServerOptimistic);
 
-  // Once the URL reflects the optimistic value, drop the optimistic layer.
+  // Count this instance as a reader, so the last one to unmount drops a write
+  // that never landed instead of leaving it pending for the next page.
+  useEffect(() => retainOptimistic(key), [key]);
+
+  // Once the URL reflects the optimistic value — or the reader has left the
+  // page it was written on — drop the optimistic layer.
   useEffect(() => {
-    if (optimisticValue !== UNSET && serialise(urlValue) === serialise(optimisticValue)) {
-      setOptimisticValue(UNSET);
-    }
-  }, [urlValue, optimisticValue]);
+    if (optimisticValue === UNSET) return;
+    settleOptimistic(key, { pathname, urlMatches: serialise(urlValue) === serialise(optimisticValue) });
+  }, [key, pathname, urlValue, optimisticValue]);
 
   // The value exposed to callers: optimistic takes priority while the URL is
   // catching up; falls back to the true URL value otherwise.
@@ -179,21 +198,25 @@ export function useUrlState<T>(
   // ── setState ───────────────────────────────────────────────────────────────
   const setState = useCallback<UrlStateDispatch<T>>(
     (valueOrUpdater) => {
-      const prev = optimisticValue !== UNSET ? optimisticValue : deserialise<T>(searchParams.get(key), defaultValue);
+      // Read the store at call time, not the render's snapshot: another instance
+      // may have written since this one last rendered.
+      const pendingValue = readOptimistic(key) as T | Unset;
+      const prev = pendingValue !== UNSET ? pendingValue : deserialise<T>(searchParams.get(key), defaultValue);
       const next =
         typeof valueOrUpdater === 'function'
           ? (valueOrUpdater as (prev: T) => T)(prev)
           : valueOrUpdater;
 
-      // 1. Optimistic: immediate UI update, no wait for navigation round-trip.
-      setOptimisticValue(next);
+      // 1. Optimistic: immediate UI update in every instance reading `key`, no
+      //    wait for the navigation round-trip.
+      writeOptimistic(key, next, pathname);
 
       // 2. Persist: update the URL asynchronously via the router.
       const url = buildUrl(pathname, searchParams, key, next, defaultValue);
       navigateRef.current(url, { scroll: false });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [searchParams, pathname, key, defaultValue, optimisticValue],
+    [searchParams, pathname, key, defaultValue],
   );
 
   // ── cleanOnPathname effect ─────────────────────────────────────────────────

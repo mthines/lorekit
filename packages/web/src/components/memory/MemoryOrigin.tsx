@@ -1,7 +1,7 @@
 import { GitBranch, GitCommitHorizontal, GitPullRequest, Github } from 'lucide-react';
 import { originLinks, type MemoryOriginFields, type OriginLinkKind } from '@/lib/origin';
 import { FilterableMetaValue } from '@/components/ui/FilterableMetaValue';
-import type { FilterField } from '@/lib/filters';
+import type { FilterField, FilterPolarity } from '@/lib/filters';
 
 /**
  * The "recorded from" provenance rows of a memory's Metadata list.
@@ -44,26 +44,26 @@ export function MemoryOrigin({
   origin,
   scope,
   onFilterOrigin,
-  isValueActive,
+  valueFilterState,
 }: {
   origin: MemoryOriginFields;
   scope?: string;
   /**
    * R3: when provided, the repo/branch/pull-request rows get a hover-reveal
-   * "Filter by this" affordance (`FilterableMetaValue`) that calls back with
-   * the `FilterField` + raw value to toggle into `?filters=`. Omitted by
-   * standalone callers (e.g. a read-only origin summary elsewhere) that have
-   * no filter bar to apply to.
+   * "filter in / filter out" affordance (`FilterableMetaValue`) that calls back
+   * with the `FilterField`, the raw value and which of the two was pressed.
+   * Omitted by standalone callers (e.g. a read-only origin summary elsewhere)
+   * that have no filter bar to apply to.
    */
-  onFilterOrigin?: (field: 'repo' | 'branch' | 'pr', value: string) => void;
+  onFilterOrigin?: (field: 'repo' | 'branch' | 'pr', value: string, polarity: FilterPolarity) => void;
   /**
-   * Whether a given (field, value) is currently part of the applied filter
-   * state (`isMetaValueActiveFilter`, `lib/filter-from-metadata.ts`) — drives
-   * the same subtle accent-orange "applied" cue a committed `FilterPill`
-   * uses. Only consulted alongside `onFilterOrigin` (a row with no filter
-   * affordance has nothing to mark active either).
+   * Whether a given (field, value) is currently filtered in or out by the
+   * applied filter state (`metaValueFilterState`, `lib/filter-from-metadata.ts`)
+   * — drives the same "applied" cue a committed `FilterPill` uses. Only
+   * consulted alongside `onFilterOrigin` (a row with no filter affordance has
+   * nothing to mark either).
    */
-  isValueActive?: (field: FilterField, value: string) => boolean;
+  valueFilterState?: (field: FilterField, value: string) => FilterPolarity | null;
 }) {
   const links = originLinks(origin, scope);
   if (links.length === 0) return null;
@@ -99,9 +99,10 @@ export function MemoryOrigin({
             <dd className="ml-auto min-w-0 truncate">
               {onFilterOrigin && filterField ? (
                 <FilterableMetaValue
-                  label={`Filter by ${rowLabel.toLowerCase()} "${label}"`}
-                  onFilter={() => onFilterOrigin(filterField, filterValue)}
-                  active={isValueActive?.(filterField, filterValue) ?? false}
+                  subject={`${rowLabel.toLowerCase()} "${label}"`}
+                  onFilterIn={() => onFilterOrigin(filterField, filterValue, 'include')}
+                  onFilterOut={() => onFilterOrigin(filterField, filterValue, 'exclude')}
+                  state={valueFilterState?.(filterField, filterValue) ?? null}
                 >
                   {valueNode}
                 </FilterableMetaValue>

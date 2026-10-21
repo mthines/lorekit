@@ -134,6 +134,7 @@ import {
   Boxes,
   CalendarPlus,
   Check,
+  Minus,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -165,6 +166,7 @@ import {
   rootSuggestions,
   searchOptions,
   selectedValues,
+  valuePolarity,
   type FacetValue,
   type Filter,
   type FilterField,
@@ -879,7 +881,13 @@ export function FilterMenu({
         </>
       ) : field ? (
         valueRows.map((option, i) => {
-          const isSelected = selectedValues(filters, field).includes(option.value);
+          // Excluded values (a tag in "includes none", a host in "is not") are
+          // selected too — unchecking takes the exclusion off — but marked with
+          // a minus rather than a check, so an exclusion never reads as an
+          // inclusion when a tag has both pills.
+          const polarity = valuePolarity(filters, field, option.value);
+          const isSelected = polarity !== null;
+          const isExcluded = polarity === 'exclude';
           return (
             <button
               key={option.value}
@@ -892,9 +900,11 @@ export function FilterMenu({
               className={[
                 'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs',
                 i === activeIndex ? 'bg-[var(--color-bg-elevated)]' : '',
-                isSelected
-                  ? 'text-[var(--color-accent)]'
-                  : 'text-[var(--color-content-secondary)]',
+                isExcluded
+                  ? 'text-[var(--color-error)]'
+                  : isSelected
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-content-secondary)]',
               ].join(' ')}
             >
               {/* The checkbox slot is always reserved, so nothing shifts
@@ -903,14 +913,18 @@ export function FilterMenu({
                 aria-hidden
                 className={[
                   'flex size-3.5 shrink-0 items-center justify-center rounded border',
-                  isSelected
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-                    : 'border-[var(--color-border)]',
+                  isExcluded
+                    ? 'border-[var(--color-error)] bg-[var(--color-error)]/15'
+                    : isSelected
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
+                      : 'border-[var(--color-border)]',
                 ].join(' ')}
               >
-                {isSelected && <Check className="size-2.5" />}
+                {isExcluded ? <Minus className="size-2.5" /> : isSelected && <Check className="size-2.5" />}
               </span>
-              <span className="flex-1 truncate">{descriptor?.format(option.value)}</span>
+              <span className={['flex-1 truncate', isExcluded ? 'line-through' : ''].join(' ')}>
+                {descriptor?.format(option.value)}
+              </span>
               {option.count !== null && (
                 <span className="shrink-0 tabular-nums text-[var(--color-content-tertiary)]">
                   {option.count}

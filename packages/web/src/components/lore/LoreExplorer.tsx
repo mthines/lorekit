@@ -135,6 +135,7 @@ import { usePersistedPreference } from '@/lib/hooks/usePersistedPreference';
 import type { DuplicateCluster } from '@lorekit/schemas/memory';
 import {
   filtersParamValue,
+  hasExplorerOnlyFilters,
   removeFilter,
   resolveFilters,
   setFilterOperator,
@@ -143,6 +144,7 @@ import {
   type Filter,
   type FilterField,
   type FilterOperator,
+  type FilterPolarity,
 } from '@/lib/filters';
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import { SortSelect } from './SortSelect';
@@ -563,9 +565,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   );
   // "Create retention policy" hands this view to a policy, so it is offered only
   // when a policy could reproduce it: the flag is on (the destination 404s
-  // otherwise) and no Explorer-only reverse direction is set.
+  // otherwise), no Explorer-only reverse direction is set, and no tag is both
+  // included and excluded (a policy has one `tags` condition — 00114).
   const canCreatePolicy =
-    retentionPoliciesEnabled && !hasExplorerOnlyConditions(retentionConditions);
+    retentionPoliciesEnabled &&
+    !hasExplorerOnlyConditions(retentionConditions) &&
+    !hasExplorerOnlyFilters(filters);
   // Which threshold the menu should open at, set by a retention pill's value
   // segment — the `editingField` above, for the other half of the bar.
   const [editingRetentionField, setEditingRetentionField] = useState<RetentionField | null>(null);
@@ -971,8 +976,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     setSelectedCluster(null);
   }
 
-  function handleOperatorChange(field: FilterField, operator: FilterOperator) {
-    const next = setFilterOperator(filters, field, operator);
+  function handleOperatorChange(field: FilterField, operator: FilterOperator, polarity: FilterPolarity) {
+    const next = setFilterOperator(filters, field, operator, polarity);
     setFilters(next);
     track({
       name: 'lore.filter_changed',
@@ -985,8 +990,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     setSelectedCluster(null);
   }
 
-  function handleRemoveFilter(field: FilterField) {
-    const next = removeFilter(filters, field);
+  function handleRemoveFilter(field: FilterField, polarity: FilterPolarity) {
+    const next = removeFilter(filters, field, polarity);
     setFilters(next);
     track({ name: 'lore.filter_changed', action: 'remove', field, ...filterCounts(next) });
     closeLesson('filter-change');

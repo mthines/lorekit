@@ -63,6 +63,7 @@ import {
 } from '@/lib/retention-filter';
 import {
   normalizeFilters,
+  policyExpressibleFilters,
   removeFilter,
   setFilterOperator,
   toggleFilterValue,
@@ -134,7 +135,10 @@ function conditionsFromPrefillParams(params: URLSearchParams): Conditions | null
   let filters: Filter[] = [];
   if (rawFilters) {
     try {
-      filters = normalizeFilters(JSON.parse(rawFilters));
+      // A policy has one `tags` condition, so a tag include + exclude (which the
+      // Explorer withholds the handoff for) can only arrive by a hand-edited
+      // link — keep only what the saved policy will actually match.
+      filters = policyExpressibleFilters(normalizeFilters(JSON.parse(rawFilters)));
     } catch {
       filters = [];
     }
