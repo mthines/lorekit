@@ -11,7 +11,8 @@
 #   runner image and browser build CI uses, so the result is authoritative.
 #
 #   Two ways to run it against a specific PR:
-#     • Comment `/update-baselines` on the PR (write-access users only).
+#     • Comment `/update-baselines` on the PR (write-access users, or Dash0's
+#       Agent0, which comments as the `dash0-dev[bot]` GitHub App).
 #     • Actions ▸ "Update visual baselines" ▸ Run workflow, enter the PR number.
 #
 #   It runs `vitest -u` (full suite by default), then commits ONLY the changed
@@ -56,12 +57,15 @@ jobs:
     name: Regenerate + commit baselines
     # Manual dispatch, OR a `/update-baselines` comment on a PR from someone with
     # write access. The author-association gate keeps drive-by commenters from
-    # pushing commits to a branch via this workflow.
+    # pushing commits to a branch via this workflow. A trusted App bot comments as
+    # CONTRIBUTOR, so it passes on its login (TRUSTED_APP_BOTS in the next step).
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request != null &&
        startsWith(github.event.comment.body, '/update-baselines') &&
-       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+       (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) ||
+        (github.event.comment.user.type == 'Bot' &&
+         contains(fromJSON('["dash0-dev[bot]"]'), github.event.comment.user.login))))
     runs-on: ubuntu-latest
     timeout-minutes: 20 # a wedged browser run must not burn the whole 6h ceiling
     permissions:
@@ -72,21 +76,32 @@ jobs:
       # permission: a read-only COLLABORATOR or a non-write org MEMBER matches it
       # too. Authoritatively verify the commenter has write (or admin) access
       # before anything touches the `contents: write` token. workflow_dispatch is
-      # exempt — GitHub already requires write access to dispatch a workflow.
+      # exempt — GitHub already requires write access to dispatch a workflow. So is
+      # a trusted App bot: anyone who can drive Agent0 against this repo can then
+      # regenerate baselines, which is no more than they can already push via it.
       - name: Verify commenter has write access
         if: github.event_name == 'issue_comment'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
         with:
           script: |
+            // Agent0 comments as the Dash0 GitHub App, which the permission API reports
+            // as 'none'. Trust it by identity instead: GitHub reserves `<slug>[bot]`
+            // for the App itself. Keep this list in sync with the job `if:` above.
+            const TRUSTED_APP_BOTS = ['dash0-dev[bot]'];
+            const { login, type } = context.payload.comment.user;
+            if (type === 'Bot' && TRUSTED_APP_BOTS.includes(login)) {
+              core.info(`${login} is a trusted GitHub App bot; skipping the collaborator check.`);
+              return;
+            }
             const { data: perm } =
               await github.rest.repos.getCollaboratorPermissionLevel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                username: context.payload.comment.user.login,
+                username: login,
               });
             if (!['write', 'admin'].includes(perm.permission)) {
               core.setFailed(
-                `@${context.payload.comment.user.login} has '${perm.permission}' access; ` +
+                `@${login} has '${perm.permission}' access; ` +
                 '/update-baselines requires write access to this repository.',
               );
             }
