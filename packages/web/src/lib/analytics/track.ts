@@ -64,6 +64,15 @@
  * - `insights.scope_opened`            — a row handed off to the Explorer.
  * - `insights.recall_flow_view_changed` — the visual page's recall flow swapped between chart and table.
  *
+ * ### Feature flags (`feature_flag.*`)
+ * - `feature_flag.exposed`             — a user reached a surface a flag gates, in either arm.
+ *   An experiment's population: count it by variant AND reason, and drop
+ *   `override` rows, or a developer's forced arm reads as random assignment.
+ *   Its attributes are the semantic-convention names the server-side OTel hook
+ *   stamps on spans (`feature_flag.key`, `.result.variant`, `.result.reason`),
+ *   not `lorekit.*`: one event is one evaluation's outcome, exactly what those
+ *   names describe, and one vocabulary then filters both signals.
+ *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
  * ids embed `scope::key` (user content + unbounded cardinality). `normalizeCommandId`
@@ -85,6 +94,7 @@
  */
 import { sendEvent } from '@dash0/sdk-web';
 
+import type { FlagKey } from '@lorekit/feature-flags';
 import type { ButtonSize, ButtonVariant } from '@/lib/button-styles';
 import type { FilterField, FilterOperator } from '@/lib/filters';
 import type { LessonUtility } from '@/lib/lesson-utility';
@@ -369,7 +379,16 @@ export type AnalyticsEvent =
       succeeded: boolean;
     }
   | { name: 'insights.scope_opened'; scopeType: ScopeSelectionType; source: InsightsScopeSource }
-  | { name: 'insights.recall_flow_view_changed'; view: 'chart' | 'table' };
+  | { name: 'insights.recall_flow_view_changed'; view: 'chart' | 'table' }
+  // ── Feature flags ─────────────────────────────────────────────────────────
+  | {
+      name: 'feature_flag.exposed';
+      flagKey: FlagKey;
+      /** A registry variant key — bounded by the flag's own declaration. */
+      variant: string;
+      /** `static` | `split` | `override` | … as `flagReasonValue` spells it. */
+      reason: string;
+    };
 
 /**
  * Dynamic lesson commands embed `scope::key` in their id (user content +
@@ -595,6 +614,12 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
       };
     case 'insights.recall_flow_view_changed':
       return { 'lorekit.insights.recall_flow.view': event.view };
+    case 'feature_flag.exposed':
+      return {
+        'feature_flag.key': event.flagKey,
+        'feature_flag.result.variant': event.variant,
+        'feature_flag.result.reason': event.reason,
+      };
   }
 }
 

@@ -81,12 +81,19 @@ const REGISTRY_INPUT = [
   {
     key: 'insights-visual',
     description:
-      "Insights — the visual first version of `/insights`: ONE page-wide window, the Learn → Recall → Promote → Prune loop strip, the Pulse timeline (lessons written and records read on a shared time axis, chosen vs bulk), the recall flow (client → tool → scope type), and runs drawn as a weekday × hour rhythm plus swimlanes — with the existing 'earning its place' grid, runs list and operational health kept below. Gates the whole page body through the `InsightsView` resolver; with it off `/insights` renders exactly as before. Reads only routes that already ship (`/memories/activity`, `/read-activity`, `/usage`, `/usage/runs`, `/utility`), so there is no backend prerequisite and flipping it is a pure UI decision.",
+      "Insights — the visual first version of `/insights`: ONE page-wide window, the Learn → Recall → Promote → Prune loop strip, the Pulse timeline (lessons written and records read on a shared time axis, chosen vs bulk), the recall flow (client → tool → scope type), and runs drawn as a weekday × hour rhythm plus swimlanes — with the existing 'earning its place' grid, runs list and operational health kept below. Gates the whole page body through the `InsightsView` resolver; with it off `/insights` renders exactly as before. Reads only routes that already ship (`/memories/activity`, `/read-activity`, `/usage`, `/usage/runs`, `/utility`), so there is no backend prerequisite and flipping it is a pure UI decision. Declared as a 50/50 experiment that is NOT running (`enabled: false` resolves every user to `off`): launching it is flipping that one boolean, and `on` is listed first so ramping its weight up never moves a user from `on` back to `off`. Exposure is measured by `feature_flag.exposed`, emitted by the `InsightsView` resolver — see docs/feature-flags.md § Running an experiment.",
     type: 'boolean',
     variants: { off: false, on: true },
     defaultVariant: 'off',
+    experiment: {
+      enabled: false,
+      variants: [
+        { key: 'on', weight: 50, description: 'The visual page' },
+        { key: 'off', weight: 50, description: 'The original page (control)' },
+      ],
+    },
     owner: '@lorekit/web',
-    tags: ['dashboard', 'web', 'insights', 'rollout'],
+    tags: ['dashboard', 'web', 'insights', 'rollout', 'experiment'],
   },
 ] satisfies unknown[];
 

@@ -19,12 +19,14 @@
  * registry's `defaultVariant: 'off'` so the two cannot disagree.
  */
 
-import { useFeatureFlagVariant } from '@/components/providers/FeatureFlagsProvider';
+import { useFeatureFlagExposure, useFeatureFlagVariant } from '@/components/providers/FeatureFlagsProvider';
 import { InsightsViewOff } from './InsightsView.off';
 import { InsightsViewOn } from './InsightsView.on';
 
 export function InsightsView() {
   const variant = useFeatureFlagVariant('insights-visual');
+  // In the resolver, so both arms are counted — see `useFeatureFlagExposure`.
+  useFeatureFlagExposure('insights-visual');
   switch (variant) {
     case 'on':
       return <InsightsViewOn />;

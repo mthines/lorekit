@@ -71,16 +71,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   // Evaluated ONCE here, server-side, for the whole dashboard tree.
   // `FeatureFlagsProvider` hands `values` to every Client Component via
-  // `useFeatureFlag`, and forwards `variants` into RUM (`dash0-rum.ts`) so
-  // Web Events can be filtered/grouped by `feature_flag.<key>` — there is no
+  // `useFeatureFlag`, and forwards `variants` and `reasons` into RUM
+  // (`dash0-rum.ts`) so Web Events can be filtered/grouped by
+  // `feature_flag.<key>` and how it was assigned — there is no
   // separate client-side evaluation to drift from this one. `user.id` is
   // passed through so this does not repeat the `auth.getUser()` call
   // `resolveDashboardBootstrap` already made above. See
   // `lib/feature-flags/server.ts`.
-  const { values: flags, variants: flagVariants } = await getAllServerFlagState(user.id);
+  const { values: flags, variants: flagVariants, reasons: flagReasons } = await getAllServerFlagState(user.id);
 
   return (
-    <FeatureFlagsProvider flags={flags} variants={flagVariants}>
+    <FeatureFlagsProvider flags={flags} variants={flagVariants} reasons={flagReasons}>
     <OnboardingProvider serverState={onboardingState}>
       {/*
         CommandPaletteProvider wraps the entire dashboard so the palette is

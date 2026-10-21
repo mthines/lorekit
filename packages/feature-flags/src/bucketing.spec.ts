@@ -83,3 +83,29 @@ describe('assignExperimentVariant', () => {
     expect(sawDifference).toBe(true);
   });
 });
+
+describe('ramping an experiment', () => {
+  it('never moves a user from the first arm to the second when the first arm only grows', () => {
+    // Cumulative bucketing: the first arm owns buckets [0, w). Raising w keeps
+    // every bucket it already owned, so a ramp from 10% to 50% only ADDS users
+    // to the treatment — the reason the registry lists `on` first.
+    const ramp = [10, 25, 50, 100].map(
+      (onWeight): Experiment => ({
+        enabled: true,
+        variants: [
+          { key: 'on', weight: onWeight },
+          { key: 'off', weight: 100 - onWeight },
+        ],
+      }),
+    );
+    for (let i = 0; i < 2_000; i++) {
+      const user = `user-${i}`;
+      let wasOn = false;
+      for (const stage of ramp) {
+        const isOn = assignExperimentVariant('insights-visual', stage, user) === 'on';
+        if (wasOn) expect(isOn).toBe(true);
+        wasOn = isOn;
+      }
+    }
+  });
+});

@@ -50,6 +50,7 @@ export {
   ATTR_FEATURE_FLAG_RESULT_REASON,
   EVENT_FEATURE_FLAG_EVALUATION,
   METRIC_FEATURE_FLAG_EVALUATIONS,
+  flagReasonValue,
 } from './otel-attributes.ts';
 export type { FlagKey, FlagValue, FlagValueMap } from './generated/flags.generated.ts';
 export { FLAG_KEYS } from './generated/flags.generated.ts';

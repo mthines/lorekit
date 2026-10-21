@@ -56,7 +56,8 @@ it can never ship a flag that silently resolves to `undefined`.
 
 > **Every `example-*` key in this document is illustrative, not a real flag.**
 > Grep for one and you will find only this file. The registry holds exactly the
-> flags that gate live behaviour — today four rollout gates, all plain booleans:
+> flags that gate live behaviour — today four rollout gates, all plain booleans
+> (`insights-visual` also declares a 50/50 experiment that is not running):
 > `retention-policies`, `lore-explorer-instruments`,
 > `lore-explorer-duplicate-clusters` and `insights-visual`. It has also held entries since removed: the
 > rollout gate for the `/insights` route (deleted once that page became
@@ -154,7 +155,7 @@ stamps the **active span** with:
 | `feature_flag.provider.name`  | `lorekit-flags`       |                                                                     |
 | `feature_flag.context.id`     | `user_abc123`         | The `targetingKey`, when the evaluation context carries one         |
 | `feature_flag.result.variant` | `treatment`           | **This is the A/B dimension** — filter or group by it               |
-| `feature_flag.result.reason`  | `SPLIT`               | `SPLIT` = experiment bucketing ran; `STATIC` = no active experiment |
+| `feature_flag.result.reason`  | `split`               | `split` = experiment bucketing ran; `static` = no active experiment; `override` = a session override won. Lowercased from OpenFeature's `SPLIT`/`STATIC` by `flagReasonValue` |
 
 ...plus a `feature_flag.evaluation` span event carrying the same data (so a
 trace that evaluates several flags still shows each one on the timeline), and
@@ -209,6 +210,15 @@ for the rest of the session:
 | Attribute | Example | Notes |
 |-----------|---------|-------|
 | `feature_flag.<flagKey>` | `feature_flag.example-onboarding-flow = "treatment"` | One dynamically-named attribute PER FLAG, holding its variant |
+| `lorekit.feature_flag.reason.<flagKey>` | `lorekit.feature_flag.reason.example-onboarding-flow = "split"` | How that variant was decided — the same values as the span's `feature_flag.result.reason`. Filter on `split` to keep developer overrides out of an experiment |
+
+Each sync REPLACES the previous values (`removeSignalAttribute` then
+`addSignalAttribute`): the SDK's add appends, so a re-sync after an override
+flip used to leave both variants on every later signal.
+
+In PromQL a hyphen in the flag key becomes an underscore:
+`feature_flag.insights-visual` is the label `feature_flag_insights_visual`, and
+its reason is `lorekit_feature_flag_reason_insights_visual`.
 
 This is a genuinely different shape from the server-side span attributes
 above, on purpose: the OTel feature-flag semantic conventions
@@ -222,11 +232,21 @@ representation that doesn't collide, at the cost of not being spec-standard.
 Only the variant is attached, never an `object`-typed flag's whole payload —
 same "prefer `variant` over `value`" reasoning as the span hook.
 
-**This is what answers "did treatment convert better than control":** search
-or group Web Events by `feature_flag.example-onboarding-flow`, and compare
-whatever conversion event you're tracking (a `sign_up_completed` custom event,
-a specific page reached) between the `"control"` and `"treatment"`
-populations.
+**This is what answers "did treatment convert better than control":** group
+the conversion event you're tracking by `feature_flag.<flagKey>`, filtered to
+`lorekit.feature_flag.reason.<flagKey> = "split"`, and divide by each arm's
+exposed users from `feature_flag.exposed` — see
+[Running an experiment](#running-an-experiment).
+
+**Known gap — the initial page load.** The sync runs after React mounts, so
+signals the SDK records while a page first loads carry no flag tags: 192 of 219
+dashboard page views (88%), 115 of 151 navigation timings and all 31 browser
+errors over 2026-10-14..21. `@dash0/sdk-web` only attaches attributes to those
+when they are passed to `init()` as `additionalSignalAttributes`, and `init()`
+runs before the flags are known. Until that changes, do not compare page views,
+load-time web vitals or browser errors per variant; count the experiment's
+population with `feature_flag.exposed`, which is emitted after mount and always
+carries its variant.
 
 **Before this was wired (nothing appears):** if you evaluated flags server-
 side (Server Components) before `FeatureFlagsProvider` existed on this
@@ -234,6 +254,122 @@ codebase, or before a page ever finished a client-side hydration where the
 provider mounts, no `feature_flag.*` attribute reaches RUM at all — only the
 server-side span hook fires. A `feature_flag.*` search on Web Events finding
 nothing is the correct, expected symptom of that gap, not a broken query.
+
+## Running an experiment
+
+Per-user splits need no storage: a signed-in user is bucketed by their Supabase
+user id (see [Targeting key resolution](#targeting-key-resolution)), so they see
+the same arm on every device for as long as the weights stand still.
+`insights-visual` is declared this way and is the worked example.
+
+### 1. Declare the arms, dark
+
+```ts
+experiment: {
+  enabled: false,
+  variants: [
+    { key: 'on', weight: 50, description: 'The new surface' },
+    { key: 'off', weight: 50, description: 'Control' },
+  ],
+},
+```
+
+`enabled: false` resolves every user to `defaultVariant` with reason `static`,
+so merging changes nothing. **List the treatment first**: the first arm owns
+buckets `[0, weight)`, so raising its weight only ever adds users to it
+(`bucketing.spec.ts` § "ramping an experiment"). Lowering it, or reordering the
+arms, moves users between arms mid-experiment.
+
+### 2. Count exposure in the resolver
+
+Call `useFeatureFlagExposure('<flag-key>')` in the copy-and-suffix resolver,
+never in one arm — the control arm's exposures are half the comparison. It emits
+`feature_flag.exposed` once per mount (and again if the variant changes), one
+task after the commit so it carries the real user id rather than the anonymous
+one:
+
+| Attribute | Example |
+|---|---|
+| `feature_flag.key` | `insights-visual` |
+| `feature_flag.result.variant` | `on` |
+| `feature_flag.result.reason` | `split` |
+
+### 3. Launch and ramp
+
+Set `enabled: true` and deploy. To ramp, raise the first arm's weight (and lower
+the second to keep the sum at 100). Visitors who are not signed in are bucketed
+by the `lorekit_flag_anon_id` cookie and can change arm when they sign in, so
+run experiments on authenticated surfaces.
+
+### 4. Measure
+
+Exposed users per arm — the population, and the sample-ratio check:
+
+```promql
+sum by (feature_flag_result_variant) (
+  clamp_max(
+    sum by (feature_flag_result_variant, user_id) (
+      increase({otel_metric_name="dash0.web.events", service_name="web",
+        event_name="feature_flag.exposed", feature_flag_key="insights-visual",
+        feature_flag_result_reason="split", user_id!="", user_id!~"anon:.*"}[$__range])
+    ),
+    1
+  )
+)
+```
+
+The clamped sum is the distinct-user shape that matches a SQL `uniqExact`
+on `dash0.web.events`; `count()` and `dash0.web.users` do not.
+
+**Sample-ratio mismatch is the regression signal.** With `n` exposed users and an
+arm weighted `p`, that arm's share should stay within `p ± 3·√(p(1−p)/n)` —
+±15 points at 100 users, ±7.5 at 400. Outside it, assignment or exposure is
+broken (a resolver that only one arm reaches, a cached page): stop reading
+outcomes until it is explained.
+
+Outcomes per exposed user, per arm, overrides excluded — here every Insights
+interaction. The exposure event names its arm `feature_flag_result_variant` and
+the outcome events `feature_flag_insights_visual`, so the denominator is
+relabelled before dividing:
+
+```promql
+sum by (feature_flag_insights_visual) (
+  increase({otel_metric_name="dash0.web.events", service_name="web",
+    event_name=~"^insights[.].*", lorekit_feature_flag_reason_insights_visual="split"}[$__range])
+)
+/ on (feature_flag_insights_visual)
+sum by (feature_flag_insights_visual) (
+  label_replace(
+    clamp_max(
+      sum by (feature_flag_result_variant, user_id) (
+        increase({otel_metric_name="dash0.web.events", service_name="web",
+          event_name="feature_flag.exposed", feature_flag_key="insights-visual",
+          feature_flag_result_reason="split", user_id!="", user_id!~"anon:.*"}[$__range])
+      ),
+      1
+    ),
+    "feature_flag_insights_visual", "$1", "feature_flag_result_variant", "(.*)"
+  )
+)
+```
+
+Server-side outcomes (errors, latency) group spans by
+`feature_flag.result.variant` instead.
+
+### 5. Finish
+
+Ship the winner as [Removing a flag](#removing-a-flag) describes: promote its
+arm into the resolver, delete the other, drop the registry entry — and the
+`useFeatureFlagExposure` call with it.
+
+### What this does not do
+
+- **No saved per-user assignment.** The arm is a pure function of flag key,
+  user id and weights. There is no way to pin one user to an arm across devices
+  (a session override pins one browser, and only for allowlisted developers in
+  production), and a non-monotonic weight change reassigns users.
+- **Weights change by deploy.** `registry.ts` stays the single source of truth;
+  there is no runtime percentage control.
 
 ## Cross-language flags (adding a language)
 

@@ -29,7 +29,7 @@
  * Next.js evaluates outside the React tree, and also server-side during static
  * prerendering) can import it as safely as a client component can.
  */
-import { init, identify, addSignalAttribute } from '@dash0/sdk-web';
+import { init, identify, addSignalAttribute, removeSignalAttribute } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
 import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
@@ -396,6 +396,16 @@ export function resetDash0Identity(): void {
 export const FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX = 'feature_flag.';
 
 /**
+ * Attribute-name prefix for each flag's assignment REASON (`static`, `split`,
+ * `override`), set beside its variant by {@link syncFeatureFlagRumAttributes}.
+ *
+ * Its own `lorekit.*` namespace rather than `feature_flag.<key>.reason`: the
+ * semantic conventions' naming rules say a name should not also be a namespace,
+ * and `feature_flag.<key>` is already a leaf holding the variant.
+ */
+export const FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX = 'lorekit.feature_flag.reason.';
+
+/**
  * Attach the current session's feature-flag state to every subsequent RUM
  * signal — page views, clicks, custom events, errors — via `addSignalAttribute`.
  *
@@ -438,14 +448,42 @@ export const FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX = 'feature_flag.';
  *
  * Called from `FeatureFlagsProvider` (a `useEffect`, so it re-runs whenever
  * the server re-evaluates flags — e.g. after a session-override change) with
- * the variant map `getAllServerFlagVariants()` (`lib/feature-flags/server.ts`)
- * produced. No-op before RUM init, like every other function in this module —
+ * the variant and reason maps `getAllServerFlagState()`
+ * (`lib/feature-flags/server.ts`) produced. Each re-run REPLACES the previous
+ * values rather than adding to them.
+ *
+ * ## Known gap: the initial page load
+ *
+ * This runs after React mounts, so signals the SDK records while a page first
+ * loads — the page view, navigation timing, early web vitals and errors — carry
+ * no flag tags (88% of dashboard page views over 2026-10-14..21). Compare those
+ * per variant only once flags reach `init()`'s `additionalSignalAttributes`; for
+ * an experiment's population, use the `feature_flag.exposed` event instead. No-op before RUM init, like every other function in this module —
  * a flag evaluated during static prerendering (no browser, no SDK) has
  * nothing to attach to yet; the next real page load calls this again anyway.
  */
-export function syncFeatureFlagRumAttributes(flagVariants: Readonly<Record<string, string>>): void {
+export function syncFeatureFlagRumAttributes(
+  flagVariants: Readonly<Record<string, string>>,
+  flagReasons: Readonly<Record<string, string>>,
+): void {
   if (!initialized) return;
   for (const [flagKey, variant] of Object.entries(flagVariants)) {
-    addSignalAttribute(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}${flagKey}`, variant);
+    replaceSignalAttribute(`${FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX}${flagKey}`, variant);
+    const reason = flagReasons[flagKey];
+    if (reason !== undefined) {
+      replaceSignalAttribute(`${FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX}${flagKey}`, reason);
+    }
   }
+}
+
+/**
+ * Set a signal attribute to exactly one value.
+ *
+ * `addSignalAttribute` APPENDS. A re-sync — after an override change, or React
+ * running the effect twice in development — would otherwise leave the old and
+ * the new variant on every later signal, which reads as both arms at once.
+ */
+function replaceSignalAttribute(name: string, value: string): void {
+  removeSignalAttribute(name);
+  addSignalAttribute(name, value);
 }

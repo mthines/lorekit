@@ -157,6 +157,11 @@ const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = Object.fromEntri
   FLAG_REGISTRY.map((flag) => [flag.key, flag.defaultVariant]),
 );
 
+/** Every flag resolved by its default, as the real provider reports it outside an experiment. */
+const DEFAULT_FLAG_REASONS: Readonly<Record<string, string>> = Object.fromEntries(
+  FLAG_REGISTRY.map((flag) => [flag.key, 'static']),
+);
+
 /**
  * Seed `FeatureFlagsProvider` with the registry's defaults so components
  * reading `useFeatureFlag`/`useFeatureFlagVariant` (e.g. `LoreExplorer`'s
@@ -165,7 +170,7 @@ const DEFAULT_FLAG_VARIANTS: Readonly<Record<string, string>> = Object.fromEntri
  * layout, which is the only place a real provider is mounted.
  */
 export const withFeatureFlags: Decorator = (Story) => (
-  <FeatureFlagsProvider flags={DEFAULT_FLAG_VALUES} variants={DEFAULT_FLAG_VARIANTS}>
+  <FeatureFlagsProvider flags={DEFAULT_FLAG_VALUES} variants={DEFAULT_FLAG_VARIANTS} reasons={DEFAULT_FLAG_REASONS}>
     <Story />
   </FeatureFlagsProvider>
 );
@@ -184,8 +189,11 @@ export const withFeatureFlags: Decorator = (Story) => (
 export function withFlagVariants(overrides: Partial<Record<FlagKey, string>>): Decorator {
   const values: FlagValueMap = { ...DEFAULT_FLAG_VALUES };
   const variants: Record<string, string> = { ...DEFAULT_FLAG_VARIANTS };
+  const reasons: Record<string, string> = { ...DEFAULT_FLAG_REASONS };
   for (const [key, variant] of Object.entries(overrides) as [FlagKey, string][]) {
     variants[key] = variant;
+    // A forced variant is what the real provider reports as an override.
+    reasons[key] = 'override';
     // Every flag in the registry is `boolean`, so the value IS "is this the `on`
     // arm" — which is also why an unknown variant seeds `false`, matching the
     // resolver's `default → off`. The cast is needed because `FlagValueMap` is a
@@ -193,7 +201,7 @@ export function withFlagVariants(overrides: Partial<Record<FlagKey, string>>): D
     (values as Record<FlagKey, boolean>)[key] = variant === 'on';
   }
   const Wrapped: Decorator = (Story) => (
-    <FeatureFlagsProvider flags={values} variants={variants}>
+    <FeatureFlagsProvider flags={values} variants={variants} reasons={reasons}>
       <Story />
     </FeatureFlagsProvider>
   );

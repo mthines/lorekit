@@ -16,6 +16,7 @@ import {
   FLAG_KEYS,
   evaluateFlag,
   evaluateFlagDetails,
+  flagReasonValue,
   parseFlagOverrides,
   withFlagOverrides,
   type FlagKey,
@@ -94,8 +95,8 @@ export async function getAllServerFlags(knownUserId?: string | null): Promise<Fl
 }
 
 /**
- * Every declared flag's resolved VALUE and VARIANT, in one pass —
- * `{ values, variants }`. `values` is what `getAllServerFlags` already
+ * Every declared flag's resolved VALUE, VARIANT and REASON, in one pass —
+ * `{ values, variants, reasons }`. `values` is what `getAllServerFlags` already
  * returns (`FeatureFlagsProvider`'s `flags` prop, what `useFeatureFlag` reads).
  * `variants` — flag key -> variant KEY string (`"treatment"`, not `true`) — is
  * what `FeatureFlagsProvider` forwards into
@@ -105,13 +106,23 @@ export async function getAllServerFlags(knownUserId?: string | null): Promise<Fl
  * SEPARATE representation from the OTel semconv attributes the server-side
  * hook stamps on spans.
  *
+ * `reasons` — flag key -> how the variant was decided (`static`, `split`,
+ * `override`, spelled by `flagReasonValue` exactly as spans spell it) — is what
+ * lets an experiment's analysis keep a developer override out of its treatment
+ * arm: without it, an overridden `on` and a randomly assigned `on` are the same
+ * RUM value.
+ *
  * Uses `evaluateFlagDetails` (one call per flag, not two) so this never
  * double-evaluates — and never double-fires the OTel hook — relative to a
  * plain `getAllServerFlags()` call for the same request.
  */
 export async function getAllServerFlagState(
   knownUserId?: string | null,
-): Promise<{ values: FlagValueMap; variants: Record<FlagKey, string> }> {
+): Promise<{
+  values: FlagValueMap;
+  variants: Record<FlagKey, string>;
+  reasons: Record<FlagKey, string>;
+}> {
   const context = await resolveFeatureFlagContext(knownUserId);
   const entries = await Promise.all(
     FLAG_KEYS.map(async (key) => {
@@ -122,15 +133,18 @@ export async function getAllServerFlagState(
 
   const values: Record<string, unknown> = {};
   const variants: Record<string, string> = {};
+  const reasons: Record<string, string> = {};
   for (const [key, details] of entries) {
     values[key] = details.value;
     // `variant` is optional per the OpenFeature spec, but `LoreKitFlagProvider`
     // always sets it (static/experiment/override all do) — the fallback only
     // guards a hypothetical future provider that doesn't.
     variants[key] = details.variant ?? String(details.value);
+    reasons[key] = flagReasonValue(details.reason);
   }
   return {
     values: values as unknown as FlagValueMap,
     variants: variants as Record<FlagKey, string>,
+    reasons: reasons as Record<FlagKey, string>,
   };
 }
