@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTokenVolume, formatShare, readDeliveryCost, CHARS_PER_TOKEN_ESTIMATE } from './lore-cost';
+import { formatTokenVolume, formatShare, readDeliveryCost, costWindowSince, CHARS_PER_TOKEN_ESTIMATE } from './lore-cost';
 import type { UtilityCost } from '@lorekit/schemas/memory';
 
 const cost = (over: Partial<UtilityCost> = {}): UtilityCost => ({
@@ -109,5 +109,17 @@ describe('CHARS_PER_TOKEN_ESTIMATE', () => {
     // the assumption, and so changing it is one edit in @lorekit/schemas
     // rather than a silent disagreement between the label and the figure.
     expect(CHARS_PER_TOKEN_ESTIMATE).toBe(4);
+  });
+});
+
+describe('costWindowSince', () => {
+  it('is 30 days back, floored to the start of the UTC hour', () => {
+    expect(costWindowSince(Date.parse('2026-10-21T08:47:13.250Z'))).toBe('2026-09-21T08:00:00.000Z');
+  });
+
+  it('is the same value for every instant inside one hour, so callers share one query key', () => {
+    expect(costWindowSince(Date.parse('2026-10-21T08:00:00.000Z'))).toBe(
+      costWindowSince(Date.parse('2026-10-21T08:59:59.999Z')),
+    );
   });
 });

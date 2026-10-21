@@ -37,7 +37,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Copy, Check, ArrowUpRight } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
-import { useLoreUtility, useLoreUtilityRows } from '@/lib/queries/lore-utility';
+import { useLoreUtilitySummary, useLoreUtilityRows } from '@/lib/queries/lore-utility';
 import { LESSON_UTILITY_META, formatPullThrough, type LessonUtility } from '@/lib/lesson-utility';
 import { groomPrompt } from '@/lib/lore-utility-prompt';
 import { track } from '@/lib/analytics/track';
@@ -85,7 +85,8 @@ export function LoreUtilityGrid() {
   }
   // Account-wide: the page it lives on has no scope filter, and the hooks take
   // one only because the route does.
-  const census = useLoreUtility({});
+  // The census is window-independent; sharing the cost line's key makes the two one request.
+  const census = useLoreUtilitySummary();
   const rows = useLoreUtilityRows(selected);
 
   if (census.isError) {
