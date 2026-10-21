@@ -7,8 +7,14 @@ environments:
   # Local export goes wherever your .env.local OTEL_* variables point; set the
   # dataset in your personal overlay. Every LoreKit service shares this namespace.
   local: { namespace: lorekit }
-  # PR previews (web on Vercel, api on the preview Supabase project) export to the
-  # shared org's `default` dataset with deployment.environment.name=preview.
+  # A PR's web preview (web-preview-deploy.yml) exports browser RUM to the shared
+  # org's `default` dataset with deployment.environment.name=preview, but it calls
+  # the PRODUCTION api: its api spans carry deployment.environment.name=production
+  # and production's service.version, not the PR's. Scope them by
+  # dash0.trace.origin.web.session.id, matched against the session.id of web
+  # events whose page.url.domain is the preview host; never by environment. api
+  # spans tagged `preview` come from the preview Supabase project (main's staging
+  # deploy, `/preview` builds), which a PR's web preview never calls.
   preview: { dataset: default, namespace: lorekit }
 web:
   service_name: web                   # SERVICE_NAME in packages/web/src/lib/dash0-rum.ts
