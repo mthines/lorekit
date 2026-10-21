@@ -537,6 +537,11 @@ permission (`lk_rw_*` or `lk_ro_*`); a service-role token has no user and is ref
 so they are reported as `org_count` beside it and never subtracted. It is the same answer
 `GET /memories/quota` and the `lorekit quota` command return.
 
+A token narrowed to `personal` or to selected orgs sees `org_count` and `total` over only the
+orgs it reaches: `0` under `personal`. `personal` is never narrowed, by tenancy or by a scope
+allowlist, because the cap it is measured against is account-wide
+([what a scoped token sees](./api-tokens.md#what-a-scoped-token-sees)).
+
 ```json
 {
   "params": {

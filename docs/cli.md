@@ -186,7 +186,8 @@ Remote-only: your active memories against your plan's cap and how many writes ar
 `GET /memories/quota` (the same answer as the `memory.quota` MCP tool). `personal` is the pair the
 cap trigger enforces — personal memories against the personal limit, `remaining` = limit − count,
 never negative; org-owned memories count against each org's own cap, so they are shown beside it
-(`org_count`) and never subtracted. The shaping is the pure `memoryQuotaFromRow`
+(`org_count`) and never subtracted; a token narrowed to `personal` or selected orgs sees `org_count` and
+`total` over only the orgs it reaches. The shaping is the pure `memoryQuotaFromRow`
 (`packages/mcp-core/src/limits/memory-quota.ts`, mirrored to `_shared/limits/`). Warns at the cap
 and under 10 % headroom. Unlike the other read commands it **exits 1** when the remote is
 denied/unconfigured/unreachable/erroring, because there is no offline answer to fall back to and a

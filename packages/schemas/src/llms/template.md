@@ -123,8 +123,11 @@ behaves exactly as it always has.
 A request that NAMES a scope outside the allowlist is refused (`-32003` on MCP,
 `403` on REST) rather than answered with an empty list. A request that names no
 scope is narrowed instead. `memory.scopes` is narrowed too, so a scoped token
-cannot enumerate scope names it may not read. An operation that carries no scope
-at all (`memory.purge_expired`) is refused for a token that has an allowlist.
+cannot enumerate scope names it may not read. An account-wide sweep, which
+carries no scope at all (`memory.purge`, `memory.purge_expired`), is refused for a
+token that has an allowlist. `memory.quota` is answered for every token: it
+returns counts only, `org_count` and `total` cover just the orgs the tenancy
+reaches (`0` under `personal`), and `personal` stays account-wide because the cap is.
 
 For a scope INSIDE the allowlist, a scoped token can archive, delete, or restore any writer's row for that scope+key — the management authority the owner granted by scoping the key — reporting `404` (nothing there) vs `403` (present, but not this token's to touch); an unscoped token stays own-rows-only.
 

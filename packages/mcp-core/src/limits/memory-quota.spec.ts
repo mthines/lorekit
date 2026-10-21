@@ -54,7 +54,7 @@ describe('quotaForKey', () => {
   function fakeReads(orgCount = 0) {
     return {
       memberOrgIds: vi.fn(async () => MEMBER_ORGS),
-      countOrgMemories: vi.fn(async (_orgIds: string[]) => orgCount),
+      countOrgMemories: vi.fn<(orgIds: string[]) => Promise<number>>(async () => orgCount),
     };
   }
   const key = (orgAccess: KeyRestriction['orgAccess'], orgIds: string[] = []): KeyRestriction =>

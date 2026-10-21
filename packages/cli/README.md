@@ -419,7 +419,8 @@ lorekit quota --json   # { available, endpoint, plan, personal, org_count, total
 ```
 
 `personal` is the pair the cap enforces; org-owned memories count against each
-org's own cap and are shown beside it, never subtracted. Exits 1 when the remote
+org's own cap and are shown beside it, never subtracted. A token narrowed to
+`personal` or selected orgs sees only the orgs it reaches. Exits 1 when the remote
 is denied, unconfigured, unreachable or erroring, so a script can gate a bulk
 write on it.
 

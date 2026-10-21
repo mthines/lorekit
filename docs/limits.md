@@ -51,8 +51,11 @@ from `lorekit_memory_count` (00047), shaped by the pure `memoryQuotaFromRow`
 pair the trigger above enforces — personal active rows against the personal
 limit — so `remaining` is the number of new personal writes left. Org-owned
 rows count against each org's own cap (`00018_org_limits.sql`), so they are
-reported as `org_count` beside it and never subtracted. A service-role caller
-has no user and is refused. Per-org quotas are not reported yet.
+reported as `org_count` beside it and never subtracted. A token narrowed to
+`personal` or to selected orgs gets `org_count` and `total` recounted over only
+the orgs it reaches (`quotaForKey`, same file, applying `effectiveOrgIds`); the
+personal pair is never narrowed, because the cap is account-wide. A service-role
+caller has no user and is refused. Per-org quotas are not reported yet.
 
 ### The cap is also a WRITE-COST parameter
 

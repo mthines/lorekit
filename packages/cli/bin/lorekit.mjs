@@ -568,7 +568,8 @@ writes are left before the remote refuses one with \`memory_cap\` — from
 
 "personal" is the pair the cap enforces: your personal memories against your
 personal limit. Org-owned memories count against each org's own cap, so they
-are shown beside it and never subtracted from what is left.
+are shown beside it and never subtracted from what is left. A token narrowed to
+personal or selected orgs counts only the orgs it reaches.
 
 Remote only: the offline store has no plan and no cap. Exits 1 when the remote
 is denied, unconfigured, unreachable or erroring, so a script can gate a bulk

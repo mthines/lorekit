@@ -463,7 +463,10 @@ export const MemoryQuotaResponseSchema = z.object({
     limit: z.number().int().nonnegative(),
     remaining: z.number().int().nonnegative(),
   }),
-  /** Active org-owned memories across the caller's orgs (each org has its own cap). */
+  /**
+   * Active org-owned memories across the orgs the caller reaches (each org has its own cap):
+   * every org it belongs to, or only those its token's tenancy admits (`0` under `personal`).
+   */
   org_count: z.number().int().nonnegative(),
   /** `personal.count + org_count` — every active memory the caller can see. */
   total: z.number().int().nonnegative(),

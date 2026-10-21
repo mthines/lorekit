@@ -527,7 +527,8 @@ export const MCP_TOOLS = [
     returns:
       '`{ "plan", "personal": { "count", "limit", "remaining" }, "org_count", "total" }`. `personal` is the '
       + 'pair the cap enforces; org-owned memories count against each org\'s own cap, so `org_count` is '
-      + 'reported beside it and not subtracted from `remaining`. A service-role caller has no user and is refused.',
+      + 'reported beside it and not subtracted from `remaining`. A token narrowed to `personal` or to selected orgs '
+      + 'sees `org_count` and `total` over only the orgs it reaches. A service-role caller has no user and is refused.',
   },
   {
     name: 'memory.list_archived',
