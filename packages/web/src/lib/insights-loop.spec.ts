@@ -117,12 +117,22 @@ describe('loopStages', () => {
     });
   });
 
-  it('drops the Learn and Recall deltas when a series hit the row cap, but keeps Prune', () => {
-    const stages = loopStages(current, { ...previous, summary: { archived: 1, expired: 0 } }, census, true);
+  it('drops the Learn and Recall deltas when the current series hit the row cap, but keeps Prune', () => {
+    const stages = loopStages(current, { ...previous, summary: { archived: 1, expired: 0 } }, census, {
+      current: true,
+      previous: false,
+    });
     expect(stages.learn.changePct).toBeNull();
     expect(stages.recall.changePct).toBeNull();
     expect(stages.prune.changePct).toBe(400);
     expect(stages.seriesIncomplete).toBe(true);
+  });
+
+  it('drops the Learn and Recall deltas but does not mark the figures incomplete when only the previous series hit the cap', () => {
+    const stages = loopStages(current, previous, census, { current: false, previous: true });
+    expect(stages.seriesIncomplete).toBe(false);
+    expect(stages.learn.changePct).toBeNull();
+    expect(stages.recall.changePct).toBeNull();
   });
 
   it('leaves Promote absent while the census has not loaded', () => {

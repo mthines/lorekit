@@ -164,7 +164,7 @@ export function InsightsVisualPage() {
       { totals: rawTotals(current.writes, current.reads), summary: current.usage.summary },
       { totals: rawTotals(previous.writes, previous.reads), summary: previous.usage.summary },
       census.data?.census ?? null,
-      currentCapped || previousCapped,
+      { current: currentCapped, previous: previousCapped },
     );
   }, [loop.data, census.data]);
   const updating = loop.isPlaceholderData;

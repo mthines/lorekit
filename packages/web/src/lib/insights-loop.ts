@@ -173,7 +173,7 @@ export interface LoopStages {
   recall: { records: number; chosen: number; changePct: number | null };
   promote: { loadBearing: number; specialist: number } | null;
   prune: { archived: number; expired: number; changePct: number | null };
-  /** Learn and Recall come from a series that hit the row cap — they are lower bounds. */
+  /** The CURRENT window's series hit the row cap — Learn and Recall are lower bounds. */
   seriesIncomplete: boolean;
 }
 
@@ -193,27 +193,30 @@ export function periodChange(current: number, previous: number): number | null {
 /**
  * The four stage figures, each from the one source that can carry it (see the module docblock).
  *
- * `seriesTruncated` — either window's activity series hit the row cap. Learn and
- * Recall are then lower bounds, and their deltas are dropped: a delta between
- * two figures that may each be missing rows is not a comparison.
+ * `truncation` — which window's activity series hit the row cap. Only the
+ * CURRENT window's cap makes the stated Learn and Recall figures lower bounds
+ * (`seriesIncomplete`); the previous window only ever feeds a delta. A cap on
+ * EITHER window drops the Learn and Recall deltas: a delta against a figure
+ * that may be missing rows is not a comparison.
  */
 export function loopStages(
   current: LoopWindowInput,
   previous: LoopWindowInput,
   census: UtilityCensus | null,
-  seriesTruncated = false,
+  truncation: { current: boolean; previous: boolean } = { current: false, previous: false },
 ): LoopStages {
   const records = current.totals.chosen + current.totals.bulk;
   const previousRecords = previous.totals.chosen + previous.totals.bulk;
   const pruned = current.summary.archived + current.summary.expired;
   const previousPruned = previous.summary.archived + previous.summary.expired;
-  const delta = (now: number, before: number) => (seriesTruncated ? null : periodChange(now, before));
+  const eitherTruncated = truncation.current || truncation.previous;
+  const delta = (now: number, before: number) => (eitherTruncated ? null : periodChange(now, before));
   return {
     learn: { created: current.totals.written, changePct: delta(current.totals.written, previous.totals.written) },
     recall: { records, chosen: current.totals.chosen, changePct: delta(records, previousRecords) },
     promote: census ? { loadBearing: census['load-bearing'], specialist: census.specialist } : null,
     prune: { archived: current.summary.archived, expired: current.summary.expired, changePct: periodChange(pruned, previousPruned) },
-    seriesIncomplete: seriesTruncated,
+    seriesIncomplete: truncation.current,
   };
 }
 
