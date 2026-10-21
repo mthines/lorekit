@@ -104,7 +104,8 @@ don't want to) reproduce that toolchain locally, the **Update visual baselines**
 build `web-test` uses, then commits **only** the changed screenshots straight back onto the PR's
 branch. Two ways to run it against a specific PR:
 
-- **Comment `/update-baselines` on the PR** (write-access users only), or
+- **Comment `/update-baselines` on the PR** (write-access users, or Dash0's Agent0, which
+  comments as the `dash0-dev[bot]` GitHub App and is trusted by that identity), or
 - **Actions ▸ "Update visual baselines" ▸ Run workflow**, entering the PR number.
 
 It runs `vitest -u` over the whole suite, stages only files under `__screenshots__/` (matching
