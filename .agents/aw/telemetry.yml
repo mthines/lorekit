@@ -1,0 +1,20 @@
+# .agents/aw/telemetry.yml — the telemetry witness (telemetry-verify). Committed.
+# Personal values (your own local dataset, the Dash0 MCP server key) go in
+# ~/.agents/aw/config.yml under repos.mthines/lorekit.
+version: 1
+backend: dash0-mcp
+environments:
+  # Local export goes wherever your .env.local OTEL_* variables point; set the
+  # dataset in your personal overlay. Every LoreKit service shares this namespace.
+  local: { namespace: lorekit }
+  # PR previews (web on Vercel, api on the preview Supabase project) export to the
+  # shared org's `default` dataset with deployment.environment.name=preview.
+  preview: { dataset: default, namespace: lorekit }
+web:
+  service_name: web                   # SERVICE_NAME in packages/web/src/lib/dash0-rum.ts
+  event_patterns:
+    # track({ name: 'lore.sort_changed', … }) — packages/web/src/lib/analytics/track.ts
+    - "track\\(\\{\\s*name:\\s*['\"]([^'\"]+)"
+    # export const AUTH_ATTEMPT_EVENT = 'auth.attempt' — packages/web/src/lib/auth-telemetry.ts
+    - "_EVENT\\s*=\\s*['\"]([a-z_]+\\.[a-z_.]+)"
+ingest_wait_seconds: 45

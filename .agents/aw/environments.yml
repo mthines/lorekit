@@ -1,0 +1,98 @@
+# .agents/aw/environments.yml — where the verification suite runs. Committed; no secrets.
+# Field reference: the aw-verify skill's rules/config.md. Written by /aw-verify setup.
+# Read .agents/aw/notes.md before a run: local `web` talks to PRODUCTION Supabase,
+# and the local Supabase stack runs on a developer machine only.
+version: 1
+environments:
+  local:
+    url: http://localhost:3000
+    stack:
+      driver: command
+      commands:
+        # Local Supabase (Postgres + Auth + Edge Functions) — LOCAL MACHINE ONLY.
+        # The script exits 78 when no Docker daemon is reachable (the Agent0 /
+        # cloud sandbox), and the run carries on with `web` against the hosted
+        # backend. Listed before `web` so it is ready when `web` picks its mode.
+        # No `port`: Docker owns 54321, and its listener would read as foreign.
+        - name: supabase
+          run: sh .agents/aw/scripts/stack/supabase-local.sh
+          ready_url: http://127.0.0.1:54321/functions/v1/health
+        # The dashboard. web.sh serves it against the local Supabase while
+        # supabase-local.sh runs, otherwise against the hosted project in
+        # .env.local (production).
+        - name: web
+          run: sh .agents/aw/scripts/stack/web.sh
+          ready_url: http://localhost:3000
+          port: 3000
+      component_map:
+        packages/web/: [web]
+        packages/schemas/: [web]
+        packages/feature-flags/: [web]
+        supabase/: [supabase, web]
+        scripts/seed/: [supabase, web]
+      default: [web]
+      hot_reload: [packages/web/src/]
+      config_files: [.env.local, packages/web/.env.local, supabase/config.toml]
+      ready_timeout_seconds: 300
+    auth:
+      strategy: storage-state
+      storage_state: .auth/local.json
+      # Present only when signed in (the Sidebar's user-settings link).
+      authed_check: '{role: "link", name: "User settings for"}'
+      refresh:
+        when: missing-or-expired
+        env: [LOREKIT_TESTING_USER_NAME, LOREKIT_TESTING_USER_PW]
+        # Reuses the repo's own headless login (scripts/auth-bootstrap-credentials.mjs).
+        # The runner exports PREVIEW_URL as this environment's url.
+        command: |
+          set -a
+          [ -f .env.local ] && . ./.env.local
+          [ -f packages/web/.env.local ] && . ./packages/web/.env.local
+          set +a
+          AUTH_LOGIN_URL="${PREVIEW_URL:-http://localhost:3000}/login" \
+            AUTH_STORAGE_STATE=./.auth/local.json \
+            AUTH_POST_LOGIN_URL_PATTERN='/lore' \
+            AUTH_AUTHED_ROLE='link' \
+            AUTH_AUTHED_NAME='User settings for' \
+            node scripts/auth-bootstrap-credentials.mjs
+        timeout_seconds: 120
+      # The email is the LOREKIT_TESTING_USER_NAME env var, never committed.
+      identity: { email: env:LOREKIT_TESTING_USER_NAME, role: user }
+    fixtures:
+      seed: null
+  preview:
+    url:
+      # GitHub deployments here are main's staging/production deploys only, so the
+      # PR preview comes from the sticky `lorekit-web-preview` comment that
+      # web-preview-deploy.yml posts (stable `pr-<n>` alias).
+      from: pr-deployment
+      comment:
+        authors: [github-actions]
+        host_pattern: 'lorekit-pr-\d+-[a-z0-9-]+\.vercel\.app'
+      template: 'https://lorekit-pr-{pr}-mads-thines-projects.vercel.app'
+    auth:
+      strategy: storage-state
+      # Outer wall: Vercel Deployment Protection on every preview request.
+      bypass_header: { name: x-vercel-protection-bypass, env: VERCEL_AUTOMATION_BYPASS_SECRET }
+      # Separate from local.json: the Supabase session cookie is host-scoped.
+      storage_state: .auth/preview.json
+      authed_check: '{role: "link", name: "User settings for"}'
+      refresh:
+        when: always
+        env: [LOREKIT_TESTING_USER_NAME, LOREKIT_TESTING_USER_PW, VERCEL_AUTOMATION_BYPASS_SECRET]
+        command: |
+          set -a
+          [ -f .env.local ] && . ./.env.local
+          [ -f packages/web/.env.local ] && . ./packages/web/.env.local
+          set +a
+          : "${PREVIEW_URL:?PREVIEW_URL is set by the runner to the resolved preview origin}"
+          AUTH_LOGIN_URL="$PREVIEW_URL/login" \
+            AUTH_STORAGE_STATE=./.auth/preview.json \
+            AUTH_POST_LOGIN_URL_PATTERN='/lore' \
+            AUTH_AUTHED_ROLE='link' \
+            AUTH_AUTHED_NAME='User settings for' \
+            node scripts/auth-bootstrap-credentials.mjs
+        timeout_seconds: 120
+      identity: { email: env:LOREKIT_TESTING_USER_NAME, role: user }
+    fixtures:
+      seed: null
