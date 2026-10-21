@@ -97,6 +97,10 @@ export function RunsSwimlanes({ runs, window, timeZone }: RunsSwimlanesProps) {
         <span>{time.format(new Date(window.from))}</span>
         <span>{time.format(new Date(window.to))}</span>
       </div>
+      <p className="ml-[7.75rem] text-[11px] text-[var(--color-content-tertiary)]">
+        Length = first to last call. Thickness = records read (square-root scale, thickest{' '}
+        {layout.maxRecordsRead.toLocaleString('en-US')}).
+      </p>
 
       <AnchoredTooltip id={readoutId} anchor={cursor.anchor} open={active !== null && active !== undefined} onDismiss={cursor.dismiss}>
         {active && (

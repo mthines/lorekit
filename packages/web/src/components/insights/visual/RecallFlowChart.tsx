@@ -81,7 +81,7 @@ export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
   if (flow.totalCalls === 0) {
     return (
       <p className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 text-xs text-[var(--color-content-tertiary)]">
-        No lore was recalled in {rangeCaption}.
+        No successful lore reads in {rangeCaption}.
       </p>
     );
   }
@@ -100,12 +100,11 @@ export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
     <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-[var(--color-content-tertiary)]">
-          {flow.totalCalls.toLocaleString('en-US')} lore-read calls
+          {flow.totalCalls.toLocaleString('en-US')} successful lore-read calls
         </span>
         <button
           type="button"
           onClick={() => setAsTable((v) => !v)}
-          aria-pressed={asTable}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 text-xs text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
         >
           {asTable ? <Workflow className="size-3.5" aria-hidden /> : <Table2 className="size-3.5" aria-hidden />}

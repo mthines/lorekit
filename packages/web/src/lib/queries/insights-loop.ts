@@ -19,9 +19,17 @@
  *
  * ## The row cap is reported, not hidden
  *
- * `capped` is true when either CURRENT series reached PostgREST's row cap (see
- * `isAtRowCap`). The page then says the timeline may be incomplete instead of
- * drawing the cliff a truncated series would show at "now".
+ * `currentCapped` / `previousCapped` say whether either series of that window
+ * reached PostgREST's row cap (see `isAtRowCap`). The page then says the
+ * figures may be incomplete instead of drawing the cliff a truncated series
+ * would show at "now", and drops deltas that would compare a partial window.
+ *
+ * ## The window travels with the data
+ *
+ * Both hooks keep the previous result on screen while a new range loads
+ * (`keepPreviousData`). Each result therefore carries the `window` it was
+ * fetched for, and the page draws grids from THAT window — never re-gridding
+ * last week's rows onto this month's axis as if the empty days were fact.
  */
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -40,11 +48,15 @@ export interface InsightsLoopWindow {
 }
 
 export interface InsightsLoopData {
+  /** The window these rows were fetched for. */
+  window: AbsoluteRange;
   unit: BucketUnit;
   current: InsightsLoopWindow;
   previous: InsightsLoopWindow;
-  /** Either current series reached the row cap — the timeline may be missing its newest buckets. */
-  capped: boolean;
+  /** A current-window series reached the row cap — its newest buckets may be missing. */
+  currentCapped: boolean;
+  /** A previous-window series reached the row cap — a delta against it is unreliable. */
+  previousCapped: boolean;
 }
 
 async function fetchWindow(
@@ -71,20 +83,21 @@ const EMPTY_USAGE: UsageStatsResponse = {
 };
 const EMPTY_WINDOW: InsightsLoopWindow = { writes: [], reads: [], usage: EMPTY_USAGE };
 
+function seriesCapped(w: InsightsLoopWindow): boolean {
+  return isAtRowCap(w.writes.length) || isAtRowCap(w.reads.length);
+}
+
 async function fetchInsightsLoop(window: AbsoluteRange, signal?: AbortSignal): Promise<InsightsLoopData> {
   const unit = bucketPlanFor(window).unit;
   const token = await browserAccessToken();
-  if (!token) return { unit, current: EMPTY_WINDOW, previous: EMPTY_WINDOW, capped: false };
+  if (!token) {
+    return { window, unit, current: EMPTY_WINDOW, previous: EMPTY_WINDOW, currentCapped: false, previousCapped: false };
+  }
   const [current, previous] = await Promise.all([
     fetchWindow(token, window, unit, signal),
     fetchWindow(token, priorWindow(window), unit, signal),
   ]);
-  return {
-    unit,
-    current,
-    previous,
-    capped: isAtRowCap(current.writes.length) || isAtRowCap(current.reads.length),
-  };
+  return { window, unit, current, previous, currentCapped: seriesCapped(current), previousCapped: seriesCapped(previous) };
 }
 
 export function useInsightsLoop(window: AbsoluteRange) {
@@ -107,13 +120,17 @@ export const MAX_RUN_PAGES = 5;
 const RUNS_PAGE_SIZE = 100;
 
 export interface WindowRuns {
+  /** The window these runs were fetched for. */
+  window: AbsoluteRange;
+  /** Most recent first — the route orders by `last_seen desc`. */
   runs: UsageRun[];
+  /** More runs exist past {@link MAX_RUN_PAGES}; the OLDEST part of the window is missing. */
   truncated: boolean;
 }
 
 async function fetchWindowRuns(window: AbsoluteRange, signal?: AbortSignal): Promise<WindowRuns> {
   const token = await browserAccessToken();
-  if (!token) return { runs: [], truncated: false };
+  if (!token) return { window, runs: [], truncated: false };
   const runs: UsageRun[] = [];
   let cursor: string | null = null;
   for (let pageIndex = 0; pageIndex < MAX_RUN_PAGES; pageIndex++) {
@@ -124,9 +141,9 @@ async function fetchWindowRuns(window: AbsoluteRange, signal?: AbortSignal): Pro
     );
     runs.push(...runsPage.runs);
     cursor = runsPage.next_cursor;
-    if (!cursor) return { runs, truncated: false };
+    if (!cursor) return { window, runs, truncated: false };
   }
-  return { runs, truncated: true };
+  return { window, runs, truncated: true };
 }
 
 export function useWindowRuns(window: AbsoluteRange) {

@@ -33,6 +33,8 @@ import { useChartCursor } from './use-chart-cursor';
 
 interface PulseTimelineProps {
   buckets: readonly PulseBucket[];
+  /** e.g. "the last 7 days" — the totals in the text alternative are for the whole window. */
+  rangeCaption: string;
   unit: BucketUnit;
   timeZone: string;
   /** The series reached the row cap — newest buckets may be missing. */
@@ -47,7 +49,7 @@ const ROWS = [
 
 type RowKey = (typeof ROWS)[number]['key'];
 
-export function PulseTimeline({ buckets, unit, timeZone, capped }: PulseTimelineProps) {
+export function PulseTimeline({ buckets, rangeCaption, unit, timeZone, capped }: PulseTimelineProps) {
   const cursor = useChartCursor(buckets.length);
   const readoutId = `pulse-readout-${useId().replace(/:/g, '')}`;
   const totals = pulseTotals(buckets);
@@ -86,7 +88,7 @@ export function PulseTimeline({ buckets, unit, timeZone, capped }: PulseTimeline
         <div
           ref={cursor.rootRef}
           role="img"
-          aria-label={`Per ${unit}: ${totals.written} lessons written, ${totals.chosen} records chosen on purpose, ${totals.bulk} records delivered in bulk. Use the arrow keys to read each ${unit}.`}
+          aria-label={`In ${rangeCaption}: ${totals.written} lessons written, ${totals.chosen} records chosen on purpose, ${totals.bulk} records delivered in bulk. Use the arrow keys to read each ${unit}.`}
           aria-describedby={activeBucket ? readoutId : undefined}
           className="flex min-w-0 flex-1 gap-[2px] rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
           {...cursor.rootProps}
@@ -119,10 +121,21 @@ export function PulseTimeline({ buckets, unit, timeZone, capped }: PulseTimeline
         </div>
       </div>
 
-      {/* Three ticks — first, middle, last — enough to anchor the axis without crowding it. */}
-      <div className="ml-[5.75rem] flex justify-between text-[11px] tabular-nums text-[var(--color-content-tertiary)]" aria-hidden>
-        {tickIndexes.map((i) => (
-          <span key={i}>{buckets[i] ? label(buckets[i]) : ''}</span>
+      {/* Three ticks — first, middle, last — each centred under ITS bar, so an even
+          bucket count does not put the middle tick on the gap between two bars. */}
+      <div className="relative ml-[5.75rem] h-4 text-[11px] tabular-nums text-[var(--color-content-tertiary)]" aria-hidden>
+        {tickIndexes.map((i, n) => (
+          <span
+            key={i}
+            className="absolute whitespace-nowrap"
+            style={{
+              left: `${((i + 0.5) / buckets.length) * 100}%`,
+              // Edge ticks anchor inward so they never overflow the chart.
+              transform: n === 0 ? 'translateX(0)' : n === tickIndexes.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
+            }}
+          >
+            {buckets[i] ? label(buckets[i]) : ''}
+          </span>
         ))}
       </div>
 

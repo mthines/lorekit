@@ -10,8 +10,9 @@
  * standalone component; this dispatches on the variant KEY, never the value.
  *
  * Retiring the flag: promote `.on`'s body here (or re-export
- * `InsightsVisualPage`), delete `.off` and — once nothing else needs it — the
- * original `InsightsPage`, delete this `switch`, drop the registry entry.
+ * `InsightsVisualPage`), delete `.off`, delete this `switch`, drop the registry
+ * entry. The original `InsightsPage` can go too once `InsightsPageSkeleton`
+ * (still imported by `page.tsx` as the Suspense fallback) has moved out of it.
  *
  * `default` is OFF: an unknown variant (a stale override cookie, a renamed
  * variant) must land on the page every reader already knows, matching the

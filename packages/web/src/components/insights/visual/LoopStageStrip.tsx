@@ -29,6 +29,8 @@ import { formatBucketLabel } from './format';
 
 interface LoopStageStripProps {
   stages: LoopStages;
+  /** The census request failed — Promote says so instead of "loading" forever. */
+  censusFailed?: boolean;
   pulse: readonly PulseBucket[];
   unit: BucketUnit;
   /** e.g. "the last 7 days". */
@@ -80,11 +82,20 @@ function Stage({
   );
 }
 
-export function LoopStageStrip({ stages, pulse, unit, rangeCaption, timeZone }: LoopStageStripProps) {
+export function LoopStageStrip({ stages, censusFailed = false, pulse, unit, rangeCaption, timeZone }: LoopStageStripProps) {
   const label = (start: string) => formatBucketLabel(start, unit, timeZone);
   const writePoints: SparkPoint[] = pulse.map((b) => ({ label: label(b.start), value: b.written }));
   const readPoints: SparkPoint[] = pulse.map((b) => ({ label: label(b.start), value: b.chosen + b.bulk }));
   const share = formatShare(chosenShare(stages));
+  // Learn and Recall come from a series that hit the row cap: say they are lower bounds.
+  const incomplete = stages.seriesIncomplete ? (
+    <p className="mb-1 text-[11px] text-[var(--color-warning)]">At least this many — the series hit the 1,000-row cap.</p>
+  ) : null;
+  const promoteVerb = stages.promote
+    ? `${stages.promote.specialist} specialists could reach further`
+    : censusFailed
+      ? 'Census unavailable — refresh to retry'
+      : 'Loading census';
 
   return (
     <section aria-label="The learning loop">
@@ -98,6 +109,7 @@ export function LoopStageStrip({ stages, pulse, unit, rangeCaption, timeZone }: 
           changePct={stages.learn.changePct}
           caption={rangeCaption}
         >
+          {incomplete}
           <Sparkbar points={writePoints} unit="new lessons" className="h-10" ariaLabel={`New lessons per ${unit}`} />
         </Stage>
 
@@ -110,13 +122,14 @@ export function LoopStageStrip({ stages, pulse, unit, rangeCaption, timeZone }: 
           changePct={stages.recall.changePct}
           caption={rangeCaption}
         >
+          {incomplete}
           <Sparkbar points={readPoints} unit="records" className="h-10" ariaLabel={`Records read per ${unit}`} />
         </Stage>
 
         <Stage
           icon={TrendingUp}
           name="Promote"
-          verb={stages.promote ? `${stages.promote.specialist} specialists could reach further` : 'Loading census'}
+          verb={promoteVerb}
           figure={stages.promote?.loadBearing ?? null}
           unitLabel="load-bearing"
           caption="all-time"

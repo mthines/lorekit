@@ -63,9 +63,9 @@ function unitMs(unit: BucketUnit): number {
  * Every bucket start (UTC, ISO) whose bucket intersects `window`.
  *
  * Anchored the way the server anchors its buckets (`date_trunc` on UTC), so a
- * server row lands on exactly one of these. The first bucket may start before
- * `window.from` — a 7-day window opened at 14:00 still has a bar for the whole
- * first day, because that is the bucket the server counted those writes in.
+ * server row lands on exactly one of these. The first and last buckets are
+ * usually PARTIAL: the server filters `>= since`, so a 7-day window opened at
+ * 14:00 yields 8 day bars whose first holds only that day's afternoon.
  */
 export function bucketStarts(window: AbsoluteRange, unit: BucketUnit): string[] {
   const step = unitMs(unit);
@@ -173,6 +173,8 @@ export interface LoopStages {
   recall: { records: number; chosen: number; changePct: number | null };
   promote: { loadBearing: number; specialist: number } | null;
   prune: { archived: number; expired: number; changePct: number | null };
+  /** Learn and Recall come from a series that hit the row cap — they are lower bounds. */
+  seriesIncomplete: boolean;
 }
 
 /**
@@ -188,21 +190,30 @@ export function periodChange(current: number, previous: number): number | null {
   return pctChange(current, previous);
 }
 
-/** The four stage figures, each from the one source that can carry it (see the module docblock). */
+/**
+ * The four stage figures, each from the one source that can carry it (see the module docblock).
+ *
+ * `seriesTruncated` — either window's activity series hit the row cap. Learn and
+ * Recall are then lower bounds, and their deltas are dropped: a delta between
+ * two figures that may each be missing rows is not a comparison.
+ */
 export function loopStages(
   current: LoopWindowInput,
   previous: LoopWindowInput,
   census: UtilityCensus | null,
+  seriesTruncated = false,
 ): LoopStages {
   const records = current.totals.chosen + current.totals.bulk;
   const previousRecords = previous.totals.chosen + previous.totals.bulk;
   const pruned = current.summary.archived + current.summary.expired;
   const previousPruned = previous.summary.archived + previous.summary.expired;
+  const delta = (now: number, before: number) => (seriesTruncated ? null : periodChange(now, before));
   return {
-    learn: { created: current.totals.written, changePct: periodChange(current.totals.written, previous.totals.written) },
-    recall: { records, chosen: current.totals.chosen, changePct: periodChange(records, previousRecords) },
+    learn: { created: current.totals.written, changePct: delta(current.totals.written, previous.totals.written) },
+    recall: { records, chosen: current.totals.chosen, changePct: delta(records, previousRecords) },
     promote: census ? { loadBearing: census['load-bearing'], specialist: census.specialist } : null,
     prune: { archived: current.summary.archived, expired: current.summary.expired, changePct: periodChange(pruned, previousPruned) },
+    seriesIncomplete: seriesTruncated,
   };
 }
 

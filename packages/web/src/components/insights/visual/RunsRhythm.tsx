@@ -114,6 +114,11 @@ export function RunsRhythm({ runs, timeZone }: RunsRhythmProps) {
           <span key={h}>{hourLabel(h)}</span>
         ))}
       </div>
+      <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-content-tertiary)]">
+        <span>Fewer</span>
+        <span className="h-2 w-16 rounded-sm bg-gradient-to-r from-[var(--color-accent)]/20 to-[var(--color-accent)]" aria-hidden />
+        <span>More — up to {grid.max} run{grid.max === 1 ? '' : 's'} in one hour</span>
+      </p>
       <p className="min-h-4 text-xs text-[var(--color-content-tertiary)]" aria-live="polite">
         {cell && activeCount !== null
           ? `${WEEKDAYS[cell.d]} ${hourLabel(cell.h)}–${hourLabel((cell.h + 1) % 24)}: ${activeCount} run${activeCount === 1 ? '' : 's'} started`

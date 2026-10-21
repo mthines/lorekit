@@ -113,7 +113,16 @@ describe('loopStages', () => {
       recall: { records: 300, chosen: 6, changePct: 100 },
       promote: { loadBearing: 4, specialist: 7 },
       prune: { archived: 3, expired: 2, changePct: null },
+      seriesIncomplete: false,
     });
+  });
+
+  it('drops the Learn and Recall deltas when a series hit the row cap, but keeps Prune', () => {
+    const stages = loopStages(current, { ...previous, summary: { archived: 1, expired: 0 } }, census, true);
+    expect(stages.learn.changePct).toBeNull();
+    expect(stages.recall.changePct).toBeNull();
+    expect(stages.prune.changePct).toBe(400);
+    expect(stages.seriesIncomplete).toBe(true);
   });
 
   it('leaves Promote absent while the census has not loaded', () => {

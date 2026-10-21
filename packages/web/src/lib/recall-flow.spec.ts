@@ -29,6 +29,14 @@ describe('recallFlow', () => {
     expect(flow.rows).toEqual([{ client: 'mcp', tool: 'memory.list', scopeType: 'repo', calls: 10 }]);
   });
 
+  it('counts only successful calls — a failed read recalled nothing', () => {
+    const flow = recallFlow([
+      row({ tool_name: 'memory.read', event_count: 5 }),
+      row({ tool_name: 'memory.read', outcome: 'error', event_count: 9 }),
+    ]);
+    expect(flow.totalCalls).toBe(5);
+  });
+
   it('names an unattributed client and buckets unknown scope types', () => {
     const flow = recallFlow([row({ client: null, scope_type: null, event_count: 3 })]);
     expect(flow.rows[0]).toMatchObject({ client: 'unattributed', scopeType: 'other' });

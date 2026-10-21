@@ -11,12 +11,15 @@
  * mixing them would make the bands disagree with their own nodes. Calls are
  * used throughout, because "who is asking" is a question about calls.
  *
- * ## The four lore-read tools
+ * ## The four lore-read tools, successful calls only
  *
- * The same narrow definition `/memories/read-activity` uses — `memory.read`,
- * `memory.list`, `memory.search`, `memory.list_archived` — so this chart and the
- * Pulse timeline beside it describe the same reads. `memory.scopes`,
- * `memory.usage` and the `org.*` reads are catalogue lookups, not recall.
+ * The same tool set `/memories/read-activity` counts — `memory.read`,
+ * `memory.list`, `memory.search`, `memory.list_archived`. `memory.scopes`,
+ * `memory.usage` and the `org.*` reads are catalogue lookups, not recall. Only
+ * `outcome === 'ok'` counts: a failed read recalled nothing (failures are the
+ * operational-health section's job). This is NOT the same population as the
+ * Pulse timeline: that series counts records and excludes dashboard reads,
+ * this one counts calls and includes them.
  *
  * ## Dashboard reads are kept
  *
@@ -94,7 +97,7 @@ function columnNodes(totals: Map<string, number>, layer: number, prefix: string)
 
 export function recallFlow(usageRows: readonly UsageStatRow[], topN = RECALL_FLOW_TOP_N): RecallFlow {
   const raw: RecallFlowRow[] = usageRows
-    .filter((r) => RECALL_TOOLS.has(r.tool_name) && r.event_count > 0)
+    .filter((r) => RECALL_TOOLS.has(r.tool_name) && r.outcome === 'ok' && r.event_count > 0)
     .map((r) => ({
       client: clientLabel(r.client),
       tool: r.tool_name,

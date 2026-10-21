@@ -73,7 +73,7 @@ export const RecallFlowSwapsToATable: Story = {
     const toggle = await waitFor(() => canvas.getByRole('button', { name: 'View as table' }));
     await step('the chart is the default, the table is one click away', async () => {
       await userEvent.click(toggle);
-      await expect(canvas.getByRole('button', { name: 'View as chart' })).toHaveAttribute('aria-pressed', 'true');
+      await expect(canvas.getByRole('button', { name: 'View as chart' })).toBeInTheDocument();
     });
     await step('the table carries the exact calls the bands were drawn from', async () => {
       const table = canvas.getByRole('table');
@@ -85,6 +85,9 @@ export const RecallFlowSwapsToATable: Story = {
       await expect(firstRow).toHaveTextContent('640');
       // memory.write is not a recall, so it never appears.
       await expect(within(table).queryByText('memory.write')).toBeNull();
+      // Successful reads only: 640 + 210 + 380 + 44 + 90 + 30 = 1,394. The fixture's
+      // 6 failed memory.read calls would make it 1,400 — a failed read recalled nothing.
+      await expect(canvas.getByText('1,394 successful lore-read calls')).toBeInTheDocument();
     });
   },
 };
