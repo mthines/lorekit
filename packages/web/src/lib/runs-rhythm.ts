@@ -72,8 +72,9 @@ export function rhythmGrid(runs: readonly UsageRun[], timeZone: string): RhythmG
   let total = 0;
   for (const run of runs) {
     const parts = localParts(run.first_seen, timeZone);
-    if (!parts) continue;
-    cells[parts.weekday]![parts.hour]! += 1;
+    const row = parts ? cells[parts.weekday] : undefined;
+    if (!parts || !row) continue;
+    row[parts.hour] = (row[parts.hour] ?? 0) + 1;
     total += 1;
   }
   const max = Math.max(0, ...cells.flat());
@@ -138,10 +139,10 @@ export function swimlanes(runs: readonly UsageRun[], window: AbsoluteRange): Swi
   }
 
   return {
-    lanes: RUN_LANES.filter((lane) => byLane.has(lane)).map((lane) => ({
-      lane,
-      runs: byLane.get(lane)!.sort((a, b) => a.x0 - b.x0),
-    })),
+    lanes: RUN_LANES.flatMap((lane) => {
+      const laneRuns = byLane.get(lane);
+      return laneRuns ? [{ lane, runs: laneRuns.sort((a, b) => a.x0 - b.x0) }] : [];
+    }),
     maxRecordsRead,
   };
 }

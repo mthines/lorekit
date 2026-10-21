@@ -32,16 +32,20 @@ describe('layoutFlow', () => {
   it('uses one scale for every column, picked from the fullest', () => {
     // Columns 0 and 2 each hold 40 across two nodes (one 10px gap) → 90px / 40.
     const scale = 90 / 40;
-    expect(byId.get('m')!.y1 - byId.get('m')!.y0).toBeCloseTo(40 * scale);
-    expect(byId.get('a')!.y1 - byId.get('a')!.y0).toBeCloseTo(30 * scale);
+    const height = (id: string) => {
+      const n = byId.get(id);
+      return n ? n.y1 - n.y0 : NaN;
+    };
+    expect(height('m')).toBeCloseTo(40 * scale);
+    expect(height('a')).toBeCloseTo(30 * scale);
     for (const link of layout.links) expect(link.width).toBeCloseTo(link.value * scale);
   });
 
   it('stacks bands inside their nodes without overlap', () => {
-    const intoM = layout.links.filter((l) => l.target === 'm').sort((p, q) => p.ty - q.ty);
-    const m = byId.get('m')!;
-    expect(intoM[0]!.ty - intoM[0]!.width / 2).toBeCloseTo(m.y0);
-    expect(intoM[1]!.ty + intoM[1]!.width / 2).toBeCloseTo(m.y1);
+    const [upper, lower] = layout.links.filter((l) => l.target === 'm').sort((p, q) => p.ty - q.ty);
+    const m = byId.get('m');
+    expect(upper && m && upper.ty - upper.width / 2).toBeCloseTo(m?.y0 ?? NaN);
+    expect(lower && m && lower.ty + lower.width / 2).toBeCloseTo(m?.y1 ?? NaN);
   });
 
   it('drops zero, negative and dangling links, and nodes left without flow', () => {

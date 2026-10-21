@@ -102,7 +102,7 @@ export function layoutFlow(
 
   const layerCount = Math.max(...valued.map((n) => n.layer)) + 1;
   const columns: (typeof valued)[] = Array.from({ length: layerCount }, () => []);
-  for (const n of valued) columns[n.layer]!.push(n);
+  for (const n of valued) columns[n.layer]?.push(n);
 
   // One scale for every column — see the module docblock.
   const scale = Math.min(
@@ -129,46 +129,37 @@ export function layoutFlow(
     }
   });
 
-  const placed = usable.filter((l) => laidOut.has(l.source) && laidOut.has(l.target));
-  const sourceOffset = new Map<string, number>();
-  const targetOffset = new Map<string, number>();
-  const sy = new Map<FlowLinkInput, number>();
-  const ty = new Map<FlowLinkInput, number>();
+  // Resolve both endpoints once, so the placement below never re-looks-up a node.
+  const placed = usable.flatMap((link) => {
+    const source = laidOut.get(link.source);
+    const target = laidOut.get(link.target);
+    return source && target ? [{ link, source, target, width: link.value * scale, sy: 0, ty: 0 }] : [];
+  });
 
   // Leave each source ordered by target position, arrive ordered by source position.
-  const bySourceThenTarget = [...placed].sort(
-    (a, b) => laidOut.get(a.source)!.y0 - laidOut.get(b.source)!.y0 || laidOut.get(a.target)!.y0 - laidOut.get(b.target)!.y0,
-  );
-  for (const l of bySourceThenTarget) {
-    const node = laidOut.get(l.source)!;
-    const offset = sourceOffset.get(l.source) ?? 0;
-    const w = l.value * scale;
-    sy.set(l, node.y0 + offset + w / 2);
-    sourceOffset.set(l.source, offset + w);
+  const sourceOffset = new Map<string, number>();
+  for (const p of [...placed].sort((a, b) => a.source.y0 - b.source.y0 || a.target.y0 - b.target.y0)) {
+    const offset = sourceOffset.get(p.source.id) ?? 0;
+    p.sy = p.source.y0 + offset + p.width / 2;
+    sourceOffset.set(p.source.id, offset + p.width);
   }
-  const byTargetThenSource = [...placed].sort(
-    (a, b) => laidOut.get(a.target)!.y0 - laidOut.get(b.target)!.y0 || laidOut.get(a.source)!.y0 - laidOut.get(b.source)!.y0,
-  );
-  for (const l of byTargetThenSource) {
-    const node = laidOut.get(l.target)!;
-    const offset = targetOffset.get(l.target) ?? 0;
-    const w = l.value * scale;
-    ty.set(l, node.y0 + offset + w / 2);
-    targetOffset.set(l.target, offset + w);
+  const targetOffset = new Map<string, number>();
+  for (const p of [...placed].sort((a, b) => a.target.y0 - b.target.y0 || a.source.y0 - b.source.y0)) {
+    const offset = targetOffset.get(p.target.id) ?? 0;
+    p.ty = p.target.y0 + offset + p.width / 2;
+    targetOffset.set(p.target.id, offset + p.width);
   }
 
-  const flowLinks: FlowLink[] = placed.map((l) => {
-    const x0 = laidOut.get(l.source)!.x1;
-    const x1 = laidOut.get(l.target)!.x0;
+  const flowLinks: FlowLink[] = placed.map(({ link, source, target, width: w, sy, ty }) => {
+    const x0 = source.x1;
+    const x1 = target.x0;
     const xm = (x0 + x1) / 2;
-    const s = sy.get(l)!;
-    const t = ty.get(l)!;
     return {
-      ...l,
-      width: l.value * scale,
-      sy: s,
-      ty: t,
-      path: `M${round(x0)},${round(s)}C${round(xm)},${round(s)} ${round(xm)},${round(t)} ${round(x1)},${round(t)}`,
+      ...link,
+      width: w,
+      sy,
+      ty,
+      path: `M${round(x0)},${round(sy)}C${round(xm)},${round(sy)} ${round(xm)},${round(ty)} ${round(x1)},${round(ty)}`,
     };
   });
 

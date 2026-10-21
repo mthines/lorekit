@@ -39,9 +39,9 @@ describe('rhythmGrid', () => {
       ],
       'UTC',
     );
-    expect(grid.cells[0]![9]).toBe(2);
-    expect(grid.cells[0]![10]).toBe(0);
-    expect(grid.cells[2]![14]).toBe(1);
+    expect(grid.cells[0]?.[9]).toBe(2);
+    expect(grid.cells[0]?.[10]).toBe(0);
+    expect(grid.cells[2]?.[14]).toBe(1);
     expect(grid).toMatchObject({ max: 2, total: 3 });
   });
 
@@ -70,8 +70,8 @@ describe('swimlanes', () => {
       window,
     );
     expect(result.lanes.map((l) => l.lane)).toEqual(['local', 'pr']);
-    expect(result.lanes[1]!.runs[0]).toMatchObject({ x0: 0.5, x1: 0.75 });
-    expect(result.lanes[0]!.runs[0]).toMatchObject({ x0: 0.25, x1: 0.25 });
+    expect(result.lanes[1]?.runs[0]).toMatchObject({ x0: 0.5, x1: 0.75 });
+    expect(result.lanes[0]?.runs[0]).toMatchObject({ x0: 0.25, x1: 0.25 });
     expect(result.maxRecordsRead).toBe(40);
   });
 
@@ -80,7 +80,7 @@ describe('swimlanes', () => {
       [run({ first_seen: '2026-06-14T20:00:00.000Z', last_seen: '2026-06-15T06:00:00.000Z' })],
       window,
     );
-    expect(result.lanes[0]!.runs[0]).toMatchObject({ x0: 0, x1: 0.25 });
+    expect(result.lanes[0]?.runs[0]).toMatchObject({ x0: 0, x1: 0.25 });
   });
 
   it('returns no lanes for a degenerate window', () => {

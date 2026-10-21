@@ -41,7 +41,7 @@ import { RunsList } from '@/components/settings/RunsList';
 import { RangePicker } from '@/components/ui/RangePicker';
 import { track } from '@/lib/analytics/track';
 import { rangeTelemetry } from '@/lib/analytics/lore-events';
-import { loopStages, pulseBuckets, rawTotals } from '@/lib/insights-loop';
+import { loopStages, pulseBuckets, pulseTotals, rawTotals } from '@/lib/insights-loop';
 import { useInsightsLoop, useWindowRuns, MAX_RUN_PAGES } from '@/lib/queries/insights-loop';
 import { useLoreUtility } from '@/lib/queries/lore-utility';
 import { excludeDashboardReads, failuresByToolOutcome } from '@/lib/usage-health';
@@ -138,6 +138,13 @@ export function InsightsVisualPage() {
     );
   }, [loop.data, census.data]);
 
+  const data = loop.data;
+  const runData = runs.data;
+  const pulseIsEmpty = useMemo(() => {
+    const t = pulseTotals(pulse);
+    return t.written + t.chosen + t.bulk === 0;
+  }, [pulse]);
+
   const usageRows = useMemo(() => loop.data?.current.usage.by_tool ?? [], [loop.data]);
   const agentRows = useMemo(() => excludeDashboardReads(usageRows), [usageRows]);
   const agentPreviousRows = useMemo(() => excludeDashboardReads(loop.data?.previous.usage.by_tool ?? []), [loop.data]);
@@ -157,24 +164,26 @@ export function InsightsVisualPage() {
 
       {loop.isLoading ? (
         <Skeleton className="h-40" />
-      ) : loop.isError || !stages ? (
+      ) : loop.isError || !data || !stages ? (
         <Notice>{LOAD_ERROR}</Notice>
       ) : (
-        <LoopStageStrip stages={stages} pulse={pulse} unit={loop.data!.unit} rangeCaption={caption} timeZone={timeZone} />
+        <LoopStageStrip stages={stages} pulse={pulse} unit={data.unit} rangeCaption={caption} timeZone={timeZone} />
       )}
 
       <Section
         icon={Activity}
         title="Pulse"
-        description={`Lessons written, records an agent chose on purpose, and records that rode along in a list or search — per ${loop.data?.unit ?? 'bucket'}, in ${caption}. Each row has its own scale.`}
+        description={`Lessons written, records an agent chose on purpose, and records that rode along in a list or search — per ${data?.unit ?? 'bucket'}, in ${caption}. Each row has its own scale.`}
       >
         {loop.isLoading ? (
           <Skeleton />
-        ) : loop.isError ? (
+        ) : loop.isError || !data ? (
           <Notice>{LOAD_ERROR}</Notice>
+        ) : pulseIsEmpty ? (
+          <Notice>Nothing was written or read in {caption}.</Notice>
         ) : (
           <Card>
-            <PulseTimeline buckets={pulse} unit={loop.data!.unit} timeZone={timeZone} capped={loop.data!.capped} />
+            <PulseTimeline buckets={pulse} unit={data.unit} timeZone={timeZone} capped={data.capped} />
           </Card>
         )}
       </Section>
@@ -196,17 +205,17 @@ export function InsightsVisualPage() {
           <Skeleton />
         ) : runs.isError ? (
           <Notice>Failed to load runs. Please refresh the page to try again.</Notice>
-        ) : (runs.data?.runs.length ?? 0) === 0 ? (
+        ) : !runData || runData.runs.length === 0 ? (
           <Notice>No runs recorded in {caption}.</Notice>
         ) : (
           <Card>
             <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-              <RunsRhythm runs={runs.data!.runs} timeZone={timeZone} />
-              <RunsSwimlanes runs={runs.data!.runs} window={window} timeZone={timeZone} />
+              <RunsRhythm runs={runData.runs} timeZone={timeZone} />
+              <RunsSwimlanes runs={runData.runs} window={window} timeZone={timeZone} />
             </div>
-            {runs.data!.truncated && (
+            {runData.truncated && (
               <p className="mt-3 text-xs text-[var(--color-content-tertiary)]">
-                Showing the first {runs.data!.runs.length.toLocaleString('en-US')} runs ({MAX_RUN_PAGES} pages) — pick a
+                Showing the first {runData.runs.length.toLocaleString('en-US')} runs ({MAX_RUN_PAGES} pages) — pick a
                 shorter range to see them all.
               </p>
             )}
