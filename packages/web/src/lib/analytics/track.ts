@@ -57,7 +57,8 @@
  * - `lore.results_paged`               — "Load more" appended a page.
  *
  * ### Insights (`insights.*`)
- * - `insights.range_changed`           — one of the page's TWO independent windows moved.
+ * - `insights.range_changed`           — one of the page's TWO independent windows moved
+ *                                        (`section: 'page'` — the visual page's single window).
  * - `insights.utility_quadrant_selected` — a utility quadrant was opened or closed.
  * - `insights.utility_prompt_copied`   — a grooming prompt reached the clipboard.
  * - `insights.scope_opened`            — a row handed off to the Explorer.
@@ -343,7 +344,7 @@ export type AnalyticsEvent =
   // ── Insights ──────────────────────────────────────────────────────────────
   | {
       name: 'insights.range_changed';
-      /** The page carries TWO independent windows; a bare preset would not say which moved. */
+      /** The original page carries TWO independent windows; a bare preset would not say which moved. The visual page's one window is `page`. */
       section: InsightsRangeSection;
       preset: RangeTelemetryPreset;
       spanDays?: number;

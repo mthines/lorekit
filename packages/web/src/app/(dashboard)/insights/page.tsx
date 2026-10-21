@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { InsightsPage, InsightsPageSkeleton } from '@/components/insights/InsightsPage';
+import { InsightsPageSkeleton } from '@/components/insights/InsightsPage';
+import { InsightsView } from '@/components/insights/InsightsView';
 
 export const metadata: Metadata = { title: 'Insights' };
 
@@ -13,12 +14,16 @@ export const metadata: Metadata = { title: 'Insights' };
  *
  * Suspense is required, not decorative: InsightsPage's RunsList/queries read
  * client-side state that opts the subtree out of static rendering.
+ *
+ * `InsightsView` is the `insights-visual` flag resolver: off renders the
+ * original `InsightsPage`, on renders the visual page. One skeleton serves both
+ * arms — they share the same outer layout.
  */
 export default function Page() {
   return (
     <div className="flex max-w-page flex-col gap-6">
       <Suspense fallback={<InsightsPageSkeleton />}>
-        <InsightsPage />
+        <InsightsView />
       </Suspense>
     </div>
   );
