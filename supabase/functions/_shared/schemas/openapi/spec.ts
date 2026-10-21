@@ -283,8 +283,9 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '`personal` is the pair the memory cap enforces: personal memories against the personal limit, '
       + 'with `remaining` writes left before `POST /memories` is refused with `memory_cap`. Org-owned '
       + 'memories count against each org\'s own cap, so they are reported as `org_count` and are not '
-      + 'subtracted from `remaining`. Requires a user-scoped credential; a service-role token has no '
-      + 'user and gets 403.',
+      + 'subtracted from `remaining`. A token narrowed to `personal` or to selected orgs gets '
+      + '`org_count` and `total` over only the orgs it reaches (`0` under `personal`). Requires a '
+      + 'user-scoped credential; a service-role token has no user and gets 403.',
     security,
     responses: {
       200: { description: 'Quota', content: { 'application/json': { schema: MemoryQuotaResponseSchema } } },
