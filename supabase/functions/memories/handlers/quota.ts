@@ -9,11 +9,8 @@ import { memoryQuotaFromRow, quotaForKey, type MemoryCountRow } from '../../_sha
 import { countActiveOrgMemories } from '../../_shared/limits/org-memory-count.ts';
 
 /**
- * GET /memories/quota — the caller's active memories against their plan's cap.
- * Counts only, so a scope-restricted key may read it; a key narrowed to `personal`
- * or selected orgs sees `org_count` and `total` over only the orgs it reaches
- * (`quotaForKey`). A service-role caller has no cap and is refused rather than
- * shown zeros that look like an empty account.
+ * GET /memories/quota — the caller's active memories against their plan's cap, with the org half
+ * narrowed to the calling key's tenancy (`quotaForKey`); a service-role caller has no cap and is refused.
  */
 export async function handleQuota(
   _req: Request, auth: AuthContext, db: DbClient, span: Span,

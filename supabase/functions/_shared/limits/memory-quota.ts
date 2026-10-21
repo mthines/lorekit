@@ -59,15 +59,9 @@ export function memoryQuotaFromRow(row: MemoryCountRow | null | undefined): Memo
 }
 
 /**
- * The quota as the calling key may see it.
- *
- * `lorekit_memory_count` counts every org the OWNER belongs to. A key narrowed to `personal`
- * or to selected orgs (00068) must not learn what the other orgs hold, so `org_count` and
- * `total` are recounted over `effectiveOrgIds` — the same intersection every tenant-scoped
- * read uses. `personal` is never narrowed: the cap is account-wide, so a count cut to the
- * key's scope allowlist would overstate `remaining`. Without a key, or with one that reaches
- * every org, neither read runs. Never reports more org memories than the owner's own figure.
- *
+ * The quota as the calling key may see it: for a key narrowed to `personal` or selected orgs (00068),
+ * `org_count` and `total` recounted over `effectiveOrgIds`, capped at the owner's figure; `personal`
+ * is never narrowed because the cap is account-wide.
  * @param quota the owner's quota, from `memoryQuotaFromRow`.
  * @param key the calling key's restriction; `undefined` for a JWT or an unrestricted caller.
  * @param reads the membership read and the org count, supplied by each surface.

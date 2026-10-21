@@ -586,16 +586,9 @@ describe('scope-authorized removal surfaces existed → reason (00071 / 00072)',
   });
 });
 
-/**
- * Drift guard: `GET /memories/quota` and `memory.quota` pass the calling key's tenancy.
- *
- * `lorekit_memory_count` counts every org the OWNER belongs to and takes no key
- * parameters, so the narrowing lives in `quotaForKey` (pure, behaviour-tested in
- * `limits/memory-quota.spec.ts`). That holds only while both surfaces route
- * through it with the key: one that returns `memoryQuotaFromRow(data)` directly
- * compiles, runs, and shows a `personal` key every org's count. The edge is Deno
- * and no vitest harness executes it, hence a source guard.
- */
+// `lorekit_memory_count` takes no key, so tenancy narrowing lives in `quotaForKey` (behaviour-tested in
+// `limits/memory-quota.spec.ts`). A surface returning `memoryQuotaFromRow(data)` directly would show a
+// `personal` key every org's count, and no vitest harness runs the Deno edge, hence a source guard.
 describe('key-tenancy usage guard (quota org count)', () => {
   it('GET /memories/quota narrows through quotaForKey with the calling key', () => {
     const src = readHandlerSource('quota');

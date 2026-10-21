@@ -10,15 +10,12 @@ import { createTracedClient, type Span } from '../telemetry/otel.ts';
 
 /**
  * Active (non-archived) org-owned memories across `orgIds`, matching the RPC's own org count.
- *
- * On the api_key path `db` is the service-role client, which bypasses RLS, so `orgIds` must
- * already be the caller's member orgs intersected with the key's tenancy (`effectiveOrgIds`):
- * that filter is the whole boundary here.
- *
  * @throws Error when the count query fails; the caller must not fall back to a wider figure.
  */
 export async function countActiveOrgMemories(db: DbClient, span: Span, orgIds: string[]): Promise<number> {
   if (orgIds.length === 0) return 0;
+  // The api_key path runs on the service-role client, which bypasses RLS: `orgIds` must already be
+  // membership ∩ the key's tenancy (`effectiveOrgIds`), because this filter is the whole boundary.
   const { count, error } = await createTracedClient(db, span)
     .from('memories')
     .select('id', { head: true, count: 'exact' })
