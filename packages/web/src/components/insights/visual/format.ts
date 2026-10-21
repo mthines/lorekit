@@ -13,12 +13,12 @@ const dayFormat = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'num
 const hourFormats = new Map<string, Intl.DateTimeFormat>();
 
 function hourFormat(timeZone: string): Intl.DateTimeFormat {
-  let f = hourFormats.get(timeZone);
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone });
-    hourFormats.set(timeZone, f);
+  let formatter = hourFormats.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone });
+    hourFormats.set(timeZone, formatter);
   }
-  return f;
+  return formatter;
 }
 
 export function formatBucketLabel(start: string, unit: BucketUnit, timeZone: string): string {

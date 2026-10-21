@@ -15,16 +15,43 @@
  * same calls continuing.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Table2, Workflow } from 'lucide-react';
 import { layoutFlow } from '@/lib/flow-layout';
 import { RECALL_FLOW_COLUMNS, recallFlow } from '@/lib/recall-flow';
 import type { UsageStatRow } from '@lorekit/schemas/usage';
 import { formatCompact } from './format';
 
-const WIDTH = 720;
+/** Fallback before the first measurement, and the floor below which labels would collide. */
+const DEFAULT_WIDTH = 720;
+const MIN_WIDTH = 320;
 const HEIGHT = 240;
 const NODE_WIDTH = 10;
+
+/**
+ * The chart's own pixel width, tracked with a ResizeObserver.
+ *
+ * Laid out at the real width rather than scaled through a fixed viewBox: a
+ * scaled SVG shrinks its 11px labels to ~5px on a phone, which is the
+ * "chart that ignores the canvas" failure. Measuring keeps text at its size.
+ *
+ * A callback ref (element in state), not a ref object: the measured element
+ * unmounts while the table is shown, and an observer attached once on mount
+ * would keep watching the detached node.
+ */
+function useMeasuredWidth() {
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  useEffect(() => {
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(Math.max(MIN_WIDTH, Math.round(entry.contentRect.width)));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  return { ref: setElement, width };
+}
 
 /** ≤ 6 hues (top 5 + "other"), each a theme token; "other" is always the neutral one. */
 const CLIENT_COLORS = [
@@ -43,9 +70,10 @@ interface RecallFlowChartProps {
 
 export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
   const flow = useMemo(() => recallFlow(rows), [rows]);
+  const { ref: measureRef, width } = useMeasuredWidth();
   const layout = useMemo(
-    () => layoutFlow(flow.nodes, flow.links, { width: WIDTH, height: HEIGHT, nodeWidth: NODE_WIDTH, nodePadding: 12 }),
-    [flow],
+    () => layoutFlow(flow.nodes, flow.links, { width, height: HEIGHT, nodeWidth: NODE_WIDTH, nodePadding: 12 }),
+    [flow, width],
   );
   const [focused, setFocused] = useState<string | null>(null);
   const [asTable, setAsTable] = useState(false);
@@ -71,11 +99,9 @@ export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-6 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-content-tertiary)]" aria-hidden={asTable}>
-          {RECALL_FLOW_COLUMNS.map((c) => (
-            <span key={c}>{c}</span>
-          ))}
-        </div>
+        <span className="text-xs text-[var(--color-content-tertiary)]">
+          {flow.totalCalls.toLocaleString('en-US')} lore-read calls
+        </span>
         <button
           type="button"
           onClick={() => setAsTable((v) => !v)}
@@ -112,56 +138,68 @@ export function RecallFlowChart({ rows, rangeCaption }: RecallFlowChartProps) {
           </table>
         </div>
       ) : (
-        <svg
-          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="h-auto w-full overflow-visible"
-          // A GROUP, not role="img": an img is a leaf, so the focusable nodes
-          // below would be reachable but never announced.
-          role="group"
-          aria-label={`${flow.totalCalls} lore-read calls in ${rangeCaption}, from ${clientIds.length} client${clientIds.length === 1 ? '' : 's'}. Use View as table for the exact figures.`}
-        >
-          <g fill="none" aria-hidden>
-            {layout.links.map((l) => (
-              <path
-                key={`${l.source}->${l.target}`}
-                d={l.path}
-                stroke={bandColor(l.source)}
-                strokeWidth={Math.max(1, l.width)}
-                strokeOpacity={focused === null ? 0.35 : touches(l) ? 0.75 : 0.08}
-                className="transition-[stroke-opacity] duration-150"
-              />
+        <div ref={measureRef} className="flex flex-col gap-2">
+          {/* Column names sit over the three node columns: left, centre, right. */}
+          <div className="grid grid-cols-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-content-tertiary)]" aria-hidden>
+            {RECALL_FLOW_COLUMNS.map((c, i) => (
+              <span key={c} className={i === 0 ? 'text-left' : i === 1 ? 'text-center' : 'text-right'}>
+                {c}
+              </span>
             ))}
-          </g>
-          {layout.nodes.map((n) => {
-            const labelRight = n.layer < 2;
-            const fill = n.layer === 0 ? (clientColor.get(n.id) ?? OTHER_COLOR) : 'var(--color-content-secondary)';
-            return (
-              <g
-                key={n.id}
-                tabIndex={0}
-                role="img"
-                aria-label={`${n.label}: ${n.value.toLocaleString('en-US')} calls`}
-                onPointerEnter={() => setFocused(n.id)}
-                onPointerLeave={() => setFocused((f) => (f === n.id ? null : f))}
-                onFocus={() => setFocused(n.id)}
-                onBlur={() => setFocused((f) => (f === n.id ? null : f))}
-                className="cursor-default outline-none [&:focus-visible>rect]:stroke-[var(--color-accent)]"
-              >
-                <rect x={n.x0} y={n.y0} width={n.x1 - n.x0} height={Math.max(1, n.y1 - n.y0)} rx={2} fill={fill} strokeWidth={2} />
-                <text
-                  x={labelRight ? n.x1 + 6 : n.x0 - 6}
-                  y={(n.y0 + n.y1) / 2}
-                  dy="0.35em"
-                  textAnchor={labelRight ? 'start' : 'end'}
-                  className="fill-[var(--color-content-secondary)] text-[11px]"
+          </div>
+          <svg
+            width={width}
+            height={HEIGHT}
+            viewBox={`0 0 ${width} ${HEIGHT}`}
+            className="max-w-full overflow-visible"
+            // A GROUP, not role="img": an img is a leaf, so the focusable nodes
+            // below would be reachable but never announced.
+            role="group"
+            aria-label={`${flow.totalCalls} lore-read calls in ${rangeCaption}, from ${clientIds.length} client${clientIds.length === 1 ? '' : 's'}. Use View as table for the exact figures.`}
+          >
+            <g fill="none" aria-hidden>
+              {layout.links.map((l) => (
+                <path
+                  key={`${l.source}->${l.target}`}
+                  d={l.path}
+                  stroke={bandColor(l.source)}
+                  strokeWidth={Math.max(1, l.width)}
+                  strokeOpacity={focused === null ? 0.35 : touches(l) ? 0.75 : 0.08}
+                  className="transition-[stroke-opacity] duration-150"
+                />
+              ))}
+            </g>
+            {layout.nodes.map((n) => {
+              const labelRight = n.layer < 2;
+              const fill = n.layer === 0 ? (clientColor.get(n.id) ?? OTHER_COLOR) : 'var(--color-content-secondary)';
+              return (
+                <g
+                  key={n.id}
+                  tabIndex={0}
+                  role="img"
+                  aria-label={`${n.label}: ${n.value.toLocaleString('en-US')} calls`}
+                  onPointerEnter={() => setFocused(n.id)}
+                  onPointerLeave={() => setFocused((f) => (f === n.id ? null : f))}
+                  onFocus={() => setFocused(n.id)}
+                  onBlur={() => setFocused((f) => (f === n.id ? null : f))}
+                  className="cursor-default outline-none [&:focus-visible>rect]:stroke-[var(--color-accent)]"
                 >
-                  <tspan className={n.layer === 1 ? 'font-mono' : undefined}>{n.label}</tspan>
-                  <tspan className="fill-[var(--color-content-tertiary)]"> {formatCompact(n.value)}</tspan>
-                </text>
-              </g>
-            );
-          })}
-        </svg>
+                  <rect x={n.x0} y={n.y0} width={n.x1 - n.x0} height={Math.max(1, n.y1 - n.y0)} rx={2} fill={fill} strokeWidth={2} />
+                  <text
+                    x={labelRight ? n.x1 + 6 : n.x0 - 6}
+                    y={(n.y0 + n.y1) / 2}
+                    dy="0.35em"
+                    textAnchor={labelRight ? 'start' : 'end'}
+                    className="fill-[var(--color-content-secondary)] text-[11px]"
+                  >
+                    <tspan className={n.layer === 1 ? 'font-mono' : undefined}>{n.label}</tspan>
+                    <tspan className="fill-[var(--color-content-tertiary)]"> {formatCompact(n.value)}</tspan>
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
       )}
 
       <p className="min-h-4 text-xs text-[var(--color-content-tertiary)]" aria-live="polite">

@@ -55,19 +55,18 @@ export function RunsRhythm({ runs, timeZone }: RunsRhythmProps) {
   }
 
   // The busiest cell, for the summary a screen reader hears first.
-  let busiest: { d: number; h: number; n: number } | null = null;
-  grid.cells.forEach((row, d) =>
-    row.forEach((n, h) => {
-      if (n > 0 && (busiest === null || n > busiest.n)) busiest = { d, h, n };
-    }),
-  );
-  const peak = busiest as { d: number; h: number; n: number } | null;
+  let peak: { d: number; h: number; n: number } | null = null;
+  for (const [d, row] of grid.cells.entries()) {
+    for (const [h, n] of row.entries()) {
+      if (n > 0 && (peak === null || n > peak.n)) peak = { d, h, n };
+    }
+  }
   const activeCount = cell ? (grid.cells[cell.d]?.[cell.h] ?? 0) : null;
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex gap-2">
-        <div className="grid shrink-0 grid-rows-7 gap-[2px] text-[10px] leading-none text-[var(--color-content-tertiary)]" aria-hidden>
+        <div className="grid w-7 shrink-0 grid-rows-7 gap-[2px] text-[10px] leading-none text-[var(--color-content-tertiary)]" aria-hidden>
           {WEEKDAYS.map((d) => (
             <span key={d} className="flex items-center">
               {d}
@@ -110,7 +109,7 @@ export function RunsRhythm({ runs, timeZone }: RunsRhythmProps) {
           )}
         </div>
       </div>
-      <div className="ml-7 grid grid-cols-4 text-[10px] tabular-nums text-[var(--color-content-tertiary)]" aria-hidden>
+      <div className="ml-9 grid grid-cols-4 text-[10px] tabular-nums text-[var(--color-content-tertiary)]" aria-hidden>
         {HOUR_TICKS.map((h) => (
           <span key={h}>{hourLabel(h)}</span>
         ))}

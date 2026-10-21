@@ -116,14 +116,14 @@ async function fetchWindowRuns(window: AbsoluteRange, signal?: AbortSignal): Pro
   if (!token) return { runs: [], truncated: false };
   const runs: UsageRun[] = [];
   let cursor: string | null = null;
-  for (let page = 0; page < MAX_RUN_PAGES; page++) {
-    const res = await usageRunsRequest(
+  for (let pageIndex = 0; pageIndex < MAX_RUN_PAGES; pageIndex++) {
+    const runsPage = await usageRunsRequest(
       token,
       { since: window.from, until: window.to, limit: RUNS_PAGE_SIZE, ...(cursor ? { cursor } : {}) },
       signal,
     );
-    runs.push(...res.runs);
-    cursor = res.next_cursor;
+    runs.push(...runsPage.runs);
+    cursor = runsPage.next_cursor;
     if (!cursor) return { runs, truncated: false };
   }
   return { runs, truncated: true };

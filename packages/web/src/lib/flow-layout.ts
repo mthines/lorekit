@@ -138,16 +138,16 @@ export function layoutFlow(
 
   // Leave each source ordered by target position, arrive ordered by source position.
   const sourceOffset = new Map<string, number>();
-  for (const p of [...placed].sort((a, b) => a.source.y0 - b.source.y0 || a.target.y0 - b.target.y0)) {
-    const offset = sourceOffset.get(p.source.id) ?? 0;
-    p.sy = p.source.y0 + offset + p.width / 2;
-    sourceOffset.set(p.source.id, offset + p.width);
+  for (const band of [...placed].sort((a, b) => a.source.y0 - b.source.y0 || a.target.y0 - b.target.y0)) {
+    const offset = sourceOffset.get(band.source.id) ?? 0;
+    band.sy = band.source.y0 + offset + band.width / 2;
+    sourceOffset.set(band.source.id, offset + band.width);
   }
   const targetOffset = new Map<string, number>();
-  for (const p of [...placed].sort((a, b) => a.target.y0 - b.target.y0 || a.source.y0 - b.source.y0)) {
-    const offset = targetOffset.get(p.target.id) ?? 0;
-    p.ty = p.target.y0 + offset + p.width / 2;
-    targetOffset.set(p.target.id, offset + p.width);
+  for (const band of [...placed].sort((a, b) => a.target.y0 - b.target.y0 || a.source.y0 - b.source.y0)) {
+    const offset = targetOffset.get(band.target.id) ?? 0;
+    band.ty = band.target.y0 + offset + band.width / 2;
+    targetOffset.set(band.target.id, offset + band.width);
   }
 
   const flowLinks: FlowLink[] = placed.map(({ link, source, target, width: w, sy, ty }) => {

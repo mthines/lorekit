@@ -62,7 +62,14 @@ export const RendersTheLoopAndEverySection: Story = {
 
 export const RecallFlowSwapsToATable: Story = {
   play: async ({ canvasElement, step }) => {
-    const canvas = within(canvasElement);
+    const page = within(canvasElement);
+    const section = await waitFor(() => {
+      const heading = page.getByRole('heading', { name: 'Recall flow' });
+      const container = heading.closest('section');
+      if (!container) throw new Error('Recall flow heading is not inside a section');
+      return container;
+    });
+    const canvas = within(section);
     const toggle = await waitFor(() => canvas.getByRole('button', { name: 'View as table' }));
     await step('the chart is the default, the table is one click away', async () => {
       await userEvent.click(toggle);

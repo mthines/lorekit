@@ -34,12 +34,12 @@ const WEEKDAY_INDEX: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, 
 const partsFormatters = new Map<string, Intl.DateTimeFormat>();
 
 function formatterFor(timeZone: string): Intl.DateTimeFormat {
-  let f = partsFormatters.get(timeZone);
-  if (!f) {
-    f = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', hour: 'numeric', hourCycle: 'h23' });
-    partsFormatters.set(timeZone, f);
+  let formatter = partsFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', hour: 'numeric', hourCycle: 'h23' });
+    partsFormatters.set(timeZone, formatter);
   }
-  return f;
+  return formatter;
 }
 
 /** Weekday (0 = Monday) and hour (0–23) of an instant in `timeZone`, or `null` if unparseable. */

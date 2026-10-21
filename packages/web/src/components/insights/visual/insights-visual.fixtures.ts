@@ -11,9 +11,7 @@
 import { http, HttpResponse } from 'msw';
 import type { UsageRun, UsageStatRow } from '@lorekit/schemas/usage';
 import { FROZEN_NOW, memoryHandlers, utilityHandlers } from '@/mocks/memories';
-
-const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
+import { DAY_MS, HOUR_MS } from '@/lib/time-range';
 const FROZEN = Date.parse(FROZEN_NOW);
 /** Requests whose window starts before this are the "previous" window of the default 7d range. */
 const CURRENT_FROM = FROZEN - 7 * DAY_MS;

@@ -73,7 +73,6 @@ export function useChartCursor(count: number) {
 
   return {
     active,
-    setActive,
     dismiss,
     rootRef,
     anchor: active === null ? null : (itemRefs.current[active] ?? null),
