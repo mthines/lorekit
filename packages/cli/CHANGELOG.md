@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.75.0](https://github.com/mthines/lorekit/compare/cli-v1.74.0...cli-v1.75.0) (2026-10-21)
+
+
+### Features
+
+* **explorer:** add a Recent read sort — last deliberate agent read first ([#718](https://github.com/mthines/lorekit/issues/718)) ([e19ebbf](https://github.com/mthines/lorekit/commit/e19ebbf786a4b17631e9fb136a48990370fe569f))
+
 ## [1.74.0](https://github.com/mthines/lorekit/compare/cli-v1.73.0...cli-v1.74.0) (2026-10-21)
 
 
