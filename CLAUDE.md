@@ -390,6 +390,7 @@ Each decision's full rationale lives in [`docs/decisions.md`](./docs/decisions.m
 the headline here is the rule; follow the link for the "why". Short entries carry
 their rationale inline. **Do not relitigate these.**
 - **Dashboard is a CLIENT of LoreKit's REST API** — [rationale](./docs/decisions.md#dashboard-is-a-client-of-lorekits-rest-api)
+- **Client reads are never server actions** (Next runs actions one at a time and they cannot be aborted) — [rationale](./docs/decisions.md#client-reads-are-never-server-actions)
 - **MCP server endpoint is a static production URL** — [rationale](./docs/decisions.md#mcp-server-endpoint-is-a-static-production-url)
 - **Lore Explorer filters through ONE two-level command menu + pills** — [rationale](./docs/decisions.md#lore-explorer-filters-through-one-two-level-command-menu)
 - **The Explorer's Activity panel has a DISPLAY default (24h), separate from the list's (all time)** — [rationale](./docs/decisions.md#the-explorers-activity-panel-has-a-display-default-separate-from-the-lists)

@@ -84,6 +84,36 @@ or `.rpc(…)` for anything other than **auth**, stop and add an endpoint instea
   are the migration backlog, not a licence to add a new direct `.from(…)`/`.rpc(…)`
   read for product data — new surfaces get an endpoint.
 
+## A client read is never a server action (REQUIRED)
+
+React Query `queryFn`s must not call a server action (`'use server'` module).
+Next's app router runs server actions **one at a time per client**, and an
+action cannot take an `AbortSignal`. Every read served that way queues behind
+whatever action is already in flight, and React Query can never cancel it.
+`useIsFetching()`, and with it the TopBar `ActivityIndicator`, stays non-zero
+until the whole queue drains.
+
+- **This happened.** On `/lore` the memory badge, the pending-invites query and
+  the Explorer's list were all server actions, fired on every load and every
+  window focus (`FocusRefetcher`). They ran strictly in sequence, with the list
+  last, so the activity bar stayed lit for seconds after every visible panel had
+  loaded. In the worst case seen, a slow Supabase auth call kept it on for about
+  85 s.
+- **What to use instead.** If a REST endpoint exists, call it from the browser
+  through `src/lib/api/*` with the query's `signal` (`fetchMemoryPage`,
+  `fetchScopes`). If the read still needs server-side code (a surface on the
+  migration backlog), wrap it in a GET route handler under `app/api/**` and read
+  it with `getAppRoute(path, signal)` (`lib/app-route.ts`), as
+  `/api/plan/usage` and `/api/invites/pending` do.
+- **Server actions stay for mutations**, which are one user gesture each, and
+  for server components, where calling the function is a plain call with no
+  queue.
+- **Known remaining offenders** (not on `/lore`'s refresh path):
+  `useAuditLog` → `listAuditLog`; `LessonDetailSheet`'s member lookup →
+  `listMemberIdentities`; `OrganizationManager`'s org-data effect →
+  `listScopeBindings`, `listMembers`, `listMemberIdentities`, `listInvites`,
+  `listAvailableScopes`; and `InviteDetailsDialog` → `getInviteOrgDetails`.
+
 ## Conventions specific to this package
 
 - **Theme:** dark-only, driven by CSS custom properties in

@@ -40,6 +40,7 @@ vi.mock('@/lib/api/memories', () => ({
   getMemoryByIdRequest: vi.fn(),
   getMemoryByRefRequest: vi.fn(),
   listFacetsPostRequest: vi.fn(),
+  listMemoriesPostRequest: vi.fn(),
   pivotPostRequest: vi.fn(),
 }));
 
