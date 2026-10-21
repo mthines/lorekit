@@ -54,8 +54,9 @@
  *   least N times", "opened within N days"); those reverse directions are
  *   Explorer-only, so "Create retention policy" is hidden while one is set.
  * - `sort` param:     the list order (`lib/explorer-sort.ts`) — Newest (absent,
- *   the default) or Most chosen (`opened_count`, migration 00113). Shareable;
- *   an unknown value falls back to Newest.
+ *   the default), Most chosen (`opened_count`, migration 00113) or Recent read
+ *   (`last_opened_at`, migration 00115). Shareable; an unknown value falls back
+ *   to Newest.
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
  *   deep links) land; never written. `resolveFilters` folds a `'personal'` value

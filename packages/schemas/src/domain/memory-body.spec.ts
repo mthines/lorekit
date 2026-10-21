@@ -55,6 +55,15 @@ describe('ListMemoriesBodySchema', () => {
     expect(ListMemoriesBodySchema.safeParse({ sort: 'read_count' }).success).toBe(false);
   });
 
+  it('accepts the last_opened_at ("Recent read") sort on both transports (00115)', () => {
+    expect(ListMemoriesBodySchema.parse({ sort: 'last_opened_at' }).sort).toBe('last_opened_at');
+    expect(ListMemoriesQuerySchema.parse({ sort: 'last_opened_at' }).sort).toBe('last_opened_at');
+    // `last_read_at` is the BROADER column (bulk list/search pages move it) and
+    // is deliberately not an order: "Recent read" means a deliberate read.
+    expect(ListMemoriesBodySchema.safeParse({ sort: 'last_read_at' }).success).toBe(false);
+    expect(ListMemoriesQuerySchema.safeParse({ sort: 'last_read_at' }).success).toBe(false);
+  });
+
   it('coerces the reverse directions on the query transport like every other threshold', () => {
     const r = ListMemoriesQuerySchema.parse({ sort: 'opened_count', min_opened_count: '10', opened_within_days: '7' });
     expect(r.sort).toBe('opened_count');

@@ -1,7 +1,7 @@
 /**
  * The Lore Explorer's list order — the `?sort=` URL param.
  *
- * Two orders, both descending:
+ * Three orders, all descending:
  *
  * - `created_at` — **Newest**, the default and the order the list has always
  *   had (`listMemories` used to hard-code it so a backdated migration lands at
@@ -10,6 +10,15 @@
  *   deliberately fetched the most, first. It is the direct answer to "which
  *   lore is actually used?", where a `Chosen: N times or more` threshold makes
  *   the reader guess an N first.
+ * - `last_opened_at` — **Recent read**, migration 00115: the lessons an agent
+ *   deliberately read most recently, first — "what is being used right now?",
+ *   which a lifetime count cannot tell apart from what was used last spring.
+ *   A deliberate read only (00099): a lesson that merely rode along in a bulk
+ *   list/search page, or that a human opened in this dashboard, does not move.
+ *   Never-read lessons trail the list; they are not dropped from it.
+ *
+ * `last_read_at` is not offered: bulk pages bump it, so as an order it would
+ * mostly re-state "was in a recent listing".
  *
  * `updated_at` is a legal API sort but is not offered: a re-write bumps it, so
  * as a list order it mostly re-states recurrence, which `Recurrence` already
@@ -18,7 +27,7 @@
  * Pure, so the URL handling is unit-tested without a browser.
  */
 
-export const EXPLORER_SORTS = ['created_at', 'opened_count'] as const;
+export const EXPLORER_SORTS = ['created_at', 'opened_count', 'last_opened_at'] as const;
 export type ExplorerSort = (typeof EXPLORER_SORTS)[number];
 
 /** The order an absent `?sort=` means. */
@@ -28,6 +37,7 @@ export const DEFAULT_EXPLORER_SORT: ExplorerSort = 'created_at';
 export const EXPLORER_SORT_LABELS: Record<ExplorerSort, string> = {
   created_at: 'Newest',
   opened_count: 'Most chosen',
+  last_opened_at: 'Recent read',
 };
 
 /**

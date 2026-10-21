@@ -46,6 +46,9 @@ values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a7', 'authenticated', 'authenticated', 'lk-mig-a7@test.local', now(), now()),
   -- §114's own account, for §108's reason: exact counts out of four readers.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a8', 'authenticated', 'authenticated', 'lk-mig-a8@test.local', now(), now()),
+  -- §115's own account: its full-order and page-walk assertions compare
+  -- against the WHOLE (user, scope) population.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a9', 'authenticated', 'authenticated', 'lk-mig-a9@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -11063,6 +11066,184 @@ begin
     assert r.args like '%p_exclude_tags text[]',
       format('114 AC-6b: %s must end in p_exclude_tags text[], got (%s)', r.proname, r.args);
   end loop;
+end;
+$$;
+
+-- ── 115. the "Recent read" sort — p_sort => 'last_opened_at' (00115) ────────
+-- 00115 lets the list order by the last DELIBERATE agent read (00099's
+-- last_opened_at), not by last_read_at, which bulk list/search pages and the
+-- dashboard's detail sheet also move. The column is NULL for a lesson nothing
+-- ever opened, so the order is `desc nulls last` and the keyset carries a
+-- nullable timestamp.
+--
+-- Seven lessons on a fresh account, so every order and count is exact:
+--   115-recent   opened 1 hour ago
+--   115-tie-1    opened at T (2 days ago)     } the SAME timestamp: id breaks
+--   115-tie-2    opened at T (2 days ago)     } the tie
+--   115-old      opened 30 days ago
+--   115-listed   NEVER opened, but last_read_at = now and read_count 500 — a
+--                lesson that rides along in every bulk page
+--   115-never-a  never opened
+--   115-never-b  never opened
+--
+-- AC-1: sort => 'last_opened_at' orders by last_opened_at desc NULLS LAST,
+--       id desc — the most recently opened leads, and 115-listed sits in the
+--       never-opened tail however recently it was LISTED.
+-- AC-2: the sort is not a filter: total_count and the row count equal the
+--       unsorted list's.
+-- AC-3: walking it two rows at a time from each page's last row — a cursor
+--       of (last_opened_at, id) — returns every row exactly once, across the
+--       tie, across the opened→never-opened boundary, and inside the tail
+--       (where the cursor's timestamp half is NULL).
+-- AC-4: p_cursor_count means nothing to this sort and must not narrow it; a
+--       NULL p_cursor_ts with a NULL p_cursor_id is the first page.
+-- AC-5: the other orders are unchanged — created_at still orders by
+--       created_at desc, id desc, and an unknown sort still falls back.
+-- AC-6: still exactly one overload, still off the anonymous surface.
+do $$
+declare
+  v_user      uuid := '00000000-0000-0000-0000-0000000000a9';
+  v_t         timestamptz := now() - interval '2 days';
+  v_n         bigint;
+  v_total     integer;
+  v_unsorted  integer;
+  v_expected  text[];
+  v_got       text[];
+  v_page      text[];
+  v_walk      text[] := '{}';
+  v_pages     integer := 0;
+  v_cur_ts    timestamptz;
+  v_cur_id    uuid;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_user), true);
+
+  insert into memories (user_id, scope, key, value, created_at,
+                        read_count, opened_count, last_read_at, last_opened_at) values
+    (v_user, 'global', '115-recent',  'v', now() - interval '50 days', 9,   4, now() - interval '1 hour', now() - interval '1 hour'),
+    (v_user, 'global', '115-tie-1',   'v', now() - interval '40 days', 7,   2, v_t,                       v_t),
+    (v_user, 'global', '115-tie-2',   'v', now() - interval '30 days', 7,   2, v_t,                       v_t),
+    (v_user, 'global', '115-old',     'v', now() - interval '60 days', 3,   1, now() - interval '30 days', now() - interval '30 days'),
+    (v_user, 'global', '115-listed',  'v', now() - interval '20 days', 500, 0, now(),                     null),
+    (v_user, 'global', '115-never-a', 'v', now() - interval '10 days', 0,   0, null,                      null),
+    (v_user, 'global', '115-never-b', 'v', now() - interval '5 days',  0,   0, null,                      null);
+
+  -- ── AC-1: the order ─────────────────────────────────────────────────────
+  select array_agg(key order by last_opened_at desc nulls last, id desc) into v_expected
+    from memories where user_id = v_user and scope = 'global';
+
+  select array_agg(l.key order by l.ord), max(l.total_count) into v_got, v_total
+    from lorekit_memory_list(p_user_id => v_user, p_scope => 'global',
+                             p_sort => 'last_opened_at', p_limit => 100)
+         with ordinality as l(id, scope, key, value, tags, source_agent, trigger,
+                              created_at, updated_at, expires_at, archived_at,
+                              origin_repo, origin_branch, origin_commit, origin_pr,
+                              kind, host, seen_count, read_count, opened_count,
+                              last_read_at, last_opened_at, org_id, created_by,
+                              updated_by, org_name, org_slug, total_count, ord);
+  assert v_got = v_expected,
+    format('115 AC-1a: sort => last_opened_at must order by last_opened_at desc nulls last, '
+           'id desc. expected %s, got %s', v_expected, v_got);
+  assert v_got[1] = '115-recent',
+    format('115 AC-1b: the most recently opened lesson must lead, got %s', v_got);
+  assert v_got[4] = '115-old' and '115-listed' = any(v_got[5:7]),
+    format('115 AC-1c: never-opened lessons — including one LISTED a moment ago — must '
+           'trail every opened one, got %s', v_got);
+  assert array_position(v_got, '115-tie-1') between 2 and 3
+     and array_position(v_got, '115-tie-2') between 2 and 3,
+    format('115 AC-1d: the two lessons opened at the same instant sit together, got %s', v_got);
+
+  -- ── AC-2: a sort, not a filter ──────────────────────────────────────────
+  select max(total_count), count(*) into v_unsorted, v_n
+    from lorekit_memory_list(p_user_id => v_user, p_scope => 'global', p_limit => 100);
+  assert v_total = v_unsorted and v_total = 7 and v_n = 7,
+    format('115 AC-2: total_count must be the unsorted total (7), got sorted=%s unsorted=%s rows=%s',
+           v_total, v_unsorted, v_n);
+
+  -- ── AC-3: the page walk ─────────────────────────────────────────────────
+  -- Pages of 2 over 7 rows: [recent, tie-x] ends inside the tie, [tie-y, old]
+  -- ends on the last OPENED row, [never, never] starts and ends inside the
+  -- tail (cursor timestamp NULL), [never] is the remainder.
+  loop
+    select coalesce(array_agg(l.key order by l.ord), '{}') into v_page
+      from lorekit_memory_list(p_user_id => v_user, p_scope => 'global',
+                               p_sort => 'last_opened_at', p_limit => 2,
+                               p_cursor_ts => v_cur_ts, p_cursor_id => v_cur_id)
+           with ordinality as l(id, scope, key, value, tags, source_agent, trigger,
+                                created_at, updated_at, expires_at, archived_at,
+                                origin_repo, origin_branch, origin_commit, origin_pr,
+                                kind, host, seen_count, read_count, opened_count,
+                                last_read_at, last_opened_at, org_id, created_by,
+                                updated_by, org_name, org_slug, total_count, ord);
+    exit when cardinality(v_page) = 0;
+    v_walk  := v_walk || v_page;
+    v_pages := v_pages + 1;
+    select id, last_opened_at into v_cur_id, v_cur_ts
+      from memories where user_id = v_user and key = v_page[cardinality(v_page)];
+    exit when v_pages > 10;
+  end loop;
+  assert v_walk = v_expected,
+    format('115 AC-3a: the page walk must return every row exactly once, in order — no gap, '
+           'no overlap. walk=%s expected=%s', v_walk, v_expected);
+  assert v_pages = 4,
+    format('115 AC-3b: 7 rows at 2 per page is 4 pages, got %s', v_pages);
+
+  -- ── AC-4: foreign cursor halves ─────────────────────────────────────────
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_sort => 'last_opened_at',
+      p_cursor_count => 0, p_limit => 100);
+  assert v_n = 7,
+    format('115 AC-4a: p_cursor_count must be ignored under last_opened_at, got %s rows', v_n);
+
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_sort => 'last_opened_at',
+      p_cursor_ts => null, p_cursor_id => null, p_limit => 100);
+  assert v_n = 7,
+    format('115 AC-4b: no cursor id means the first page, got %s rows', v_n);
+
+  -- ── AC-5: the other orders are unchanged ────────────────────────────────
+  select array_agg(key order by created_at desc, id desc) into v_expected
+    from memories where user_id = v_user and scope = 'global';
+  select array_agg(l.key order by l.ord) into v_got
+    from lorekit_memory_list(p_user_id => v_user, p_scope => 'global',
+                             p_sort => 'created_at', p_limit => 100)
+         with ordinality as l(id, scope, key, value, tags, source_agent, trigger,
+                              created_at, updated_at, expires_at, archived_at,
+                              origin_repo, origin_branch, origin_commit, origin_pr,
+                              kind, host, seen_count, read_count, opened_count,
+                              last_read_at, last_opened_at, org_id, created_by,
+                              updated_by, org_name, org_slug, total_count, ord);
+  assert v_got = v_expected,
+    format('115 AC-5a: created_at must still order by created_at desc, id desc. '
+           'expected %s, got %s', v_expected, v_got);
+
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_sort => 'bogus', p_limit => 100);
+  assert v_n = 7, format('115 AC-5b: an unknown sort must fall back, not fail, got %s', v_n);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-6: the catalog side — 00115 replaced the body, not the signature.
+do $$
+declare
+  v_sig text;
+begin
+  assert (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname = 'lorekit_memory_list') = 1,
+    '115 AC-6a: lorekit_memory_list must still have exactly one overload';
+
+  select p.oid::regprocedure::text into v_sig
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_list';
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    '115 AC-6b: anon must NOT have EXECUTE on lorekit_memory_list';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE')
+     and has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    '115 AC-6c: authenticated and service_role MUST keep EXECUTE on lorekit_memory_list';
 end;
 $$;
 

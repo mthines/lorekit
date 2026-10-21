@@ -46,7 +46,7 @@
  * - `lore.memory_archive_toggled`      — a memory was archived or restored.
  * - `lore.filter_changed`              — any filter-bar mutation, thresholds included.
  * - `lore.status_changed`              — Active / Archived / Expiring.
- * - `lore.sort_changed`                — the list order (Newest / Most chosen).
+ * - `lore.sort_changed`                — the list order (Newest / Most chosen / Recent read).
  * - `lore.search_committed`            — the debounced search settled.
  * - `lore.scope_selected`              — a scope chip (or Browse-all row) was picked.
  * - `lore.range_changed`               — any of the FIVE controls that write `?range=`.

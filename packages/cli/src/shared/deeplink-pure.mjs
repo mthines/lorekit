@@ -50,7 +50,8 @@ export const LORE_PARAM_DEFAULTS = {
   // five retention thresholds plus, since 00113, their four reverse directions).
   // `null` means no narrowing; absent from the URL when unset.
   retention: null,
-  // 'created_at' | 'opened_count' | null — the list order (00113). `null` is
+  // 'created_at' | 'opened_count' | 'last_opened_at' | null — the list order
+  // (00113, 00115). `null` is
   // Newest, the default, so an unsorted link carries no `sort` param.
   sort: null,
   // 'active' | 'archived' | 'expiring' | null — the Explorer's Status control.

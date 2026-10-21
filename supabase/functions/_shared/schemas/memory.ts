@@ -135,8 +135,15 @@ export const TimestampFilterSchema = z
  * deliberate-fetch counter, `id` breaking ties. It pages through a cursor of
  * its own (`count-cursor.ts`), because a keyset bound on an integer column
  * cannot ride in the timestamp cursor the two date sorts share.
+ *
+ * `last_opened_at` (migration 00115) is "recently read first": descending on
+ * the last DELIBERATE agent read (00099 — a targeted `memory.read` / CLI
+ * `read`, never a bulk list/search page nor a human opening the dashboard),
+ * `id` breaking ties, and NULLS LAST, so lessons nothing ever opened trail the
+ * list rather than lead it. Its cursor (`last-opened-cursor.ts`) carries a
+ * NULLABLE timestamp, because a page can end inside that never-opened tail.
  */
-export const MemorySortSchema = z.enum(['updated_at', 'created_at', 'opened_count']);
+export const MemorySortSchema = z.enum(['updated_at', 'created_at', 'opened_count', 'last_opened_at']);
 export type MemorySort = z.infer<typeof MemorySortSchema>;
 
 /**

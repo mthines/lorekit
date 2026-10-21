@@ -60,7 +60,8 @@ export interface MemoryFilters {
   retentionConditions?: RetentionConditions;
   /**
    * The list order (`lib/explorer-sort.ts`) — `created_at` (Newest, the
-   * default) or `opened_count` (Most chosen, migration 00113). A cursor is only
+   * default), `opened_count` (Most chosen, migration 00113) or `last_opened_at`
+   * (Recent read, migration 00115). A cursor is only
    * valid for the order that minted it; the route restarts at page one if the
    * two disagree, and the Explorer's query key changes with the sort anyway.
    */
@@ -105,7 +106,8 @@ const MAX_PAGE_SIZE = 100;
  * Ordering defaults to `created_at desc` — `sort: 'created_at'` — not the
  * route's `updated_at` default: a memory migrated with a backdated `created_at`
  * belongs at its original position in the Explorer, which is the order the list
- * has always been in. `filters.sort` swaps in `opened_count` ("Most chosen").
+ * has always been in. `filters.sort` swaps in `opened_count` ("Most chosen") or
+ * `last_opened_at` ("Recent read").
  *
  * A body rather than a query string: the filter bar's dimensions are unbounded,
  * and the query transport caps each one at 2048 characters — the ceiling that

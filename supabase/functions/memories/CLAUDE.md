@@ -353,6 +353,17 @@ table constraint). The list also takes `sort=opened_count` (most chosen first,
 so `paginate.ts` and its MCP byte-mirror stay untouched, and each decoder rejects the other's
 format so a sort flip restarts at page one. §113 pins all of it.
 
+**`sort=last_opened_at` ("Recent read", 00115)** orders by the last deliberate agent read
+(00099's column — targeted AND from `mcp`/`cli`, never a bulk page or the dashboard), `desc NULLS
+LAST`, `id desc` breaking ties. It is a sort, not a filter: never-opened lessons stay in the result
+as an id-ordered tail, so `total` matches every other order. The column is nullable, so it pages
+through a third codec, `_shared/api/last-opened-cursor.ts` (mirrored from
+`mcp-core/src/rest/last-opened-cursor.ts`), whose `last_opened_at` may be `null`: a page that ended
+inside the tail. The RPC reuses `p_cursor_ts`/`p_cursor_id` — under this sort a NULL `p_cursor_ts`
+with a set `p_cursor_id` means "inside the tail", so the handler must pass the id whenever a cursor
+decoded. Same signature as 00114 (`create or replace`). §115 pins the order, the total and a page
+walk across the tie and the opened→never-opened boundary.
+
 They differ from a dimension in one way that matters when reading a count: a threshold is
 applied in the RPC's `base` CTE rather than as a per-dimension `ok_*` flag, so it narrows
 **every** facet including the SELF-EXCLUDED one. That is the correct asymmetry, not an

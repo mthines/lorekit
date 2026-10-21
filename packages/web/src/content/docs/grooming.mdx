@@ -183,6 +183,14 @@ filters, so a sorted view is shareable; **Newest** is the default. Over the
 REST API the same order is `sort=opened_count` on `GET /memories` and
 `POST /memories/list`.
 
+To see what agents are reading **right now**, set **Sort** to **Recent read**:
+the lessons an agent most recently fetched on purpose come first. Only a
+deliberate read counts — an agent's `memory.read` or the CLI's `read` — so a
+lesson that merely appeared in a `memory.list` or `memory.search` page, or that
+you opened in the dashboard, does not move up. Lessons no agent has ever read
+stay in the list, after every read one. Over the REST API the same order is
+`sort=last_opened_at`.
+
 </TutorialStep>
 
 <TutorialStep number={2} title="Save it as a policy">
