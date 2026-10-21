@@ -757,6 +757,11 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
+`exclude_tags` (comma-separated) is a separate "carries none of these labels" condition ANDed with
+`tags` in any mode, so `tags=perf&tags_mode=all&exclude_tags=flaky` is "tagged perf, not tagged
+flaky". `GET /memories/facets`, `/activity` and `/pivot` (and their `POST` body forms) take it too.
+In the Explorer, tags can carry an include pill and an exclude pill at once, and a memory's detail
+panel offers filter in / filter out on every metadata value.
 
 `kind` and `host` are the memory TAXONOMY: `kind` is the bucket type — a closed vocabulary of
 `lesson`, `bus` and `signal` — and `host` is the skill or agent that owns the bucket. Together they

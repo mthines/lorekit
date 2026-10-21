@@ -44,6 +44,8 @@ values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a6', 'authenticated', 'authenticated', 'lk-mig-a6@test.local', now(), now()),
   -- §113's own account, for §108's reason: exact counts out of four readers.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a7', 'authenticated', 'authenticated', 'lk-mig-a7@test.local', now(), now()),
+  -- §114's own account, for §108's reason: exact counts out of four readers.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a8', 'authenticated', 'authenticated', 'lk-mig-a8@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -10895,6 +10897,172 @@ begin
   assert (select pronargs from pg_proc p join pg_namespace n on n.oid = p.pronamespace
            where n.nspname = 'public' and p.proname = 'lorekit_match_retention') = 14,
     '113 AC-6e: lorekit_match_retention must take the 14 arguments 00113 gave it';
+end;
+$$;
+
+-- ── 114. exclude_tags — "tagged a AND NOT tagged b" (00114) ─────────────────
+-- One `tags` list has one mode, so a label filter could include OR exclude but
+-- never both. 00114 appends `p_exclude_tags` to the four readers: an
+-- always-applied "carries none of these" conjunct, independent of p_tags_mode.
+--
+-- Five lessons on a fresh account, so every count is exact:
+--   114-perf        {perf}          host h1
+--   114-perf-flaky  {perf, flaky}   host h1
+--   114-flaky       {flaky}         host h2
+--   114-bare        {}              host h2
+--   114-perf-ci     {perf, ci}      host h2
+--
+-- AC-1: include + exclude compose on the list, under `all` AND `any`.
+-- AC-2: a lone exclusion equals `tags_mode => 'none'` over the same list.
+-- AC-3: facets apply it to every OTHER dimension, and the tag facet never
+--       self-excludes it — an excluded label stays listed at count 0.
+-- AC-4: activity and the pivot count the same rows the list returns, and a
+--       tag-axis pivot yields no cell for an excluded label.
+-- AC-5: a null exclusion is identical to omitting it.
+-- AC-6: one overload per reader, each ending in `p_exclude_tags text[]`.
+do $$
+declare
+  v_user uuid := '00000000-0000-0000-0000-0000000000a8';
+  v_n    bigint;
+  v_h1   bigint;
+  v_h2   bigint;
+  v_got  text[];
+  v_none text[];
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_user), true);
+
+  insert into memories (user_id, scope, key, value, kind, host, tags) values
+    (v_user, 'global', '114-perf',       'v', 'lesson', 'h1', array['perf']),
+    (v_user, 'global', '114-perf-flaky', 'v', 'lesson', 'h1', array['perf', 'flaky']),
+    (v_user, 'global', '114-flaky',      'v', 'lesson', 'h2', array['flaky']),
+    (v_user, 'global', '114-bare',       'v', 'lesson', 'h2', array[]::text[]),
+    (v_user, 'global', '114-perf-ci',    'v', 'lesson', 'h2', array['perf', 'ci']);
+
+  -- ── AC-1: include + exclude on the list ─────────────────────────────────
+  select array_agg(key order by key) into v_got from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky'],
+      p_limit => 100);
+  assert v_got = array['114-perf', '114-perf-ci'],
+    format('114 AC-1a: perf AND NOT flaky must list perf and perf-ci, got %s', v_got);
+
+  select array_agg(key order by key) into v_got from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['ci', 'flaky'], p_tags_mode => 'any', p_exclude_tags => array['perf'],
+      p_limit => 100);
+  assert v_got = array['114-flaky'],
+    format('114 AC-1b: (ci OR flaky) AND NOT perf must list only flaky, got %s', v_got);
+
+  -- Several excluded labels: none of them, never "not all of them".
+  select array_agg(key order by key) into v_got from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global',
+      p_exclude_tags => array['flaky', 'ci'], p_limit => 100);
+  assert v_got = array['114-bare', '114-perf'],
+    format('114 AC-1c: NOT flaky AND NOT ci must list bare and perf, got %s', v_got);
+
+  -- ── AC-2: a lone exclusion equals tags_mode none ───────────────────────
+  select array_agg(key order by key) into v_got from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_exclude_tags => array['flaky'], p_limit => 100);
+  select array_agg(key order by key) into v_none from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['flaky'], p_tags_mode => 'none', p_limit => 100);
+  assert v_got = v_none and v_got = array['114-bare', '114-perf', '114-perf-ci'],
+    format('114 AC-2: exclude_tags => {flaky} must equal tags_mode none, got %s vs %s', v_got, v_none);
+
+  -- ── AC-3: facets ────────────────────────────────────────────────────────
+  select count into v_h1 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky'])
+   where facet = 'host' and value = 'h1';
+  select count into v_h2 from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky'])
+   where facet = 'host' and value = 'h2';
+  assert v_h1 = 1 and v_h2 = 1,
+    format('114 AC-3a: the host facet must count the rows the list returns (h1=1, h2=1), '
+           'got h1=%s h2=%s', v_h1, v_h2);
+
+  -- `any` mode: the tag facet self-excludes the INCLUDE condition, so perf and
+  -- ci show what selecting them yields — still without the excluded label.
+  select count into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['ci'], p_tags_mode => 'any', p_exclude_tags => array['flaky'])
+   where facet = 'tag' and value = 'perf';
+  assert v_n = 2,
+    format('114 AC-3b: tag perf must count perf and perf-ci (perf-flaky is excluded), got %s', v_n);
+
+  -- `all` mode: co-occurrence folds the include back in, the exclusion stays.
+  select count into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky'])
+   where facet = 'tag' and value = 'ci';
+  assert v_n = 1, format('114 AC-3c: tag ci must count perf-ci only, got %s', v_n);
+
+  -- The excluded label stays in the catalog at zero, so the menu can offer to
+  -- take the exclusion back off.
+  select count into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky'])
+   where facet = 'tag' and value = 'flaky';
+  assert v_n = 0, format('114 AC-3d: an excluded label must be listed at count 0, got %s', v_n);
+  assert exists (
+      select 1 from lorekit_memory_facets(
+        p_user_id => v_user, p_scope => 'global',
+        p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky'])
+       where facet = 'tag' and value = 'flaky'),
+    '114 AC-3e: an excluded label must NOT disappear from the tag facet';
+
+  -- ── AC-4: activity and the pivot ────────────────────────────────────────
+  select coalesce(sum(count), 0) into v_n from lorekit_memory_activity(
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky']);
+  assert v_n = 2, format('114 AC-4a: activity must count the same 2 rows, got %s', v_n);
+
+  select coalesce(sum(count), 0) into v_n from lorekit_memory_pivot('host', 'kind',
+      p_user_id => v_user, p_scope => 'global',
+      p_tags => array['perf'], p_tags_mode => 'all', p_exclude_tags => array['flaky']);
+  assert v_n = 2, format('114 AC-4b: the pivot must count the same 2 rows, got %s', v_n);
+
+  select count(*) into v_n from lorekit_memory_pivot('tag', 'host',
+      p_user_id => v_user, p_scope => 'global', p_exclude_tags => array['flaky'])
+   where row_value = 'flaky';
+  assert v_n = 0, format('114 AC-4c: a tag-axis pivot must yield no cell for an excluded label, got %s', v_n);
+
+  -- ── AC-5: null is a no-op ───────────────────────────────────────────────
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_user, p_scope => 'global', p_exclude_tags => null, p_limit => 100);
+  assert v_n = 5, format('114 AC-5a: a null exclusion must change nothing on the list, got %s', v_n);
+
+  select count into v_n from lorekit_memory_facets(
+      p_user_id => v_user, p_scope => 'global', p_exclude_tags => null)
+   where facet = 'tag' and value = 'flaky';
+  assert v_n = 2, format('114 AC-5b: a null exclusion must change nothing on facets, got %s', v_n);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-6: the catalog side.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.proname, count(*) over (partition by p.proname) as overloads,
+           pg_get_function_identity_arguments(p.oid) as args
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('lorekit_memory_list', 'lorekit_memory_facets',
+                         'lorekit_memory_activity', 'lorekit_memory_pivot')
+  loop
+    assert r.overloads = 1,
+      format('114 AC-6a: %s must have exactly one overload, found %s', r.proname, r.overloads);
+    assert r.args like '%p_exclude_tags text[]',
+      format('114 AC-6b: %s must end in p_exclude_tags text[], got (%s)', r.proname, r.args);
+  end loop;
 end;
 $$;
 

@@ -260,6 +260,16 @@ export const ListMemoriesQuerySchema = z.object({
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
   /**
+   * Labels the row must carry NONE of (comma-separated, like `tags`).
+   *
+   * An independent conjunct, ANDed with whatever `tags`/`tags_mode` ask — which
+   * is what makes "tagged `perf` AND NOT tagged `flaky`" expressible: one
+   * `tags` list has one mode, so it can include or exclude but never both.
+   * Same `not.ov` semantics as `tags_mode=none` (carries none of them), never
+   * the negation of containment. Migration 00114.
+   */
+  exclude_tags: z.string().optional(),
+  /**
    * Case-insensitive substring match against `key` OR `value`.
    *
    * Deliberately NOT the full-text `q` of `POST /memories/search`: that one is
@@ -572,6 +582,8 @@ export const ListFacetsQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: z.string().optional(),
   source_agent: ValueListSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
@@ -663,6 +675,8 @@ export const PivotQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: z.string().optional(),
   source_agent: ValueListSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
@@ -747,6 +761,8 @@ export const ActivityQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: z.string().optional(),
   source_agent: ValueListSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
@@ -1090,6 +1106,8 @@ const DimensionValuesSchema = z
 const dimensionBodyFields = {
   tags: DimensionValuesSchema.optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
+  /** Labels the row must carry NONE of — see `ListMemoriesQuerySchema.exclude_tags`. */
+  exclude_tags: DimensionValuesSchema.optional(),
   source_agent: DimensionValuesSchema.optional(),
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: DimensionValuesSchema.optional(),

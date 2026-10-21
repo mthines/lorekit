@@ -111,8 +111,10 @@ until the whole queue drains.
   for server components, where calling the function is a plain call with no
   queue.
 - **Known remaining offenders** (not on `/lore`'s refresh path):
-  `useAuditLog` → `listAuditLog`, and `LessonDetailSheet`'s member lookup →
-  `listMemberIdentities`.
+  `useAuditLog` → `listAuditLog`; `LessonDetailSheet`'s member lookup →
+  `listMemberIdentities`; `OrganizationManager`'s org-data effect →
+  `listScopeBindings`, `listMembers`, `listMemberIdentities`, `listInvites`,
+  `listAvailableScopes`; and `InviteDetailsDialog` → `getInviteOrgDetails`.
 
 ## Conventions specific to this package
 

@@ -37,6 +37,17 @@ describe('dimensionsFromQuery / dimensionsFromBody', () => {
     const d = dimensionsFromQuery({});
     expect(d.host.values).toEqual([]);
     expect(d.tags.values).toEqual([]);
+    expect(d.exclude_tags).toEqual([]);
+  });
+
+  it('decode exclude_tags beside tags, independent of tags_mode, on both sides', () => {
+    // The exclusion is its own conjunct (00114): an include condition in ANY
+    // mode composes with it, so neither decoder may fold one into the other.
+    const fromQuery = dimensionsFromQuery({ tags: 'perf', tags_mode: 'all', exclude_tags: ' flaky ,ci,flaky' });
+    const fromBody = dimensionsFromBody({ tags: ['perf'], tags_mode: 'all', exclude_tags: [' flaky ', 'ci', 'flaky'] });
+    expect(fromBody).toEqual(fromQuery);
+    expect(fromQuery.tags).toEqual({ values: ['perf'], mode: 'all' });
+    expect(fromQuery.exclude_tags).toEqual(['flaky', 'ci']);
   });
 
   it('trim, drop empties and dedupe on both sides', () => {

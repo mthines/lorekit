@@ -150,6 +150,7 @@ async function runFacets(
     p_scope: scopeFilter ?? null,
     p_tags: list(d.tags.values),
     p_tags_mode: d.tags.mode,
+    p_exclude_tags: list(d.exclude_tags),
     p_source_agent: list(d.source_agent.values),
     p_source_agent_mode: d.source_agent.mode,
     p_trigger: list(d.trigger.values),
