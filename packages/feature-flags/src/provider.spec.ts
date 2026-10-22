@@ -139,6 +139,27 @@ describe('LoreKitFlagProvider', () => {
     expect(['control', 'treatment']).toContain(result.variant);
   });
 
+  it('resolves a disabled experiment to its default variant with reason STATIC, whatever the targeting key', async () => {
+    // The rollback path: `enabled: false` must send every user back to the default and
+    // never report SPLIT. A fixture, so it holds whatever the live registry declares.
+    const darkFlag: FlagDefinition = {
+      ...experimentFlag,
+      key: 'dark-flag',
+      experiment: {
+        enabled: false,
+        variants: [
+          { key: 'control', weight: 50 },
+          { key: 'treatment', weight: 50 },
+        ],
+      },
+    };
+    const provider = new LoreKitFlagProvider([darkFlag]);
+    for (const targetingKey of ['user-a', 'user-b', 'user-c', 'user-d', 'user-e']) {
+      const result = await provider.resolveBooleanEvaluation('dark-flag', true, { targetingKey }, NOOP_LOGGER);
+      expect(result).toMatchObject({ value: false, variant: 'control', reason: StandardResolutionReasons.STATIC });
+    }
+  });
+
   it('resolves a string flag correctly', async () => {
     const provider = new LoreKitFlagProvider([stringFlag]);
     const result = await provider.resolveStringEvaluation('string-flag', '', {}, NOOP_LOGGER);
