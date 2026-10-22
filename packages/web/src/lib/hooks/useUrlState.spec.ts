@@ -262,7 +262,7 @@ describe('writeParamToHistory', () => {
     });
   });
 
-  describe('Recent read on the Explorer (aw-verify F-1)', () => {
+  describe('Recent read on the Explorer', () => {
     it('choosing Recent read writes sort=%22last_opened_at%22, and a reload reads it back', () => {
       const { win, calls, addressBar } = fakeWindow('/lore');
       writeParamToHistory(win, 'sort', 'last_opened_at', null, 'replace');

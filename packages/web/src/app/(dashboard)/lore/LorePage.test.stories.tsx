@@ -66,16 +66,11 @@ export const RendersScopeSelector: Story = {
 };
 
 /** The page's own `?sort=` value, as a reload would read it. */
+// The browser's location, not useSearchParams(): Storybook's App Router mock
+// never feeds `window.history` back into it.
 const sortInAddressBar = () => new URLSearchParams(window.location.search).get('sort');
 
-/**
- * A sort choice is in the address bar the moment it is made, so a reload right
- * after it keeps it. It used to reach the URL only after a server render
- * returned — 4.3 s on PR #718's preview, where a reload in between restored
- * Newest. Storybook's App Router mock never feeds `window.history` back into
- * `useSearchParams`, so this reads the browser's own location: what a reload
- * would load.
- */
+/** A sort choice is in the address bar the moment it is made, so a reload right after it keeps it. */
 export const SortChoiceIsInTheAddressBarAtOnce: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);

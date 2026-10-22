@@ -13,13 +13,9 @@
  * on the client, avoiding hydration mismatches.
  *
  * ## Writing the URL
- * `setState` writes the address bar with `window.history.replaceState` (or
- * `pushState` in `push` mode) — see {@link writeParamToHistory}. Next.js syncs
- * those calls into `useSearchParams()` / `usePathname()` without a server
- * render, so the URL holds the new value the moment `setState` returns, and a
- * reload right after a choice restores it. (It used to go through
- * `router.replace`, which commits the URL only once the route's server render
- * returns — seconds on a slow backend, long enough for a reload to lose it.)
+ * `setState` writes the address bar with `window.history` ({@link writeParamToHistory}),
+ * so it holds the new value as soon as `setState` returns and a reload keeps it.
+ * A `router.replace` committed the URL only after a server render — seconds on a slow backend.
  *
  * ## Optimistic updates
  * The address bar changes synchronously, but Next.js applies the change to
@@ -136,14 +132,9 @@ export function buildUrl<T>(
   return `${pathname}${qs ? `?${qs}` : ''}`;
 }
 
-/**
- * Whether a push-mode write already added a history entry in the current task.
- * One handler that sets several push-mode keys is one user step — FilterBar's
- * "Clear all" sets `filters` and then `retention` — so it gets one Back step:
- * the first write that changes the URL pushes, and the rest in the same task
- * replace that entry. Cleared on the next microtask, once the handler returns.
- * (The router collapsed same-tick navigations the same way.)
- */
+// One handler that sets several push-mode keys (FilterBar's "Clear all") is one
+// user step, so only its first URL-changing write pushes; the rest replace that
+// entry. Cleared on the next microtask, once the handler has returned.
 let pushedThisTask = false;
 
 function notePush(): void {
@@ -162,21 +153,8 @@ export interface HistoryWindow {
 
 /**
  * Write one param to the address bar, synchronously, and return the URL written.
- *
- * Goes through `window.history`, not the router: Next.js patches `pushState` /
- * `replaceState` so `useSearchParams()` and `usePathname()` follow the change,
- * without the server render a `router.replace` waits on before it commits the
- * URL. That wait is what let a reload restore the previous value.
- *
- * Builds from the LIVE location, not a render's `useSearchParams()` snapshot,
- * so two writes in one tick (two keys set by one handler) both land: the second
- * starts from the URL the first just wrote. It also keeps the write on the page
- * the browser is actually showing.
- *
- * `push` adds a history entry only when this param's value changes, the same
- * dedupe the App Router applies to `router.push`, so re-setting the current
- * value leaves no empty Back step — and only once per task (`pushedThisTask`),
- * so one click that sets two keys is one Back step.
+ * @param mode - `push` adds a Back step when the value changes, once per task; `replace` never does.
+ * @returns The URL now in the address bar.
  */
 export function writeParamToHistory<T>(
   win: HistoryWindow,
@@ -185,10 +163,15 @@ export function writeParamToHistory<T>(
   defaultValue: T,
   mode: 'push' | 'replace',
 ): string {
+  // The LIVE location, not a render's useSearchParams() snapshot: a second
+  // write in the same tick then starts from the URL the first just wrote.
   const params = new URLSearchParams(win.location.search);
   const nextRaw = serialise(next) === serialise(defaultValue) ? null : serialise(next);
+  // Re-setting the current value pushes nothing, as router.push dedupes it.
   const changed = params.get(key) !== nextRaw;
   const url = buildUrl(win.location.pathname, params, key, next, defaultValue);
+  // window.history, not the router: Next.js syncs it into useSearchParams()
+  // without the server render a router.replace waits on before the URL commits.
   if (mode === 'push' && changed && !pushedThisTask) {
     win.history.pushState(null, '', url);
     notePush();
