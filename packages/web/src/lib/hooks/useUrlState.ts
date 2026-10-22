@@ -136,6 +136,24 @@ export function buildUrl<T>(
   return `${pathname}${qs ? `?${qs}` : ''}`;
 }
 
+/**
+ * Whether a push-mode write already added a history entry in the current task.
+ * One handler that sets several push-mode keys is one user step — FilterBar's
+ * "Clear all" sets `filters` and then `retention` — so it gets one Back step:
+ * the first write that changes the URL pushes, and the rest in the same task
+ * replace that entry. Cleared on the next microtask, once the handler returns.
+ * (The router collapsed same-tick navigations the same way.)
+ */
+let pushedThisTask = false;
+
+function notePush(): void {
+  if (pushedThisTask) return;
+  pushedThisTask = true;
+  queueMicrotask(() => {
+    pushedThisTask = false;
+  });
+}
+
 /** The parts of `window` a URL write touches — passed in so the write is testable without a DOM. */
 export interface HistoryWindow {
   location: Pick<Location, 'pathname' | 'search'>;
@@ -157,7 +175,8 @@ export interface HistoryWindow {
  *
  * `push` adds a history entry only when this param's value changes, the same
  * dedupe the App Router applies to `router.push`, so re-setting the current
- * value leaves no empty Back step.
+ * value leaves no empty Back step — and only once per task (`pushedThisTask`),
+ * so one click that sets two keys is one Back step.
  */
 export function writeParamToHistory<T>(
   win: HistoryWindow,
@@ -170,8 +189,9 @@ export function writeParamToHistory<T>(
   const nextRaw = serialise(next) === serialise(defaultValue) ? null : serialise(next);
   const changed = params.get(key) !== nextRaw;
   const url = buildUrl(win.location.pathname, params, key, next, defaultValue);
-  if (mode === 'push' && changed) {
+  if (mode === 'push' && changed && !pushedThisTask) {
     win.history.pushState(null, '', url);
+    notePush();
   } else {
     win.history.replaceState(null, '', url);
   }

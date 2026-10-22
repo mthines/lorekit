@@ -301,6 +301,23 @@ describe('writeParamToHistory', () => {
       expect(calls.map((c) => c.method)).toEqual(['pushState']);
       expect(addressBar()).toBe('/lore');
     });
+
+    it('one handler that sets two keys adds one history entry (FilterBar "Clear all")', () => {
+      const { win, calls, addressBar } = fakeWindow('/lore?filters=%5B1%5D&retention=%7B%22a%22%3A1%7D');
+      // Same task, as in one click handler: filters, then retention.
+      writeParamToHistory(win, 'filters', [], [], 'push');
+      writeParamToHistory(win, 'retention', {}, {}, 'push');
+      expect(calls.map((c) => c.method)).toEqual(['pushState', 'replaceState']);
+      expect(addressBar()).toBe('/lore');
+    });
+
+    it('separate clicks each add their own history entry', async () => {
+      const { win, calls } = fakeWindow('/lore');
+      writeParamToHistory(win, 'lesson', '"a"', null, 'push');
+      await Promise.resolve(); // the click handler returned; the next click is a new task
+      writeParamToHistory(win, 'lesson', '"b"', null, 'push');
+      expect(calls.map((c) => c.method)).toEqual(['pushState', 'pushState']);
+    });
   });
 
   describe('builds from the live URL', () => {
