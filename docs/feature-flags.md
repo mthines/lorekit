@@ -57,7 +57,7 @@ it can never ship a flag that silently resolves to `undefined`.
 > **Every `example-*` key in this document is illustrative, not a real flag.**
 > Grep for one and you will find only this file. The registry holds exactly the
 > flags that gate live behaviour — today four rollout gates, all plain booleans
-> (`insights-visual` also declares a 50/50 experiment that is not running):
+> (`insights-visual` also runs a 50/50 experiment):
 > `retention-policies`, `lore-explorer-instruments`,
 > `lore-explorer-duplicate-clusters` and `insights-visual`. It has also held entries since removed: the
 > rollout gate for the `/insights` route (deleted once that page became
@@ -260,7 +260,7 @@ nothing is the correct, expected symptom of that gap, not a broken query.
 Per-user splits need no storage: a signed-in user is bucketed by their Supabase
 user id (see [Targeting key resolution](#targeting-key-resolution)), so they see
 the same arm on every device for as long as the weights stand still.
-`insights-visual` is declared this way and is the worked example.
+`insights-visual` runs this way and is the worked example.
 
 ### 1. Declare the arms, dark
 

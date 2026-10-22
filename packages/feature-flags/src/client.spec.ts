@@ -65,6 +65,26 @@ describe('evaluateFlagDetails', () => {
     expect(details).toMatchObject({ value: false, variant: 'off', reason: 'OVERRIDE' });
   });
 
+  it('splits every running experiment by targeting key, near its declared weights', async () => {
+    // Derived from the registry, like the dark-experiment case below: a launch
+    // must change who sees what, report SPLIT, and honour the weights it declares.
+    const running = FLAG_REGISTRY.filter((flag) => flag.experiment?.enabled);
+    const users = Array.from({ length: 2_000 }, (_, i) => `user-${i}`);
+    for (const flag of running) {
+      const counts = new Map<string, number>();
+      for (const targetingKey of users) {
+        const details = await evaluateFlagDetails(flag.key as FlagKey, { targetingKey });
+        expect(details.reason).toBe('SPLIT');
+        counts.set(details.variant ?? '', (counts.get(details.variant ?? '') ?? 0) + 1);
+      }
+      for (const arm of flag.experiment?.variants ?? []) {
+        // ±5 points at n = 2,000 is more than three standard deviations for any weight.
+        expect(((counts.get(arm.key) ?? 0) / users.length) * 100).toBeGreaterThan(arm.weight - 5);
+        expect(((counts.get(arm.key) ?? 0) / users.length) * 100).toBeLessThan(arm.weight + 5);
+      }
+    }
+  });
+
   it('keeps every declared-but-disabled experiment on its default for every user', async () => {
     // A dark experiment must change nothing: no user lands on another arm and
     // none is reported as SPLIT. Derived from the registry rather than naming a
