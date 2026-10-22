@@ -13,8 +13,8 @@
  * on the client, avoiding hydration mismatches.
  *
  * ## Writing the URL
- * `setState` writes the address bar with `window.history` ({@link writeParamToHistory}),
- * so it holds the new value as soon as `setState` returns and a reload keeps it.
+ * `setState` writes the address bar with `window.history` ({@link writeParamToHistory})
+ * a microtask after it returns — before any paint — so a reload right after a choice keeps it.
  * A `router.replace` committed the URL only after a server render — seconds on a slow backend.
  *
  * ## Optimistic updates
@@ -257,8 +257,9 @@ export function useUrlState<T>(
       //    before `useSearchParams()` catches up a render later.
       writeOptimistic(key, next, pathname);
 
-      // 2. Persist: write the address bar now, so a reload keeps the choice.
-      writeParamToHistory(window, key, next, defaultValue, navigationMode);
+      // 2. Persist to the address bar, a microtask later: on a hard load Next.js
+      //    patches window.history in an effect that runs after child mount effects.
+      queueMicrotask(() => writeParamToHistory(window, key, next, defaultValue, navigationMode));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [searchParams, pathname, key, defaultValue, navigationMode],
