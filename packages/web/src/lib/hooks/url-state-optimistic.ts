@@ -1,13 +1,13 @@
 /**
  * The optimistic layer behind {@link useUrlState}, shared by URL param KEY.
  *
- * A URL write through the router lands a navigation later: the new search
- * params reach `useSearchParams()` only once the router has finished its cycle,
- * which for a dynamic page includes a server round trip. `useUrlState` hides
- * that by showing the written value immediately. That layer used to be local
- * `useState` per hook INSTANCE, so it only hid the wait from the component that
- * wrote — every other component reading the same param kept the old value
- * until the navigation landed. Two components reading `?filters=` (the
+ * A URL write reaches `useSearchParams()` a render after it is made: Next.js
+ * applies a `window.history` write inside a transition (and a router write,
+ * before `useUrlState` used `window.history`, only after a server round trip).
+ * `useUrlState` hides that by showing the written value immediately. That layer
+ * used to be local `useState` per hook INSTANCE, so it only hid the wait from
+ * the component that wrote — every other component reading the same param kept
+ * the old value until the write landed. Two components reading `?filters=` (the
  * Explorer and the detail panel applying a filter into it) disagreed for that
  * whole window, and the Explorer looked slow to react to the panel.
  *
@@ -17,7 +17,7 @@
  * node vitest project.
  *
  * An entry is dropped — the URL becomes the source of truth again — when:
- * - the URL now holds the written value (the navigation landed);
+ * - the URL now holds the written value (the write landed);
  * - the pathname differs from the one it was written on (the reader left the
  *   page the write was aimed at, so it can never land there);
  * - the last instance reading the key unmounts (nothing is left to show it,

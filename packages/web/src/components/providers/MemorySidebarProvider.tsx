@@ -203,8 +203,8 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // than reimplemented for the alias.
   const urlMemoryId = searchParams.get('memoryId') ?? lessonParamMemoryId;
   // Closing the sheet dismisses the id locally rather than rewriting the URL —
-  // the pure `activeMemoryId` docblock has the why (a second router.replace in
-  // the same tick clobbers the Explorer's scope/filter write).
+  // the pure `activeMemoryId` docblock has the why (when URL writes went through
+  // the router, a second one in the same tick clobbered the Explorer's write).
   const [dismissedMemoryId, setDismissedMemoryId] = useState<string | null>(null);
   const memoryId = activeMemoryId(urlMemoryId, dismissedMemoryId);
   const { data: memoryByIdLesson } = useMemoryById(memoryId);
@@ -258,12 +258,12 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
     [setLessonRef],
   );
 
-  // Only write the URL when a lesson is actually open. Calling this
-  // unconditionally (e.g. from LoreExplorer's scope-select handler, which
-  // closes any open lesson while also setting ?scope) would fire a second
-  // router.replace built from the *pre-scope* search params, clobbering the
-  // scope param that was set in the same tick. Guarding on lessonRef makes the
-  // close a no-op navigation when nothing is open.
+  // Only write the URL when a lesson is actually open. LoreExplorer's
+  // scope-select handler closes any open lesson while also setting ?scope; when
+  // URL writes went through the router, that second write was built from the
+  // *pre-scope* params and clobbered the scope. Writes now start from the live
+  // URL, and guarding on lessonRef still keeps the close a no-op when nothing
+  // is open.
   const closeLesson = useCallback((rawReason?: MemoryCloseReason) => {
     // Only a close that closed SOMETHING is an event. `LoreExplorer` calls this
     // on every filter/scope/status change whether or not a memory is open, so
