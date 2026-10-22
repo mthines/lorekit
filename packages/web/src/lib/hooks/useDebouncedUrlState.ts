@@ -7,13 +7,13 @@
  * debounced, while the value it returns stays instantly responsive.
  *
  * ## Why this exists
- * `useUrlState` writes the URL synchronously on every `setState` call. For a
+ * `useUrlState` writes the URL on every `setState` call (a microtask later). For a
  * value that changes rapidly — a text search box, a range slider — that means a
- * `router.replace` per keystroke/drag. Each navigation re-renders the route
- * subtree (every component subscribed to `useSearchParams`), which makes the
- * control feel laggy and floods the URL/history with intermediate values.
+ * URL write per keystroke/drag. Each write re-renders every component
+ * subscribed to `useSearchParams`, which makes the control feel laggy and
+ * floods the URL with intermediate values (and the history, in `push` mode).
  * Wrapping the write in `startTransition` only lowers its priority; it does not
- * stop the per-keystroke navigation.
+ * stop the per-keystroke write.
  *
  * This hook decouples the two concerns:
  *   1. **Responsiveness** — the returned value is backed by local `useState`, so

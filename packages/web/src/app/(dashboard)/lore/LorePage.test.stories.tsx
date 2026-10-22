@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { expect, within } from 'storybook/test';
+import { expect, userEvent, within } from 'storybook/test';
 
 import LorePageClient from './LorePageClient';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
@@ -61,6 +61,32 @@ export const RendersScopeSelector: Story = {
       // appears once the /memories/scopes query has settled with rows.
       const group = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
       await expect(group.getAllByRole('radio').length).toBeGreaterThan(1);
+    });
+  },
+};
+
+/** The page's own `?sort=` value, as a reload would read it. */
+// The browser's location, not useSearchParams(): Storybook's App Router mock
+// never feeds `window.history` back into it.
+const sortInAddressBar = () => new URLSearchParams(window.location.search).get('sort');
+
+/** A sort choice is in the address bar the moment it is made, so a reload right after it keeps it. */
+export const SortChoiceIsInTheAddressBarAtOnce: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    // Exact name: the phone-width control is labelled "Sort memories: <order>".
+    const sort = await canvas.findByRole('combobox', { name: 'Sort memories' });
+
+    await step('Choosing Recent read writes sort to the URL in the same step', async () => {
+      await userEvent.selectOptions(sort, 'Recent read');
+      await expect(sortInAddressBar()).toBe('"last_opened_at"');
+      await expect(sort).toHaveValue('last_opened_at');
+    });
+
+    await step('Choosing Newest, the default, removes sort again', async () => {
+      await userEvent.selectOptions(sort, 'Newest');
+      await expect(sortInAddressBar()).toBeNull();
+      await expect(sort).toHaveValue('created_at');
     });
   },
 };

@@ -12,18 +12,22 @@
  * Next.js renders a shell on the server and fills in the real URL-derived value
  * on the client, avoiding hydration mismatches.
  *
+ * ## Writing the URL
+ * `setState` writes the address bar with `window.history` ({@link writeParamToHistory})
+ * a microtask after it returns — before any paint — so a reload right after a choice keeps it.
+ * A `router.replace` committed the URL only after a server render — seconds on a slow backend.
+ *
  * ## Optimistic updates
- * URL navigation via `router.replace` is asynchronous: the new search params do
- * not appear in `useSearchParams()` until the router has completed the navigation
- * cycle (a React transition). Without optimistic state, users would see the old
- * value for tens of milliseconds between clicking and the URL updating — causing
+ * The address bar changes synchronously, but Next.js applies the change to
+ * `useSearchParams()` inside a React transition, a render later. Without
+ * optimistic state, readers would show the old value for that render — causing
  * perceived lag and flicker.
  *
  * This hook solves it with a local `optimistic` state that is updated
- * synchronously on every `setState` call, while the URL write happens in the
- * background. When the URL finally reflects the new value (next render after
- * navigation), `optimistic` is reset to `UNSET` so the URL is once again the
- * source of truth.
+ * synchronously on every `setState` call, alongside the URL write. When
+ * `useSearchParams()` reflects the new value (the next render),
+ * `optimistic` is reset to `UNSET` so the URL is once again the source of
+ * truth.
  *
  * The optimistic value is shared by KEY across every mounted instance
  * (`url-state-optimistic.ts`), not held per instance: a write from one
@@ -76,8 +80,9 @@ export interface UseUrlStateOptions {
    */
   cleanOnPathname?: string | string[];
   /**
-   * Navigation method. Use 'push' only when you need the back-button to undo
-   * state changes. 'replace' (default) keeps history clean.
+   * How a write enters the browser history. Use 'push' only when you need the
+   * back-button to undo state changes (`history.pushState`). 'replace'
+   * (default, `history.replaceState`) keeps history clean.
    * @default 'replace'
    */
   navigationMode?: 'push' | 'replace';
@@ -125,6 +130,55 @@ export function buildUrl<T>(
   }
   const qs = params.toString();
   return `${pathname}${qs ? `?${qs}` : ''}`;
+}
+
+// One handler that sets several push-mode keys (FilterBar's "Clear all") is one
+// user step, so only its first URL-changing write pushes; the rest replace that
+// entry. Cleared on the next microtask, once the handler has returned.
+let pushedThisTask = false;
+
+function notePush(): void {
+  if (pushedThisTask) return;
+  pushedThisTask = true;
+  queueMicrotask(() => {
+    pushedThisTask = false;
+  });
+}
+
+/** The parts of `window` a URL write touches — passed in so the write is testable without a DOM. */
+export interface HistoryWindow {
+  location: Pick<Location, 'pathname' | 'search'>;
+  history: Pick<History, 'pushState' | 'replaceState'>;
+}
+
+/**
+ * Write one param to the address bar, synchronously, and return the URL written.
+ * @param mode - `push` adds a Back step when the value changes, once per task; `replace` never does.
+ * @returns The URL now in the address bar.
+ */
+export function writeParamToHistory<T>(
+  win: HistoryWindow,
+  key: string,
+  next: T,
+  defaultValue: T,
+  mode: 'push' | 'replace',
+): string {
+  // The LIVE location, not a render's useSearchParams() snapshot: a second
+  // write in the same tick then starts from the URL the first just wrote.
+  const params = new URLSearchParams(win.location.search);
+  const nextRaw = serialise(next) === serialise(defaultValue) ? null : serialise(next);
+  // Re-setting the current value pushes nothing, as router.push dedupes it.
+  const changed = params.get(key) !== nextRaw;
+  const url = buildUrl(win.location.pathname, params, key, next, defaultValue);
+  // window.history, not the router: Next.js syncs it into useSearchParams()
+  // without the server render a router.replace waits on before the URL commits.
+  if (mode === 'push' && changed && !pushedThisTask) {
+    win.history.pushState(null, '', url);
+    notePush();
+  } else {
+    win.history.replaceState(null, '', url);
+  }
+  return url;
 }
 
 /**
@@ -187,14 +241,6 @@ export function useUrlState<T>(
   // catching up; falls back to the true URL value otherwise.
   const value = optimisticValue !== UNSET ? optimisticValue : urlValue;
 
-  // ── Navigate ref ───────────────────────────────────────────────────────────
-  // Updated synchronously during render (no useEffect) so there is never a
-  // stale-closure window where setState uses the wrong navigate function.
-  const navigateRef = useRef<ReturnType<typeof useRouter>['push']>(
-    navigationMode === 'push' ? router.push : router.replace,
-  );
-  navigateRef.current = navigationMode === 'push' ? router.push : router.replace;
-
   // ── setState ───────────────────────────────────────────────────────────────
   const setState = useCallback<UrlStateDispatch<T>>(
     (valueOrUpdater) => {
@@ -207,16 +253,16 @@ export function useUrlState<T>(
           ? (valueOrUpdater as (prev: T) => T)(prev)
           : valueOrUpdater;
 
-      // 1. Optimistic: immediate UI update in every instance reading `key`, no
-      //    wait for the navigation round-trip.
+      // 1. Optimistic: immediate UI update in every instance reading `key`,
+      //    before `useSearchParams()` catches up a render later.
       writeOptimistic(key, next, pathname);
 
-      // 2. Persist: update the URL asynchronously via the router.
-      const url = buildUrl(pathname, searchParams, key, next, defaultValue);
-      navigateRef.current(url, { scroll: false });
+      // 2. Persist to the address bar, a microtask later: on a hard load Next.js
+      //    patches window.history in an effect that runs after child mount effects.
+      queueMicrotask(() => writeParamToHistory(window, key, next, defaultValue, navigationMode));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [searchParams, pathname, key, defaultValue],
+    [searchParams, pathname, key, defaultValue, navigationMode],
   );
 
   // ── cleanOnPathname effect ─────────────────────────────────────────────────
