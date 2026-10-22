@@ -7,7 +7,7 @@
  * debounced, while the value it returns stays instantly responsive.
  *
  * ## Why this exists
- * `useUrlState` writes the URL synchronously on every `setState` call. For a
+ * `useUrlState` writes the URL on every `setState` call (a microtask later). For a
  * value that changes rapidly — a text search box, a range slider — that means a
  * URL write per keystroke/drag. Each write re-renders every component
  * subscribed to `useSearchParams`, which makes the control feel laggy and

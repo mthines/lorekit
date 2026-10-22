@@ -377,8 +377,8 @@ describe('writeParamToHistory', () => {
  *
  * 1. User calls setState(next).
  * 2. writeOptimistic(next) fires synchronously → re-render shows `next` immediately.
- * 3. writeParamToHistory writes the address bar synchronously (tested above);
- *    Next.js applies it to useSearchParams() in a transition.
+ * 3. A microtask later, writeParamToHistory writes the address bar (tested
+ *    above); Next.js applies it to useSearchParams() in a transition.
  * 4. On that render, searchParams changes → urlValue becomes `next`.
  * 5. useEffect detects serialise(urlValue) === serialise(optimisticValue) → sets
  *    optimisticValue back to UNSET (URL is now the source of truth again).
