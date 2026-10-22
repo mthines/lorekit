@@ -12,6 +12,9 @@
  *   - toAbsolute path normalisation
  *   - buildUrl: param write, delete on default, preserve unrelated params
  *   - isPathnameAllowed: exact match, prefix match, non-match, array overload
+ *   - writeParamToHistory: the setter's URL write — replaceState vs pushState,
+ *     built from the live location, synchronous (so a reload right after a
+ *     choice keeps it), against a fake `window`
  *
  * The optimistic-update contract is documented in the comments below as a
  * spec for future integration tests, and the SSR contract is documented via
@@ -25,6 +28,8 @@ import {
   toAbsolute,
   buildUrl,
   isPathnameAllowed,
+  writeParamToHistory,
+  type HistoryWindow,
 } from './useUrlState';
 
 // ── serialise ─────────────────────────────────────────────────────────────────
@@ -202,6 +207,134 @@ describe('isPathnameAllowed', () => {
   });
 });
 
+// ── writeParamToHistory ───────────────────────────────────────────────────────
+
+const ORIGIN = 'https://lorekit.test';
+
+/**
+ * A fake `window` whose history calls move its location the way a browser's
+ * do, and record every call, so a test reads "the address bar" right after a
+ * write without a DOM.
+ */
+function fakeWindow(start: string) {
+  const calls: { method: 'pushState' | 'replaceState'; url: string }[] = [];
+  const location = { pathname: '/', search: '' };
+  const go = (url: string) => {
+    const u = new URL(url, ORIGIN);
+    location.pathname = u.pathname;
+    location.search = u.search;
+  };
+  go(start);
+  const history = {
+    pushState: (_data: unknown, _unused: string, url?: string | URL | null) => {
+      calls.push({ method: 'pushState', url: String(url) });
+      go(String(url));
+    },
+    replaceState: (_data: unknown, _unused: string, url?: string | URL | null) => {
+      calls.push({ method: 'replaceState', url: String(url) });
+      go(String(url));
+    },
+  };
+  const win: HistoryWindow = { location, history };
+  /** What a reload would load right now. */
+  const addressBar = () => `${location.pathname}${location.search}`;
+  return { win, calls, addressBar };
+}
+
+/** What `useUrlState` reads back for `key` after loading `url` (a reload). */
+function readBack<T>(url: string, key: string, defaultValue: T): T {
+  return deserialise(new URL(url, ORIGIN).searchParams.get(key), defaultValue);
+}
+
+describe('writeParamToHistory', () => {
+  describe('replace mode', () => {
+    it('writes the new URL with replaceState and never pushState', () => {
+      const { win, calls } = fakeWindow('/lore');
+      const url = writeParamToHistory(win, 'status', 'archived', 'active', 'replace');
+      expect(url).toBe('/lore?status=%22archived%22');
+      expect(calls).toEqual([{ method: 'replaceState', url: '/lore?status=%22archived%22' }]);
+    });
+
+    it('changes the address bar before it returns — no navigation to wait for', () => {
+      const { win, addressBar } = fakeWindow('/lore');
+      writeParamToHistory(win, 'status', 'archived', 'active', 'replace');
+      expect(addressBar()).toBe('/lore?status=%22archived%22');
+    });
+  });
+
+  describe('Recent read on the Explorer (aw-verify F-1)', () => {
+    it('choosing Recent read writes sort=%22last_opened_at%22, and a reload reads it back', () => {
+      const { win, calls, addressBar } = fakeWindow('/lore');
+      writeParamToHistory(win, 'sort', 'last_opened_at', null, 'replace');
+      expect(calls).toEqual([{ method: 'replaceState', url: '/lore?sort=%22last_opened_at%22' }]);
+      // The reload happens immediately: the address bar already holds the choice.
+      expect(addressBar()).toBe('/lore?sort=%22last_opened_at%22');
+      expect(readBack(addressBar(), 'sort', null)).toBe('last_opened_at');
+    });
+
+    it('choosing Newest (the default) again drops sort, and a reload reads the default', () => {
+      const { win, addressBar } = fakeWindow('/lore?sort=%22last_opened_at%22');
+      writeParamToHistory(win, 'sort', null, null, 'replace');
+      expect(addressBar()).toBe('/lore');
+      expect(readBack(addressBar(), 'sort', null)).toBe(null);
+    });
+  });
+
+  describe('push mode', () => {
+    it('adds a history entry with pushState when the URL changes', () => {
+      const { win, calls } = fakeWindow('/lore');
+      writeParamToHistory(win, 'lesson', { scope: 'global', key: 'k' }, null, 'push');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].method).toBe('pushState');
+      expect(readBack(calls[0].url, 'lesson', null)).toEqual({ scope: 'global', key: 'k' });
+    });
+
+    it('replaces instead of pushing when the value is unchanged, leaving no empty Back step', () => {
+      const { win, calls } = fakeWindow('/lore?lesson=%7B%22scope%22%3A%22global%22%2C%22key%22%3A%22k%22%7D');
+      writeParamToHistory(win, 'lesson', { scope: 'global', key: 'k' }, null, 'push');
+      expect(calls.map((c) => c.method)).toEqual(['replaceState']);
+    });
+
+    it('pushes when clearing a set value back to its default', () => {
+      const { win, calls, addressBar } = fakeWindow('/lore?lesson=%22x%22');
+      writeParamToHistory(win, 'lesson', null, null, 'push');
+      expect(calls.map((c) => c.method)).toEqual(['pushState']);
+      expect(addressBar()).toBe('/lore');
+    });
+  });
+
+  describe('builds from the live URL', () => {
+    it('keeps params already in the address bar', () => {
+      const { win, addressBar } = fakeWindow('/lore?scope=%22repo%3A%3Aa%2Fb%22&q=%22auth%22');
+      writeParamToHistory(win, 'sort', 'opened_count', null, 'replace');
+      const qs = new URL(addressBar(), ORIGIN).searchParams;
+      expect(qs.get('scope')).toBe('"repo::a/b"');
+      expect(qs.get('q')).toBe('"auth"');
+      expect(qs.get('sort')).toBe('"opened_count"');
+    });
+
+    it('keeps a param written earlier in the same tick (two keys set by one handler)', () => {
+      const { win, addressBar } = fakeWindow('/lore');
+      writeParamToHistory(win, 'status', 'archived', 'active', 'replace');
+      writeParamToHistory(win, 'sort', 'last_opened_at', null, 'replace');
+      expect(readBack(addressBar(), 'status', 'active')).toBe('archived');
+      expect(readBack(addressBar(), 'sort', null)).toBe('last_opened_at');
+    });
+
+    it('removes the param when set to its default and keeps the rest', () => {
+      const { win, addressBar } = fakeWindow('/lore?status=%22archived%22&sort=%22opened_count%22');
+      writeParamToHistory(win, 'status', 'active', 'active', 'replace');
+      expect(addressBar()).toBe('/lore?sort=%22opened_count%22');
+    });
+
+    it('writes on the page the browser shows, keeping its other params (e.g. a Storybook iframe)', () => {
+      const { win, addressBar } = fakeWindow('/iframe.html?id=pages-lore--default&viewMode=story');
+      writeParamToHistory(win, 'sort', 'last_opened_at', null, 'replace');
+      expect(addressBar()).toBe('/iframe.html?id=pages-lore--default&viewMode=story&sort=%22last_opened_at%22');
+    });
+  });
+});
+
 /**
  * ── SSR contract (documented, not executed here) ──────────────────────────────
  *
@@ -226,9 +359,10 @@ describe('isPathnameAllowed', () => {
  * ── Optimistic update contract (documented, not executed here) ─────────────────
  *
  * 1. User calls setState(next).
- * 2. setOptimisticValue(next) fires synchronously → re-render shows `next` immediately.
- * 3. router.replace(url) fires asynchronously → navigation starts.
- * 4. When navigation completes, searchParams changes → urlValue becomes `next`.
+ * 2. writeOptimistic(next) fires synchronously → re-render shows `next` immediately.
+ * 3. writeParamToHistory writes the address bar synchronously (tested above);
+ *    Next.js applies it to useSearchParams() in a transition.
+ * 4. On that render, searchParams changes → urlValue becomes `next`.
  * 5. useEffect detects serialise(urlValue) === serialise(optimisticValue) → sets
  *    optimisticValue back to UNSET (URL is now the source of truth again).
  * 6. External URL changes (back button, direct link) update searchParams → urlValue
