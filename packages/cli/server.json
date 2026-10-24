@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mthines/lorekit",
+  "title": "LoreKit",
+  "description": "Shared memory for coding agents: lessons learned from failures, recalled by scope.",
+  "repository": {
+    "url": "https://github.com/mthines/lorekit",
+    "source": "github",
+    "subfolder": "packages/cli"
+  },
+  "websiteUrl": "https://lorekit.io",
+  "version": "1.75.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@lorekit/cli",
+      "version": "1.75.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "LOREKIT_MODE",
+          "description": "`local` keeps lessons as markdown on disk with no account; `remote` uses the hosted store",
+          "default": "local",
+          "isRequired": false
+        },
+        {
+          "name": "LOREKIT_TOKEN",
+          "description": "LoreKit API token (lk_rw_…), only for remote mode",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer lk_rw_… token from lorekit.io → Connect your agent",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
