@@ -4,7 +4,15 @@
     "packages/cli": {
       "release-type": "node",
       "component": "cli",
-      "package-name": "@lorekit/cli"
+      "package-name": "@lorekit/cli",
+      "extra-files": [
+        { "type": "json", "path": "server.json", "jsonpath": "$.version" },
+        {
+          "type": "json",
+          "path": "server.json",
+          "jsonpath": "$.packages[0].version"
+        }
+      ]
     }
   },
   "include-component-in-tag": true,
