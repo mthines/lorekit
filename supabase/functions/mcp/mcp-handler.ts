@@ -357,8 +357,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
 
     // Resolve plan name for usage-event annotation (fails open — null → 'free').
     // Only resolved for authenticated non-service callers; service-role has no plan.
+    // Passing the request `span` reuses the lookup index.ts already made for this
+    // request (memoised per span in `_shared/telemetry/usage.ts`) instead of a
+    // second, untraced round trip; where index.ts skipped it (BYOD) it runs traced.
     const planName = auth.type !== 'service' && analyticsUserId
-      ? await getUserPlanName(db, analyticsUserId)
+      ? await getUserPlanName(db, analyticsUserId, span)
       : null;
     if (planName) toolSpan.setAttributes({ 'lorekit.plan': planName });
 
