@@ -198,10 +198,13 @@ async function lookupUserPlanName(
     const query = parentSpan
       ? createTracedClient(db, parentSpan).from('user_plans')
       : db.from('user_plans');
-    const { data } = await query
+    const { data, error } = await query
       .select('plan_name')
       .eq('user_id', userId)
       .maybeSingle();
+    // A PostgREST error is returned, not thrown: fail open to null like the catch
+    // below, so the per-span memo evicts it and the next caller retries.
+    if (error) return null;
     // `maybeSingle()` resolves to the row itself (or null) on both clients; the
     // traced wrapper's declared `PostgrestResponse<T[]>` describes the general
     // case, not this one, which is why the cast goes through `unknown`.

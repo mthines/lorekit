@@ -102,6 +102,35 @@ Deno.test('a failed lookup (null) is not memoised: the next call retries', async
   assertEquals(counter.queries, 2);
 });
 
+Deno.test('a returned PostgREST error is null and not memoised: the next call retries', async () => {
+  // PostgREST RESOLVES a failure as `{ data: null, error }` rather than
+  // rejecting, so this is the shape a DB error actually takes in production —
+  // distinct from the rejected promise the `fail` fake above models.
+  const counter = { queries: 0 };
+  const span = newRootSpan();
+  const responses = [
+    { data: null, error: { message: 'boom' } },
+    { data: { plan_name: 'pro' }, error: null },
+  ];
+  const db = {
+    from: () => {
+      const response = responses[counter.queries++];
+      const b = {
+        select: () => b,
+        eq: () => b,
+        maybeSingle: () => b,
+        then: (f: (v: unknown) => unknown, r?: (e: unknown) => unknown) =>
+          Promise.resolve(response).then(f, r),
+      };
+      return b;
+    },
+  } as unknown as DbClient;
+  const failed = await getUserPlanName(db, 'u1', span);
+  const retried = await getUserPlanName(db, 'u1', span);
+  assertEquals([failed, retried], [null, 'pro']);
+  assertEquals(counter.queries, 2);
+});
+
 Deno.test('a missing row still resolves to free and is memoised', async () => {
   const counter = { queries: 0 };
   const span = newRootSpan();
