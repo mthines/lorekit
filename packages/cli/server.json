@@ -9,12 +9,12 @@
     "subfolder": "packages/cli"
   },
   "websiteUrl": "https://lorekit.io",
-  "version": "1.75.0",
+  "version": "1.76.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@lorekit/cli",
-      "version": "1.75.0",
+      "version": "1.76.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
