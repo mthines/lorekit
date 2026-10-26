@@ -161,8 +161,35 @@ export function recordUsageEvent(
  * Untimed, this query was invisible: an `lorekit.mcp` span could report 0.885s
  * with only 0.084s accounted for by children, and none of the missing time had
  * a name.
+ *
+ * With `parentSpan` the result is also memoised per (span, user), so the MCP
+ * transport's preamble (`mcp/index.ts`) and its `tools/call` (`mcp/mcp-handler.ts`)
+ * share ONE query by passing the same request span. Keyed on the span, not the
+ * db client, because `getDb` builds a new client per call. A null (failed)
+ * lookup is not kept, so the next caller retries as it did before. Without a
+ * span nothing is memoised.
  */
-export async function getUserPlanName(
+const planNameMemo = new WeakMap<Span, Map<string, Promise<string | null>>>();
+
+export function getUserPlanName(
+  db: DbClient,
+  userId: string,
+  parentSpan?: Span,
+): Promise<string | null> {
+  if (!parentSpan) return lookupUserPlanName(db, userId);
+  let byUser = planNameMemo.get(parentSpan);
+  if (!byUser) planNameMemo.set(parentSpan, byUser = new Map());
+  const memoised = byUser.get(userId);
+  if (memoised) return memoised;
+  const lookup = lookupUserPlanName(db, userId, parentSpan);
+  byUser.set(userId, lookup);
+  void lookup.then((plan) => {
+    if (plan === null && byUser.get(userId) === lookup) byUser.delete(userId);
+  });
+  return lookup;
+}
+
+async function lookupUserPlanName(
   db: DbClient,
   userId: string,
   parentSpan?: Span,
