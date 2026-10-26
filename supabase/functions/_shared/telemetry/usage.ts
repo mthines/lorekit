@@ -146,6 +146,9 @@ export function recordUsageEvent(
   else void p;
 }
 
+/** Per-request plan-name memo for `getUserPlanName` — see its doc comment. */
+const planNameMemo = new WeakMap<Span, Map<string, Promise<string | null>>>();
+
 /**
  * Look up the plan name for a user — used to annotate usage events and span
  * attributes. Fails open (returns null) on any error.
@@ -169,8 +172,6 @@ export function recordUsageEvent(
  * lookup is not kept, so the next caller retries as it did before. Without a
  * span nothing is memoised.
  */
-const planNameMemo = new WeakMap<Span, Map<string, Promise<string | null>>>();
-
 export function getUserPlanName(
   db: DbClient,
   userId: string,
