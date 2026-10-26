@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.76.0](https://github.com/mthines/lorekit/compare/cli-v1.75.0...cli-v1.76.0) (2026-10-26)
+
+
+### Features
+
+* **cli:** add MCP Registry and Glama listing metadata ([#724](https://github.com/mthines/lorekit/issues/724)) ([b37df92](https://github.com/mthines/lorekit/commit/b37df9219063f7e58aa929b545f4143f8ef5a8c2))
+
 ## [1.75.0](https://github.com/mthines/lorekit/compare/cli-v1.74.0...cli-v1.75.0) (2026-10-21)
 
 
