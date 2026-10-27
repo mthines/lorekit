@@ -107,6 +107,22 @@ export function panelWidthCss(fraction: number | null): string {
 }
 
 /**
+ * The width a drag asks for: the width when the drag started, plus however far
+ * the pointer has moved LEFT since (the panel is anchored to the right edge, so
+ * moving left widens it).
+ *
+ * Relative to the start rather than computed from the pointer's position in the
+ * viewport, so the edge does not jump to the cursor on the first move (the
+ * handle is 24px wide and can be grabbed anywhere in it), and so it holds under
+ * a transformed ancestor or a classic scrollbar, where "viewport width minus
+ * pointer x" is not the panel's width. Unclamped — the caller clamps when it
+ * turns the width into a stored fraction.
+ */
+export function dragPanelWidth(startWidthPx: number, startX: number, clientX: number): number {
+  return startWidthPx + (startX - clientX);
+}
+
+/**
  * The width a key press on the resize handle asks for, or `null` when the key
  * does not resize.
  *

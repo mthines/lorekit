@@ -6,6 +6,7 @@ import {
   PANEL_KEYBOARD_STEP_PX,
   PANEL_MIN_WIDTH_PX,
   clampPanelWidth,
+  dragPanelWidth,
   keyboardPanelWidth,
   panelFractionFromWidth,
   panelWidthBounds,
@@ -103,6 +104,27 @@ describe('panelWidthCss', () => {
 describe('clampPanelWidth', () => {
   it('passes a width inside the bounds through unchanged', () => {
     expect(clampPanelWidth(600, LAPTOP)).toBe(600);
+  });
+});
+
+describe('dragPanelWidth', () => {
+  it('widens by however far the pointer moved left since the drag began', () => {
+    expect(dragPanelWidth(512, 900, 800)).toBe(612);
+  });
+
+  it('narrows when the pointer moves right', () => {
+    expect(dragPanelWidth(512, 900, 950)).toBe(462);
+  });
+
+  it('does not depend on where in the edge the drag was grabbed', () => {
+    // Grabbing the 24px edge at its left or right side moves the panel the same
+    // amount for the same movement — no jump to the cursor on the first move.
+    expect(dragPanelWidth(512, 1000, 960)).toBe(dragPanelWidth(512, 1020, 980));
+  });
+
+  it('leaves clamping to the caller', () => {
+    expect(dragPanelWidth(512, 900, 0)).toBe(1412);
+    expect(clampPanelWidth(dragPanelWidth(512, 900, 0), LAPTOP)).toBeCloseTo(1008);
   });
 });
 

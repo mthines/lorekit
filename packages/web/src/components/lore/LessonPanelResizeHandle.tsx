@@ -37,6 +37,7 @@ import {
 import type { MemoryPanelResizeSource } from '@/lib/analytics/lore-events';
 import { useViewportWidth } from '@/lib/hooks/useViewportWidth';
 import {
+  dragPanelWidth,
   keyboardPanelWidth,
   panelFractionFromWidth,
   panelWidthBounds,
@@ -68,11 +69,8 @@ interface LessonPanelResizeHandleProps {
 interface DragState {
   pointerId: number;
   startX: number;
-  /**
-   * Where inside the handle the pointer grabbed it, relative to the panel's
-   * edge — so the edge does not jump to the cursor on the first move.
-   */
-  grabOffset: number;
+  /** The panel's rendered width when the drag began — see `dragPanelWidth`. */
+  startWidthPx: number;
   moved: boolean;
 }
 
@@ -103,10 +101,18 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
 
   function commit(source: MemoryPanelResizeSource) {
     const next = pendingRef.current;
+    if (next === null) return;
+    const viewport = window.innerWidth;
+    const nextWidth = panelWidthPx(next, viewport);
+    // Home at the minimum, an arrow at a bound, a drag that ended where it
+    // began: nothing changed, so nothing is stored and no event says otherwise.
+    if (Math.round(nextWidth) === Math.round(panelWidthPx(fraction, viewport))) {
+      revert();
+      return;
+    }
     pendingRef.current = null;
     setPreviewFraction(null);
-    if (next === null) return;
-    onCommit({ fraction: next, source, viewportPercent: Math.round(next * 100) });
+    onCommit({ fraction: next, source, viewportPercent: viewportPercent(nextWidth, viewport) });
   }
 
   /** Abandon an uncommitted gesture and put the rendered width back. */
@@ -118,7 +124,9 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
+    // One drag at a time, from the primary pointer's main button: a second
+    // finger or pen arriving mid-drag must not take over the first one's state.
+    if (event.button !== 0 || !event.isPrimary || dragRef.current) return;
     const element = panel();
     if (!element) return;
     event.preventDefault();
@@ -130,11 +138,10 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
       // (and for synthetic test pointers). The drag still works while the
       // cursor stays over the handle; it must never throw out of a handler.
     }
-    const edgeX = window.innerWidth - element.getBoundingClientRect().width;
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
-      grabOffset: event.clientX - edgeX,
+      startWidthPx: element.getBoundingClientRect().width,
       moved: false,
     };
     setDragging(true);
@@ -149,7 +156,7 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
     drag.moved = true;
     const viewport = window.innerWidth;
     if (viewport <= 0) return;
-    const widthPx = viewport - (event.clientX - drag.grabOffset);
+    const widthPx = dragPanelWidth(drag.startWidthPx, drag.startX, event.clientX);
     preview(panelFractionFromWidth(widthPx, viewport));
   }
 
@@ -168,6 +175,8 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
   function handleDoubleClick() {
     pendingRef.current = null;
     setPreviewFraction(null);
+    // Already the default: a reset would store nothing new.
+    if (fraction === null) return;
     const viewport = window.innerWidth;
     onCommit({
       fraction: null,
@@ -177,6 +186,9 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    // Alt+← is browser Back and Cmd/Ctrl+← are text/OS shortcuts; leave them be.
+    // Shift alone is ours (the larger step).
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const viewport = window.innerWidth;
     if (viewport <= 0) return;
     const current = panelWidthPx(pendingRef.current ?? fraction, viewport);

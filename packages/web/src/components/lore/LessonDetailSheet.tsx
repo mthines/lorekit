@@ -813,11 +813,14 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
               'fixed z-50 flex flex-col bg-[var(--color-bg-raised)] shadow-2xl',
               isSheet
                 ? 'inset-x-0 bottom-0 max-h-[90vh] rounded-t-2xl border-t border-[var(--color-border)] pb-[env(safe-area-inset-bottom)]'
-                : 'inset-y-0 right-0 border-l border-[var(--color-border)]',
+                : 'inset-y-0 right-0 max-w-full border-l border-[var(--color-border)]',
             ].join(' ')}
             // The drawer's width is inline because its bounds are viewport-
             // relative and the preferred value is the reader's — see
             // `panelWidthCss`. The sheet spans the screen and has no width.
+            // `max-w-full` is inert against the viewport (70vw is the cap) but
+            // keeps the drawer inside a NARROWER containing block, which `vw`
+            // cannot see — a transformed frame, like the stories' device frames.
             style={isSheet ? undefined : { width: panelWidthCss(panelWidthFraction) }}
             role="dialog"
             // Only the mobile sheet is modal — see the backdrop above (R1).
