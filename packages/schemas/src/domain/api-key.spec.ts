@@ -151,6 +151,26 @@ describe('orgAllowedByKey', () => {
     // The SQL twin has the same `else false`, and migrations.test.sql §81 AC-3
     // asserts it — this is the TypeScript half of that pair.
     expect(orgAllowedByKey('nonsense' as ApiKeyOrgAccess, [ORG_A], ORG_A)).toBe(false);
+    // ...and reaches no personal row either (00116): an unknown value fails closed.
+    expect(orgAllowedByKey('nonsense' as ApiKeyOrgAccess, [], null)).toBe(false);
+  });
+
+  it('orgs_only reaches its selected orgs and NO personal row (00116)', () => {
+    expect(orgAllowedByKey('orgs_only', [ORG_A], null)).toBe(false);
+    expect(orgAllowedByKey('orgs_only', [ORG_A], ORG_A)).toBe(true);
+    expect(orgAllowedByKey('orgs_only', [ORG_A], ORG_B)).toBe(false);
+  });
+});
+
+describe('ApiKeyScopingSchema orgs_only (00116)', () => {
+  const ORG = '11111111-1111-4111-8111-111111111111';
+
+  it('accepts orgs_only with at least one org id', () => {
+    expect(ApiKeyScopingSchema.parse({ orgAccess: 'orgs_only', orgIds: [ORG] }).orgAccess).toBe('orgs_only');
+  });
+
+  it('refuses orgs_only with no org id', () => {
+    expect(ApiKeyScopingSchema.safeParse({ orgAccess: 'orgs_only', orgIds: [] }).success).toBe(false);
   });
 });
 

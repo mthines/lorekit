@@ -6,8 +6,10 @@ import {
   applyTenantScope,
   effectiveOrgIds,
   keyScopeFilter,
+  MATCH_NOTHING,
   normalizeKeyRestriction,
   ownRowsFragment,
+  reachesPersonal,
   restrictsTenancy,
 } from './tenant-scope.js';
 
@@ -70,12 +72,22 @@ describe('normalizeKeyRestriction', () => {
     expect(normalizeKeyRestriction({ org_access: null }).orgAccess).toBe('all');
   });
 
-  it('fails CLOSED on an org_access it does not recognise', () => {
-    // Present-but-unrecognised is corruption (the CHECK dropped, or a BYOD
-    // install predating it). "I do not understand this restriction" must not
-    // resolve to "there is no restriction", so it lands on the NARROWEST value.
-    expect(normalizeKeyRestriction({ org_access: 'everything' }).orgAccess).toBe('personal');
-    expect(normalizeKeyRestriction({ org_access: 42 }).orgAccess).toBe('personal');
+  it('fails closed on an org_access it does not recognise: no personal and no org row', () => {
+    // Present-but-unrecognised is corruption (the CHECK dropped, a BYOD install
+    // predating it) or a value newer than this code. "I do not understand this
+    // restriction" must not resolve to "there is no restriction" — nor to
+    // `personal`, which still reaches the owner's personal rows (00116).
+    for (const raw of ['everything', 42, 'ORGS_ONLY']) {
+      const key = normalizeKeyRestriction({ org_access: raw, org_ids: ['org-a'] });
+      expect(key).toEqual({ scopes: [], orgAccess: 'orgs_only', orgIds: [] });
+      expect(reachesPersonal(key)).toBe(false);
+      expect(effectiveOrgIds(['org-a'], key)).toEqual([]);
+    }
+  });
+
+  it('reads orgs_only', () => {
+    expect(normalizeKeyRestriction({ org_access: 'orgs_only', org_ids: ['org-a'] }))
+      .toEqual({ scopes: [], orgAccess: 'orgs_only', orgIds: ['org-a'] });
   });
 
   it('degrades an unreadable scopes column to unrestricted, not to deny-all', () => {
@@ -269,6 +281,45 @@ describe('applyTenantScope with a key restriction', () => {
     });
     expect(query.eq).toHaveBeenCalledWith('user_id', 'user-1');
     expect(query.or).toHaveBeenCalledWith('scope.eq.global');
+  });
+});
+
+describe('orgs_only (00116): selected orgs, no personal rows', () => {
+  const key = { scopes: [], orgAccess: 'orgs_only' as const, orgIds: ['org-a'] };
+
+  it('reaches no personal row; every other tenancy and no key still do', () => {
+    expect(reachesPersonal(key)).toBe(false);
+    expect(reachesPersonal()).toBe(true);
+    for (const orgAccess of ['all', 'personal', 'selected'] as const) {
+      expect(reachesPersonal({ scopes: [], orgAccess, orgIds: [] })).toBe(true);
+    }
+  });
+
+  it('intersects its orgs with membership, like selected', () => {
+    expect(effectiveOrgIds(['org-a', 'org-b'], key)).toEqual(['org-a']);
+    expect(effectiveOrgIds(['org-b'], key)).toEqual([]);
+  });
+
+  it('its ownership disjunct matches nothing', () => {
+    expect(ownRowsFragment('user-1', key)).toBe(MATCH_NOTHING);
+  });
+
+  it('applyTenantScope reads only the selected org rows', () => {
+    const query = fakeQuery();
+    applyTenantScope(query, 'user-1', ['org-a', 'org-b'], key);
+    expect(query.or).toHaveBeenCalledWith(`${MATCH_NOTHING},org_id.in.("org-a")`);
+    expect(query.or).not.toHaveBeenCalledWith(expect.stringContaining('user_id.eq.user-1'));
+  });
+
+  it('applyTenantScope with no reachable org matches NOTHING, not personal rows', () => {
+    const query = fakeQuery();
+    applyTenantScope(query, 'user-1', ['org-b'], key);
+    expect(query.or).toHaveBeenCalledWith(MATCH_NOTHING);
+    expect(query.or).not.toHaveBeenCalledWith('org_id.is.null');
+  });
+
+  it('restrictsTenancy is true', () => {
+    expect(restrictsTenancy(key)).toBe(true);
   });
 });
 

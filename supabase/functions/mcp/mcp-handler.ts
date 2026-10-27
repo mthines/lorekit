@@ -25,7 +25,12 @@ import { type Span } from '../_shared/telemetry/otel.ts';
 import { redactUrls } from '../_shared/telemetry/span-semconv.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
-import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/auth/account-wide-tools.ts';
+import {
+  isRefusedForScopedKey,
+  accountWideRefusalMessage,
+  isRefusedForOrgsOnlyKey,
+  orgsOnlyRefusalMessage,
+} from '../_shared/auth/account-wide-tools.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/telemetry/usage-stats.ts';
 import { parseSessionKind } from '../_shared/telemetry/session-kind.ts';
@@ -209,6 +214,15 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // calls, thrown as `KeyScopeDeniedError` and caught below). This keeps one
     // gating code path per surface — inline pre-dispatch for memory, in-handler
     // for retention — rather than splitting memory tools across both.
+    // An `orgs_only` key may not reach an operation that picks its rows by
+    // owner rather than by tenant (00116) — memory AND retention tools, so this
+    // sits before the memory-only block below: there is nothing to narrow.
+    if (isRefusedForOrgsOnlyKey(toolName, keyRestriction(auth)?.orgAccess)) {
+      span
+        .clientError('PermissionDenied: owner-row tool on an orgs_only token')
+        .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_orgs_only_owner_rows' });
+      return jsonrpcError(id, JSONRPC_FORBIDDEN, orgsOnlyRefusalMessage(toolName));
+    }
     if (!isOrgTool && !isRetentionTool) {
       // Scope allowlist (migration 00068). Same class of denial as the two
       // above — authenticated, insufficient scope — so the same

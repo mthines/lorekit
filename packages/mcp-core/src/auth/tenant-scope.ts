@@ -27,8 +27,8 @@
 export interface KeyRestriction {
   /** Allowlist of scope patterns. EMPTY = unrestricted. */
   scopes: string[];
-  orgAccess: 'all' | 'personal' | 'selected';
-  /** Meaningful only under `selected`. */
+  orgAccess: 'all' | 'personal' | 'selected' | 'orgs_only';
+  /** Meaningful only under `selected` and `orgs_only`. */
   orgIds: string[];
 }
 
@@ -36,10 +36,14 @@ export interface KeyRestriction {
  * Build a `KeyRestriction` from the raw `api_tokens` row the transports select.
  *
  * Total, and fail-closed on the one value that matters: an `org_access` the
- * code does not recognise becomes `personal`, the NARROWEST tenancy, not `all`.
- * A row can only carry an unknown value if `api_tokens_org_access_valid` was
- * dropped or a BYOD install predates it, and in that state "I do not understand
- * this restriction" must not resolve to "there is no restriction".
+ * code does not recognise becomes `orgs_only` with NO org ids — a key that
+ * reaches nothing at all, neither personal rows nor any org. It used to become
+ * `personal`, which still exposed the owner's personal rows: wrong for a value
+ * that may mean "no personal rows" (`orgs_only`, read by an older deploy). A
+ * row can only carry an unknown value if `api_tokens_org_access_valid` was
+ * dropped, a BYOD install predates it, or a newer migration added a value this
+ * code predates, and in that state "I do not understand this restriction" must
+ * not resolve to "there is no restriction".
  *
  * The scope list degrades the other way — a non-array becomes empty, i.e.
  * unrestricted — because that is the DEFAULT for every key ever created, so
@@ -59,15 +63,13 @@ export function normalizeKeyRestriction(row: {
     ? row.org_ids.filter((s): s is string => typeof s === 'string')
     : [];
   const raw = row.org_access;
-  const orgAccess: KeyRestriction['orgAccess'] =
-    raw === 'all' || raw === 'personal' || raw === 'selected'
-      ? raw
-      // Absent is the pre-00068 shape (the column did not exist), which IS
-      // unrestricted. Present-but-unrecognised is corruption, and denies.
-      : raw == null
-        ? 'all'
-        : 'personal';
-  return { scopes, orgAccess, orgIds };
+  // Absent is the pre-00068 shape (the column did not exist), which IS
+  // unrestricted. Present-but-unrecognised denies everything.
+  if (raw == null) return { scopes, orgAccess: 'all', orgIds };
+  if (raw === 'all' || raw === 'personal' || raw === 'selected' || raw === 'orgs_only') {
+    return { scopes, orgAccess: raw, orgIds };
+  }
+  return { scopes, orgAccess: 'orgs_only', orgIds: [] };
 }
 
 /**
@@ -82,8 +84,28 @@ export function normalizeKeyRestriction(row: {
 export function effectiveOrgIds(memberOrgIds: string[], key?: KeyRestriction): string[] {
   if (!key || key.orgAccess === 'all') return memberOrgIds;
   if (key.orgAccess === 'personal') return [];
+  // `selected` and `orgs_only` narrow orgs the same way; they differ only in
+  // whether the owner's personal rows are reachable (`reachesPersonal`).
   return memberOrgIds.filter((id) => key.orgIds.includes(id));
 }
+
+/**
+ * May this key reach its owner's PERSONAL rows (`org_id IS NULL`)?
+ *
+ * True for every tenancy except `orgs_only` — the one mode that exists to
+ * publish org lore through a token without exposing the owner's own memories
+ * (00116). A JWT or service caller has no key and is unaffected.
+ */
+export function reachesPersonal(key?: KeyRestriction): boolean {
+  return !key || key.orgAccess !== 'orgs_only';
+}
+
+/**
+ * A PostgREST filter no row satisfies. `id` is the primary key and never null,
+ * so this is the honest "match nothing" for a key that may reach no row on the
+ * branch it guards — rather than omitting a filter, which would match all.
+ */
+export const MATCH_NOTHING = 'id.is.null';
 
 /**
  * True when the calling key narrows WHICH ORGS are reachable.
@@ -108,6 +130,9 @@ export function restrictsTenancy(key?: KeyRestriction): boolean {
  * ownership test with `org_id.is.null` so "mine" reads as "mine, and personal".
  */
 export function ownRowsFragment(userId: string, key?: KeyRestriction): string {
+  // `orgs_only`: the owner's personal rows are out of reach, and their own
+  // org-owned rows are reached through the `org_id.in.(…)` disjunct instead.
+  if (!reachesPersonal(key)) return MATCH_NOTHING;
   return restrictsTenancy(key)
     ? `and(user_id.eq.${userId},org_id.is.null)`
     : `user_id.eq.${userId}`;
@@ -183,7 +208,10 @@ export function applyTenantScope<Q extends {
   // must emit exactly what it always did — so the org-row exclusion a
   // restricted key needs is a SECOND top-level filter, which PostgREST ANDs,
   // rather than a rewrite of the first.
-  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) q = q.or('org_id.is.null');
+  // `orgs_only` reaching no org reaches nothing: its personal branch is closed.
+  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) {
+    q = q.or(reachesPersonal(key) ? 'org_id.is.null' : MATCH_NOTHING);
+  }
   const scopeFilter = keyScopeFilter(key);
   // A second `.or()` — PostgREST ANDs top-level filters, so this reads as
   // "(mine or my orgs') AND (in the key's allowlist)".

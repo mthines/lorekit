@@ -1,5 +1,6 @@
 import type { AuthContext, ResolvedAuth, DbClient } from './auth.ts';
-import { hasPermission, isJwtAuth, analyticsUserId, usageAuthType } from './auth.ts';
+import { hasPermission, isJwtAuth, analyticsUserId, usageAuthType, keyRestriction } from './auth.ts';
+import { isRefusedForOrgsOnlyKey, orgsOnlyRefusalMessage } from '../auth/account-wide-tools.ts';
 import { forbidden, notFound, methodNotAllowed } from './respond.ts';
 import { translateDbError } from './errors.ts';
 import { recordUsageEvent, getUserPlanName } from '../telemetry/usage.ts';
@@ -224,6 +225,14 @@ export function createRouter(routes: Route[], functionName: string) {
       if (route.requires === 'jwt' && !isJwtAuth(resolved.auth)) return forbidden('This endpoint requires a Supabase JWT (not an API token)', cors);
       if (route.requires === 'read' && !hasPermission(resolved.auth, 'read')) return forbidden('Read permission required', cors);
       if (route.requires === 'write' && !hasPermission(resolved.auth, 'write')) return forbidden('Write permission required', cors);
+      // An `orgs_only` key may not reach an operation that picks its rows by
+      // owner (00116) — refused here, once, for the whole REST surface, keyed
+      // on the same tool name the MCP dispatcher refuses.
+      const gateTool = restToolName({ fn: functionName, method, path: route.path, force: url.searchParams.get('force') === 'true' });
+      if (isRefusedForOrgsOnlyKey(gateTool, keyRestriction(resolved.auth)?.orgAccess)) {
+        span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_orgs_only_owner_rows' });
+        return forbidden(orgsOnlyRefusalMessage(gateTool), cors);
+      }
 
       const hs = span.child(`lorekit.${functionName}.${method.toLowerCase()}${route.path}`, { 'http.route': route.path });
 

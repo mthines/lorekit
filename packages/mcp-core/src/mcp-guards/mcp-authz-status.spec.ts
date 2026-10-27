@@ -59,7 +59,10 @@ describe('mcp-handler auth status guard', () => {
     // (retention/groom, in-handler — a `KeyScopeDeniedError` thrown by
     // `policy.*`/`groom.*`'s scope gate, caught here and mapped the same way).
     //
-    // Was 4, then 5. The v1→v2 bump added the retention denial: `tools.ts`'s
+    // Was 4, then 5, then 6. The 00116 bump added the orgs_only owner-row
+    // refusal (`isRefusedForOrgsOnlyKey`): an `orgs_only` key calling a tool
+    // that only acts on its owner's personal rows is denied outright.
+    // The v1→v2 bump added the retention denial: `tools.ts`'s
     // `assertScopeAllowed` throws `KeyScopeDeniedError` for a fenced-scope
     // policy/groom call, and this catch block maps it to JSONRPC_FORBIDDEN
     // rather than the in-band `isError` shape every other client error gets —
@@ -69,7 +72,7 @@ describe('mcp-handler auth status guard', () => {
     // Pinned deliberately: a new denial must be a conscious edit here, because
     // the failure mode this guard exists for is a denial added as -32001, which
     // hangs the client instead of surfacing.
-    expect(forbidden.length).toBe(5);
+    expect(forbidden.length).toBe(6);
     expect(block).not.toMatch(/jsonrpcError\(\s*id,\s*-32001/);
   });
 
