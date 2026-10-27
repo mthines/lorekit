@@ -64,6 +64,22 @@ function runGenerator(args: string[], cwd = repoRoot): string {
 }
 
 /**
+ * Budget for a test that spawns the generator, sized to that work rather than
+ * left at vitest's 5 s default.
+ *
+ * Each `runGenerator` is a cold Node start plus a type-stripped import of the
+ * catalog: ~150 ms on an idle machine, but CI runs this file next to
+ * `next build` under `nx affected --parallel=3`, where one spawn has been
+ * measured at up to ~4 s. The "edited by hand" case spawns five times in
+ * series, so under the default its verdict depended on runner load — it once
+ * finished every assertion green in 14.7 s and was failed for the clock alone
+ * (a synchronous body cannot be pre-empted; vitest compares elapsed time when
+ * it returns). Nothing in this file asserts speed, so the budget only bounds a
+ * runaway spawn; 30 s leaves ~2x headroom over the slowest CI run observed.
+ */
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
+
+/**
  * A throwaway tree containing only what the generator resolves against, so a
  * test can perturb an artifact without touching the worktree.
  *
@@ -89,7 +105,7 @@ function sandbox(): { dir: string; dispose: () => void } {
 describe('gen-surfaces freshness', () => {
   it('reports the committed artifacts as in sync', () => {
     expect(() => runGenerator(['--check'])).not.toThrow();
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   it('owns exactly the artifacts these tests cover', () => {
     // Guards the list above against the generator growing a third target that
@@ -115,7 +131,7 @@ describe('gen-surfaces freshness', () => {
     } finally {
       dispose();
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   // The gate-bites proof, permanent rather than a one-off manual step. Run in a
   // sandbox so an interrupted test can never leave the real artifact perturbed.
@@ -142,7 +158,7 @@ describe('gen-surfaces freshness', () => {
     } finally {
       dispose();
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   it.each(ARTIFACTS)('goes RED when %s is missing entirely', (artifact) => {
     const { dir, dispose } = sandbox();
@@ -153,7 +169,7 @@ describe('gen-surfaces freshness', () => {
     } finally {
       dispose();
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 });
 
 describe('gen-surfaces portability', () => {
@@ -180,7 +196,7 @@ describe('gen-surfaces portability', () => {
     } finally {
       dispose();
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   it('imports nothing but node: builtins', () => {
     // Template literals are stripped FIRST. The generator emits source, and
