@@ -631,6 +631,14 @@ describe('orgs_only (00116) is wired into every edge choke point', () => {
     }
   });
 
+  it('neither write surface records citations for a key that cannot reach personal rows', () => {
+    // lorekit_record_memory_citations (00107) only ever credits the owner's
+    // personal lessons and takes no tenancy, so an orgs_only key must skip it.
+    expect(edge('_shared/telemetry/citations.ts')).toMatch(/input\.reachesPersonal === false\) return 0/);
+    expect(edge('mcp/tools.ts')).toMatch(/reachesPersonal: reachesPersonal\(keyScoping\)/);
+    expect(edge('memories/handlers/create.ts')).toMatch(/reachesPersonal: reachesPersonal\(keyRestriction\(auth\)\)/);
+  });
+
   it('the REST router refuses owner-row tools before any handler runs', () => {
     const src = edge('_shared/api/router.ts');
     const gate = src.indexOf('isRefusedForOrgsOnlyKey(');
