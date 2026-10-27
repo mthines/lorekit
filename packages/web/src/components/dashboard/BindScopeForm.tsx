@@ -3,8 +3,8 @@
 /**
  * BindScopeForm — Settings → Organization → "Bind a scope".
  *
- * A searchable `Combobox` over the account's WHOLE scope catalog, then an
- * explicit Bind. It replaced a free-text input over a row of suggestion chips
+ * A searchable `Combobox` over the account's scope catalog (every scope, up
+ * to the endpoint's 1,000-row ceiling), then an explicit Bind. It replaced a free-text input over a row of suggestion chips
  * whose source was a direct `memories` select (`order by scope limit 500`,
  * deduped to 100, 20 rendered): an alphabetical prefix, so on a busy account a
  * scope that sorted late was never loaded and searching for it found nothing.

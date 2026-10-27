@@ -7,9 +7,11 @@
  * prefix of the ALPHABET, not of the catalog: an account with a few thousand
  * memories only ever saw its `branch::a…` scopes, and typing a scope that
  * sorted later filtered a list it had never been loaded into, so an existing
- * scope "did not exist". The catalog now comes whole from `GET /memories/scopes`
+ * scope "did not exist". The catalog now comes from `GET /memories/scopes`
  * (aggregated in Postgres, one row per scope), and searching it is the
- * `Combobox`'s job — so this module only decides WHAT is offered.
+ * `Combobox`'s job — so this module only decides WHAT is offered. That endpoint
+ * is still bounded by PostgREST's `max_rows` (1,000 scopes); past it, the least
+ * used scopes drop off and the typed row is the way to reach them.
  */
 
 import { scopeType, type ScopePrefix } from '@/lib/scope';
