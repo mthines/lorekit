@@ -45,5 +45,8 @@ test('/api-docs returns the Markdown to a client that asks for it', async ({ req
   expect(res.status()).toBe(200);
   expect(res.headers()['content-type']).toContain('text/markdown');
   expect(res.headers()['vary']).toMatch(/accept/i);
+  // Never cacheable by a CDN: one that ignored `Vary` would serve it to browsers.
+  expect(res.headers()['cache-control']).toContain('private');
+  expect(res.headers()['cache-control']).not.toContain('s-maxage');
   expect(await res.text()).toMatch(/^# LoreKit REST API\n/);
 });

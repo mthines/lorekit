@@ -59,9 +59,13 @@ const renderScalarPage = ApiReference(config);
 // must key on it — otherwise a cached Markdown body could be served to a browser.
 const NEGOTIATED = { Vary: 'Accept', Link: agentDocsLinkHeader() };
 
+// Kept out of shared caches too: `Vary` only protects browsers if the CDN honours
+// it. The cacheable copy is `/api-docs.md`, which has one body per URL.
+const NEGOTIATED_MARKDOWN = { ...NEGOTIATED, 'Cache-Control': 'private, no-cache' };
+
 export async function GET(request: Request) {
   if (prefersMarkdown(request.headers.get('accept'))) {
-    return apiDocsMarkdownResponse(request.url, NEGOTIATED);
+    return apiDocsMarkdownResponse(request.url, NEGOTIATED_MARKDOWN);
   }
 
   const page = renderScalarPage();
