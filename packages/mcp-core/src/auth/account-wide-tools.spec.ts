@@ -18,6 +18,13 @@ describe('isRefusedForOrgsOnlyKey (00116)', () => {
     }
   });
 
+  it('covers the owner analytics whose RPCs take no tenancy', () => {
+    for (const tool of ['memory.read-activity', 'memory.read-ranking', 'memory.utility', 'memory.usage',
+      'memory.usage-runs']) {
+      expect(isRefusedForOrgsOnlyKey(tool, 'orgs_only')).toBe(true);
+    }
+  });
+
   it('leaves tenancy-narrowed tools alone', () => {
     for (const tool of ['memory.read', 'memory.list', 'memory.search', 'memory.write', 'memory.scopes',
       'memory.list_archived', 'memory.archive', 'memory.restore', 'memory.delete']) {

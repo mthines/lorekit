@@ -74,6 +74,13 @@ export const OWNER_ROW_TOOLS: ReadonlySet<string> = new Set([
   ...ACCOUNT_WIDE_TOOLS,
   'memory.quota',
   'memory.protect',
+  // Owner analytics: their RPCs take no tenancy and roll up the owner's own
+  // reads and calls, personal keys included (00080, 00079, 00083, 00085, 00106).
+  'memory.read-activity',
+  'memory.read-ranking',
+  'memory.utility',
+  'memory.usage',
+  'memory.usage-runs',
   'policy.list',
   'policy.create',
   'policy.update',
