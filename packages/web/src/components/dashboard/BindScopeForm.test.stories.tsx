@@ -125,3 +125,17 @@ export const ShowsTheBindError: Story = {
     });
   },
 };
+
+export const DoesNotListARepoWithNoMemories: Story = {
+  play: async ({ step }) => {
+    await step('a repo that only has branch memories is typed, not listed', async () => {
+      // `repo::acme/agent-marketplace` holds no memory of its own — the scope
+      // tree invents it as the parent of the 150 branch scopes. Only the typed
+      // "use this scope" row may offer it.
+      const body = await search('repo::acme/agent-marketplace');
+      const options = await body.findAllByRole('option');
+      await expect(options).toHaveLength(1);
+      await expect(options[0]).toHaveAccessibleName(/use this scope/);
+    });
+  },
+};

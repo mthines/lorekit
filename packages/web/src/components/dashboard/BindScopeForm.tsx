@@ -54,10 +54,16 @@ export function BindScopeForm({ orgName, boundScopes, onBind, onCancel }: BindSc
   const [pending, startTransition] = useTransition();
   const { data: scopeNodes, isLoading, isError } = useScopeTree();
 
-  const catalogOptions = useMemo(
-    () => bindableScopeOptions(flattenScopeTree(scopeNodes ?? []).map((n) => n.scope), boundScopes),
-    [scopeNodes, boundScopes],
-  );
+  const catalogOptions = useMemo(() => {
+    // `count > 0` drops the zero-count `repo::` parents `buildScopeTree` invents
+    // so branches have somewhere to nest. They hold no memories, and binding one
+    // routes none of its branches' writes (bindings match by prefix), so listing
+    // them would contradict the hint below and invite exactly that mistake.
+    const catalog = flattenScopeTree(scopeNodes ?? [])
+      .filter((n) => n.count > 0)
+      .map((n) => n.scope);
+    return bindableScopeOptions(catalog, boundScopes);
+  }, [scopeNodes, boundScopes]);
   // A value picked through `creatable` is not in the catalog, and the trigger
   // has no label to show for an option-less value — so it is kept as a row.
   const options = useMemo(() => {
