@@ -52,8 +52,8 @@ token you never scope behaves exactly as it always has.
 | Axis | Column | Default | Meaning |
 |------|--------|---------|---------|
 | Scopes | `api_tokens.scopes` | `{}` — **unrestricted** | Allowlist of scope patterns the token may touch |
-| Tenancy | `api_tokens.org_access` | `all` | `all` \| `personal` \| `selected` |
-| Orgs | `api_tokens.org_ids` | `{}` | The orgs a `selected` token may reach |
+| Tenancy | `api_tokens.org_access` | `all` | `all` \| `personal` \| `selected` \| `orgs_only` |
+| Orgs | `api_tokens.org_ids` | `{}` | The orgs a `selected` or `orgs_only` token may reach |
 
 ### Scope patterns
 
@@ -99,9 +99,17 @@ an org, and vice versa.
 | `all` (default) | ✓ | Every org the owner belongs to |
 | `personal` | ✓ | None |
 | `selected` | ✓ | Only the orgs in `org_ids` |
+| `orgs_only` | ✗ | Only the orgs in `org_ids` |
 
-Personal memories are reachable under every tenancy — `personal` narrows which
-*orgs* a token reaches, it never revokes the owner's own memories. A token can
+Personal memories are reachable under every tenancy **except `orgs_only`** —
+`personal` and `selected` narrow which *orgs* a token reaches and never revoke
+the owner's own memories. `orgs_only` (migration 00116) is the one tenancy that
+does: it reaches the orgs in `org_ids` (still intersected with the owner's
+current membership) and **none** of the owner's personal memories, on every read
+and write path. It exists for a token that leaves your hands — a read-only token
+bundled in a public tool, a CI token shared with a team — where `selected` would
+also expose everything personal you keep in the token's scopes. Like `selected`,
+it requires at least one org. A token can
 only be pointed at an org its **owner** is a member of; asking for any other org
 is rejected when the scoping is saved, not silently ignored.
 
@@ -109,6 +117,21 @@ Tenancy is authoritative over
 [scope→org binding](./decisions.md#scopeorg-binding): a write under a bound
 scope from a `personal` token falls back to a personal memory rather than being
 routed into an org the token was never granted.
+
+Under `orgs_only` there is nothing to fall back to: a write that would land in
+the personal store (no `org`, and no scope→org binding to an org the token
+reaches) is **refused** with `key_personal_denied` (`LK002`) rather than
+written. Operations that only ever act on the owner's own rows — and so have no
+org-scoped form to narrow to — are refused outright for an `orgs_only` token
+(MCP `-32003`, REST `403`): `memory.purge`, `memory.purge_expired`,
+`memory.quota`, `memory.protect`, `policy.list/create/update/delete`,
+`groom.preview/run`, and their REST twins. The writes addressed by id
+(`PATCH /memories/:id`, `DELETE /memories/:id`, `POST /memories/:id/restore`)
+are narrowed to rows in the token's orgs, so they never touch a personal row.
+
+An `org_access` value a reader does not recognise **fails closed to no access**
+(no personal rows, no orgs), so a new tenancy can never widen a key on a server
+that predates it.
 
 ### What a scoped token sees
 

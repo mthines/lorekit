@@ -403,6 +403,7 @@ their rationale inline. **Do not relitigate these.**
 - **Write-only tokens (`lk_wo_*`)** — [rationale](./docs/decisions.md#write-only-tokens-lk_wo_)
 - Token SHA-256 hash in DB — shown once, never stored in plain text
 - **API token scoping (scopes + orgs)** — [rationale](./docs/decisions.md#api-token-scoping-scopes--orgs)
+- **`orgs_only` tenancy excludes personal memories (00116)** — [rationale](./docs/decisions.md#orgs_only-the-one-tenancy-that-excludes-personal-memories)
 - `AlwaysOn` OTel sampler — sampling deferred to Dash0 pipeline, never SDK-side
 - `instrumentation.ts` must be `async function register()` with `NEXT_RUNTIME === 'nodejs'` guard
 - **Browser RUM initialises in `lib/dash0-rum.ts`, identity set at INIT** — [rationale](./docs/decisions.md#browser-rum-init--identity-at-init)
