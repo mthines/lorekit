@@ -1013,6 +1013,7 @@ attribute here.
 | `lore.memory_content_tab` | Preview ⇄ Edit inside the panel | `lorekit.lore.memory.content_tab`, `.content_tab_source` (`click`/`shortcut`) |
 | `lore.memory_edit` | An edit was saved or discarded | `lorekit.lore.memory.edit_action`, `.edit_outcome` (saves only), `.changed_value`, `.changed_tags`, `.changed_ttl` |
 | `lore.memory_archive_toggled` | A memory was archived or restored | `lorekit.lore.memory.archive_action`, `.archive_outcome` |
+| `lore.memory_panel_resized` | The desktop detail panel's width was changed (one event per drag, key press-and-hold, or reset) | `lorekit.lore.memory.panel_resize_source` (`drag`/`keyboard`/`reset`), `.panel_viewport_percent` (number: share of the viewport the panel now covers) |
 | `lore.filter_changed` | Any filter-bar mutation, age/activity thresholds included | `lorekit.lore.filter.action`, `.field` (optional), `.operator` (optional), `.count`, `.retention_count` |
 | `lore.status_changed` | Active / Archived / Expiring | `lorekit.lore.status` |
 | `lore.sort_changed` | The list order was picked (Newest / Most chosen / Recent read) | `lorekit.lore.sort` (`created_at`/`opened_count`/`last_opened_at`) |

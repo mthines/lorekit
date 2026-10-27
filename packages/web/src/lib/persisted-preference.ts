@@ -46,6 +46,12 @@ export const PREFERENCE_KEYS = {
    * `enabled` on this, so a folded panel issues no clustering request at all.
    */
   explorerClustersOpen: 'lorekit:explorer-clusters-open',
+  /**
+   * How wide the reader left the desktop memory detail panel, as a FRACTION of
+   * the viewport (see `lib/lesson-panel-width.ts` for why not pixels). Absent
+   * means the default width.
+   */
+  lessonPanelWidth: 'lorekit:lesson-panel-width',
 } as const;
 
 export type PreferenceKey = (typeof PREFERENCE_KEYS)[keyof typeof PREFERENCE_KEYS];
@@ -107,4 +113,27 @@ export function parseEnumPreference<T extends string>(
   if (raw === null) return fallback;
   const value = raw.trim();
   return (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+/**
+ * A stored fraction in `(0, 1]`, or `null` — "use the default" — for anything
+ * else: absent, unresolved, not a number, or out of range.
+ *
+ * `null` rather than a fallback number because the caller's default is often
+ * not a fraction at all (the memory panel's is a pixel width), and a sentinel
+ * fraction would quietly turn into "that share of whatever screen you are on".
+ * Zero is rejected with the rest: a zero-width panel is never a choice.
+ */
+export function parseFractionPreference(raw: string | null): number | null {
+  if (raw === null) return null;
+  const value = raw.trim();
+  if (value === '') return null;
+  const fraction = Number(value);
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) return null;
+  return fraction;
+}
+
+/** The canonical on-disk spelling of a fraction preference. */
+export function serializeFractionPreference(value: number): string {
+  return String(value);
 }

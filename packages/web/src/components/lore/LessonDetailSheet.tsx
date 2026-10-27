@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, Layers, Cpu, Repeat, BookOpenCheck, MousePointerClick, Quote } from 'lucide-react';
@@ -40,6 +40,14 @@ import { listMemberIdentities } from '@/lib/org-members';
 import { scopeRepoUrl } from '@/lib/scope';
 import { originLinks } from '@/lib/origin';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+import { usePersistedPreference } from '@/lib/hooks/usePersistedPreference';
+import {
+  PREFERENCE_KEYS,
+  parseFractionPreference,
+  serializeFractionPreference,
+} from '@/lib/persisted-preference';
+import { panelWidthCss } from '@/lib/lesson-panel-width';
+import { LessonPanelResizeHandle, type PanelWidthChange } from './LessonPanelResizeHandle';
 import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
 import { track } from '@/lib/analytics/track';
 import { toast } from 'sonner';
@@ -461,6 +469,23 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   const belowMd = useIsMobile();
   const isSheet = layout === 'sheet' || (layout === 'auto' && belowMd);
   const dragControls = useDragControls();
+  // The desktop drawer's width: a per-browser preference stored as a fraction of
+  // the viewport, rendered through a CSS `clamp()` whose bounds also follow the
+  // viewport (`lib/lesson-panel-width.ts`). Unresolved or absent both mean the
+  // default width — unlike a disclosure, there is no "neutral" width to hold
+  // while the store is unread, and the default is what the panel always was.
+  const panelWidthPref = usePersistedPreference(PREFERENCE_KEYS.lessonPanelWidth);
+  const panelWidthFraction = parseFractionPreference(panelWidthPref.raw);
+  const { write: writePanelWidth } = panelWidthPref;
+  const handlePanelWidthCommit = useCallback(
+    ({ fraction, source, viewportPercent }: PanelWidthChange) => {
+      // `''` is the store's "nothing stored", so a reset goes back to the default
+      // in this tab and, through the `storage` event, in every other one.
+      writePanelWidth(fraction === null ? '' : serializeFractionPreference(fraction));
+      track({ name: 'lore.memory_panel_resized', source, viewportPercent });
+    },
+    [writePanelWidth],
+  );
   const archiveMutation = useArchiveLesson();
   const restoreMutation = useRestoreLesson();
   const isPending = archiveMutation.isPending || restoreMutation.isPending;
@@ -788,8 +813,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
               'fixed z-50 flex flex-col bg-[var(--color-bg-raised)] shadow-2xl',
               isSheet
                 ? 'inset-x-0 bottom-0 max-h-[90vh] rounded-t-2xl border-t border-[var(--color-border)] pb-[env(safe-area-inset-bottom)]'
-                : 'inset-y-0 right-0 w-full max-w-lg border-l border-[var(--color-border)]',
+                : 'inset-y-0 right-0 border-l border-[var(--color-border)]',
             ].join(' ')}
+            // The drawer's width is inline because its bounds are viewport-
+            // relative and the preferred value is the reader's — see
+            // `panelWidthCss`. The sheet spans the screen and has no width.
+            style={isSheet ? undefined : { width: panelWidthCss(panelWidthFraction) }}
             role="dialog"
             // Only the mobile sheet is modal — see the backdrop above (R1).
             // `undefined` (not `false`) omits the attribute entirely for the
@@ -803,6 +832,15 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
             // announcing that selecting a row updates this panel.
             id="lesson-detail-panel"
           >
+            {/* Resize edge — desktop drawer only. Drag the left edge (or focus it
+                and use the arrow keys) to change the width; double-click resets. */}
+            {!isSheet && (
+              <LessonPanelResizeHandle
+                fraction={panelWidthFraction}
+                onCommit={handlePanelWidthCommit}
+              />
+            )}
+
             {/* Drag handle — bottom sheet only. Grabbing it starts the drag; the
                 body scrolls independently (dragListener is off). */}
             {isSheet && (

@@ -44,6 +44,7 @@
  * - `lore.memory_content_tab`          — Preview ⇄ Edit inside the detail panel.
  * - `lore.memory_edit`                 — an edit was saved or discarded.
  * - `lore.memory_archive_toggled`      — a memory was archived or restored.
+ * - `lore.memory_panel_resized`        — the desktop detail panel's width was changed.
  * - `lore.filter_changed`              — any filter-bar mutation, thresholds included.
  * - `lore.status_changed`              — Active / Archived / Expiring.
  * - `lore.sort_changed`                — the list order (Newest / Most chosen / Recent read).
@@ -120,6 +121,7 @@ import type {
   MemoryEditAction,
   MemoryMutationOutcome,
   MemoryOpenSurface,
+  MemoryPanelResizeSource,
   RangeTelemetryPreset,
   ScopeSelectionType,
 } from './lore-events';
@@ -271,6 +273,16 @@ export type AnalyticsEvent =
     }
   | { name: 'lore.memory_closed'; reason: MemoryCloseReason }
   | { name: 'lore.memory_content_tab'; tab: MemoryContentTab; source: MemoryContentTabSource }
+  | {
+      name: 'lore.memory_panel_resized';
+      source: MemoryPanelResizeSource;
+      /**
+       * The share of the viewport the panel covers AFTER the change, as a whole
+       * percentage — a measure, and the panel's width is stored as exactly this
+       * kind of share. Pixels would mostly describe the reader's monitor.
+       */
+      viewportPercent: number;
+    }
   | {
       name: 'lore.memory_edit';
       action: MemoryEditAction;
@@ -501,6 +513,11 @@ function toAttributes(event: AnalyticsEvent): Record<string, AttributeValue> {
       return {
         'lorekit.lore.memory.content_tab': event.tab,
         'lorekit.lore.memory.content_tab_source': event.source,
+      };
+    case 'lore.memory_panel_resized':
+      return {
+        'lorekit.lore.memory.panel_resize_source': event.source,
+        'lorekit.lore.memory.panel_viewport_percent': event.viewportPercent,
       };
     case 'lore.memory_edit': {
       const attrs: Record<string, AttributeValue> = {

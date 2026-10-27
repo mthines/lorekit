@@ -6,7 +6,9 @@ import {
   isResolved,
   parseBooleanPreference,
   parseEnumPreference,
+  parseFractionPreference,
   serializeBooleanPreference,
+  serializeFractionPreference,
 } from './persisted-preference';
 
 /**
@@ -89,6 +91,33 @@ describe('parseEnumPreference', () => {
     // by value, so silently accepting a different casing would let two spellings
     // of one member exist.
     expect(parseEnumPreference('Heatmap', VIEWS, 'charts')).toBe('charts');
+  });
+});
+
+describe('parseFractionPreference', () => {
+  it('reads a stored fraction', () => {
+    expect(parseFractionPreference('0.4533')).toBe(0.4533);
+    expect(parseFractionPreference(' 0.5 ')).toBe(0.5);
+    expect(parseFractionPreference('1')).toBe(1);
+  });
+
+  it('means "use the default" for absent and unresolved', () => {
+    // `null`, not a fallback fraction: the memory panel's default is a pixel
+    // width, and a sentinel fraction would become that share of any screen.
+    expect(parseFractionPreference('')).toBeNull();
+    expect(parseFractionPreference(UNRESOLVED)).toBeNull();
+  });
+
+  it('means "use the default" for anything that is not a fraction in (0, 1]', () => {
+    for (const raw of ['0', '-0.2', '1.01', '45', 'NaN', 'Infinity', 'wide', '0.5px', '[]']) {
+      expect(parseFractionPreference(raw)).toBeNull();
+    }
+  });
+
+  it('round-trips what it serialises', () => {
+    for (const value of [0.2667, 0.5, 0.7]) {
+      expect(parseFractionPreference(serializeFractionPreference(value))).toBe(value);
+    }
   });
 });
 
