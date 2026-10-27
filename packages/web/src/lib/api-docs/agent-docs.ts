@@ -41,15 +41,7 @@ function bestQuality(accept: string, types: ReadonlySet<string>): number {
   return best;
 }
 
-/**
- * Does this request want Markdown rather than the HTML page?
- *
- * Only when it names a Markdown type explicitly and ranks it at least as high
- * as HTML. A tie goes to Markdown: browsers never send `text/markdown`, so a
- * client that lists it beside `text/html` is a tool that can read either and
- * would rather have the one with content in it. Wildcards (`*\/*`) never
- * count, so every browser and every generic client still gets the page.
- */
+/** Wants Markdown when it names a Markdown type at least as high as HTML — browsers never send one, so a tie goes to Markdown and wildcards never count. */
 export function prefersMarkdown(accept: string | null | undefined): boolean {
   if (!accept) return false;
   const markdown = bestQuality(accept, MARKDOWN_TYPES);
@@ -66,16 +58,8 @@ export function agentDocsLinkHeader(): string {
 }
 
 /**
- * Add agent signposts to Scalar's HTML shell.
- *
- * The `<noscript>` note is PLAIN TEXT with absolute URLs on purpose: HTML-to-
- * text converters disagree on whether `<noscript>` content is markup or raw
- * text, and plain text reads correctly under both. Browsers with JavaScript
- * never show it, so the page people see is unchanged.
- *
- * Throws if the shell no longer has the `</head>` and `<body>` tags it is
- * spliced into — a Scalar upgrade that changes its template should fail the
- * e2e journey loudly, not ship a page with the signposts silently gone.
+ * Add agent signposts to Scalar's HTML shell; the `<noscript>` note is plain text because converters disagree on whether its content is markup.
+ * @throws {Error} When the shell lacks `</head>` or `<body>`, so a Scalar template change fails loudly instead of silently dropping the signposts.
  */
 export function withAgentHints(html: string, origin: string): string {
   const markdownUrl = new URL(API_DOCS_MARKDOWN_PATH, origin).href;

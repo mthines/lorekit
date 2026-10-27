@@ -730,12 +730,9 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   // docs are safe by default; the caller clears it to execute for real. The
   // backend contract lives in `_shared/limits/dry-run.ts` (isDryRunHeader).
   const MUTATING_METHODS = new Set(['post', 'patch', 'delete', 'put']);
-  //
-  // `schema.default: true` is what the console pre-fills, NOT what the server
-  // does: `isDryRunHeader` treats an absent header as `false` and executes. The
-  // description says so in words, and `x-server-default` says so in data, so a
-  // reader that skips the prose (the Markdown renderer, an agent reading the
-  // JSON) does not mistake a real write for a rehearsal.
+  // `schema.default: true` is the console pre-fill, NOT the server's default: an
+  // absent header executes. `x-server-default` states that in data, so readers
+  // that skip the prose (the Markdown renderer, agents) cannot miss it.
   const dryRunParam = {
     name: 'X-LoreKit-Dry-Run',
     in: 'header',

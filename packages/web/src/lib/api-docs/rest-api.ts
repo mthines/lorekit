@@ -8,13 +8,10 @@ import {
   agentDocsLinkHeader,
 } from './agent-docs';
 
-/**
- * This environment's REST API base — the Edge Functions root. Pinned into the
- * spec's `servers[0].url` (and so into every Markdown example), so docs served
- * from a preview point at the preview's API.
- */
 const SUPABASE_URL =
   process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? 'https://pqokxlhvnosogizsjztg.supabase.co';
+
+/** This environment's Edge Functions root, pinned into `servers[0].url` so docs served from a preview point at the preview's API. */
 export const REST_API_BASE_URL = `${SUPABASE_URL}/functions/v1`;
 
 /** The same edge-cache policy as the JSON spec: cheap to regenerate, rarely changes. */

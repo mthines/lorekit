@@ -53,13 +53,7 @@ export interface OpenApiParameter {
   readonly required?: boolean;
   readonly description?: string;
   readonly schema?: JsonSchema;
-  /**
-   * What the SERVER does when the parameter is absent, when that differs from
-   * `schema.default`. `X-LoreKit-Dry-Run` needs it: its `default: true` is what
-   * the interactive console pre-fills, while a request without the header
-   * executes for real. An agent told "default true" would skip the header and
-   * make a real write it believed was a rehearsal.
-   */
+  /** What the server does when the parameter is absent, where that differs from the console pre-fill in `schema.default` (see `X-LoreKit-Dry-Run` in `spec.ts`). */
   readonly 'x-server-default'?: unknown;
 }
 
@@ -116,11 +110,7 @@ function code(value: unknown): string {
   return `\`${typeof value === 'string' ? value : JSON.stringify(value)}\``;
 }
 
-/**
- * GitHub-style heading anchor: lowercase, punctuation dropped, spaces to `-`.
- * Matches what GitHub and most Markdown renderers generate, so the index links
- * resolve wherever the file is rendered.
- */
+/** GitHub-style heading anchor (lowercase, punctuation dropped, spaces to `-`), so index links resolve wherever the file is rendered. */
 export function headingAnchor(heading: string): string {
   return heading
     .toLowerCase()
@@ -165,7 +155,7 @@ class SchemaContext {
 
   /** The component a schema IS — by `$ref`, or by being an identical inline copy. */
   componentName(schema: JsonSchema): string | undefined {
-    if (schema.$ref) return schema.$ref.split('/').pop();
+    if (schema.$ref) return refName(schema.$ref);
     // Only objects are worth naming: a bare `string` matching some
     // single-field component would be a confusing link, not a helpful one.
     if (!schema.properties) return undefined;
@@ -179,9 +169,13 @@ class SchemaContext {
 
   resolve(schema: JsonSchema): JsonSchema {
     if (!schema.$ref) return schema;
-    const name = schema.$ref.split('/').pop() ?? '';
-    return this.components[name] ?? {};
+    return this.components[refName(schema.$ref)] ?? {};
   }
+}
+
+/** `#/components/schemas/Memory` → `Memory`. */
+function refName(ref: string): string {
+  return ref.split('/').pop() ?? '';
 }
 
 function isNullSchema(schema: JsonSchema): boolean {
@@ -193,6 +187,17 @@ function unionVariants(schema: JsonSchema): { variants: readonly JsonSchema[]; n
   const union = schema.anyOf ?? schema.oneOf;
   if (!union) return null;
   return { variants: union.filter((v) => !isNullSchema(v)), nullable: union.some(isNullSchema) };
+}
+
+/** `T | null` read as `T`; any other schema unchanged. */
+function nonNullVariant(schema: JsonSchema): JsonSchema {
+  const union = unionVariants(schema);
+  return union && union.variants.length === 1 ? (union.variants[0] as JsonSchema) : schema;
+}
+
+/** An empty-array default (`tags: []`) says nothing worth printing. */
+function hasMeaningfulDefault(schema: JsonSchema): boolean {
+  return schema.default !== undefined && !(Array.isArray(schema.default) && schema.default.length === 0);
 }
 
 /** A short type label: `string`, `integer or null`, `array of string`, a component link. */
@@ -233,8 +238,7 @@ function rangeNote(min: number | undefined, max: number | undefined, label: stri
 /** Constraint sentences for one schema: allowed values, bounds, format, default. */
 function constraintNotes(schema: JsonSchema, serverDefault: { readonly value: unknown } | null): string[] {
   const notes: string[] = [];
-  const union = unionVariants(schema);
-  const scalar = union && union.variants.length === 1 ? (union.variants[0] as JsonSchema) : schema;
+  const scalar = nonNullVariant(schema);
 
   if (scalar.enum) notes.push(`One of ${scalar.enum.map(code).join(', ')}.`);
   if (scalar.const !== undefined) notes.push(`Always ${code(scalar.const)}.`);
@@ -262,7 +266,7 @@ function constraintNotes(schema: JsonSchema, serverDefault: { readonly value: un
 
   if (serverDefault) {
     notes.push(`Default ${code(serverDefault.value)}.`);
-  } else if (schema.default !== undefined && !(Array.isArray(schema.default) && schema.default.length === 0)) {
+  } else if (hasMeaningfulDefault(schema)) {
     notes.push(`Default ${code(schema.default)}.`);
   }
   return notes;
@@ -282,12 +286,7 @@ interface FieldRow {
   readonly notes: string;
 }
 
-/**
- * Flatten an object schema into table rows. A nested object becomes dotted
- * rows (`org.slug`) and an array of objects `entries[].key`, unless the nested
- * shape is a named component — then it is a link, written out once under
- * "Schemas" instead of on every response that carries it.
- */
+/** Flatten an object schema into table rows: dotted rows for nested shapes (`org.slug`, `entries[].key`), a link for a named component. */
 function fieldRows(schema: JsonSchema, ctx: SchemaContext, prefix = '', depth = 0): FieldRow[] {
   const resolved = ctx.resolve(schema);
   const required = new Set(resolved.required ?? []);
@@ -314,17 +313,16 @@ function fieldRows(schema: JsonSchema, ctx: SchemaContext, prefix = '', depth = 
 
 /** The object a field contains, directly or as the element of an array. */
 function nestedObject(field: JsonSchema): { schema: JsonSchema; suffix: string } | null {
-  const union = unionVariants(field);
-  const single = union && union.variants.length === 1 ? (union.variants[0] as JsonSchema) : field;
+  const single = nonNullVariant(field);
   if (single.properties) return { schema: single, suffix: '' };
   if (single.items?.properties) return { schema: single.items, suffix: '[]' };
   return null;
 }
 
-function fieldTable(rows: readonly FieldRow[], nameHeader: string): string {
+function fieldTable(rows: readonly FieldRow[]): string {
   if (rows.length === 0) return '_No fields._';
   return [
-    `| ${nameHeader} | Required | Type | Notes |`,
+    '| Field | Required | Type | Notes |',
     '|---|---|---|---|',
     ...rows.map((r) => `| \`${r.name}\` | ${r.required ? 'yes' : 'no'} | ${cell(r.type)} | ${r.notes} |`),
   ].join('\n');
@@ -332,38 +330,33 @@ function fieldTable(rows: readonly FieldRow[], nameHeader: string): string {
 
 // ── Examples ────────────────────────────────────────────────────────────────
 
-/**
- * A minimal example value: required fields only, real enum/default values
- * where the schema has them, `<name>` placeholders where it does not. Minimal
- * on purpose — an agent copying it sends what the call needs, not a guess at
- * every optional filter.
- */
+/** A minimal example value — required fields only, real enum/default values, `<name>` placeholders otherwise — so a copied call sends only what it needs. */
 function exampleValue(schema: JsonSchema, ctx: SchemaContext, name: string, depth = 0): unknown {
-  const s = ctx.resolve(schema);
-  if (s.example !== undefined) return s.example;
-  if (s.const !== undefined) return s.const;
-  if (s.enum?.length) return s.enum[0];
-  if (s.default !== undefined && !(Array.isArray(s.default) && s.default.length === 0)) return s.default;
+  const resolved = ctx.resolve(schema);
+  if (resolved.example !== undefined) return resolved.example;
+  if (resolved.const !== undefined) return resolved.const;
+  if (resolved.enum?.length) return resolved.enum[0];
+  if (hasMeaningfulDefault(resolved)) return resolved.default;
 
-  const union = unionVariants(s);
+  const union = unionVariants(resolved);
   if (union?.variants[0]) return exampleValue(union.variants[0], ctx, name, depth);
 
-  const type = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
-  if (s.properties || type === 'object') {
+  const type = Array.isArray(resolved.type) ? resolved.type.find((t) => t !== 'null') : resolved.type;
+  if (resolved.properties || type === 'object') {
     if (depth >= MAX_FLATTEN_DEPTH) return {};
     const out: Record<string, unknown> = {};
-    for (const key of s.required ?? []) {
-      const property = s.properties?.[key];
+    for (const key of resolved.required ?? []) {
+      const property = resolved.properties?.[key];
       if (property) out[key] = exampleValue(property, ctx, key, depth + 1);
     }
     return out;
   }
   switch (type) {
     case 'array':
-      return s.items ? [exampleValue(s.items, ctx, name, depth + 1)] : [];
+      return resolved.items ? [exampleValue(resolved.items, ctx, name, depth + 1)] : [];
     case 'integer':
     case 'number':
-      return s.minimum ?? (s.exclusiveMinimum !== undefined ? s.exclusiveMinimum + 1 : 1);
+      return resolved.minimum ?? (resolved.exclusiveMinimum !== undefined ? resolved.exclusiveMinimum + 1 : 1);
     case 'boolean':
       return true;
     default:
@@ -417,21 +410,23 @@ function listOperations(doc: OpenApiDocument): OperationRef[] {
   return out;
 }
 
+const UNTAGGED = 'Other';
+
+function primaryTag(op: OpenApiOperation): string {
+  return op.tags?.[0] ?? UNTAGGED;
+}
+
 /** Tags in order of first appearance, so the file follows the spec's own grouping. */
 function tagOrder(ops: readonly OperationRef[]): string[] {
   const tags: string[] = [];
   for (const { op } of ops) {
-    const tag = op.tags?.[0] ?? 'Other';
+    const tag = primaryTag(op);
     if (!tags.includes(tag)) tags.push(tag);
   }
   return tags;
 }
 
-/**
- * Header parameters attached to more than one operation with an identical
- * definition — `X-LoreKit-Client`, `X-LoreKit-Dry-Run`. Written once under
- * "Common headers" rather than repeated in every operation's table.
- */
+/** Header parameters attached identically to more than one operation, documented once under "Common headers" instead of in every table. */
 function commonHeaders(ops: readonly OperationRef[]): Map<string, { param: OpenApiParameter; ops: OperationRef[] }> {
   const byShape = new Map<string, { param: OpenApiParameter; ops: OperationRef[] }>();
   for (const ref of ops) {
@@ -487,7 +482,7 @@ function responseLines(op: OpenApiOperation, ctx: SchemaContext): string[] {
       summary = `${description} → ${ctx.link(component)}`.trim();
     } else {
       summary = `${description} → ${typeLabel(schema, ctx)}`.trim();
-      if (ctx.resolve(schema).properties) table = fieldTable(fieldRows(schema, ctx), 'Field');
+      if (ctx.resolve(schema).properties) table = fieldTable(fieldRows(schema, ctx));
     }
 
     // Statuses that render identically (most often 400/401/403 → Error) share a line.
@@ -530,7 +525,7 @@ function renderOperation(
   if (body) {
     const resolved = ctx.resolve(body);
     out.push('**Request body** (`application/json`)', '');
-    out.push(resolved.properties ? fieldTable(fieldRows(body, ctx), 'Field') : `\`${typeLabel(body, ctx)}\``, '');
+    out.push(resolved.properties ? fieldTable(fieldRows(body, ctx)) : `\`${typeLabel(body, ctx)}\``, '');
   }
 
   out.push('**Responses**', '', ...responseLines(op, ctx), '');
@@ -558,7 +553,7 @@ function renderIndex(ops: readonly OperationRef[], tags: readonly string[]): str
   const out: string[] = [];
   for (const tag of tags) {
     out.push(`### ${tag}`, '', '| Method | Path | Summary |', '|---|---|---|');
-    for (const ref of ops.filter((o) => (o.op.tags?.[0] ?? 'Other') === tag)) {
+    for (const ref of ops.filter((o) => primaryTag(o.op) === tag)) {
       const anchor = headingAnchor(operationHeading(ref.method, ref.path));
       out.push(`| ${ref.method.toUpperCase()} | [\`${ref.path}\`](#${anchor}) | ${cell(ref.op.summary ?? '')} |`);
     }
@@ -579,7 +574,7 @@ function renderSchemas(ctx: SchemaContext): string {
       if (!schema) continue;
       out.push(`### ${name}`, '');
       if (schema.description) out.push(schema.description.trim(), '');
-      out.push(fieldTable(fieldRows(schema, ctx), 'Field'), '');
+      out.push(fieldTable(fieldRows(schema, ctx)), '');
     }
   }
   return out.join('\n');
@@ -600,7 +595,7 @@ export function renderOpenApiMarkdown(doc: OpenApiDocument, links: MarkdownLinks
   // Operations first: rendering them is what decides which schemas get linked.
   const sections = tags.map((tag) => {
     const body = ops
-      .filter((o) => (o.op.tags?.[0] ?? 'Other') === tag)
+      .filter((o) => primaryTag(o.op) === tag)
       .map((ref) => renderOperation(ref, ctx, baseUrl, shared));
     return [`## ${tag}`, '', ...body].join('\n');
   });
