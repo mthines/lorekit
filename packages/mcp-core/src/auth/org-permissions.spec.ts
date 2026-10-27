@@ -17,6 +17,15 @@ describe('translateOrgPermissionError', () => {
     expect(orgError.message.toLowerCase()).toMatch(/permission|role/);
   });
 
+  it('tells an orgs_only key to pass an org rather than ask for a role (00116)', () => {
+    const dbError = { code: ORG_PERMISSION_SQLSTATE, message: 'key_personal_denied: this token may not write personal memories (scope=global)' };
+    const result = translateOrgPermissionError(dbError) as OrgPermissionError;
+    expect(result).toBeInstanceOf(OrgPermissionError);
+    expect(result.message).toMatch(/orgs_only/);
+    expect(result.message).toMatch(/Pass `org`/);
+    expect(result.message).not.toMatch(/change your role/);
+  });
+
   it('passes unrelated errors through unchanged', () => {
     const dbError = { code: 'LK001', message: 'memory_cap_exceeded: limit=1000' };
     const result = translateOrgPermissionError(dbError);

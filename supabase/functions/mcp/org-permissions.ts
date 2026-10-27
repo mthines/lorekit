@@ -17,6 +17,9 @@
 /** Custom SQLSTATE raised by memory_write / memory_delete on an org-permission denial. */
 export const ORG_PERMISSION_SQLSTATE = 'LK002';
 
+/** Message prefix `memory_write` raises (LK002) for a personal write from an `orgs_only` key (00116). */
+export const KEY_PERSONAL_DENIED_PREFIX = 'key_personal_denied';
+
 /** Message prefix every memory/org RPC raises when the caller names a non-existent org slug. */
 const UNKNOWN_ORG_PREFIX = 'unknown_org: ';
 
@@ -57,6 +60,15 @@ export class UnknownOrgError extends Error {
 export function translateOrgPermissionError(err: unknown): unknown {
   const code = (err as { code?: string } | null | undefined)?.code;
   const rawMessage = (err as { message?: string } | null | undefined)?.message;
+
+  // 00116: an `orgs_only` key writing to the personal store. No role change
+  // fixes it; naming one of the key's orgs does.
+  if (code === ORG_PERMISSION_SQLSTATE && rawMessage?.startsWith(KEY_PERSONAL_DENIED_PREFIX)) {
+    return new OrgPermissionError(
+      'This token is limited to selected orgs (orgs_only) and cannot write personal memories. ' +
+        'Pass `org` with one of the token\'s orgs, or use a token that may reach your personal memories.',
+    );
+  }
 
   if (code === ORG_PERMISSION_SQLSTATE) {
     const message = rawMessage ?? 'org_permission_denied: you do not have the required role in this org';

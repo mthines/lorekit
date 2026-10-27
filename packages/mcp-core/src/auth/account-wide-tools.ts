@@ -56,3 +56,63 @@ export function accountWideRefusalMessage(toolName: string): string {
   return `"${toolName}" operates across your whole account, so it is not available to a ` +
     'token restricted to specific scopes. Use an unscoped token for maintenance sweeps.';
 }
+
+
+/**
+ * Operations that act on the owner's own rows without consulting the key's
+ * tenancy, and so are refused outright to an `orgs_only` key (00116).
+ *
+ * `orgs_only` promises the owner's PERSONAL rows are out of reach. These
+ * operations choose their rows by `user_id` inside the RPC (or report on the
+ * owner's whole account), so there is no tenant predicate to narrow — the only
+ * honest answer is to refuse the CALL, exactly as `ACCOUNT_WIDE_TOOLS` is
+ * refused to a scoped key. Every other tool narrows instead: reads through
+ * `applyTenantScope` / `lorekit_api_token_org_allowed`, writes through
+ * `memory_write`'s personal-row refusal and `applyKeyScopeFilter`.
+ */
+export const OWNER_ROW_TOOLS: ReadonlySet<string> = new Set([
+  ...ACCOUNT_WIDE_TOOLS,
+  'memory.quota',
+  'memory.protect',
+  // Owner analytics: their RPCs take no tenancy and roll up the owner's own
+  // reads and calls, personal keys included (00080, 00079, 00083, 00085, 00106).
+  'memory.read-activity',
+  'memory.read-ranking',
+  'memory.utility',
+  'memory.usage',
+  'memory.usage-runs',
+  'policy.list',
+  'policy.create',
+  'policy.update',
+  'policy.delete',
+  'groom.preview',
+  'groom.run',
+]);
+
+/**
+ * Is this tool refused outright for a key with this tenancy?
+ *
+ * Only `orgs_only` is affected; every other tenancy (and no key at all) keeps
+ * exactly the behaviour it had.
+ */
+export function isRefusedForOrgsOnlyKey(toolName: string, orgAccess: string | undefined): boolean {
+  return orgAccess === 'orgs_only' && (OWNER_ROW_TOOLS.has(toolName) || isAccountOrgTool(toolName));
+}
+
+/**
+ * Org and membership management (`org.*`, `member.*`, MCP and REST). None of
+ * it reads the key's `org_ids`: `org.list` and `GET /orgs` return every org the
+ * owner belongs to, and the member/invite lists expose handles and invitee
+ * emails. An `orgs_only` key is the one meant to be handed out, so it gets none
+ * of the owner's account-level org surface.
+ */
+function isAccountOrgTool(toolName: string): boolean {
+  return toolName.startsWith('org.') || toolName.startsWith('member.');
+}
+
+/** The refusal sentence for `isRefusedForOrgsOnlyKey`, shared by both surfaces. */
+export function orgsOnlyRefusalMessage(toolName: string): string {
+  const what = isAccountOrgTool(toolName) ? 'manages your account\'s organisations' : 'acts on your own memories';
+  return `"${toolName}" ${what}, so it is not available to a token ` +
+    'limited to selected orgs (orgs_only). Use a token that may reach your personal memories.';
+}

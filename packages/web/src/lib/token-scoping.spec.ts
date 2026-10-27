@@ -5,6 +5,7 @@ import {
   UNSCOPED,
   describeScoping,
   isScoped,
+  namesOrgs,
   orgBadgeLabel,
   scopeBadgeLabel,
   scopePatternOptions,
@@ -55,9 +56,29 @@ describe('orgBadgeLabel', () => {
     expect(orgBadgeLabel(scoping({ org_access: 'selected', org_ids: [ORG_A] }))).toBe('1 org');
     expect(orgBadgeLabel(scoping({ org_access: 'selected', org_ids: [ORG_A, ORG_B] }))).toBe('2 orgs');
   });
+
+  it('marks an orgs_only key as orgs-only, so it never reads like a selected one', () => {
+    expect(orgBadgeLabel(scoping({ org_access: 'orgs_only', org_ids: [ORG_A] }))).toBe('1 org only');
+    expect(orgBadgeLabel(scoping({ org_access: 'orgs_only', org_ids: [ORG_A, ORG_B] }))).toBe('2 orgs only');
+  });
+});
+
+describe('namesOrgs', () => {
+  it('is true for the two tenancies that carry an org list', () => {
+    expect(namesOrgs('selected')).toBe(true);
+    expect(namesOrgs('orgs_only')).toBe(true);
+    expect(namesOrgs('all')).toBe(false);
+    expect(namesOrgs('personal')).toBe(false);
+  });
 });
 
 describe('describeScoping', () => {
+  it('says an orgs_only key reaches no personal memories', () => {
+    expect(describeScoping(scoping({ org_access: 'orgs_only', org_ids: [ORG_A] }), { [ORG_A]: 'Acme' })).toBe(
+      'Any scope · orgs: Acme · no personal memories.',
+    );
+  });
+
   it('states the unrestricted case plainly', () => {
     expect(describeScoping(UNSCOPED)).toBe('Unrestricted — every scope and org you can reach.');
   });
@@ -175,7 +196,12 @@ describe('ORG_ACCESS_TIERS', () => {
   it('covers every OrgAccess value exactly once', () => {
     // The form renders from this list, so a value missing here is a tenancy the
     // user cannot choose and a badge with no card behind it.
-    expect(ORG_ACCESS_TIERS.map((t) => t.value)).toEqual(['all', 'personal', 'selected']);
+    expect(ORG_ACCESS_TIERS.map((t) => t.value)).toEqual(['all', 'personal', 'selected', 'orgs_only']);
+  });
+
+  it('labels orgs_only so the user can see it excludes personal memories', () => {
+    const tier = ORG_ACCESS_TIERS.find((t) => t.value === 'orgs_only');
+    expect(tier?.label).toBe('Selected orgs only (no personal memories)');
   });
 });
 

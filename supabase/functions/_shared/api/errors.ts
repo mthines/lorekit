@@ -46,6 +46,13 @@ export function translateDbError(err: unknown): RestError | null {
   const code = e?.code ?? e?.error?.code;
   const message = e?.message ?? e?.error?.message;
   if (code === 'LK001') return new RestError('Memory limit exceeded. Archive unused memories or upgrade your plan.', 429, 'memory_cap');
+  if (code === 'LK002' && typeof message === 'string' && message.startsWith('key_personal_denied')) {
+    return new RestError(
+      'This token is limited to selected orgs (orgs_only) and cannot write personal memories. Pass `org` with one of the token\'s orgs.',
+      403,
+      'key_personal_denied',
+    );
+  }
   if (code === 'LK002') return new RestError('Insufficient permissions for this org action.', 403, 'org_permission_denied');
   if (code === 'PGRST116') return new RestError('Not found', 404, 'not_found');
   if (code === '23505') return new RestError('A record with this identifier already exists.', 409, 'conflict');

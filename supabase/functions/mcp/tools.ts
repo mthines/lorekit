@@ -33,7 +33,7 @@ import { countActiveOrgMemories } from '../_shared/limits/org-memory-count.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/provenance/origin.ts';
 import { recordAuditDeferred } from '../_shared/audit/audit.ts';
-import { applyTenantScope, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
+import { applyTenantScope, reachesPersonal, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { pgArrayLiteral, resolveKindHost, toTagList } from '../_shared/schemas/tags.ts';
 import { rankLessons, selectDiverse } from '../_shared/ranking/lesson-rank.ts';
@@ -268,6 +268,7 @@ export async function toolWrite(
     citingMemoryId: row.id,
     cited,
     correlationId: correlationId ?? null,
+    reachesPersonal: reachesPersonal(keyScoping),
   });
 
   // `inserted` is an internal audit-classification signal (D4), not part of

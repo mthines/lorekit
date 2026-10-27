@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { generateToken, revokeToken, setTokenScoping, type ApiToken, type TokenPermission } from '@/lib/tokens';
 import { PERMISSION_TIERS, tierFor, type PermissionTierValue } from '@/lib/token-permission';
-import { type TokenScoping } from '@/lib/token-scoping';
+import { namesOrgs, type TokenScoping } from '@/lib/token-scoping';
 import { ScopingBadges, ScopingFields } from '@/components/dashboard/TokenScoping';
 import { DisclosurePanel, useDisclosure } from '@/components/ui/DisclosurePanel';
 import { Button, IconButton } from '@/components/ui/Button';
@@ -157,7 +157,7 @@ function GenerateForm({
   // Caught here rather than left to the server round-trip: the database rejects
   // it (`api_tokens_org_ids_match_access`) and so does the RPC, but a form that
   // lets you press the button and then tells you no is a worse form.
-  const incompleteOrgs = scoping.org_access === 'selected' && scoping.org_ids.length === 0;
+  const incompleteOrgs = namesOrgs(scoping.org_access) && scoping.org_ids.length === 0;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -278,7 +278,7 @@ function TokenRow({
   const [saveError, setSaveError] = useState('');
   const [saving, startSaving] = useTransition();
 
-  const draftIncomplete = draft.org_access === 'selected' && draft.org_ids.length === 0;
+  const draftIncomplete = namesOrgs(draft.org_access) && draft.org_ids.length === 0;
   const { panelId: editorPanelId, triggerProps: editorTriggerProps } = useDisclosure(editing);
 
   // Move focus INTO the panel when it opens. The generate form already does

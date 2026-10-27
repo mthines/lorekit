@@ -13,8 +13,10 @@ import { z } from 'npm:zod@3';
  * read/write one the token prefix already encodes:
  *
  *   • `scopes`     — an allowlist of scope patterns. EMPTY MEANS UNRESTRICTED.
- *   • `orgAccess`  — the tenancy: `all` | `personal` | `selected`, with
- *                    `orgIds` meaningful only under `selected`.
+ *   • `orgAccess`  — the tenancy: `all` | `personal` | `selected` |
+ *                    `orgs_only`, with `orgIds` meaningful only under
+ *                    `selected` and `orgs_only`. `orgs_only` (00116) is
+ *                    `selected` without the owner's personal memories.
  *
  * Kept in `@lorekit/schemas` rather than next to the dashboard's server actions
  * because the same shape is read by the edge auth path and, once the management
@@ -68,18 +70,23 @@ export const ApiKeyScopesSchema = z
   .max(API_KEY_MAX_SCOPES, `at most ${API_KEY_MAX_SCOPES} scope patterns per key`)
   .default([]);
 
-export const API_KEY_ORG_ACCESS = ['all', 'personal', 'selected'] as const;
+export const API_KEY_ORG_ACCESS = ['all', 'personal', 'selected', 'orgs_only'] as const;
 
 /**
  * Which tenancy a key reaches.
  *
- * A tri-state rather than "an empty `orgIds` means everything": empty would
+ * An explicit tenancy rather than "an empty `orgIds` means everything": empty would
  * have to mean both "unrestricted" and "no orgs at all", and those are the two
  * most different answers available.
  */
 export const ApiKeyOrgAccessSchema = z.enum(API_KEY_ORG_ACCESS);
 
 export type ApiKeyOrgAccess = z.infer<typeof ApiKeyOrgAccessSchema>;
+
+/** The tenancies that name their orgs in `orgIds` (and must name at least one). */
+export function orgAccessNamesOrgs(orgAccess: ApiKeyOrgAccess): boolean {
+  return orgAccess === 'selected' || orgAccess === 'orgs_only';
+}
 
 /**
  * A key's full scoping, with the cross-field rule the DB also enforces
@@ -100,14 +107,14 @@ export const ApiKeyScopingSchema = z
       .default([]),
   })
   .superRefine((val, ctx) => {
-    if (val.orgAccess === 'selected' && val.orgIds.length === 0) {
+    if (orgAccessNamesOrgs(val.orgAccess) && val.orgIds.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['orgIds'],
-        message: 'orgAccess "selected" requires at least one org id',
+        message: `orgAccess "${val.orgAccess}" requires at least one org id`,
       });
     }
-    if (val.orgAccess !== 'selected' && val.orgIds.length > 0) {
+    if (!orgAccessNamesOrgs(val.orgAccess) && val.orgIds.length > 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['orgIds'],
@@ -159,18 +166,20 @@ export function scopeAllowedByKey(patterns: readonly string[], scope: string | n
 /**
  * Does a key with this tenancy reach a row owned by `orgId` (`null` = personal)?
  *
- * The TypeScript twin of `lorekit_api_token_org_allowed` (00068). A personal row
- * is reachable under every tenancy: `personal` narrows which ORGS are reachable,
- * it never revokes the owner's own memories.
+ * The TypeScript twin of `lorekit_api_token_org_allowed` (00068, 00116). A
+ * personal row is reachable under `all`, `personal` and `selected` — those
+ * narrow which ORGS are reachable, never the owner's own memories — and NOT
+ * under `orgs_only`, which exists to publish org lore without them. An
+ * unrecognised value reaches nothing.
  */
 export function orgAllowedByKey(
   orgAccess: ApiKeyOrgAccess,
   orgIds: readonly string[],
   orgId: string | null,
 ): boolean {
-  if (orgId === null) return true;
+  if (orgId === null) return orgAccess === 'all' || orgAccess === 'personal' || orgAccess === 'selected';
   if (orgAccess === 'all') return true;
-  if (orgAccess === 'selected') return orgIds.includes(orgId);
+  if (orgAccess === 'selected' || orgAccess === 'orgs_only') return orgIds.includes(orgId);
   // `personal`, and anything else. Written as an explicit fall-through rather
   // than `orgAccess === 'personal' ? false : orgIds.includes(orgId)` so an
   // unrecognised value denies instead of being treated as `selected` — the SQL

@@ -21,7 +21,9 @@ import { scopeAllowedByKey } from '../schemas/api-key.ts';
 import {
   effectiveOrgIds,
   keyScopeFilter,
+  MATCH_NOTHING,
   ownRowsFragment,
+  reachesPersonal,
   restrictsTenancy,
   type KeyRestriction,
 } from '../auth/tenant-scope.ts';
@@ -78,7 +80,9 @@ export function applyRestTenantScope<Q extends TracedQuery<unknown>>(
   let out = visibleOrgIds.length === 0
     ? (q.eq('user_id', userId) as Q)
     : (q.or(`${ownRowsFragment(userId, key)},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`) as Q);
-  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) out = out.or('org_id.is.null') as Q;
+  if (visibleOrgIds.length === 0 && restrictsTenancy(key)) {
+    out = out.or(reachesPersonal(key) ? 'org_id.is.null' : MATCH_NOTHING) as Q;
+  }
   const scopeFilter = keyScopeFilter(key);
   // A second `.or()` — PostgREST ANDs top-level filters, so this reads as
   // "(mine or my orgs') AND (in the key's allowlist)".
@@ -99,8 +103,18 @@ export function applyRestTenantScope<Q extends TracedQuery<unknown>>(
  * A no-op for a JWT/service caller and for an unrestricted key.
  */
 export function applyKeyScopeFilter<Q extends TracedQuery<unknown>>(q: Q, auth: AuthContext): Q {
-  const filter = keyScopeFilter(keyRestriction(auth));
-  return filter ? (q.or(filter) as Q) : q;
+  const key = keyRestriction(auth);
+  const filter = keyScopeFilter(key);
+  let out = filter ? (q.or(filter) as Q) : q;
+  // An `orgs_only` key must not touch its owner's personal rows on this
+  // owner-row write family either: narrow to the key's own orgs (no ids → no
+  // row). The other tenancies keep exactly the filter they always had.
+  if (key && !reachesPersonal(key)) {
+    out = out.or(
+      key.orgIds.length > 0 ? `org_id.in.(${key.orgIds.map((id) => `"${id}"`).join(',')})` : MATCH_NOTHING,
+    ) as Q;
+  }
+  return out;
 }
 
 /**

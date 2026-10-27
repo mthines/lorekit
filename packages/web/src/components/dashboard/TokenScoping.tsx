@@ -23,6 +23,7 @@ import {
   creatableScopePattern,
   describeScoping,
   isScoped,
+  namesOrgs,
   orgBadgeLabel,
   scopeBadgeLabel,
   scopePatternOptions,
@@ -198,13 +199,13 @@ export function ScopingFields({
                   key={value}
                   type="button"
                   // The selected tier is signalled by COLOUR alone, which a
-                  // screen reader cannot see — all three would otherwise be
+                  // screen reader cannot see — every tier would otherwise be
                   // announced identically. `aria-pressed` is the right role
                   // here rather than a radiogroup: these stay buttons, so the
                   // arrow-key roving focus a radiogroup promises is not
                   // implemented and claiming it would be worse than not.
                   aria-pressed={scoping.org_access === value}
-                  // Choosing a tenancy other than `selected` DROPS any orgs
+                  // Choosing a tenancy that names no orgs DROPS any orgs
                   // already picked. The database rejects the pair outright
                   // (`api_tokens_org_ids_match_access`), and carrying a hidden
                   // list that the next save would reject is worse than losing
@@ -213,7 +214,7 @@ export function ScopingFields({
                     onChange({
                       ...scoping,
                       org_access: value as OrgAccess,
-                      org_ids: value === 'selected' ? scoping.org_ids : [],
+                      org_ids: namesOrgs(value) ? scoping.org_ids : [],
                     })
                   }
                   className={[
@@ -231,7 +232,7 @@ export function ScopingFields({
               ))}
             </div>
 
-            {scoping.org_access === 'selected' && (
+            {namesOrgs(scoping.org_access) && (
               <Combobox
                 multiple
                 options={orgOptions}

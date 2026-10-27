@@ -7,6 +7,7 @@ import { TokenManager } from './TokenManager';
 import { ClientConfigTabs, type McpClientConfig } from './ClientConfigTabs';
 import type { ApiToken } from '@/lib/tokens';
 import type { TokenPermission } from '@/lib/tokens';
+import type { OrgAccess } from '@/lib/token-scoping';
 
 // ── MCP client definitions ────────────────────────────────────────────────────
 
@@ -267,7 +268,7 @@ interface OnboardingStepContentProps {
     token_prefix: string;
     permissions: TokenPermission[];
     scopes: string[];
-    org_access: 'all' | 'personal' | 'selected';
+    org_access: OrgAccess;
     org_ids: string[];
     last_used_at: string | null;
     created_at: string;

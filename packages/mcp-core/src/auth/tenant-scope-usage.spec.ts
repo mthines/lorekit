@@ -189,8 +189,10 @@ describe('tenancy exclusion guard (REST helper)', () => {
     // The `.eq()` branch is reached under `personal`, and under `selected`
     // whose intersection with the caller's memberships is empty. Without this
     // second filter the owner's own org rows come back on both.
+    // Under `orgs_only` (00116) the same branch must match NOTHING instead:
+    // its owner's personal rows are out of reach too.
     expect(restTenantSource()).toMatch(
-      /restrictsTenancy\(key\)\)\s*out\s*=\s*out\.or\('org_id\.is\.null'\)/,
+      /restrictsTenancy\(key\)\)\s*\{\s*out\s*=\s*out\.or\(reachesPersonal\(key\)\s*\?\s*'org_id\.is\.null'\s*:\s*MATCH_NOTHING\)/,
     );
   });
 
@@ -610,5 +612,46 @@ describe('key-tenancy usage guard (quota org count)', () => {
     );
     expect(src).toContain(".in('org_id', orgIds)");
     expect(src).toContain(".is('archived_at', null)");
+  });
+});
+
+describe('orgs_only (00116) is wired into every edge choke point', () => {
+  const edge = (rel: string) => readFileSync(path.resolve(here, '../../../../supabase/functions', rel), 'utf8');
+
+  it('the REST owner-row write family (applyKeyScopeFilter) narrows an orgs_only key to its orgs', () => {
+    const fn = edge('_shared/api/tenant.ts').match(/export function applyKeyScopeFilter[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(fn).toMatch(/!reachesPersonal\(key\)/);
+    expect(fn).toMatch(/org_id\.in\./);
+    expect(fn).toContain('MATCH_NOTHING');
+  });
+
+  it('every owner-row REST handler still goes through applyKeyScopeFilter', () => {
+    for (const handler of ['memories/handlers/update.ts', 'memories/handlers/remove.ts', 'memories/handlers/restore.ts']) {
+      expect(edge(handler), handler).toMatch(/applyKeyScopeFilter\(q, auth\)/);
+    }
+  });
+
+  it('neither write surface records citations for a key that cannot reach personal rows', () => {
+    // lorekit_record_memory_citations (00107) only ever credits the owner's
+    // personal lessons and takes no tenancy, so an orgs_only key must skip it.
+    expect(edge('_shared/telemetry/citations.ts')).toMatch(/input\.reachesPersonal === false\) return 0/);
+    expect(edge('mcp/tools.ts')).toMatch(/reachesPersonal: reachesPersonal\(keyScoping\)/);
+    expect(edge('memories/handlers/create.ts')).toMatch(/reachesPersonal: reachesPersonal\(keyRestriction\(auth\)\)/);
+  });
+
+  it('the REST router refuses owner-row tools before any handler runs', () => {
+    const src = edge('_shared/api/router.ts');
+    const gate = src.indexOf('isRefusedForOrgsOnlyKey(');
+    const handler = src.indexOf('route.handler(');
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(handler);
+  });
+
+  it('the MCP dispatcher refuses owner-row tools before the memory/retention split', () => {
+    const src = edge('mcp/mcp-handler.ts');
+    const gate = src.indexOf('isRefusedForOrgsOnlyKey(');
+    const split = src.indexOf('if (!isOrgTool && !isRetentionTool)');
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(split);
   });
 });

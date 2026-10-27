@@ -27,8 +27,11 @@ scopes, and whether it may touch your organisations at all:
 - **Scopes** — pick specific scopes, or an owner wildcard like `repo::mthines/*`
   that keeps covering new repos under that owner as they appear. Leave it empty
   for any scope.
-- **Organisations** — *All my orgs* (the default), *Personal only*, or a
-  specific list. Your own memories stay reachable under all three.
+- **Organisations** — *All my orgs* (the default), *Personal only*, a
+  specific list, or *Selected orgs only (no personal memories)*. Your own
+  memories stay reachable under the first three; the last reaches only the orgs
+  you pick, never your personal memories — use it for a token you share or
+  publish. Such a token cannot write personal memories either: pass `org`.
 
 A scoped token that names a scope outside its allowlist is refused outright
 rather than answering with an empty list, and it cannot enumerate scope names it

@@ -36,6 +36,12 @@ export interface CitationInput {
   cited: unknown;
   /** The run this write belongs to, from `X-LoreKit-Correlation-Id`. */
   correlationId: string | null;
+  /**
+   * False for a key that may not reach its owner's personal rows (`orgs_only`,
+   * 00116). The RPC only ever credits the owner's personal lessons, so such a
+   * key records nothing. Omitted means true.
+   */
+  reachesPersonal?: boolean;
 }
 
 /**
@@ -55,7 +61,7 @@ export async function recordCitations(
   const refs = parseMemoryRefs(input.cited);
   // Nothing to record is the common case — most writes cite nothing — so this
   // returns before touching the database at all.
-  if (refs.length === 0 || !input.userId) return 0;
+  if (refs.length === 0 || !input.userId || input.reachesPersonal === false) return 0;
 
   try {
     // Through the traced client, like every other RPC on a request path: the

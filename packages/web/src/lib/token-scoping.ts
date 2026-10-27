@@ -2,7 +2,8 @@
  * The dashboard's model of API-key scoping — the pure half.
  *
  * A key can be narrowed along two axes (migration 00068): an allowlist of scope
- * patterns, and a tenancy (`all` / `personal` / `selected` orgs). This module
+ * patterns, and a tenancy (`all` / `personal` / `selected` orgs, and `orgs_only` from
+ * migration 00116). This module
  * owns the decisions the UI needs and the DB does not care about: what the
  * picker offers, what the row badge says, and how the whole thing reads as a
  * sentence.
@@ -17,14 +18,14 @@
  */
 import { ApiKeyScopePatternSchema } from '@lorekit/schemas/api-key';
 
-export type OrgAccess = 'all' | 'personal' | 'selected';
+export type OrgAccess = 'all' | 'personal' | 'selected' | 'orgs_only';
 
 /** A key's scoping as the dashboard reads it back off `api_tokens`. */
 export interface TokenScoping {
   /** Allowlist of scope patterns. EMPTY = unrestricted. */
   scopes: string[];
   org_access: OrgAccess;
-  /** Meaningful only under `selected`. */
+  /** Meaningful only under `selected` and `orgs_only`. */
   org_ids: string[];
 }
 
@@ -38,7 +39,7 @@ export interface OrgAccessTier {
 }
 
 /**
- * Single source of truth for the three tenancy choices — drives both the
+ * Single source of truth for the tenancy choices — drives both the
  * "New token" cards and the row badge, so adding one is a single edit here
  * rather than parallel arrays. Same shape and same reasoning as
  * `PERMISSION_TIERS`.
@@ -59,7 +60,17 @@ export const ORG_ACCESS_TIERS: readonly OrgAccessTier[] = [
     label: 'Specific orgs',
     desc: 'Your own memories plus the orgs you pick',
   },
+  {
+    value: 'orgs_only',
+    label: 'Selected orgs only (no personal memories)',
+    desc: 'Only the orgs you pick — none of your own memories. For tokens you share or publish',
+  },
 ] as const;
+
+/** Does this tenancy carry an org list? `selected` and `orgs_only` both need ≥ 1 org. */
+export function namesOrgs(orgAccess: OrgAccess): boolean {
+  return orgAccess === 'selected' || orgAccess === 'orgs_only';
+}
 
 /** Is this key restricted at all? Drives whether a badge renders. */
 export function isScoped(scoping: TokenScoping): boolean {
@@ -89,7 +100,8 @@ export function orgBadgeLabel(scoping: TokenScoping): string | null {
   if (scoping.org_access === 'all') return null;
   if (scoping.org_access === 'personal') return 'personal only';
   const n = scoping.org_ids.length;
-  return n === 1 ? '1 org' : `${n} orgs`;
+  const orgs = n === 1 ? '1 org' : `${n} orgs`;
+  return scoping.org_access === 'orgs_only' ? `${orgs} only` : orgs;
 }
 
 /**
@@ -117,13 +129,14 @@ export function describeScoping(
 
   if (scoping.org_access === 'personal') {
     parts.push('personal memories only');
-  } else if (scoping.org_access === 'selected') {
+  } else if (namesOrgs(scoping.org_access)) {
     const named = scoping.org_ids.map((id) => orgNameById[id]).filter((n): n is string => !!n);
     parts.push(
       named.length === scoping.org_ids.length && named.length > 0
         ? `orgs: ${named.join(', ')}`
         : `${scoping.org_ids.length} org${scoping.org_ids.length === 1 ? '' : 's'}`,
     );
+    if (scoping.org_access === 'orgs_only') parts.push('no personal memories');
   }
 
   return `${parts.join(' · ')}.`;

@@ -2,6 +2,7 @@ import type { AuthContext } from '../../_shared/api/auth.ts';
 import { actorUserId, auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { created, tooManyRequests, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { reachesPersonal } from '../../_shared/auth/tenant-scope.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/limits/dry-run.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/telemetry/otel.ts';
@@ -210,6 +211,7 @@ export async function handleCreate(
     citingMemoryId: row.id,
     cited: body.cited,
     correlationId: parseCorrelationId(req.headers.get(CORRELATION_HEADER)),
+    reachesPersonal: reachesPersonal(keyRestriction(auth)),
   });
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
