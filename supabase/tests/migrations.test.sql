@@ -11261,6 +11261,9 @@ $$;
 --       still shows them to selected.
 -- AC-5: lorekit_api_token_set_scoping accepts orgs_only with org ids, refuses
 --       it without.
+-- AC-6: memory_delete / restore_memory by (scope, key) never archive, delete or
+--       restore a personal row for orgs_only, still act on its selected org,
+--       and are unchanged for a selected key.
 do $$
 declare
   v_owner   uuid := '00000000-0000-0000-0000-0000000116a1';
@@ -11357,6 +11360,38 @@ begin
       p_key_org_access => 'selected', p_key_org_ids => array[v_org])
    where key like '116-%';
   assert v_n = 2, format('116 AC-4b: selected must list the org row and the personal row, got %s', v_n);
+
+  -- ── AC-6: memory_delete / restore_memory by (scope, key) ───────────────
+  -- Scoped like the published-token case (a non-empty allowlist), and unscoped.
+  perform memory_delete(p_user_id => v_owner, p_scope => 'global', p_key => '116-selected-personal',
+                        p_key_scopes => array['global'], p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  perform memory_delete(p_user_id => v_owner, p_scope => 'global', p_key => '116-selected-personal', p_force => true,
+                        p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-selected-personal' and archived_at is null),
+    '116 AC-6a: orgs_only must not archive or hard-delete a personal row';
+
+  perform memory_delete(p_user_id => v_owner, p_scope => 'global', p_key => '116-org',
+                        p_key_scopes => array['global'], p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-org' and archived_at is not null),
+    '116 AC-6b: orgs_only must still archive a row in its selected org';
+  perform restore_memory(p_user_id => v_owner, p_scope => 'global', p_key => '116-org',
+                         p_key_scopes => array['global'], p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-org' and archived_at is null),
+    '116 AC-6c: orgs_only must still restore a row in its selected org';
+
+  update memories set archived_at = now() where key = '116-selected-personal';
+  perform restore_memory(p_user_id => v_owner, p_scope => 'global', p_key => '116-selected-personal',
+                         p_key_scopes => array['global'], p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-selected-personal' and archived_at is not null),
+    '116 AC-6d: orgs_only must not restore a personal row';
+  perform restore_memory(p_user_id => v_owner, p_scope => 'global', p_key => '116-selected-personal',
+                         p_key_scopes => array['global'], p_key_org_access => 'selected', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-selected-personal' and archived_at is null),
+    '116 AC-6e: a selected key must still restore its personal row';
+  perform memory_delete(p_user_id => v_owner, p_scope => 'global', p_key => '116-selected-personal',
+                        p_key_org_access => 'selected', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-selected-personal' and archived_at is not null),
+    '116 AC-6f: a selected key must still archive its personal row';
   reset role;
 
   -- ── AC-5: set_scoping ──────────────────────────────────────────────────

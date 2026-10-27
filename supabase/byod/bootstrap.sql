@@ -23704,14 +23704,19 @@ on conflict (version) do nothing;
 -- WHERE IT IS ENFORCED.
 --   • `lorekit_api_token_org_allowed` — the one predicate every tenancy-aware
 --     RPC already calls per row (list, scopes, tags, facets, pivot, activity,
---     relevant, delete, restore, …). No signature changes anywhere: every RPC
---     already threads `p_key_org_access` through.
+--     relevant, …). No signature changes anywhere: every RPC already threads
+--     `p_key_org_access` through.
 --   • `memory_write` — its personal destination never consulted the predicate,
 --     so it gains an explicit check (the only body change here).
+--   • `memory_delete` / `restore_memory` (00071 / 00072) match their own-row and
+--     member-org disjuncts WITHOUT the predicate — it only guards the
+--     scope-managed one — so each removal/restore WHERE gains it for an
+--     `orgs_only` key. Every other tenancy runs the 00071/00072 WHERE unchanged.
 --   • `lorekit_api_token_set_scoping` + the table CHECKs accept the new value.
 --   The edge applies the same rule to its PostgREST reads (`tenant-scope.ts`),
 --   and refuses `orgs_only` the operations that pick rows by owner rather than
---   by tenant (purge, quota, protect, policies, groom — `account-wide-tools.ts`).
+--   by tenant (purge, quota, protect, policies, groom, and the owner analytics —
+--   read-activity, read-ranking, utility, usage — `account-wide-tools.ts`).
 --
 -- UNKNOWN VALUES FAIL CLOSED. The personal branch now answers `true` only for
 -- the three tenancies known to allow it, so a value this function does not
@@ -24189,6 +24194,283 @@ grant execute on function memory_write(
   uuid, text, text, text, text[], text, text, timestamptz, text,
   integer, boolean, text, text, text, integer, text, text, text[], text, uuid[]
 ) to anon, authenticated, service_role;
+
+-- 6. Archive / hard-delete and restore by (scope, key): 00071's `memory_delete`
+--    and 00072's `restore_memory`, verbatim except the marked `orgs_only` clause.
+create or replace function memory_delete(
+  p_user_id  uuid,
+  p_org_slug text default null,
+  p_scope    text default null,
+  p_key      text default null,
+  p_force    boolean default false,
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',
+  p_key_org_ids    uuid[] default '{}'
+)
+returns table (deleted boolean, archived boolean, existed boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_org_id  uuid;
+  v_count   integer;
+  v_existed boolean;
+  v_actor   uuid := case
+    when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
+    else auth.uid()
+  end;
+  -- A scoped key on the trusted service-role connection manages the whole
+  -- allowed scope, not just its owner's rows. See the header for why BOTH
+  -- conjuncts are load-bearing (service_role gate closes the p_key_scopes IDOR;
+  -- the length check keeps an unscoped key own-rows-only).
+  v_scope_managed boolean := (
+    auth.role() = 'service_role'
+    and array_length(p_key_scopes, 1) is not null
+  );
+  -- The SERVICE tier — the bare `SUPABASE_SERVICE_ROLE_KEY` (CI, the smoke
+  -- suite, an operator script). It authenticates as no user and no key, so both
+  -- surfaces resolve `p_user_id => null` for it (REST `auth.userId` is unset for
+  -- `type:'service'`; MCP's `toolUserId` returns null for anything that is not
+  -- an api_key). `auth.uid()` is null on that connection too, so v_actor is NULL
+  -- and every `m.user_id = v_actor` disjunct below is NULL — before this the
+  -- personal branch matched ZERO rows for the tier that is meant to reach all of
+  -- them, and the edge reported the row it could see but not touch as a 403.
+  --
+  -- Own-rows-only is the API-KEY rule (00046), and null actor is precisely "no
+  -- key, no user": the tier that holds the service-role secret can write the
+  -- table directly, so pinning it here protected nothing. This restores what
+  -- the raw-query paths have always done — `if (userId) …eq('user_id', userId)`,
+  -- i.e. no owner filter when there is no user (mcp-core/src/tools/delete.ts).
+  --
+  -- It cannot widen anyone else: an api_key ALWAYS carries `p_user_id` (the
+  -- `api_tokens.user_id` it was matched by), and a non-service-role caller fails
+  -- the role conjunct, so `auth.uid()` keeps pinning it — the 00046 IDOR guard
+  -- is untouched on both.
+  v_service_tier boolean := (
+    auth.role() = 'service_role'
+    and p_user_id is null
+  );
+begin
+  -- The scope allowlist, before either branch. LK002 maps to a 403 on both
+  -- surfaces, so no second mapping is needed here.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
+
+  if p_org_slug is not null then
+    select o.id into v_org_id from orgs o where o.slug = p_org_slug;
+    if v_org_id is null then
+      raise exception using
+        errcode = 'P0001',
+        message = format('unknown_org: %s', p_org_slug);
+    end if;
+
+    -- The tenancy half, before the capability gates so the denial names the
+    -- key, not its owner's role.
+    if not lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, v_org_id) then
+      raise exception using errcode = 'LK002',
+        message = format('key_org_denied: org=%s', p_org_slug);
+    end if;
+
+    v_existed := exists(
+      select 1 from memories m
+       where m.org_id = v_org_id and m.scope = p_scope and m.key = p_key
+    );
+
+    if p_force then
+      if not lorekit_org_can(v_actor, v_org_id, 'hard_delete') then
+        raise exception using
+          errcode = 'LK002',
+          message = format('org_permission_denied: org=%s capability=hard_delete', p_org_slug);
+      end if;
+
+      delete from memories
+       where org_id = v_org_id and scope = p_scope and key = p_key;
+      get diagnostics v_count = row_count;
+
+      return query select (v_count > 0), false, v_existed;
+    else
+      if not lorekit_org_can(v_actor, v_org_id, 'archive') then
+        raise exception using
+          errcode = 'LK002',
+          message = format('org_permission_denied: org=%s capability=archive', p_org_slug);
+      end if;
+
+      update memories
+         set archived_at = now()
+       where org_id = v_org_id and scope = p_scope and key = p_key and archived_at is null;
+      get diagnostics v_count = row_count;
+
+      return query select false, (v_count > 0), v_existed;
+    end if;
+  else
+    -- Personal / scope-authorized branch.
+    --
+    -- `existed` is the caller's VISIBILITY of (scope,key), deliberately BROADER
+    -- than the removal WHERE below so that `existed=true, removed=false` is a
+    -- meaningful "present but not removed by this call" (forbidden / already
+    -- archived) rather than collapsing into not_found. A service-role caller
+    -- (the edge, which can already read the whole scope via memory.list) sees
+    -- any row; a non-service-role caller sees only its own / member-org rows,
+    -- so it can never enumerate another user's memories.
+    v_existed := case
+      when auth.role() = 'service_role' then exists(
+        select 1 from memories m where m.scope = p_scope and m.key = p_key
+      )
+      else exists(
+        select 1 from memories m
+         where m.scope = p_scope and m.key = p_key
+           and ( m.user_id = v_actor
+                 or m.org_id in (select lorekit_member_org_ids(v_actor)) )
+      )
+    end;
+
+    if p_force then
+      delete from memories m
+       where m.scope = p_scope and m.key = p_key
+         and ( v_service_tier
+               or m.user_id = v_actor
+               or m.org_id in (select lorekit_member_org_ids(v_actor))
+               or ( v_scope_managed
+                    and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) ) )
+         -- 00116: an orgs_only key never reaches a personal row (or an org it did not select).
+         and ( coalesce(p_key_org_access, 'all') <> 'orgs_only'
+               or lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) );
+      get diagnostics v_count = row_count;
+
+      return query select (v_count > 0), false, (v_existed or v_count > 0);
+    else
+      update memories m
+         set archived_at = now()
+       where m.scope = p_scope and m.key = p_key and m.archived_at is null
+         and ( v_service_tier
+               or m.user_id = v_actor
+               or m.org_id in (select lorekit_member_org_ids(v_actor))
+               or ( v_scope_managed
+                    and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) ) )
+         -- 00116: an orgs_only key never reaches a personal row (or an org it did not select).
+         and ( coalesce(p_key_org_access, 'all') <> 'orgs_only'
+               or lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) );
+      get diagnostics v_count = row_count;
+
+      return query select false, (v_count > 0), (v_existed or v_count > 0);
+    end if;
+  end if;
+end;
+$$;
+
+-- 00046/00068's revoke is carried over verbatim against the (unchanged)
+-- signature: 00020 granted `anon` EXPLICITLY, and `revoke … from public` does
+-- not remove a per-role grant, so anon must be named again or the re-created
+-- function silently comes back reachable.
+revoke execute on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])
+  from public, anon;
+grant execute on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])
+  to authenticated, service_role;
+
+comment on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[]) is
+  'Archives (p_force=false) or hard-deletes (p_force=true) a memory and reports
+   whether a row for (scope,key) the caller may see existed. A key with a
+   non-empty scope allowlist reaching this function on the service-role
+   connection manages every writer''s row within the scopes/orgs it is scoped
+   to; an unscoped key, and any non-service-role caller, stay pinned to their
+   own (and member-org) rows, preserving the 00046 actor guard. The service tier
+   (service-role connection, no p_user_id — no user and no key) is unpinned: it
+   has no actor to be pinned to. Org removals remain gated on the archive /
+   hard_delete capability.';
+
+create or replace function restore_memory(
+  p_user_id uuid,
+  p_scope   text default null,
+  p_key     text default null,
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',
+  p_key_org_ids    uuid[] default '{}'
+)
+returns table (restored boolean, existed boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count   integer;
+  v_existed boolean;
+  v_actor   uuid := case
+    when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
+    else auth.uid()
+  end;
+  -- Same gate as memory_delete (00071): a scoped key on the trusted
+  -- service-role connection manages the whole allowlist; an unscoped key and
+  -- any non-service-role caller stay own-rows-only (auth.uid() pins them),
+  -- preserving the 00046 actor guard against a request-supplied p_key_scopes.
+  v_scope_managed boolean := (
+    auth.role() = 'service_role'
+    and array_length(p_key_scopes, 1) is not null
+  );
+  -- The SERVICE tier, exactly as in 00071's `memory_delete` — see that header
+  -- for the full argument. Short form: the bare service-role key authenticates
+  -- as no user and no key, so `p_user_id` is null AND `auth.uid()` is null,
+  -- leaving v_actor NULL and every ownership disjunct below NULL. Restore has to
+  -- answer this the same way removal does, or a row the service tier can archive
+  -- is a row it cannot un-archive.
+  v_service_tier boolean := (
+    auth.role() = 'service_role'
+    and p_user_id is null
+  );
+begin
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
+
+  -- Visibility of an ARCHIVED (restorable) row, broader than the restore WHERE
+  -- for a service-role caller so `existed=true, restored=false` is a meaningful
+  -- forbidden signal; a non-service-role caller never sees another user's row.
+  v_existed := case
+    when auth.role() = 'service_role' then exists(
+      select 1 from memories m
+       where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+    )
+    else exists(
+      select 1 from memories m
+       where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+         and ( m.user_id = v_actor
+               or m.org_id in (select lorekit_member_org_ids(v_actor)) )
+    )
+  end;
+
+  update memories m
+     set archived_at = null
+   where m.scope = p_scope and m.key = p_key and m.archived_at is not null
+     and ( v_service_tier
+           or m.user_id = v_actor
+           or m.org_id in (select lorekit_member_org_ids(v_actor))
+           or ( v_scope_managed
+                and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) ) )
+     -- 00116: an orgs_only key never reaches a personal row (or an org it did not select).
+     and ( coalesce(p_key_org_access, 'all') <> 'orgs_only'
+           or lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id) );
+  get diagnostics v_count = row_count;
+
+  return query select (v_count > 0), (v_existed or v_count > 0);
+end;
+$$;
+
+revoke execute on function restore_memory(uuid, text, text, text[], text, uuid[])
+  from public, anon;
+grant execute on function restore_memory(uuid, text, text, text[], text, uuid[])
+  to authenticated, service_role;
+
+comment on function restore_memory(uuid, text, text, text[], text, uuid[]) is
+  'Un-archives a memory and reports whether a restorable (archived) row the
+   caller may see existed. A key with a non-empty scope allowlist reaching this
+   on the service-role connection restores any writer''s row within its
+   scopes/orgs; an unscoped key and any non-service-role caller stay pinned to
+   their own (and member-org) rows — the 00046/00071 actor guard, applied to
+   restore. The service tier (service-role connection, no p_user_id — no user and
+   no key) is unpinned: it has no actor to be pinned to.';
 ;
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00116', 'api_token_orgs_only_tenancy')
