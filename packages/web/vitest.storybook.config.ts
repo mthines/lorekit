@@ -79,6 +79,12 @@ export default defineConfig({
       // package — the same mid-run re-optimize trigger as the two above, and the
       // only one this PR adds.
       '@lorekit/schemas/api-key',
+      // `BindScopeForm` reaches `@/lib/scope-bindings-validate`, which
+      // value-imports `ScopeSchema` from `@lorekit/schemas/scope` — a fourth
+      // runtime entry into the linked package. Its first CI run failed all five
+      // `BindScopeForm.test.stories.tsx` stories with the same
+      // `Failed to fetch dynamically imported module: …/deps/react-18-….js`.
+      '@lorekit/schemas/scope',
       // `mocks/decorators.tsx` value-imports `@lorekit/feature-flags/registry`
       // to DERIVE the story flag seed from the registry instead of transcribing
       // it. That is a runtime entry into a SECOND linked workspace package —
