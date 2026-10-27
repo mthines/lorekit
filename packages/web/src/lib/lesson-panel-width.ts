@@ -32,8 +32,11 @@ export const PANEL_MIN_VIEWPORT_FRACTION = 0.15;
 export const PANEL_MAX_VIEWPORT_FRACTION = 0.7;
 
 /**
- * The width before the reader has chosen one. The panel's historical width
- * (`max-w-lg`), so nobody who never drags the edge sees a different panel.
+ * The width before the reader has chosen one. It is the panel's historical
+ * width (`max-w-lg`), so a reader who never drags the edge sees the panel they
+ * always did — except on screens wider than ~3413px, where the 15vw floor
+ * (`PANEL_MIN_VIEWPORT_FRACTION`) is wider than 512px and lifts it (516px at
+ * 3440px).
  */
 export const PANEL_DEFAULT_WIDTH_PX = 512;
 

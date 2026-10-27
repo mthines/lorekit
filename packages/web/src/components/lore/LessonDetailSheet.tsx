@@ -473,7 +473,8 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
   // the viewport, rendered through a CSS `clamp()` whose bounds also follow the
   // viewport (`lib/lesson-panel-width.ts`). Unresolved or absent both mean the
   // default width — unlike a disclosure, there is no "neutral" width to hold
-  // while the store is unread, and the default is what the panel always was.
+  // while the store is unread, and the default is the panel's historical 512px
+  // (lifted by the 15vw floor only on screens wider than ~3413px).
   const panelWidthPref = usePersistedPreference(PREFERENCE_KEYS.lessonPanelWidth);
   const panelWidthFraction = parseFractionPreference(panelWidthPref.raw);
   const { write: writePanelWidth } = panelWidthPref;
