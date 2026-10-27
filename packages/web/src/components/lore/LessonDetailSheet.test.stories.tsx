@@ -1,11 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
-import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+import { expect, fireEvent, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { LessonDetailSheet } from './LessonDetailSheet';
 import type { ContentTab } from './content-tabs';
 import type { LessonEntry } from './LessonCard';
 import { withQueryClient } from '@/mocks/decorators';
+import {
+  PANEL_KEYBOARD_STEP_PX,
+  panelFractionFromWidth,
+  panelWidthBounds,
+  panelWidthPx,
+} from '@/lib/lesson-panel-width';
+import { PREFERENCE_KEYS, parseFractionPreference } from '@/lib/persisted-preference';
 
 /**
  * Interaction tests for {@link LessonDetailSheet} — the mobile bottom-sheet
@@ -302,6 +309,124 @@ export const DrawerOpenDoesNotStealFocus: Story = {
       // delay it.
       await new Promise((resolve) => setTimeout(resolve, 250));
       await expect(body().getByRole('button', { name: /close detail panel/i })).not.toHaveFocus();
+    });
+  },
+};
+
+// ── Resizing (desktop drawer) ────────────────────────────────────────────────
+
+// Each story starts with no stored width: `.storybook/vitest.setup.ts` clears
+// every `PREFERENCE_KEYS` entry before each one, so nothing here leaks into the
+// drawer screenshots either.
+
+const resizeEdge = () => body().getByRole('separator', { name: /resize memory panel/i });
+const storedPanelWidth = () =>
+  parseFractionPreference(window.localStorage.getItem(PREFERENCE_KEYS.lessonPanelWidth));
+
+/**
+ * The drawer's left edge is a focusable window splitter: arrow keys and Home
+ * resize it, the result is stored as a share of the screen (so it survives a
+ * reload and scales across monitors), and a double-click goes back to the
+ * default. Expected widths are derived from the iframe's own viewport through
+ * the same pure functions the panel renders with, rather than hard-coded for
+ * one iframe size.
+ */
+export const DrawerResizesFromItsEdge: Story = {
+  render: (args) => <Harness onClose={args.onClose} layout="drawer" />,
+  play: async ({ step }) => {
+    const dialog = await body().findByRole('dialog', { name: /memory detail/i });
+    await waitFor(() => expect(dialog).toBeVisible());
+    const separator = resizeEdge();
+    const viewport = window.innerWidth;
+    const defaultWidth = Math.round(panelWidthPx(null, viewport));
+
+    await step('starts at the default width with nothing stored', async () => {
+      await expect(separator).toHaveAttribute('aria-valuenow', String(defaultWidth));
+      await expect(window.localStorage.getItem(PREFERENCE_KEYS.lessonPanelWidth)).toBeNull();
+    });
+
+    await step('ArrowLeft widens the panel one step and stores it as a share of the screen', async () => {
+      const storedFraction = panelFractionFromWidth(defaultWidth + PANEL_KEYBOARD_STEP_PX, viewport);
+      const widened = Math.round(panelWidthPx(storedFraction, viewport));
+      separator.focus();
+      await userEvent.keyboard('{ArrowLeft}');
+      await waitFor(() => expect(separator).toHaveAttribute('aria-valuenow', String(widened)));
+      await expect(Math.abs(dialog.getBoundingClientRect().width - widened)).toBeLessThanOrEqual(1);
+      await expect(storedPanelWidth()).toBe(storedFraction);
+    });
+
+    await step('Home takes it to the smallest width this screen allows', async () => {
+      await userEvent.keyboard('{Home}');
+      const smallest = Math.round(panelWidthBounds(viewport).min);
+      await waitFor(() => expect(separator).toHaveAttribute('aria-valuenow', String(smallest)));
+      await expect(Math.abs(dialog.getBoundingClientRect().width - smallest)).toBeLessThanOrEqual(1);
+    });
+
+    await step('double-clicking the edge resets to the default', async () => {
+      await userEvent.dblClick(separator);
+      await waitFor(() => expect(separator).toHaveAttribute('aria-valuenow', String(defaultWidth)));
+      await expect(Math.abs(dialog.getBoundingClientRect().width - defaultWidth)).toBeLessThanOrEqual(1);
+      // `''` is the store's "nothing stored" — it parses back as the default.
+      await expect(storedPanelWidth()).toBeNull();
+    });
+  },
+};
+
+/**
+ * The pointer path: a press that wobbles under the drag threshold stores
+ * nothing (a double-click's two presses must not commit a "drag" first), and a
+ * real drag widens the panel by exactly the distance moved — measured from
+ * where the drag started, so grabbing the 24px edge off-centre does not make
+ * the panel jump — and stores the result once, on release.
+ *
+ * `fireEvent` rather than `userEvent.pointer`: the handle needs a press, moves
+ * at chosen x positions and a release on the SAME element, which is exactly
+ * what these dispatch. The synthetic pointer is not one the browser can
+ * capture; the handle tolerates that, and the events target the edge anyway.
+ */
+export const DrawerResizesByDragging: Story = {
+  render: (args) => <Harness onClose={args.onClose} layout="drawer" />,
+  play: async ({ step }) => {
+    const dialog = await body().findByRole('dialog', { name: /memory detail/i });
+    await waitFor(() => expect(dialog).toBeVisible());
+    const separator = resizeEdge();
+    const viewport = window.innerWidth;
+    const defaultWidth = Math.round(panelWidthPx(null, viewport));
+    const pointer = { pointerId: 1, isPrimary: true, button: 0 };
+    const startX = Math.round(separator.getBoundingClientRect().left) + 4;
+
+    await step('a press that wobbles under the threshold stores nothing', async () => {
+      fireEvent.pointerDown(separator, { ...pointer, clientX: startX });
+      fireEvent.pointerMove(separator, { ...pointer, clientX: startX - 2 });
+      fireEvent.pointerUp(separator, { ...pointer, clientX: startX - 2 });
+      await expect(separator).toHaveAttribute('aria-valuenow', String(defaultWidth));
+      await expect(window.localStorage.getItem(PREFERENCE_KEYS.lessonPanelWidth)).toBeNull();
+    });
+
+    await step('dragging 100px left widens the panel by 100px and stores it on release', async () => {
+      const expectedFraction = panelFractionFromWidth(defaultWidth + 100, viewport);
+      const expectedWidth = Math.round(panelWidthPx(expectedFraction, viewport));
+      fireEvent.pointerDown(separator, { ...pointer, clientX: startX });
+      fireEvent.pointerMove(separator, { ...pointer, clientX: startX - 50 });
+      fireEvent.pointerMove(separator, { ...pointer, clientX: startX - 100 });
+      // Mid-drag the DOM already shows the new width, but nothing is stored yet.
+      await waitFor(() =>
+        expect(Math.abs(dialog.getBoundingClientRect().width - expectedWidth)).toBeLessThanOrEqual(1),
+      );
+      await expect(window.localStorage.getItem(PREFERENCE_KEYS.lessonPanelWidth)).toBeNull();
+      fireEvent.pointerUp(separator, { ...pointer, clientX: startX - 100 });
+      await waitFor(() => expect(separator).toHaveAttribute('aria-valuenow', String(expectedWidth)));
+      await expect(storedPanelWidth()).toBe(expectedFraction);
+    });
+  },
+};
+
+/** The mobile sheet spans the screen, so it has no resize edge at all. */
+export const SheetHasNoResizeEdge: Story = {
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('no separator renders on the bottom sheet', async () => {
+      await expect(body().queryByRole('separator', { name: /resize memory panel/i })).not.toBeInTheDocument();
     });
   },
 };

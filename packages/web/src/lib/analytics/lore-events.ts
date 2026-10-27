@@ -159,6 +159,14 @@ export type LoreInstrumentAction =
 export type MemoryContentTab = 'preview' | 'edit';
 export type MemoryContentTabSource = 'click' | 'shortcut';
 
+/**
+ * How the desktop detail panel's width was changed: dragging its edge, the
+ * arrow/Home/End keys on that edge, or a double-click back to the default.
+ * Kept apart because whether the keyboard path is used at all is one of the
+ * things the event exists to answer.
+ */
+export type MemoryPanelResizeSource = 'drag' | 'keyboard' | 'reset';
+
 /** An edit either lands or is thrown away. */
 export type MemoryEditAction = 'save' | 'discard';
 export type MemoryMutationOutcome = 'success' | 'error';

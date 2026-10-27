@@ -361,6 +361,19 @@ describe('track — lore.memory_archive_toggled', () => {
   });
 });
 
+describe('track — lore.memory_panel_resized', () => {
+  it('sends how the width changed and the share of the screen as a number', () => {
+    // A number, not a string: "how wide do people make it" is averaged and
+    // percentiled in Dash0, which a stringified percentage could only group by.
+    track({ name: 'lore.memory_panel_resized', source: 'keyboard', viewportPercent: 45 });
+    expect(lastCall().name).toBe('lore.memory_panel_resized');
+    expect(lastCall().attributes).toEqual({
+      'lorekit.lore.memory.panel_resize_source': 'keyboard',
+      'lorekit.lore.memory.panel_viewport_percent': 45,
+    });
+  });
+});
+
 describe('track — lore.filter_changed', () => {
   it('sends the dimension and the operator, never the value', () => {
     track({
