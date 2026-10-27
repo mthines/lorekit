@@ -11247,6 +11247,137 @@ begin
 end;
 $$;
 
+-- ── 116. API-token tenancy `orgs_only` — selected orgs, no personal rows (00116) ─
+--
+-- AC-1: lorekit_api_token_org_allowed — orgs_only reaches a selected org, not
+--       an unselected one, and NOT a personal row; all/personal/selected/NULL
+--       still reach personal rows; an unknown tenancy reaches nothing.
+-- AC-2: the CHECKs admit orgs_only with org ids and refuse it without.
+-- AC-3: memory_write refuses a personal write from an orgs_only key
+--       (LK002 key_personal_denied) instead of falling back to personal, and
+--       writes nothing; an org write through the same key still lands; a
+--       `selected` key's personal write is unchanged.
+-- AC-4: lorekit_memory_list hides the owner's personal rows from orgs_only and
+--       still shows them to selected.
+-- AC-5: lorekit_api_token_set_scoping accepts orgs_only with org ids, refuses
+--       it without.
+do $$
+declare
+  v_owner   uuid := '00000000-0000-0000-0000-0000000116a1';
+  v_other   uuid := '00000000-0000-0000-0000-0000000116a2';
+  v_org     uuid;
+  v_org_b   uuid;
+  v_token   uuid;
+  v_failed  boolean;
+  v_msg     text;
+  v_n       bigint;
+  v_access  text;
+begin
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values
+    ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+     'lk-mig-116-owner@test.local', now(), now()),
+    ('00000000-0000-0000-0000-000000000000', v_other, 'authenticated', 'authenticated',
+     'lk-mig-116-other@test.local', now(), now());
+  insert into orgs (slug, name, created_by) values ('orgs-only-116-a', 'A', v_owner) returning id into v_org;
+  insert into orgs (slug, name, created_by) values ('orgs-only-116-b', 'B', v_other) returning id into v_org_b;
+  insert into org_members (org_id, user_id, role) values (v_org, v_owner, 'owner');
+  insert into org_members (org_id, user_id, role) values (v_org_b, v_other, 'owner');
+
+  -- ── AC-1: the predicate ────────────────────────────────────────────────
+  assert not lorekit_api_token_org_allowed('orgs_only', array[v_org], null),
+    '116 AC-1a: orgs_only must NOT reach a personal row';
+  assert lorekit_api_token_org_allowed('orgs_only', array[v_org], v_org),
+    '116 AC-1b: orgs_only must reach a selected org';
+  assert not lorekit_api_token_org_allowed('orgs_only', array[v_org], v_org_b),
+    '116 AC-1c: orgs_only must not reach an unselected org';
+  assert lorekit_api_token_org_allowed('all', '{}'::uuid[], null)
+     and lorekit_api_token_org_allowed('personal', '{}'::uuid[], null)
+     and lorekit_api_token_org_allowed('selected', array[v_org], null)
+     and lorekit_api_token_org_allowed(null, '{}'::uuid[], null),
+    '116 AC-1d: all/personal/selected/NULL must still reach personal rows';
+  assert lorekit_api_token_org_allowed('selected', array[v_org], v_org)
+     and not lorekit_api_token_org_allowed('selected', array[v_org], v_org_b)
+     and not lorekit_api_token_org_allowed('personal', '{}'::uuid[], v_org)
+     and lorekit_api_token_org_allowed('all', '{}'::uuid[], v_org),
+    '116 AC-1e: the org half of the other tenancies is unchanged';
+  assert not lorekit_api_token_org_allowed('bogus', '{}'::uuid[], null)
+     and not lorekit_api_token_org_allowed('bogus', array[v_org], v_org),
+    '116 AC-1f: an unknown tenancy must reach nothing (fail closed)';
+
+  -- ── AC-2: the CHECKs ───────────────────────────────────────────────────
+  insert into api_tokens (user_id, name, token_prefix, token_hash)
+  values (v_owner, '116 fixture', 'lk_ro_aaaa...', 'hash-116-orgs-only-0001')
+  returning id into v_token;
+  update api_tokens set org_access = 'orgs_only', org_ids = array[v_org] where id = v_token;
+  select org_access into v_access from api_tokens where id = v_token;
+  assert v_access = 'orgs_only', '116 AC-2a: orgs_only with an org id must be accepted';
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'orgs_only', org_ids = '{}'::uuid[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, '116 AC-2b: orgs_only without org ids must be refused';
+
+  -- ── AC-3: memory_write ─────────────────────────────────────────────────
+  v_failed := false;
+  begin
+    perform memory_write(p_user_id => v_owner, p_scope => 'global', p_key => '116-personal',
+                         p_value => 'v', p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  exception when sqlstate 'LK002' then
+    get stacked diagnostics v_msg = message_text;
+    v_failed := v_msg like 'key_personal_denied%';
+  end;
+  assert v_failed, '116 AC-3a: a personal write from orgs_only must raise LK002 key_personal_denied';
+  assert not exists (select 1 from memories where key = '116-personal'),
+    '116 AC-3b: the refused personal write must write nothing';
+
+  perform memory_write(p_user_id => v_owner, p_scope => 'global', p_key => '116-org',
+                       p_value => 'v', p_org_slug => 'orgs-only-116-a',
+                       p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-org' and org_id = v_org),
+    '116 AC-3c: an org write from orgs_only must still land';
+
+  perform memory_write(p_user_id => v_owner, p_scope => 'global', p_key => '116-selected-personal',
+                       p_value => 'v', p_key_org_access => 'selected', p_key_org_ids => array[v_org]);
+  assert exists (select 1 from memories where key = '116-selected-personal' and user_id = v_owner and org_id is null),
+    '116 AC-3d: a selected key must still write personal rows';
+
+  -- ── AC-4: lorekit_memory_list ──────────────────────────────────────────
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_owner), true);
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_owner, p_scope => 'global', p_limit => 100,
+      p_key_org_access => 'orgs_only', p_key_org_ids => array[v_org])
+   where key like '116-%';
+  assert v_n = 1, format('116 AC-4a: orgs_only must list only the org row, got %s', v_n);
+  select count(*) into v_n from lorekit_memory_list(
+      p_user_id => v_owner, p_scope => 'global', p_limit => 100,
+      p_key_org_access => 'selected', p_key_org_ids => array[v_org])
+   where key like '116-%';
+  assert v_n = 2, format('116 AC-4b: selected must list the org row and the personal row, got %s', v_n);
+  reset role;
+
+  -- ── AC-5: set_scoping ──────────────────────────────────────────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_owner), true);
+  perform lorekit_api_token_set_scoping(v_token, array['project::reaper-mcp'], 'orgs_only', array[v_org]);
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'orgs_only', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed, '116 AC-5b: set_scoping must refuse orgs_only without org ids (LK004)';
+  reset role;
+  select org_access into v_access from api_tokens where id = v_token;
+  assert v_access = 'orgs_only', '116 AC-5a: set_scoping must accept orgs_only with org ids';
+
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
