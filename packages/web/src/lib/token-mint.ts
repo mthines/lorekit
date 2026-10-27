@@ -41,7 +41,7 @@ export interface ApiToken {
   /** Scope allowlist (migration 00068). EMPTY = unrestricted. */
   scopes: string[];
   org_access: OrgAccess;
-  /** Meaningful only under `org_access: 'selected'`. */
+  /** Meaningful only under `org_access: 'selected'` or `'orgs_only'`. */
   org_ids: string[];
   last_used_at: string | null;
   created_at: string;
