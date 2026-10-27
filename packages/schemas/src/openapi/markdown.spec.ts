@@ -83,6 +83,15 @@ describe('renderOpenApiMarkdown — the generated REST spec', () => {
     expect(section(markdown, 'POST /memories')).toContain(`-d '{"scope":"<scope>","key":"<key>","value":"<value>"}'`);
   });
 
+  // curl globs `{id}` into `id`, so an unedited copy would hit `/memories/id`
+  // instead of failing loudly; only the curl URL changes, headings keep `{id}`.
+  it('writes path parameters in curl URLs as <name> placeholders, never curl globs', () => {
+    const curlLines = markdown.split('\n').filter((line) => line.startsWith('curl'));
+    expect(curlLines.length).toBeGreaterThan(0);
+    for (const line of curlLines) expect(line, line).not.toContain('{');
+    expect(section(markdown, 'GET /memories/{id}')).toContain(`curl "${BASE_URL}/memories/<id>`);
+  });
+
   it('is deterministic', () => {
     expect(renderOpenApiMarkdown(spec, LINKS)).toBe(markdown);
   });
@@ -156,7 +165,8 @@ describe('renderOpenApiMarkdown — rendering rules', () => {
   });
 
   it('puts required query parameters in the example URL and shell-quotes the body', () => {
-    expect(markdown).toContain('curl -X PUT "https://tiny.test/things/{id}?mode=<mode>"');
+    expect(markdown).toContain('curl -X PUT "https://tiny.test/things/<id>?mode=<mode>"');
+    expect(markdown).toContain('### PUT /things/{id}');
     expect(markdown).toContain(`-d '{"note":"it'\\''s here","meta":{"owner":"<owner>"}}'`);
   });
 

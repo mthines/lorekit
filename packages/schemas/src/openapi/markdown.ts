@@ -373,7 +373,9 @@ function curlExample(method: string, path: string, op: OpenApiOperation, baseUrl
   const query = (op.parameters ?? [])
     .filter((p) => p.in === 'query' && p.required)
     .map((p) => `${encodeURIComponent(p.name)}=<${p.name}>`);
-  const url = `${baseUrl}${path}${query.length ? `?${query.join('&')}` : ''}`;
+  // curl reads `{id}` as a URL glob and silently requests `/id`; `<id>` stays a visible placeholder.
+  const pathWithPlaceholders = path.replace(/\{(\w+)\}/g, '<$1>');
+  const url = `${baseUrl}${pathWithPlaceholders}${query.length ? `?${query.join('&')}` : ''}`;
 
   const lines = [`curl${method === 'get' ? '' : ` -X ${method.toUpperCase()}`} "${url}"`];
   if (!isPublic(op)) lines.push(`  -H "Authorization: Bearer $LOREKIT_TOKEN"`);
