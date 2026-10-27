@@ -241,9 +241,17 @@ export function LessonPanelResizeHandle({ fraction, onCommit }: LessonPanelResiz
       // dragged — the cursor is the affordance, as in most editors.
       className="group/resize absolute inset-y-0 -left-3 z-10 w-6 cursor-col-resize touch-none select-none focus-visible:outline-none"
     >
+      {/*
+        The indicator: an accent line that fades out toward the top and bottom
+        (the same transparent → accent → transparent stops as the TopBar's
+        ActivityIndicator) and fades IN on hover, focus or drag. A hard,
+        full-height bar reads as a second border on top of the panel's own;
+        the gradient reads as "this edge is live". Opacity, not colour, is
+        what transitions — a gradient's stops cannot be animated.
+      */}
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover/resize:bg-[var(--color-accent)] group-focus-visible/resize:bg-[var(--color-accent)] group-data-[resizing]/resize:bg-[var(--color-accent)]"
+        className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-gradient-to-b from-transparent via-[var(--color-accent)] to-transparent opacity-0 transition-opacity duration-200 group-hover/resize:opacity-100 group-focus-visible/resize:opacity-100 group-data-[resizing]/resize:opacity-100"
       />
     </div>
   );
