@@ -17,6 +17,9 @@ describe('prefersMarkdown', () => {
     ['text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', false],
     ['text/html, text/markdown;q=0.5', false],
     ['text/markdown;q=0', false],
+    // Parameter names are case-insensitive, so an uppercase `Q` still refuses.
+    ['text/markdown;Q=0', false],
+    ['text/html, text/markdown;Q=0.5', false],
     ['application/json', false],
   ])('%j → %s', (accept, expected) => {
     expect(prefersMarkdown(accept)).toBe(expected);

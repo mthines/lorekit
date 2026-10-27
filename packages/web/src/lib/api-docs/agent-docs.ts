@@ -34,7 +34,8 @@ function bestQuality(accept: string, types: ReadonlySet<string>): number {
     const [rawType, ...params] = part.split(';');
     const type = rawType?.trim().toLowerCase();
     if (!type || !types.has(type)) continue;
-    const qParam = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
+    // Parameter names are case-insensitive (RFC 9110 §5.6.6): `Q=0` refuses too.
+    const qParam = params.map((p) => p.trim().toLowerCase()).find((p) => p.startsWith('q='));
     const q = qParam ? Number.parseFloat(qParam.slice(2)) : 1;
     if (Number.isFinite(q) && q > best) best = q;
   }
