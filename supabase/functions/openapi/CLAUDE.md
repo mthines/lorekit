@@ -23,6 +23,14 @@ production without depending on this function's CORS allow-origin. The old
 `GET /ui` route now 302-redirects to the dashboard page so existing bookmarks
 keep working.
 
+The same spec is also rendered as **Markdown for AI agents** at
+`https://lorekit.io/api-docs.md` (`packages/schemas/src/openapi/markdown.ts`,
+served by `packages/web/src/app/api-docs.md/`), and `/api-docs` returns that
+Markdown to a request sent with `Accept: text/markdown`. The Scalar page is an
+empty JavaScript shell to anything that does not run scripts, so this is the
+form agents read. Everything in it derives from this spec — improve a
+description here and both the page and the Markdown pick it up.
+
 ## Spec generation
 
 The spec is **generated lazily on first request** and cached for the lifetime of the isolate:
