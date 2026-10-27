@@ -61,6 +61,8 @@ describe('renderOpenApiMarkdown — the generated REST spec', () => {
     expect(rows).toHaveLength(1);
     expect(section(markdown, 'POST /memories')).toContain('`X-LoreKit-Dry-Run`');
     expect(section(markdown, 'GET /memories')).not.toContain('`X-LoreKit-Dry-Run`');
+    // A POST that only reads ignores the header, so it must not be offered one.
+    expect(section(markdown, 'POST /memories/search')).not.toContain('`X-LoreKit-Dry-Run`');
   });
 
   it('links repeated shapes to one Schemas entry rather than inlining them', () => {

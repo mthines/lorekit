@@ -618,8 +618,9 @@ export function renderOpenApiMarkdown(doc: OpenApiDocument, links: MarkdownLinks
     '## Before you call',
     '',
     `1. **Authenticate.** Send \`Authorization: Bearer <token>\` on every request except the ones marked public. ${authDescription ?? ''}`.trim(),
-    '2. **Writes are real by default.** A `POST`, `PATCH` or `DELETE` without `X-LoreKit-Dry-Run: true` changes data. ' +
-      'Send that header to have the request validated and authorized without changing anything (see [Common headers](#common-headers)).',
+    '2. **Writes are real by default.** An operation that lists `X-LoreKit-Dry-Run` under its common headers changes data ' +
+      'unless the request carries `X-LoreKit-Dry-Run: true`, which validates and authorizes it without changing anything. ' +
+      'Operations that do not list it (including the `POST` reads) ignore it. See [Common headers](#common-headers).',
     `3. **Errors.** A non-2xx response carries ${errorLink}. \`429\` means rate-limited; wait for the \`Retry-After\` header before retrying.`,
     '4. **JSON in, JSON out.** Send request bodies with `Content-Type: application/json`.',
     '',

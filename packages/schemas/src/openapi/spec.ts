@@ -730,6 +730,17 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   // docs are safe by default; the caller clears it to execute for real. The
   // backend contract lives in `_shared/limits/dry-run.ts` (isDryRunHeader).
   const MUTATING_METHODS = new Set(['post', 'patch', 'delete', 'put']);
+  // POSTs that only READ (body-transport filters, search, batch read). Their
+  // handlers never check the header, so advertising it promises a rehearsal
+  // that does not happen. `rest-dry-run-parity.spec.ts` holds this to the routers.
+  const READ_ONLY_POSTS = new Set([
+    '/memories/list',
+    '/memories/search',
+    '/memories/facets',
+    '/memories/pivot',
+    '/memories/activity',
+    '/memories/read',
+  ]);
   // `schema.default: true` is the console pre-fill, NOT the server's default: an
   // absent header executes. `x-server-default` states that in data, so readers
   // that skip the prose (the Markdown renderer, agents) cannot miss it.
@@ -773,11 +784,12 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   for (const [path, operations] of Object.entries(paths)) {
     // The public blog surface implements neither usage attribution nor dry-run,
     // so it must not advertise their headers. Every other (Bearer-authed) route
-    // gets the client header, and every mutating one the dry-run header.
+    // gets the client header, and every one that changes data the dry-run header.
     if (path.startsWith('/blog')) continue;
     for (const [method, operation] of Object.entries(operations)) {
       operation.parameters = [...(operation.parameters ?? []), clientParam];
       if (!MUTATING_METHODS.has(method)) continue;
+      if (method === 'post' && READ_ONLY_POSTS.has(path)) continue;
       operation.parameters = [...(operation.parameters ?? []), dryRunParam];
     }
   }
