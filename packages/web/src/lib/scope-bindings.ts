@@ -13,8 +13,8 @@
  *
  * The bind form's scope catalog is NOT read here: it comes from
  * `GET /memories/scopes` through the shared scope-tree query (see
- * `BindScopeForm`). A `memories` select deduped in JS — what used to live here
- * as `listAvailableScopes` — only ever sees a prefix of the rows.
+ * `BindScopeForm`). A `memories` select deduped in JS, which is how this file
+ * used to build it, only ever sees a prefix of the rows.
  *
  * Error translation:
  *  - SQLSTATE P0001, message starting with `scope_bound_elsewhere:` → friendly

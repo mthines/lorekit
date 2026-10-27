@@ -113,8 +113,9 @@ until the whole queue drains.
 - **Known remaining offenders** (not on `/lore`'s refresh path):
   `useAuditLog` → `listAuditLog`; `LessonDetailSheet`'s member lookup →
   `listMemberIdentities`; `OrganizationManager`'s org-data effect →
-  `listScopeBindings`, `listMembers`, `listMemberIdentities`, `listInvites`,
-  `listAvailableScopes`; and `InviteDetailsDialog` → `getInviteOrgDetails`.
+  `listScopeBindings`, `listMembers`, `listMemberIdentities`, `listInvites`;
+  and `InviteDetailsDialog` → `getInviteOrgDetails`. (Its bind-scope picker
+  already reads `GET /memories/scopes` through `useScopeTree`.)
 
 ## Conventions specific to this package
 
