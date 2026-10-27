@@ -25,6 +25,15 @@ describe('isRefusedForOrgsOnlyKey (00116)', () => {
     }
   });
 
+  it('refuses the account-level org surface, which ignores the key\'s org list', () => {
+    for (const tool of ['org.list', 'org.get', 'org.create', 'org.rename', 'org.delete', 'member.list',
+      'member.invite_list', 'member.invite', 'member.revoke', 'member.remove', 'member.role_change']) {
+      expect(isRefusedForOrgsOnlyKey(tool, 'orgs_only')).toBe(true);
+      expect(isRefusedForOrgsOnlyKey(tool, 'selected')).toBe(false);
+    }
+    expect(orgsOnlyRefusalMessage('org.list')).toMatch(/organisations.*orgs_only/);
+  });
+
   it('leaves tenancy-narrowed tools alone', () => {
     for (const tool of ['memory.read', 'memory.list', 'memory.search', 'memory.write', 'memory.scopes',
       'memory.list_archived', 'memory.archive', 'memory.restore', 'memory.delete']) {

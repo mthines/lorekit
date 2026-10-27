@@ -127,7 +127,9 @@ org-scoped form to narrow to — are refused outright for an `orgs_only` token
 `memory.quota`, `memory.protect`, `policy.list/create/update/delete`,
 `groom.preview/run`, and their REST twins, plus the owner analytics
 `GET /memories/read-activity`, `/read-ranking`, `/utility`, `/usage` and
-`/usage/runs`. The writes addressed by id (`PATCH /memories/:id`,
+`/usage/runs`, and all org and membership management (`org.*`, `member.*`,
+`/orgs/**`) — those list every org the owner belongs to, member handles and
+invitee emails, whatever the token's `org_ids`. The writes addressed by id (`PATCH /memories/:id`,
 `DELETE /memories/:id`, `POST /memories/:id/restore`) match only the caller's
 own rows, which are personal, so for an `orgs_only` token they match nothing and
 return `404`; archive / delete / restore by scope+key (`memory.archive`,

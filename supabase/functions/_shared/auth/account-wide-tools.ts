@@ -96,11 +96,23 @@ export const OWNER_ROW_TOOLS: ReadonlySet<string> = new Set([
  * exactly the behaviour it had.
  */
 export function isRefusedForOrgsOnlyKey(toolName: string, orgAccess: string | undefined): boolean {
-  return orgAccess === 'orgs_only' && OWNER_ROW_TOOLS.has(toolName);
+  return orgAccess === 'orgs_only' && (OWNER_ROW_TOOLS.has(toolName) || isAccountOrgTool(toolName));
+}
+
+/**
+ * Org and membership management (`org.*`, `member.*`, MCP and REST). None of
+ * it reads the key's `org_ids`: `org.list` and `GET /orgs` return every org the
+ * owner belongs to, and the member/invite lists expose handles and invitee
+ * emails. An `orgs_only` key is the one meant to be handed out, so it gets none
+ * of the owner's account-level org surface.
+ */
+function isAccountOrgTool(toolName: string): boolean {
+  return toolName.startsWith('org.') || toolName.startsWith('member.');
 }
 
 /** The refusal sentence for `isRefusedForOrgsOnlyKey`, shared by both surfaces. */
 export function orgsOnlyRefusalMessage(toolName: string): string {
-  return `"${toolName}" acts on your own memories, so it is not available to a token ` +
+  const what = isAccountOrgTool(toolName) ? 'manages your account\'s organisations' : 'acts on your own memories';
+  return `"${toolName}" ${what}, so it is not available to a token ` +
     'limited to selected orgs (orgs_only). Use a token that may reach your personal memories.';
 }
