@@ -185,7 +185,7 @@ global                             # least specific
 - Every memory is personal by default. Add `org` to `memory.write` to write org-owned lore.
 - All org members with read access see org-owned lore in their reads.
 - Roles: `viewer` (read only), `member` (read + write/archive/restore), `admin` (+ hard-delete + invite management), `owner` (+ rename/delete org).
-- Scope→org binding: an admin can bind a scope to the org — subsequent writes under that scope auto-route to the org for write-capable members. Non-members fall back to personal (never rejected) with a `notice`.
+- Scope→org binding: an admin can bind a scope to the org — subsequent writes under that scope auto-route to the org for write-capable members. Non-members fall back to personal (never rejected) with a `notice` — except from a token limited to selected orgs (`orgs_only`), which may not write personal memories: that write is refused, so pass `org`.
 - Manage orgs and members at lorekit.io → Settings → Organization.
 
 ## Filtering lore (dashboard Explorer + REST)
