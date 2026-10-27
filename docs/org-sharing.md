@@ -94,7 +94,9 @@ is routed to the org automatically:
 - A **non-member** (or a viewer) writing under a bound scope → the memory is
   saved to **their personal lore** (never rejected), and `memory.write` returns
   a `notice` explaining it's saved personal because they aren't a write-member,
-  and to ask an admin to add them. Never silent, never a hard failure.
+  and to ask an admin to add them. Never silent, never a hard failure — except
+  from a token limited to selected orgs (`orgs_only`), which may not write
+  personal memories: that write is refused (`key_personal_denied`) instead.
 - An **explicit `org`** parameter always takes precedence over the binding.
 
 Binding is server-side truth (an `org_scope_bindings` row), not the advisory

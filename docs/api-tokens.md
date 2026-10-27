@@ -128,8 +128,9 @@ org-scoped form to narrow to — are refused outright for an `orgs_only` token
 `groom.preview/run`, and their REST twins, plus the owner analytics
 `GET /memories/read-activity`, `/read-ranking`, `/utility`, `/usage` and
 `/usage/runs`. The writes addressed by id (`PATCH /memories/:id`,
-`DELETE /memories/:id`, `POST /memories/:id/restore`) are narrowed to rows in
-the token's orgs, and archive / delete / restore by scope+key (`memory.archive`,
+`DELETE /memories/:id`, `POST /memories/:id/restore`) match only the caller's
+own rows, which are personal, so for an `orgs_only` token they match nothing and
+return `404`; archive / delete / restore by scope+key (`memory.archive`,
 `memory.delete`, `memory.restore`, `DELETE /memories?scope&key`,
 `POST /memories/restore`) only ever match rows in the token's orgs, so none of
 them touches a personal row.
