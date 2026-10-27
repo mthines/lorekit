@@ -74,8 +74,11 @@ function runGenerator(args: string[], cwd = repoRoot): string {
  * series, so under the default its verdict depended on runner load — it once
  * finished every assertion green in 14.7 s and was failed for the clock alone
  * (a synchronous body cannot be pre-empted; vitest compares elapsed time when
- * it returns). Nothing in this file asserts speed, so the budget only bounds a
- * runaway spawn; 30 s leaves ~2x headroom over the slowest CI run observed.
+ * it returns). Nothing in this file asserts speed; 30 s leaves ~2x headroom
+ * over the slowest CI run observed. It is NOT a hang guard: for the same reason,
+ * a hung spawn runs until the CI job's own timeout. A per-spawn `timeout` on
+ * `execFileSync` would not fix that either, since the RED cases accept any
+ * throw and a killed spawn throws too.
  */
 const SPAWN_TEST_TIMEOUT_MS = 30_000;
 
