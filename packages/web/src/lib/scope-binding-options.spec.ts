@@ -66,11 +66,30 @@ describe('bindableScopeOptions', () => {
     const options = bindableScopeOptions(['repo::acme/api', 'repo::acme/web', 'branch::acme/api::main'], []);
 
     expect(options).toEqual([
-      { value: 'repo::acme/*', label: 'repo::acme/*', hint: 'every scope under this owner', type: 'repo' },
+      { value: 'repo::acme/*', label: 'repo::acme/*', hint: 'every repo scope under acme', type: 'repo' },
       { value: 'branch::acme/api::main', label: 'main', hint: 'branch::acme/api::main', type: 'branch' },
       { value: 'repo::acme/api', label: 'acme/api', hint: 'repo::acme/api', type: 'repo' },
       { value: 'repo::acme/web', label: 'acme/web', hint: 'repo::acme/web', type: 'repo' },
     ]);
+  });
+
+  it('hints a wildcard with the one scope type its prefix covers', () => {
+    // A binding matches by literal prefix (00111), so `repo::acme/*` covers no
+    // `branch::acme/…` scope — the hint must not promise "every scope".
+    const hints = Object.fromEntries(
+      bindableScopeOptions(
+        ['repo::acme/api', 'repo::acme/web', 'branch::acme/api::main', 'branch::acme/web::dev', 'project::a', 'project::b'],
+        [],
+      )
+        .filter((o) => o.value.endsWith('*'))
+        .map((o) => [o.value, o.hint]),
+    );
+
+    expect(hints).toEqual({
+      'branch::acme/*': 'every branch scope under acme',
+      'project::*': 'every project scope',
+      'repo::acme/*': 'every repo scope under acme',
+    });
   });
 
   it('only offers values the bind would accept', () => {

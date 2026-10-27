@@ -27,7 +27,6 @@ export interface BindableScopeOption {
   type: ScopePrefix;
 }
 
-const WILDCARD_HINT = 'every scope under this owner';
 
 /**
  * Every scope and owner wildcard the org could bind, minus what it already has.
@@ -63,7 +62,7 @@ export function bindableScopeOptions(
     options.push({
       value,
       label: isWildcard ? value : lastSegment(value),
-      hint: isWildcard ? WILDCARD_HINT : value,
+      hint: isWildcard ? wildcardHint(value) : value,
       type: scopeType(value),
     });
   }
@@ -97,6 +96,24 @@ export function creatableBindingScope(
 /** Bindings are stored trimmed and lowercased, so compare in that form. */
 function normalisedSet(scopes: readonly string[]): Set<string> {
   return new Set(scopes.map((s) => s.trim().toLowerCase()));
+}
+
+/**
+ * What a wildcard binding actually covers, in words.
+ *
+ * A binding matches by literal prefix (00111: `p_scope like 'repo::acme/%'`),
+ * so `repo::acme/*` covers acme's REPO scopes and none of its branch scopes —
+ * which is where most agent lore is written. "Every scope under this owner"
+ * would leave an admin believing branch lore is shared when it stays personal,
+ * so the hint names the scope type it is limited to.
+ *
+ * `repo::acme/*` → `every repo scope under acme`, `branch::acme/*` →
+ * `every branch scope under acme`, `project::*` → `every project scope`.
+ */
+function wildcardHint(pattern: string): string {
+  const type = scopeType(pattern);
+  const owner = pattern.slice(pattern.indexOf('::') + 2, -1).replace(/(\/|::)$/, '');
+  return owner ? `every ${type} scope under ${owner}` : `every ${type} scope`;
 }
 
 /** `repo::acme/api` → `acme/api`, `branch::acme/api::main` → `main`, `global` → `global`. */
