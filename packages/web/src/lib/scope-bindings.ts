@@ -11,6 +11,11 @@
  * `org_scope_bindings` table were shipped in 00026_scope_org_bindings.sql
  * (#114). This file is the UI / server-action layer only.
  *
+ * The bind form's scope catalog is NOT read here: it comes from
+ * `GET /memories/scopes` through the shared scope-tree query (see
+ * `BindScopeForm`). A `memories` select deduped in JS, which is how this file
+ * used to build it, only ever sees a prefix of the rows.
+ *
  * Error translation:
  *  - SQLSTATE P0001, message starting with `scope_bound_elsewhere:` → friendly
  *    "This scope is already bound to another organization."
@@ -35,49 +40,6 @@ export interface ScopeBinding {
   scope: string;
   created_by: string | null;
   created_at: string;
-}
-
-/**
- * Return distinct scopes visible to the caller (personal lore + org lore via
- * RLS on `memories`) that are not yet bound to the given org. Excludes scopes
- * that are already in `alreadyBound`, so the BindScopeForm only surfaces
- * actionable suggestions. Capped at 100 to keep the payload small — the
- * server sorts alphabetically so the most-recognisable scopes appear first.
- */
-export async function listAvailableScopes(orgId: string, alreadyBound: string[]): Promise<string[]> {
-  const supabase = await createServerClient();
-  const user = await getVerifiedUser();
-  if (!user) return [];
-
-  // The memories RLS policies (00015 + org read widening) scope this query
-  // to rows the user can see — personal lore + lore from orgs they belong to.
-  // PostgREST's column de-duplication via `.order` + client-side distinct is
-  // the pragmatic approach; a raw SQL `SELECT DISTINCT` would need an RPC.
-  const { data, error } = await supabase
-    .from('memories')
-    .select('scope')
-    .order('scope', { ascending: true })
-    .limit(500); // over-fetch then client-deduplicate; memories.scope has no index for DISTINCT
-
-  if (error) {
-    console.error('[listAvailableScopes] DB error:', error.message);
-    return [];
-  }
-
-  const boundSet = new Set(alreadyBound);
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  for (const row of data ?? []) {
-    const scope = row.scope as string;
-    if (!seen.has(scope) && !boundSet.has(scope)) {
-      seen.add(scope);
-      result.push(scope);
-      if (result.length >= 100) break;
-    }
-  }
-
-  return result;
 }
 
 /**

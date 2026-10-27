@@ -60,11 +60,11 @@ Authorization is derived server-side — the write is accepted only if the calle
 
 Instead of passing `org` on every write, an admin can bind a scope to the org so writes auto-route:
 
-Go to [Settings → Organization → Shared scopes](/settings/organization) → enter a scope string (e.g. `repo::myteam/api`) → click **Bind scope**.
+Go to [Settings → Organization → Shared scopes](/settings/organization) → **Bind a scope** → open the **Scope** picker and search for the scope by owner, repo, or branch (e.g. `myteam/api`) → pick it → click **Bind scope**. The picker searches every scope you can see; scopes already bound to the org are not offered. To bind a scope that has no memories yet, type it in full (e.g. `repo::myteam/api`) and pick the *use this scope* row.
 
 After binding, any write under `repo::myteam/api` by a write-capable member routes to the org automatically. A non-member writing under a bound scope gets a graceful fallback to personal lore (never rejected) with a `notice` in the response.
 
-**Binding a whole owner at once.** Instead of binding each repo one at a time, enter a **wildcard** pattern, e.g. `repo::myteam/*`, to bind every repo scope under that owner in one step (or `branch::myteam/api::*` for every branch of one repo). When a write's scope matches more than one binding, the most specific one wins: an exact scope beats any wildcard, and a longer wildcard prefix beats a shorter one.
+**Binding a whole owner at once.** Instead of binding each repo one at a time, pick or type a **wildcard** pattern, e.g. `repo::myteam/*` (the picker lists `repo::owner/*` for an owner with more than one repo scope, and `branch::owner/*` for one with more than one branch scope), to bind every repo scope under that owner in one step (or `branch::myteam/api::*` for every branch of one repo). When a write's scope matches more than one binding, the most specific one wins: an exact scope beats any wildcard, and a longer wildcard prefix beats a shorter one.
 
 </TutorialStep>
 
