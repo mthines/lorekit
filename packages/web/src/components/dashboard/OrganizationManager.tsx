@@ -14,7 +14,7 @@
  * file (plan.md Decision D4 / AC-10).
  */
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Users, Plus, Mail, X, LogOut, Trash2, Download, Link, Unlink,
@@ -34,8 +34,7 @@ import {
 } from '@/lib/orgs';
 import { inviteMember, listInvites, revokeInvite, type OrgInvite } from '@/lib/org-invites';
 import { listMemberIdentities, type OrgMemberIdentity } from '@/lib/org-members';
-import { listScopeBindings, listAvailableScopes, bindScope, unbindScope, type ScopeBinding } from '@/lib/scope-bindings';
-import { validateScopeBindingPattern } from '@/lib/scope-bindings-validate';
+import { listScopeBindings, bindScope, unbindScope, type ScopeBinding } from '@/lib/scope-bindings';
 import { normalizeSlug } from '@/lib/org-slug';
 import {
   roleCapabilities,
@@ -50,6 +49,7 @@ import {
   OrgInvitesSkeleton,
   OrgScopesSkeleton,
 } from '@/components/dashboard/OrganizationSkeleton';
+import { BindScopeForm } from '@/components/dashboard/BindScopeForm';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Button, IconButton } from '@/components/ui/Button';
@@ -338,139 +338,6 @@ function InviteForm({
   );
 }
 
-// ── Bind-scope form ───────────────────────────────────────────────────────────
-
-interface BindScopeFormProps {
-  orgId: string;
-  orgName: string;
-  /** Scopes visible to the user that are not yet bound to this org — shown as clickable suggestions. */
-  availableScopes: string[];
-  onBound: (binding: ScopeBinding) => void;
-  onCancel?: () => void;
-}
-
-function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: BindScopeFormProps) {
-  const [scope, setScope] = useState('');
-  const [error, setError] = useState('');
-  const [pending, startTransition] = useTransition();
-
-  /** Bind the given scope string (already trimmed + lowercased by the caller). */
-  function doBindScope(normalized: string) {
-    setError('');
-    startTransition(async () => {
-      const result = await bindScope(orgId, normalized);
-      if ('error' in result) {
-        setError(result.error);
-        return;
-      }
-      onBound({
-        id: result.id,
-        org_id: orgId,
-        scope: normalized,
-        created_by: null,
-        created_at: new Date().toISOString(),
-      });
-      showToast(`Scope ${normalized} bound to ${orgName}.`, 'success');
-      setScope('');
-    });
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const validated = validateScopeBindingPattern(scope);
-    if (!validated.ok) {
-      setError(validated.error);
-      return;
-    }
-    doBindScope(validated.normalized);
-  }
-
-  // Filter suggestions by what the user has typed so far (substring match).
-  const inputLower = scope.trim().toLowerCase();
-  const suggestions = inputLower
-    ? availableScopes.filter((s) => s.includes(inputLower))
-    : availableScopes;
-
-  return (
-    <form
-      onSubmit={handleSubmit}
-      className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
-    >
-      <p className="text-xs font-medium text-[var(--color-content-secondary)]">Bind a scope</p>
-      <p className="text-[10px] text-[var(--color-content-tertiary)]">
-        Memories written under this scope are automatically shared with {orgName} for write-capable members. Use a
-        wildcard (e.g. <code className="font-mono">repo::dash0hq/*</code>) to bind every scope under a prefix at
-        once.
-      </p>
-
-      <div className="flex flex-col gap-1">
-        <label htmlFor="bind-scope" className="text-xs text-[var(--color-content-secondary)]">
-          Scope (e.g. <code className="font-mono">repo::owner/name</code> or{' '}
-          <code className="font-mono">repo::owner/*</code>)
-        </label>
-        <input
-          id="bind-scope"
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
-          placeholder="repo::owner/name or repo::owner/*"
-          maxLength={500}
-          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-content-primary)] placeholder:font-mono placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
-        />
-      </div>
-
-      {/* Scope suggestions — clickable chips that immediately trigger the bind. */}
-      {suggestions.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[10px] text-[var(--color-content-tertiary)]">
-            {inputLower ? 'Matching scopes' : 'Your existing scopes'}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {suggestions.slice(0, 20).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => doBindScope(s)}
-                disabled={pending}
-                className="flex min-h-8 items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 font-mono text-[10px] text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
-              >
-                <Link className="size-3 shrink-0" aria-hidden />
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
-
-      <div className="flex gap-2">
-        <Button
-          type="submit"
-          variant="primary"
-          size="md"
-          isLoading={pending}
-          disabled={!scope.trim()}
-          leftIcon={<Link className="size-4" aria-hidden />}
-          analyticsId="org.bind-scope-submit"
-        >
-          Bind scope
-        </Button>
-        {onCancel && (
-          <Button
-            type="button"
-            variant="outline"
-            size="md"
-            analyticsId="org.bind-scope-cancel"
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
-        )}
-      </div>
-    </form>
-  );
-}
-
 // ── Shared presentational bits ─────────────────────────────────────────────────
 
 /** Small role pill used in the org list and detail header. */
@@ -619,7 +486,6 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
   const [identities, setIdentities] = useState<OrgMemberIdentity[]>([]);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
   const [bindings, setBindings] = useState<ScopeBinding[]>([]);
-  const [availableScopes, setAvailableScopes] = useState<string[]>([]);
   const [loadingOrgData, setLoadingOrgData] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(initialOrgs.length === 0);
   // Progressive disclosure — the invite and bind-scope forms stay collapsed
@@ -652,28 +518,22 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
       setIdentities([]);
       setInvites([]);
       setBindings([]);
-      setAvailableScopes([]);
       return;
     }
     let cancelled = false;
     setLoadingOrgData(true);
     (async () => {
-      // Fetch bindings first so listAvailableScopes can exclude already-bound ones.
-      const binds = await listScopeBindings(selectedOrgId);
-      if (cancelled) return;
-      const boundScopes = binds.map((b) => b.scope);
-      const [m, ids, inv, scopes] = await Promise.all([
+      const [binds, m, ids, inv] = await Promise.all([
+        listScopeBindings(selectedOrgId),
         listMembers(selectedOrgId),
         listMemberIdentities(selectedOrgId),
         listInvites(selectedOrgId),
-        listAvailableScopes(selectedOrgId, boundScopes),
       ]);
       if (cancelled) return;
       setMembers(m);
       setIdentities(ids);
       setInvites(inv);
       setBindings(binds);
-      setAvailableScopes(scopes);
       setLoadingOrgData(false);
     })();
     return () => {
@@ -805,6 +665,21 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
     setInvites((prev) => [invite, ...prev]);
   }
 
+  /** `BindScopeForm`'s `onBind`: the server action plus the local state it implies. */
+  async function handleBind(scope: string): Promise<string | null> {
+    if (!selectedOrg) return 'No organization selected.';
+    const org = selectedOrg;
+    const result = await bindScope(org.id, scope);
+    if ('error' in result) return result.error;
+    // Adding it to `bindings` is also what stops the picker offering it again.
+    setBindings((prev) => [
+      ...prev,
+      { id: result.id, org_id: org.id, scope, created_by: null, created_at: new Date().toISOString() },
+    ]);
+    showToast(`Scope ${scope} bound to ${org.name}.`, 'success');
+    return null;
+  }
+
   function handleUnbind(binding: ScopeBinding) {
     if (!selectedOrgId) return;
     startTransition(async () => {
@@ -814,18 +689,14 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
         showToast(result.error, 'error');
         return;
       }
+      // Dropping it from `bindings` is also what offers it in the bind picker again.
       setBindings((prev) => prev.filter((b) => b.id !== binding.id));
-      // Return the unbound scope to the suggestions list (insert back in sorted order).
-      setAvailableScopes((prev) => {
-        const next = [...prev, binding.scope];
-        next.sort();
-        return next;
-      });
       showToast(`Scope ${binding.scope} unbound.`, 'success');
     });
   }
 
   const pendingInvites = invites.filter((i) => i.status === 'pending');
+  const boundScopes = useMemo(() => bindings.map((b) => b.scope), [bindings]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -1063,14 +934,9 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
               )}
               {showBindForm ? (
                 <BindScopeForm
-                  orgId={selectedOrg.id}
                   orgName={selectedOrg.name}
-                  availableScopes={availableScopes}
-                  onBound={(binding) => {
-                    setBindings((prev) => [...prev, binding]);
-                    // Remove the just-bound scope from suggestions so it doesn't appear twice.
-                    setAvailableScopes((prev) => prev.filter((s) => s !== binding.scope));
-                  }}
+                  boundScopes={boundScopes}
+                  onBind={handleBind}
                   onCancel={() => setShowBindForm(false)}
                 />
               ) : (
