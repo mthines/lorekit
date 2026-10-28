@@ -698,9 +698,12 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     'Generate a token from [Settings → API keys](/settings/api-keys) and paste it into the',
     '**Authorize** box above — one token works on every endpoint, orgs included.',
     '',
-    '**Safe by default** — destructive calls run in *dry-run* mode: the `X-LoreKit-Dry-Run`',
-    'header defaults to `true`, so create / update / delete requests are validated and',
-    'authorized but make **no changes**. Clear that header on an operation to execute for real.',
+    '**Safe by default here** — this console pre-fills `X-LoreKit-Dry-Run: true`, so create /',
+    'update / delete requests sent from it are validated and authorized but make **no changes**.',
+    'Clear that header on an operation to execute for real. A request sent WITHOUT the header',
+    '(curl, an SDK, an agent) executes for real.',
+    '',
+    '**For agents and scripts** — the same reference as Markdown: [/api-docs.md](/api-docs.md).',
   ].join('\n');
 
   const gen = new OpenApiGeneratorV31(registry.definitions);
@@ -727,14 +730,30 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   // docs are safe by default; the caller clears it to execute for real. The
   // backend contract lives in `_shared/limits/dry-run.ts` (isDryRunHeader).
   const MUTATING_METHODS = new Set(['post', 'patch', 'delete', 'put']);
+  // POSTs that only READ (body-transport filters, search, batch read). Their
+  // handlers never check the header, so advertising it promises a rehearsal
+  // that does not happen. `rest-dry-run-parity.spec.ts` holds this to the routers.
+  const READ_ONLY_POSTS = new Set([
+    '/memories/list',
+    '/memories/search',
+    '/memories/facets',
+    '/memories/pivot',
+    '/memories/activity',
+    '/memories/read',
+  ]);
+  // `schema.default: true` is the console pre-fill, NOT the server's default: an
+  // absent header executes. `x-server-default` states that in data, so readers
+  // that skip the prose (the Markdown renderer, agents) cannot miss it.
   const dryRunParam = {
     name: 'X-LoreKit-Dry-Run',
     in: 'header',
     required: false,
     description:
-      'Safe-explore mode. When `true` (the default here), the request is validated and ' +
-      'authorized but makes NO changes. Set it to `false` to execute for real.',
+      'Safe-explore mode. `true` validates and authorizes the request but makes NO changes. ' +
+      'Absent or `false` executes it for real — the server default is `false`; only this ' +
+      'reference\'s try-it console pre-fills `true`.',
     schema: { type: 'boolean', default: true },
+    'x-server-default': false,
   };
   // Attach the client-attribution header to EVERY operation (not just mutating
   // ones — it exists mainly to label reads). Optional and fail-safe: an
@@ -765,11 +784,12 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   for (const [path, operations] of Object.entries(paths)) {
     // The public blog surface implements neither usage attribution nor dry-run,
     // so it must not advertise their headers. Every other (Bearer-authed) route
-    // gets the client header, and every mutating one the dry-run header.
+    // gets the client header, and every one that changes data the dry-run header.
     if (path.startsWith('/blog')) continue;
     for (const [method, operation] of Object.entries(operations)) {
       operation.parameters = [...(operation.parameters ?? []), clientParam];
       if (!MUTATING_METHODS.has(method)) continue;
+      if (method === 'post' && READ_ONLY_POSTS.has(path)) continue;
       operation.parameters = [...(operation.parameters ?? []), dryRunParam];
     }
   }

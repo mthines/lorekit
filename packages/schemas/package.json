@@ -21,6 +21,7 @@
     "./usage": "./src/domain/usage.ts",
     "./relevant": "./src/shared/relevant.ts",
     "./openapi/spec": "./src/openapi/spec.ts",
+    "./openapi/markdown": "./src/openapi/markdown.ts",
     "./tool-catalog": "./src/shared/tool-catalog.ts",
     "./llms/render": "./src/llms/render.ts"
   },

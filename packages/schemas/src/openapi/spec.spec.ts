@@ -104,6 +104,17 @@ describe('generateSpec', () => {
 
     const get = spec.paths['/memories']!.get as { parameters?: Array<{ name: string }> };
     expect((get.parameters ?? []).some((p) => p.name === 'X-LoreKit-Dry-Run')).toBe(false);
+
+    // A POST that only reads ignores the header; offering it promises a rehearsal.
+    const search = spec.paths['/memories/search']!.post as { parameters?: Array<{ name: string }> };
+    expect((search.parameters ?? []).some((p) => p.name === 'X-LoreKit-Dry-Run')).toBe(false);
+  });
+
+  // The console pre-fills `true`; the server executes a request without the header.
+  it('states the dry-run header defaults to a real write on the server', () => {
+    const post = spec.paths['/memories']!.post as { parameters?: Array<Record<string, unknown>> };
+    const dryRun = post.parameters?.find((p) => p['name'] === 'X-LoreKit-Dry-Run');
+    expect(dryRun?.['x-server-default']).toBe(false);
   });
 
   // The hard-delete flag is a query param on BOTH delete forms — a caller that

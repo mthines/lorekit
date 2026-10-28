@@ -145,3 +145,10 @@ until the whole queue drains.
   what the generator produces. The repo-wide obligation to update it lives in
   the root [CLAUDE.md](../../CLAUDE.md#user-facing-docs-mandatory-on-every-change).
   Keep the template terse: it is read by agents under a token budget, not browsed.
+- **`/api-docs.md` is the REST reference for agents, rendered on request.** The
+  Scalar page at `/api-docs` is an empty JavaScript shell to a fetch, so the same
+  OpenAPI document is also served as Markdown by `app/api-docs.md/route.ts`
+  (renderer: `@lorekit/schemas/openapi/markdown`), and `/api-docs` returns it to
+  `Accept: text/markdown`. Nothing is committed and nothing can drift: improve the
+  spec in `packages/schemas/src/openapi/spec.ts` and both forms change. The
+  negotiation and the HTML signposts live in `src/lib/api-docs/agent-docs.ts`.

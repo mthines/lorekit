@@ -109,6 +109,21 @@ https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
 
 Auth: `Authorization: Bearer <token>` — token prefix encodes permissions (see Tokens below).
 
+## REST API
+
+Memories, organizations, members and invites are also plain HTTPS + JSON under
+`https://pqokxlhvnosogizsjztg.supabase.co/functions/v1`, with the same Bearer token.
+
+- **Reference as Markdown (read this one):** https://lorekit.io/api-docs.md — every route,
+  parameter, body and response, with a `curl` example each. `https://lorekit.io/api-docs`
+  returns the same file to a request sent with `Accept: text/markdown`.
+- OpenAPI 3.1 JSON: https://lorekit.io/api-docs/spec
+- Interactive console (browser): https://lorekit.io/api-docs
+
+A REST write is REAL unless it carries `X-LoreKit-Dry-Run: true`, which validates and authorizes
+the request without changing anything. The browser console pre-fills that header; curl and SDKs
+do not.
+
 ## Tokens
 
 ```
@@ -997,6 +1012,7 @@ id: a `401` makes streamable-HTTP clients retry a session handshake and hang.
 
 ## Key documentation
 
+- REST API reference (Markdown): https://lorekit.io/api-docs.md
 - MCP tools reference: https://github.com/mthines/lorekit/blob/main/docs/mcp-tools.md
 - Scope format: https://github.com/mthines/lorekit/blob/main/docs/scope-format.md
 - API tokens: https://github.com/mthines/lorekit/blob/main/docs/api-tokens.md
