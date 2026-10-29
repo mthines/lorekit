@@ -295,6 +295,18 @@ A null column value yields NO facet row. An option that matches by absence would
 `is not set` operator, which `GET /` does not have yet; offering the option without the
 operator would be a row you can click and nothing happens.
 
+**The handler reads `lorekit_memory_facet_catalog` (00117), never the set form directly.**
+It is the same rows, with the same parameters and order, returned as ONE `jsonb` array.
+PostgREST caps a set-returning result at `max_rows` (1000, `supabase/config.toml`) and says
+nothing about it, and because the set is ordered `facet asc`, the dimensions that sort last
+(`tag`, then `trigger`) are the ones that get cut. That happened in production: every facets
+response for a large account carried exactly 1000 rows (`lorekit.result_count`), and the
+Explorer's Tag and Trigger menus read "No values yet". A scalar result is not capped, so the
+catalog is exact at any size. The wrapper is security invoker and only reshapes the answer;
+every rule below still lives in `lorekit_memory_facets`. §117 asserts the two argument lists
+are identical, so a new dimension must be added to both or CI fails. `GET /tags`
+(`lorekit_memory_tags`) and `/pivot` are still set-returning and still capped.
+
 **Counts are DRILL-DOWN as of 00057.** The route mirrors `GET /`'s filter params (`scope`,
 `tags`/`tags_mode`, and a `<dim>`/`<dim>_mode` pair for each scalar dimension) and passes them
 to the RPC, which counts each dimension with every OTHER active filter applied but NOT its own
