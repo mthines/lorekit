@@ -52,6 +52,9 @@ values
   -- §117's own account: its catalog must exceed 1000 rows from its own lessons
   -- alone, and its equality assertions compare whole catalogs.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000aa', 'authenticated', 'authenticated', 'lk-mig-aa@test.local', now(), now()),
+  -- §118's own account: its label catalog and its pivot grid must each exceed
+  -- 1000 rows from its own lessons alone.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ab', 'authenticated', 'authenticated', 'lk-mig-ab@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -11577,6 +11580,194 @@ begin
     '117 AC-6b: authenticated must be able to execute lorekit_memory_facet_catalog';
   assert has_function_privilege('service_role', v_wrapper, 'EXECUTE'),
     '117 AC-6c: service_role must be able to execute lorekit_memory_facet_catalog';
+end;
+$$;
+
+-- ── 118. the label catalog and the pivot grid as ONE value each (00118) ─────
+-- 00117's cut, on the two remaining set-returning reads that grow with the
+-- data. PostgREST caps a set at max_rows (1000) without an error:
+--   - `lorekit_memory_tags` orders count desc, so an account with more than
+--     1000 labels lost its RAREST ones;
+--   - `lorekit_memory_pivot` is asked for up to PIVOT_LIMIT_MAX + 1 = 2001
+--     cells, so a limit above 999 was cut at 1000 and the handler's
+--     `truncated` flag (rows > limit) read false on a grid that was cut.
+-- 00118 returns each as one jsonb array, which PostgREST does not cap.
+--
+-- 220 lessons on a fresh account, each carrying six labels of its own and one
+-- trigger of its own, give 1320 labels and 1320 (label, trigger) cells.
+--
+-- AC-1: both wrappers return a SCALAR jsonb, not a set.
+-- AC-2: the tag catalog holds every row of lorekit_memory_tags past 1000, in
+--       order, with the same counts.
+-- AC-3: the pivot grid holds every cell of lorekit_memory_pivot past 1000, in
+--       order; p_limit is honoured exactly (so limit + 1 cells come back when
+--       the grid is larger, and `truncated` is real); filters pass through.
+-- AC-4: tenancy is still the set forms': an authenticated caller sees its own
+--       rows through the invoker wrappers and none of another user's.
+-- AC-5: each wrapper takes exactly its set form's parameters and forwards
+--       every one of them.
+-- AC-6: anon cannot execute either; authenticated and service_role can.
+do $$
+declare
+  v_user  uuid := '00000000-0000-0000-0000-0000000000ab';
+  v_other uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_set   jsonb;
+  v_cat   jsonb;
+  v_n     bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_user), true);
+
+  insert into memories (user_id, scope, key, value, kind, host, tags, trigger)
+  select v_user, 'global', format('118-%s', g), 'v', 'lesson', 'h1',
+         array(select format('118-t-%s-%s', g, k) from generate_series(1, 6) as k),
+         format('118-trig-%s', g)
+    from generate_series(1, 220) as g;
+
+  -- ── AC-1: one value each, not a set ────────────────────────────────────
+  select count(*) into v_n
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname in ('lorekit_memory_tag_catalog', 'lorekit_memory_pivot_grid')
+     and not p.proretset and p.prorettype = 'jsonb'::regtype;
+  assert v_n = 2,
+    format('118 AC-1: both wrappers must return a single jsonb (not a set), found %s of 2', v_n);
+
+  -- ── AC-2: the tag catalog, past 1000 ───────────────────────────────────
+  select jsonb_agg(jsonb_build_object('tag', t.tag, 'count', t.count) order by t.ord)
+    into v_set
+    from lorekit_memory_tags(p_user_id => v_user) with ordinality as t(tag, count, ord);
+  v_cat := lorekit_memory_tag_catalog(p_user_id => v_user);
+
+  assert jsonb_array_length(v_set) > 1000,
+    format('118 AC-2a: the fixture must yield more than 1000 labels, got %s', jsonb_array_length(v_set));
+  assert v_cat = v_set,
+    format('118 AC-2b: the tag catalog must equal lorekit_memory_tags row for row, in order '
+           '(%s vs %s elements)', jsonb_array_length(v_cat), jsonb_array_length(v_set));
+  select count(*) into v_n from jsonb_array_elements(v_cat) e
+   where e->>'tag' like '118-t-%' and (e->>'count')::int = 1;
+  assert v_n = 1320, format('118 AC-2c: all 1320 labels must be listed with count 1, got %s', v_n);
+
+  v_cat := lorekit_memory_tag_catalog(p_user_id => v_user, p_archived => true);
+  assert v_cat = '[]'::jsonb, format('118 AC-2d: an empty catalog must be [], got %s', v_cat);
+
+  -- ── AC-3: the pivot grid, past 1000 ────────────────────────────────────
+  select jsonb_agg(jsonb_build_object('row_value', g.row_value, 'col_value', g.col_value,
+                                      'count', g.count) order by g.ord)
+    into v_set
+    from lorekit_memory_pivot('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                              p_limit => 2001)
+         with ordinality as g(row_value, col_value, count, ord);
+  v_cat := lorekit_memory_pivot_grid('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                                     p_limit => 2001);
+
+  assert jsonb_array_length(v_set) = 1320,
+    format('118 AC-3a: the fixture must yield 1320 cells, got %s', jsonb_array_length(v_set));
+  assert v_cat = v_set,
+    format('118 AC-3b: the pivot grid must equal lorekit_memory_pivot cell for cell, in order '
+           '(%s vs %s elements)', jsonb_array_length(v_cat), jsonb_array_length(v_set));
+
+  -- The handler asks for limit + 1 to detect truncation; past 1000 that cell
+  -- must actually arrive.
+  v_cat := lorekit_memory_pivot_grid('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                                     p_limit => 1001);
+  assert jsonb_array_length(v_cat) = 1001,
+    format('118 AC-3c: p_limit => 1001 must return 1001 cells, got %s', jsonb_array_length(v_cat));
+
+  select jsonb_agg(jsonb_build_object('row_value', g.row_value, 'col_value', g.col_value,
+                                      'count', g.count) order by g.ord)
+    into v_set
+    from lorekit_memory_pivot('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                              p_limit => 5)
+         with ordinality as g(row_value, col_value, count, ord);
+  v_cat := lorekit_memory_pivot_grid('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                                     p_limit => 5);
+  assert v_cat = v_set and jsonb_array_length(v_cat) = 5,
+    format('118 AC-3d: a small p_limit must return the same top cells, got %s', v_cat);
+
+  -- A non-axis filter passes through: no lesson has host h2, so no cells.
+  v_cat := lorekit_memory_pivot_grid('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                                     p_limit => 2001, p_host => array['h2']);
+  assert v_cat = '[]'::jsonb,
+    format('118 AC-3e: a host filter matching nothing must yield [], got %s elements',
+           jsonb_array_length(v_cat));
+  reset role;
+
+  -- ── AC-4: tenancy through the invoker wrappers ─────────────────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_user), true);
+  v_cat := lorekit_memory_tag_catalog(p_user_id => v_user);
+  select count(*) into v_n from jsonb_array_elements(v_cat) e where e->>'tag' like '118-t-%';
+  assert v_n = 1320, format('118 AC-4a: the owner must see its 1320 labels as authenticated, got %s', v_n);
+  v_cat := lorekit_memory_pivot_grid('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                                     p_limit => 2001);
+  assert jsonb_array_length(v_cat) = 1320,
+    format('118 AC-4b: the owner must see its 1320 cells as authenticated, got %s', jsonb_array_length(v_cat));
+
+  -- Another user, even naming the owner as p_user_id, sees none of them.
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_other), true);
+  v_cat := lorekit_memory_tag_catalog(p_user_id => v_user);
+  select count(*) into v_n from jsonb_array_elements(v_cat) e where e->>'tag' like '118-%';
+  assert v_n = 0, format('118 AC-4c: another user must see none of the owner''s labels, got %s', v_n);
+  v_cat := lorekit_memory_pivot_grid('tag', 'trigger', p_user_id => v_user, p_scope => 'global',
+                                     p_limit => 2001);
+  select count(*) into v_n from jsonb_array_elements(v_cat) e where e->>'row_value' like '118-%';
+  assert v_n = 0, format('118 AC-4d: another user must see none of the owner''s cells, got %s', v_n);
+  reset role;
+
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-5 / AC-6: the catalog side, for each (wrapper, set form) pair.
+do $$
+declare
+  r         record;
+  v_wrapper oid;
+  v_set_fn  oid;
+  v_n       bigint;
+begin
+  for r in
+    select * from (values
+      ('lorekit_memory_tag_catalog', 'lorekit_memory_tags'),
+      ('lorekit_memory_pivot_grid',  'lorekit_memory_pivot')
+    ) as pairs(wrapper, set_form)
+  loop
+    select count(*) into v_n
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = r.wrapper;
+    assert v_n = 1, format('118 AC-5a: %s must have exactly one overload, found %s', r.wrapper, v_n);
+
+    select p.oid into v_wrapper
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = r.wrapper;
+    select p.oid into v_set_fn
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = r.set_form;
+
+    assert pg_get_function_arguments(v_wrapper) = pg_get_function_arguments(v_set_fn),
+      format('118 AC-5b: %s must take exactly %s''s parameters.%s  wrapper:  %s%s  set form: %s',
+             r.wrapper, r.set_form, chr(10), pg_get_function_arguments(v_wrapper),
+             chr(10), pg_get_function_arguments(v_set_fn));
+
+    select count(*) into v_n
+      from pg_proc p, unnest(p.proargnames) as a
+     where p.oid = v_wrapper
+       and p.prosrc !~ ('\m' || a || '\s+=>\s+' || a || '\M');
+    assert v_n = 0,
+      format('118 AC-5c: %s parameter(s) of %s are declared but not forwarded to %s',
+             v_n, r.wrapper, r.set_form);
+
+    assert not has_function_privilege('anon', v_wrapper, 'EXECUTE'),
+      format('118 AC-6a: anon must not be able to execute %s', r.wrapper);
+    assert has_function_privilege('authenticated', v_wrapper, 'EXECUTE'),
+      format('118 AC-6b: authenticated must be able to execute %s', r.wrapper);
+    assert has_function_privilege('service_role', v_wrapper, 'EXECUTE'),
+      format('118 AC-6c: service_role must be able to execute %s', r.wrapper);
+  end loop;
 end;
 $$;
 

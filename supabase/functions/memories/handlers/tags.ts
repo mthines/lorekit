@@ -8,6 +8,11 @@ import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/db/database.types.ts';
 import { ListTagsQuerySchema } from '../../_shared/schemas/memory.ts';
 
+/**
+ * One element of the catalog. `lorekit_memory_tag_catalog` returns
+ * `lorekit_memory_tags`' rows as a jsonb array, so an element has exactly a
+ * row's shape; the generated types can only call a jsonb result `Json`.
+ */
 type TagRow = Database['public']['Functions']['lorekit_memory_tags']['Returns'][number];
 
 /**
@@ -44,9 +49,16 @@ export async function handleTags(
   span.setAttributes({ 'lorekit.operation': 'memories.tags', 'lorekit.archived': validated.data.archived });
 
   const tracedDb = createTracedClient(db, span);
+  // `lorekit_memory_tag_catalog` (00118), not `lorekit_memory_tags`: the same
+  // rows as ONE jsonb array. PostgREST caps a set-returning result at
+  // `max_rows` (1000) without an error, and the set is ordered count desc, so
+  // an account with more than 1000 labels silently lost its rarest ones — the
+  // row-cap bug this endpoint was built to fix, one hop further down. A scalar
+  // result is not capped (00117 found the same cut on /facets).
+  //
   // Service-role callers have no user id; the RPC recognises a null p_user_id
   // from a service_role JWT as "no tenant filter", matching GET /memories.
-  const { data, error } = await tracedDb.rpc<TagRow>('lorekit_memory_tags', {
+  const { data, error } = await tracedDb.rpc<TagRow[] | null>('lorekit_memory_tag_catalog', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
     // The calling key's restriction (00068/00069). Narrowed inside the RPC for
@@ -58,7 +70,7 @@ export async function handleTags(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const tags = ((data ?? []) as TagRow[]).map((r) => ({ tag: r.tag, count: Number(r.count) }));
+  const tags = (data ?? []).map((r) => ({ tag: r.tag, count: Number(r.count) }));
   span.setAttributes({ 'lorekit.result_count': tags.length });
   return ok({ tags }, cors);
 }

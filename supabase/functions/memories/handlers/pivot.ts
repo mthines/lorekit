@@ -18,7 +18,10 @@ import { retentionFrom, retentionRpcParams } from '../../_shared/api/retention.t
 import type { RetentionConditions } from '../../_shared/api/retention.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 
-/** One row as `lorekit_memory_pivot` returns it. */
+/**
+ * One cell as `lorekit_memory_pivot` returns it — and so one element of
+ * `lorekit_memory_pivot_grid`'s jsonb array, which carries the same rows.
+ */
 interface PivotRow {
   row_value: string;
   col_value: string;
@@ -123,7 +126,14 @@ async function runPivot(
   const list = (values: readonly string[]) => (values.length ? [...values] : null);
 
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc<PivotRow>('lorekit_memory_pivot', {
+  // `lorekit_memory_pivot_grid` (00118), not `lorekit_memory_pivot`: the same
+  // cells as ONE jsonb array. PostgREST caps a set-returning result at
+  // `max_rows` (1000) without an error, and `limit` goes up to
+  // PIVOT_LIMIT_MAX (2000), so a limit above 999 was cut at 1000 — and the
+  // `truncated` check below, comparing 1000 rows to the limit, reported a cut
+  // grid as complete. A scalar result is not capped, so `p_limit` is the only
+  // limit and `truncated` means what it says.
+  const { data, error } = await tracedDb.rpc<PivotRow[] | null>('lorekit_memory_pivot_grid', {
     p_row_facet: row,
     p_col_facet: col,
     p_user_id: auth.userId ?? null,
@@ -165,7 +175,7 @@ async function runPivot(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const rows = (data ?? []) as PivotRow[];
+  const rows = data ?? [];
   const truncated = rows.length > limit;
   const cells = rows.slice(0, limit).map((r) => ({
     row: r.row_value,
