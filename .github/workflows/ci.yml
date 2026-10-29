@@ -306,7 +306,9 @@ jobs:
   #    `nx affected` would, and `--changed` gives finer, file-level selection.
   web-test:
     name: Web — Storybook interaction + visual tests (changed)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.56.0 (pinned for pixel baselines)
+    # cannot install chromium on Ubuntu 26.04, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     needs: [changes]
     if: needs.changes.outputs.web == 'true'
     permissions:
@@ -383,7 +385,9 @@ jobs:
   #    on web-test above.
   web-e2e:
     name: Web — Playwright e2e (local build + local Supabase)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.56.0 (pinned for pixel baselines)
+    # cannot install chromium on Ubuntu 26.04, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     needs: [changes]
     if: needs.changes.outputs.web == 'true'
     timeout-minutes: 30

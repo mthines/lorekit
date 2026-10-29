@@ -66,7 +66,9 @@ jobs:
        (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) ||
         (github.event.comment.user.type == 'Bot' &&
          contains(fromJSON('["dash0-dev[bot]"]'), github.event.comment.user.login))))
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.56.0 (pinned for pixel baselines)
+    # cannot install chromium on Ubuntu 26.04, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20 # a wedged browser run must not burn the whole 6h ceiling
     permissions:
       contents: write # push the regenerated baselines back onto the PR branch
