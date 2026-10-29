@@ -749,6 +749,11 @@ jobs:
     name: Deploy → production
     runs-on: ubuntu-latest
     needs: smoke-preview
+    # `always()` is load-bearing. Without an `if:`, GitHub applies an implicit
+    # `success()`, which also checks TRANSITIVE needs — so the skipped
+    # `deploy-web-preview` on an API-only merge silently skipped this job even
+    # though `smoke-preview` passed, and API-only merges never reached production.
+    if: always() && needs.smoke-preview.result == 'success'
     environment: production
     permissions:
       # `write` for this job's own deployed-SHA marker, nothing else.

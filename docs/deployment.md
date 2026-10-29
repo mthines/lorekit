@@ -274,6 +274,13 @@ API paths changed, and the web chain (`deploy-web-preview` / `stage-web-producti
 neither. `packages/schemas/`, the workspace files, and `deploy.yml` itself map to
 **both**.
 
+Every job downstream of a path-gated job carries an explicit
+`if: always() && …` on its real predecessors. A job with **no** `if:` gets
+GitHub's implicit `success()`, which also fails when any *transitive* dependency
+was skipped: `deploy-production` once had none, so on every API-only merge the
+skipped `deploy-web-preview` (two hops up, via `smoke-preview`) skipped the
+production deploy while the run still reported success. Don't drop those guards.
+
 A **manual run** can override the detection. From **Actions ▸ Deploy ▸ Run
 workflow** (or `gh workflow run deploy.yml`), pick a `deploy_target`:
 
