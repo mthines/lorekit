@@ -11435,8 +11435,9 @@ $$;
 --       null (the handler treats null as "no rows", but [] is the contract).
 -- AC-4: tenancy is still lorekit_memory_facets': through the invoker wrapper,
 --       an authenticated caller sees its own catalog and not another user's.
--- AC-5: the two argument lists are identical (names, types, defaults), so a
---       dimension added to one and not the other fails here.
+-- AC-5: the two argument lists are identical (names, types, defaults), and
+--       every parameter is forwarded, so a dimension added to one and not the
+--       other — or declared and never passed on — fails here.
 -- AC-6: anon cannot execute it; authenticated and service_role can.
 do $$
 declare
@@ -11560,6 +11561,15 @@ begin
     format('117 AC-5b: the catalog must take exactly lorekit_memory_facets'' parameters — '
            'a dimension added to one must be added to the other.%s  catalog: %s%s  set form: %s',
            chr(10), pg_get_function_arguments(v_wrapper), chr(10), pg_get_function_arguments(v_set_fn));
+
+  -- Declared is not forwarded: a parameter the wrapper accepts but never passes
+  -- on would be silently ignored, which AC-5b cannot see.
+  select count(*) into v_n
+    from pg_proc p, unnest(p.proargnames) as a
+   where p.oid = v_wrapper
+     and p.prosrc !~ ('\m' || a || '\s+=>\s+' || a || '\M');
+  assert v_n = 0,
+    format('117 AC-5c: %s catalog parameter(s) are declared but not forwarded to lorekit_memory_facets', v_n);
 
   assert not has_function_privilege('anon', v_wrapper, 'EXECUTE'),
     '117 AC-6a: anon must not be able to execute lorekit_memory_facet_catalog';
