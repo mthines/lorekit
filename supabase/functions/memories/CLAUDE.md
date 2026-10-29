@@ -304,8 +304,13 @@ response for a large account carried exactly 1000 rows (`lorekit.result_count`),
 Explorer's Tag and Trigger menus read "No values yet". A scalar result is not capped, so the
 catalog is exact at any size. The wrapper is security invoker and only reshapes the answer;
 every rule below still lives in `lorekit_memory_facets`. §117 asserts the two argument lists
-are identical, so a new dimension must be added to both or CI fails. `GET /tags`
-(`lorekit_memory_tags`) and `/pivot` are still set-returning and still capped.
+are identical, so a new dimension must be added to both or CI fails. `GET /tags` and
+`/pivot` read the same way as of 00118 (see their sections).
+
+**The rule, for every aggregate route here:** an RPC whose row count grows with the data is
+read through a scalar `jsonb` wrapper, never as a set. `/scopes`, `/activity` and
+`/read-activity` are still set-returning; a large enough account can reach 1000 rows there too
+(the Insights page already flags a full `/activity` page as possibly incomplete).
 
 **Counts are DRILL-DOWN as of 00057.** The route mirrors `GET /`'s filter params (`scope`,
 `tags`/`tags_mode`, and a `<dim>`/`<dim>_mode` pair for each scalar dimension) and passes them
@@ -828,6 +833,25 @@ archive-only labels — in the other.
 
 Same rationale as `/scopes` for aggregating in Postgres (`lorekit_memory_tags`, migration
 00050), and the same tenant predicate.
+
+**The handler reads `lorekit_memory_tag_catalog` (00118)**: the same rows, as one `jsonb`
+array. Read as a set, PostgREST cut the catalog at `max_rows` (1000), and because it is ordered
+count desc, an account with more than 1000 labels lost its rarest ones, which are the ones a
+catalog exists to surface. §118 pins equality past 1000 rows and that the wrapper takes and
+forwards exactly `lorekit_memory_tags`' parameters.
+
+## `GET /pivot` / `POST /pivot`
+
+`lorekit_memory_pivot` (00090, widened like `_facets`) counts memories per (row value, column
+value) pair across two dimensions, both self-excluded, ordered count desc, capped by `limit`
+(default 400, max `PIVOT_LIMIT_MAX` = 2000). The handler asks for `limit + 1` so `truncated`
+can say whether the cap cut the grid.
+
+**The handler reads `lorekit_memory_pivot_grid` (00118)**: the same cells, as one `jsonb`
+array. Read as a set, any `limit` above 999 met PostgREST's `max_rows` (1000) first, and the
+`truncated` check, comparing 1000 rows against the limit, reported a cut grid as complete. With
+the scalar form `limit` is the only cap. §118 pins equality past 1000 cells, that `p_limit` is
+honoured exactly, and parameter parity and forwarding.
 
 ## `GET /activity`
 
