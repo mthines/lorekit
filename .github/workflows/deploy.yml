@@ -415,7 +415,9 @@ jobs:
   #    No `environment:` — a required reviewer on `production` must not gate a test.
   e2e-web-staged:
     name: Web e2e → staged production build (Playwright)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.56.0 (pinned for pixel baselines)
+    # cannot install chromium on Ubuntu 26.04, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     needs: [changes, stage-web-production]
     if: needs.stage-web-production.result == 'success'
     timeout-minutes: 20
@@ -997,7 +999,9 @@ jobs:
   # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
     name: Smoke test → production
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.56.0 (pinned for pixel baselines)
+    # cannot install chromium on Ubuntu 26.04, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     needs: [deploy-production, promote-web-production]
     # Run when EITHER half reached production. The health/MCP curls hit the API
     # (live either way) and the dashboard curl hits the web, so it validates
