@@ -19,6 +19,11 @@ import { retentionFrom, retentionRpcParams } from '../../_shared/api/retention.t
 import type { RetentionConditions } from '../../_shared/api/retention.ts';
 import { parseTagsParam } from '../../_shared/schemas/tags.ts';
 
+/**
+ * One element of the catalog. `lorekit_memory_facet_catalog` returns
+ * `lorekit_memory_facets`' rows as a jsonb array, so an element has exactly a
+ * row's shape; the generated types can only call a jsonb result `Json`.
+ */
 type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Returns'][number];
 
 /**
@@ -142,9 +147,16 @@ async function runFacets(
   const list = (values: readonly string[]) => (values.length ? [...values] : null);
 
   const tracedDb = createTracedClient(db, span);
+  // `lorekit_memory_facet_catalog` (00117), not `lorekit_memory_facets`: the
+  // same rows as ONE jsonb array. PostgREST caps a set-returning result at
+  // `max_rows` (1000) without an error, and the set is ordered `facet asc`, so
+  // a large account silently lost `tag` and `trigger` — the dimensions that
+  // sort last — and the Explorer's menus for them read "No values yet". A
+  // scalar result is not capped, so the catalog is exact at any size.
+  //
   // Service-role callers have no user id; the RPC recognises a null p_user_id
   // from a service_role JWT as "no tenant filter", matching GET /memories.
-  const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
+  const { data, error } = await tracedDb.rpc<FacetRow[] | null>('lorekit_memory_facet_catalog', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
     p_scope: scopeFilter ?? null,
@@ -186,7 +198,7 @@ async function runFacets(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const facets = ((data ?? []) as FacetRow[])
+  const facets = (data ?? [])
     .filter((r) => !narrowed || requested.has(r.facet))
     .map((r) => ({ facet: r.facet, value: r.value, count: Number(r.count) }));
 

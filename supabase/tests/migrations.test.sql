@@ -49,6 +49,9 @@ values
   -- §115's own account: its full-order and page-walk assertions compare
   -- against the WHOLE (user, scope) population.
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000a9', 'authenticated', 'authenticated', 'lk-mig-a9@test.local', now(), now()),
+  -- §117's own account: its catalog must exceed 1000 rows from its own lessons
+  -- alone, and its equality assertions compare whole catalogs.
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000aa', 'authenticated', 'authenticated', 'lk-mig-aa@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000b2', 'authenticated', 'authenticated', 'lk-mig-b@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000c3', 'authenticated', 'authenticated', 'lk-mig-c@test.local', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'lk-mig-d@test.local', now(), now()),
@@ -11410,6 +11413,160 @@ begin
   assert v_access = 'orgs_only', '116 AC-5a: set_scoping must accept orgs_only with org ids';
 
   perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 117. the facet catalog as ONE value, past PostgREST's max_rows (00117) ──
+-- PostgREST caps a set-returning result at max_rows (1000, supabase/config.toml)
+-- without an error, and `lorekit_memory_facets` orders `facet asc`, so `tag`
+-- and `trigger` — the last of the nine dimensions — were what a large account
+-- lost: the Explorer's Tag and Trigger menus read "No values yet". 00117 returns
+-- the same rows as one jsonb array, which PostgREST does not cap.
+--
+-- 600 lessons on a fresh account, each with its own tag and its own trigger,
+-- give 600 + 600 rows for those two dimensions alone plus the scalar ones:
+-- past 1000, with tag and trigger at the END of the order — exactly the rows
+-- the cap used to cut.
+--
+-- AC-1: the catalog is a SCALAR jsonb, not a set, so max_rows cannot apply.
+-- AC-2: it holds every row the set form returns, past 1000, in the same order
+--       with the same counts — every tag and every trigger included.
+-- AC-3: drill-down parameters pass through, and an empty catalog is [], never
+--       null (the handler treats null as "no rows", but [] is the contract).
+-- AC-4: tenancy is still lorekit_memory_facets': through the invoker wrapper,
+--       an authenticated caller sees its own catalog and not another user's.
+-- AC-5: the two argument lists are identical (names, types, defaults), so a
+--       dimension added to one and not the other fails here.
+-- AC-6: anon cannot execute it; authenticated and service_role can.
+do $$
+declare
+  v_user  uuid := '00000000-0000-0000-0000-0000000000aa';
+  v_other uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_set   jsonb;
+  v_cat   jsonb;
+  v_n     bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_user), true);
+
+  insert into memories (user_id, scope, key, value, kind, host, tags, trigger)
+  select v_user, 'global', format('117-%s', g), 'v', 'lesson', 'h1',
+         array[format('117-tag-%s', g)], format('117-trigger-%s', g)
+    from generate_series(1, 600) as g;
+
+  -- ── AC-1: one value, not a set ─────────────────────────────────────────
+  select count(*) into v_n
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_facet_catalog'
+     and not p.proretset and p.prorettype = 'jsonb'::regtype;
+  assert v_n = 1,
+    '117 AC-1: lorekit_memory_facet_catalog must return a single jsonb (not a set) — '
+    'a set is capped at max_rows by PostgREST';
+
+  -- ── AC-2: every row, in order, past 1000 ───────────────────────────────
+  select jsonb_agg(jsonb_build_object('facet', f.facet, 'value', f.value, 'count', f.count)
+                   order by f.ord)
+    into v_set
+    from lorekit_memory_facets(p_user_id => v_user, p_scope => 'global')
+         with ordinality as f(facet, value, count, ord);
+  v_cat := lorekit_memory_facet_catalog(p_user_id => v_user, p_scope => 'global');
+
+  assert jsonb_array_length(v_set) > 1000,
+    format('117 AC-2a: the fixture must yield more than 1000 catalog rows to exercise the cap, got %s',
+           jsonb_array_length(v_set));
+  assert v_cat = v_set,
+    format('117 AC-2b: the catalog must equal lorekit_memory_facets row for row, in order '
+           '(%s vs %s elements)', jsonb_array_length(v_cat), jsonb_array_length(v_set));
+
+  select count(*) into v_n from jsonb_array_elements(v_cat) e
+   where e->>'facet' = 'tag' and e->>'value' like '117-tag-%' and (e->>'count')::int = 1;
+  assert v_n = 600, format('117 AC-2c: all 600 tags must be listed with count 1, got %s', v_n);
+
+  select count(*) into v_n from jsonb_array_elements(v_cat) e
+   where e->>'facet' = 'trigger' and e->>'value' like '117-trigger-%' and (e->>'count')::int = 1;
+  assert v_n = 600, format('117 AC-2d: all 600 triggers must be listed with count 1, got %s', v_n);
+
+  assert v_cat->-1->>'facet' = 'trigger',
+    format('117 AC-2e: the last element must be a trigger — the rows past the cap — got %s',
+           v_cat->-1->>'facet');
+
+  -- ── AC-3: drill-down passes through; empty is [] ───────────────────────
+  select jsonb_agg(jsonb_build_object('facet', f.facet, 'value', f.value, 'count', f.count)
+                   order by f.ord)
+    into v_set
+    from lorekit_memory_facets(p_user_id => v_user, p_scope => 'global',
+                               p_tags => array['117-tag-1'], p_trigger => array['117-trigger-2'])
+         with ordinality as f(facet, value, count, ord);
+  v_cat := lorekit_memory_facet_catalog(p_user_id => v_user, p_scope => 'global',
+                                        p_tags => array['117-tag-1'], p_trigger => array['117-trigger-2']);
+  assert v_cat = v_set, '117 AC-3a: a filtered catalog must equal the filtered set form';
+
+  -- No lesson carries tag-1 AND trigger-2, so host h1 is listed at zero.
+  select (e->>'count')::int into v_n from jsonb_array_elements(v_cat) e
+   where e->>'facet' = 'host' and e->>'value' = 'h1';
+  assert v_n = 0, format('117 AC-3b: the filters must narrow the counts (host h1 = 0), got %s', v_n);
+
+  -- The tag facet self-excludes the tag filter, so under trigger-2 alone tag-2 counts 1.
+  select (e->>'count')::int into v_n from jsonb_array_elements(v_cat) e
+   where e->>'facet' = 'tag' and e->>'value' = '117-tag-2';
+  assert v_n = 1, format('117 AC-3c: tag-2 must count 1 under trigger-2, got %s', v_n);
+
+  v_cat := lorekit_memory_facet_catalog(p_user_id => v_user, p_scope => 'project::117-nothing-here');
+  assert v_cat = '[]'::jsonb, format('117 AC-3d: an empty catalog must be [], got %s', v_cat);
+  reset role;
+
+  -- ── AC-4: tenancy through the invoker wrapper ──────────────────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_user), true);
+  v_cat := lorekit_memory_facet_catalog(p_user_id => v_user, p_scope => 'global');
+  select count(*) into v_n from jsonb_array_elements(v_cat) e where e->>'facet' = 'tag'
+     and e->>'value' like '117-tag-%';
+  assert v_n = 600, format('117 AC-4a: the owner must see its 600 tags as authenticated, got %s', v_n);
+
+  -- Another user, even naming the owner as p_user_id, sees none of them.
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_other), true);
+  v_cat := lorekit_memory_facet_catalog(p_user_id => v_user, p_scope => 'global');
+  select count(*) into v_n from jsonb_array_elements(v_cat) e where e->>'value' like '117-%';
+  assert v_n = 0, format('117 AC-4b: another user must see none of the owner''s values, got %s', v_n);
+  reset role;
+
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-5 / AC-6: the catalog side.
+do $$
+declare
+  v_wrapper oid;
+  v_set_fn  oid;
+  v_n       bigint;
+begin
+  select count(*) into v_n
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_facet_catalog';
+  assert v_n = 1, format('117 AC-5a: lorekit_memory_facet_catalog must have exactly one overload, found %s', v_n);
+
+  select p.oid into v_wrapper
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_facet_catalog';
+  select p.oid into v_set_fn
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_memory_facets';
+
+  assert pg_get_function_arguments(v_wrapper) = pg_get_function_arguments(v_set_fn),
+    format('117 AC-5b: the catalog must take exactly lorekit_memory_facets'' parameters — '
+           'a dimension added to one must be added to the other.%s  catalog: %s%s  set form: %s',
+           chr(10), pg_get_function_arguments(v_wrapper), chr(10), pg_get_function_arguments(v_set_fn));
+
+  assert not has_function_privilege('anon', v_wrapper, 'EXECUTE'),
+    '117 AC-6a: anon must not be able to execute lorekit_memory_facet_catalog';
+  assert has_function_privilege('authenticated', v_wrapper, 'EXECUTE'),
+    '117 AC-6b: authenticated must be able to execute lorekit_memory_facet_catalog';
+  assert has_function_privilege('service_role', v_wrapper, 'EXECUTE'),
+    '117 AC-6c: service_role must be able to execute lorekit_memory_facet_catalog';
 end;
 $$;
 

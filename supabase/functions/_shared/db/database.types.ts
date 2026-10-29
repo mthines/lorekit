@@ -933,6 +933,47 @@ export type Database = {
           scope: string
         }[]
       }
+      lorekit_memory_facet_catalog: {
+        Args: {
+          p_archived?: boolean
+          p_created_since?: string
+          p_created_until?: string
+          p_exclude_tags?: string[]
+          p_host?: string[]
+          p_host_mode?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
+          p_kind?: string[]
+          p_kind_mode?: string
+          p_max_opened_count?: number
+          p_max_read_count?: number
+          p_max_seen_count?: number
+          p_min_age_days?: number
+          p_min_opened_count?: number
+          p_min_read_count?: number
+          p_min_seen_count?: number
+          p_opened_within_days?: number
+          p_origin_branch?: string[]
+          p_origin_branch_mode?: string
+          p_origin_pr?: string[]
+          p_origin_pr_mode?: string
+          p_origin_repo?: string[]
+          p_origin_repo_mode?: string
+          p_owner?: string[]
+          p_owner_mode?: string
+          p_scope?: string
+          p_source_agent?: string[]
+          p_source_agent_mode?: string
+          p_tags?: string[]
+          p_tags_mode?: string
+          p_trigger?: string[]
+          p_trigger_mode?: string
+          p_unseen_days?: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
       lorekit_memory_facets: {
         Args: {
           p_archived?: boolean
