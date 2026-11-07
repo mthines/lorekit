@@ -368,7 +368,7 @@ export const MCP_TOOLS = [
         supersedes: {
           type: 'string',
           description:
-            'The id of the memory this one replaces (from `memory.read`). Must name a memory you can read with this token; anything else is rejected as not found. Kept on update unless re-supplied.',
+            'The id of the memory this one replaces (from `memory.read`). Must name a memory this token can read that has the same owner as the one being written (personal to personal, or the same org); anything else is rejected as not found. Kept on update unless re-supplied.',
         },
       },
     },
