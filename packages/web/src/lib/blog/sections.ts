@@ -54,7 +54,7 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     id: 'lorekit-memory-format-gaps',
     label: "Seven gaps in LoreKit's memory format",
     summary:
-      "LoreKit's memory record is one open-source proposal for a shared agent-memory format, and it isn't finished. Held up against Copilot Memory, Graphiti, OpenTelemetry and the rest, it has seven gaps, each tied to a failure you can point to. Here they are, with a sketch of a better record and the CI test any shared format should pass.",
+      "LoreKit's memory record is one open-source proposal for a shared agent-memory format, and it isn't finished. Held up against Copilot Memory, Graphiti, OpenTelemetry and the rest, it had seven gaps, each tied to a failure you can point to. Four are now closed: a stable id, open attributes, a content type and a supersedes link. Here is what changed, what is still open, and the CI test any shared format should pass.",
   },
 ];
 
