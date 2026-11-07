@@ -47,6 +47,7 @@ export const mirrorPairs = [
   { core: 'packages/mcp-core/src/limits/ttl.ts', edge: 'supabase/functions/mcp/ttl.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/limits/ttl-defaults.ts', edge: 'supabase/functions/mcp/ttl-defaults.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/provenance/origin.ts', edge: 'supabase/functions/_shared/provenance/origin.ts', driftChecked: true },
+  { core: 'packages/mcp-core/src/provenance/record-extensions.ts', edge: 'supabase/functions/_shared/provenance/record-extensions.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/webhook/webhook-secret-select.ts', edge: 'supabase/functions/mcp/webhook-secret-select.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/auth/tenant-scope.ts', edge: 'supabase/functions/_shared/auth/tenant-scope.ts', driftChecked: true },
   { core: 'packages/mcp-core/src/auth/org-permissions.ts', edge: 'supabase/functions/mcp/org-permissions.ts', driftChecked: true },
