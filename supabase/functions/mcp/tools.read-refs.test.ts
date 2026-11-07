@@ -143,21 +143,43 @@ Deno.test('AC-1: refs branch returns entries and missing', async () => {
   assertEquals(Array.isArray((result as { missing: unknown[] }).missing), true);
 });
 
-Deno.test('AC-1: singular branch own keys are exactly scope, value and updated_at', async () => {
+Deno.test('AC-1: singular branch own keys are exactly id, scope, value and updated_at', async () => {
   const { span } = newRootSpan();
-  // Only the columns the singular path actually selects (`id,scope,value,
-  // updated_at`) — a real Postgres response would never carry `key` here, so
-  // the fake must not either or this assertion would pass for the wrong reason.
-  // `scope` IS selected now and IS returned: an unscoped read that did not say
-  // where it landed is ambiguous, so every singular read names its scope.
+  // Only the columns the singular path actually selects — a real Postgres
+  // response would never carry `key` here, so the fake must not either or this
+  // assertion would pass for the wrong reason. `scope` is returned because an
+  // unscoped read that did not say where it landed is ambiguous; `id` is
+  // returned (00119) because it is the record's stable identity. Record
+  // extensions that hold their defaults are left out.
   const { db } = fakeDb({
-    // deno-lint-ignore no-explicit-any
-    singleRows: [{ id: '1', scope: 'global', value: 'hello', updated_at: 't' } as any],
+    singleRows: [
+      // deno-lint-ignore no-explicit-any
+      { id: '1', scope: 'global', value: 'hello', updated_at: 't', attributes: {}, content_type: 'text/markdown', supersedes: null } as any,
+    ],
   });
 
   const result = await toolRead(db, { scope: 'global', key: 'a' }, null, span);
 
-  assertEquals(Object.keys(result as object).sort(), ['scope', 'updated_at', 'value']);
+  assertEquals(Object.keys(result as object).sort(), ['id', 'scope', 'updated_at', 'value']);
+});
+
+Deno.test('00119: a read reports record extensions that say something', async () => {
+  const { span } = newRootSpan();
+  const { db } = fakeDb({
+    singleRows: [
+      {
+        id: '1', scope: 'global', value: '{}', updated_at: 't',
+        attributes: { 'vcs.pr': 4 }, content_type: 'application/json', supersedes: '2',
+        // deno-lint-ignore no-explicit-any
+      } as any,
+    ],
+  });
+
+  const result = await toolRead(db, { scope: 'global', key: 'a' }, null, span) as Record<string, unknown>;
+
+  assertEquals(result.attributes, { 'vcs.pr': 4 });
+  assertEquals(result.content_type, 'application/json');
+  assertEquals(result.supersedes, '2');
 });
 
 Deno.test('AC-2: refs together with scope or key is rejected', async () => {

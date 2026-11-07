@@ -8,6 +8,8 @@ import {
   parseRecordFields,
   parseSupersedes,
   splitCitedIds,
+  translateRecordFieldDbError,
+  compactRecordFields,
 } from './record-extensions.js';
 
 const ID = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b';
@@ -95,5 +97,35 @@ describe('splitCitedIds', () => {
 
   it('treats a non-array as empty', () => {
     expect(splitCitedIds('global::k')).toEqual({ ids: [], refs: [] });
+  });
+});
+
+describe('translateRecordFieldDbError', () => {
+  it('turns the database rejections into user errors', () => {
+    const missing = translateRecordFieldDbError({ code: 'P0001', message: `supersedes_not_found: ${ID}` });
+    expect(missing).toBeInstanceOf(RecordFieldError);
+    expect((missing as Error).message).not.toContain(ID);
+    const json = translateRecordFieldDbError({
+      code: '23514',
+      message: 'new row for relation "memories" violates check constraint "memories_json_value_parses"',
+    });
+    expect(json).toBeInstanceOf(RecordFieldError);
+  });
+
+  it('passes other errors through unchanged', () => {
+    const other = { code: '23505', message: 'duplicate key' };
+    expect(translateRecordFieldDbError(other)).toBe(other);
+  });
+});
+
+describe('compactRecordFields', () => {
+  it('leaves out fields that hold their defaults', () => {
+    expect(compactRecordFields({ id: ID, value: 'v', attributes: {}, content_type: 'text/markdown', supersedes: null }))
+      .toEqual({ id: ID, value: 'v' });
+  });
+
+  it('keeps fields that say something', () => {
+    const row = { id: ID, attributes: { 'vcs.pr': 4 }, content_type: 'application/json', supersedes: ID };
+    expect(compactRecordFields(row)).toEqual(row);
   });
 });

@@ -22,7 +22,8 @@
  * swallowed here.
  */
 
-import { parseMemoryRefs } from '../scope/scope.ts';
+import { MEMORY_CITED_MAX, parseMemoryRefs } from '../scope/scope.ts';
+import { splitCitedIds } from '../provenance/record-extensions.ts';
 import { createTracedClient } from './otel.ts';
 import type { Span } from './otel.ts';
 import type { DbClient } from '../db/db-client.ts';
@@ -58,10 +59,15 @@ export async function recordCitations(
   span: Span,
   input: CitationInput,
 ): Promise<number> {
-  const refs = parseMemoryRefs(input.cited);
+  // An entry names a lesson either by id (00119) or by `scope::key`. The cap
+  // applies to both forms together, ids first.
+  const split = splitCitedIds(input.cited);
+  const ids = split.ids.slice(0, MEMORY_CITED_MAX);
+  const refs = parseMemoryRefs(split.refs).slice(0, MEMORY_CITED_MAX - ids.length);
+  const claimed = ids.length + refs.length;
   // Nothing to record is the common case — most writes cite nothing — so this
   // returns before touching the database at all.
-  if (refs.length === 0 || !input.userId || input.reachesPersonal === false) return 0;
+  if (claimed === 0 || !input.userId || input.reachesPersonal === false) return 0;
 
   try {
     // Through the traced client, like every other RPC on a request path: the
@@ -73,6 +79,7 @@ export async function recordCitations(
       p_cited_scopes: refs.map((r) => r.scope),
       p_cited_keys: refs.map((r) => r.key),
       p_correlation_id: input.correlationId,
+      p_cited_ids: ids,
     });
     if (error) return 0;
     const recorded = typeof data === 'number' ? data : 0;
@@ -81,7 +88,7 @@ export async function recordCitations(
     // owns, so a persistent gap means the agent is naming lessons that do not
     // exist — a prompt problem, invisible from the counter alone.
     span.setAttributes({
-      'lorekit.cited.count': refs.length,
+      'lorekit.cited.count': claimed,
       'lorekit.cited.recorded': recorded,
     });
     return recorded;

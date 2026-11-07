@@ -163,6 +163,8 @@ export type Database = {
       memories: {
         Row: {
           archived_at: string | null
+          attributes: Json
+          content_type: string
           created_at: string
           created_by: string | null
           expires_at: string | null
@@ -176,6 +178,7 @@ export type Database = {
           origin_repo: string | null
           scope: string
           source_agent: string | null
+          supersedes: string | null
           tags: string[]
           trigger: string | null
           updated_at: string
@@ -185,6 +188,8 @@ export type Database = {
         }
         Insert: {
           archived_at?: string | null
+          attributes?: Json
+          content_type?: string
           created_at?: string
           created_by?: string | null
           expires_at?: string | null
@@ -198,6 +203,7 @@ export type Database = {
           origin_repo?: string | null
           scope: string
           source_agent?: string | null
+          supersedes?: string | null
           tags?: string[]
           trigger?: string | null
           updated_at?: string
@@ -207,6 +213,8 @@ export type Database = {
         }
         Update: {
           archived_at?: string | null
+          attributes?: Json
+          content_type?: string
           created_at?: string
           created_by?: string | null
           expires_at?: string | null
@@ -220,6 +228,7 @@ export type Database = {
           origin_repo?: string | null
           scope?: string
           source_agent?: string | null
+          supersedes?: string | null
           tags?: string[]
           trigger?: string | null
           updated_at?: string
@@ -1014,7 +1023,9 @@ export type Database = {
       }
       memory_write: {
         Args: {
+          p_attributes?: Json
           p_clear_ttl?: boolean
+          p_content_type?: string
           p_created_at?: string
           p_key: string
           p_key_org_access?: string
@@ -1027,6 +1038,7 @@ export type Database = {
           p_origin_repo?: string
           p_scope: string
           p_source_agent?: string
+          p_supersedes?: string
           p_tags?: string[]
           p_trigger?: string
           p_ttl_seconds?: number
@@ -1035,7 +1047,9 @@ export type Database = {
         }
         Returns: {
           archived_at: string | null
+          attributes: Json
           binding_org_slug: string
+          content_type: string
           created_at: string
           expires_at: string
           host: string | null
@@ -1051,6 +1065,7 @@ export type Database = {
           scope: string
           seen_count: number
           source_agent: string | null
+          supersedes: string | null
           tags: string[]
           trigger: string | null
           updated_at: string

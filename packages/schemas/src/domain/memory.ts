@@ -61,7 +61,22 @@ export const MemoryWriteSchema = z.object({
   // the cap are all dropped, and the write succeeds regardless. A citation is
   // telemetry attached to a write and must never fail the write it measures —
   // the same posture `usage_events` and the read counters take.
+  //
+  // An entry may also be a memory id (uuid), which names the lesson even after
+  // its scope or key changes (00119). `splitCitedIds` in the shared
+  // record-extensions parser separates the two forms.
   cited: z.array(z.string().max(1024)).optional(),
+  // Record extensions (00119). Optional and additive: a write that omits them
+  // behaves exactly as before. The shared `parseRecordFields` validator
+  // (mcp-core / _shared/provenance/record-extensions.ts) owns the shape rules —
+  // these schemas only admit the wire types.
+  //   attributes    namespaced keys (`ci.run_url`) → scalar values; merged on
+  //                 update, and a null value removes the key
+  //   content_type  `text/markdown` (default) or `application/json`
+  //   supersedes    the id of the memory this one replaces
+  attributes: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  content_type: z.string().optional(),
+  supersedes: z.string().optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
@@ -908,11 +923,17 @@ export type ReadActivityResponse = z.infer<typeof ReadActivityResponseSchema>;
  * It is also not a column, so admitting it here would reproduce the `org` bug
  * exactly: copied into the column patch, naming something that does not exist,
  * failing every request that used it.
+ *
+ * The record extensions (`attributes`, `content_type`, `supersedes`) are
+ * omitted for the origin fields' reason: each has write-path validation (a
+ * merge, a JSON body check, a visibility check on the target) that lives in
+ * `memory_write`, and a column patch would bypass it. Set them with a write.
  */
 export const UpdateMemoryBodySchema = MemoryWriteSchema
   .omit({
     scope: true, key: true, created_at: true, org: true, cited: true,
     origin_repo: true, origin_branch: true, origin_commit: true, origin_pr: true,
+    attributes: true, content_type: true, supersedes: true,
   }).partial()
   .refine((d) => Object.keys(d).some((k) => d[k as keyof typeof d] !== undefined), { message: 'PATCH body must contain at least one field' });
 export type UpdateMemoryBody = z.infer<typeof UpdateMemoryBodySchema>;
@@ -950,6 +971,12 @@ export const MemoryEntrySchema = z.object({
   // Taxonomy. Optional/nullable so a row written before 00056 (NULL kind/host)
   // and an older client that reads neither are both unaffected.
   kind: z.string().nullable().optional(), host: z.string().nullable().optional(),
+  // Record extensions (00119). Optional so a client reading a response from a
+  // pre-00119 backend is unaffected; the columns themselves are NOT NULL
+  // (attributes, content_type) or nullable (supersedes).
+  attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  content_type: z.string().optional(),
+  supersedes: z.string().uuid().nullable().optional(),
   // Recurrence — how many times this lesson has been written (00059). The
   // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
   // for the same reason kind/host are, so a client reading a response from a
@@ -1019,6 +1046,7 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
   + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
+  + 'attributes,content_type,supersedes,'
   + 'read_count,opened_count,last_read_at,last_opened_at,cited_count,last_cited_at,'
   + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 

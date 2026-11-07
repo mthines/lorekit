@@ -32,6 +32,12 @@ import { memoryQuotaFromRow, quotaForKey, type MemoryCountRow } from '../_shared
 import { countActiveOrgMemories } from '../_shared/limits/org-memory-count.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/provenance/origin.ts';
+import {
+  parseRecordFields,
+  translateRecordFieldDbError,
+  compactRecordFields,
+  RECORD_FIELD_COLUMNS,
+} from '../_shared/provenance/record-extensions.ts';
 import { recordAuditDeferred } from '../_shared/audit/audit.ts';
 import { applyTenantScope, reachesPersonal, type KeyRestriction } from '../_shared/auth/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
@@ -160,7 +166,7 @@ export async function toolWrite(
   // argument rather than a parameter threaded through all twelve.
   correlationId?: string | null,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, cited, attributes, content_type, supersedes } = params;
   if (!rawScope || !key || !value) throw new UserInputError('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new UserInputError(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -172,6 +178,9 @@ export async function toolWrite(
   // Every field is independently optional; the RPC keeps the last KNOWN value
   // per field, so omitting one never erases what an earlier write recorded.
   const origin = parseOrigin({ origin_repo, origin_branch, origin_commit, origin_pr });
+  // Record extensions (00119): open attributes, the value's content type, and
+  // the id this record supersedes. Null means "keep what is stored".
+  const record = parseRecordFields({ attributes, content_type, supersedes }, value);
   // Taxonomy: explicit kind/host win; otherwise recover them from the loop tag.
   // The shared resolver is the one place the closed-vocabulary check and the
   // host-length clamp live, so storage and usage tracking classify identically.
@@ -194,6 +203,9 @@ export async function toolWrite(
     ...(origin.pr !== null ? { 'lorekit.origin.pr': origin.pr } : {}),
     ...(resolvedKind ? { 'lorekit.kind': resolvedKind } : {}),
     ...(resolvedHost ? { 'lorekit.host': resolvedHost } : {}),
+    ...(record.attributes ? { 'lorekit.attributes.count': Object.keys(record.attributes).length } : {}),
+    ...(record.contentType ? { 'lorekit.content_type': record.contentType } : {}),
+    ...(record.supersedes ? { 'lorekit.supersedes': true } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -220,6 +232,9 @@ export async function toolWrite(
       p_origin_pr: origin.pr,
       p_kind: resolvedKind,
       p_host: resolvedHost,
+      p_attributes: record.attributes,
+      p_content_type: record.contentType,
+      p_supersedes: record.supersedes,
       // The calling key's restriction, BOTH axes (00068/00069). The RPC is the
       // LAST gate on the write path — the edge runs on the service-role client,
       // so the dispatcher's check above it is advisory — and it is also the only
@@ -231,7 +246,7 @@ export async function toolWrite(
     })
     .single();
   if (error) {
-    const translated = translateOrgPermissionError(translateCapError(error));
+    const translated = translateRecordFieldDbError(translateOrgPermissionError(translateCapError(error)));
     throw translated instanceof Error ? translated : new Error(error.message);
   }
   const row = data as {
@@ -340,11 +355,12 @@ export async function toolRead(
   });
 
   const tracedDb = createTracedClient(db, span);
-  // `id` is selected purely to drive the per-memory read counter below — it is
-  // stripped before the tool's result is returned. `scope` IS returned: an
-  // unscoped read that did not say where it landed is ambiguous, and the caller
-  // has no other way to tell a `global` hit from a `repo::…` one.
-  let query = tracedDb.from('memories').select('id,scope,value,updated_at').eq('key', key).is('archived_at', null)
+  // `id` drives the per-memory read counter below AND is returned (00119): it
+  // is the record's stable identity, the one `supersedes` and `cited` accept.
+  // `scope` is returned too: an unscoped read that did not say where it landed
+  // is ambiguous, and the caller has no other way to tell a `global` hit from a
+  // `repo::…` one.
+  let query = tracedDb.from('memories').select(`id,scope,value,updated_at,${RECORD_FIELD_COLUMNS}`).eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
   // A named scope still narrows in SQL — same single-row read as before, no
   // extra rows fetched to be discarded client-side.
@@ -369,7 +385,7 @@ export async function toolRead(
     .order('updated_at', { ascending: false })
     .limit(UNSCOPED_READ_CANDIDATE_LIMIT);
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string }[];
+  const rows = (data ?? []) as { id: string; scope: string; value: string; updated_at: string; attributes?: unknown; content_type?: unknown; supersedes?: unknown }[];
   // Stamped BEFORE the miss return, not after: a miss is exactly the population
   // this measure exists to size — how often an unscoped read fans out and still
   // finds nothing. Stamping it after the return also made this surface disagree
@@ -391,7 +407,7 @@ export async function toolRead(
   // discarded were never shown to the caller, and counting them would inflate
   // the `opened_count / read_count` ratio `/insights` is built on.
   recordMemoryReads(db, [winner.id], 'targeted', 'mcp');
-  const { id: _id, ...rest } = winner;
+  const rest = compactRecordFields(winner);
   // `other_scopes` appears ONLY when the key was genuinely ambiguous — an
   // always-present empty array would be noise on every single-lesson read.
   const others = shadowedScopes(rows, winner);
@@ -447,16 +463,16 @@ async function toolReadRefs(
 
   // One query builder for both key shapes, so the batched and single-key paths
   // cannot drift in their tenant, archived or expiry predicates. `id` is
-  // selected purely to drive the read counter below — it is stripped before
-  // the tool's result is returned, matching the singular path's leanness (D7).
+  // returned, like the singular path's (00119), with the same compacted record
+  // extensions.
   const run = async (scope: string, keyFilter: { in: string[] } | { eq: string }) => {
-    const base = tracedDb.from('memories').select('id,scope,key,value,updated_at').eq('scope', scope);
+    const base = tracedDb.from('memories').select(`id,scope,key,value,updated_at,${RECORD_FIELD_COLUMNS}`).eq('scope', scope);
     let query = ('in' in keyFilter ? base.in('key', keyFilter.in) : base.eq('key', keyFilter.eq))
       .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
     if (userId) query = applyTenantScope(query, userId, orgIds, keyScoping);
     const { data, error } = await query;
     if (error) throw new Error(error.message);
-    return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string }[];
+    return (data ?? []) as { id: string; scope: string; key: string; value: string; updated_at: string; attributes?: unknown; content_type?: unknown; supersedes?: unknown }[];
   };
 
   const rows = (
@@ -470,7 +486,7 @@ async function toolReadRefs(
   ).flat();
 
   if (rows.length > 0) recordMemoryReads(db, rows.map((r) => r.id), 'targeted', 'mcp');
-  const entries = rows.map(({ id: _id, ...rest }) => rest);
+  const entries = rows.map(compactRecordFields);
   const missing = missingRefs(parsed, rows);
   // `result.count` is what every other tool reports, so a batch read that omits
   // it is absent from any panel built over that attribute rather than reading

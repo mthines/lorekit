@@ -165,3 +165,50 @@ export function splitCitedIds(cited: unknown): { ids: string[]; refs: unknown[] 
   }
   return { ids: [...ids], refs };
 }
+
+/**
+ * The database's own rejections of these fields, as user errors. The RPC and
+ * the table constraints are the last gate (a JSON record updated without a
+ * content_type still has its body checked, and only the database can see
+ * whether a `supersedes` id is readable), so their errors must reach the
+ * caller as the same {@link RecordFieldError} the parser throws.
+ */
+const DB_FIELD_ERRORS: ReadonlyArray<readonly [string, string]> = [
+  ['supersedes_not_found', 'supersedes names a memory that does not exist or that you cannot read'],
+  ['memories_json_value_parses', 'value must be valid JSON when content_type is application/json'],
+  ['memories_content_type_known', `content_type must be one of ${CONTENT_TYPES.join(', ')}`],
+  ['memories_supersedes_not_self', 'a memory cannot supersede itself'],
+];
+
+/** Map a database error about a record field to a {@link RecordFieldError}; pass anything else through. */
+export function translateRecordFieldDbError(err: unknown): unknown {
+  const message = (err as { message?: string } | null | undefined)?.message ?? '';
+  for (const [marker, text] of DB_FIELD_ERRORS) {
+    if (message.includes(marker)) return new RecordFieldError(text);
+  }
+  return err;
+}
+
+/** The columns a read selects to report the record extensions. */
+export const RECORD_FIELD_COLUMNS = 'attributes,content_type,supersedes';
+
+type WithRecordFields = { attributes?: unknown; content_type?: unknown; supersedes?: unknown };
+
+/**
+ * Shape a read result for an agent: keep the record extensions only where they
+ * say something. An empty map, the default content type, and a missing link
+ * are left out, so a lesson that uses none of them reads exactly as before and
+ * costs no extra tokens on every read.
+ */
+export function compactRecordFields<T extends WithRecordFields>(
+  row: T,
+): Omit<T, keyof WithRecordFields> & Partial<WithRecordFields> {
+  const { attributes, content_type, supersedes, ...rest } = row;
+  const hasAttributes = typeof attributes === 'object' && attributes !== null && Object.keys(attributes).length > 0;
+  return {
+    ...rest,
+    ...(hasAttributes ? { attributes } : {}),
+    ...(typeof content_type === 'string' && content_type !== CONTENT_TYPES[0] ? { content_type } : {}),
+    ...(supersedes ? { supersedes } : {}),
+  };
+}
