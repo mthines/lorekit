@@ -167,13 +167,17 @@ class LocalStore {
     // the value even when only the value changed, as the hosted CHECK is.
     // Normalised as the server normalises: a content type is matched lowercase
     // and a supersedes id is stored lowercase.
+    // A write to an ARCHIVED key starts a fresh record on the server (every
+    // conflict target is partial on `archived_at is null`), so the record
+    // extensions start empty here too rather than inheriting the archived ones.
+    const live = existing && !existing.entry.archived_at ? existing.entry : null;
     const contentType = (typeof content_type === 'string' && content_type.trim()
       ? content_type.trim().toLowerCase()
-      : null) ?? existing?.entry.content_type ?? null;
+      : null) ?? live?.content_type ?? null;
     const supersedesId = typeof supersedes === 'string' && supersedes.trim()
       ? supersedes.trim().toLowerCase()
       : null;
-    const mergedAttributes = mergeAttributes(existing?.entry.attributes, attributes);
+    const mergedAttributes = mergeAttributes(live?.attributes, attributes);
     const issue = recordFieldsIssue({ attributes, content_type: contentType, supersedes: supersedesId, value })
       ?? (Object.keys(mergedAttributes).length > ATTRIBUTES_MAX_KEYS
         ? `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`
@@ -235,7 +239,7 @@ class LocalStore {
       id: existing?.entry.id || randomUUID(),
       attributes: mergedAttributes,
       content_type: contentType,
-      supersedes: supersedesId ?? existing?.entry.supersedes ?? null,
+      supersedes: supersedesId ?? live?.supersedes ?? null,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);

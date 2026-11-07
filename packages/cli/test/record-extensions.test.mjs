@@ -161,3 +161,16 @@ test('validation parity: the local store rejects what the hosted store rejects',
   assert.equal(loop.ok, false);
   assert.match(loop.error, /cannot supersede itself/);
 });
+
+test('revive: a write to an archived key does not inherit its record extensions', async () => {
+  const dir = tmp('lk-rx-revive-');
+  const store = createLocalStore(dir);
+  await store.write({
+    scope: 'global', key: 'k', value: '{}', content_type: 'application/json', attributes: { 'vcs.pr': 1 },
+  });
+  await store.archive({ scope: 'global', key: 'k' });
+  const revived = await store.write({ scope: 'global', key: 'k', value: 'plain markdown' });
+  assert.equal(revived.ok, true, revived.error);
+  assert.equal(revived.entry.content_type, null);
+  assert.deepEqual(revived.entry.attributes, {});
+});
