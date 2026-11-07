@@ -46,9 +46,9 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
   },
   {
     id: 'open-agent-memory-format',
-    label: 'Every agent tool invents its own memory format. What would an open one look like?',
+    label: "Agent memory needs its OpenTelemetry moment",
     summary:
-      "Files, blocks, namespaces, knowledge graphs, extracted facts: every agent tool stores memory in its own shape, and none can read the others. A tour of the formats, what they quietly agree on, the choices behind LoreKit's record (including the ones I'm unsure of), how the same record carries a CI job's JSON state, and what a skeptic would say about all of it.",
+      "Every agent tool stores memory in its own shape, and none can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, what they already agree on, LoreKit's open-source record offered as one proposal with its gaps listed, and what a shared spec could look like.",
   },
 ];
 

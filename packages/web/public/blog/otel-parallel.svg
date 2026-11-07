@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="Two columns compare observability, which OpenTelemetry settled, with agent memory, which is still open, across four layers. Data model: spans, metrics and logs versus a memory record with an address, identity, body and lifecycle. Semantic conventions: names like service.name, http.* and db.* versus scope levels, kinds and tag namespaces. Protocol: OTLP versus a memory tool contract over MCP. Implementations: SDKs and the Collector, with vendors competing on the backend, versus LoreKit, Letta, Mem0 and others, which would compete on retrieval and experience. A caption says the shape is shared, and what you do with it is where you compete.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <rect x="0" y="0" width="720" height="420" fill="#0d0e11"/>
+
+  <text x="290" y="36" text-anchor="middle" class="lbl" font-size="11.5" fill="#7c8cf8">OBSERVABILITY · settled (OTel)</text>
+  <text x="565" y="36" text-anchor="middle" class="lbl" font-size="11.5" fill="#f5a623">AGENT MEMORY · still open</text>
+
+  <!-- row labels -->
+  <text x="30" y="80" class="lbl" font-size="10.5">DATA MODEL</text>
+  <text x="30" y="150" class="lbl" font-size="10.5">CONVENTIONS</text>
+  <text x="30" y="220" class="lbl" font-size="10.5">PROTOCOL</text>
+  <text x="30" y="290" class="lbl" font-size="10.5">IMPLEMENTATIONS</text>
+
+  <!-- left column -->
+  <rect x="170" y="56" width="240" height="50" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.5"/>
+  <text x="290" y="86" text-anchor="middle" class="k" font-size="11.5">spans · metrics · logs</text>
+  <rect x="170" y="126" width="240" height="50" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.5"/>
+  <text x="290" y="156" text-anchor="middle" class="k" font-size="11.5">service.name · http.* · db.*</text>
+  <rect x="170" y="196" width="240" height="50" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.5"/>
+  <text x="290" y="226" text-anchor="middle" class="k" font-size="11.5">OTLP</text>
+  <rect x="170" y="266" width="240" height="50" rx="8" fill="#1a1d24" stroke="#7c8cf8" stroke-opacity="0.5"/>
+  <text x="290" y="287" text-anchor="middle" font-size="11.5">SDKs + Collector</text>
+  <text x="290" y="305" text-anchor="middle" class="lbl" font-size="9.5">vendors compete on the backend</text>
+
+  <!-- right column -->
+  <rect x="440" y="56" width="250" height="50" rx="8" fill="#2a2010" stroke="#f5a623" stroke-dasharray="5 4"/>
+  <text x="565" y="77" text-anchor="middle" font-size="11.5">a memory record</text>
+  <text x="565" y="95" text-anchor="middle" class="k" font-size="9.5" fill="#8892a4">address · identity · body · lifecycle</text>
+  <rect x="440" y="126" width="250" height="50" rx="8" fill="#2a2010" stroke="#f5a623" stroke-dasharray="5 4"/>
+  <text x="565" y="156" text-anchor="middle" class="k" font-size="10">scope levels · kinds · tag namespaces</text>
+  <rect x="440" y="196" width="250" height="50" rx="8" fill="#2a2010" stroke="#f5a623" stroke-dasharray="5 4"/>
+  <text x="565" y="226" text-anchor="middle" font-size="11.5">a memory tool contract over MCP</text>
+  <rect x="440" y="266" width="250" height="50" rx="8" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="565" y="287" text-anchor="middle" font-size="11.5">LoreKit · Letta · Mem0 · …</text>
+  <text x="565" y="305" text-anchor="middle" class="lbl" font-size="9.5">compete on retrieval and experience</text>
+
+  <path d="M416,81 L434,81 M420,78 L416,81 L420,84 M430,78 L434,81 L430,84" fill="none" stroke="#8892a4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M416,151 L434,151 M420,148 L416,151 L420,154 M430,148 L434,151 L430,154" fill="none" stroke="#8892a4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M416,221 L434,221 M420,218 L416,221 L420,224 M430,218 L434,221 L430,224" fill="none" stroke="#8892a4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M416,291 L434,291 M420,288 L416,291 L420,294 M430,288 L434,291 L430,294" fill="none" stroke="#8892a4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <line x1="40" y1="340" x2="680" y2="340" stroke="#2a2d38"/>
+  <text x="360" y="366" text-anchor="middle" class="lbl" font-size="11.5" fill="#c5ccd6">Dashed: the layers nobody has agreed on yet. OTel's lesson is that</text>
+  <text x="360" y="386" text-anchor="middle" class="lbl" font-size="11.5" fill="#c5ccd6">the shape is shared, and what you do with it is where you compete.</text>
+</svg>
