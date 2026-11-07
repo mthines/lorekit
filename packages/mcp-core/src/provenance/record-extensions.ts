@@ -178,6 +178,7 @@ const DB_FIELD_ERRORS: ReadonlyArray<readonly [string, string]> = [
   ['memories_json_value_parses', 'value must be valid JSON when content_type is application/json'],
   ['memories_content_type_known', `content_type must be one of ${CONTENT_TYPES.join(', ')}`],
   ['memories_supersedes_not_self', 'a memory cannot supersede itself'],
+  ['memories_attributes_max_keys', `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`],
 ];
 
 /** Map a database error about a record field to a {@link RecordFieldError}; pass anything else through. */

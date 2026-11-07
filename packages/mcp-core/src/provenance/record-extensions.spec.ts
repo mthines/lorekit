@@ -110,6 +110,11 @@ describe('translateRecordFieldDbError', () => {
       message: 'new row for relation "memories" violates check constraint "memories_json_value_parses"',
     });
     expect(json).toBeInstanceOf(RecordFieldError);
+    const keys = translateRecordFieldDbError({
+      code: '23514',
+      message: 'new row for relation "memories" violates check constraint "memories_attributes_max_keys"',
+    });
+    expect((keys as Error).message).toBe('attributes must have <= 32 keys');
   });
 
   it('passes other errors through unchanged', () => {
