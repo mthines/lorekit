@@ -409,6 +409,31 @@ that cannot succeed. It reads LoreKit's own on-disk format only — not persiste
 `~/.agent-memory/<bucket>/` — and v1 has no `--org <slug>` org-owned write and no reverse
 remote→local direction
 
+### `write`
+
+`write <scope::key> [value]` (or `<scope> <key>`, or `--scope`/`--key` for a key containing `::`)
+creates or updates a memory; the value may also come from `--value` or stdin. Metadata flags mirror
+`memory.write`: `--tags`, `--source-agent`, `--trigger`, `--kind`/`--host`, `--ttl-days`/`--clear-ttl`,
+`--org` and `--cited` (remote only; `scope::key` refs or memory ids), and `--origin-*`/`--no-origin`
+(derived from git + CI by default). The record extensions (migration 00119):
+
+- `--attributes '<json object>'` — namespaced keys to scalar values, e.g.
+  `'{"ci.run_url":"https://…","vcs.pr":482}'`. Merged into what is stored; a `null` removes a key.
+  Only the JSON is parsed at the flag seam; the key and value rules are the store's (the server's
+  shared `record-extensions` parser remotely, `recordFieldsIssue` in `store/format.mjs` locally).
+- `--content-type text/markdown|application/json` — with `application/json` the value must parse,
+  also on a later update that keeps the type.
+- `--supersedes <id>` — the id of the memory this one replaces. Remotely it must be a memory the
+  token can read.
+
+**The local store is lossless and gives every record an id.** A record file's frontmatter carries
+`id` (a uuid minted on the first write and kept on every rewrite, archive and revive),
+`attributes`, `content_type` and `supersedes`, appended to `FIELDS` in `store/format.mjs`. A
+frontmatter field this version does not know — written by a newer CLI, another tool, or by hand — is
+kept on every rewrite instead of being dropped. `migrate` to remote carries `attributes` and
+`content_type`; it does not carry `supersedes` (a local id means nothing to the hosted store) or the
+local `id` (the hosted store mints its own).
+
 ### `archive`/`delete`/`restore`
 
 (aliases: `rm` → `delete`) (the removal lifecycle, the counterpart to `write` — `archive
