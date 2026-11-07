@@ -177,7 +177,8 @@ class LocalStore {
     const issue = recordFieldsIssue({ attributes, content_type: contentType, supersedes: supersedesId, value })
       ?? (Object.keys(mergedAttributes).length > ATTRIBUTES_MAX_KEYS
         ? `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`
-        : null);
+        : null)
+      ?? (supersedesId && supersedesId === existing?.entry.id ? 'a memory cannot supersede itself' : null);
     if (issue) return { ok: false, error: issue };
     let override, expires_at;
     try {

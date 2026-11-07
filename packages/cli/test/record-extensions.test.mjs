@@ -153,4 +153,11 @@ test('validation parity: the local store rejects what the hosted store rejects',
   const over = await store.write({ scope: 'global', key: 'cap', value: 'v', attributes: half(100) });
   assert.equal(over.ok, false);
   assert.match(over.error, /<= 32 keys/);
+  // A record cannot supersede itself.
+  const self = await store.write({ scope: 'global', key: 'cap', value: 'v', supersedes: ok.entry.id });
+  assert.equal(self.ok, true, 'a different record may be superseded');
+  const own = (await store.write({ scope: 'global', key: 'cap', value: 'v' })).entry.id;
+  const loop = await store.write({ scope: 'global', key: 'cap', value: 'v', supersedes: own });
+  assert.equal(loop.ok, false);
+  assert.match(loop.error, /cannot supersede itself/);
 });
