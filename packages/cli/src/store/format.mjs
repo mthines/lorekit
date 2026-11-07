@@ -80,13 +80,31 @@ export function mergeAttributes(stored, incoming) {
   return merged;
 }
 
-// The local store's last gate on the record extensions — the twin of the
-// hosted table's CHECK constraints, not of the edge parser (attribute key
-// rules are the server's to enforce). Returns an error message, or null.
-export function recordFieldsIssue({ attributes, content_type, value }) {
+// The local store's gate on the record extensions: the same rules the server's
+// shared parser (packages/mcp-core/src/provenance/record-extensions.ts) applies,
+// so a write the hosted store rejects is never accepted offline. A twin rather
+// than an import because the CLI is zero-dependency. Returns an error message,
+// or null.
+const ATTRIBUTE_KEY_RE = /^[a-z0-9_]+(?:[.-][a-z0-9_]+)*$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const ATTRIBUTES_MAX_KEYS = 32;
+const ATTRIBUTE_KEY_MAX = 128;
+const ATTRIBUTE_VALUE_MAX = 1024;
+
+export function recordFieldsIssue({ attributes, content_type, supersedes, value }) {
   if (attributes != null) {
     if (!isPlainObject(attributes)) return 'attributes must be an object of key/value pairs';
+    if (Object.keys(attributes).length > ATTRIBUTES_MAX_KEYS) {
+      return `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`;
+    }
     for (const [k, v] of Object.entries(attributes)) {
+      if (k.length > ATTRIBUTE_KEY_MAX || !ATTRIBUTE_KEY_RE.test(k)) {
+        return `attribute key must be lowercase and dot-separated (e.g. "ci.run_url"), <= ${ATTRIBUTE_KEY_MAX} characters: ${k}`;
+      }
+      if (typeof v === 'number' && !Number.isFinite(v)) return `attribute ${k} must be a finite number`;
+      if (typeof v === 'string' && v.length > ATTRIBUTE_VALUE_MAX) {
+        return `attribute ${k} must be <= ${ATTRIBUTE_VALUE_MAX} characters`;
+      }
       if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) {
         return `attribute ${k} must be a string, number, boolean, or null`;
       }
@@ -101,6 +119,9 @@ export function recordFieldsIssue({ attributes, content_type, value }) {
     } catch {
       return 'value must be valid JSON when content_type is application/json';
     }
+  }
+  if (supersedes != null && !UUID_RE.test(supersedes)) {
+    return `supersedes must be a memory id (uuid): ${supersedes}`;
   }
   return null;
 }

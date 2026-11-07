@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
-  serializeEntry, parseEntry, slugify, scopeToDir, extraFields, mergeAttributes, recordFieldsIssue,
+  serializeEntry, parseEntry, slugify, scopeToDir, extraFields, mergeAttributes, recordFieldsIssue, ATTRIBUTES_MAX_KEYS,
 } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
@@ -165,8 +165,19 @@ class LocalStore {
     // Record extensions keep their stored value when omitted, like origin
     // below; attributes MERGE. The effective content type is checked against
     // the value even when only the value changed, as the hosted CHECK is.
-    const contentType = content_type ?? existing?.entry.content_type ?? null;
-    const issue = recordFieldsIssue({ attributes, content_type: contentType, value });
+    // Normalised as the server normalises: a content type is matched lowercase
+    // and a supersedes id is stored lowercase.
+    const contentType = (typeof content_type === 'string' && content_type.trim()
+      ? content_type.trim().toLowerCase()
+      : null) ?? existing?.entry.content_type ?? null;
+    const supersedesId = typeof supersedes === 'string' && supersedes.trim()
+      ? supersedes.trim().toLowerCase()
+      : null;
+    const mergedAttributes = mergeAttributes(existing?.entry.attributes, attributes);
+    const issue = recordFieldsIssue({ attributes, content_type: contentType, supersedes: supersedesId, value })
+      ?? (Object.keys(mergedAttributes).length > ATTRIBUTES_MAX_KEYS
+        ? `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`
+        : null);
     if (issue) return { ok: false, error: issue };
     let override, expires_at;
     try {
@@ -221,9 +232,9 @@ class LocalStore {
       // Identity: minted once, then kept, so a reference by id survives every
       // rewrite (and a revive) of this scope::key.
       id: existing?.entry.id || randomUUID(),
-      attributes: mergeAttributes(existing?.entry.attributes, attributes),
+      attributes: mergedAttributes,
       content_type: contentType,
-      supersedes: supersedes ?? existing?.entry.supersedes ?? null,
+      supersedes: supersedesId ?? existing?.entry.supersedes ?? null,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);

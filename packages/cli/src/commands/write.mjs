@@ -250,7 +250,7 @@ export async function write(args) {
   // ── Record extensions (00119) ─────────────────────────────────────────────
   // Only the JSON is parsed here — a flag the shell mangled is a usage error at
   // the seam. The rules on keys, types and ids belong to the store: the server's
-  // shared parser for a remote write, `recordFieldsIssue` for a local one.
+  // shared parser for a remote write, its twin `recordFieldsIssue` for a local one.
   let attributes;
   if (args.attributes !== undefined) {
     try {

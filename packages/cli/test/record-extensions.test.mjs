@@ -126,3 +126,31 @@ test('write flags: --attributes, --content-type and --supersedes reach the store
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /--attributes must be a JSON object/);
 });
+
+test('validation parity: the local store rejects what the hosted store rejects', async () => {
+  const dir = tmp('lk-rx-parity-');
+  const store = createLocalStore(dir);
+  const bad = [
+    [{ attributes: { 'CI.Run': 'x' } }, /attribute key must be lowercase/],
+    [{ attributes: { k: 'x'.repeat(1025) } }, /<= 1024 characters/],
+    [{ supersedes: 'not-a-uuid' }, /supersedes must be a memory id/],
+  ];
+  for (const [fields, message] of bad) {
+    const res = await store.write({ scope: 'global', key: 'k', value: 'v', ...fields });
+    assert.equal(res.ok, false);
+    assert.match(res.error, message);
+  }
+  // Content types and ids are normalised lowercase, as the server does.
+  const id = '6F1C2A5E-3B4D-4E8F-9A0B-1C2D3E4F5A6B';
+  const ok = await store.write({
+    scope: 'global', key: 'k', value: '{}', content_type: 'Application/JSON', supersedes: id,
+  });
+  assert.equal(ok.entry.content_type, 'application/json');
+  assert.equal(ok.entry.supersedes, id.toLowerCase());
+  // The 32-key cap holds on the merged map, not only on one write.
+  const half = (from) => Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${from + i}`, i]));
+  assert.equal((await store.write({ scope: 'global', key: 'cap', value: 'v', attributes: half(0) })).ok, true);
+  const over = await store.write({ scope: 'global', key: 'cap', value: 'v', attributes: half(100) });
+  assert.equal(over.ok, false);
+  assert.match(over.error, /<= 32 keys/);
+});
