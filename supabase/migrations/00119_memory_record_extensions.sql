@@ -12,8 +12,9 @@
 --                        every later update is held to it, not only the RPC).
 --   supersedes    uuid   the id of the memory this one replaces. Kept on
 --                        update unless re-supplied; cleared if the target is
---                        hard-deleted. The write RPC only accepts an id the
---                        caller could read with this key.
+--                        hard-deleted. Only an id the caller can read AND
+--                        that has the same owner (personal, or the same org)
+--                        is accepted, by the RPC and by a direct write.
 --   cited ids            `lorekit_record_memory_citations` also resolves a
 --                        lesson named by its id, not only by scope/key.
 --
@@ -108,7 +109,10 @@ set search_path = public
 as $$
 begin
   if new.supersedes is null
-     or (tg_op = 'UPDATE' and new.supersedes is not distinct from old.supersedes)
+     or (tg_op = 'UPDATE'
+         and new.supersedes is not distinct from old.supersedes
+         and new.org_id is not distinct from old.org_id
+         and new.user_id is not distinct from old.user_id)
      or current_user not in ('anon', 'authenticated') then
     return new;
   end if;
@@ -128,7 +132,7 @@ $$;
 
 drop trigger if exists memories_check_supersedes on memories;
 create trigger memories_check_supersedes
-  before insert or update of supersedes on memories
+  before insert or update of supersedes, org_id, user_id on memories
   for each row execute function lorekit_memories_check_supersedes();
 
 -- `on delete set null` clears `supersedes` on every row that linked to a

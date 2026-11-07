@@ -11798,6 +11798,7 @@ declare
   v_err_missing text;
   v_err_scope   text;
   v_ts          timestamptz;
+  v_moved       uuid;
 begin
   -- ── Defaults: a write that names none of the new fields is unchanged ──────
   select id, attributes, content_type, supersedes into v_old, v_attrs, v_ct, v_sup
@@ -11906,6 +11907,23 @@ begin
   assert v_err_foreign like 'P0001 supersedes_not_found:%' and v_err_foreign = v_err_missing,
     format('119 AC-3q: a direct write must fail on a foreign id exactly like a missing one, got %L vs %L',
            v_err_foreign, v_err_missing);
+
+  -- ── moving a linked row to another owner re-checks the link ─────────────
+  insert into org_members (org_id, user_id, role)
+    values ('00000000-0000-0000-0000-0000000000f1', v_me, 'member');
+  insert into memories (user_id, scope, key, value, supersedes)
+    values (v_me, 'global', '119-moved', 'v', v_old) returning id into v_moved;
+  v_err_foreign := null;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000ac","role":"authenticated"}', true);
+  begin
+    update memories set org_id = '00000000-0000-0000-0000-0000000000f1' where id = v_moved;
+  exception when others then v_err_foreign := sqlstate || ' ' || replace(sqlerrm, v_old::text, '<id>');
+  end;
+  reset role;
+  assert v_err_foreign like 'P0001 supersedes_not_found:%',
+    format('119 AC-3t: moving a row with a personal link into an org must fail, got %L', v_err_foreign);
 
   -- ── the stored attribute map is capped at 32 keys, merges included ──────
   begin
