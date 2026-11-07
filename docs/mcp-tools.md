@@ -109,7 +109,7 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `origin_pr` | | Provenance: the pull request number the lesson came out of. Rendered as a link to the PR when combined with `origin_repo`. |
 | `attributes` | | Open metadata: an object of namespaced keys (lowercase, dot-separated, e.g. `ci.run_url`, `vcs.pr`) to string, number or boolean values. At most 32 keys. **Merged** on update; a key set to `null` is removed. |
 | `content_type` | | `text/markdown` (default) or `application/json`. With `application/json` the value must parse. Omit on an update to keep the stored type. |
-| `supersedes` | | The `id` of the memory this one replaces. Must name a memory you can read with this token; anything else fails as `supersedes names a memory that does not exist or that you cannot read`. Kept on update unless re-supplied. |
+| `supersedes` | | The `id` of the memory this one replaces. Must name a memory this token can read **and** that has the same owner as the one being written: your own personal memory for a personal write, a memory in the same org for an org write. Anything else, including an id that does not exist, fails with the same error, so the field cannot be used to probe for ids. Kept on update unless re-supplied. |
 | `cited` | | Lessons that shaped this run, as `scope::key` strings or memory ids. Unresolvable entries are dropped silently. |
 
 **Provenance (`origin_*`).** `scope` says where a lesson **applies**; the four

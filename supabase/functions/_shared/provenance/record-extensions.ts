@@ -180,7 +180,7 @@ export function splitCitedIds(cited: unknown): { ids: string[]; refs: unknown[] 
  * caller as the same {@link RecordFieldError} the parser throws.
  */
 const DB_FIELD_ERRORS: ReadonlyArray<readonly [string, string]> = [
-  ['supersedes_not_found', 'supersedes names a memory that does not exist or that you cannot read'],
+  ['supersedes_not_found', 'supersedes must name a memory you can read with the same owner as this one (your own personal memory, or one in the same org)'],
   ['memories_json_value_parses', 'value must be valid JSON when content_type is application/json'],
   ['memories_content_type_known', `content_type must be one of ${CONTENT_TYPES.join(', ')}`],
   ['memories_supersedes_not_self', 'a memory cannot supersede itself'],
