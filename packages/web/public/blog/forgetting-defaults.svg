@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" role="img" aria-label="Four timelines comparing how memories expire. Legend: a filled dot is a write, a hollow dot is a read, a cross is when the record expires. Copilot Memory: written, then used, then deleted 28 days after the last use — it forgets by default. LangGraph store with a TTL: written, then read, and each read resets the TTL, so it expires one TTL after the last read. LoreKit without ttl_days: written, read, written again, and it never expires; grooming proposes clean-up instead. LoreKit with ttl_days: written with a TTL, read — which does not extend it — then written again with a TTL, which restarts the countdown, and it expires one TTL after that last write.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <defs>
+    <marker id="arf" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#f5a623"/></marker>
+  </defs>
+  <rect x="0" y="0" width="720" height="400" fill="#0d0e11"/>
+
+  <!-- legend -->
+  <circle cx="200" cy="30" r="5" fill="#e7ebf2"/><text x="211" y="34" class="lbl" font-size="10.5">write</text>
+  <circle cx="276" cy="30" r="5" fill="none" stroke="#e7ebf2" stroke-width="1.5"/><text x="287" y="34" class="lbl" font-size="10.5">read</text>
+  <path d="M351.5,25.5 L360.5,34.5 M360.5,25.5 L351.5,34.5" stroke="#f87171" stroke-width="2.2" stroke-linecap="round"/><text x="368" y="34" class="lbl" font-size="10.5">expires</text>
+  <text x="450" y="34" class="lbl" font-size="10.5">time →</text>
+
+  <!-- Copilot -->
+  <text x="40" y="84" font-size="12" font-weight="600">Copilot Memory</text>
+  <text x="40" y="100" class="lbl" font-size="9.5">forgets by default</text>
+  <line x1="200" y1="88" x2="680" y2="88" stroke="#2a2d38"/>
+  <rect x="300" y="82" width="250" height="12" rx="3" fill="#7c8cf8" fill-opacity="0.18"/>
+  <circle cx="220" cy="88" r="5" fill="#e7ebf2"/>
+  <circle cx="300" cy="88" r="5" fill="#0d0e11" stroke="#e7ebf2" stroke-width="1.5"/>
+  <path d="M544.5,82.5 L555.5,93.5 M555.5,82.5 L544.5,93.5" stroke="#f87171" stroke-width="2.2" stroke-linecap="round"/>
+  <text x="425" y="113" text-anchor="middle" class="lbl" font-size="9.5">28 days unused</text>
+
+  <!-- LangGraph -->
+  <text x="40" y="164" font-size="12" font-weight="600">LangGraph store</text>
+  <text x="40" y="180" class="lbl" font-size="9.5">read resets the TTL</text>
+  <line x1="200" y1="168" x2="680" y2="168" stroke="#2a2d38"/>
+  <rect x="360" y="162" width="180" height="12" rx="3" fill="#7c8cf8" fill-opacity="0.18"/>
+  <circle cx="220" cy="168" r="5" fill="#e7ebf2"/>
+  <circle cx="290" cy="168" r="5" fill="#0d0e11" stroke="#e7ebf2" stroke-width="1.5"/>
+  <circle cx="360" cy="168" r="5" fill="#0d0e11" stroke="#e7ebf2" stroke-width="1.5"/>
+  <path d="M534.5,162.5 L545.5,173.5 M545.5,162.5 L534.5,173.5" stroke="#f87171" stroke-width="2.2" stroke-linecap="round"/>
+  <text x="450" y="193" text-anchor="middle" class="lbl" font-size="9.5">one TTL after the last read</text>
+
+  <!-- LoreKit no ttl -->
+  <text x="40" y="244" font-size="12" font-weight="600" fill="#f5a623">LoreKit</text>
+  <text x="40" y="260" class="lbl" font-size="9.5">no ttl_days (default)</text>
+  <line x1="200" y1="248" x2="676" y2="248" stroke="#f5a623" stroke-opacity="0.7" marker-end="url(#arf)"/>
+  <circle cx="220" cy="248" r="5" fill="#e7ebf2"/>
+  <circle cx="300" cy="248" r="5" fill="#0d0e11" stroke="#e7ebf2" stroke-width="1.5"/>
+  <circle cx="380" cy="248" r="5" fill="#e7ebf2"/>
+  <text x="530" y="273" text-anchor="middle" class="lbl" font-size="9.5">kept — grooming proposes clean-up</text>
+
+  <!-- LoreKit with ttl -->
+  <text x="40" y="324" font-size="12" font-weight="600" fill="#f5a623">LoreKit</text>
+  <text x="40" y="340" class="lbl" font-size="9.5">with ttl_days</text>
+  <line x1="200" y1="328" x2="680" y2="328" stroke="#2a2d38"/>
+  <rect x="420" y="322" width="190" height="12" rx="3" fill="#f5a623" fill-opacity="0.18"/>
+  <circle cx="220" cy="328" r="5" fill="#e7ebf2"/>
+  <circle cx="320" cy="328" r="5" fill="#0d0e11" stroke="#e7ebf2" stroke-width="1.5"/>
+  <circle cx="420" cy="328" r="5" fill="#e7ebf2"/>
+  <path d="M604.5,322.5 L615.5,333.5 M615.5,322.5 L604.5,333.5" stroke="#f87171" stroke-width="2.2" stroke-linecap="round"/>
+  <text x="320" y="353" text-anchor="middle" class="lbl" font-size="9.5">read: no change</text>
+  <text x="515" y="353" text-anchor="middle" class="lbl" font-size="9.5">a write with a TTL restarts it</text>
+
+  <line x1="40" y1="372" x2="680" y2="372" stroke="#1d2028"/>
+  <text x="360" y="392" text-anchor="middle" class="lbl" font-size="11" fill="#c5ccd6">Three tools, three answers to "what keeps a memory alive?" — use, reads, or explicit writes.</text>
+</svg>

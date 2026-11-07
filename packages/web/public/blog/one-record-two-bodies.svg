@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" role="img" aria-label="One record envelope carrying two kinds of body. The shared envelope at the top holds scope, key, kind, tags, ttl_days and origin fields. Below it, two bodies. Left, a lesson: written by an agent, the body is prose such as 'Integration tests need Postgres up first', kind lesson or unset, read as advisory and shown to agents at session start. Right, CI state: written by a script, the body is versioned JSON with v, updated_by_run, commit and data, kind bus, read by parsing it and looked up explicitly, with a 7-day TTL that acts as a liveness check. At the bottom, both live at one address, repo::acme/checkout, which an agent and a CI job both read.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <defs>
+    <marker id="aro" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8892a4"/></marker>
+  </defs>
+  <rect x="0" y="0" width="720" height="440" fill="#0d0e11"/>
+
+  <!-- envelope -->
+  <rect x="140" y="22" width="440" height="66" rx="12" fill="#13151a" stroke="#f5a623" stroke-opacity="0.6"/>
+  <text x="360" y="46" text-anchor="middle" class="lbl" font-size="10.5" fill="#f5a623">THE SAME ENVELOPE</text>
+  <text x="360" y="72" text-anchor="middle" class="k" font-size="11.5">scope · key · kind · tags · ttl_days · origin_*</text>
+
+  <line x1="290" y1="88" x2="200" y2="112" stroke="#8892a4" stroke-width="1.4" marker-end="url(#aro)"/>
+  <line x1="430" y1="88" x2="520" y2="112" stroke="#8892a4" stroke-width="1.4" marker-end="url(#aro)"/>
+
+  <!-- lesson -->
+  <rect x="40" y="114" width="310" height="214" rx="12" fill="#13151a" stroke="#2a2d38"/>
+  <text x="60" y="140" font-size="13" font-weight="700">a lesson</text>
+  <text x="330" y="140" text-anchor="end" class="lbl" font-size="10">written by an agent</text>
+  <rect x="60" y="154" width="270" height="56" rx="8" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="74" y="177" font-size="11" fill="#c5ccd6">Integration tests need Postgres</text>
+  <text x="74" y="195" font-size="11" fill="#c5ccd6">up first: docker compose up -d db.</text>
+  <text x="60" y="236" class="k" font-size="10.5" fill="#aeb6c2">kind: lesson (or unset)</text>
+  <text x="60" y="260" class="lbl" font-size="10.5">read as  <tspan fill="#e7ebf2">advisory</tspan></text>
+  <text x="60" y="284" class="lbl" font-size="10.5">shown   <tspan fill="#e7ebf2">at session start</tspan></text>
+  <text x="60" y="308" class="lbl" font-size="10.5">lifetime <tspan fill="#e7ebf2">kept unless a TTL is set</tspan></text>
+
+  <!-- CI state -->
+  <rect x="370" y="114" width="310" height="214" rx="12" fill="#13151a" stroke="#2a2d38"/>
+  <text x="390" y="140" font-size="13" font-weight="700">CI state</text>
+  <text x="660" y="140" text-anchor="end" class="lbl" font-size="10">written by a script</text>
+  <rect x="390" y="154" width="270" height="56" rx="8" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="404" y="177" class="k" font-size="10" fill="#7ce6bf">{"v":1, "updated_by_run":…,</text>
+  <text x="404" y="195" class="k" font-size="10" fill="#7ce6bf"> "commit":…, "data":{"flaky":[…]}}</text>
+  <text x="390" y="236" class="k" font-size="10.5" fill="#aeb6c2">kind: bus · host: ci</text>
+  <text x="390" y="260" class="lbl" font-size="10.5">read as  <tspan fill="#e7ebf2">parsed, version-checked</tspan></text>
+  <text x="390" y="284" class="lbl" font-size="10.5">shown   <tspan fill="#e7ebf2">only when looked up</tspan></text>
+  <text x="390" y="308" class="lbl" font-size="10.5">lifetime <tspan fill="#e7ebf2">7-day TTL = liveness</tspan></text>
+
+  <line x1="195" y1="328" x2="300" y2="358" stroke="#8892a4" stroke-width="1.4" marker-end="url(#aro)"/>
+  <line x1="525" y1="328" x2="420" y2="358" stroke="#8892a4" stroke-width="1.4" marker-end="url(#aro)"/>
+
+  <rect x="230" y="360" width="260" height="36" rx="8" fill="#2a2010" stroke="#f5a623"/>
+  <text x="360" y="383" text-anchor="middle" class="k" font-size="11.5" font-weight="600" fill="#f5a623">repo::acme/checkout</text>
+  <text x="360" y="422" text-anchor="middle" class="lbl" font-size="11" fill="#c5ccd6">One address, one store — the agent and the CI job both read it.</text>
+</svg>

@@ -42,6 +42,12 @@ Here are the families I've found. They all change quickly, so treat the details 
 
 Several of these made a choice the others didn't, and those choices are worth looking at.
 
+<figure>
+  <img src="/blog/memory-formats-map.svg" alt="A grid placing agent memory formats by who writes them and how structured they are. A person writes AGENTS.md, CLAUDE.md and Cursor rules. The agent writes memory-tool files, Letta blocks, Copilot Memory, the MCP knowledge graph, LangGraph store items and LoreKit records, with LoreKit highlighted. An extractor writes Mem0 facts and Graphiti edges. Rows run from plain files at the bottom to typed records and graphs at the top." width="720" height="420" />
+  <figcaption>The same idea in eight shapes, placed roughly by who writes each one and how much structure it has. Neither axis decides whether two tools can share memory. What decides it is whether an address means the same thing to every reader.</figcaption>
+</figure>
+
+
 **Instruction files keep a person in the loop.** `AGENTS.md` now sits under the Linux Foundation's Agentic AI Foundation, next to MCP. It's the closest thing to a standard here because it's simply a Markdown file at a known path. But it holds *rules a person curates*, not lessons an agent writes as it goes. It doesn't track how often something recurs, nothing in it expires, and it can't target anything finer than a directory.
 
 **Anthropic's memory tool goes all in on files.** The model gets six commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) under a `/memories` prefix, and your application decides where the files actually live. There are no embeddings and no schema. That makes it very portable and completely unstructured: two agents writing to the same directory have no shared idea of what a file *means*.
@@ -59,6 +65,12 @@ Several of these made a choice the others didn't, and those choices are worth lo
 I'm not the first to notice this. MacPaw Research has proposed **Portable Memory**, a `.mem` bundle with byte-reproducible serialization, deletion tombstones and optional signing. Its own authors say it's not yet widely adopted. The **Open Memory Protocol** is an April 2026 draft for moving conversations and the memories derived from them between platforms, as a ZIP file with a manifest. Cognee offers a **COGX** exchange format with importers from Mem0, Letta and Zep.
 
 These are worth reading. They have one thing in common: they solve **export**. They answer "how do I move my memory from vendor A to vendor B?" That's a real problem, mostly for personal assistants. The problem I care about is slightly different: **live addressing**. When a CI job, an editor agent and a review bot all work in the same repo at the same moment, how do they write to, and read from, the *same* place? A bundle format doesn't answer that, and an address format doesn't replace a bundle. The two could fit together.
+
+<figure>
+  <img src="/blog/export-vs-address.svg" alt="Two problems side by side. Left, export: memory in vendor A is packed into a bundle such as a .mem file, an .omp.zip or COGX, and unpacked in vendor B. Right, live addressing: a CI job, an editor agent and a review bot all read and write one address, repo::acme/checkout, at the same time." width="720" height="380" />
+  <figcaption>Export moves one owner's memory between vendors. Live addressing lets many tools share one place at the same time. Existing proposals cover the first, and a scope string could sit inside their records to cover the second.</figcaption>
+</figure>
+
 
 ## What they quietly agree on
 
@@ -109,6 +121,12 @@ The `value` is text, capped at 64 KiB. When LoreKit puts lessons into an agent's
 A write can carry `ttl_days`, which sets `expires_at`. Every later write that also carries a TTL restarts the countdown. A write *without* one leaves the existing expiry alone. A lesson written without any TTL never expires, unless a repo or user config sets a default for its scope.
 
 So LoreKit is **permanent by default, with forgetting as an opt-in**. Copilot is the opposite: it forgets by default, after 28 days unused. LangGraph sits in between, with an optional TTL that resets when the item is *read*. LoreKit deliberately never lets a read change a record, so only a write can extend a lesson's life. Old lessons are handled by grooming instead: a review pass that suggests merges, expiries and archives before anything changes.
+
+<figure>
+  <img src="/blog/forgetting-defaults.svg" alt="Four timelines comparing expiry. Copilot Memory deletes a fact 28 days after its last use. LangGraph's optional TTL is reset by each read. LoreKit without ttl_days keeps the record indefinitely. LoreKit with ttl_days ignores reads and restarts the countdown only when a write carries a TTL." width="720" height="400" />
+  <figcaption>Three tools, three answers to "what keeps a memory alive?": using it (Copilot), reading it (LangGraph), or explicitly writing it again (LoreKit). Only LoreKit keeps memories forever by default.</figcaption>
+</figure>
+
 
 I go back and forth on which default is right. Forgetting by default keeps a store honest without anyone tending it. Permanent by default means you don't lose the hard-won lesson about the bug that only shows up once a quarter. A shared format should probably let both exist and make the choice visible on each record, rather than settle it once for everyone.
 
@@ -184,6 +202,12 @@ Every concept from the lesson record carries over, with no new fields:
 - **`kind` keeps the record out of an agent's way.** A record with `kind: bus` is left out of the lessons an agent is shown at the start of a session, so a JSON blob never competes with real lessons for context.
 - **The TTL becomes a liveness check.** The job passes `--ttl-days 7` on every run, so every run restarts the countdown. The expiry then measures how long the job has been *silent*, not how old the record is. The state lasts as long as the job keeps running, and disappears a week after someone deletes the workflow. A stale flaky-test list is worse than none, so this is the right failure mode.
 - **The body carries its own version.** Checking `v` is the reader's job. A reader that sees a version it doesn't know falls back to its first-run behaviour instead of guessing.
+
+<figure>
+  <img src="/blog/one-record-two-bodies.svg" alt="One record envelope with scope, key, kind, tags, ttl_days and origin fields, carrying two bodies. Left, a lesson written by an agent: prose, kind lesson or unset, read as advisory at session start. Right, CI state written by a script: versioned JSON, kind bus, parsed when looked up, with a 7-day TTL as a liveness check. Both live at repo::acme/checkout." width="720" height="440" />
+  <figcaption>One envelope, two bodies. The prose lesson and the JSON state share an address, an identity and a lifecycle. Only how they're read differs.</figcaption>
+</figure>
+
 
 The payoff, and the reason to do this instead of `actions/cache`, is that **the agent and the job read the same store**. CI writes `ci-state::flaky-tests`. An agent asked to "fix the flaky tests" reads that exact key in the same repo scope and starts from the real list. The agent's findings go back as a *lesson* right next to it. The state record says what's true right now, and the lesson says what was learned about it. These are two kinds of record in one shape, with no import step between them.
 
