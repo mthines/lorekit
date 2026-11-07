@@ -44,6 +44,12 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     summary:
       "Everyone reached for vector databases. But most of what a coding agent needs to remember is small, specific, and recurring — a scoped note, not a semantic blob. Here's the deterministic, no-AI data model LoreKit runs on, the rationale for every column, and an invitation to converge on a shared shape.",
   },
+  {
+    id: 'open-agent-memory-format',
+    label: 'Every agent tool is inventing its own memory format. What would an open one look like?',
+    summary:
+      "Files, blocks, namespaces, knowledge graphs, extracted facts: every agent tool has its own shape for remembering things, and none of them can read the others. A curious tour of the formats out there, what they quietly agree on, why LoreKit's record looks the way it does, and how the same record carries a CI job's JSON state without a second schema.",
+  },
 ];
 
 /** URL slugs / MDX filename stems, in listing order (newest first). */

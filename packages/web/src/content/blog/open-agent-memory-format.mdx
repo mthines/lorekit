@@ -1,0 +1,199 @@
+---
+title: "Every agent tool is inventing its own memory format. What would an open one look like?"
+description: "Files, blocks, namespaces, knowledge graphs, extracted facts: every agent tool has its own shape for remembering things, and none of them can read the others. A curious tour of the formats out there, what they quietly agree on, why LoreKit's record looks the way it does, and how the same record carries a CI job's JSON state without a second schema."
+date: "2026-11-07"
+author: "Mads Thines"
+readingMinutes: 11
+tags: ["agent-memory", "open-format", "standards", "ci", "lorekit"]
+order: 5
+keywords: ["agent memory format", "open memory standard", "memory interoperability", "AGENTS.md", "Copilot Memory", "Letta memory blocks", "Mem0", "LangGraph store", "MCP memory server", "Graphiti", "CI state", "JSON state records", "lorekit"]
+---
+
+## Count the memory formats on your machine
+
+Try a small exercise. List every place your coding tools keep something they "remember".
+
+On my laptop the list goes something like this: an `AGENTS.md` and a `CLAUDE.md` in most repos, `.cursor/rules/*.mdc` in a few, a `/memories` directory an API agent writes to, the facts Copilot keeps for each repo on GitHub's side, a JSONL knowledge graph left over from trying the MCP reference memory server, and a `.lorekit/` folder. Six or seven shapes. **No two of them can read each other.**
+
+Each one is reasonable on its own. Taken together, they amount to an industry reinventing the same small idea over and over: *a note an agent left for its future self, addressed somehow, true for a while.* That shape keeps getting redefined from scratch, and I think it's worth asking what a shared version would need.
+
+I don't have a finished answer. What I have is a tour of the formats, a few patterns they quietly share, the reasoning behind the shape LoreKit settled on, and one test I think any open format should pass: can it hold memory that **no model wrote**?
+
+## A tour of the shapes
+
+Here are the families I've found, each in one line. These are all moving targets, so treat the details as a snapshot from late 2026.
+
+| Family | Example | The unit of memory | Addressed by | Time |
+| --- | --- | --- | --- | --- |
+| Instruction files | `AGENTS.md`, `CLAUDE.md`, Cursor `.mdc` rules | A whole Markdown file | File path (and `globs` for Cursor) | None. Lives until someone edits it |
+| Agent-managed files | Anthropic's memory tool | A file under `/memories` | Path, chosen by the model | None |
+| Hosted repo facts | GitHub Copilot Memory | A fact with code citations | One repository | Deleted after 28 days unused |
+| Context blocks | Letta core memory | A labeled block with a character `limit` | `label` on an agent | None. Always in context |
+| Extracted facts | Mem0 | A fact the service extracts from messages | `user_id` / `agent_id` / `run_id` / `app_id` | Optional expiration date |
+| Namespaced store | LangGraph `BaseStore` | A JSON `value` dict | A `namespace` tuple + `key` | Optional, depends on the backend |
+| Knowledge graph | MCP reference memory server | Entities, relations, observations | Entity name | None |
+| Temporal graph | Graphiti / Zep | A fact on a graph edge | Entities + edge | Two timelines: when it was true, and when it was recorded |
+
+A few of these deserve a closer look, because each one made a choice the others didn't.
+
+**Instruction files are memory with a human in the loop.** `AGENTS.md` (now under the Linux Foundation's Agentic AI Foundation, next to MCP) is the nearest thing to a standard here, and the reason is simple: it's a Markdown file at a known path. But it holds *rules a person curates*, not lessons an agent writes as it goes. It has no idea of recurrence, no expiry, and no address finer than "this directory".
+
+**Anthropic's memory tool goes all in on files.** The model gets six commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) under a `/memories` prefix, and your application decides where that actually lives. No embeddings and no schema. That makes it very portable and very unstructured. Two agents writing to the same directory have no agreement about what a file *means*.
+
+**Copilot Memory validates against the code.** Every fact carries citations, meaning links to code locations, and Copilot checks them against the current branch before using the fact. Facts are scoped to one repository and go away after 28 days without use. I find that combination of *provenance you can check* and *forgetting by default* the most interesting design in the list. It's also locked inside one product.
+
+**Letta treats memory as context budget.** A block has a `label`, a `value` and a character `limit`, and it's compiled into the system prompt on every step. The format admits that memory isn't free: it costs tokens every turn.
+
+**LangGraph is nearly a key-value store.** It's `put(namespace, key, value)`, with the namespace as a tuple like `("memories", user_id)`. Of everything here, it's the closest relative of LoreKit's shape. The difference is that the namespace is a programming-language value, not a grammar you can write down in a URL or a filename.
+
+**The graphs model the world, not the work.** The MCP reference server stores entities, relations and observations in a single `memory.jsonl` file. Graphiti puts four timestamps on each edge (`valid_at`, `invalid_at`, `created_at`, `expired_at`), so it can answer "what was true in March?" Both are built for facts *about things*: people, companies, how one fact supersedes another.
+
+## What they quietly agree on
+
+Once you strip the branding, almost every format answers the same four questions. They just answer them differently:
+
+1. **Where is this true?** A path, a repo, a user ID, a namespace tuple, an entity.
+2. **What is its identity?** Something that decides whether a second write is an *update* or a *duplicate*.
+3. **What does it say?** Almost always plain text, or JSON when a program is the reader.
+4. **How long is it true?** Often skipped. When it isn't, the answers range from "28 days unused" to "two full timelines".
+
+They disagree on **who writes**: a person (instruction files), the model directly (memory tool, Letta, LoreKit), or a service that extracts facts from a conversation (Mem0, Graphiti). That's a real fork. Extraction gives you memory without asking the agent for anything, and costs you a model call on every write plus a store you can't fully predict.
+
+They also disagree on the **body**: free text, a capped block, a JSON dict, or a triple. That one matters less than it seems, as the CI section below shows.
+
+## Why LoreKit's record looks the way it does
+
+I've written up [every column of the data model](/blog/agent-memory-data-model) before, so I won't repeat it here. What I find more interesting now is which of the four questions LoreKit answered *on purpose*, and what each answer borrows from or rejects in the formats above.
+
+### "Where" is a grammar, not a value
+
+```text
+global
+project::{name}
+repo::{owner}/{repo}
+branch::{owner}/{repo}::{branch}
+```
+
+LangGraph's tuple and LoreKit's scope do the same job. The difference is that a scope is a **string you can write down anywhere**: in a URL, a filename, a CLI flag, a YAML key, a log line. It has a fixed set of levels, a read order (most specific first), and a separator (`::`) chosen so it can't collide with the `/` in a repo path or the `:` in a branch name. A tuple only means something inside one language's runtime. A grammar means the same thing to a Deno edge function, a Node CLI and a `grep`.
+
+It's also coarser than a file path and finer than "one repo", which is where coding lessons actually live. "This branch's spike found X" and "this whole org uses Y" are both easy to say.
+
+### "Identity" is `scope` + `key`, and a rewrite is a signal
+
+Writing the same `scope` + `key` again updates the row and increments `seen_count`. Compare that with an append-only log of facts: if you re-learn the same thing five times, an append log holds five near-duplicates, while LoreKit holds one row that knows it was re-learned five times. Recurrence is the one salience signal you get for free from a deterministic store.
+
+Copilot gets *trust* from citations. LoreKit gets a weaker version of the same thing from provenance: `origin_repo`, `origin_branch`, `origin_commit` and `origin_pr` record where a lesson was learned. It doesn't re-check the code before use. If I were starting a standard from scratch, a citation field that readers *may* verify is the first thing I'd take from Copilot.
+
+### "What it says" is plain text, and advisory
+
+The `value` is text, at most 64 KiB, and the read path labels it *"considerations, not rules."* That's a deliberate line between LoreKit and instruction files. `AGENTS.md` holds what a human has decided. Lore holds what an agent has *noticed*, and it should be easy to ignore when it's wrong. Keeping both in one file is how instruction files grow into an unreviewed pile of half-truths.
+
+### "How long" is a TTL that resets on write
+
+`ttl_days` sets `expires_at`, and a re-write restarts the countdown. So a lesson that keeps getting re-learned stays alive, and one nobody touches anymore fades out. It's the same intuition as Copilot's "28 days unused", reached independently, which is either a nice convergence or a sign the idea is obvious. Either way, it's a hint that **forgetting by default** belongs in any shared format.
+
+What LoreKit doesn't do is Graphiti's two timelines. A coding lesson like "the integration tests need Postgres up first" is rarely a historical fact you'd ask about at a point in time. It's either still useful or it isn't. I'm not certain that holds forever, and it's one of the open questions below.
+
+### "What kind" is a small, closed vocabulary
+
+`kind` is one of `lesson`, `bus` or `signal`, and `host` names the loop that wrote the record. The list is closed on purpose: adding a kind is a schema change, because each kind is read on a different schedule. A `lesson` is read every run. A `bus` event is a transient outcome, read only when deciding what to promote. A `signal` is a durable per-repo filter. None of the other formats separates these, and without that separation a store fills up with records that crowd each other out of the context window.
+
+### On disk, it's a file you can `cat`
+
+Offline, a record is one Markdown file per `scope` + `key`, with frontmatter that mirrors the hosted row column for column. Here's one, trimmed (the real file also lists the empty provenance fields as `null`):
+
+```markdown
+---
+scope: "repo::acme/checkout"
+key: "tests-need-local-postgres"
+tags: ["ci","gotcha"]
+created: "2026-10-02T09:14:00.000Z"
+updated: "2026-11-04T16:41:12.000Z"
+origin_commit: "0f4a1c9"
+expires_at: "2026-12-04T16:41:12.000Z"
+seen_count: 4
+kind: "lesson"
+host: null
+---
+Integration tests need Postgres up first: docker compose up -d db.
+```
+
+Every scalar in the frontmatter is JSON-encoded. That's a strict subset of YAML, so the file is still valid YAML, still greppable, and parses with no YAML library at all. The parser ignores fields it doesn't recognise and treats missing ones as absent, which is how a file written before `seen_count` existed still reads fine today. That forward tolerance matters more for an open format than any single field does.
+
+It's also close enough to a memory-tool file or an `AGENTS.md` that the formats could meet halfway: frontmatter for the address and lifecycle, a Markdown body for the note.
+
+## The test: memory no model wrote
+
+Here's the part I find most convincing, and it came from somewhere I didn't plan for.
+
+CI jobs need memory too. A test workflow wants to know which tests flaked last time. A deploy job wants the last SHA it shipped. A review bot wants to know what it already commented on. None of that involves a model, and the usual answers are `actions/cache` or an artifact bucket nobody else can read.
+
+LoreKit handles this with the **same record**. The only difference is the body: a versioned JSON envelope instead of prose.
+
+```json
+{
+  "v": 1,
+  "updated_by_run": "https://github.com/acme/checkout/actions/runs/123456789",
+  "commit": "0f4a1c9",
+  "data": {
+    "flaky": ["src/queue.test.ts::retries on 429"],
+    "consecutive_green": 3
+  }
+}
+```
+
+It's written with the CLI, piped straight from `jq`:
+
+```bash
+jq -nc --arg run "$RUN_URL" --arg sha "$GITHUB_SHA" --argjson data "$NEW_DATA" \
+  '{v: 1, updated_by_run: $run, commit: $sha, data: $data}' \
+| npx @lorekit/cli write \
+    --scope "repo::${GITHUB_REPOSITORY}" --key 'ci-state::flaky-tests' \
+    --tags 'ci::test-state' --kind bus --host ci \
+    --ttl-days 7 --remote --json
+```
+
+Every concept from the lesson record maps across without a new field:
+
+- **Scope** is the same. Trunk state lives at `repo::`, and per-PR state at `branch::`, so it goes away with the branch.
+- **Identity** is the same, but the discipline is stricter: *one key per fact, overwritten in place, never one key per run.* Because same `scope` + `key` is an update, a job that runs a thousand times still holds one row. Keying on the run ID would turn a memory store into a slow artifact bucket.
+- **Kind** keeps it out of the way. `--kind bus` keeps the record out of the lessons an agent sees at session start, so a JSON blob never competes with a lesson for context.
+- **TTL changes meaning, nicely.** The countdown restarts on every write, so a 7-day TTL on a daily job doesn't measure how *old* the record is. It measures how long the job has been *silent*. The state lives as long as the job keeps running, and disappears a week after someone deletes the workflow. A stale flaky-test list is worse than none, so letting it expire is the safe default.
+- **Version the body, not the schema.** `v` is the reader's job. A reader that sees a version it doesn't know falls back to its first-run path instead of guessing.
+
+The payoff is the reason to do this instead of `actions/cache`: **the agent and the job read the same store.** CI writes `ci-state::flaky-tests`. An agent asked to "fix the flaky tests" reads that exact key in the same repo scope and starts from the real list. Its findings go back as a *lesson* next to it. The state record says what's true right now, and the lesson says what we learned about it. Two kinds of record in one shape, with no import step between them.
+
+That's why I think it's a good test for an open format. If the shape only fits prose written by a model, it's a chat feature. If it can also hold a JSON record a shell script wrote, with the same address, identity and lifecycle, it starts to look like infrastructure. (The [full CI recipe](/docs/use-cases) covers tokens, guards, and why the store must never be on a build's critical path.)
+
+## What an open format might need
+
+Here's my current guess at the smallest core, written down so people can argue with it:
+
+- **An address grammar.** A string with defined levels and a read order. Not a path, and not a language-specific tuple.
+- **An identity rule.** Address + key is unique, and a rewrite is an update that's *counted*.
+- **A body.** Text by default. JSON allowed when the reader is a program, versioned inside the body.
+- **A lifecycle.** Created, updated, an optional expiry that resets on write, and soft deletion.
+- **Provenance.** Where the record was learned, and ideally *citations a reader may verify*.
+- **A kind.** Enough to tell a lesson from an event from a filter, so readers can budget for each.
+- **Forward tolerance.** Readers ignore unknown fields and treat missing ones as absent.
+
+Everything else should stay free to vary: storage engine, ranking, whether you add embeddings on top, whether extraction or the agent does the writing. OpenTelemetry worked because it standardised the *shape of a span*, not anyone's backend. I spend my days at [Dash0](https://www.dash0.com) watching what that one agreement made possible.
+
+And the questions I genuinely don't know the answers to:
+
+- **Is the four-level scope set right?** Monorepos want something between `repo` and `branch`. Orgs want something above `project`.
+- **Do coding lessons need two timelines?** Graphiti's argument is strong for facts about the world. Is there a coding case where "what was true in March" matters?
+- **Should citations be in the core?** Copilot's check-before-use is the best guard against stale memory I've seen. It also ties a record to a code host.
+- **Who should write?** The agent, explicitly, or an extractor watching the conversation? A format can probably allow both, but the trust model is very different.
+
+The schema, the scope validator and the on-disk format are all open in the repo. If you're building one of the formats in the table, I'd love to hear where this shape breaks for you. A standard nobody argued about isn't one.
+
+## See the files for yourself
+
+The quickest way to decide whether this shape is any good is to look at the files it writes:
+
+```bash
+npx @lorekit/cli install
+```
+
+It creates a folder of plain Markdown records you can open, grep and diff. Then tell me what's missing.
