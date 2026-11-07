@@ -445,7 +445,10 @@ ${c.bold('Options')}
       --ttl-days <n>       Days until auto-expiry 1–365 (local or remote)
       --clear-ttl          Remove any existing expiry (make it permanent)
       --org <slug>         Write to this org's scope (remote only)
-      --cited <a,b>        \`scope::key\` refs this lesson applied (remote only)
+      --cited <a,b>        \`scope::key\` refs or memory ids this lesson applied (remote only)
+      --attributes <json>  Open metadata, e.g. '{"ci.run_url":"https://…"}' (merged; null removes a key)
+      --content-type <t>   text/markdown (default) or application/json (value must parse)
+      --supersedes <id>    The id of the memory this one replaces
       --origin-repo <o/n>  Override the derived provenance repository
       --origin-branch <b>  Override the derived provenance branch
       --origin-commit <s>  Override the derived provenance commit SHA
@@ -1177,6 +1180,7 @@ const KNOWN_FLAGS = [
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'completions', 'complete', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'cited',
+  'attributes', 'content-type', 'supersedes',
   'remote', 'local',
   // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the
   // scope/time tab so the flag is a no-op, but `link` is a HUMAN_COMMAND that

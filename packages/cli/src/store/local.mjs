@@ -6,8 +6,11 @@
 // and an opt-in per-repo `project` tier — behind the same contract, so callers
 // (`core/lessons`, `hook`, `doctor`, `migrate`) keep talking to one interface.
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
+import {
+  serializeEntry, parseEntry, slugify, scopeToDir, extraFields, mergeAttributes, recordFieldsIssue,
+} from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
 import { seenCountOf, withReadFields, updatedAtOf } from './entry-fields.mjs';
@@ -155,9 +158,16 @@ class LocalStore {
   async write({
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr, kind, host,
+    attributes, content_type, supersedes,
   } = {}) {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
+    // Record extensions keep their stored value when omitted, like origin
+    // below; attributes MERGE. The effective content type is checked against
+    // the value even when only the value changed, as the hosted CHECK is.
+    const contentType = content_type ?? existing?.entry.content_type ?? null;
+    const issue = recordFieldsIssue({ attributes, content_type: contentType, value });
+    if (issue) return { ok: false, error: issue };
     let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
@@ -171,6 +181,8 @@ class LocalStore {
     fs.mkdirSync(dir, { recursive: true });
     const created = existing ? existing.entry.created || now : override || now;
     const entry = {
+      // Fields this version does not know survive the rewrite (lossless).
+      ...extraFields(existing?.entry),
       scope,
       key,
       tags: Array.isArray(tags) ? tags : [],
@@ -206,6 +218,12 @@ class LocalStore {
       seen_count: existing && !existing.entry.archived_at
         ? seenCountOf(existing.entry) + 1
         : 1,
+      // Identity: minted once, then kept, so a reference by id survives every
+      // rewrite (and a revive) of this scope::key.
+      id: existing?.entry.id || randomUUID(),
+      attributes: mergeAttributes(existing?.entry.attributes, attributes),
+      content_type: contentType,
+      supersedes: supersedes ?? existing?.entry.supersedes ?? null,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);
@@ -224,6 +242,7 @@ class LocalStore {
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, entry.key);
     const full = {
+      ...extraFields(entry),
       scope,
       key: entry.key,
       tags: Array.isArray(entry.tags) ? entry.tags : [],
@@ -243,6 +262,12 @@ class LocalStore {
       // re-sight its lessons, so a relocated entry must keep the count it had.
       // An entry that never carried one lands as null and reads back as 0.
       seen_count: entry.seen_count ?? null,
+      // Verbatim too; an entry from before ids existed gets one here, and a
+      // relocated entry that already had one keeps it.
+      id: entry.id || existing?.entry.id || randomUUID(),
+      attributes: entry.attributes ?? {},
+      content_type: entry.content_type ?? null,
+      supersedes: entry.supersedes ?? null,
       value: entry.value == null ? '' : String(entry.value),
     };
     const file = existing ? existing.file : this._freshPath(dir, entry.key);

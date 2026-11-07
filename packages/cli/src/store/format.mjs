@@ -41,11 +41,82 @@ export const FIELDS = [
   // back to inferring from tags for, same as an absent remote value.
   'kind',
   'host',
+  // Record extensions (migration 00119), mirroring the hosted columns.
+  //   id            a uuid minted on the first write and kept on every rewrite —
+  //                 the record's identity, independent of its scope::key address
+  //   attributes    open map of namespaced keys to scalar values
+  //   content_type  null (= text/markdown) or 'application/json'
+  //   supersedes    the id of the record this one replaces
+  // Appended like the columns above.
+  'id',
+  'attributes',
+  'content_type',
+  'supersedes',
 ];
 
+// The content types a record may declare; the first is what null means. The
+// local twin of the hosted `memories_content_type_known` constraint.
+export const CONTENT_TYPES = ['text/markdown', 'application/json'];
+
+// Frontmatter fields this version does not know: written by a newer CLI, by
+// another tool sharing the directory, or by hand. Carried through every rewrite
+// so the file format is lossless — a field LoreKit does not understand is not
+// LoreKit's to drop.
+export function extraFields(entry) {
+  const out = {};
+  if (!entry) return out;
+  for (const [k, v] of Object.entries(entry)) {
+    if (k !== 'value' && !FIELDS.includes(k) && v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+// Merge an attributes write into what is stored, the way the hosted
+// `memory_write` does: named keys are replaced, a null value removes its key,
+// and keys the write does not name are kept.
+export function mergeAttributes(stored, incoming) {
+  const merged = { ...(isPlainObject(stored) ? stored : {}), ...(incoming || {}) };
+  for (const k of Object.keys(merged)) if (merged[k] === null) delete merged[k];
+  return merged;
+}
+
+// The local store's last gate on the record extensions — the twin of the
+// hosted table's CHECK constraints, not of the edge parser (attribute key
+// rules are the server's to enforce). Returns an error message, or null.
+export function recordFieldsIssue({ attributes, content_type, value }) {
+  if (attributes != null) {
+    if (!isPlainObject(attributes)) return 'attributes must be an object of key/value pairs';
+    for (const [k, v] of Object.entries(attributes)) {
+      if (v !== null && !['string', 'number', 'boolean'].includes(typeof v)) {
+        return `attribute ${k} must be a string, number, boolean, or null`;
+      }
+    }
+  }
+  if (content_type != null && !CONTENT_TYPES.includes(content_type)) {
+    return `content_type must be one of ${CONTENT_TYPES.join(', ')}: ${content_type}`;
+  }
+  if (content_type === 'application/json') {
+    try {
+      JSON.parse(value);
+    } catch {
+      return 'value must be valid JSON when content_type is application/json';
+    }
+  }
+  return null;
+}
+
+function isPlainObject(v) {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 // Serialize an entry ({ ...columns, value }) into file text.
+//
+// Known fields come first, in FIELDS order; any field this version does not know
+// follows, in the order it was read, so a rewrite never drops it.
 export function serializeEntry(entry) {
-  const fm = FIELDS.map((k) => `${k}: ${JSON.stringify(entry[k] ?? null)}`).join('\n');
+  const known = FIELDS.map((k) => `${k}: ${JSON.stringify(entry[k] ?? null)}`);
+  const extra = Object.entries(extraFields(entry)).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+  const fm = [...known, ...extra].join('\n');
   const body = entry.value == null ? '' : String(entry.value);
   return `---\n${fm}\n---\n${body}\n`;
 }

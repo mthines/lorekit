@@ -29,7 +29,14 @@
 //                          omitted, a configured default may apply — see below.
 //   --clear-ttl            Remove any existing expiry (make the memory permanent)
 //   --org <slug>           Write to this org (remote only)
-//   --cited <ref,ref>      `scope::key` refs this lesson APPLIED (remote only)
+//   --cited <ref,ref>      `scope::key` refs or memory ids this lesson APPLIED
+//                          (remote only)
+//   --attributes <json>    Open metadata as a JSON object of namespaced keys to
+//                          scalar values, e.g. '{"ci.run_url":"https://…"}'.
+//                          Merged into what is stored; a null value removes a key
+//   --content-type <type>  text/markdown (default) or application/json (the
+//                          value must then parse as JSON)
+//   --supersedes <id>      The id of the memory this one replaces
 //
 // `--cited` credits the lore that shaped the work being written up. It is the
 // only signal that distinguishes a lesson that was read from one that was used:
@@ -240,6 +247,25 @@ export async function write(args) {
     ? String(args.cited).split(',').map((r) => r.trim()).filter(Boolean)
     : [];
 
+  // ── Record extensions (00119) ─────────────────────────────────────────────
+  // Only the JSON is parsed here — a flag the shell mangled is a usage error at
+  // the seam. The rules on keys, types and ids belong to the store: the server's
+  // shared parser for a remote write, `recordFieldsIssue` for a local one.
+  let attributes;
+  if (args.attributes !== undefined) {
+    try {
+      attributes = JSON.parse(String(args.attributes));
+    } catch {
+      attributes = undefined;
+    }
+    if (typeof attributes !== 'object' || attributes === null || Array.isArray(attributes)) {
+      err(`${c.red('Error:')} --attributes must be a JSON object, e.g. '{"ci.run_url":"https://ci.example/1"}'`);
+      return 1;
+    }
+  }
+  const contentType = typeof args['content-type'] === 'string' ? args['content-type'] : undefined;
+  const supersedes = typeof args.supersedes === 'string' ? args.supersedes : undefined;
+
   // ── Provenance ────────────────────────────────────────────────────────────
   // Derived from git + CI unless --no-origin; explicit --origin-* flags win.
   // A field that is neither supplied nor derivable is omitted, never sent as
@@ -342,6 +368,9 @@ export async function write(args) {
     ...(clearTtl ? { clear_ttl: true } : {}),
     ...(orgSlug ? { org: orgSlug } : {}),
     ...(cited.length ? { cited } : {}),
+    ...(attributes ? { attributes } : {}),
+    ...(contentType ? { content_type: contentType } : {}),
+    ...(supersedes ? { supersedes } : {}),
     ...origin,
   };
 

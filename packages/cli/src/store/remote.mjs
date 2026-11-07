@@ -370,6 +370,7 @@ class RemoteStore {
     const {
       scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
       cited, origin_repo, origin_branch, origin_commit, origin_pr,
+      attributes, content_type, supersedes,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
@@ -393,6 +394,11 @@ class RemoteStore {
     if (origin_branch !== undefined) body.origin_branch = origin_branch;
     if (origin_commit !== undefined) body.origin_commit = origin_commit;
     if (origin_pr !== undefined) body.origin_pr = origin_pr;
+    // Record extensions (00119) — same posture: sent only when given, validated
+    // by the server's shared parser, kept as stored when omitted.
+    if (attributes !== undefined) body.attributes = attributes;
+    if (content_type !== undefined) body.content_type = content_type;
+    if (supersedes !== undefined) body.supersedes = supersedes;
     const res = await this._rest('/memories', { method: 'POST', body });
     // `httpStatus` and `retryAfter` are passed through so a caller can tell the
     // two 429s apart and honour the server's own backoff. They are DIFFERENT
@@ -591,6 +597,10 @@ class RemoteStore {
       origin_branch: entry.origin_branch,
       origin_commit: entry.origin_commit,
       origin_pr: entry.origin_pr,
+      // `supersedes` is NOT carried: it names a LOCAL id, which the hosted
+      // store does not know, and the server would reject the write.
+      attributes: entry.attributes && Object.keys(entry.attributes).length ? entry.attributes : undefined,
+      content_type: entry.content_type ?? undefined,
     }));
     // Always present, like every other key in this envelope — a caller must
     // not have to know which branch produced the result to read it.
