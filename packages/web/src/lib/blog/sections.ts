@@ -48,7 +48,13 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     id: 'open-agent-memory-format',
     label: "Agent memory needs its OpenTelemetry moment",
     summary:
-      "Every agent tool stores memory in its own shape, and none can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, what they already agree on, LoreKit's open-source record offered as one proposal with its gaps listed, and what a shared spec could look like.",
+      "Every agent tool stores memory in its own shape, and none can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, the proposals that already exist, what they agree on, and what a shared spec for agent memory could look like.",
+  },
+  {
+    id: 'lorekit-memory-format-gaps',
+    label: "Seven gaps in LoreKit's memory format",
+    summary:
+      "LoreKit's memory record is one open-source proposal for a shared agent-memory format, and it isn't finished. Held up against Copilot Memory, Graphiti, OpenTelemetry and the rest, it has seven gaps, each tied to a failure you can point to. Here they are, with a sketch of a better record and the CI test any shared format should pass.",
   },
 ];
 
