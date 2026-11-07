@@ -46,9 +46,9 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
   },
   {
     id: 'open-agent-memory-format',
-    label: 'Every agent tool is inventing its own memory format. What would an open one look like?',
+    label: 'Every agent tool invents its own memory format. What would an open one look like?',
     summary:
-      "Files, blocks, namespaces, knowledge graphs, extracted facts: every agent tool has its own shape for remembering things, and none of them can read the others. A curious tour of the formats out there, what they quietly agree on, why LoreKit's record looks the way it does, and how the same record carries a CI job's JSON state without a second schema.",
+      "Files, blocks, namespaces, knowledge graphs, extracted facts: every agent tool stores memory in its own shape, and none can read the others. A tour of the formats, what they quietly agree on, the choices behind LoreKit's record (including the ones I'm unsure of), how the same record carries a CI job's JSON state, and what a skeptic would say about all of it.",
   },
 ];
 
