@@ -11797,6 +11797,7 @@ declare
   v_err_foreign text;
   v_err_missing text;
   v_err_scope   text;
+  v_ts          timestamptz;
 begin
   -- ── Defaults: a write that names none of the new fields is unchanged ──────
   select id, attributes, content_type, supersedes into v_old, v_attrs, v_ct, v_sup
@@ -11886,10 +11887,44 @@ begin
   v_n := lorekit_record_memory_citations(v_me, v_old, '{}', '{}', 'run-119b', array[v_old]);
   assert v_n = 0, format('119 AC-3o: a lesson must not cite itself by id, got %s', v_n);
 
-  -- ── hard-deleting the target clears the link ────────────────────────────
+  -- ── a direct authenticated write cannot link to (or probe) a foreign id ─
+  v_err_foreign := null;
+  v_err_missing := null;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000ac","role":"authenticated"}', true);
+  begin
+    update memories set supersedes = v_foreign where id = v_new;
+  exception when others then v_err_foreign := sqlstate || ' ' || replace(sqlerrm, v_foreign::text, '<id>');
+  end;
+  begin
+    update memories set supersedes = '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b' where id = v_new;
+  exception when others then
+    v_err_missing := sqlstate || ' ' || replace(sqlerrm, '6f1c2a5e-3b4d-4e8f-9a0b-1c2d3e4f5a6b', '<id>');
+  end;
+  reset role;
+  assert v_err_foreign like 'P0001 supersedes_not_found:%' and v_err_foreign = v_err_missing,
+    format('119 AC-3q: a direct write must fail on a foreign id exactly like a missing one, got %L vs %L',
+           v_err_foreign, v_err_missing);
+
+  -- ── the stored attribute map is capped at 32 keys, merges included ──────
+  begin
+    update memories
+       set attributes = (select jsonb_object_agg('k' || i, i) from generate_series(1, 33) i)
+     where id = v_new;
+    v_err_scope := null;
+  exception when check_violation then v_err_scope := sqlerrm;
+  end;
+  assert v_err_scope like '%memories_attributes_max_keys%',
+    format('119 AC-3r: 33 stored attribute keys must violate the cap, got %L', v_err_scope);
+
+  -- ── hard-deleting the target clears the link, without touching updated_at
+  select updated_at into v_ts from memories where id = v_new;
   delete from memories where id = v_old;
   select supersedes into v_sup from memories where id = v_new;
   assert v_sup is null, format('119 AC-3p: a deleted target must clear supersedes, got %s', v_sup);
+  assert (select updated_at from memories where id = v_new) = v_ts,
+    '119 AC-3s: clearing a link because its target was deleted must not bump updated_at';
 end;
 $$;
 

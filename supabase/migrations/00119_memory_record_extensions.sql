@@ -66,6 +66,22 @@ alter table memories drop constraint if exists memories_supersedes_not_self;
 alter table memories add constraint memories_supersedes_not_self
   check (supersedes is null or supersedes <> id);
 
+create or replace function lorekit_jsonb_key_count(p_value jsonb)
+returns integer
+language sql
+immutable
+set search_path = public
+as $$
+  select count(*)::integer from jsonb_object_keys(p_value);
+$$;
+
+-- The 32-key cap holds for the STORED map, not only per write: updates merge,
+-- so a series of writes that each name new keys would otherwise grow it
+-- without bound.
+alter table memories drop constraint if exists memories_attributes_max_keys;
+alter table memories add constraint memories_attributes_max_keys
+  check (lorekit_jsonb_key_count(attributes) <= 32);
+
 create index if not exists memories_supersedes_idx
   on memories (supersedes) where supersedes is not null;
 
@@ -75,6 +91,102 @@ comment on column memories.content_type is
   'What the value is: text/markdown (default) or application/json (must parse).';
 comment on column memories.supersedes is
   'The id of the memory this one replaces. NULL when it replaces nothing, or when the target was hard-deleted.';
+
+-- The same `supersedes` rule for a write that does not go through
+-- `memory_write`: a signed-in client may insert or update `memories` directly
+-- through PostgREST (RLS allows its own rows), and a foreign-key check ignores
+-- RLS — so without this, a 23503-vs-200 answer would reveal whether any
+-- tenant's id exists. The function is SECURITY INVOKER, so its lookup sees
+-- only what RLS lets the caller see, and it fails a hidden target exactly like
+-- a missing one. It runs BEFORE the deferred foreign-key check. A
+-- SECURITY DEFINER caller (`memory_write`, which checks for itself) and the
+-- service role skip it.
+create or replace function lorekit_memories_check_supersedes()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.supersedes is null
+     or (tg_op = 'UPDATE' and new.supersedes is not distinct from old.supersedes)
+     or current_user not in ('anon', 'authenticated') then
+    return new;
+  end if;
+  if not exists (
+    select 1
+      from memories m
+     where m.id = new.supersedes
+       and m.org_id is not distinct from new.org_id
+       and (new.org_id is not null or m.user_id = new.user_id)
+  ) then
+    raise exception using errcode = 'P0001',
+      message = format('supersedes_not_found: %s', new.supersedes);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists memories_check_supersedes on memories;
+create trigger memories_check_supersedes
+  before insert or update of supersedes on memories
+  for each row execute function lorekit_memories_check_supersedes();
+
+-- `on delete set null` clears `supersedes` on every row that linked to a
+-- hard-deleted memory. That is housekeeping, not an edit, so it must not bump
+-- `updated_at` (age-based retention reads it). 00107's trigger, verbatim except
+-- the marked 00119 lines: a cleared link joins the derived-column exemption.
+create or replace function lorekit_memories_set_updated_at()
+returns trigger
+language plpgsql
+set search_path = public, extensions
+as $$
+declare
+  v_new memories := new;
+  v_old memories := old;
+  v_embedding_changed boolean;
+  v_counters_changed  boolean;
+  v_link_cleared      boolean;  -- 00119
+begin
+  v_embedding_changed :=
+       new.embedding is distinct from old.embedding
+    or new.embedding_model is distinct from old.embedding_model;
+
+  v_counters_changed :=
+       new.read_count     is distinct from old.read_count
+    or new.last_read_at   is distinct from old.last_read_at
+    or new.last_opened_at is distinct from old.last_opened_at
+    or new.opened_count   is distinct from old.opened_count
+    or new.cited_count    is distinct from old.cited_count
+    or new.last_cited_at  is distinct from old.last_cited_at;
+
+  -- 00119: only a CLEAR is exempt. Setting or changing a link is an edit.
+  v_link_cleared := old.supersedes is not null and new.supersedes is null;
+
+  -- `fts` must be masked: see 00107.
+  v_new.embedding := null; v_new.embedding_model := null;
+  v_new.read_count := null; v_new.last_read_at := null; v_new.last_opened_at := null;
+  v_new.opened_count := null;
+  v_new.cited_count := null; v_new.last_cited_at := null;
+  v_new.updated_at := null; v_new.fts := null;
+  v_new.supersedes := null;  -- 00119
+
+  v_old.embedding := null; v_old.embedding_model := null;
+  v_old.read_count := null; v_old.last_read_at := null; v_old.last_opened_at := null;
+  v_old.opened_count := null;
+  v_old.cited_count := null; v_old.last_cited_at := null;
+  v_old.updated_at := null; v_old.fts := null;
+  v_old.supersedes := null;  -- 00119
+
+  if (v_embedding_changed or v_counters_changed or v_link_cleared)
+     and v_new is not distinct from v_old then
+    new.updated_at := old.updated_at;
+  else
+    new.updated_at := now();
+  end if;
+
+  return new;
+end;
+$$;
 
 -- 2. memory_write ─────────────────────────────────────────────────────────────
 
@@ -222,26 +334,29 @@ begin
       message = format('key_personal_denied: this token may not write personal memories (scope=%s)', p_scope);
   end if;
 
-  -- 00119: a `supersedes` link may only name a memory this caller could read
-  -- with this key. An unreachable id fails EXACTLY like a nonexistent one, so
-  -- the link cannot be used to probe for other tenants' memory ids.
-  if p_supersedes is not null and p_user_id is not null and not exists (
+  -- 00119: a `supersedes` link may only name a memory with the SAME OWNER
+  -- as the row being written — the caller's own personal memory for a personal
+  -- write, a memory of the same org for an org write — inside this key's scope
+  -- allowlist. Same-owner rather than "any memory the caller can read" so an
+  -- org row never exposes the id of its writer's personal memory to every
+  -- other member. An unreachable id fails EXACTLY like a nonexistent one, so
+  -- the link cannot be used to probe for other tenants' memory ids. The
+  -- service-role tier (p_user_id null) may link to any existing memory.
+  if p_supersedes is not null and not exists (
     select 1
       from memories m
      where m.id = p_supersedes
-       and lorekit_api_token_scope_allowed(p_key_scopes, m.scope)
        and (
-         (m.org_id is null and m.user_id = p_user_id
-           and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, null))
-         or (m.org_id in (select lorekit_member_org_ids(p_user_id))
-           and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id))
+         p_user_id is null
+         or (
+           lorekit_api_token_scope_allowed(p_key_scopes, m.scope)
+           and case
+                 when v_org_id is not null then m.org_id = v_org_id
+                 else m.org_id is null and m.user_id = p_user_id
+               end
+         )
        )
   ) then
-    raise exception using errcode = 'P0001',
-      message = format('supersedes_not_found: %s', p_supersedes);
-  end if;
-  if p_supersedes is not null and p_user_id is null
-     and not exists (select 1 from memories m where m.id = p_supersedes) then
     raise exception using errcode = 'P0001',
       message = format('supersedes_not_found: %s', p_supersedes);
   end if;
