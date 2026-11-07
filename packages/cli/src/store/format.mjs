@@ -80,11 +80,12 @@ export function mergeAttributes(stored, incoming) {
   return merged;
 }
 
-// The local store's gate on the record extensions: the same rules the server's
-// shared parser (packages/mcp-core/src/provenance/record-extensions.ts) applies,
-// so a write the hosted store rejects is never accepted offline. A twin rather
-// than an import because the CLI is zero-dependency. Returns an error message,
-// or null.
+// The local store's gate on the record extensions: the same shape rules the
+// server's shared parser (packages/mcp-core/src/provenance/record-extensions.ts)
+// applies. A twin rather than an import because the CLI is zero-dependency.
+// One server rule has no offline equivalent: the hosted store also rejects a
+// `supersedes` id it cannot find, while a local store cannot know ids that live
+// elsewhere, so it accepts any well-formed one. Returns an error message, or null.
 const ATTRIBUTE_KEY_RE = /^[a-z0-9_]+(?:[.-][a-z0-9_]+)*$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const ATTRIBUTES_MAX_KEYS = 32;
