@@ -174,3 +174,14 @@ test('revive: a write to an archived key does not inherit its record extensions'
   assert.equal(revived.entry.content_type, null);
   assert.deepEqual(revived.entry.attributes, {});
 });
+
+test('revive: a revived key is a new record that may supersede its archived predecessor', async () => {
+  const dir = tmp('lk-rx-revive-id-');
+  const store = createLocalStore(dir);
+  const first = await store.write({ scope: 'global', key: 'k', value: 'one' });
+  await store.archive({ scope: 'global', key: 'k' });
+  const revived = await store.write({ scope: 'global', key: 'k', value: 'two', supersedes: first.entry.id });
+  assert.equal(revived.ok, true, revived.error);
+  assert.notEqual(revived.entry.id, first.entry.id);
+  assert.equal(revived.entry.supersedes, first.entry.id);
+});

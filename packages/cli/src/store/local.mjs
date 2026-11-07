@@ -182,7 +182,7 @@ class LocalStore {
       ?? (Object.keys(mergedAttributes).length > ATTRIBUTES_MAX_KEYS
         ? `attributes must have <= ${ATTRIBUTES_MAX_KEYS} keys`
         : null)
-      ?? (supersedesId && supersedesId === existing?.entry.id ? 'a memory cannot supersede itself' : null);
+      ?? (supersedesId && supersedesId === live?.id ? 'a memory cannot supersede itself' : null);
     if (issue) return { ok: false, error: issue };
     let override, expires_at;
     try {
@@ -235,8 +235,10 @@ class LocalStore {
         ? seenCountOf(existing.entry) + 1
         : 1,
       // Identity: minted once, then kept, so a reference by id survives every
-      // rewrite (and a revive) of this scope::key.
-      id: existing?.entry.id || randomUUID(),
+      // rewrite. A revive of an archived key is a NEW record, as on the server
+      // (which inserts a fresh row), so it gets a new id and can supersede the
+      // archived one.
+      id: live?.id || randomUUID(),
       attributes: mergedAttributes,
       content_type: contentType,
       supersedes: supersedesId ?? live?.supersedes ?? null,
