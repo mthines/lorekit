@@ -48,7 +48,7 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     id: 'open-agent-memory-format',
     label: "Agent memory needs its OpenTelemetry moment",
     summary:
-      "Every agent tool stores memory in its own shape, and none can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, the proposals that already exist, what they agree on, and what a shared spec for agent memory could look like.",
+      "Every agent tool stores memory in its own shape, and every week someone builds another one. None of them can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, the proposals that already exist, and what a shared spec could look like.",
   },
 ];
 
