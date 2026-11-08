@@ -12,7 +12,7 @@ Any added or changed `supabase/migrations/*.sql`. Each file is ONE transaction, 
 
 ## Checklist
 
-- [ ] `create index concurrently` / `reindex ... concurrently` is absent as a statement (it cannot run in a transaction and fails the push); a plain build on `usage_events`, `audit_log` or `memories` carries a `LOCK WINDOW` comment naming what blocks and why that is acceptable.
+- [ ] `create index concurrently` / `reindex ... concurrently` is absent as a statement (it cannot run in a transaction and fails the push); a plain build on `usage_events`, `audit_log` or `memories` carries a comment naming what blocks and why that is acceptable (`LOCK WINDOW`, as in 00061).
 - [ ] An `alter table` on `memories`, `usage_events`, `audit_log` or another table that grows without bound opens with `set local lock_timeout` so a queued ACCESS EXCLUSIVE lock fails fast instead of stalling every request behind it.
 - [ ] No `alter column ... type`, no `add column` with a volatile default (`now()`, `gen_random_uuid()`, `random()`), and no `add column ... not null` without a constant default on a populated table (each rewrites the table under ACCESS EXCLUSIVE).
 - [ ] A new `check` or foreign-key constraint on a populated table is `not valid`, and its `validate constraint` sits in a LATER migration file (validating in the same file keeps the first lock until commit).
@@ -24,4 +24,4 @@ Any added or changed `supabase/migrations/*.sql`. Each file is ONE transaction, 
 ## Severity hints
 
 - **Must-fix**: `concurrently` as a statement, a table rewrite, a same-file `validate constraint`, an unbounded backfill, a drop that breaks the previous release, an edited merged migration.
-- **Should-fix**: missing `lock_timeout`, missing `LOCK WINDOW` note, missing `analyze`.
+- **Should-fix**: missing `lock_timeout`, missing lock-window comment, missing `analyze`.

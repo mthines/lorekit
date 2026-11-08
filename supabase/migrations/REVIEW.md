@@ -10,7 +10,7 @@ A migration that breaks an invariant below is a defect, not a style point.
   file changes nothing on a database that already ran it. A fix is a new, higher-numbered file.
 - **One transaction per file means every lock is held to the end of the file.** `CREATE INDEX CONCURRENTLY`
   and `REINDEX ... CONCURRENTLY` cannot run in a transaction, so they appear only in comments (00033, 00061,
-  00076, 00086, 00096). Plain builds are deliberate here and each says so in a `LOCK WINDOW` note.
+  00076, 00086, 00096). Plain builds are deliberate here. 00061 carries a `LOCK WINDOW` note and the others explain the lock in prose; 00109, a plain build on `usage_events`, says nothing about it, which is the gap the lens closes.
   A `NOT VALID` constraint validated in the same file keeps its first lock until commit, so the
   `VALIDATE CONSTRAINT` belongs in a later file.
 - **Migrations push before Edge Functions deploy, and rollback restores only functions** (`HEAD~1`). The
