@@ -357,7 +357,7 @@ export const MCP_TOOLS = [
         attributes: {
           type: 'object',
           description:
-            'Open metadata as namespaced keys with scalar values, e.g. `{"ci.run_url": "https://…", "vcs.pr": 482}`. Keys are lowercase and dot-separated; at most 32. On an update the map is MERGED into what is stored, and a key set to null is removed.',
+            'Open metadata as namespaced keys with scalar values, e.g. `{"ci.run_url": "https://…", "vcs.pr": 482}`. Keys are lowercase and dot-separated; at most 32 keys, each key at most 128 characters and each string value at most 1024. On an update the map is MERGED into what is stored, and a key set to null is removed.',
         },
         content_type: {
           type: 'string',
