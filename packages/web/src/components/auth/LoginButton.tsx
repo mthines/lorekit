@@ -557,7 +557,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         <button
           type="button"
           onClick={() => {
-            selectOption('email_password');
+            selectOption(passwordMode === 'signup' ? 'email_password_signup' : 'email_password');
             resetTo('password');
           }}
           className={LINK_CLASS}
