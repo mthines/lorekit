@@ -234,7 +234,9 @@ export async function prepareArm(
  * reported the clean room CONTAMINATED. Only an explicit
  * `"<name>@builtin": false` switches one off.
  *
- * The list is every built-in 2.1.287 ships except `sec-default`, which is
+ * The list is every built-in seen so far (2.1.287, plus `privacy`, which a
+ * later release added and preflight reported as `cc-plugin-privacy`) except
+ * `sec-default`, which is
  * enabled from managed policy only, so a session setting cannot switch it
  * either way. It is a request, like every flag here, so a built-in a later
  * release adds is not silently trusted: preflight names it in a
@@ -247,6 +249,7 @@ export const BUILTIN_PLUGINS = Object.freeze([
   "mermaid",
   "mods-guide",
   "plugin-authoring",
+  "privacy",
   "responsive-mode",
   "telemetry",
   "tips",
