@@ -1,55 +1,55 @@
 ---
 title: "Agent memory needs its OpenTelemetry moment"
-description: "Every agent tool stores memory in its own shape, and none can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, the proposals that already exist, what they agree on, and what a shared spec for agent memory could look like."
+description: "Every agent tool stores memory in its own shape, and every week someone builds another one. None of them can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, the proposals that already exist, and what a shared spec could look like."
 date: "2026-11-07"
 author: "Mads Thines"
-readingMinutes: 8
+readingMinutes: 7
 tags: ["agent-memory", "open-format", "standards", "opentelemetry", "lorekit"]
 order: 5
-keywords: ["agent memory format", "open memory standard", "memory interoperability", "OpenTelemetry for agent memory", "memory specification", "AGENTS.md", "Copilot Memory", "Letta memory blocks", "Mem0", "LangGraph store", "MCP memory server", "Graphiti", "Portable Memory", "Open Memory Protocol", "CI state", "lorekit"]
+keywords: ["agent memory format", "open memory standard", "memory interoperability", "OpenTelemetry for agent memory", "memory specification", "AGENTS.md", "Copilot Memory", "Letta memory blocks", "Mem0", "LangGraph store", "MCP memory server", "Graphiti", "Portable Memory", "Open Memory Protocol", "lorekit"]
 ---
 
 
 ## Count the memory formats on your machine
 
-Here's a small exercise. List every place your coding tools keep something they "remember".
-
-A typical setup today looks like this:
+List every place your coding tools keep something they "remember". A typical setup today:
 
 - an `AGENTS.md` or `CLAUDE.md` in most repos, and `.cursor/rules/*.mdc` in a few
-- an API agent writing files to a `/memories` directory
+- an agent writing files to a `/memories` directory through Anthropic's memory tool
 - Copilot keeping facts about each repo on GitHub's side
 - a memory MCP server keeping a JSONL knowledge graph
 
-That's five or six shapes, and **none of them can read the others**.
+That's four different shapes, and **none of them can read the others**. A lesson your CI agent learns stays in whatever wrote it. Your editor agent can't read it, and neither can the next tool you try.
 
-Each one is reasonable on its own. Together, they're an industry rebuilding the same small idea again and again: *a note an agent left for its future self, stored at some address, true for a while.* A lesson your CI agent learns stays in whatever wrote it. Your editor agent can't read it. Neither can the next tool you try.
+Each format is reasonable on its own. Together, they rebuild the same small idea again and again: *a note an agent left for its future self, stored at some address, true for a while.*
 
-I build one of these tools, LoreKit, which is open source. So I'll be clear about what this post is and isn't. It isn't a pitch that LoreKit has solved memory. LoreKit's format is one proposal among several, and it has gaps of its own. The point of the post is that **this is the moment to agree on a shared shape**, and that we've watched another field get this right.
+And the list keeps growing. Browse r/ClaudeAI, r/LocalLLaMA or r/cursor and you'll find a steady stream of "I built a memory layer for my agent" posts, each with its own storage, its own schema and its own MCP tools. That's good evidence the problem is real: people keep hitting it badly enough to build something. But every new solution adds one more format that nothing else can read. **The problem isn't a missing tool. It's a missing agreement**, and that only comes from the community working on it together.
+
+I build one of these tools, LoreKit, which is open source. This isn't a pitch that LoreKit has solved memory. Its format is one proposal among several, with gaps of its own. The point is that **this is the moment to agree on a shared shape**, and that another field has already shown how.
 
 ## We've seen this before
 
-Ten years ago, observability looked a lot like agent memory does now. Every monitoring vendor shipped its own agent, its own instrumentation library and its own data format. If you instrumented your code for one vendor, switching meant doing it again. Two open projects tried to fix this from different directions: OpenTracing (a common API) and OpenCensus (Google's instrumentation libraries and exporters). For a while they competed too.
+Before 2019, every observability vendor shipped its own agent, its own instrumentation library and its own data format. Switching vendors meant instrumenting your code again. Two open projects, OpenTracing and OpenCensus, tried to fix that and competed with each other too.
 
-In 2019 they merged into **OpenTelemetry**. The important part wasn't the code. It was what the vendors agreed to stop competing on. OpenTelemetry standardised four layers:
+In 2019 they merged into **OpenTelemetry**. What mattered was what the vendors agreed to stop competing on:
 
 1. **A data model**: what a span, a metric and a log record are.
-2. **Semantic conventions**: shared names like `service.name`, `http.*` and `db.*`, so the same thing is called the same thing everywhere.
+2. **Semantic conventions**: shared names like `service.name` and `http.*`.
 3. **A protocol**: OTLP, one way to send the data.
-4. **Reference implementations**: SDKs and the Collector, so nobody had to start from zero.
+4. **Reference implementations**: shared SDKs and the Collector.
 
-Vendors kept competing, but on what they *do* with the data: storage, querying, analysis, user experience. Users got to instrument once. I work with OpenTelemetry every day at [Dash0](https://www.dash0.com), and that one agreement is why a whole ecosystem of tools can read each other's data today.
+Vendors kept competing on what they *do* with the data: storage, querying, analysis. Users instrument once. I work with OpenTelemetry every day at [Dash0](https://www.dash0.com), and that agreement is why a whole ecosystem of tools can read each other's data.
 
 <figure>
   <img src="/blog/otel-parallel.svg" alt="Two columns compare observability, which OpenTelemetry settled, with agent memory, which is still open, across four layers: data model, semantic conventions, protocol, and implementations. For memory, the first three layers are drawn dashed because nobody has agreed on them yet." width="720" height="420" />
-  <figcaption>The same four layers. Observability agreed on the first three and kept competing on the fourth. Agent memory hasn't agreed on any of them yet.</figcaption>
+  <figcaption>The same four layers. Observability agreed on them and competes on what happens after the data arrives. Agent memory has plenty of implementations, but nothing agreed underneath them.</figcaption>
 </figure>
 
-Agent memory is at the stage observability was in before 2019. There are many formats, a few early proposals and no agreement. The timing is good for two reasons. The formats are still young enough to change. And the agent ecosystem already has a neutral home for shared standards: MCP and `AGENTS.md` both now sit under the Linux Foundation's Agentic AI Foundation.
+Agent memory is where observability was before 2019. The timing is good: the formats are young enough to change, and there's already a neutral home for agent standards. MCP and `AGENTS.md` both sit under the Linux Foundation's Agentic AI Foundation.
 
 ## A tour of the shapes
 
-To agree on a shape, it helps to see the ones we already have. These change quickly, so treat the details as a snapshot from late 2026.
+These change quickly, so treat the details as a snapshot from late 2026.
 
 | Family | Example | The unit of memory | Addressed by | Forgetting |
 | --- | --- | --- | --- | --- |
@@ -63,108 +63,80 @@ To agree on a shape, it helps to see the ones we already have. These change quic
 | Temporal graph | Graphiti / Zep | A fact on a graph edge | Entities + edge | Facts are invalidated rather than deleted, on two timelines |
 | Addressed record | LoreKit | A record with a scope, key and lifecycle | A scope string + `key` | Never, unless a TTL is set |
 
-<figure>
-  <img src="/blog/memory-formats-map.svg" alt="A grid placing agent memory formats by who writes them and how structured they are. A person writes AGENTS.md, CLAUDE.md and Cursor rules. The agent writes memory-tool files, Letta blocks, Copilot Memory, the MCP knowledge graph, LangGraph store items and LoreKit records. An extractor writes Mem0 facts and Graphiti edges. Rows run from plain files at the bottom to typed records and graphs at the top." width="720" height="420" />
-  <figcaption>The same idea in ten shapes, placed roughly by who writes each one and how much structure it has. Neither axis decides whether two tools can share memory. What decides it is whether an address means the same thing to every reader.</figcaption>
-</figure>
-
-Each of these got something right that a shared spec should keep:
-
-- **`AGENTS.md`** shows that a plain file at a known path can become a standard. But it holds rules a person curates, not lessons an agent learns.
-- **Anthropic's memory tool** shows how far plain files go. It also shows the cost: two agents sharing a directory have no shared idea of what a file *means*.
-- **Copilot Memory** pairs *citations you can check* against the code with *forgetting by default*. It's the design I'd most like a shared spec to have, and today it's locked inside one product.
-- **Letta** is honest that memory costs context tokens on every turn.
-- **LangGraph** shows how small the core can be: `put(namespace, key, value)`.
-- **Graphiti** models time properly, with separate timelines for when a fact was true and when it was recorded.
+A few of them got something right that a shared spec should keep. **Copilot Memory** pairs citations you can check against the code with forgetting by default, though it's locked inside one product. **LangGraph** shows how small the core can be: `put(namespace, key, value)`. **Graphiti** models time properly, with separate timelines for when a fact was true and when it was recorded. And **`AGENTS.md`** shows that a plain file at a known path can become a standard.
 
 ### The proposals that already exist
 
-Several people have already started on this. MacPaw Research has proposed **Portable Memory**, a `.mem` bundle with byte-reproducible serialization, deletion tombstones and optional signing. Its own authors say it's not yet widely adopted. The **Open Memory Protocol** is an April 2026 draft for moving conversations, and the memories derived from them, between platforms as a ZIP file with a manifest. Cognee offers a **COGX** exchange format with importers from Mem0, Letta and Zep.
+Several people have started on this. MacPaw Research's **Portable Memory** is a `.mem` bundle with byte-reproducible serialization, deletion tombstones and optional signing; its authors say it isn't widely adopted yet. The **Open Memory Protocol** is an April 2026 draft for moving conversations and the memories derived from them between platforms as a ZIP with a manifest. Cognee's **COGX** format imports from Mem0, Letta and Zep.
 
-These are starting points, not competitors. They mostly solve **export**: "how do I move my memory from vendor A to vendor B?" That matters most for personal assistants. Coding tools have a second problem that's still open: **live addressing**. When a CI job, an editor agent and a review bot work in the same repo at the same time, how do they write to and read from the *same* place, and agree on what it means? A complete spec needs both, the way OpenTelemetry needed both a data model and a protocol.
+These mostly solve **export**: moving one person's memory from vendor A to vendor B. Coding tools also have a second, open problem: **live addressing**. When a CI job, an editor agent and a review bot work in the same repo at once, how do they read and write the *same* place and agree on what it means? A complete spec needs both.
 
 <figure>
   <img src="/blog/export-vs-address.svg" alt="Two problems side by side. Left, export: memory in vendor A is packed into a bundle such as a .mem file, an .omp.zip or COGX, and unpacked in vendor B. Right, live addressing: a CI job, an editor agent and a review bot all read and write one address, repo::acme/checkout, at the same time." width="720" height="380" />
   <figcaption>Export moves one owner's memory between vendors. Live addressing lets many tools share one place at the same time. The existing proposals focus on the first. A shared address could sit inside their records to cover the second.</figcaption>
 </figure>
 
-## What every format already agrees on
-
-Strip away the branding and almost every format answers the same four questions, just in different ways:
-
-1. **Where is this true?** A path, a repo, a user ID, a namespace tuple, an entity.
-2. **What is its identity?** Something that decides whether a second write is an *update* or a *duplicate*.
-3. **What does it say?** Almost always plain text, or JSON when a program is the reader.
-4. **When does it stop being true?** Often skipped. When it isn't, the answers range from "28 days unused" to "two full timelines".
-
-That's the part I find hopeful. These four questions are the beginning of a data model, and nobody disagrees that they matter. The tools only disagree on the answers. OpenTelemetry started from a similar place: everyone already had spans, they just shaped them differently.
-
-There's one real fork. **Who writes the memory?** In instruction files it's a person. In the memory tool, Letta and LoreKit, the model writes directly. In Mem0 and Graphiti, a service extracts facts from the conversation. A shared format doesn't need to pick one. It needs to *record* which one, so a reader knows how much to trust what it reads.
-
 ## What a shared spec could look like
 
-If agent memory followed OpenTelemetry's path, the spec would have the same four layers:
+Strip away the branding and every format answers the same four questions differently: **where** a memory is true, **what its identity is** (does a second write update it or duplicate it?), **what it says**, and **when it stops being true**. Nobody disagrees that those matter. The tools only disagree on the answers, which is where OpenTelemetry started too.
 
-- **A data model.** One record: an address, a stable ID, a body with a content type, a lifecycle, provenance with optional anchors, a kind, and an open attribute map. Small enough that a shell script can write a valid record.
-- **Conventions.** Shared names for address levels (`global`, `project`, `repo`, `branch`, and whatever monorepos need), for kinds, and for attribute namespaces (`vcs.*`, `ci.*`, `agent.*`). OpenTelemetry's semantic conventions are the model: one registry, versioned, open to anyone.
-- **A contract.** A small set of memory operations (write, read, list, search, archive) with fixed inputs and outputs, exposed over MCP. Every memory server today speaks MCP but exposes different tools, so agents can call any of them and none of them mean the same thing.
-- **Conformance tests.** Round-trip a record and check nothing was lost. Check that unknown attributes survive a rewrite. Check that expiry rules behave as stated.
+There's one real fork: **who writes the memory**. In instruction files it's a person. In the memory tool, Letta and LoreKit, it's the model. In Mem0 and Graphiti, a service extracts facts from the conversation. A spec doesn't need to pick one. It needs to *record* which, so a reader knows how much to trust what it reads.
 
-Here's roughly what one record could look like on the wire. It's an illustration of the data model, not a proposal for exact field names:
+Here's roughly what one record could look like as a file. It illustrates the data model; the field names aren't a proposal:
 
-```json
-{
-  "spec": "agent-memory/0.1",
-  "id": "8f0c2a6e-4b1d-4c7a-9e2f-3a5b6c7d8e9f",
-  "address": { "level": "repo", "value": "github.com/acme/checkout" },
-  "key": "tests-need-local-postgres",
-  "kind": "lesson",
-  "written_by": { "type": "agent", "name": "claude-code" },
-  "content_type": "text/markdown",
-  "body": "Integration tests need Postgres up first: docker compose up -d db.",
-  "lifecycle": { "expires_at": null, "extended_by": "write" },
-  "attributes": { "vcs.pr": 482, "ci.run_url": "https://ci.example/runs/123" }
-}
+```markdown
+---
+spec: agent-memory/0.1
+id: 8f0c2a6e-4b1d-4c7a-9e2f-3a5b6c7d8e9f
+address: { level: repo, value: github.com/acme/checkout }
+key: tests-need-local-postgres
+kind: lesson
+written_by: { type: agent, name: claude-code }
+content_type: text/markdown
+lifecycle: { expires_at: null, extended_by: write }
+attributes: { vcs.pr: 482, ci.run_url: "https://ci.example/runs/123" }
+---
+Integration tests fail with `ECONNREFUSED 127.0.0.1:5432` unless Postgres
+is already running. Start it before `pnpm test`:
+
+    docker compose up -d db
+
+The test setup does not start it for you.
 ```
 
-Each line answers one of the four questions or the fork above: `address` and `key` say where it's true, `id` is its identity, `content_type` and `body` say what it says, `lifecycle` says when it stops, and `written_by` records who wrote it. Everything a tool needs beyond that goes in `attributes`, under a namespace other tools can ignore. The same record could just as well be a Markdown file with frontmatter.
+The frontmatter is the envelope: `address` and `key` say where it's true, `id` is its identity, `lifecycle` says when it stops, and `written_by` answers the fork. The Markdown below it is the memory itself, and `content_type` tells a reader how to treat it. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record serialises to JSON just as well, for a tool that wants to send it over the wire.
 
-What stays *out* of the spec matters as much: storage, ranking, embeddings, whether a model or an extractor writes, the user interface. Those are where tools should compete, the way observability vendors compete on everything after the data arrives.
+Around that record, a spec would mirror OpenTelemetry's layers:
 
-The spec should live somewhere neutral, not in LoreKit's repo or any single vendor's. The Agentic AI Foundation already looks after MCP and `AGENTS.md`, which makes it one natural option, though that's for the people involved to decide.
+- **Conventions**: shared names for address levels (`global`, `project`, `repo`, `branch`, and whatever monorepos need), for kinds, and for attribute namespaces (`vcs.*`, `ci.*`, `agent.*`), in one versioned registry.
+- **A contract**: a few operations (write, read, list, search, archive) with fixed inputs and outputs, exposed over MCP. Many memory servers now offer an MCP interface, but each exposes different tools with different meanings.
+- **Conformance tests** in place of a reference implementation: round-trip a record and check nothing was lost, check that unknown attributes survive a rewrite, check that expiry behaves as stated.
+
+What stays *out* matters as much: storage, ranking, embeddings, the user interface. That's where tools should compete. And the spec should live somewhere neutral, not in LoreKit's repo or any single vendor's.
 
 ## What a skeptic would say
 
-These are the objections I'd raise if someone else had written this post.
+**"You build a memory tool, so of course you want a standard shaped like it."** Fair. It's why LoreKit is one row in the table rather than the template. If a shared spec looks different, LoreKit should adopt it anyway.
 
-**"You build a memory tool, so of course you want a standard shaped like it."** That's a fair suspicion. It's why this post spends more time on other tools than on LoreKit, and why LoreKit is one row in the table rather than the template. If a shared spec ends up looking different, LoreKit should adopt it anyway. Being the tool that wrote the spec matters less than being one of many tools that can read each other's memory.
+**"MCP already is the standard."** MCP standardises the *call*, not the *record*. OpenTelemetry needed a protocol *and* a data model. Memory needs both too.
 
-**"MCP already is the standard."** MCP standardises the *call*, not the *record*. It's like having a shared network protocol without a shared data model. OpenTelemetry needed OTLP *and* the data model. Memory needs both too.
+**"Shared memory is a prompt-injection channel."** Yes. Anything an agent reads can steer it, and shared memory widens who gets to write it. A spec should make that visible: record who wrote each memory, allow signatures (Portable Memory already does), and let a record point at the code it depends on so a reader can check whether that code changed. No format makes poisoning impossible.
 
-**"Shared memory is a prompt-injection channel."** Yes. Anything an agent reads can steer it, and shared memory widens who gets to write those things. A spec should make the risk visible rather than hide it: record who wrote each memory and how, let readers check anchors, and allow signatures, which Portable Memory already proposes. No format makes poisoning impossible.
-
-**"Another standard won't fix fragmentation."** That's the xkcd 927 problem: an attempt to unify everything adds one more competing standard. It's the strongest objection. My answer is the OpenTelemetry one. Agreement happened there when the existing projects *merged*, not when someone added a fifth. The useful work here is the same: take what the existing proposals and tools each got right, and agree on one shape for the parts they share.
-
-**"It's too early. Memory designs are still changing."** Maybe. But OpenTelemetry's data model has kept evolving since 2019, through versioning and conventions. Agreeing on a small core now doesn't freeze anything. It just stops every new tool from inventing its own core from scratch.
+**"Another standard won't fix fragmentation."** That's [xkcd 927](https://xkcd.com/927/), and it's the strongest objection. My answer is OpenTelemetry's: agreement came when existing projects *merged*, not when someone added another one. The work here is the same: take what the existing proposals and tools each got right, and agree on the parts they share.
 
 ## Open questions
 
 I don't know the answers to these, and I'd rather work them out in public:
 
-- **Which address levels?** Monorepos want a level between `repo` and `branch`, and organisations want one above `project`. Is a fixed list right, or should levels be conventions too?
-- **Should forgetting be the default?** Copilot forgets by default, LoreKit doesn't, and LangGraph extends life on read. A per-record rule avoids choosing, but tools still need a default.
-- **Do coding lessons need two timelines?** Graphiti's case is strong for facts about the world. Is there a coding case where "what was true in March" matters?
-- **Are anchors part of the core?** They're the best protection against stale memory, but they tie a record to a code host.
-- **Who should coordinate?** A working group across tool builders, a foundation, or a draft spec that people send changes to?
+- **Which address levels?** Monorepos want a level between `repo` and `branch`. Should levels be a fixed list or conventions?
+- **Should forgetting be the default?** Copilot forgets by default, LoreKit doesn't, and LangGraph extends life on read.
+- **Should a record point at the code it depends on?** It's the best protection against stale memory, but it ties a record to a code host.
+- **Who should coordinate?** A working group, a foundation, or a draft spec people send changes to?
 
-If you build any of the tools in the table, or you've written one of the existing proposals, I'd like to compare notes. Disagreement is the useful part. LoreKit's schema, scope validator and on-disk format are MIT-licensed in the repo as one concrete input.
-
-## Look at a real record
-
-The quickest way to judge any of this is to look at real files. LoreKit's offline store writes plain Markdown records you can open, grep and diff:
+If you build any of the tools in the table, or wrote one of the proposals, I'd like to compare notes. LoreKit's schema and on-disk format are MIT-licensed as one concrete input. To see real records, LoreKit's offline store writes plain Markdown files you can open, grep and diff:
 
 ```bash
 npx @lorekit/cli install
 ```
 
-Then compare them with the files your other tools write, and tell me what a shared format would need that none of them have yet.
+Compare them with what your other tools write, and tell me what a shared format would need that none of them have yet.
