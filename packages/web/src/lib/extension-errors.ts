@@ -23,8 +23,10 @@
  * extension message — "Cannot read properties of undefined (reading 'M_ID')" —
  * is the single most common shape of a real first-party TypeError, so a message
  * regex broad enough to catch it would also silence our own bugs. The stack is
- * the only place the origin is unambiguous, so the decision is made from the
- * stack and the SDK's own filter is left alone.
+ * where the origin is unambiguous, so the decision is made from the stack and
+ * the SDK's own filter is left alone. The two exceptions are messages no code
+ * of ours can produce: a muted `Script error.` with no stack or URL, and one
+ * naming a browser-injected global (see `BROWSER_INJECTED_GLOBALS`).
  *
  * Kept pure and dependency-free (no React, no `next/*`, no node builtins),
  * matching the repo's functional-core convention — `dash0-rum.ts` owns the
