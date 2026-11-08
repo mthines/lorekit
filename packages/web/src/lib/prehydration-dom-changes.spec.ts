@@ -9,6 +9,7 @@ import {
   isHydrationErrorEvent,
   isHydrationErrorMessage,
   isReactOwned,
+  rememberBodyWidgets,
   summarizeDomChanges,
   watchPrehydrationDomChanges,
   type DomMutation,
@@ -257,6 +258,37 @@ describe('conflictingChangeCount', () => {
     expect(conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('next-route-announcer')) }))).toBe(0);
   });
 
+  it('leaves out an edit inside an extension widget under <body>, and the widget\'s removal', () => {
+    // react-dom 19 steps over the widget with its subtree, so neither can mismatch.
+    const { body, main } = page();
+    const widgets = new WeakSet<Node>();
+    const widget = element('div', body);
+    const inner = element('span', widget);
+    const addWidget = mutation({ target: body, addedNodes: nodes(widget) });
+
+    expect(conflictingChangeCount(addWidget, widgets)).toBe(0);
+    rememberBodyWidgets(addWidget, widgets);
+
+    expect(conflictingChangeCount(mutation({ target: widget, addedNodes: nodes(inner) }), widgets)).toBe(0);
+    expect(conflictingChangeCount(mutation({ type: 'characterData', target: textNode(inner) }), widgets)).toBe(0);
+    expect(conflictingChangeCount(mutation({ target: body, removedNodes: nodes(widget) }), widgets)).toBe(0);
+    // Removing a node of the page from under <body> still counts.
+    expect(conflictingChangeCount(mutation({ target: body, removedNodes: nodes(main) }), widgets)).toBe(1);
+  });
+
+  it('remembers no widget for an owned <body> or an owned node', () => {
+    const { body } = page();
+    const widgets = new WeakSet<Node>();
+    const ours = owned(element('div', body));
+    rememberBodyWidgets(mutation({ target: body, addedNodes: nodes(ours) }), widgets);
+    expect(widgets.has(asNode(ours))).toBe(false);
+
+    owned(body);
+    const late = element('script', body);
+    rememberBodyWidgets(mutation({ target: body, addedNodes: nodes(late) }), widgets);
+    expect(widgets.has(asNode(late))).toBe(false);
+  });
+
   it('leaves out an attribute change — react-dom 19 never throws on one', () => {
     const { html } = page();
     html.setAttribute?.('lang', 'fr');
@@ -395,6 +427,17 @@ describe('watchPrehydrationDomChanges', () => {
     ]);
 
     expect(watch?.snapshot()?.conflicting).toBe(1);
+  });
+
+  it('does not count edits inside a widget it saw added under <body>', () => {
+    const { doc, body } = fakeDocument();
+    const watch = watchPrehydrationDomChanges({ doc });
+    const widget = element('div', body);
+
+    FakeObserver.last?.callback([mutation({ target: body, addedNodes: nodes(widget) })]);
+    FakeObserver.last?.callback([mutation({ target: widget, addedNodes: nodes(element('span', widget)) })]);
+
+    expect(watch?.snapshot()).toMatchObject({ count: 2, conflicting: 0 });
   });
 
   it('counts a widget added under <body> and a language rewrite, but not as conflicting', () => {
