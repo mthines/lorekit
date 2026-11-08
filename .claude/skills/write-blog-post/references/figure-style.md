@@ -57,8 +57,7 @@ Use amber for one thing per figure: the point the reader should notice.
 - **Record / card:** one big card, `.lbl` zone headings, field names left in
   `.k`, explanations right-aligned in `.lbl` (see `memory-record.svg`).
 - **Timeline:** label column on the left, track lines from x=200, filled dots
-  for writes, hollow dots for reads, a tinted bar for a window (see
-  `forgetting-defaults.svg`).
+  for writes, hollow dots for reads, a tinted bar for a window.
 
 ## Gotchas
 

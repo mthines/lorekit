@@ -127,7 +127,7 @@ Here's roughly what one record could look like on the wire. It's an illustration
 }
 ```
 
-Each line answers one of the four questions or the fork above: `address` and `key` say where it's true, `id` is its identity, `content_type` and `body` say what it says, `lifecycle` says when it stops, and `written_by` records who wrote it. Everything a tool needs beyond that goes in `attributes`, under a namespace other tools can ignore. The same record could just as well be a Markdown file with frontmatter. [The follow-up post](/blog/lorekit-memory-format-gaps) holds LoreKit's own record up against this shape.
+Each line answers one of the four questions or the fork above: `address` and `key` say where it's true, `id` is its identity, `content_type` and `body` say what it says, `lifecycle` says when it stops, and `written_by` records who wrote it. Everything a tool needs beyond that goes in `attributes`, under a namespace other tools can ignore. The same record could just as well be a Markdown file with frontmatter.
 
 What stays *out* of the spec matters as much: storage, ranking, embeddings, whether a model or an extractor writes, the user interface. Those are where tools should compete, the way observability vendors compete on everything after the data arrives.
 
@@ -137,7 +137,7 @@ The spec should live somewhere neutral, not in LoreKit's repo or any single vend
 
 These are the objections I'd raise if someone else had written this post.
 
-**"You build a memory tool, so of course you want a standard shaped like it."** That's a fair suspicion. It's why this post spends more time on other tools than on LoreKit, and why I'm writing up LoreKit's own gaps separately. If a shared spec ends up looking different, LoreKit should adopt it anyway. Being the tool that wrote the spec matters less than being one of many tools that can read each other's memory.
+**"You build a memory tool, so of course you want a standard shaped like it."** That's a fair suspicion. It's why this post spends more time on other tools than on LoreKit, and why LoreKit is one row in the table rather than the template. If a shared spec ends up looking different, LoreKit should adopt it anyway. Being the tool that wrote the spec matters less than being one of many tools that can read each other's memory.
 
 **"MCP already is the standard."** MCP standardises the *call*, not the *record*. It's like having a shared network protocol without a shared data model. OpenTelemetry needed OTLP *and* the data model. Memory needs both too.
 
@@ -157,7 +157,7 @@ I don't know the answers to these, and I'd rather work them out in public:
 - **Are anchors part of the core?** They're the best protection against stale memory, but they tie a record to a code host.
 - **Who should coordinate?** A working group across tool builders, a foundation, or a draft spec that people send changes to?
 
-If you build any of the tools in the table, or you've written one of the existing proposals, I'd like to compare notes. Disagreement is the useful part. LoreKit's schema, scope validator and on-disk format are MIT-licensed in the repo as one concrete input, and a follow-up post goes through where that format falls short.
+If you build any of the tools in the table, or you've written one of the existing proposals, I'd like to compare notes. Disagreement is the useful part. LoreKit's schema, scope validator and on-disk format are MIT-licensed in the repo as one concrete input.
 
 ## Look at a real record
 
