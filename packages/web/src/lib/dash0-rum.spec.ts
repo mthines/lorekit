@@ -65,6 +65,7 @@ const {
   FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX,
   FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX,
   startPrehydrationDomChangeRecorder,
+  installHydrationErrorDomContext,
   PREHYDRATION_DOM_CHANGES_ATTRIBUTE,
   PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE,
 } = await import('./dash0-rum');
@@ -649,8 +650,18 @@ describe('pre-hydration DOM changes on hydration errors', () => {
         { key: PREHYDRATION_DOM_CHANGES_ATTRIBUTE, value: '+font in body ×2' },
       ]);
       expect(leftOnSignals()).toEqual([]);
+
+      // When nothing runs the reset behind the SDK (something stopped the event),
+      // the next-task timer still clears them.
+      const bare = new EventTarget();
+      const teardown = installHydrationErrorDomContext(bare);
+      const unhandled = new Event('error');
+      Object.defineProperty(unhandled, 'message', { value: HYDRATION_ERROR });
+      bare.dispatchEvent(unhandled);
+      expect(leftOnSignals()).toHaveLength(2);
       vi.advanceTimersByTime(0);
       expect(leftOnSignals()).toEqual([]);
+      teardown();
     } finally {
       delete (globalThis as { document?: unknown }).document;
       vi.useRealTimers();
