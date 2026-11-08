@@ -32,7 +32,11 @@
 import { init, identify, addSignalAttribute, removeSignalAttribute } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
-import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
+import {
+  messageOfUnknown,
+  shouldIgnoreErrorFromExtension,
+  stackOfUnknown,
+} from './extension-errors';
 import {
   deploymentEnvironmentClampMessage,
   resolveDeploymentEnvironment,
@@ -236,29 +240,25 @@ export function installExtensionErrorFilter(target?: EventTarget): () => void {
   const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
   if (!eventTarget) return () => undefined;
 
-  // Best-effort by design, and the SMALLER half of the win. A script served
-  // from another origin — which every `chrome-extension://` script is — has its
-  // uncaught errors MUTED by the browser: the page sees `message: "Script
-  // error."` with `error: null` and `filename: ""`, and no `crossorigin`
-  // attribute we control can un-mute an extension's own script tag. With
-  // neither a stack nor a filename there is nothing to attribute, so those
-  // events fall through to the fail-safe and are kept.
-  //
-  // Both production fingerprints (`M_ID`, MetaMask `inpage.js`) arrive as
-  // unhandled REJECTIONS, whose `reason` is a real `Error` object with a full
-  // stack and is not subject to the muting — that path is what removes the
-  // 102/105. This branch stays for the hosts and cases that do report an
-  // attributable uncaught error; it is never the thing to measure the filter by.
+  // A script served from another origin — which every `chrome-extension://`
+  // script is — has its uncaught errors MUTED by the browser: the page sees
+  // `message: "Script error."` with `error: null` and `filename: ""`. Nothing
+  // in such an event can be attributed, but nothing in it can be ours either,
+  // because the app serves every script it runs from its own origin, so
+  // `isMutedCrossOriginError` drops it. The message is passed for that and for
+  // the globals only iOS browsers and wallets inject (`window.ethereum`,
+  // `__gCrWeb`), whose stack points at the page itself.
   const onError = (event: Event) => {
-    const { error, filename } = event as ErrorEvent;
-    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(error), filename })) {
+    const { error, filename, message } = event as ErrorEvent;
+    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(error), filename, message })) {
       event.stopImmediatePropagation();
     }
   };
 
   const onRejection = (event: Event) => {
     const { reason } = event as PromiseRejectionEvent;
-    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(reason) })) {
+    const origin = { stack: stackOfUnknown(reason), message: messageOfUnknown(reason) };
+    if (shouldIgnoreErrorFromExtension(origin)) {
       event.stopImmediatePropagation();
     }
   };
@@ -338,6 +338,16 @@ export function initDash0Rum(): boolean {
     // Propagate W3C trace context to Supabase — links browser spans to the
     // Edge Function spans they cause.
     propagateTraceHeadersCorsURLs: [supabaseOriginPattern()],
+    // Both default to true, and both only ever add detail to errors from
+    // scripts on ANOTHER origin, which for this app means extensions: every
+    // script it runs is same-origin, so the browser already reports its errors
+    // in full. The timer wrapper also manufactured errors of its own: in
+    // Firefox it calls `callback.apply()` on an extension's privileged callback,
+    // Firefox refuses ("Permission denied to access property \"apply\""), and
+    // the SDK reported the throw from its own frame — 84 `browser.error` events
+    // from 2 sessions on 2026-11-08.
+    wrapTimers: false,
+    wrapEventHandlers: false,
   });
 
   // AFTER init(): runs right behind the SDK's `onerror`, clearing the
@@ -520,12 +530,12 @@ function clearPrehydrationAttributes(): void {
  * Start recording the DOM changes made before React hydrates.
  *
  * Call it from `instrumentation-client.ts`, right after {@link initDash0Rum}:
- * it has to be running before hydration starts to see anything. The point is
- * the `browser.error` event for React #418 — React's production message says a
- * node did not match but not which one, and
- * {@link installHydrationErrorDomContext} puts the edit that caused it
- * (`+font in main>article>p ×12`, `html[lang]=fr`) on that event. See
- * `prehydration-dom-changes.ts` for what is counted and why.
+ * it has to be running before hydration starts to see anything. React's
+ * production #418 says a node did not match but not which one or why.
+ * {@link installHydrationErrorDomContext} uses what this records to drop the
+ * #418s an extension caused (an edit like `+font in main>article>p ×12`) and
+ * to label the rest with what did change (`html[lang]=fr`, `+div in body`).
+ * See `prehydration-dom-changes.ts` for what is counted and why.
  *
  * No-op before RUM init and outside a browser.
  */
@@ -536,8 +546,24 @@ export function startPrehydrationDomChangeRecorder(): void {
 }
 
 /**
- * Put the pre-hydration DOM changes on hydration error events, and on nothing
- * else.
+ * Drop the hydration errors an extension caused, and put the pre-hydration DOM
+ * changes on the rest — on hydration error events and nothing else.
+ *
+ * ## Why some hydration errors are dropped
+ *
+ * When the watch saw something other than React make an edit that hydration
+ * cannot step over (`conflicting > 0`, see `conflictingChangeCount`), the
+ * server HTML React tried to claim was no longer the HTML the server sent. The
+ * mismatch is the editor's, not ours, and it is dropped the way
+ * {@link installExtensionErrorFilter} drops an extension's own errors. On
+ * 2026-11-08 React #418 hit 73 of 1,480 Firefox sessions on
+ * `/blog/open-agent-memory-format`, 2 of 2,485 Chrome and 0 of 1,682 Safari
+ * sessions, on identical HTML and an identical bundle.
+ *
+ * Every other hydration error is kept: nothing observed, only edits React
+ * steps over, or no watch running. A mismatch of our own shows on every
+ * browser, so it still reaches RUM from the visitors without such an
+ * extension even when one visitor's extension hides it.
  *
  * ## Why a listener ahead of the SDK, not an attribute held for the page load
  *
@@ -573,6 +599,10 @@ export function installHydrationErrorDomContext(target?: EventTarget): () => voi
     if (!isHydrationErrorEvent(event)) return;
     const snapshot = prehydrationWatch?.snapshot();
     if (!snapshot) return;
+    if (snapshot.conflicting > 0) {
+      event.stopImmediatePropagation();
+      return;
+    }
     replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, snapshot.count);
     if (snapshot.summary) {
       replaceSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE, snapshot.summary);

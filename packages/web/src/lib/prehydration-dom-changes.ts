@@ -95,6 +95,12 @@ export type DomMutation = Pick<
 export interface DomChangeSummary {
   /** Every change recorded so far, duplicates included. */
   count: number;
+  /**
+   * How many of those changes hydration cannot step over (see
+   * {@link conflictingChangeCount}). Above 0, something other than React broke
+   * the server HTML before React could claim it.
+   */
+  conflicting: number;
   /** De-duplicated, ordered, length-capped description of those changes; empty when `count` is 0. */
   summary: string;
 }
@@ -185,6 +191,35 @@ export function describeMutation(mutation: DomMutation): string[] {
 }
 
 /**
+ * How many of a mutation's recorded changes (see {@link describeMutation}) can
+ * make hydration fail.
+ *
+ * Two kinds cannot, so they are left out:
+ *
+ * - An attribute change. react-dom 19 leaves a mismatched attribute as it
+ *   finds it and only warns in development, so `html[lang]=fr` never throws.
+ * - A node added directly under `<body>`. react-dom 19 steps over unexpected
+ *   children of `<body>` and `<head>` while hydrating, precisely because
+ *   extensions put their widgets there (1Password, Grammarly and LastPass all
+ *   do). Counting those would blame an extension for a mismatch that is ours.
+ *
+ * Everything else — a node added or removed inside the page, a text node
+ * rewritten — leaves React looking at DOM the server did not send.
+ */
+export function conflictingChangeCount(mutation: DomMutation): number {
+  if (mutation.type === 'attributes') return 0;
+  const recorded = describeMutation(mutation).length;
+  if (mutation.type !== 'childList' || !isBody(mutation.target)) return recorded;
+  const addedUnderBody = Array.from(mutation.addedNodes).filter((node) => !isReactOwned(node));
+  return recorded - addedUnderBody.length;
+}
+
+/** Whether a node is the document's `<body>`. */
+function isBody(node: Node): boolean {
+  return node.nodeType === 1 && (node as Element).tagName === 'BODY';
+}
+
+/**
  * Fold counted entries into one line, in first-seen order:
  * `+font in main>article>p ×12; html[lang]=fr; …+3 more`.
  */
@@ -250,6 +285,7 @@ export function watchPrehydrationDomChanges({
 
   const counts = new Map<string, number>();
   let total = 0;
+  let conflicting = 0;
   let observing = false;
   let stopped = false;
 
@@ -259,6 +295,7 @@ export function watchPrehydrationDomChanges({
         counts.set(entry, (counts.get(entry) ?? 0) + 1);
         total++;
       }
+      conflicting += conflictingChangeCount(mutation);
     }
   });
 
@@ -292,7 +329,9 @@ export function watchPrehydrationDomChanges({
 
   return {
     snapshot: () =>
-      observing && !stopped ? { count: total, summary: summarizeDomChanges(counts) } : null,
+      observing && !stopped
+        ? { count: total, conflicting, summary: summarizeDomChanges(counts) }
+        : null,
     stop,
   };
 }
