@@ -158,7 +158,6 @@ describe('describeNode / describeLocation', () => {
   it('shows the nearest three elements, outermost first', () => {
     const { p, text } = page();
     expect(describeLocation(asNode(p))).toBe('main>article>p');
-    // A text node is located by its parent element.
     expect(describeLocation(asNode(text))).toBe('main>article>p');
   });
 

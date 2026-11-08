@@ -30,10 +30,9 @@ vi.mock('@dash0/sdk-web', () => {
   return {
     init: () => {
       boot.order.push('sdk.init');
-      // The real SDK takes over `window.onerror` here and snapshots signal
-      // attributes synchronously while handling the event. Registered through
-      // the prototype so the recording stand-in window does not log it: the
-      // boot order below asserts OUR registrations around this point.
+      // Stands in for the SDK's `window.onerror`, which snapshots signal attributes
+      // synchronously. Registered via the prototype so the recording window does
+      // not log it: the boot order below asserts OUR registrations around it.
       const host = (globalThis as { window?: EventTarget }).window;
       if (host) {
         EventTarget.prototype.addEventListener.call(host, 'error', () => {
@@ -268,11 +267,9 @@ describe('signal identity attributes', () => {
   });
 
   it('registers the extension filter and the hydration-error context BEFORE the SDK init, the reset after', () => {
-    // Listener order is registration order, so this sequence is the whole
-    // reason `stopImmediatePropagation()` can preempt the SDK, and the reason
-    // the pre-hydration attributes are in place when the SDK records a #418.
-    // Asserting the recorded boot order — rather than merely that each
-    // happened — is what makes deleting either install call fail a spec.
+    // Listener order is registration order: it is why `stopImmediatePropagation()`
+    // preempts the SDK and why the pre-hydration attributes bracket its handler.
+    // Asserting the order, not just the calls, makes deleting any install fail.
     expect(BOOT_ORDER).toEqual([
       'listener:error',
       'listener:unhandledrejection',
@@ -583,12 +580,9 @@ describe('installExtensionErrorFilter', () => {
 });
 
 describe('pre-hydration DOM changes on hydration errors', () => {
-  // The recorder is guarded to start once per module, like `initDash0Rum`, so
-  // its whole lifecycle is one spec. The hydration-error listeners and the SDK
-  // stand-in's handler were registered on `bootWindow` during the one-shot
-  // boot above, in production order. The `node` environment has no document:
-  // a stand-in whose observer hands its callback back drives the watch, and is
-  // removed again afterwards.
+  // One spec: the recorder starts once per module, and its listeners and the SDK
+  // stand-in were registered on `bootWindow` by the one-shot boot above. A stand-in
+  // document whose observer hands its callback back drives the watch.
   const PREHYDRATION_KEYS = [PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, PREHYDRATION_DOM_CHANGES_ATTRIBUTE];
   const HYDRATION_ERROR = 'Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML';
 
@@ -644,7 +638,6 @@ describe('pre-hydration DOM changes on hydration errors', () => {
       deliver?.([record]);
       deliver?.([record]);
 
-      // Any other error leaves the signals alone.
       expect(sdkSawOn("TypeError: Cannot read properties of undefined (reading 'x')")).toEqual([]);
 
       // A second entry point asking again does not replace the running watch.
