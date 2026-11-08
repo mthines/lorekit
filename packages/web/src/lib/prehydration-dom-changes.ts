@@ -210,6 +210,10 @@ export function conflictingChangeCount(mutation: DomMutation): number {
   if (mutation.type === 'attributes') return 0;
   const recorded = describeMutation(mutation).length;
   if (mutation.type !== 'childList' || !isBody(mutation.target)) return recorded;
+  // Once React owns <body>, describeMutation records nothing for it — Next's
+  // route announcer and `next/script` tags land there after hydration — so
+  // there is nothing to subtract from, and subtracting would go below zero.
+  if (isReactOwned(mutation.target)) return 0;
   const addedUnderBody = Array.from(mutation.addedNodes).filter((node) => !isReactOwned(node));
   return recorded - addedUnderBody.length;
 }

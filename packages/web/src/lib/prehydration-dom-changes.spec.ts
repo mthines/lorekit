@@ -250,6 +250,13 @@ describe('conflictingChangeCount', () => {
     ).toBe(1);
   });
 
+  it('counts nothing for a node added to an already-owned <body> — never below zero', () => {
+    // Next's route announcer and the `sw-register` script land here after hydration.
+    const { body } = page();
+    owned(body);
+    expect(conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('next-route-announcer')) }))).toBe(0);
+  });
+
   it('leaves out an attribute change — react-dom 19 never throws on one', () => {
     const { html } = page();
     html.setAttribute?.('lang', 'fr');
@@ -374,6 +381,20 @@ describe('watchPrehydrationDomChanges', () => {
     FakeObserver.last?.callback([mutation({ target: p, addedNodes: nodes(element('span')) })]);
 
     expect(watch?.snapshot()).toEqual({ count: 3, conflicting: 3, summary: '+font in main>article>p ×3' });
+  });
+
+  it('keeps an extension edit counted after React claims <body> and appends to it', () => {
+    const { doc, body, p } = fakeDocument();
+    const watch = watchPrehydrationDomChanges({ doc });
+
+    FakeObserver.last?.callback([mutation({ target: p, addedNodes: nodes(element('font')) })]);
+    owned(body);
+    FakeObserver.last?.callback([
+      mutation({ target: body, addedNodes: nodes(element('next-route-announcer')) }),
+      mutation({ target: body, addedNodes: nodes(element('script')) }),
+    ]);
+
+    expect(watch?.snapshot()?.conflicting).toBe(1);
   });
 
   it('counts a widget added under <body> and a language rewrite, but not as conflicting', () => {
