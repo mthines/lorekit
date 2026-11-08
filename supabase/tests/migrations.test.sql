@@ -482,6 +482,10 @@ declare
   v_denied_viewer boolean := false;
   v_denied_nonmember boolean := false;
 begin
+  -- This section calls memory_write the way the edge's api_key path does: a
+  -- verified service-role connection naming the token owner (00119 ignores
+  -- p_user_id for any other caller). Earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- A write-capable member (owner) writes org-owned lore: org_id set, user_id
   -- NULL. Two statements, not one nested subquery: a single SQL statement's
   -- snapshot does not reliably see a row inserted by a volatile function
@@ -585,6 +589,8 @@ declare
   v_row memories%rowtype;
   v_backdate constant timestamptz := timestamptz '2020-01-01T00:00:00Z';
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- Owner (A) creates the org row with a backdated created_at.
   select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-clobber-key', 'v1',
                                         '{}'::text[], null, null, v_backdate, 'phase2-org');
@@ -1466,6 +1472,8 @@ declare
   v_row memories%rowtype;
   v_id uuid;
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- Member B, no explicit org → routed to the bound org, author recorded.
   select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
     from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::acme/sb', 'sb-key', 'v1');
@@ -1884,6 +1892,8 @@ declare
   v_blocked    boolean;
   v_prev_claims text;
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   -- AC-1: Write a memory with p_ttl_seconds=604800 (7 days); expires_at must be ~7 days ahead.
   select id, expires_at into v_id, v_expires_at
   from memory_write(v_uid, 'global', 'ttl-test-7d', 'transient value', '{}', null, null, null, null, 604800);
@@ -10245,6 +10255,8 @@ declare
   v_row memories%rowtype;
   v_id uuid;
 begin
+  -- 00119 ignores p_user_id unless the connection is service-role; earlier sections leave their claims set.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
     from memory_write('00000000-0000-0000-0000-0000000000d4', 'repo::wild/nonmember', 'w-nonmember', 'v1');
   assert ((not v_org_routed) and v_slug = 'wild-b'),
@@ -11943,6 +11955,78 @@ begin
   assert v_sup is null, format('119 AC-3p: a deleted target must clear supersedes, got %s', v_sup);
   assert (select updated_at from memories where id = v_new) = v_ts,
     '119 AC-3s: clearing a link because its target was deleted must not bump updated_at';
+end;
+$$;
+
+-- ── AC-4: the actor is the verified caller, never a request field ──────────
+-- memory_write and lorekit_record_memory_citations are SECURITY DEFINER and
+-- granted to anon/authenticated, so a PostgREST caller names any p_user_id it
+-- likes. 00046 closed that for archive/restore/purge; 00119 re-creates both
+-- functions and applies the same rule: a caller-supplied id is honoured only
+-- on a verified service-role connection (or a direct one with no JWT role).
+do $$
+declare
+  v_me      constant uuid := '00000000-0000-0000-0000-0000000000ac';
+  v_other   constant uuid := '00000000-0000-0000-0000-0000000000ad';
+  v_citing  uuid;
+  v_n       integer;
+  v_err     text;
+begin
+  -- An authenticated caller naming ANOTHER user writes as ITSELF.
+  set local role authenticated;
+  perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', v_me), true);
+  select id into v_citing from memory_write(
+    p_user_id => v_other, p_scope => 'global', p_key => '119-actor', p_value => 'v');
+  perform memory_write(
+    p_user_id => v_other, p_scope => 'global', p_key => '119-actor-cited', p_value => 'v');
+  -- ...and its citations resolve in ITS OWN lore, not the named user's.
+  select lorekit_record_memory_citations(
+    p_user_id => v_other, p_citing_memory_id => v_citing,
+    p_cited_scopes => array['global'], p_cited_keys => array['119-actor-cited'],
+    p_correlation_id => '119-ac4') into v_n;
+  reset role;
+  assert (select count(*) from memories where key = '119-actor' and user_id = v_me) = 1,
+    '119 AC-4a: a foreign p_user_id from an authenticated caller must be ignored; the row belongs to the caller';
+  assert (select count(*) from memories where key like '119-actor%' and user_id = v_other) = 0,
+    '119 AC-4b: nothing may be written as the user the caller named';
+  assert v_n = 1,
+    format('119 AC-4c: a citation must resolve under the caller''s own lore, got %s', v_n);
+
+  -- A caller with no identity at all is refused, not treated as the service tier.
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  begin
+    perform memory_write(p_user_id => v_other, p_scope => 'global', p_key => '119-anon', p_value => 'v');
+    v_err := null;
+  exception when others then v_err := sqlstate || ' ' || sqlerrm;
+  end;
+  reset role;
+  assert v_err = 'LK002 not_authenticated',
+    format('119 AC-4d: an anonymous memory_write must raise LK002 not_authenticated, got %L', v_err);
+  assert not exists (select 1 from memories where key = '119-anon'),
+    '119 AC-4e: an anonymous write must leave no row';
+
+  set local role anon;
+  perform set_config('request.jwt.claims', '{"role":"anon"}', true);
+  -- A citation never breaks the write it accompanies, so it swallows the refusal
+  -- and returns 0; the property is that an anonymous caller naming the REAL
+  -- owner (whose lore it would otherwise resolve) credits nothing.
+  select lorekit_record_memory_citations(
+    p_user_id => v_me, p_citing_memory_id => v_citing,
+    p_cited_scopes => array['global'], p_cited_keys => array['119-actor-cited'],
+    p_correlation_id => '119-ac4-anon') into v_n;
+  reset role;
+  assert v_n = 0,
+    format('119 AC-4f: an anonymous citation must credit nothing, got %s', v_n);
+
+  -- A verified service-role connection (the edge/MCP api_key path) still names the user.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform memory_write(p_user_id => v_other, p_scope => 'global', p_key => '119-svc', p_value => 'v');
+  reset role;
+  assert (select count(*) from memories where key = '119-svc' and user_id = v_other) = 1,
+    '119 AC-4g: a service-role caller must still be able to name the user';
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 

@@ -265,6 +265,20 @@ declare
   v_expires_at   timestamptz;
   v_ttl_action   text := 'keep';
 begin
+  -- The actor is the verified caller, never a request field (the rule 00046
+  -- applied to archive/restore/purge). This function is SECURITY DEFINER and
+  -- granted to anon/authenticated, so without this a PostgREST caller names
+  -- any p_user_id. A caller-supplied id is honoured only on a verified
+  -- service-role connection (the edge/MCP api_key path resolves the token
+  -- owner and passes it) or a direct connection with no JWT role at all; an
+  -- anon or authenticated caller acts as `auth.uid()`, and no identity is refused.
+  if auth.role() is distinct from 'service_role' and auth.role() is not null then
+    if auth.uid() is null then
+      raise exception using errcode = 'LK002', message = 'not_authenticated';
+    end if;
+    p_user_id := auth.uid();
+  end if;
+
   if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
     raise exception using errcode = 'LK002',
       message = format('key_scope_denied: scope=%s', p_scope);
@@ -538,6 +552,14 @@ as $$
 declare
   v_inserted integer := 0;
 begin
+  -- The actor is the verified caller, never a request field: see memory_write.
+  if auth.role() is distinct from 'service_role' and auth.role() is not null then
+    if auth.uid() is null then
+      raise exception using errcode = 'LK002', message = 'not_authenticated';
+    end if;
+    p_user_id := auth.uid();
+  end if;
+
   -- 00119: a citation may also name a lesson by its id (p_cited_ids). The
   -- scope/key pair arrays stay paired; either list may be empty.
   if p_user_id is null
