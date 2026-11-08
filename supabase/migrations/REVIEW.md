@@ -23,8 +23,8 @@ A migration that breaks an invariant below is a defect, not a style point.
 
 ## Where the volume is
 
-- **`usage_events` is the highest-volume table by construction.** One SessionStart hook call can write
-  about 31 rows. Every index added there taxes every write, and a predicate no index serves scans the
+- **`usage_events` is the highest-volume table by construction.** Every hook and agent call writes
+  a row, so volume tracks traffic, not accounts. Every index added there taxes every write, and a predicate no index serves scans the
   account's whole history. 00109 exists because `/memories/read-activity` hit `statement timeout` after
   about 20 s of pure database wait, concentrated on heavy accounts.
 - **`audit_log` is append-only and grows without bound.** Pagination is keyset on `(created_at desc, id)`.
