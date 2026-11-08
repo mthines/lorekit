@@ -1617,12 +1617,15 @@ two attributes:
 **They ride on the hydration error and nothing else.** A signal attribute
 describes the signal it carries (see "These used to be signal attributes"
 above), so holding the summary for the whole watch would label every web
-vital and request of those seconds. Instead the listener sets both attributes
-while the SDK handles the hydration error's own `error` event and removes them
-one task later. The SDK snapshots signal attributes synchronously in its
-`window.onerror` handler, so the event keeps them. Like the extension filter,
-the listener is registered in `initDash0Rum()` **before** `init()`, so it runs
-ahead of the SDK's handler.
+vital and request of those seconds. Instead two listeners on the hydration
+error's own `error` event bracket the SDK's handler.
+`installHydrationErrorDomContext()` is registered in `initDash0Rum()` **before**
+`init()` (like the extension filter) and sets both attributes.
+`installHydrationErrorDomContextReset()` is registered **after** `init()` and
+clears them. The SDK snapshots signal attributes synchronously in its
+`window.onerror` handler, so the error event keeps them and nothing created
+later sees them. A next-task timer also clears them, in case something stops
+the event before the reset runs.
 
 Things not to "simplify":
 

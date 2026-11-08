@@ -340,6 +340,10 @@ export function initDash0Rum(): boolean {
     propagateTraceHeadersCorsURLs: [supabaseOriginPattern()],
   });
 
+  // AFTER init(): runs right behind the SDK's `onerror`, clearing the
+  // pre-hydration attributes before any later signal can copy them.
+  installHydrationErrorDomContextReset();
+
   // Identify BEFORE anything is emitted, so no event ever ships without a
   // `user.id`. An authenticated visitor is re-identified by
   // `identifyDash0User` a few milliseconds later, once React has the session.
@@ -501,6 +505,17 @@ let prehydrationWatch: PrehydrationDomWatch | null = null;
 /** One recorder per page load, however many entry points ask for it. */
 let prehydrationRecorderStarted = false;
 
+/** Whether the pre-hydration attributes are set right now, so clearing touches only what was set. */
+let prehydrationAttributesSet = false;
+
+/** Remove the pre-hydration attributes, if {@link installHydrationErrorDomContext} set them. */
+function clearPrehydrationAttributes(): void {
+  if (!prehydrationAttributesSet) return;
+  prehydrationAttributesSet = false;
+  removeSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE);
+  removeSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE);
+}
+
 /**
  * Start recording the DOM changes made before React hydrates.
  *
@@ -529,10 +544,13 @@ export function startPrehydrationDomChangeRecorder(): void {
  * A signal attribute describes the signal it rides on (docs/otel.md, "These
  * used to be signal attributes"). Holding the summary for the whole watch
  * would label every web vital, page load and request of those seconds. So the
- * attributes exist only while the SDK records the error: set here, in the
- * listener for the hydration error's own `error` event, and removed one task
- * later — by which time the SDK has copied them onto the event (it snapshots
- * signal attributes synchronously in its `window.onerror` handler).
+ * attributes exist only while the SDK records the error: set here, in a
+ * listener for the hydration error's own `error` event that runs ahead of the
+ * SDK, and cleared by {@link installHydrationErrorDomContextReset}'s listener,
+ * which runs right behind it. The SDK snapshots signal attributes
+ * synchronously in its `window.onerror` handler, so the event keeps them and
+ * no later signal sees them. A next-task timer clears them too, in case
+ * something stops the event before the reset runs.
  *
  * ## Why it must run before `init()`
  *
@@ -559,10 +577,8 @@ export function installHydrationErrorDomContext(target?: EventTarget): () => voi
     if (snapshot.summary) {
       replaceSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE, snapshot.summary);
     }
-    setTimeout(() => {
-      removeSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE);
-      removeSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE);
-    }, 0);
+    prehydrationAttributesSet = true;
+    setTimeout(clearPrehydrationAttributes, 0);
   };
 
   // Same options object as the extension filter, for the same reason: node's
@@ -572,6 +588,26 @@ export function installHydrationErrorDomContext(target?: EventTarget): () => voi
     eventTarget.addEventListener('error', onError, capture);
   });
   return () => eventTarget.removeEventListener('error', onError, capture);
+}
+
+/**
+ * Clear the pre-hydration attributes right after the SDK has recorded the
+ * hydration error — the second half of {@link installHydrationErrorDomContext}.
+ *
+ * Must be registered AFTER `init()`: window listeners at the target run
+ * capture-phase first and then in registration order, so a plain listener
+ * added once the SDK has taken over `window.onerror` runs behind it. Clearing
+ * here, instead of only on a timer, keeps the attributes off any signal the
+ * page creates in the rest of that task.
+ *
+ * @param target the event target to subscribe on; defaults to `window`.
+ * @returns a teardown function removing the listener, for tests.
+ */
+export function installHydrationErrorDomContextReset(target?: EventTarget): () => void {
+  const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
+  if (!eventTarget) return () => undefined;
+  eventTarget.addEventListener('error', clearPrehydrationAttributes);
+  return () => eventTarget.removeEventListener('error', clearPrehydrationAttributes);
 }
 
 /**
