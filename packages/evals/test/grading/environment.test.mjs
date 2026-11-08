@@ -291,6 +291,9 @@ test("a prepared arm carries its own launch options", async () => {
     // `{}`, which sets nothing and so left every default-on built-in running.
     assert.equal(settings.enabledPlugins["agents-md@builtin"], false);
     assert.equal(settings.enabledPlugins["plugin-authoring@builtin"], false);
+    // `privacy` ignores its short alias: only the registered name switches it
+    // off, and that is the name preflight reports (`cc-plugin-privacy`).
+    assert.equal(settings.enabledPlugins["cc-plugin-privacy@builtin"], false);
     // Crucially NOT `hooks: {}` — `--settings` overrides every scope, so that
     // would switch off the harness's own SessionStart hook and silently turn
     // arm B into arm A.
