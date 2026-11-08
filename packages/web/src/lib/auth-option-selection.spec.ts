@@ -29,8 +29,7 @@ describe('markOptionSelected', () => {
   });
 
   it('reports a toggled-back-and-forth pair exactly twice, not once per switch', () => {
-    // The login panel's "Create an account" / "I already have an account" pair,
-    // pressed four times. Two routes were shown interest in, so two events.
+    // The login form's "Create account" / "Sign in" tabs, switched four times. Two routes were shown interest in, so two events.
     const selected = new Set<AuthMethod>();
     const switches: AuthMethod[] = [
       'email_password_signup',
