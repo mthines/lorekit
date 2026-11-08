@@ -44,6 +44,12 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     summary:
       "Everyone reached for vector databases. But most of what a coding agent needs to remember is small, specific, and recurring — a scoped note, not a semantic blob. Here's the deterministic, no-AI data model LoreKit runs on, the rationale for every column, and an invitation to converge on a shared shape.",
   },
+  {
+    id: 'open-agent-memory-format',
+    label: "Agent memory needs its OpenTelemetry moment",
+    summary:
+      "Every agent tool stores memory in its own shape, and none can read the others. Observability had the same problem until OpenTelemetry gave everyone one data model to share. A tour of today's memory formats, the proposals that already exist, what they agree on, and what a shared spec for agent memory could look like.",
+  },
 ];
 
 /** URL slugs / MDX filename stems, in listing order (newest first). */
