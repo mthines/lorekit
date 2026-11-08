@@ -1580,8 +1580,9 @@ Four things not to "simplify":
   When an extension breaks our code the stack interleaves their frames with
   ours, and that error is our bug — it stays. When the stack proves nothing (no
   stack, or no line naming a source) the event's `filename` is consulted
-  instead, and the error is kept unless that names an extension script. The
-  three exceptions below are the only drops that do not come from the stack.
+  instead, and the error is kept unless that names an extension script. Two of
+  the three exceptions below are the only drops that do not come from the
+  stack; the third removes the SDK wrappers that produced the errors instead.
 
 `preventDefault()` is deliberately not called, so the browser still logs the
 error to the console.
