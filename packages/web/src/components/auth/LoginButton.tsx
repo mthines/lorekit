@@ -14,11 +14,10 @@ import {
   reportAuthSuccess,
   type AuthMethod,
 } from '@/lib/auth-telemetry';
-import { validatePassword } from '@/lib/password-policy';
+import { MIN_PASSWORD_LENGTH, validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
 import { AUTH_ENTRY_MODE_PARAM, parseAuthEntryMode } from '@/lib/auth-entry-mode';
-import { MIN_PASSWORD_LENGTH } from '@/lib/password-policy';
 import { GitHubMark } from '@/components/ui/GitHubMark';
 
 import { FIELD_CLASS } from './field-styles';
