@@ -377,6 +377,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // WAI-ARIA tabs: the active tab is the only one in the tab order, and the
     // arrow keys move (and, with two tabs, select) the other one.
     function handleTabKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+      // The tabs are disabled mid-submit; the keyboard must not get round that
+      // and flip the mode under a request that is already in flight.
+      if (busy) return;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') {
         return;
       }
