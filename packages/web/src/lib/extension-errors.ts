@@ -189,6 +189,10 @@ export function namesBrowserInjectedGlobal(message: string | undefined | null): 
  * on 2026-11-08, and no other browser produced one. Adding a cross-origin
  * `<script>` would change that: give it `crossorigin` and CORS headers so its
  * errors arrive unmuted instead of being dropped here.
+ *
+ * One known way back for our own errors: iPhone Safari once reported the app's
+ * service-worker-served `_next/static` chunks this way (#201, #202). If muted
+ * iOS errors return alongside a drop in detailed ones, suspect that first.
  */
 export function isMutedCrossOriginError(origin: ErrorOrigin): boolean {
   if (origin.stack || origin.filename) return false;
