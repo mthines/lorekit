@@ -118,6 +118,10 @@ describe('describeNode / describeLocation', () => {
     expect(describeNode(asNode(textNode(null)))).toBe('#text');
   });
 
+  it('truncates a long id, which an injected node may carry', () => {
+    expect(describeNode(asNode(element('div', null, 'x'.repeat(100))))).toBe(`div#${'x'.repeat(40)}`);
+  });
+
   it('shows the nearest three elements, outermost first', () => {
     const { p, text } = page();
     expect(describeLocation(asNode(p))).toBe('main>article>p');

@@ -58,6 +58,9 @@ const LOCATION_DEPTH = 3;
 /** `<html>` attributes whose change says the browser rewrote the page's language. */
 const OBSERVED_ROOT_ATTRIBUTES = ['lang', 'dir'];
 
+/** Longest element id kept — ours are short heading ids; an injected node's may not be. */
+const MAX_ID_LENGTH = 40;
+
 /** Longest `lang`/`dir` value kept; real values are a few characters. */
 const MAX_ATTRIBUTE_VALUE_LENGTH = 24;
 
@@ -103,7 +106,7 @@ export function describeNode(node: Node): string {
   if (node.nodeType === 1) {
     const element = node as Element;
     const tag = element.tagName.toLowerCase();
-    return element.id ? `${tag}#${element.id}` : tag;
+    return element.id ? `${tag}#${element.id.slice(0, MAX_ID_LENGTH)}` : tag;
   }
   return node.nodeName.toLowerCase();
 }
