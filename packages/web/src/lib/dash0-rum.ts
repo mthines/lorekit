@@ -38,6 +38,7 @@ import {
   resolveDeploymentEnvironment,
 } from './otel-deployment-env';
 import { supabaseOriginPattern } from './otel-origins';
+import { watchPrehydrationDomChanges } from './prehydration-dom-changes';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
 const SERVICE_NAME = 'web';
@@ -476,6 +477,50 @@ export function syncFeatureFlagRumAttributes(
   }
 }
 
+/** RUM attribute: what changed in the DOM before hydration (`prehydration-dom-changes.ts`). */
+export const PREHYDRATION_DOM_CHANGES_ATTRIBUTE = 'lorekit.prehydration.dom_changes';
+
+/**
+ * RUM attribute: how many such changes were recorded. Set to `0` as soon as
+ * recording starts, so a hydration error carrying `0` means "watched, nothing
+ * changed" — distinct from the attribute being absent (recorder not running).
+ */
+export const PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE = 'lorekit.prehydration.dom_change_count';
+
+/** One recorder per page load, however many entry points ask for it. */
+let prehydrationRecorderStarted = false;
+
+/**
+ * Attach a summary of the DOM changes made before React hydrated to every RUM
+ * signal, until the first hydration error has been reported (or the watch
+ * times out), then remove it again.
+ *
+ * Call it from `instrumentation-client.ts`, right after {@link initDash0Rum}:
+ * it has to be running before hydration starts to see anything. The point is
+ * the `browser.error` event for React #418 — React's production message says a
+ * node did not match but not which one, and this puts the edit that caused it
+ * (`+font in main>article>p ×12`, `html[lang]=fr`) on the same event. See
+ * `prehydration-dom-changes.ts` for what is counted and why.
+ *
+ * No-op before RUM init and outside a browser.
+ */
+export function startPrehydrationDomChangeRecorder(): void {
+  if (!initialized || prehydrationRecorderStarted) return;
+  prehydrationRecorderStarted = true;
+
+  const stop = watchPrehydrationDomChanges({
+    onChange: ({ count, summary }) => {
+      replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, count);
+      replaceSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE, summary);
+    },
+    onStop: () => {
+      removeSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE);
+      removeSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE);
+    },
+  });
+  if (stop) replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, 0);
+}
+
 /**
  * Set a signal attribute to exactly one value.
  *
@@ -483,7 +528,7 @@ export function syncFeatureFlagRumAttributes(
  * running the effect twice in development — would otherwise leave the old and
  * the new variant on every later signal, which reads as both arms at once.
  */
-function replaceSignalAttribute(name: string, value: string): void {
+function replaceSignalAttribute(name: string, value: string | number): void {
   removeSignalAttribute(name);
   addSignalAttribute(name, value);
 }

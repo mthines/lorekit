@@ -1,0 +1,284 @@
+/**
+ * Record what changed in the page's DOM before React hydrated it, so a
+ * hydration mismatch (React error #418) reaches RUM carrying the change that
+ * caused it.
+ *
+ * ## Why this exists
+ *
+ * In November 2026 production RUM showed React #418 (`args[]=HTML`) on
+ * `/blog/open-agent-memory-format` for 13 of 88 desktop Firefox sessions, and
+ * for none of the ~430 Chrome, Safari, Edge or Firefox-for-Android sessions on
+ * the same build. The server HTML and the client bundle are identical for every
+ * browser and every client component on the page renders deterministically, so
+ * the most likely cause is something in those browsers editing the DOM before
+ * hydration — a translation feature or an extension. React's production error
+ * names neither the component nor the node, so the telemetry could not say
+ * which. This module records it.
+ *
+ * ## What counts as a change
+ *
+ * A change is counted only when React does not already own the node it
+ * touches. React stamps a `__reactFiber$<random>` key on every node it hydrates
+ * or creates (elements, text nodes, and the `<html>`/`<body>` singletons —
+ * react-dom 19's `prepareToHydrateHostInstance`, `createTextNode` and singleton
+ * paths). So:
+ *
+ * - Before hydration nothing is owned, and every change is recorded.
+ * - A change to a node React has already claimed is skipped. It can no longer
+ *   cause a hydration mismatch, and React's OWN later updates — the like count
+ *   arriving, portals, Next's route announcer and `next/script` tags appended
+ *   to the already-hydrated `<body>` — all land on owned nodes.
+ *
+ * That ownership test replaces any "hydration finished" signal, which the App
+ * Router does not give: dehydrated Suspense boundaries can still hydrate (and
+ * mismatch) after the root has committed and its effects have run.
+ *
+ * ## What is recorded — structure, never content
+ *
+ * Tag names, element ids, a three-level location (`main>article>p`) and the
+ * `<html>` `lang`/`dir` values. Never text, attribute values from the body, or
+ * class names (Tailwind class lists are long and say nothing about the cause).
+ *
+ * Kept free of React, `next/*` and the SDK — `dash0-rum.ts` owns attaching the
+ * summary to signals, this module owns observing and describing.
+ */
+
+/** How long to keep watching when no hydration error arrives. */
+export const PREHYDRATION_WATCH_TIMEOUT_MS = 10_000;
+
+/** Distinct entries kept in a summary before the rest are folded into a count. */
+const MAX_SUMMARY_ENTRIES = 8;
+
+/** Hard cap on the summary string, so one pathological page cannot bloat every signal. */
+const MAX_SUMMARY_LENGTH = 512;
+
+/** Ancestor levels shown in a change's location. */
+const LOCATION_DEPTH = 3;
+
+/** `<html>` attributes whose change says the browser rewrote the page's language. */
+const OBSERVED_ROOT_ATTRIBUTES = ['lang', 'dir'];
+
+/** Longest `lang`/`dir` value kept; real values are a few characters. */
+const MAX_ATTRIBUTE_VALUE_LENGTH = 24;
+
+/**
+ * Matches the hydration errors React reports: #418 (19.x, any args), and
+ * #423/#425 from React 18, plus the unminified development messages.
+ */
+const HYDRATION_ERROR_PATTERN = /Minified React error #(?:418|423|425)\b|hydrat/i;
+
+/** The prefix React gives the expando key it stamps on every node it owns. */
+const REACT_FIBER_KEY_PREFIX = '__reactFiber$';
+
+/** The parts of a `MutationRecord` this module reads. */
+export type DomMutation = Pick<
+  MutationRecord,
+  'type' | 'target' | 'addedNodes' | 'removedNodes' | 'attributeName'
+>;
+
+/** The running result handed to {@link WatchOptions.onChange}. */
+export interface DomChangeSummary {
+  /** Every change recorded so far, duplicates included. */
+  count: number;
+  /** De-duplicated, ordered, length-capped description of those changes. */
+  summary: string;
+}
+
+/** Whether React has hydrated or created this node. */
+export function isReactOwned(node: Node | null | undefined): boolean {
+  if (!node) return false;
+  for (const key of Object.keys(node)) {
+    if (key.startsWith(REACT_FIBER_KEY_PREFIX)) return true;
+  }
+  return false;
+}
+
+/** Whether an error message is one of React's hydration-mismatch errors. */
+export function isHydrationErrorMessage(message: unknown): boolean {
+  return typeof message === 'string' && HYDRATION_ERROR_PATTERN.test(message);
+}
+
+/** `p`, `div#root`, `#text`, `#comment` — a node's tag and id, lower-cased. */
+export function describeNode(node: Node): string {
+  if (node.nodeType === 1) {
+    const element = node as Element;
+    const tag = element.tagName.toLowerCase();
+    return element.id ? `${tag}#${element.id}` : tag;
+  }
+  return node.nodeName.toLowerCase();
+}
+
+/**
+ * Where a change happened: the nearest {@link LOCATION_DEPTH} elements from
+ * `node` up, outermost first (`main>article>p`). Stops at `<body>`; a text
+ * node starts from its parent element.
+ */
+export function describeLocation(node: Node | null): string {
+  const path: string[] = [];
+  let current: Node | null = node && node.nodeType !== 1 ? node.parentNode : node;
+  while (current && current.nodeType === 1 && path.length < LOCATION_DEPTH) {
+    path.push(describeNode(current));
+    if ((current as Element).tagName === 'BODY') break;
+    current = current.parentNode;
+  }
+  return path.length > 0 ? path.reverse().join('>') : '(detached)';
+}
+
+/**
+ * Describe one mutation as zero or more summary entries, skipping anything
+ * React already owns (see the module comment).
+ *
+ * - `+font in main>article>p` — a node was added there
+ * - `-img in article>figure` — a node was removed from there
+ * - `~#text in article>p` — a text node's content changed
+ * - `html[lang]=fr` — the page's language was rewritten
+ */
+export function describeMutation(mutation: DomMutation): string[] {
+  const { target } = mutation;
+
+  if (mutation.type === 'attributes') {
+    if (isReactOwned(target) || !mutation.attributeName) return [];
+    const value = (target as Element).getAttribute(mutation.attributeName) ?? '';
+    return [
+      `${describeNode(target)}[${mutation.attributeName}]=${value.slice(0, MAX_ATTRIBUTE_VALUE_LENGTH)}`,
+    ];
+  }
+
+  if (mutation.type === 'characterData') {
+    // A string child of an element (`<p>{caption}</p>`) gets no fiber of its
+    // own; React updates it through the owning element, so check the parent too.
+    if (isReactOwned(target) || isReactOwned(target.parentNode)) return [];
+    return [`~${describeNode(target)} in ${describeLocation(target)}`];
+  }
+
+  if (isReactOwned(target)) return [];
+  const location = describeLocation(target);
+  const entries: string[] = [];
+  for (const node of Array.from(mutation.addedNodes)) {
+    if (!isReactOwned(node)) entries.push(`+${describeNode(node)} in ${location}`);
+  }
+  for (const node of Array.from(mutation.removedNodes)) {
+    if (!isReactOwned(node)) entries.push(`-${describeNode(node)} in ${location}`);
+  }
+  return entries;
+}
+
+/**
+ * Fold counted entries into one line, in first-seen order:
+ * `+font in main>article>p ×12; html[lang]=fr; …+3 more`.
+ */
+export function summarizeDomChanges(counts: ReadonlyMap<string, number>): string {
+  const parts: string[] = [];
+  for (const [entry, count] of counts) {
+    if (parts.length === MAX_SUMMARY_ENTRIES) break;
+    parts.push(count > 1 ? `${entry} ×${count}` : entry);
+  }
+  const hidden = counts.size - parts.length;
+  if (hidden > 0) parts.push(`…+${hidden} more`);
+  const summary = parts.join('; ');
+  return summary.length > MAX_SUMMARY_LENGTH
+    ? `${summary.slice(0, MAX_SUMMARY_LENGTH - 1)}…`
+    : summary;
+}
+
+export interface WatchOptions {
+  /** Called after every batch that recorded at least one change. */
+  onChange: (summary: DomChangeSummary) => void;
+  /** Called once, when watching stops for any reason. */
+  onStop: () => void;
+  /** The document to watch; defaults to the global one. */
+  doc?: Document;
+  /** Stop after this long if no hydration error arrives. */
+  timeoutMs?: number;
+}
+
+/**
+ * Watch the document for changes React does not own, until the first
+ * hydration error has been reported or {@link PREHYDRATION_WATCH_TIMEOUT_MS}
+ * passes.
+ *
+ * Observation starts once the parser has finished (`readyState` past
+ * `loading`): before that, every element the parser appends is itself a
+ * mutation, and a script that runs mid-parse would record the page.
+ *
+ * Stopping on a hydration error is deferred by one task. The SDK snapshots
+ * signal attributes synchronously while it handles the `error` event, so
+ * deferring guarantees every error React reports in that commit has been
+ * captured with the summary before {@link WatchOptions.onStop} removes it —
+ * whatever order the window's `error` listeners run in. React's own
+ * re-render after the mismatch is delivered to the observer only after that
+ * commit's task, so it never reaches the summary the error carries.
+ *
+ * @returns a function that stops watching, or `null` when the environment
+ *   cannot observe the DOM (server render, no `MutationObserver`).
+ */
+export function watchPrehydrationDomChanges({
+  onChange,
+  onStop,
+  doc = typeof document === 'undefined' ? undefined : document,
+  timeoutMs = PREHYDRATION_WATCH_TIMEOUT_MS,
+}: WatchOptions): (() => void) | null {
+  const win = doc?.defaultView;
+  if (!doc || !win || typeof win.MutationObserver !== 'function') return null;
+  const page: Document = doc;
+
+  const counts = new Map<string, number>();
+  let total = 0;
+  let stopped = false;
+
+  const observer = new win.MutationObserver((mutations) => {
+    let recorded = 0;
+    for (const mutation of mutations) {
+      for (const entry of describeMutation(mutation)) {
+        counts.set(entry, (counts.get(entry) ?? 0) + 1);
+        recorded++;
+      }
+    }
+    if (recorded === 0) return;
+    total += recorded;
+    onChange({ count: total, summary: summarizeDomChanges(counts) });
+  });
+
+  const observe = () => {
+    if (stopped || page.readyState === 'loading') return;
+    page.removeEventListener('readystatechange', observe);
+    observer.observe(page.documentElement, {
+      attributes: true,
+      attributeFilter: OBSERVED_ROOT_ATTRIBUTES,
+    });
+    if (page.body) {
+      observer.observe(page.body, { childList: true, characterData: true, subtree: true });
+    }
+  };
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    observer.disconnect();
+    win.clearTimeout(deadline);
+    win.removeEventListener('error', onError);
+    page.removeEventListener('readystatechange', observe);
+    onStop();
+  };
+
+  const onError = (event: Event) => {
+    const { message, error } = event as ErrorEvent;
+    if (isHydrationErrorMessage(message) || isHydrationErrorMessage(messageOf(error))) {
+      win.setTimeout(stop, 0);
+    }
+  };
+
+  const deadline = win.setTimeout(stop, timeoutMs);
+  win.addEventListener('error', onError);
+  if (page.readyState === 'loading') {
+    page.addEventListener('readystatechange', observe);
+  } else {
+    observe();
+  }
+  return stop;
+}
+
+/** The message of an `Error`-like value, if it has one. */
+function messageOf(error: unknown): unknown {
+  return error && typeof error === 'object' ? (error as { message?: unknown }).message : undefined;
+}

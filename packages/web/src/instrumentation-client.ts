@@ -17,6 +17,9 @@
  * next.config.ts (NEXT_PUBLIC_VCS_* env vars), resolved from Vercel's system
  * env vars which are available to the build process.
  */
-import { initDash0Rum } from './lib/dash0-rum';
+import { initDash0Rum, startPrehydrationDomChangeRecorder } from './lib/dash0-rum';
 
 initDash0Rum();
+// Must start before React hydrates: it records the DOM edits (translation,
+// extensions) that make React #418 fire, onto the error event itself.
+startPrehydrationDomChangeRecorder();
