@@ -572,8 +572,8 @@ describe('startPrehydrationDomChangeRecorder', () => {
         constructor(callback: (records: unknown[]) => void) {
           deliver = callback;
         }
-        observe() {}
-        disconnect() {}
+        observe = vi.fn();
+        disconnect = vi.fn();
       },
       setTimeout: (fn: () => void, ms?: number) => setTimeout(fn, ms),
       clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),

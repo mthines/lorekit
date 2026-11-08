@@ -1593,6 +1593,48 @@ production fingerprints arrive on the `unhandledrejection` path, where the
 `reason` is a real `Error` carrying a full stack. Judge the filter by the
 rejection path; the `error` path is a bonus for the cases that do report.
 
+### Hydration errors carry the DOM changes made before hydration
+
+React's production hydration error (`Minified React error #418; …args[]=HTML`)
+says a node did not match the server HTML, but not which node or why. In
+November 2026 it fired for 13 of 88 desktop Firefox sessions on
+`/blog/open-agent-memory-format` and for no other browser, on identical HTML
+and an identical bundle. That pointed at something in the browser (a
+translation feature or an extension) editing the DOM before hydration, and the
+telemetry could not say what.
+
+`startPrehydrationDomChangeRecorder()` (`lib/dash0-rum.ts`, started from
+`instrumentation-client.ts` right after `initDash0Rum()`) watches the document
+with a `MutationObserver` and keeps two RUM signal attributes current:
+
+| Attribute | Example | Meaning |
+|-----------|---------|---------|
+| `lorekit.prehydration.dom_change_count` | `14` | Changes recorded so far. Set to `0` when recording starts, so `0` on a #418 event means "watched, nothing changed", while an absent attribute means the recorder was not running |
+| `lorekit.prehydration.dom_changes` | `+font in main>article>p ×12; html[lang]=fr` | De-duplicated summary in first-seen order: `+`/`-` a node added/removed at that location, `~` a text node's content changed, `html[lang]=…` the page language rewritten. At most 8 entries and 512 characters |
+
+Both are removed one task after the first hydration error, or after 10 s if
+none arrives. The SDK snapshots signal attributes synchronously when it handles
+the `error` event, so the #418 `browser.error` event itself carries them.
+
+Things not to "simplify":
+
+- **A change counts only if React does not own the node.** react-dom stamps a
+  `__reactFiber$…` key on every node it hydrates or creates (including the
+  `<html>`/`<body>` singletons). That one test keeps React's own updates, Next's
+  route announcer and `next/script` tags out of the summary, and replaces a
+  "hydration finished" signal the App Router does not give. Dehydrated Suspense
+  boundaries can hydrate after the root has committed.
+- **Observation starts after the parser.** Before `readyState` leaves
+  `loading`, every element the parser appends is a mutation too.
+- **Only structure is recorded.** Tag names, ids and a three-level location,
+  plus the `<html>` `lang`/`dir` values. No text, no body attribute values, no
+  class names.
+
+What it cannot see: an edit made before `instrumentation-client.ts` runs. A
+#418 event with `dom_change_count = 0` therefore means either no edit happened
+or the edit happened earlier, not that the server and client renders diverged.
+Read it beside the browser breakdown.
+
 ### Quick console check (browser)
 ```js
 // Run in the browser console on the deployed app:
