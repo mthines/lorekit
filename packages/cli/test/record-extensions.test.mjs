@@ -143,8 +143,12 @@ test('write flags: a bare --supersedes or --content-type is a usage error, not a
     assert.equal(res.status, 1, `${flag} with no value must fail, got ${res.status}: ${res.stdout}${res.stderr}`);
     assert.match(res.stderr, new RegExp(`${flag} needs a value`));
   }
-  assert.equal(fs.existsSync(path.join(root, '.lorekit')) && fs.readdirSync(path.join(root, '.lorekit')).length > 0, false,
-    'a refused write must leave no record');
+  // A `global::` local write lands in the home store, a project one under the root:
+  // look in both, or the check passes even when a record was written.
+  const filesUnder = (dir) => (fs.existsSync(dir)
+    ? fs.readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => path.join(e.parentPath, e.name))
+    : []);
+  assert.deepEqual([...filesUnder(root), ...filesUnder(home)], [], 'a refused write must leave no record');
 });
 
 test('validation parity: the local store rejects what the hosted store rejects', async () => {
