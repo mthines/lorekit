@@ -371,6 +371,18 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   // Email + password form
   if (step === 'password') {
     const isSignup = passwordMode === 'signup';
+    // WAI-ARIA tabs: the active tab is the only one in the tab order, and the
+    // arrow keys move (and, with two tabs, select) the other one.
+    function handleTabKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') {
+        return;
+      }
+      e.preventDefault();
+      const next: PasswordMode =
+        e.key === 'Home' ? 'signup' : e.key === 'End' ? 'signin' : isSignup ? 'signin' : 'signup';
+      switchPasswordMode(next);
+      document.getElementById(`lk-auth-tab-${next}`)?.focus();
+    }
     function switchPasswordMode(next: PasswordMode) {
       if (next === passwordMode) return;
       // The one place a visitor states, unambiguously, which of the two they
@@ -388,6 +400,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         <div
           role="tablist"
           aria-label="Account"
+          onKeyDown={handleTabKeyDown}
           className="mb-1 grid grid-cols-2 gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1"
         >
           {(
@@ -398,9 +411,12 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           ).map(([mode, label]) => (
             <button
               key={mode}
+              id={`lk-auth-tab-${mode}`}
               type="button"
               role="tab"
               aria-selected={passwordMode === mode}
+              aria-controls="lk-auth-panel"
+              tabIndex={passwordMode === mode ? 0 : -1}
               onClick={() => switchPasswordMode(mode)}
               disabled={busy}
               className={
@@ -414,61 +430,68 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           ))}
         </div>
 
-        <label htmlFor="lk-email" className="sr-only">
-          Email address
-        </label>
-        <input
-          id="lk-email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          autoFocus
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={busy}
-          className={FIELD_CLASS}
-        />
+        <div
+          id="lk-auth-panel"
+          role="tabpanel"
+          aria-labelledby={`lk-auth-tab-${passwordMode}`}
+          className="flex flex-col gap-2.5"
+        >
+          <label htmlFor="lk-email" className="sr-only">
+            Email address
+          </label>
+          <input
+            id="lk-email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            autoFocus
+            required
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={busy}
+            className={FIELD_CLASS}
+          />
 
-        <label htmlFor="lk-password" className="sr-only">
-          Password
-        </label>
-        <input
-          id="lk-password"
-          name="password"
-          type="password"
-          autoComplete={isSignup ? 'new-password' : 'current-password'}
-          required
-          placeholder={isSignup ? 'Choose a password' : 'Password'}
-          aria-describedby={isSignup ? 'lk-password-hint' : undefined}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={busy}
-          className={FIELD_CLASS}
-        />
-        {isSignup && (
-          <p id="lk-password-hint" className="text-xs text-[var(--color-content-tertiary)]">
-            At least {MIN_PASSWORD_LENGTH} characters.
-          </p>
-        )}
+          <label htmlFor="lk-password" className="sr-only">
+            Password
+          </label>
+          <input
+            id="lk-password"
+            name="password"
+            type="password"
+            autoComplete={isSignup ? 'new-password' : 'current-password'}
+            required
+            placeholder={isSignup ? 'Choose a password' : 'Password'}
+            aria-describedby={isSignup ? 'lk-password-hint' : undefined}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+            className={FIELD_CLASS}
+          />
+          {isSignup && (
+            <p id="lk-password-hint" className="text-xs text-[var(--color-content-tertiary)]">
+              At least {MIN_PASSWORD_LENGTH} characters.
+            </p>
+          )}
 
-        {error && (
-          <p role="alert" className="text-xs text-[var(--color-error)]">
-            {error}
-          </p>
-        )}
+          {error && (
+            <p role="alert" className="text-xs text-[var(--color-error)]">
+              {error}
+            </p>
+          )}
 
-        <button type="submit" disabled={busy} className={PRIMARY_BUTTON_CLASS} aria-busy={busy}>
-          <LockIcon className="size-4 shrink-0" />
-          {busy
-            ? isSignup
-              ? 'Creating account...'
-              : 'Signing in...'
-            : isSignup
-              ? 'Create account'
-              : 'Sign in'}
-        </button>
+          <button type="submit" disabled={busy} className={PRIMARY_BUTTON_CLASS} aria-busy={busy}>
+            <LockIcon className="size-4 shrink-0" />
+            {busy
+              ? isSignup
+                ? 'Creating account...'
+                : 'Signing in...'
+              : isSignup
+                ? 'Create account'
+                : 'Sign in'}
+          </button>
+        </div>
 
         <div className="flex items-center justify-between gap-2">
           <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
