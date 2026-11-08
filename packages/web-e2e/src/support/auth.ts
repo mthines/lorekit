@@ -39,13 +39,11 @@ export async function provisionUser(source: ProvisionedUser): Promise<{ email: s
  * shortcut, so a broken form fails here first.
  *
  * Keep in step with scripts/auth-bootstrap-credentials.mjs, which drives the
- * same form for aw-tester: the email form is hidden behind "Continue with
- * email", and two buttons read "Sign in" (the header's GitHub button and the
- * form submit), so the submit is scoped to the form.
+ * same form for aw-tester: two buttons read "Sign in" (the header's GitHub
+ * button and the form submit), so the submit is scoped to the form.
  */
 export async function signInThroughTheForm(page: Page, email: string, password: string): Promise<void> {
   await page.goto('/login');
-  await page.getByRole('button', { name: 'Continue with email', exact: true }).click();
   await page.locator('#lk-email').fill(email);
   await page.locator('#lk-password').fill(password);
   await page.locator('form').getByRole('button', { name: 'Sign in', exact: true }).click();

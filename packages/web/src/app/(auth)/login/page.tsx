@@ -89,13 +89,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <p className="text-sm text-[var(--color-content-secondary)]">
             Free — 5,000 memories, no card
           </p>
-          {/* GitHub and the magic link create the account on first use. Say so:
-              a newcomer reading "Sign in" otherwise assumes this is not for them. */}
-          {mode === 'signin' && (
-            <p className="max-w-xs text-center text-xs text-[var(--color-content-tertiary)]">
-              No account yet? GitHub and magic link create one for you automatically.
-            </p>
-          )}
         </div>
 
         <p className="mt-12 text-center text-sm text-[var(--color-content-secondary)]">

@@ -71,13 +71,13 @@ interface LoginButtonProps {
 /**
  * Which panel of the sign-in flow is showing.
  *
- * - `idle`      — provider choice (GitHub / email + password / magic link)
- * - `password`  — email + password form (sign in or create account)
+ * - `password`  — the landing view: the "Create account | Sign in" tabs over
+ *                 GitHub and the email + password form
  * - `magic`     — email-only form that sends a magic link
  * - `sent`      — magic link sent confirmation
  * - `confirm`   — password sign-up done, confirmation email sent
  */
-type Step = 'idle' | 'password' | 'magic' | 'sent' | 'confirm';
+type Step = 'password' | 'magic' | 'sent' | 'confirm';
 
 /** Whether the password form signs into an existing account or creates one. */
 type PasswordMode = 'signin' | 'signup';
@@ -87,6 +87,10 @@ const accountTabId = (mode: PasswordMode) => `lk-auth-tab-${mode}`;
 
 const PRIMARY_BUTTON_CLASS =
   'flex h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50';
+
+// The landing view's lead action: the one control with a glow on hover.
+const GITHUB_BUTTON_CLASS =
+  'flex h-11 items-center justify-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-semibold text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] hover:shadow-[0_0_20px_var(--color-accent-glow)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50';
 
 const LINK_CLASS =
   'text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline';
@@ -99,7 +103,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   // `lib/auth-entry-mode.ts` for the drop-off that motivated it.
   const entryMode = parseAuthEntryMode(searchParams.get(AUTH_ENTRY_MODE_PARAM));
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<Step>('idle');
+  // The tabs and the form are the landing view, not a step behind a button:
+  // with them one click away, even people looking for "Create account" on
+  // the sign-up page missed it.
+  const [step, setStep] = useState<Step>('password');
+  // Focus the first field only once the visitor has moved between steps. On
+  // page load it would skip the GitHub button and, on a phone, open the
+  // keyboard over the page before anyone has read it.
+  const [focusFirstField, setFocusFirstField] = useState(false);
   const [passwordMode, setPasswordMode] = useState<PasswordMode>(entryMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -118,6 +129,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
 
   function resetTo(next: Step) {
     setStep(next);
+    setFocusFirstField(true);
     setError('');
     setPassword('');
   }
@@ -327,7 +339,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         <button
           onClick={() => {
             setEmail('');
-            resetTo('idle');
+            resetTo('magic');
           }}
           className={LINK_CLASS}
         >
@@ -371,166 +383,6 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     );
   }
 
-  // Email + password form
-  if (step === 'password') {
-    const isSignup = passwordMode === 'signup';
-    // WAI-ARIA tabs: the active tab is the only one in the tab order, and the
-    // arrow keys move (and, with two tabs, select) the other one.
-    function handleTabKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-      // The tabs are disabled mid-submit; the keyboard must not get round that
-      // and flip the mode under a request that is already in flight.
-      if (busy) return;
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') {
-        return;
-      }
-      e.preventDefault();
-      const next: PasswordMode =
-        e.key === 'Home' ? 'signup' : e.key === 'End' ? 'signin' : isSignup ? 'signin' : 'signup';
-      switchPasswordMode(next);
-      document.getElementById(accountTabId(next))?.focus();
-    }
-    function switchPasswordMode(next: PasswordMode) {
-      if (next === passwordMode) return;
-      // The one place a visitor states, unambiguously, which of the two they
-      // are here for — clearer than the eventual submit, because most people
-      // who press it never get that far.
-      selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
-      setPasswordMode(next);
-      setError('');
-    }
-    return (
-      // An explicit width, not `w-full`: the parent shrinks to fit its content,
-      // so a percentage collapsed the form once the fields moved into the tab
-      // panel. Capped to the viewport minus the page's px-6 gutters.
-      <form onSubmit={handlePasswordSubmit} className="flex w-[min(20rem,calc(100vw-3rem))] flex-col gap-2.5">
-        {/* Both modes are always visible. "Create an account" used to be a
-            small grey link under the sign-in button, and almost nobody found
-            it: the form opened in sign-in mode for everyone. */}
-        <div
-          role="tablist"
-          aria-label="Account"
-          onKeyDown={handleTabKeyDown}
-          className="mb-1 grid grid-cols-2 gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1"
-        >
-          {(
-            [
-              ['signup', 'Create account'],
-              ['signin', 'Sign in'],
-            ] as const
-          ).map(([mode, label]) => (
-            <button
-              key={mode}
-              id={accountTabId(mode)}
-              type="button"
-              role="tab"
-              aria-selected={passwordMode === mode}
-              aria-controls={ACCOUNT_PANEL_ID}
-              tabIndex={passwordMode === mode ? 0 : -1}
-              onClick={() => switchPasswordMode(mode)}
-              disabled={busy}
-              className={
-                passwordMode === mode
-                  ? 'h-8 rounded-lg bg-[var(--color-accent-subtle)] text-sm font-medium text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]'
-                  : 'h-8 rounded-lg text-sm font-medium text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]'
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div
-          id={ACCOUNT_PANEL_ID}
-          role="tabpanel"
-          aria-labelledby={accountTabId(passwordMode)}
-          className="flex flex-col gap-2.5"
-        >
-          <label htmlFor="lk-email" className="sr-only">
-            Email address
-          </label>
-          <input
-            id="lk-email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            autoFocus
-            required
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={busy}
-            className={FIELD_CLASS}
-          />
-
-          <label htmlFor="lk-password" className="sr-only">
-            Password
-          </label>
-          <input
-            id="lk-password"
-            name="password"
-            type="password"
-            autoComplete={isSignup ? 'new-password' : 'current-password'}
-            required
-            placeholder={isSignup ? 'Choose a password' : 'Password'}
-            aria-describedby={isSignup ? 'lk-password-hint' : undefined}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={busy}
-            className={FIELD_CLASS}
-          />
-          {isSignup && (
-            <p id="lk-password-hint" className="text-xs text-[var(--color-content-tertiary)]">
-              At least {MIN_PASSWORD_LENGTH} characters.
-            </p>
-          )}
-
-          {error && (
-            <p role="alert" className="text-xs text-[var(--color-error)]">
-              {error}
-            </p>
-          )}
-
-          <button type="submit" disabled={busy} className={PRIMARY_BUTTON_CLASS} aria-busy={busy}>
-            <LockIcon className="size-4 shrink-0" />
-            {busy
-              ? isSignup
-                ? 'Creating account...'
-                : 'Signing in...'
-              : isSignup
-                ? 'Create account'
-                : 'Sign in'}
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between gap-2">
-          <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
-            Back
-          </button>
-          {!isSignup && (
-            <Link href="/forgot-password" className={LINK_CLASS}>
-              Forgot password?
-            </Link>
-          )}
-        </div>
-
-        {/* A route switch from inside a panel is the same choice as picking the
-            route from the landing state, so it reports the same selection —
-            otherwise a route's count would depend on which door the visitor
-            came through. The once-per-document rule keeps a toggle harmless. */}
-        <button
-          type="button"
-          onClick={() => {
-            selectOption('email_otp');
-            resetTo('magic');
-          }}
-          className={LINK_CLASS}
-        >
-          Email me a magic link instead
-        </button>
-      </form>
-    );
-  }
-
   // Magic-link email entry form
   if (step === 'magic') {
     return (
@@ -543,7 +395,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           name="email"
           type="email"
           autoComplete="email"
-          autoFocus
+          autoFocus={focusFirstField}
           required
           placeholder="you@example.com"
           value={email}
@@ -570,66 +422,181 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         >
           Use a password instead
         </button>
-        <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
-          Back
-        </button>
       </form>
     );
   }
 
-  // Default: GitHub + email options
+  // Default: the tabs over GitHub and the email + password form
+  const isSignup = passwordMode === 'signup';
+  // WAI-ARIA tabs: the active tab is the only one in the tab order, and the
+  // arrow keys move (and, with two tabs, select) the other one.
+  function handleTabKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    // The tabs are disabled mid-submit; the keyboard must not get round that
+    // and flip the mode under a request that is already in flight.
+    if (busy) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') {
+      return;
+    }
+    e.preventDefault();
+    const next: PasswordMode =
+      e.key === 'Home' ? 'signup' : e.key === 'End' ? 'signin' : isSignup ? 'signin' : 'signup';
+    switchPasswordMode(next);
+    document.getElementById(accountTabId(next))?.focus();
+  }
+  function switchPasswordMode(next: PasswordMode) {
+    if (next === passwordMode) return;
+    // The one place a visitor states, unambiguously, which of the two they
+    // are here for — clearer than the eventual submit, because most people
+    // who press it never get that far.
+    selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
+    setPasswordMode(next);
+    setError('');
+  }
   return (
-    <div className="flex flex-col items-center gap-3">
-      {/* Primary: GitHub */}
-      <button
-        onClick={handleGitHubLogin}
-        disabled={loading}
-        className="group relative flex h-12 min-w-[220px] items-center justify-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-semibold text-[var(--color-content-primary)] shadow-[0_0_0_1px_transparent] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] hover:shadow-[0_0_20px_var(--color-accent-glow)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
-        aria-busy={loading}
+    // An explicit width, not `w-full`: the parent shrinks to fit its content,
+    // so a percentage collapsed the form once the fields moved into the tab
+    // panel. Capped to the viewport minus the page's px-6 gutters.
+    <form onSubmit={handlePasswordSubmit} className="flex w-[min(20rem,calc(100vw-3rem))] flex-col gap-2.5">
+      {/* Both modes are always visible. "Create an account" used to be a
+          small grey link under the sign-in button, and almost nobody found
+          it: the form opened in sign-in mode for everyone. */}
+      <div
+        role="tablist"
+        aria-label="Account"
+        onKeyDown={handleTabKeyDown}
+        className="mb-1 grid grid-cols-2 gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1"
       >
-        <GitHubMark className="size-4 shrink-0" />
-        {loading ? 'Redirecting...' : entryMode === 'signup' ? 'Sign up with GitHub' : 'Continue with GitHub'}
-      </button>
-
-      {/* A failed OAuth initiation never navigates away, so this step has to be
-          able to say so — the password and magic-link steps already do. */}
-      {error && (
-        <p role="alert" className="text-xs text-[var(--color-error)]">
-          {error}
-        </p>
-      )}
-
-      {/* Divider */}
-      <div className="flex w-full max-w-[220px] items-center gap-2.5">
-        <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
-        <span className="text-xs text-[var(--color-content-tertiary)]">or</span>
-        <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
+        {(
+          [
+            ['signup', 'Create account'],
+            ['signin', 'Sign in'],
+          ] as const
+        ).map(([mode, label]) => (
+          <button
+            key={mode}
+            id={accountTabId(mode)}
+            type="button"
+            role="tab"
+            aria-selected={passwordMode === mode}
+            aria-controls={ACCOUNT_PANEL_ID}
+            tabIndex={passwordMode === mode ? 0 : -1}
+            onClick={() => switchPasswordMode(mode)}
+            disabled={busy}
+            className={
+              passwordMode === mode
+                ? 'h-8 rounded-lg bg-[var(--color-accent-subtle)] text-sm font-medium text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]'
+                : 'h-8 rounded-lg text-sm font-medium text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]'
+            }
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {/* Secondary: email + password — kept clearly visible (elevated surface +
-          primary text) so it reads as a real alternative, not a muted afterthought. */}
-      <button
-        onClick={() => {
-          selectOption(entryMode === 'signup' ? 'email_password_signup' : 'email_password');
-          setPasswordMode(entryMode);
-          resetTo('password');
-        }}
-        className="flex h-11 min-w-[220px] items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+      <div
+        id={ACCOUNT_PANEL_ID}
+        role="tabpanel"
+        aria-labelledby={accountTabId(passwordMode)}
+        className="flex flex-col gap-2.5"
       >
-        <LockIcon className="size-4 shrink-0" />
-        {entryMode === 'signup' ? 'Sign up with email' : 'Continue with email'}
-      </button>
+        <button
+          type="button"
+          onClick={handleGitHubLogin}
+          disabled={loading || busy}
+          className={GITHUB_BUTTON_CLASS}
+          aria-busy={loading}
+        >
+          <GitHubMark className="size-4 shrink-0" />
+          {loading ? 'Redirecting...' : isSignup ? 'Sign up with GitHub' : 'Continue with GitHub'}
+        </button>
 
-      {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}
+        <div className="flex items-center gap-2.5">
+          <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
+          <span className="text-xs text-[var(--color-content-tertiary)]">or</span>
+          <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
+        </div>
+
+        <label htmlFor="lk-email" className="sr-only">
+          Email address
+        </label>
+        <input
+          id="lk-email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          autoFocus={focusFirstField}
+          // The form is on screen from the start, so reaching for the email
+          // field is the moment a visitor picks the email route — what the
+          // "Continue with email" button used to report.
+          onFocus={() =>
+            selectOption(isSignup ? 'email_password_signup' : 'email_password')
+          }
+          required
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={busy}
+          className={FIELD_CLASS}
+        />
+
+        <label htmlFor="lk-password" className="sr-only">
+          Password
+        </label>
+        <input
+          id="lk-password"
+          name="password"
+          type="password"
+          autoComplete={isSignup ? 'new-password' : 'current-password'}
+          required
+          placeholder={isSignup ? 'Choose a password' : 'Password'}
+          aria-describedby={isSignup ? 'lk-password-hint' : undefined}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+          className={FIELD_CLASS}
+        />
+        {isSignup && (
+          <p id="lk-password-hint" className="text-xs text-[var(--color-content-tertiary)]">
+            At least {MIN_PASSWORD_LENGTH} characters.
+          </p>
+        )}
+
+        {error && (
+          <p role="alert" className="text-xs text-[var(--color-error)]">
+            {error}
+          </p>
+        )}
+
+        <button type="submit" disabled={busy} className={PRIMARY_BUTTON_CLASS} aria-busy={busy}>
+          <LockIcon className="size-4 shrink-0" />
+          {busy
+            ? isSignup
+              ? 'Creating account...'
+              : 'Signing in...'
+            : isSignup
+              ? 'Create account'
+              : 'Sign in'}
+        </button>
+      </div>
+
+      {!isSignup && (
+        <Link href="/forgot-password" className={`self-end ${LINK_CLASS}`}>
+          Forgot password?
+        </Link>
+      )}
+
+      {/* A route switch reports a selection like any other pick, and the
+          once-per-document rule keeps a toggle back and forth harmless. */}
       <button
+        type="button"
         onClick={() => {
           selectOption('email_otp');
           resetTo('magic');
         }}
         className={LINK_CLASS}
       >
-        Or email me a magic link
+        Email me a magic link instead
       </button>
-    </div>
+    </form>
   );
 }

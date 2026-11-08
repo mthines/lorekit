@@ -1178,12 +1178,17 @@ least sure about.
 selecting is "showed interest in this route", attempting is "handed over
 credentials". The gap between them is the form-abandonment rate.
 
-Every control that moves the visitor onto a route reports it: the landing
-buttons, the "Create an account" / "I already have an account" toggle, the
-in-panel switches between the password and magic-link forms, and the return from
-the "confirm your email" screen. A route counted only when it was picked from the
-landing state would be counted differently depending on which door the visitor
-came through.
+Every control that moves the visitor onto a route reports it: the GitHub button,
+the first focus of the email field (the email form is on screen from the start,
+so reaching for it is the pick — it used to be a "Continue with email" button),
+the "Create account" / "Sign in" tabs, the in-panel switches between the password
+and magic-link forms, and the return from the "confirm your email" screen. A
+route counted only when it was picked from the landing state would be counted
+differently depending on which door the visitor came through.
+
+Since PR #739 (2026-11-08) the email route's selection fires on focus, not on a
+click through a provider-choice screen, so expect a step change in
+`email_password` / `email_password_signup` selections from that date.
 
 **A route is selected at most once per document.** The login page's panels can be
 toggled back and forth, and every switch is the same visitor showing the same
