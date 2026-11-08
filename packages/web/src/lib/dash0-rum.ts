@@ -38,7 +38,11 @@ import {
   resolveDeploymentEnvironment,
 } from './otel-deployment-env';
 import { supabaseOriginPattern } from './otel-origins';
-import { watchPrehydrationDomChanges } from './prehydration-dom-changes';
+import {
+  isHydrationErrorEvent,
+  watchPrehydrationDomChanges,
+  type PrehydrationDomWatch,
+} from './prehydration-dom-changes';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
 const SERVICE_NAME = 'web';
@@ -303,6 +307,9 @@ export function initDash0Rum(): boolean {
   // BEFORE init(): the SDK subscribes to `unhandledrejection` and takes over
   // `window.onerror` inside init(), and listener order is registration order.
   installExtensionErrorFilter();
+  // Also before init(): it has to set the pre-hydration attributes before the
+  // SDK snapshots them for a hydration error.
+  installHydrationErrorDomContext();
 
   // Warn once — `initialized` above makes this path run at most once per page —
   // when a pulled `VERCEL_ENV` claimed a deployment environment this dev build
@@ -481,25 +488,28 @@ export function syncFeatureFlagRumAttributes(
 export const PREHYDRATION_DOM_CHANGES_ATTRIBUTE = 'lorekit.prehydration.dom_changes';
 
 /**
- * RUM attribute: how many such changes were recorded. Set to `0` as soon as
- * recording starts, so a hydration error carrying `0` means "watched, nothing
- * changed" — distinct from the attribute being absent (recorder not running).
+ * RUM attribute: how many such changes were recorded. `0` means the DOM was
+ * watched and nothing changed; the attribute is absent when nothing was
+ * watching at that moment (recorder not started, parser still running, or
+ * past the watch window).
  */
 export const PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE = 'lorekit.prehydration.dom_change_count';
+
+/** The running watch, once {@link startPrehydrationDomChangeRecorder} has started one. */
+let prehydrationWatch: PrehydrationDomWatch | null = null;
 
 /** One recorder per page load, however many entry points ask for it. */
 let prehydrationRecorderStarted = false;
 
 /**
- * Attach a summary of the DOM changes made before React hydrated to every RUM
- * signal, until the first hydration error has been reported (or the watch
- * times out), then remove it again.
+ * Start recording the DOM changes made before React hydrates.
  *
  * Call it from `instrumentation-client.ts`, right after {@link initDash0Rum}:
  * it has to be running before hydration starts to see anything. The point is
  * the `browser.error` event for React #418 — React's production message says a
- * node did not match but not which one, and this puts the edit that caused it
- * (`+font in main>article>p ×12`, `html[lang]=fr`) on the same event. See
+ * node did not match but not which one, and
+ * {@link installHydrationErrorDomContext} puts the edit that caused it
+ * (`+font in main>article>p ×12`, `html[lang]=fr`) on that event. See
  * `prehydration-dom-changes.ts` for what is counted and why.
  *
  * No-op before RUM init and outside a browser.
@@ -507,18 +517,61 @@ let prehydrationRecorderStarted = false;
 export function startPrehydrationDomChangeRecorder(): void {
   if (!initialized || prehydrationRecorderStarted) return;
   prehydrationRecorderStarted = true;
+  prehydrationWatch = watchPrehydrationDomChanges();
+}
 
-  const stop = watchPrehydrationDomChanges({
-    onChange: ({ count, summary }) => {
-      replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, count);
-      replaceSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE, summary);
-    },
-    onStop: () => {
+/**
+ * Put the pre-hydration DOM changes on hydration error events, and on nothing
+ * else.
+ *
+ * ## Why a listener ahead of the SDK, not an attribute held for the page load
+ *
+ * A signal attribute describes the signal it rides on (docs/otel.md, "These
+ * used to be signal attributes"). Holding the summary for the whole watch
+ * would label every web vital, page load and request of those seconds. So the
+ * attributes exist only while the SDK records the error: set here, in the
+ * listener for the hydration error's own `error` event, and removed one task
+ * later — by which time the SDK has copied them onto the event (it snapshots
+ * signal attributes synchronously in its `window.onerror` handler).
+ *
+ * ## Why it must run before `init()`
+ *
+ * For the same reason as {@link installExtensionErrorFilter}: window listeners
+ * fire in registration order, and the SDK takes over `window.onerror` inside
+ * `init()`. `withOnErrorRegisteredLast` re-seats an earlier `onerror` behind
+ * this listener.
+ *
+ * Nothing is set when no watch is observing, so an absent attribute on a
+ * hydration error means "not watched", never "nothing changed".
+ *
+ * @param target the event target to subscribe on; defaults to `window`.
+ * @returns a teardown function removing the listener, for tests.
+ */
+export function installHydrationErrorDomContext(target?: EventTarget): () => void {
+  const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
+  if (!eventTarget) return () => undefined;
+
+  const onError = (event: Event) => {
+    if (!isHydrationErrorEvent(event)) return;
+    const snapshot = prehydrationWatch?.snapshot();
+    if (!snapshot) return;
+    replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, snapshot.count);
+    if (snapshot.summary) {
+      replaceSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE, snapshot.summary);
+    }
+    setTimeout(() => {
       removeSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE);
       removeSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE);
-    },
+    }, 0);
+  };
+
+  // Same options object as the extension filter, for the same reason: node's
+  // `EventTarget` ignores a boolean `capture` on `removeEventListener`.
+  const capture = { capture: true } as const;
+  withOnErrorRegisteredLast(eventTarget as OnErrorHost, () => {
+    eventTarget.addEventListener('error', onError, capture);
   });
-  if (stop) replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, 0);
+  return () => eventTarget.removeEventListener('error', onError, capture);
 }
 
 /**

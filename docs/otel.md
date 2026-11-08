@@ -1605,16 +1605,24 @@ telemetry could not say what.
 
 `startPrehydrationDomChangeRecorder()` (`lib/dash0-rum.ts`, started from
 `instrumentation-client.ts` right after `initDash0Rum()`) watches the document
-with a `MutationObserver` and keeps two RUM signal attributes current:
+with a `MutationObserver` for 10 s. When a hydration error is reported,
+`installHydrationErrorDomContext()` copies what it saw onto that error event as
+two attributes:
 
 | Attribute | Example | Meaning |
 |-----------|---------|---------|
-| `lorekit.prehydration.dom_change_count` | `14` | Changes recorded so far. Set to `0` when recording starts, so `0` on a #418 event means "watched, nothing changed", while an absent attribute means the recorder was not running |
-| `lorekit.prehydration.dom_changes` | `+font in main>article>p ×12; html[lang]=fr` | De-duplicated summary in first-seen order: `+`/`-` a node added/removed at that location, `~` a text node's content changed, `html[lang]=…` the page language rewritten. At most 8 entries and 512 characters |
+| `lorekit.prehydration.dom_change_count` | `14` | Changes recorded before the error. `0` means "watched, nothing changed". **Absent** means nothing was watching at that moment: the recorder was not started, the parser was still running, or the 10 s window had passed |
+| `lorekit.prehydration.dom_changes` | `+font in main>article>p ×12; html[lang]=fr` | De-duplicated summary in first-seen order: `+`/`-` a node added/removed at that location, `~` a text node's content changed, `html[lang]=…` the page language rewritten. At most 8 entries and 512 characters. Absent when the count is `0` |
 
-Both are removed one task after the first hydration error, or after 10 s if
-none arrives. The SDK snapshots signal attributes synchronously when it handles
-the `error` event, so the #418 `browser.error` event itself carries them.
+**They ride on the hydration error and nothing else.** A signal attribute
+describes the signal it carries (see "These used to be signal attributes"
+above), so holding the summary for the whole watch would label every web
+vital and request of those seconds. Instead the listener sets both attributes
+while the SDK handles the hydration error's own `error` event and removes them
+one task later. The SDK snapshots signal attributes synchronously in its
+`window.onerror` handler, so the event keeps them. Like the extension filter,
+the listener is registered in `initDash0Rum()` **before** `init()`, so it runs
+ahead of the SDK's handler.
 
 Things not to "simplify":
 
@@ -1630,7 +1638,8 @@ Things not to "simplify":
   plus the `<html>` `lang`/`dir` values. No text, no body attribute values, no
   class names.
 
-What it cannot see: an edit made before `instrumentation-client.ts` runs. A
+What it cannot see: an edit made before observation starts, which is when
+`instrumentation-client.ts` runs or the parser finishes, whichever is later. A
 #418 event with `dom_change_count = 0` therefore means either no edit happened
 or the edit happened earlier, not that the server and client renders diverged.
 Read it beside the browser breakdown.

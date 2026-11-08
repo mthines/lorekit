@@ -5,6 +5,7 @@ import {
   describeLocation,
   describeMutation,
   describeNode,
+  isHydrationErrorEvent,
   isHydrationErrorMessage,
   isReactOwned,
   summarizeDomChanges,
@@ -108,6 +109,31 @@ describe('isHydrationErrorMessage', () => {
     expect(isHydrationErrorMessage('Minified React error #4180;')).toBe(false);
     expect(isHydrationErrorMessage('Minified React error #310;')).toBe(false);
     expect(isHydrationErrorMessage(undefined)).toBe(false);
+  });
+});
+
+describe('isHydrationErrorEvent', () => {
+  function errorEvent(fields: { message?: string; error?: unknown }): Event {
+    const event = new Event('error');
+    for (const [key, value] of Object.entries(fields)) {
+      Object.defineProperty(event, key, { value });
+    }
+    return event;
+  }
+
+  it('reads the event message', () => {
+    expect(isHydrationErrorEvent(errorEvent({ message: 'Uncaught Error: Minified React error #418;' }))).toBe(true);
+  });
+
+  it("falls back to the error's own message when the event message is empty", () => {
+    expect(
+      isHydrationErrorEvent(errorEvent({ message: '', error: new Error('Minified React error #418;') })),
+    ).toBe(true);
+  });
+
+  it('rejects other errors and an event with neither', () => {
+    expect(isHydrationErrorEvent(errorEvent({ message: 'TypeError: x is undefined', error: new TypeError('x') }))).toBe(false);
+    expect(isHydrationErrorEvent(errorEvent({}))).toBe(false);
   });
 });
 
@@ -249,13 +275,6 @@ describe('watchPrehydrationDomChanges', () => {
     return { doc: doc as unknown as Document, win, docState: doc, p };
   }
 
-  function errorEvent(message: string): Event {
-    const event = new Event('error');
-    Object.defineProperty(event, 'message', { value: message });
-    Object.defineProperty(event, 'error', { value: new Error(message) });
-    return event;
-  }
-
   beforeEach(() => {
     vi.useFakeTimers();
     FakeObserver.last = undefined;
@@ -266,18 +285,16 @@ describe('watchPrehydrationDomChanges', () => {
   });
 
   it('returns null where it cannot observe — no document, or no MutationObserver', () => {
-    const onChange = vi.fn();
-    const onStop = vi.fn();
-    expect(watchPrehydrationDomChanges({ onChange, onStop, doc: undefined })).toBeNull();
+    expect(watchPrehydrationDomChanges({ doc: undefined })).toBeNull();
 
     const { doc, win } = fakeDocument();
     Object.assign(win, { MutationObserver: undefined });
-    expect(watchPrehydrationDomChanges({ onChange, onStop, doc })).toBeNull();
+    expect(watchPrehydrationDomChanges({ doc })).toBeNull();
   });
 
   it('watches <html> lang/dir and the whole <body> once parsing has finished', () => {
     const { doc } = fakeDocument();
-    watchPrehydrationDomChanges({ onChange: vi.fn(), onStop: vi.fn(), doc });
+    watchPrehydrationDomChanges({ doc });
 
     expect(FakeObserver.last?.observed).toEqual([
       { target: doc.documentElement, options: { attributes: true, attributeFilter: ['lang', 'dir'] } },
@@ -285,82 +302,56 @@ describe('watchPrehydrationDomChanges', () => {
     ]);
   });
 
-  it('waits for the parser while the document is still loading', () => {
+  it('reports "observed, nothing changed" as count 0 with an empty summary', () => {
+    const { doc } = fakeDocument();
+    expect(watchPrehydrationDomChanges({ doc })?.snapshot()).toEqual({ count: 0, summary: '' });
+  });
+
+  it('has no snapshot while the parser is still running — never a 0 it did not observe', () => {
     const { doc, docState } = fakeDocument('loading');
-    watchPrehydrationDomChanges({ onChange: vi.fn(), onStop: vi.fn(), doc });
+    const watch = watchPrehydrationDomChanges({ doc });
     expect(FakeObserver.last?.observed).toEqual([]);
+    expect(watch?.snapshot()).toBeNull();
 
     docState.readyState = 'interactive';
     docState.dispatchEvent(new Event('readystatechange'));
     expect(FakeObserver.last?.observed).toHaveLength(2);
+    expect(watch?.snapshot()).toEqual({ count: 0, summary: '' });
   });
 
-  it('reports a running count and de-duplicated summary for changes React does not own', () => {
+  it('counts and de-duplicates the changes React does not own', () => {
     const { doc, p } = fakeDocument();
-    const onChange = vi.fn();
-    watchPrehydrationDomChanges({ onChange, onStop: vi.fn(), doc });
+    const watch = watchPrehydrationDomChanges({ doc });
 
     const font = () => mutation({ target: p, addedNodes: nodes(element('font')) });
     FakeObserver.last?.callback([font(), font()]);
     FakeObserver.last?.callback([font()]);
-
-    expect(onChange).toHaveBeenLastCalledWith({ count: 3, summary: '+font in main>article>p ×3' });
-  });
-
-  it('stays silent for a batch made only of React-owned changes', () => {
-    const { doc, p } = fakeDocument();
-    const onChange = vi.fn();
-    watchPrehydrationDomChanges({ onChange, onStop: vi.fn(), doc });
-
     owned(p);
     FakeObserver.last?.callback([mutation({ target: p, addedNodes: nodes(element('span')) })]);
-    expect(onChange).not.toHaveBeenCalled();
+
+    expect(watch?.snapshot()).toEqual({ count: 3, summary: '+font in main>article>p ×3' });
   });
 
-  it('stops one task AFTER a hydration error, so the SDK captures the error with the summary first', () => {
-    const { doc, win } = fakeDocument();
-    const onStop = vi.fn();
-    watchPrehydrationDomChanges({ onChange: vi.fn(), onStop, doc });
-
-    win.dispatchEvent(errorEvent('Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML'));
-    expect(onStop).not.toHaveBeenCalled();
-    expect(FakeObserver.last?.disconnected).toBe(false);
-
-    vi.advanceTimersByTime(0);
-    expect(onStop).toHaveBeenCalledOnce();
-    expect(FakeObserver.last?.disconnected).toBe(true);
-  });
-
-  it('keeps watching through errors that are not hydration errors', () => {
-    const { doc, win } = fakeDocument();
-    const onStop = vi.fn();
-    watchPrehydrationDomChanges({ onChange: vi.fn(), onStop, doc });
-
-    win.dispatchEvent(errorEvent("TypeError: Cannot read properties of undefined (reading 'x')"));
-    vi.advanceTimersByTime(0);
-    expect(onStop).not.toHaveBeenCalled();
-  });
-
-  it('stops at the deadline when no hydration error arrives', () => {
+  it('stops observing at the deadline and has no snapshot after it', () => {
     const { doc } = fakeDocument();
-    const onStop = vi.fn();
-    watchPrehydrationDomChanges({ onChange: vi.fn(), onStop, doc });
+    const watch = watchPrehydrationDomChanges({ doc });
 
     vi.advanceTimersByTime(PREHYDRATION_WATCH_TIMEOUT_MS - 1);
-    expect(onStop).not.toHaveBeenCalled();
+    expect(watch?.snapshot()).not.toBeNull();
     vi.advanceTimersByTime(1);
-    expect(onStop).toHaveBeenCalledOnce();
+    expect(FakeObserver.last?.disconnected).toBe(true);
+    expect(watch?.snapshot()).toBeNull();
   });
 
-  it('calls onStop once however many times it is stopped', () => {
-    const { doc, win } = fakeDocument();
-    const onStop = vi.fn();
-    const stop = watchPrehydrationDomChanges({ onChange: vi.fn(), onStop, doc });
+  it('can be stopped early, idempotently, and never starts observing afterwards', () => {
+    const { doc, docState } = fakeDocument('loading');
+    const watch = watchPrehydrationDomChanges({ doc });
 
-    stop?.();
-    stop?.();
-    win.dispatchEvent(errorEvent('Minified React error #418;'));
-    vi.advanceTimersByTime(PREHYDRATION_WATCH_TIMEOUT_MS);
-    expect(onStop).toHaveBeenCalledOnce();
+    watch?.stop();
+    watch?.stop();
+    docState.readyState = 'interactive';
+    docState.dispatchEvent(new Event('readystatechange'));
+    expect(FakeObserver.last?.observed).toEqual([]);
+    expect(watch?.snapshot()).toBeNull();
   });
 });

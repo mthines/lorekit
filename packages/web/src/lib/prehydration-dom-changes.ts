@@ -39,8 +39,16 @@
  * `<html>` `lang`/`dir` values. Never text, attribute values from the body, or
  * class names (Tailwind class lists are long and say nothing about the cause).
  *
+ * ## It rides on the hydration error only
+ *
+ * This module keeps a snapshot; `dash0-rum.ts` copies it onto signal
+ * attributes only while the SDK records a hydration error, and removes them
+ * straight after. A signal attribute describes the signal it rides on
+ * (docs/otel.md, "These used to be signal attributes"), so the summary must
+ * not label every web vital and request of the page load.
+ *
  * Kept free of React, `next/*` and the SDK — `dash0-rum.ts` owns attaching the
- * summary to signals, this module owns observing and describing.
+ * snapshot, this module owns observing and describing.
  */
 
 /** How long to keep watching when no hydration error arrives. */
@@ -79,11 +87,11 @@ export type DomMutation = Pick<
   'type' | 'target' | 'addedNodes' | 'removedNodes' | 'attributeName'
 >;
 
-/** The running result handed to {@link WatchOptions.onChange}. */
+/** What a {@link PrehydrationDomWatch} has recorded so far. */
 export interface DomChangeSummary {
   /** Every change recorded so far, duplicates included. */
   count: number;
-  /** De-duplicated, ordered, length-capped description of those changes. */
+  /** De-duplicated, ordered, length-capped description of those changes; empty when `count` is 0. */
   summary: string;
 }
 
@@ -99,6 +107,12 @@ export function isReactOwned(node: Node | null | undefined): boolean {
 /** Whether an error message is one of React's hydration-mismatch errors. */
 export function isHydrationErrorMessage(message: unknown): boolean {
   return typeof message === 'string' && HYDRATION_ERROR_PATTERN.test(message);
+}
+
+/** Whether a window `error` event reports one of React's hydration-mismatch errors. */
+export function isHydrationErrorEvent(event: Event): boolean {
+  const { message, error } = event as ErrorEvent;
+  return isHydrationErrorMessage(message) || isHydrationErrorMessage(messageOf(error));
 }
 
 /** `p`, `div#root`, `#text`, `#comment` — a node's tag and id, lower-cased. */
@@ -185,61 +199,63 @@ export function summarizeDomChanges(counts: ReadonlyMap<string, number>): string
 }
 
 export interface WatchOptions {
-  /** Called after every batch that recorded at least one change. */
-  onChange: (summary: DomChangeSummary) => void;
-  /** Called once, when watching stops for any reason. */
-  onStop: () => void;
   /** The document to watch; defaults to the global one. */
   doc?: Document;
-  /** Stop after this long if no hydration error arrives. */
+  /** Stop after this long. */
   timeoutMs?: number;
 }
 
+/** A running watch, read at the moment a hydration error is reported. */
+export interface PrehydrationDomWatch {
+  /**
+   * The changes recorded so far, or `null` when the watch is not observing:
+   * the parser is still running, or the watch has stopped. `{ count: 0 }`
+   * means "observed, nothing changed" — a different answer from `null`.
+   */
+  snapshot(): DomChangeSummary | null;
+  /** Stop observing. Idempotent; the watch also stops itself after `timeoutMs`. */
+  stop(): void;
+}
+
 /**
- * Watch the document for changes React does not own, until the first
- * hydration error has been reported or {@link PREHYDRATION_WATCH_TIMEOUT_MS}
- * passes.
+ * Watch the document for changes React does not own, for
+ * {@link PREHYDRATION_WATCH_TIMEOUT_MS} — long enough to cover hydration,
+ * including Suspense boundaries that hydrate after the root.
  *
  * Observation starts once the parser has finished (`readyState` past
  * `loading`): before that, every element the parser appends is itself a
- * mutation, and a script that runs mid-parse would record the page.
+ * mutation, and a script that runs mid-parse would record the page. Until
+ * then {@link PrehydrationDomWatch.snapshot} returns `null`, never a `0` that
+ * would claim nothing changed.
  *
- * Stopping on a hydration error is deferred by one task. The SDK snapshots
- * signal attributes synchronously while it handles the `error` event, so
- * deferring guarantees every error React reports in that commit has been
- * captured with the summary before {@link WatchOptions.onStop} removes it —
- * whatever order the window's `error` listeners run in. React's own
- * re-render after the mismatch is delivered to the observer only after that
- * commit's task, so it never reaches the summary the error carries.
+ * The snapshot holds only records the observer has already delivered. When
+ * React reports a mismatch, the DOM work of its own client re-render sits in
+ * that same task and is delivered afterwards, so it never reaches the
+ * snapshot taken while the error is reported.
  *
- * @returns a function that stops watching, or `null` when the environment
- *   cannot observe the DOM (server render, no `MutationObserver`).
+ * @returns the watch, or `null` when the environment cannot observe the DOM
+ *   (server render, no `MutationObserver`).
  */
 export function watchPrehydrationDomChanges({
-  onChange,
-  onStop,
   doc = typeof document === 'undefined' ? undefined : document,
   timeoutMs = PREHYDRATION_WATCH_TIMEOUT_MS,
-}: WatchOptions): (() => void) | null {
+}: WatchOptions = {}): PrehydrationDomWatch | null {
   const win = doc?.defaultView;
   if (!doc || !win || typeof win.MutationObserver !== 'function') return null;
   const page: Document = doc;
 
   const counts = new Map<string, number>();
   let total = 0;
+  let observing = false;
   let stopped = false;
 
   const observer = new win.MutationObserver((mutations) => {
-    let recorded = 0;
     for (const mutation of mutations) {
       for (const entry of describeMutation(mutation)) {
         counts.set(entry, (counts.get(entry) ?? 0) + 1);
-        recorded++;
+        total++;
       }
     }
-    if (recorded === 0) return;
-    total += recorded;
-    onChange({ count: total, summary: summarizeDomChanges(counts) });
   });
 
   const observe = () => {
@@ -252,6 +268,7 @@ export function watchPrehydrationDomChanges({
     if (page.body) {
       observer.observe(page.body, { childList: true, characterData: true, subtree: true });
     }
+    observing = true;
   };
 
   const stop = () => {
@@ -259,26 +276,21 @@ export function watchPrehydrationDomChanges({
     stopped = true;
     observer.disconnect();
     win.clearTimeout(deadline);
-    win.removeEventListener('error', onError);
     page.removeEventListener('readystatechange', observe);
-    onStop();
-  };
-
-  const onError = (event: Event) => {
-    const { message, error } = event as ErrorEvent;
-    if (isHydrationErrorMessage(message) || isHydrationErrorMessage(messageOf(error))) {
-      win.setTimeout(stop, 0);
-    }
   };
 
   const deadline = win.setTimeout(stop, timeoutMs);
-  win.addEventListener('error', onError);
   if (page.readyState === 'loading') {
     page.addEventListener('readystatechange', observe);
   } else {
     observe();
   }
-  return stop;
+
+  return {
+    snapshot: () =>
+      observing && !stopped ? { count: total, summary: summarizeDomChanges(counts) } : null,
+    stop,
+  };
 }
 
 /** The message of an `Error`-like value, if it has one. */
