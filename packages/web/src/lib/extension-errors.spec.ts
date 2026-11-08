@@ -315,10 +315,10 @@ describe('browser-injected globals never appear in our own source', () => {
   // app now uses one of them: remove it from BROWSER_INJECTED_GLOBALS rather
   // than silencing our own errors.
   // Code only: comments may explain the globals, and specs quote production
-  // messages that name them. The list itself lives in extension-errors.ts.
+  // messages that name them. Matched with the module's own matcher, so a global
+  // added to BROWSER_INJECTED_GLOBALS is scanned for without a second list here.
   const SRC = path.resolve(__dirname, '..');
   const EXEMPT = new Set(['lib/extension-errors.ts']);
-  const INJECTED = /(?:^|[^\w$])(?:ethereum|__gCrWeb|__firefox__)(?:[^\w$]|$)/;
 
   function sourceFiles(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -337,12 +337,12 @@ describe('browser-injected globals never appear in our own source', () => {
   it('finds none in packages/web/src', () => {
     const offenders = sourceFiles(SRC)
       .filter((file) => !EXEMPT.has(path.relative(SRC, file).split(path.sep).join('/')))
-      .filter((file) => INJECTED.test(withoutComments(readFileSync(file, 'utf8'))));
+      .filter((file) => namesBrowserInjectedGlobal(withoutComments(readFileSync(file, 'utf8'))));
     expect(offenders).toEqual([]);
   });
 
   it('would catch a real reference, and not one in a comment', () => {
-    expect(INJECTED.test(withoutComments('if (window.ethereum) connect();'))).toBe(true);
-    expect(INJECTED.test(withoutComments('// window.ethereum is injected by wallets'))).toBe(false);
+    expect(namesBrowserInjectedGlobal(withoutComments('if (window.ethereum) connect();'))).toBe(true);
+    expect(namesBrowserInjectedGlobal(withoutComments('// window.ethereum is injected by wallets'))).toBe(false);
   });
 });
