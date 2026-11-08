@@ -82,24 +82,29 @@ Strip away the branding and every format answers the same four questions differe
 
 There's one real fork: **who writes the memory**. In instruction files it's a person. In the memory tool, Letta and LoreKit, it's the model. In Mem0 and Graphiti, a service extracts facts from the conversation. A spec doesn't need to pick one. It needs to *record* which, so a reader knows how much to trust what it reads.
 
-Here's roughly what one record could look like. It illustrates the data model; the field names aren't a proposal:
+Here's roughly what one record could look like as a file. It illustrates the data model; the field names aren't a proposal:
 
-```json
-{
-  "spec": "agent-memory/0.1",
-  "id": "8f0c2a6e-4b1d-4c7a-9e2f-3a5b6c7d8e9f",
-  "address": { "level": "repo", "value": "github.com/acme/checkout" },
-  "key": "tests-need-local-postgres",
-  "kind": "lesson",
-  "written_by": { "type": "agent", "name": "claude-code" },
-  "content_type": "text/markdown",
-  "body": "Integration tests need Postgres up first: docker compose up -d db.",
-  "lifecycle": { "expires_at": null, "extended_by": "write" },
-  "attributes": { "vcs.pr": 482, "ci.run_url": "https://ci.example/runs/123" }
-}
+```markdown
+---
+spec: agent-memory/0.1
+id: 8f0c2a6e-4b1d-4c7a-9e2f-3a5b6c7d8e9f
+address: { level: repo, value: github.com/acme/checkout }
+key: tests-need-local-postgres
+kind: lesson
+written_by: { type: agent, name: claude-code }
+content_type: text/markdown
+lifecycle: { expires_at: null, extended_by: write }
+attributes: { vcs.pr: 482, ci.run_url: "https://ci.example/runs/123" }
+---
+Integration tests fail with `ECONNREFUSED 127.0.0.1:5432` unless Postgres
+is already running. Start it before `pnpm test`:
+
+    docker compose up -d db
+
+The test setup does not start it for you.
 ```
 
-`address` and `key` say where it's true, `id` is its identity, `content_type` and `body` say what it says, `lifecycle` says when it stops, and `written_by` answers the fork. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record could just as well be a Markdown file with frontmatter.
+The frontmatter is the envelope: `address` and `key` say where it's true, `id` is its identity, `lifecycle` says when it stops, and `written_by` answers the fork. The Markdown below it is the memory itself, and `content_type` tells a reader how to treat it. Anything else a tool needs goes in `attributes`, under a namespace other tools can ignore. The same record serialises to JSON just as well, for a tool that wants to send it over the wire.
 
 Around that record, a spec would mirror OpenTelemetry's layers:
 
