@@ -1543,7 +1543,7 @@ committed `.lorekit.json` can never opt the gate out of its own check.
 ### Browser
 Open Chrome DevTools → Network → filter by `v1/traces`. You should see POST requests to the Dash0 OTLP endpoint after page load and on each navigation.
 
-### Browser errors from extensions are dropped, by STACK not by message
+### Browser errors from extensions are dropped, by STACK not by message (with three exceptions)
 
 A visitor's browser extension raises its uncaught errors and unhandled promise
 rejections on the *page's* `window`, so `@dash0/sdk-web` records them as
@@ -1576,24 +1576,28 @@ Four things not to "simplify":
   matches its regexes against the error MESSAGE. The extension message above is
   the commonest shape of a real first-party `TypeError`, so a regex wide enough
   to catch it would also silence our own bugs.
-- **It drops only when EVERY source-bearing frame is an extension URL.** When an
-  extension breaks our code the stack interleaves their frames with ours, and
-  that error is our bug — it stays. When the stack proves nothing (no stack, or
-  no line naming a source) the event's `filename` is consulted instead, and the
-  error is kept unless that names an extension script.
+- **By stack, it drops only when EVERY source-bearing frame is an extension URL.**
+  When an extension breaks our code the stack interleaves their frames with
+  ours, and that error is our bug — it stays. When the stack proves nothing (no
+  stack, or no line naming a source) the event's `filename` is consulted
+  instead, and the error is kept unless that names an extension script. Two of
+  the three exceptions below are the only drops that do not come from the
+  stack; the third removes the SDK wrappers that produced the errors instead.
 
 `preventDefault()` is deliberately not called, so the browser still logs the
 error to the console.
 
-**What the filter does NOT reach.** Uncaught errors from a cross-origin script —
-which every `chrome-extension://` script is — are muted by the browser: the page
-gets `Script error.` with `error: null` and `filename: ""`, so there is nothing
-to attribute and the event is kept (fail-safe). That is acceptable because both
-production fingerprints arrive on the `unhandledrejection` path, where the
-`reason` is a real `Error` carrying a full stack. Judge the filter by the
-rejection path; the `error` path is a bonus for the cases that do report.
+**Three exceptions to "by stack", each measured on 2026-11-08.** Every
+`browser.error` behind that day's `Web - Fatal Error` firings came from a
+browser or an extension, and these three shapes got past the stack test:
 
-### Hydration errors carry the DOM changes made before hydration
+| Shape | Seen | Why the stack cannot tell | How it is dropped |
+|-------|------|---------------------------|-------------------|
+| `Script error.` with `error: null`, `filename: ""` | 98 events, 83 sessions, Safari on iOS only | A script from another origin has its errors muted by the browser: no stack, no URL | `isMutedCrossOriginError`. The app serves every script it runs from its own origin, so a muted error cannot be ours. A cross-origin `<script>` added later needs `crossorigin` plus CORS headers, or its errors are dropped here. Residual risk: iPhone Safari once muted the app's own service-worker-served chunks (#201, #202); Next sets no `crossorigin` on its scripts, so that fix rests on the CORS header alone |
+| A message naming `ethereum`, `__gCrWeb` or `__firefox__` | 58 events, 45 sessions (Brave iOS's `window.ethereum.selectedAddress = undefined`); 1 `__gCrWeb` (Chrome iOS) | iOS browsers evaluate injected scripts as the page's own, so the only frame is `global code@<page URL>:1:16` | `namesBrowserInjectedGlobal`, checked before the stack. Safe only while our code never touches these globals, which `extension-errors.spec.ts` enforces by scanning `src/` |
+| `Permission denied to access property "apply"` | 84 events, 2 Firefox sessions | Thrown inside the SDK's own timer wrapper (`@dash0/sdk-web/dist/dash0.js`), a first-party frame | Not filtered: `wrapTimers: false` and `wrapEventHandlers: false` in `init()` remove the wrappers. They only add detail to errors from cross-origin scripts, and the timer wrapper called `.apply()` on Firefox extensions' privileged callbacks, which Firefox refuses |
+
+### Hydration errors an extension caused are dropped; the rest carry the DOM changes made before hydration
 
 React's production hydration error (`Minified React error #418; …args[]=HTML`)
 says a node did not match the server HTML, but not which node or why. In
@@ -1603,11 +1607,26 @@ and an identical bundle. That pointed at something in the browser (a
 translation feature or an extension) editing the DOM before hydration, and the
 telemetry could not say what.
 
+By 2026-11-08 the sample was larger and the split held: #418 hit 73 of 1,480
+Firefox sessions on that post (about 8% of desktop Firefox, 0.4% on Android),
+2 of 2,485 Chrome and 0 of 1,682 Safari sessions. Nothing in the telemetry
+told affected Firefox sessions from unaffected ones on the same build.
+
 `startPrehydrationDomChangeRecorder()` (`lib/dash0-rum.ts`, started from
 `instrumentation-client.ts` right after `initDash0Rum()`) watches the document
 with a `MutationObserver` for 10 s. When a hydration error is reported,
-`installHydrationErrorDomContext()` copies what it saw onto that error event as
-two attributes:
+`installHydrationErrorDomContext()` reads what it saw:
+
+- **Something other than React made an edit hydration cannot step over**
+  (`conflictingChangeCount` > 0): the error is dropped with
+  `stopImmediatePropagation()`, like an extension's own error. Steppable edits
+  are left out of that count: a node added directly under `<body>`, any later
+  edit inside it and its removal, which react-dom 19 skips (subtree and all)
+  while hydrating because extensions put their widgets there; and attribute
+  changes such as `html[lang]`, which react-dom 19 never throws on. Counting
+  them would blame an extension for a mismatch of ours.
+- **Anything else** (no edit, only steppable ones, or no watch running): the
+  error is kept and carries two attributes:
 
 | Attribute | Example | Meaning |
 |-----------|---------|---------|
@@ -1645,7 +1664,12 @@ What it cannot see: an edit made before observation starts, which is when
 `instrumentation-client.ts` runs or the parser finishes, whichever is later. A
 #418 event with `dom_change_count = 0` therefore means either no edit happened
 or the edit happened earlier, not that the server and client renders diverged.
-Read it beside the browser breakdown.
+Read it beside the browser breakdown. Such errors are kept, so a #418 that
+still reaches RUM is either ours or an edit made too early to see.
+
+A mismatch of our own fails for every visitor, so dropping one visitor's #418
+because their extension also edited the page does not hide it: it still
+arrives from everyone else.
 
 ### Quick console check (browser)
 ```js

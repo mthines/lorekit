@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
 import {
   isExtensionOnlyStack,
+  isMutedCrossOriginError,
+  messageOfUnknown,
+  namesBrowserInjectedGlobal,
   shouldIgnoreErrorFromExtension,
   stackOfUnknown,
 } from './extension-errors';
@@ -208,5 +214,135 @@ describe('stackOfUnknown', () => {
     expect(stackOfUnknown(null)).toBeUndefined();
     expect(stackOfUnknown(undefined)).toBeUndefined();
     expect(stackOfUnknown({ stack: 12345 })).toBeUndefined();
+  });
+});
+
+/**
+ * Copied verbatim from production `browser.error` events on `service.name=web`
+ * (2026-11-08). Brave and Chrome on iOS evaluate their injected scripts as the
+ * page's own, so the stack's only frame is the page URL — it reads as ours.
+ */
+const BRAVE_IOS_ETHEREUM = {
+  message: "TypeError: undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')",
+  stack: 'global code@https://www.lorekit.io/blog/open-agent-memory-format:1:16',
+  filename: 'https://www.lorekit.io/blog/open-agent-memory-format',
+};
+
+const CHROME_IOS_GCRWEB = {
+  message: "ReferenceError: Can't find variable: __gCrWeb",
+  stack: 'global code@https://www.lorekit.io/blog/open-agent-memory-format:1:9',
+  filename: 'https://www.lorekit.io/blog/open-agent-memory-format',
+};
+
+describe('namesBrowserInjectedGlobal', () => {
+  it('matches the production Brave and Chrome iOS messages', () => {
+    expect(namesBrowserInjectedGlobal(BRAVE_IOS_ETHEREUM.message)).toBe(true);
+    expect(namesBrowserInjectedGlobal(CHROME_IOS_GCRWEB.message)).toBe(true);
+    expect(namesBrowserInjectedGlobal("TypeError: window.__firefox__ is undefined")).toBe(true);
+  });
+
+  it('matches only whole identifiers', () => {
+    expect(namesBrowserInjectedGlobal("Cannot read properties of undefined (reading 'ethereumAddress')")).toBe(false);
+    expect(namesBrowserInjectedGlobal('my__gCrWebShim is not defined')).toBe(false);
+    expect(namesBrowserInjectedGlobal('$ethereum is not defined')).toBe(false);
+  });
+
+  it('ignores a missing message', () => {
+    expect(namesBrowserInjectedGlobal(undefined)).toBe(false);
+    expect(namesBrowserInjectedGlobal(null)).toBe(false);
+  });
+});
+
+describe('isMutedCrossOriginError', () => {
+  it("matches the browser's muted error: Script error. with no stack and no filename", () => {
+    expect(isMutedCrossOriginError({ message: 'Script error.', filename: '' })).toBe(true);
+    expect(isMutedCrossOriginError({ message: 'Script error' })).toBe(true);
+  });
+
+  it('keeps a Script error. that still carries a stack or a script URL', () => {
+    expect(isMutedCrossOriginError({ message: 'Script error.', stack: FIRST_PARTY_STACK })).toBe(false);
+    expect(
+      isMutedCrossOriginError({
+        message: 'Script error.',
+        filename: 'https://www.lorekit.io/_next/static/chunks/page.js',
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps any other message, even one that starts the same way', () => {
+    expect(isMutedCrossOriginError({ message: 'Script error in LoreList' })).toBe(false);
+    expect(isMutedCrossOriginError({})).toBe(false);
+  });
+});
+
+describe('shouldIgnoreErrorFromExtension — injected globals and muted errors', () => {
+  it('drops the production Brave and Chrome iOS errors, though their stack reads as first-party', () => {
+    expect(isExtensionOnlyStack(BRAVE_IOS_ETHEREUM.stack)).toBe(false);
+    expect(shouldIgnoreErrorFromExtension(BRAVE_IOS_ETHEREUM)).toBe(true);
+    expect(shouldIgnoreErrorFromExtension(CHROME_IOS_GCRWEB)).toBe(true);
+  });
+
+  it('drops a muted cross-origin Script error.', () => {
+    expect(shouldIgnoreErrorFromExtension({ message: 'Script error.', filename: '' })).toBe(true);
+  });
+
+  it('still keeps a first-party error whose message names nothing injected', () => {
+    expect(
+      shouldIgnoreErrorFromExtension({
+        message: "TypeError: Cannot read properties of undefined (reading 'M_ID')",
+        stack: FIRST_PARTY_STACK,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('messageOfUnknown', () => {
+  it('reads the message off an Error or an error-shaped object', () => {
+    expect(messageOfUnknown(new Error('boom'))).toBe('boom');
+    expect(messageOfUnknown({ message: 'boom' })).toBe('boom');
+  });
+
+  it('returns undefined for anything else', () => {
+    expect(messageOfUnknown('boom')).toBeUndefined();
+    expect(messageOfUnknown(null)).toBeUndefined();
+    expect(messageOfUnknown({ message: 42 })).toBeUndefined();
+  });
+});
+
+describe('browser-injected globals never appear in our own source', () => {
+  // `namesBrowserInjectedGlobal` drops an error on its message alone, which is
+  // only safe while no code of ours touches these globals. If this fails, the
+  // app now uses one of them: remove it from BROWSER_INJECTED_GLOBALS rather
+  // than silencing our own errors.
+  // Code only: comments may explain the globals, and specs quote production
+  // messages that name them. Matched with the module's own matcher, so a global
+  // added to BROWSER_INJECTED_GLOBALS is scanned for without a second list here.
+  const SRC = path.resolve(__dirname, '..');
+  const EXEMPT = new Set(['lib/extension-errors.ts']);
+
+  function sourceFiles(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return sourceFiles(full);
+      const isCode = /\.(?:ts|tsx|js|jsx|mjs)$/.test(entry.name);
+      const isTest = /\.(?:spec|test|stories)\.[jt]sx?$/.test(entry.name);
+      return isCode && !isTest ? [full] : [];
+    });
+  }
+
+  /** Remove block and line comments; the `[^:]` keeps `https://` intact. */
+  const withoutComments = (code: string) =>
+    code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  it('finds none in packages/web/src', () => {
+    const offenders = sourceFiles(SRC)
+      .filter((file) => !EXEMPT.has(path.relative(SRC, file).split(path.sep).join('/')))
+      .filter((file) => namesBrowserInjectedGlobal(withoutComments(readFileSync(file, 'utf8'))));
+    expect(offenders).toEqual([]);
+  });
+
+  it('would catch a real reference, and not one in a comment', () => {
+    expect(namesBrowserInjectedGlobal(withoutComments('if (window.ethereum) connect();'))).toBe(true);
+    expect(namesBrowserInjectedGlobal(withoutComments('// window.ethereum is injected by wallets'))).toBe(false);
   });
 });

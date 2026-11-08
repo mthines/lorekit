@@ -2,12 +2,14 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 import {
   PREHYDRATION_WATCH_TIMEOUT_MS,
+  conflictingChangeCount,
   describeLocation,
   describeMutation,
   describeNode,
   isHydrationErrorEvent,
   isHydrationErrorMessage,
   isReactOwned,
+  rememberBodyWidgets,
   summarizeDomChanges,
   watchPrehydrationDomChanges,
   type DomMutation,
@@ -225,6 +227,82 @@ describe('describeMutation', () => {
   });
 });
 
+describe('conflictingChangeCount', () => {
+  it('counts a node added or removed inside the page', () => {
+    const { p, article } = page();
+    expect(conflictingChangeCount(mutation({ target: p, addedNodes: nodes(element('font')) }))).toBe(1);
+    expect(conflictingChangeCount(mutation({ target: article, removedNodes: nodes(element('img')) }))).toBe(1);
+  });
+
+  it('counts a rewritten text node', () => {
+    const { text } = page();
+    expect(conflictingChangeCount(mutation({ type: 'characterData', target: text }))).toBe(1);
+  });
+
+  it('leaves out a node added directly under <body> — react-dom 19 steps over it', () => {
+    const { body } = page();
+    expect(conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('div')) }))).toBe(0);
+  });
+
+  it('still counts a node REMOVED from directly under <body>', () => {
+    const { body, main } = page();
+    expect(
+      conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('div')), removedNodes: nodes(main) })),
+    ).toBe(1);
+  });
+
+  it('counts nothing for a node added to an already-owned <body> — never below zero', () => {
+    // Next's route announcer and the `sw-register` script land here after hydration.
+    const { body } = page();
+    owned(body);
+    expect(conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('next-route-announcer')) }))).toBe(0);
+  });
+
+  it('leaves out an edit inside an extension widget under <body>, and the widget\'s removal', () => {
+    // react-dom 19 steps over the widget with its subtree, so neither can mismatch.
+    const { body, main } = page();
+    const widgets = new WeakSet<Node>();
+    const widget = element('div', body);
+    const inner = element('span', widget);
+    const addWidget = mutation({ target: body, addedNodes: nodes(widget) });
+
+    expect(conflictingChangeCount(addWidget, widgets)).toBe(0);
+    rememberBodyWidgets(addWidget, widgets);
+
+    expect(conflictingChangeCount(mutation({ target: widget, addedNodes: nodes(inner) }), widgets)).toBe(0);
+    expect(conflictingChangeCount(mutation({ type: 'characterData', target: textNode(inner) }), widgets)).toBe(0);
+    expect(conflictingChangeCount(mutation({ target: body, removedNodes: nodes(widget) }), widgets)).toBe(0);
+    // Removing a node of the page from under <body> still counts.
+    expect(conflictingChangeCount(mutation({ target: body, removedNodes: nodes(main) }), widgets)).toBe(1);
+  });
+
+  it('remembers no node React owns, but does remember a widget added after React claimed <body>', () => {
+    const { body } = page();
+    const widgets = new WeakSet<Node>();
+    const ours = owned(element('div', body));
+    rememberBodyWidgets(mutation({ target: body, addedNodes: nodes(ours) }), widgets);
+    expect(widgets.has(asNode(ours))).toBe(false);
+
+    owned(body);
+    const late = element('div', body);
+    rememberBodyWidgets(mutation({ target: body, addedNodes: nodes(late) }), widgets);
+    expect(widgets.has(asNode(late))).toBe(true);
+    expect(conflictingChangeCount(mutation({ target: late, addedNodes: nodes(element('span', late)) }), widgets)).toBe(0);
+  });
+
+  it('leaves out an attribute change — react-dom 19 never throws on one', () => {
+    const { html } = page();
+    html.setAttribute?.('lang', 'fr');
+    expect(conflictingChangeCount(mutation({ type: 'attributes', target: html, attributeName: 'lang' }))).toBe(0);
+  });
+
+  it('leaves out what React already owns, as describeMutation does', () => {
+    const { p } = page();
+    owned(p);
+    expect(conflictingChangeCount(mutation({ target: p, addedNodes: nodes(element('font')) }))).toBe(0);
+  });
+});
+
 describe('summarizeDomChanges', () => {
   it('keeps first-seen order and marks repeats with a count', () => {
     const counts = new Map([
@@ -278,7 +356,7 @@ describe('watchPrehydrationDomChanges', () => {
       documentElement: html,
       body,
     });
-    return { doc: doc as unknown as Document, win, docState: doc, p };
+    return { doc: doc as unknown as Document, win, docState: doc, html, body, p };
   }
 
   beforeEach(() => {
@@ -310,7 +388,7 @@ describe('watchPrehydrationDomChanges', () => {
 
   it('reports "observed, nothing changed" as count 0 with an empty summary', () => {
     const { doc } = fakeDocument();
-    expect(watchPrehydrationDomChanges({ doc })?.snapshot()).toEqual({ count: 0, summary: '' });
+    expect(watchPrehydrationDomChanges({ doc })?.snapshot()).toEqual({ count: 0, conflicting: 0, summary: '' });
   });
 
   it('has no snapshot while the parser is still running — never a 0 it did not observe', () => {
@@ -322,7 +400,7 @@ describe('watchPrehydrationDomChanges', () => {
     docState.readyState = 'interactive';
     docState.dispatchEvent(new Event('readystatechange'));
     expect(FakeObserver.last?.observed).toHaveLength(2);
-    expect(watch?.snapshot()).toEqual({ count: 0, summary: '' });
+    expect(watch?.snapshot()).toEqual({ count: 0, conflicting: 0, summary: '' });
   });
 
   it('counts and de-duplicates the changes React does not own', () => {
@@ -335,7 +413,49 @@ describe('watchPrehydrationDomChanges', () => {
     owned(p);
     FakeObserver.last?.callback([mutation({ target: p, addedNodes: nodes(element('span')) })]);
 
-    expect(watch?.snapshot()).toEqual({ count: 3, summary: '+font in main>article>p ×3' });
+    expect(watch?.snapshot()).toEqual({ count: 3, conflicting: 3, summary: '+font in main>article>p ×3' });
+  });
+
+  it('keeps an extension edit counted after React claims <body> and appends to it', () => {
+    const { doc, body, p } = fakeDocument();
+    const watch = watchPrehydrationDomChanges({ doc });
+
+    FakeObserver.last?.callback([mutation({ target: p, addedNodes: nodes(element('font')) })]);
+    owned(body);
+    FakeObserver.last?.callback([
+      mutation({ target: body, addedNodes: nodes(element('next-route-announcer')) }),
+      mutation({ target: body, addedNodes: nodes(element('script')) }),
+    ]);
+
+    expect(watch?.snapshot()?.conflicting).toBe(1);
+  });
+
+  it('does not count edits inside a widget it saw added under <body>', () => {
+    const { doc, body } = fakeDocument();
+    const watch = watchPrehydrationDomChanges({ doc });
+    const widget = element('div', body);
+
+    FakeObserver.last?.callback([mutation({ target: body, addedNodes: nodes(widget) })]);
+    FakeObserver.last?.callback([mutation({ target: widget, addedNodes: nodes(element('span', widget)) })]);
+
+    expect(watch?.snapshot()).toMatchObject({ count: 2, conflicting: 0 });
+  });
+
+  it('counts a widget added under <body> and a language rewrite, but not as conflicting', () => {
+    const { doc, html, body } = fakeDocument();
+    const watch = watchPrehydrationDomChanges({ doc });
+
+    html.setAttribute?.('lang', 'fr');
+    FakeObserver.last?.callback([
+      mutation({ target: body, addedNodes: nodes(element('grammarly-desktop-integration')) }),
+      mutation({ type: 'attributes', target: html, attributeName: 'lang' }),
+    ]);
+
+    expect(watch?.snapshot()).toEqual({
+      count: 2,
+      conflicting: 0,
+      summary: '+grammarly-desktop-integration in body; html[lang]=fr',
+    });
   });
 
   it('stops observing at the deadline and has no snapshot after it', () => {

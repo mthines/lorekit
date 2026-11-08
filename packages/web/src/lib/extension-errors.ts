@@ -23,8 +23,10 @@
  * extension message — "Cannot read properties of undefined (reading 'M_ID')" —
  * is the single most common shape of a real first-party TypeError, so a message
  * regex broad enough to catch it would also silence our own bugs. The stack is
- * the only place the origin is unambiguous, so the decision is made from the
- * stack and the SDK's own filter is left alone.
+ * where the origin is unambiguous, so the decision is made from the stack and
+ * the SDK's own filter is left alone. The two exceptions are messages no code
+ * of ours can produce: a muted `Script error.` with no stack or URL, and one
+ * naming a browser-injected global (see `BROWSER_INJECTED_GLOBALS`).
  *
  * Kept pure and dependency-free (no React, no `next/*`, no node builtins),
  * matching the repo's functional-core convention — `dash0-rum.ts` owns the
@@ -136,6 +138,68 @@ function verdictOfStack(stack: string): StackVerdict {
 }
 
 /**
+ * Globals that only a browser or an extension injects into the page, never
+ * LoreKit's own code. `extension-errors.spec.ts` scans `src/` and fails if any
+ * of them appears there, which is what makes a message naming one sufficient
+ * evidence on its own.
+ *
+ * - `ethereum` — the wallet provider Brave, MetaMask and Coinbase inject. Brave
+ *   on iOS runs `window.ethereum.selectedAddress = undefined` on every page and
+ *   throws when the provider is missing: 58 `browser.error` events from 45
+ *   sessions on 2026-11-08, all `Brave` iOS user agents.
+ * - `__gCrWeb` — Chrome for iOS's injected bridge (`ReferenceError: Can't find
+ *   variable: __gCrWeb`, seen the same day).
+ * - `__firefox__` — Firefox for iOS's equivalent of `__gCrWeb`.
+ *
+ * Their stack cannot prove this: an iOS browser evaluates the injected script
+ * as the page's own, so the only frame is `global code@<the page URL>:1:16`,
+ * which reads as first-party.
+ */
+const BROWSER_INJECTED_GLOBALS = ['ethereum', '__gCrWeb', '__firefox__'] as const;
+
+/**
+ * One of {@link BROWSER_INJECTED_GLOBALS} as a whole identifier, so
+ * `ethereumAddress` or `my__gCrWebShim` do not match. Written without a
+ * lookbehind, which Safari before 16.4 cannot parse.
+ */
+const BROWSER_INJECTED_GLOBAL_PATTERN = new RegExp(
+  String.raw`(?:^|[^\w$])(?:${BROWSER_INJECTED_GLOBALS.join('|')})(?:[^\w$]|$)`,
+);
+
+/**
+ * The message a browser substitutes for an uncaught error thrown by a script
+ * from another origin, with `error: null` and `filename: ""` (the HTML spec's
+ * "muted errors"). The optional period covers engines that omit it.
+ */
+const MUTED_CROSS_ORIGIN_MESSAGE = /^Script error\.?$/;
+
+/** Whether an error message names a global only injected scripts define. */
+export function namesBrowserInjectedGlobal(message: string | undefined | null): boolean {
+  return typeof message === 'string' && BROWSER_INJECTED_GLOBAL_PATTERN.test(message);
+}
+
+/**
+ * Whether an error is a muted cross-origin error: the browser's `Script error.`
+ * with no stack and no script URL.
+ *
+ * It cannot be LoreKit's own: every script the app runs is served from its own
+ * origin (`/_next/static/…`, plus inline scripts), and same-origin errors are
+ * never muted. What is left is a script injected from elsewhere — Safari
+ * extensions and in-app browsers on iOS produced 98 of these from 83 sessions
+ * on 2026-11-08, and no other browser produced one. Adding a cross-origin
+ * `<script>` would change that: give it `crossorigin` and CORS headers so its
+ * errors arrive unmuted instead of being dropped here.
+ *
+ * One known way back for our own errors: iPhone Safari once reported the app's
+ * service-worker-served `_next/static` chunks this way (#201, #202). If muted
+ * iOS errors return alongside a drop in detailed ones, suspect that first.
+ */
+export function isMutedCrossOriginError(origin: ErrorOrigin): boolean {
+  if (origin.stack || origin.filename) return false;
+  return typeof origin.message === 'string' && MUTED_CROSS_ORIGIN_MESSAGE.test(origin.message.trim());
+}
+
+/**
  * The subset of `ErrorEvent` / `PromiseRejectionEvent` this module reads.
  *
  * Typed structurally rather than as the DOM interfaces so the module stays
@@ -147,14 +211,19 @@ export type ErrorOrigin = {
   stack?: string | undefined | null;
   /** The script URL the event was raised from, when the host reports one. */
   filename?: string | undefined | null;
+  /** The error message: `ErrorEvent.message`, or a rejection reason's `message`. */
+  message?: string | undefined | null;
 };
 
 /**
  * Whether an error should be dropped before it reaches the SDK.
  *
- * The stack decides whenever it proves anything — an extension-only stack drops
- * the error, and a single frame of ours keeps it, outranking `filename` in both
- * directions.
+ * A message naming a browser-injected global drops the error first, whatever
+ * the stack says (see {@link BROWSER_INJECTED_GLOBALS}).
+ *
+ * Otherwise the stack decides whenever it proves anything — an extension-only
+ * stack drops the error, and a single frame of ours keeps it, outranking
+ * `filename` in both directions.
  *
  * `filename` is consulted in the two cases where the stack does not: a thrown
  * non-`Error` value (`throw 'boom'`, `Promise.reject(x)`) that has no stack at
@@ -162,9 +231,14 @@ export type ErrorOrigin = {
  * Those two are the same situation — no evidence from the stack — so they take
  * the same path; short-circuiting on the mere PRESENCE of a stack would keep an
  * error the host had already told us came from `chrome-extension://…`.
+ *
+ * With neither, only a muted cross-origin error is dropped; anything else is
+ * kept.
  */
 export function shouldIgnoreErrorFromExtension(origin: ErrorOrigin | undefined | null): boolean {
   if (!origin) return false;
+
+  if (namesBrowserInjectedGlobal(origin.message)) return true;
 
   if (origin.stack) {
     const verdict = verdictOfStack(origin.stack);
@@ -172,7 +246,7 @@ export function shouldIgnoreErrorFromExtension(origin: ErrorOrigin | undefined |
   }
 
   if (origin.filename) return isExtensionFrame(origin.filename);
-  return false;
+  return isMutedCrossOriginError(origin);
 }
 
 /**
@@ -186,4 +260,11 @@ export function stackOfUnknown(reason: unknown): string | undefined {
   if (typeof reason !== 'object' || reason === null) return undefined;
   const stack = (reason as { stack?: unknown }).stack;
   return typeof stack === 'string' ? stack : undefined;
+}
+
+/** Read the message off an unknown thrown value, on the same terms as {@link stackOfUnknown}. */
+export function messageOfUnknown(reason: unknown): string | undefined {
+  if (typeof reason !== 'object' || reason === null) return undefined;
+  const message = (reason as { message?: unknown }).message;
+  return typeof message === 'string' ? message : undefined;
 }

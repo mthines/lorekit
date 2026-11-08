@@ -95,6 +95,12 @@ export type DomMutation = Pick<
 export interface DomChangeSummary {
   /** Every change recorded so far, duplicates included. */
   count: number;
+  /**
+   * How many of those changes hydration cannot step over (see
+   * {@link conflictingChangeCount}). Above 0, something other than React broke
+   * the server HTML before React could claim it.
+   */
+  conflicting: number;
   /** De-duplicated, ordered, length-capped description of those changes; empty when `count` is 0. */
   summary: string;
 }
@@ -185,6 +191,67 @@ export function describeMutation(mutation: DomMutation): string[] {
 }
 
 /**
+ * How many of a mutation's recorded changes (see {@link describeMutation}) can
+ * make hydration fail.
+ *
+ * Two kinds cannot, so they are left out:
+ *
+ * - An attribute change. react-dom 19 leaves a mismatched attribute as it
+ *   finds it and only warns in development, so `html[lang]=fr` never throws.
+ * - A node added directly under `<body>`, any later edit inside it, and its
+ *   removal. react-dom 19 steps over an unexpected child of `<body>` or
+ *   `<head>`, subtree and all, precisely because extensions put their widgets
+ *   there (1Password, Grammarly and LastPass all do). Counting those would
+ *   blame an extension for a mismatch that is ours. `bodyWidgets` holds the
+ *   widgets seen so far; {@link rememberBodyWidgets} fills it.
+ *
+ * Everything else — a node added or removed inside the page, a text node
+ * rewritten — leaves React looking at DOM the server did not send.
+ */
+export function conflictingChangeCount(
+  mutation: DomMutation,
+  bodyWidgets: Pick<WeakSet<Node>, 'has'> = new WeakSet(),
+): number {
+  if (mutation.type === 'attributes') return 0;
+  if (isInsideBodyWidget(mutation.target, bodyWidgets)) return 0;
+  const recorded = describeMutation(mutation).length;
+  if (mutation.type !== 'childList' || !isBody(mutation.target)) return recorded;
+  // Once React owns <body>, describeMutation records nothing for it — Next's
+  // route announcer and `next/script` tags land there after hydration — so
+  // there is nothing to subtract from, and subtracting would go below zero.
+  if (isReactOwned(mutation.target)) return 0;
+  const addedUnderBody = Array.from(mutation.addedNodes).filter((node) => !isReactOwned(node));
+  const removedWidgets = Array.from(mutation.removedNodes).filter((node) => bodyWidgets.has(node));
+  return recorded - addedUnderBody.length - removedWidgets.length;
+}
+
+/**
+ * Remember the nodes a mutation added directly under `<body>`, for
+ * {@link conflictingChangeCount} — also once React owns `<body>`, so edits
+ * inside a widget added after the root hydrated cannot drop a later Suspense
+ * boundary's mismatch.
+ */
+export function rememberBodyWidgets(mutation: DomMutation, bodyWidgets: WeakSet<Node>): void {
+  if (mutation.type !== 'childList' || !isBody(mutation.target)) return;
+  for (const node of Array.from(mutation.addedNodes)) {
+    if (!isReactOwned(node)) bodyWidgets.add(node);
+  }
+}
+
+/** Whether a node is a remembered `<body>` widget or sits inside one. */
+function isInsideBodyWidget(node: Node | null, bodyWidgets: Pick<WeakSet<Node>, 'has'>): boolean {
+  for (let current = node; current && !isBody(current); current = current.parentNode) {
+    if (bodyWidgets.has(current)) return true;
+  }
+  return false;
+}
+
+/** Whether a node is the document's `<body>`. */
+function isBody(node: Node): boolean {
+  return node.nodeType === 1 && (node as Element).tagName === 'BODY';
+}
+
+/**
  * Fold counted entries into one line, in first-seen order:
  * `+font in main>article>p ×12; html[lang]=fr; …+3 more`.
  */
@@ -250,6 +317,8 @@ export function watchPrehydrationDomChanges({
 
   const counts = new Map<string, number>();
   let total = 0;
+  let conflicting = 0;
+  const bodyWidgets = new WeakSet<Node>();
   let observing = false;
   let stopped = false;
 
@@ -259,6 +328,8 @@ export function watchPrehydrationDomChanges({
         counts.set(entry, (counts.get(entry) ?? 0) + 1);
         total++;
       }
+      conflicting += conflictingChangeCount(mutation, bodyWidgets);
+      rememberBodyWidgets(mutation, bodyWidgets);
     }
   });
 
@@ -292,7 +363,9 @@ export function watchPrehydrationDomChanges({
 
   return {
     snapshot: () =>
-      observing && !stopped ? { count: total, summary: summarizeDomChanges(counts) } : null,
+      observing && !stopped
+        ? { count: total, conflicting, summary: summarizeDomChanges(counts) }
+        : null,
     stop,
   };
 }
