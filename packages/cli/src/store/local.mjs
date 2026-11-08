@@ -171,6 +171,15 @@ class LocalStore {
     // conflict target is partial on `archived_at is null`), so the record
     // extensions start empty here too rather than inheriting the archived ones.
     const live = existing && !existing.entry.archived_at ? existing.entry : null;
+    // A non-string is an error here as on the server (`parseRecordFields`),
+    // never silently dropped: `supersedes: 42` must not succeed offline only
+    // to fail remotely.
+    if (content_type != null && content_type !== '' && typeof content_type !== 'string') {
+      return { ok: false, error: 'content_type must be a string' };
+    }
+    if (supersedes != null && supersedes !== '' && typeof supersedes !== 'string') {
+      return { ok: false, error: `supersedes must be a memory id (uuid): ${String(supersedes)}` };
+    }
     const contentType = (typeof content_type === 'string' && content_type.trim()
       ? content_type.trim().toLowerCase()
       : null) ?? live?.content_type ?? null;

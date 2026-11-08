@@ -134,6 +134,9 @@ test('validation parity: the local store rejects what the hosted store rejects',
     [{ attributes: { 'CI.Run': 'x' } }, /attribute key must be lowercase/],
     [{ attributes: { k: 'x'.repeat(1025) } }, /<= 1024 characters/],
     [{ supersedes: 'not-a-uuid' }, /supersedes must be a memory id/],
+    // A non-string is rejected, not silently dropped, as the hosted parser does.
+    [{ supersedes: 42 }, /supersedes must be a memory id/],
+    [{ content_type: 123 }, /content_type must be a string/],
   ];
   for (const [fields, message] of bad) {
     const res = await store.write({ scope: 'global', key: 'k', value: 'v', ...fields });
