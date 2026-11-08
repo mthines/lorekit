@@ -49,7 +49,7 @@ export const SHIKI_THEME = 'github-dark-default';
  * specs catch an addition that forgets to (`docs/mdx-render.spec.ts`,
  * `blog/mdx-render.spec.ts`).
  */
-export const MDX_SHIKI_LANGS = ['bash', 'json', 'jsonc', 'yaml', 'javascript', 'js'] as const;
+export const MDX_SHIKI_LANGS = ['bash', 'json', 'jsonc', 'yaml', 'javascript', 'js', 'markdown'] as const;
 
 /**
  * Strip Shiki's inline `background-color` from the `<pre>` so the block keeps the
