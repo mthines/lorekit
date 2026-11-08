@@ -29,8 +29,7 @@ describe('markOptionSelected', () => {
   });
 
   it('reports a toggled-back-and-forth pair exactly twice, not once per switch', () => {
-    // The login panel's "Create an account" / "I already have an account" pair,
-    // pressed four times. Two routes were shown interest in, so two events.
+    // The login form's "Create account" / "Sign in" tabs, switched four times. Two routes were shown interest in, so two events.
     const selected = new Set<AuthMethod>();
     const switches: AuthMethod[] = [
       'email_password_signup',
@@ -43,7 +42,7 @@ describe('markOptionSelected', () => {
   });
 
   it('counts the same route reached through a different control only once', () => {
-    // "Continue with email" from the landing state and "Use a password instead"
+    // Focusing the email field on the landing view and "Use a password instead"
     // from the magic-link panel are the same route — the count must not depend
     // on which door the visitor came through.
     const selected = new Set<AuthMethod>();

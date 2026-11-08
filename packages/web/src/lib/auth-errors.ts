@@ -85,6 +85,14 @@ export function friendlyAuthError(error: AuthErrorLike): string {
   if (code === 'flow_state_not_found' || msg.includes('code verifier')) {
     return 'This link was opened in a different browser from the one you started in. Sign in with your email and password to continue.';
   }
+  // GoTrue raises this on the OAuth provider's return (GitHub), when the state
+  // the flow started with is missing or stale — a different browser, or a tab
+  // left open too long. It reaches /welcome verbatim as `?error=bad_oauth_state`
+  // and used to render as the raw code. Provider-neutral on purpose: a GitHub-
+  // only user has no password, so the PKCE copy above would mislead them.
+  if (code === 'bad_oauth_state') {
+    return 'That sign-in was started in a different browser or took too long. Go back to sign in and try again from this browser.';
+  }
   if (code === 'access_denied' || code === 'auth_failed') {
     return "That link didn't work — it may have expired or already been used. Request a new one and try again.";
   }

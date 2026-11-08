@@ -4,7 +4,7 @@
 
 ## Quickstart (hosted — fastest path)
 
-1. Sign in at https://lorekit.io with GitHub
+1. Create a free account at https://lorekit.io/login?mode=signup (GitHub, email + password, or magic link; existing users sign in at https://lorekit.io/login)
 2. Go to Lore Explorer → Connect your agent → Generate new token (choose Read + Write)
 3. Copy the token (shown once)
 4. Connect your agent:

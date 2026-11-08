@@ -15,7 +15,7 @@ Values live in the sibling `environments.yml`, `ui.yml` and `telemetry.yml`; thi
 ## Login
 
 - One shared test account: email `LOREKIT_TESTING_USER_NAME`, password `LOREKIT_TESTING_USER_PW` (from `.env.local` locally, the shell elsewhere). Never commit either value.
-- `/login` opens on a provider-choice screen; the email form appears after "Continue with email". `scripts/auth-bootstrap-credentials.mjs` handles that and lands on `/lore`. Never script the GitHub OAuth path.
+- `/login` shows the "Create account | Sign in" tabs and the email form straight away (sign-in mode; `?mode=signup` opens on Create account). Deployments before PR #739 hide the form behind "Continue with email"; `scripts/auth-bootstrap-credentials.mjs` handles both and lands on `/lore`. Never script the GitHub OAuth path.
 - Signed in = the sidebar link "User settings for <name>". It shows the account's display name and has no `data-testid` to mask in screenshots.
 - Sessions are host-scoped: `.auth/local.json` never authenticates the preview, and the preview session is recaptured every run.
 

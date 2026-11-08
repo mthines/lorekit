@@ -1,3 +1,5 @@
+import { SIGNUP_PATH } from '@/lib/auth-entry-mode';
+
 import { CopyCommand } from './CopyCommand';
 import { LandingLink } from './LandingLink';
 import { StepBadge } from './StepBadge';
@@ -76,12 +78,12 @@ export function GetStartedCard() {
               </p>
               <p className="text-sm leading-relaxed text-[var(--color-content-secondary)]">
                 <LandingLink
-                  href="/login"
-                  cta="sign-in"
+                  href={SIGNUP_PATH}
+                  cta="get-token"
                   placement="get-started"
                   className={INLINE_LINK_CLASS}
                 >
-                  Sign in
+                  Create a free account
                 </LandingLink>{' '}
                 for a free token to share lessons across machines, teammates and CI. Or skip
                 it and{' '}

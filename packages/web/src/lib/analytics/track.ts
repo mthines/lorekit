@@ -170,8 +170,10 @@ export type CopySurface =
  * `get-token` and `offline-guide` are the two answers to the question the hero
  * asks right under the install command (hosted or offline?), so their ratio is
  * the page's most direct read on which path visitors want. `sign-in` is the
- * same destination as `get-token` reached from a different promise (the header
- * button, the closing card's inline link), which is why it is a separate value.
+ * header button: a returning visitor's door to `/login`, a different promise
+ * from `get-token`, which is why it is a separate value. The closing card's
+ * inline link reported `sign-in` until 2026-11-08 and `get-token` since, when it
+ * became a sign-up link (`/login?mode=signup`) — a relabel, not a shift in intent.
  */
 export type LandingCta =
   | 'get-token'

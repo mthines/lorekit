@@ -72,6 +72,18 @@ describe('friendlyAuthError', () => {
     expect(message.toLowerCase()).not.toContain('error');
   });
 
+  // Seen in production RUM on /welcome: the provider code arrives verbatim as
+  // `?error=bad_oauth_state`, and with no mapping it rendered as the raw,
+  // capitalised code "Bad_oauth_state".
+  it('maps bad_oauth_state to provider-neutral retry guidance', () => {
+    const message = friendlyAuthError({ message: 'bad_oauth_state', code: 'bad_oauth_state' });
+    expect(message).toContain('different browser');
+    expect(message).toContain('try again');
+    // A GitHub-only account has no password to sign in with.
+    expect(message.toLowerCase()).not.toContain('password');
+    expect(message).not.toContain('bad_oauth_state');
+  });
+
   it('maps a generic denied/failed link to request-a-new-one copy', () => {
     expect(friendlyAuthError({ message: 'Access denied', code: 'access_denied' })).toContain(
       'expired or already been used',

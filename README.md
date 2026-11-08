@@ -103,7 +103,7 @@ It then asks for a token — and that's where you pick a path:
 <tr valign="top">
 <td>
 
-1. Sign in at [lorekit.io](https://lorekit.io) → **Connect your agent** →
+1. [Create a free account](https://lorekit.io/login?mode=signup) (or sign in) → **Connect your agent** →
    **Generate new token** (shown once).
 2. Paste it when the installer asks.
 

@@ -6,8 +6,9 @@
 // state. Use this flow for unattended re-auth (CI, Claude Web, mass test runs).
 //
 // LoreKit specifics baked into the locator ladder below:
-//   - The login page (/login) opens on a provider CHOICE screen. The email +
-//     password fields are NOT visible until you click "Continue with email".
+//   - The login page (/login) shows the email + password form straight away.
+//     Deployments from before that change open on a provider choice screen
+//     with the form behind "Continue with email"; step 1 below handles both.
 //   - The email field is #lk-email, the password field is #lk-password.
 //   - Two buttons on the page read "Sign in" (the nav GitHub button and the
 //     form submit), so we submit by pressing Enter on the password field
@@ -133,8 +134,11 @@ try {
   await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
 
   // >>> CUSTOMIZE START <<<
-  // 1. Reveal the email + password form (idle screen shows provider choices).
-  await page.getByRole('button', { name: /continue with email/i }).click();
+  // 1. Reveal the email + password form when an older deployment hides it
+  //    behind the provider choice screen.
+  const continueWithEmail = page.getByRole('button', { name: /continue with email/i });
+  await page.locator('#lk-email').or(continueWithEmail).first().waitFor();
+  if (await continueWithEmail.isVisible()) await continueWithEmail.click();
   // 2. Fill the credentials. #lk-email / #lk-password are stable ids.
   await page.locator('#lk-email').fill(EMAIL);
   await page.locator('#lk-password').fill(PASSWORD);
