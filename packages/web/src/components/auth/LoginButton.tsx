@@ -396,7 +396,10 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       setError('');
     }
     return (
-      <form onSubmit={handlePasswordSubmit} className="flex w-full max-w-xs flex-col gap-2.5">
+      // An explicit width, not `w-full`: the parent shrinks to fit its content,
+      // so a percentage collapsed the form once the fields moved into the tab
+      // panel. Capped to the viewport minus the page's px-6 gutters.
+      <form onSubmit={handlePasswordSubmit} className="flex w-[min(20rem,calc(100vw-3rem))] flex-col gap-2.5">
         {/* Both modes are always visible. "Create an account" used to be a
             small grey link under the sign-in button, and almost nobody found
             it: the form opened in sign-in mode for everyone. */}
