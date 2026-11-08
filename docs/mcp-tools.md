@@ -154,7 +154,9 @@ say. A write that omits all three behaves exactly as before.
 - `supersedes` records that this memory replaces another, by the other's `id`
   (returned by `memory.write` and `memory.read`). The id survives a change of
   scope or key, which a `scope::key` reference does not. The server checks that
-  you can read the target with this token, and answers the same way for a
+  you can read the target with this token and that it has the same owner as
+  the memory being written (personal to personal, or the same org), and
+  answers the same way for a
   target that is invisible to you and one that does not exist, so the field
   cannot be used to probe for other tenants' ids.
 

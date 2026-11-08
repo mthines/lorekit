@@ -424,7 +424,8 @@ creates or updates a memory; the value may also come from `--value` or stdin. Me
 - `--content-type text/markdown|application/json` — with `application/json` the value must parse,
   also on a later update that keeps the type.
 - `--supersedes <id>` — the id of the memory this one replaces. Remotely it must be a memory the
-  token can read.
+  token can read and that has the same owner as the one being written (personal to personal, or
+  the same org).
 
 **The local store is lossless and gives every record an id.** A record file's frontmatter carries
 `id` (a uuid minted on the first write and kept on every rewrite and archive; a revive of an archived key is a new record with a new id, as on the server),
