@@ -110,6 +110,25 @@ If agent memory followed OpenTelemetry's path, the spec would have the same four
 - **A contract.** A small set of memory operations (write, read, list, search, archive) with fixed inputs and outputs, exposed over MCP. Every memory server today speaks MCP but exposes different tools, so agents can call any of them and none of them mean the same thing.
 - **Conformance tests.** Round-trip a record and check nothing was lost. Check that unknown attributes survive a rewrite. Check that expiry rules behave as stated.
 
+Here's roughly what one record could look like on the wire. It's an illustration of the data model, not a proposal for exact field names:
+
+```json
+{
+  "spec": "agent-memory/0.1",
+  "id": "8f0c2a6e-4b1d-4c7a-9e2f-3a5b6c7d8e9f",
+  "address": { "level": "repo", "value": "github.com/acme/checkout" },
+  "key": "tests-need-local-postgres",
+  "kind": "lesson",
+  "written_by": { "type": "agent", "name": "claude-code" },
+  "content_type": "text/markdown",
+  "body": "Integration tests need Postgres up first: docker compose up -d db.",
+  "lifecycle": { "expires_at": null, "extended_by": "write" },
+  "attributes": { "vcs.pr": 482, "ci.run_url": "https://ci.example/runs/123" }
+}
+```
+
+Each line answers one of the four questions or the fork above: `address` and `key` say where it's true, `id` is its identity, `content_type` and `body` say what it says, `lifecycle` says when it stops, and `written_by` records who wrote it. Everything a tool needs beyond that goes in `attributes`, under a namespace other tools can ignore. The same record could just as well be a Markdown file with frontmatter. [The follow-up post](/blog/lorekit-memory-format-gaps) holds LoreKit's own record up against this shape.
+
 What stays *out* of the spec matters as much: storage, ranking, embeddings, whether a model or an extractor writes, the user interface. Those are where tools should compete, the way observability vendors compete on everything after the data arrives.
 
 The spec should live somewhere neutral, not in LoreKit's repo or any single vendor's. The Agentic AI Foundation already looks after MCP and `AGENTS.md`, which makes it one natural option, though that's for the people involved to decide.
