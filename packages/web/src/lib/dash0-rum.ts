@@ -243,14 +243,9 @@ export function installExtensionErrorFilter(target?: EventTarget): () => void {
   const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
   if (!eventTarget) return () => undefined;
 
-  // A script served from another origin — which every `chrome-extension://`
-  // script is — has its uncaught errors MUTED by the browser: the page sees
-  // `message: "Script error."` with `error: null` and `filename: ""`. Nothing
-  // in such an event can be attributed, but nothing in it can be ours either,
-  // because the app serves every script it runs from its own origin, so
-  // `isMutedCrossOriginError` drops it. The message is passed for that and for
-  // the globals only iOS browsers and wallets inject (`window.ethereum`,
-  // `__gCrWeb`), whose stack points at the page itself.
+  // The message is passed for the two drops the stack cannot decide: a muted
+  // cross-origin `Script error.` (no stack, and no script of ours is
+  // cross-origin) and a browser-injected global, whose stack is the page itself.
   const onError = (event: Event) => {
     const { error, filename, message } = event as ErrorEvent;
     if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(error), filename, message })) {
@@ -341,14 +336,9 @@ export function initDash0Rum(): boolean {
     // Propagate W3C trace context to Supabase — links browser spans to the
     // Edge Function spans they cause.
     propagateTraceHeadersCorsURLs: [supabaseOriginPattern()],
-    // Both default to true, and both only ever add detail to errors from
-    // scripts on ANOTHER origin, which for this app means extensions: every
-    // script it runs is same-origin, so the browser already reports its errors
-    // in full. The timer wrapper also manufactured errors of its own: in
-    // Firefox it calls `callback.apply()` on an extension's privileged callback,
-    // Firefox refuses ("Permission denied to access property \"apply\""), and
-    // the SDK reported the throw from its own frame — 84 `browser.error` events
-    // from 2 sessions on 2026-11-08.
+    // Both only add detail to errors from cross-origin scripts — extensions,
+    // here — and the timer wrapper threw on Firefox extensions' privileged
+    // callbacks ("Permission denied to access property \"apply\""). docs/otel.md.
     wrapTimers: false,
     wrapEventHandlers: false,
   });
