@@ -19,6 +19,8 @@ const boot = vi.hoisted(() => ({
   // What the SDK stand-in's `error` handler saw on each error event: the
   // signal attributes the real SDK would copy onto that `browser.error`.
   errorSnapshots: [] as Array<Array<{ key: string; value: unknown }>>,
+  // The options `initDash0Rum` handed to the SDK's `init()`.
+  initOptions: undefined as Record<string, unknown> | undefined,
 }));
 
 vi.mock('@dash0/sdk-web', () => {
@@ -28,8 +30,9 @@ vi.mock('@dash0/sdk-web', () => {
     if (index !== -1) signalAttributes.splice(index, 1);
   };
   return {
-    init: () => {
+    init: (options: Record<string, unknown>) => {
       boot.order.push('sdk.init');
+      boot.initOptions = options;
       // Stands in for the SDK's `window.onerror`, which snapshots signal attributes
       // synchronously. Registered via the prototype so the recording window does
       // not log it: the boot order below asserts OUR registrations around it.
@@ -279,6 +282,13 @@ describe('signal identity attributes', () => {
       // ...and the hydration-error reset AFTER it, so it runs behind the SDK's handler.
       'listener:error',
     ]);
+  });
+
+  it("turns off the SDK's timer and event-listener wrapping", () => {
+    // Both only add detail to errors from scripts on another origin — for this
+    // app, extensions — and the timer wrapper threw on Firefox extensions'
+    // privileged callbacks ("Permission denied to access property \"apply\"").
+    expect(boot.initOptions).toMatchObject({ wrapTimers: false, wrapEventHandlers: false });
   });
 
   it('carries exactly one user.id after init — identify() must not be paired with an append', () => {
@@ -539,6 +549,45 @@ describe('installExtensionErrorFilter', () => {
     teardown();
   });
 
+  it("hides a muted cross-origin Script error. — no script of ours is cross-origin", () => {
+    const target = new OnErrorEventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkOnError(target);
+
+    dispatch(target, 'error', { message: 'Script error.', error: null, filename: '', lineno: 0 });
+
+    expect(sdk).not.toHaveBeenCalled();
+    teardown();
+  });
+
+  it('hides an error naming a global only iOS browsers inject, though its stack is the page itself', () => {
+    const target = new OnErrorEventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkOnError(target);
+
+    dispatch(target, 'error', {
+      message: "TypeError: undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')",
+      error: { stack: 'global code@https://www.lorekit.io/blog/open-agent-memory-format:1:16' },
+      filename: 'https://www.lorekit.io/blog/open-agent-memory-format',
+    });
+
+    expect(sdk).not.toHaveBeenCalled();
+    teardown();
+  });
+
+  it('hides a rejection whose reason names an injected global', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkListener(target, 'unhandledrejection');
+
+    dispatch(target, 'unhandledrejection', {
+      reason: { message: "Can't find variable: __gCrWeb", stack: 'global code@https://www.lorekit.io/:1:9' },
+    });
+
+    expect(sdk).not.toHaveBeenCalled();
+    teardown();
+  });
+
   it('keeps an error it cannot attribute — a rejection with no stack at all', () => {
     const target = new EventTarget();
     const teardown = installExtensionErrorFilter(target);
@@ -662,6 +711,25 @@ describe('pre-hydration DOM changes on hydration errors', () => {
       vi.advanceTimersByTime(0);
       expect(leftOnSignals()).toEqual([]);
       teardown();
+
+      // An edit hydration cannot step over — inside the page rather than under
+      // <body> — means something else broke the server HTML: the SDK never
+      // sees that #418, and nothing is left on later signals.
+      const paragraph = { nodeType: 1, nodeName: 'P', tagName: 'P', id: '', parentNode: body };
+      const injected = { nodeType: 1, nodeName: 'FONT', tagName: 'FONT', id: '', parentNode: paragraph };
+      deliver?.([
+        { type: 'childList', target: paragraph, addedNodes: [injected], removedNodes: [], attributeName: null },
+      ]);
+      const recordedBefore = boot.errorSnapshots.length;
+      const dropped = new Event('error');
+      Object.defineProperty(dropped, 'message', { value: HYDRATION_ERROR });
+      bootWindow.dispatchEvent(dropped);
+      expect(boot.errorSnapshots).toHaveLength(recordedBefore);
+      expect(leftOnSignals()).toEqual([]);
+
+      // Any other error still reaches the SDK.
+      sdkSawOn("TypeError: Cannot read properties of undefined (reading 'x')");
+      expect(boot.errorSnapshots).toHaveLength(recordedBefore + 1);
     } finally {
       delete (globalThis as { document?: unknown }).document;
       vi.useRealTimers();

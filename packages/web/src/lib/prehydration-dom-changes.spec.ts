@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 import {
   PREHYDRATION_WATCH_TIMEOUT_MS,
+  conflictingChangeCount,
   describeLocation,
   describeMutation,
   describeNode,
@@ -225,6 +226,43 @@ describe('describeMutation', () => {
   });
 });
 
+describe('conflictingChangeCount', () => {
+  it('counts a node added or removed inside the page', () => {
+    const { p, article } = page();
+    expect(conflictingChangeCount(mutation({ target: p, addedNodes: nodes(element('font')) }))).toBe(1);
+    expect(conflictingChangeCount(mutation({ target: article, removedNodes: nodes(element('img')) }))).toBe(1);
+  });
+
+  it('counts a rewritten text node', () => {
+    const { text } = page();
+    expect(conflictingChangeCount(mutation({ type: 'characterData', target: text }))).toBe(1);
+  });
+
+  it('leaves out a node added directly under <body> — react-dom 19 steps over it', () => {
+    const { body } = page();
+    expect(conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('div')) }))).toBe(0);
+  });
+
+  it('still counts a node REMOVED from directly under <body>', () => {
+    const { body, main } = page();
+    expect(
+      conflictingChangeCount(mutation({ target: body, addedNodes: nodes(element('div')), removedNodes: nodes(main) })),
+    ).toBe(1);
+  });
+
+  it('leaves out an attribute change — react-dom 19 never throws on one', () => {
+    const { html } = page();
+    html.setAttribute?.('lang', 'fr');
+    expect(conflictingChangeCount(mutation({ type: 'attributes', target: html, attributeName: 'lang' }))).toBe(0);
+  });
+
+  it('leaves out what React already owns, as describeMutation does', () => {
+    const { p } = page();
+    owned(p);
+    expect(conflictingChangeCount(mutation({ target: p, addedNodes: nodes(element('font')) }))).toBe(0);
+  });
+});
+
 describe('summarizeDomChanges', () => {
   it('keeps first-seen order and marks repeats with a count', () => {
     const counts = new Map([
@@ -278,7 +316,7 @@ describe('watchPrehydrationDomChanges', () => {
       documentElement: html,
       body,
     });
-    return { doc: doc as unknown as Document, win, docState: doc, p };
+    return { doc: doc as unknown as Document, win, docState: doc, html, body, p };
   }
 
   beforeEach(() => {
@@ -310,7 +348,7 @@ describe('watchPrehydrationDomChanges', () => {
 
   it('reports "observed, nothing changed" as count 0 with an empty summary', () => {
     const { doc } = fakeDocument();
-    expect(watchPrehydrationDomChanges({ doc })?.snapshot()).toEqual({ count: 0, summary: '' });
+    expect(watchPrehydrationDomChanges({ doc })?.snapshot()).toEqual({ count: 0, conflicting: 0, summary: '' });
   });
 
   it('has no snapshot while the parser is still running — never a 0 it did not observe', () => {
@@ -322,7 +360,7 @@ describe('watchPrehydrationDomChanges', () => {
     docState.readyState = 'interactive';
     docState.dispatchEvent(new Event('readystatechange'));
     expect(FakeObserver.last?.observed).toHaveLength(2);
-    expect(watch?.snapshot()).toEqual({ count: 0, summary: '' });
+    expect(watch?.snapshot()).toEqual({ count: 0, conflicting: 0, summary: '' });
   });
 
   it('counts and de-duplicates the changes React does not own', () => {
@@ -335,7 +373,24 @@ describe('watchPrehydrationDomChanges', () => {
     owned(p);
     FakeObserver.last?.callback([mutation({ target: p, addedNodes: nodes(element('span')) })]);
 
-    expect(watch?.snapshot()).toEqual({ count: 3, summary: '+font in main>article>p ×3' });
+    expect(watch?.snapshot()).toEqual({ count: 3, conflicting: 3, summary: '+font in main>article>p ×3' });
+  });
+
+  it('counts a widget added under <body> and a language rewrite, but not as conflicting', () => {
+    const { doc, html, body } = fakeDocument();
+    const watch = watchPrehydrationDomChanges({ doc });
+
+    html.setAttribute?.('lang', 'fr');
+    FakeObserver.last?.callback([
+      mutation({ target: body, addedNodes: nodes(element('grammarly-desktop-integration')) }),
+      mutation({ type: 'attributes', target: html, attributeName: 'lang' }),
+    ]);
+
+    expect(watch?.snapshot()).toEqual({
+      count: 2,
+      conflicting: 0,
+      summary: '+grammarly-desktop-integration in body; html[lang]=fr',
+    });
   });
 
   it('stops observing at the deadline and has no snapshot after it', () => {
