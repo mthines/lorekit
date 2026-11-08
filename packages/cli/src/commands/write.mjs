@@ -263,8 +263,18 @@ export async function write(args) {
       return 1;
     }
   }
-  const contentType = typeof args['content-type'] === 'string' ? args['content-type'] : undefined;
-  const supersedes = typeof args.supersedes === 'string' ? args.supersedes : undefined;
+  // A bare `--content-type` / `--supersedes` parses as `true`. Like a malformed
+  // `--attributes` or `--origin-pr`, an explicit flag with no value is a usage
+  // error: dropping it would report "memory written" for a link or type the user
+  // believes they set.
+  for (const flag of ['content-type', 'supersedes']) {
+    if (args[flag] !== undefined && typeof args[flag] !== 'string') {
+      err(`${c.red('Error:')} --${flag} needs a value`);
+      return 1;
+    }
+  }
+  const contentType = args['content-type'];
+  const supersedes = args.supersedes;
 
   // ── Provenance ────────────────────────────────────────────────────────────
   // Derived from git + CI unless --no-origin; explicit --origin-* flags win.

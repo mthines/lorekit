@@ -127,6 +127,26 @@ test('write flags: --attributes, --content-type and --supersedes reach the store
   assert.match(bad.stderr, /--attributes must be a JSON object/);
 });
 
+test('write flags: a bare --supersedes or --content-type is a usage error, not a silent no-op', () => {
+  const root = tmp('lk-rx-cli-bare-root-');
+  const home = tmp('lk-rx-cli-bare-home-');
+  const env = { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home, LOREKIT_HOME: home, LOREKIT_TELEMETRY: '0' };
+  delete env.LOREKIT_TOKEN;
+  delete env.LOREKIT_MCP_URL;
+  delete env.LOREKIT_ENDPOINT;
+  // `--attributes` and `--origin-pr` already refuse a bad explicit value; these two
+  // must not report "memory written" for a flag the user believes they set.
+  for (const flag of ['--supersedes', '--content-type']) {
+    const res = spawnSync(process.execPath, [
+      BIN, 'write', 'global::bare', 'v', '--local', '--no-origin', '--dir', root, flag,
+    ], { encoding: 'utf8', env });
+    assert.equal(res.status, 1, `${flag} with no value must fail, got ${res.status}: ${res.stdout}${res.stderr}`);
+    assert.match(res.stderr, new RegExp(`${flag} needs a value`));
+  }
+  assert.equal(fs.existsSync(path.join(root, '.lorekit')) && fs.readdirSync(path.join(root, '.lorekit')).length > 0, false,
+    'a refused write must leave no record');
+});
+
 test('validation parity: the local store rejects what the hosted store rejects', async () => {
   const dir = tmp('lk-rx-parity-');
   const store = createLocalStore(dir);
