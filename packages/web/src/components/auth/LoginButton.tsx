@@ -82,6 +82,9 @@ type Step = 'idle' | 'password' | 'magic' | 'sent' | 'confirm';
 /** Whether the password form signs into an existing account or creates one. */
 type PasswordMode = 'signin' | 'signup';
 
+const ACCOUNT_PANEL_ID = 'lk-auth-panel';
+const accountTabId = (mode: PasswordMode) => `lk-auth-tab-${mode}`;
+
 const PRIMARY_BUTTON_CLASS =
   'flex h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50';
 
@@ -381,7 +384,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       const next: PasswordMode =
         e.key === 'Home' ? 'signup' : e.key === 'End' ? 'signin' : isSignup ? 'signin' : 'signup';
       switchPasswordMode(next);
-      document.getElementById(`lk-auth-tab-${next}`)?.focus();
+      document.getElementById(accountTabId(next))?.focus();
     }
     function switchPasswordMode(next: PasswordMode) {
       if (next === passwordMode) return;
@@ -411,11 +414,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           ).map(([mode, label]) => (
             <button
               key={mode}
-              id={`lk-auth-tab-${mode}`}
+              id={accountTabId(mode)}
               type="button"
               role="tab"
               aria-selected={passwordMode === mode}
-              aria-controls="lk-auth-panel"
+              aria-controls={ACCOUNT_PANEL_ID}
               tabIndex={passwordMode === mode ? 0 : -1}
               onClick={() => switchPasswordMode(mode)}
               disabled={busy}
@@ -431,9 +434,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         </div>
 
         <div
-          id="lk-auth-panel"
+          id={ACCOUNT_PANEL_ID}
           role="tabpanel"
-          aria-labelledby={`lk-auth-tab-${passwordMode}`}
+          aria-labelledby={accountTabId(passwordMode)}
           className="flex flex-col gap-2.5"
         >
           <label htmlFor="lk-email" className="sr-only">
