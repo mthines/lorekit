@@ -50,6 +50,9 @@ const {
   syncFeatureFlagRumAttributes,
   FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX,
   FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX,
+  startPrehydrationDomChangeRecorder,
+  PREHYDRATION_DOM_CHANGES_ATTRIBUTE,
+  PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -553,5 +556,65 @@ describe('installExtensionErrorFilter', () => {
     // `instrumentation-client.ts` is evaluated server-side during static
     // prerendering, where there is no `window` to subscribe on.
     expect(() => installExtensionErrorFilter()()).not.toThrow();
+  });
+});
+
+describe('startPrehydrationDomChangeRecorder', () => {
+  // The recorder is guarded to start once per module, like `initDash0Rum`, so
+  // its whole lifecycle is one spec. The `node` environment has no document:
+  // a stand-in with an observer that hands its callback back is enough to
+  // drive it, and is removed again afterwards.
+  it('carries the change summary on signals until a hydration error has been captured', () => {
+    vi.useFakeTimers();
+    let deliver: ((records: unknown[]) => void) | undefined;
+    const win = Object.assign(new EventTarget(), {
+      MutationObserver: class {
+        constructor(callback: (records: unknown[]) => void) {
+          deliver = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+      setTimeout: (fn: () => void, ms?: number) => setTimeout(fn, ms),
+      clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
+    });
+    const body = { nodeType: 1, nodeName: 'BODY', tagName: 'BODY', id: '', parentNode: null };
+    (globalThis as { document?: unknown }).document = Object.assign(new EventTarget(), {
+      readyState: 'interactive',
+      defaultView: win,
+      documentElement: {},
+      body,
+    });
+
+    try {
+      startPrehydrationDomChangeRecorder();
+      // Watching, nothing changed yet: an explicit 0, not an absent attribute.
+      expect(valuesOf(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE)).toEqual([0]);
+      expect(valuesOf(PREHYDRATION_DOM_CHANGES_ATTRIBUTE)).toEqual([]);
+
+      const font = { nodeType: 1, nodeName: 'FONT', tagName: 'FONT', id: '', parentNode: body };
+      deliver?.([{ type: 'childList', target: body, addedNodes: [font], removedNodes: [], attributeName: null }]);
+      deliver?.([{ type: 'childList', target: body, addedNodes: [font], removedNodes: [], attributeName: null }]);
+      // Replaced, never appended: one entry per key.
+      expect(valuesOf(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE)).toEqual([2]);
+      expect(valuesOf(PREHYDRATION_DOM_CHANGES_ATTRIBUTE)).toEqual(['+font in body ×2']);
+
+      // A second entry point asking again changes nothing.
+      startPrehydrationDomChangeRecorder();
+      expect(valuesOf(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE)).toEqual([2]);
+
+      const hydrationError = new Event('error');
+      Object.defineProperty(hydrationError, 'message', { value: 'Error: Minified React error #418;' });
+      win.dispatchEvent(hydrationError);
+      // Still attached while the SDK handles the error event...
+      expect(valuesOf(PREHYDRATION_DOM_CHANGES_ATTRIBUTE)).toEqual(['+font in body ×2']);
+      vi.advanceTimersByTime(0);
+      // ...and gone from every later signal.
+      expect(valuesOf(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE)).toEqual([]);
+      expect(valuesOf(PREHYDRATION_DOM_CHANGES_ATTRIBUTE)).toEqual([]);
+    } finally {
+      delete (globalThis as { document?: unknown }).document;
+      vi.useRealTimers();
+    }
   });
 });
