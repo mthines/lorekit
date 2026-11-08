@@ -427,7 +427,7 @@ creates or updates a memory; the value may also come from `--value` or stdin. Me
   token can read.
 
 **The local store is lossless and gives every record an id.** A record file's frontmatter carries
-`id` (a uuid minted on the first write and kept on every rewrite, archive and revive),
+`id` (a uuid minted on the first write and kept on every rewrite and archive; a revive of an archived key is a new record with a new id, as on the server),
 `attributes`, `content_type` and `supersedes`, appended to `FIELDS` in `store/format.mjs`. A
 frontmatter field this version does not know — written by a newer CLI, another tool, or by hand — is
 kept on every rewrite instead of being dropped. `migrate` to remote carries `attributes` and
