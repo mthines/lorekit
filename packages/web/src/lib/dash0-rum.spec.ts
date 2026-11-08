@@ -14,7 +14,12 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 // a bare arrow because the ORDER of the filter registration relative to `init()`
 // is a correctness property (see `installExtensionErrorFilter`), and a stub that
 // records nothing lets that line be deleted with every spec still green.
-const boot = vi.hoisted(() => ({ order: [] as string[] }));
+const boot = vi.hoisted(() => ({
+  order: [] as string[],
+  // What the SDK stand-in's `error` handler saw on each error event: the
+  // signal attributes the real SDK would copy onto that `browser.error`.
+  errorSnapshots: [] as Array<Array<{ key: string; value: unknown }>>,
+}));
 
 vi.mock('@dash0/sdk-web', () => {
   const signalAttributes: Array<{ key: string; value: unknown }> = [];
@@ -25,6 +30,15 @@ vi.mock('@dash0/sdk-web', () => {
   return {
     init: () => {
       boot.order.push('sdk.init');
+      // Stands in for the SDK's `window.onerror`, which snapshots signal attributes
+      // synchronously. Registered via the prototype so the recording window does
+      // not log it: the boot order below asserts OUR registrations around it.
+      const host = (globalThis as { window?: EventTarget }).window;
+      if (host) {
+        EventTarget.prototype.addEventListener.call(host, 'error', () => {
+          boot.errorSnapshots.push(signalAttributes.map((attr) => ({ ...attr })));
+        });
+      }
     },
     addSignalAttribute: (key: string, value: unknown) => {
       signalAttributes.push({ key, value });
@@ -50,6 +64,10 @@ const {
   syncFeatureFlagRumAttributes,
   FEATURE_FLAG_RUM_ATTRIBUTE_PREFIX,
   FEATURE_FLAG_REASON_RUM_ATTRIBUTE_PREFIX,
+  startPrehydrationDomChangeRecorder,
+  installHydrationErrorDomContext,
+  PREHYDRATION_DOM_CHANGES_ATTRIBUTE,
+  PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -249,12 +267,18 @@ describe('signal identity attributes', () => {
     expect(initDash0Rum()).toBe(false);
   });
 
-  it('registers the extension filter BEFORE calling the SDK init', () => {
-    // Listener order is registration order, so this sequence is the whole
-    // reason `stopImmediatePropagation()` can preempt the SDK. Asserting the
-    // recorded boot order — rather than merely that both happened — is what
-    // makes deleting the `installExtensionErrorFilter()` call fail a spec.
-    expect(BOOT_ORDER).toEqual(['listener:error', 'listener:unhandledrejection', 'sdk.init']);
+  it('registers the extension filter and the hydration-error context BEFORE the SDK init, the reset after', () => {
+    // Listener order is registration order: it is why `stopImmediatePropagation()`
+    // preempts the SDK and why the pre-hydration attributes bracket its handler.
+    // Asserting the order, not just the calls, makes deleting any install fail.
+    expect(BOOT_ORDER).toEqual([
+      'listener:error',
+      'listener:unhandledrejection',
+      'listener:error',
+      'sdk.init',
+      // ...and the hydration-error reset AFTER it, so it runs behind the SDK's handler.
+      'listener:error',
+    ]);
   });
 
   it('carries exactly one user.id after init — identify() must not be paired with an append', () => {
@@ -553,5 +577,94 @@ describe('installExtensionErrorFilter', () => {
     // `instrumentation-client.ts` is evaluated server-side during static
     // prerendering, where there is no `window` to subscribe on.
     expect(() => installExtensionErrorFilter()()).not.toThrow();
+  });
+});
+
+describe('pre-hydration DOM changes on hydration errors', () => {
+  // One spec: the recorder starts once per module, and its listeners and the SDK
+  // stand-in were registered on `bootWindow` by the one-shot boot above. A stand-in
+  // document whose observer hands its callback back drives the watch.
+  const PREHYDRATION_KEYS = [PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, PREHYDRATION_DOM_CHANGES_ATTRIBUTE];
+  const HYDRATION_ERROR = 'Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML';
+
+  /** Dispatch an error and return the pre-hydration attributes the SDK saw on it. */
+  function sdkSawOn(message: string) {
+    const event = new Event('error');
+    Object.defineProperty(event, 'message', { value: message });
+    bootWindow.dispatchEvent(event);
+    const seen = boot.errorSnapshots.at(-1) ?? [];
+    return seen.filter((attr) => PREHYDRATION_KEYS.includes(attr.key));
+  }
+
+  const leftOnSignals = () => signalAttributes.filter((attr) => PREHYDRATION_KEYS.includes(attr.key));
+
+  it('puts the snapshot on the hydration error event only, and only once something is watching', () => {
+    vi.useFakeTimers();
+    let deliver: ((records: unknown[]) => void) | undefined;
+    const win = Object.assign(new EventTarget(), {
+      MutationObserver: class {
+        constructor(callback: (records: unknown[]) => void) {
+          deliver = callback;
+        }
+        observe = vi.fn();
+        disconnect = vi.fn();
+      },
+      setTimeout: (fn: () => void, ms?: number) => setTimeout(fn, ms),
+      clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
+    });
+    const body = { nodeType: 1, nodeName: 'BODY', tagName: 'BODY', id: '', parentNode: null };
+    (globalThis as { document?: unknown }).document = Object.assign(new EventTarget(), {
+      readyState: 'interactive',
+      defaultView: win,
+      documentElement: {},
+      body,
+    });
+
+    try {
+      // Recorder not started: a #418 carries neither attribute — "not
+      // watched", never a 0 that would claim nothing changed.
+      expect(sdkSawOn(HYDRATION_ERROR)).toEqual([]);
+
+      startPrehydrationDomChangeRecorder();
+      // Watching is not a reason to label signals: nothing is set until a #418.
+      expect(leftOnSignals()).toEqual([]);
+
+      // Watched, nothing changed: an explicit 0 and no summary on the error...
+      expect(sdkSawOn(HYDRATION_ERROR)).toEqual([{ key: PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, value: 0 }]);
+      // ...and already gone when the dispatch returns, before any timer runs.
+      expect(leftOnSignals()).toEqual([]);
+
+      const font = { nodeType: 1, nodeName: 'FONT', tagName: 'FONT', id: '', parentNode: body };
+      const record = { type: 'childList', target: body, addedNodes: [font], removedNodes: [], attributeName: null };
+      deliver?.([record]);
+      deliver?.([record]);
+
+      expect(sdkSawOn("TypeError: Cannot read properties of undefined (reading 'x')")).toEqual([]);
+
+      // A second entry point asking again does not replace the running watch.
+      startPrehydrationDomChangeRecorder();
+
+      // Replaced, never appended: one entry per key on the error event.
+      expect(sdkSawOn(HYDRATION_ERROR)).toEqual([
+        { key: PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, value: 2 },
+        { key: PREHYDRATION_DOM_CHANGES_ATTRIBUTE, value: '+font in body ×2' },
+      ]);
+      expect(leftOnSignals()).toEqual([]);
+
+      // When nothing runs the reset behind the SDK (something stopped the event),
+      // the next-task timer still clears them.
+      const bare = new EventTarget();
+      const teardown = installHydrationErrorDomContext(bare);
+      const unhandled = new Event('error');
+      Object.defineProperty(unhandled, 'message', { value: HYDRATION_ERROR });
+      bare.dispatchEvent(unhandled);
+      expect(leftOnSignals()).toHaveLength(2);
+      vi.advanceTimersByTime(0);
+      expect(leftOnSignals()).toEqual([]);
+      teardown();
+    } finally {
+      delete (globalThis as { document?: unknown }).document;
+      vi.useRealTimers();
+    }
   });
 });

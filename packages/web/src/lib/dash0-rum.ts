@@ -38,6 +38,11 @@ import {
   resolveDeploymentEnvironment,
 } from './otel-deployment-env';
 import { supabaseOriginPattern } from './otel-origins';
+import {
+  isHydrationErrorEvent,
+  watchPrehydrationDomChanges,
+  type PrehydrationDomWatch,
+} from './prehydration-dom-changes';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
 const SERVICE_NAME = 'web';
@@ -302,6 +307,9 @@ export function initDash0Rum(): boolean {
   // BEFORE init(): the SDK subscribes to `unhandledrejection` and takes over
   // `window.onerror` inside init(), and listener order is registration order.
   installExtensionErrorFilter();
+  // Also before init(): it has to set the pre-hydration attributes before the
+  // SDK snapshots them for a hydration error.
+  installHydrationErrorDomContext();
 
   // Warn once — `initialized` above makes this path run at most once per page —
   // when a pulled `VERCEL_ENV` claimed a deployment environment this dev build
@@ -331,6 +339,10 @@ export function initDash0Rum(): boolean {
     // Edge Function spans they cause.
     propagateTraceHeadersCorsURLs: [supabaseOriginPattern()],
   });
+
+  // AFTER init(): runs right behind the SDK's `onerror`, clearing the
+  // pre-hydration attributes before any later signal can copy them.
+  installHydrationErrorDomContextReset();
 
   // Identify BEFORE anything is emitted, so no event ever ships without a
   // `user.id`. An authenticated visitor is re-identified by
@@ -476,6 +488,128 @@ export function syncFeatureFlagRumAttributes(
   }
 }
 
+/** RUM attribute: what changed in the DOM before hydration (`prehydration-dom-changes.ts`). */
+export const PREHYDRATION_DOM_CHANGES_ATTRIBUTE = 'lorekit.prehydration.dom_changes';
+
+/**
+ * RUM attribute: how many such changes were recorded. `0` means the DOM was
+ * watched and nothing changed; the attribute is absent when nothing was
+ * watching at that moment (recorder not started, parser still running, or
+ * past the watch window).
+ */
+export const PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE = 'lorekit.prehydration.dom_change_count';
+
+/** The running watch, once {@link startPrehydrationDomChangeRecorder} has started one. */
+let prehydrationWatch: PrehydrationDomWatch | null = null;
+
+/** One recorder per page load, however many entry points ask for it. */
+let prehydrationRecorderStarted = false;
+
+/** Whether the pre-hydration attributes are set right now, so clearing touches only what was set. */
+let prehydrationAttributesSet = false;
+
+/** Remove the pre-hydration attributes, if {@link installHydrationErrorDomContext} set them. */
+function clearPrehydrationAttributes(): void {
+  if (!prehydrationAttributesSet) return;
+  prehydrationAttributesSet = false;
+  removeSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE);
+  removeSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE);
+}
+
+/**
+ * Start recording the DOM changes made before React hydrates.
+ *
+ * Call it from `instrumentation-client.ts`, right after {@link initDash0Rum}:
+ * it has to be running before hydration starts to see anything. The point is
+ * the `browser.error` event for React #418 — React's production message says a
+ * node did not match but not which one, and
+ * {@link installHydrationErrorDomContext} puts the edit that caused it
+ * (`+font in main>article>p ×12`, `html[lang]=fr`) on that event. See
+ * `prehydration-dom-changes.ts` for what is counted and why.
+ *
+ * No-op before RUM init and outside a browser.
+ */
+export function startPrehydrationDomChangeRecorder(): void {
+  if (!initialized || prehydrationRecorderStarted) return;
+  prehydrationRecorderStarted = true;
+  prehydrationWatch = watchPrehydrationDomChanges();
+}
+
+/**
+ * Put the pre-hydration DOM changes on hydration error events, and on nothing
+ * else.
+ *
+ * ## Why a listener ahead of the SDK, not an attribute held for the page load
+ *
+ * A signal attribute describes the signal it rides on (docs/otel.md, "These
+ * used to be signal attributes"). Holding the summary for the whole watch
+ * would label every web vital, page load and request of those seconds. So the
+ * attributes exist only while the SDK records the error: set here, in a
+ * listener for the hydration error's own `error` event that runs ahead of the
+ * SDK, and cleared by {@link installHydrationErrorDomContextReset}'s listener,
+ * which runs right behind it. The SDK snapshots signal attributes
+ * synchronously in its `window.onerror` handler, so the event keeps them and
+ * no later signal sees them. A next-task timer clears them too, in case
+ * something stops the event before the reset runs.
+ *
+ * ## Why it must run before `init()`
+ *
+ * For the same reason as {@link installExtensionErrorFilter}: window listeners
+ * fire in registration order, and the SDK takes over `window.onerror` inside
+ * `init()`. `withOnErrorRegisteredLast` re-seats an earlier `onerror` behind
+ * this listener.
+ *
+ * Nothing is set when no watch is observing, so an absent attribute on a
+ * hydration error means "not watched", never "nothing changed".
+ *
+ * @param target the event target to subscribe on; defaults to `window`.
+ * @returns a teardown function removing the listener, for tests.
+ */
+export function installHydrationErrorDomContext(target?: EventTarget): () => void {
+  const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
+  if (!eventTarget) return () => undefined;
+
+  const onError = (event: Event) => {
+    if (!isHydrationErrorEvent(event)) return;
+    const snapshot = prehydrationWatch?.snapshot();
+    if (!snapshot) return;
+    replaceSignalAttribute(PREHYDRATION_DOM_CHANGE_COUNT_ATTRIBUTE, snapshot.count);
+    if (snapshot.summary) {
+      replaceSignalAttribute(PREHYDRATION_DOM_CHANGES_ATTRIBUTE, snapshot.summary);
+    }
+    prehydrationAttributesSet = true;
+    setTimeout(clearPrehydrationAttributes, 0);
+  };
+
+  // Same options object as the extension filter, for the same reason: node's
+  // `EventTarget` ignores a boolean `capture` on `removeEventListener`.
+  const capture = { capture: true } as const;
+  withOnErrorRegisteredLast(eventTarget as OnErrorHost, () => {
+    eventTarget.addEventListener('error', onError, capture);
+  });
+  return () => eventTarget.removeEventListener('error', onError, capture);
+}
+
+/**
+ * Clear the pre-hydration attributes right after the SDK has recorded the
+ * hydration error — the second half of {@link installHydrationErrorDomContext}.
+ *
+ * Must be registered AFTER `init()`: window listeners at the target run
+ * capture-phase first and then in registration order, so a plain listener
+ * added once the SDK has taken over `window.onerror` runs behind it. Clearing
+ * here, instead of only on a timer, keeps the attributes off any signal the
+ * page creates in the rest of that task.
+ *
+ * @param target the event target to subscribe on; defaults to `window`.
+ * @returns a teardown function removing the listener, for tests.
+ */
+export function installHydrationErrorDomContextReset(target?: EventTarget): () => void {
+  const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
+  if (!eventTarget) return () => undefined;
+  eventTarget.addEventListener('error', clearPrehydrationAttributes);
+  return () => eventTarget.removeEventListener('error', clearPrehydrationAttributes);
+}
+
 /**
  * Set a signal attribute to exactly one value.
  *
@@ -483,7 +617,7 @@ export function syncFeatureFlagRumAttributes(
  * running the effect twice in development — would otherwise leave the old and
  * the new variant on every later signal, which reads as both arms at once.
  */
-function replaceSignalAttribute(name: string, value: string): void {
+function replaceSignalAttribute(name: string, value: string | number): void {
   removeSignalAttribute(name);
   addSignalAttribute(name, value);
 }
