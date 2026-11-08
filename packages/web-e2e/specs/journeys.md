@@ -48,3 +48,8 @@ flow:
   - WHEN {role: "tab", name: "Sign in"} is clicked
     THEN {role: "tab", name: "Sign in"} has aria-selected: true
     AND {role: "link", name: "Forgot password?"} is visible
+  - WHEN {role: "tab", name: "Sign in"} is pressed with "ArrowLeft"
+    THEN {role: "tab", name: "Create account"} has aria-selected: true
+    AND {role: "button", name: "Create account"} is visible
+  - WHEN {role: "tab", name: "Create account"} is pressed with "End"
+    THEN {role: "tab", name: "Sign in"} has aria-selected: true
