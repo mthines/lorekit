@@ -73,10 +73,14 @@ const MAX_ID_LENGTH = 40;
 const MAX_ATTRIBUTE_VALUE_LENGTH = 24;
 
 /**
- * Matches the hydration errors React reports: #418 (19.x, any args), and
- * #423/#425 from React 18, plus the unminified development messages.
+ * Matches the hydration errors React reports and nothing else: #418 (19.x,
+ * any args) and #423/#425 from React 18, plus the unminified development
+ * wording of each ("Hydration failed because…", "There was an error while
+ * hydrating…", "Text content does not match server-rendered HTML"). A bare
+ * "hydrat" would also catch an unrelated error that merely mentions it.
  */
-const HYDRATION_ERROR_PATTERN = /Minified React error #(?:418|423|425)\b|hydrat/i;
+const HYDRATION_ERROR_PATTERN =
+  /Minified React error #(?:418|423|425)\b|Hydration failed|while hydrating|Text content does not match server-rendered HTML/i;
 
 /** The prefix React gives the expando key it stamps on every node it owns. */
 const REACT_FIBER_KEY_PREFIX = '__reactFiber$';

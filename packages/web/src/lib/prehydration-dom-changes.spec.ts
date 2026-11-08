@@ -103,6 +103,13 @@ describe('isHydrationErrorMessage', () => {
     expect(isHydrationErrorMessage('Minified React error #423;')).toBe(true);
     expect(isHydrationErrorMessage('Minified React error #425;')).toBe(true);
     expect(isHydrationErrorMessage("Hydration failed because the server rendered HTML didn't match the client.")).toBe(true);
+    expect(isHydrationErrorMessage('There was an error while hydrating. Because the error happened outside of a Suspense boundary…')).toBe(true);
+    expect(isHydrationErrorMessage('Text content does not match server-rendered HTML.')).toBe(true);
+  });
+
+  it('does not match an unrelated error that merely mentions hydration', () => {
+    expect(isHydrationErrorMessage('Failed to rehydrate the query cache from localStorage')).toBe(false);
+    expect(isHydrationErrorMessage('useDehydratedState: state is stale')).toBe(false);
   });
 
   it('does not match other React errors or non-strings', () => {
