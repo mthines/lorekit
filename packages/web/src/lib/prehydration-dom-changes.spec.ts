@@ -276,7 +276,7 @@ describe('conflictingChangeCount', () => {
     expect(conflictingChangeCount(mutation({ target: body, removedNodes: nodes(main) }), widgets)).toBe(1);
   });
 
-  it('remembers no widget for an owned <body> or an owned node', () => {
+  it('remembers no node React owns, but does remember a widget added after React claimed <body>', () => {
     const { body } = page();
     const widgets = new WeakSet<Node>();
     const ours = owned(element('div', body));
@@ -284,9 +284,10 @@ describe('conflictingChangeCount', () => {
     expect(widgets.has(asNode(ours))).toBe(false);
 
     owned(body);
-    const late = element('script', body);
+    const late = element('div', body);
     rememberBodyWidgets(mutation({ target: body, addedNodes: nodes(late) }), widgets);
-    expect(widgets.has(asNode(late))).toBe(false);
+    expect(widgets.has(asNode(late))).toBe(true);
+    expect(conflictingChangeCount(mutation({ target: late, addedNodes: nodes(element('span', late)) }), widgets)).toBe(0);
   });
 
   it('leaves out an attribute change — react-dom 19 never throws on one', () => {

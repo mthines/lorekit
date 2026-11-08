@@ -225,9 +225,14 @@ export function conflictingChangeCount(
   return recorded - addedUnderBody.length - removedWidgets.length;
 }
 
-/** Remember the nodes a mutation added directly under an unowned `<body>`, for {@link conflictingChangeCount}. */
+/**
+ * Remember the nodes a mutation added directly under `<body>`, for
+ * {@link conflictingChangeCount} — also once React owns `<body>`, so edits
+ * inside a widget added after the root hydrated cannot drop a later Suspense
+ * boundary's mismatch.
+ */
 export function rememberBodyWidgets(mutation: DomMutation, bodyWidgets: WeakSet<Node>): void {
-  if (mutation.type !== 'childList' || !isBody(mutation.target) || isReactOwned(mutation.target)) return;
+  if (mutation.type !== 'childList' || !isBody(mutation.target)) return;
   for (const node of Array.from(mutation.addedNodes)) {
     if (!isReactOwned(node)) bodyWidgets.add(node);
   }
