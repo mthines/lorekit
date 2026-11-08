@@ -51,7 +51,7 @@
  * snapshot, this module owns observing and describing.
  */
 
-/** How long to keep watching when no hydration error arrives. */
+/** How long the watch observes before it stops itself; a hydration error does not end it. */
 export const PREHYDRATION_WATCH_TIMEOUT_MS = 10_000;
 
 /** Distinct entries kept in a summary before the rest are folded into a count. */
