@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.77.0](https://github.com/mthines/lorekit/compare/cli-v1.76.0...cli-v1.77.0) (2026-11-08)
+
+
+### Features
+
+* memory record extensions — attributes, content_type, supersedes, stable ids ([#736](https://github.com/mthines/lorekit/issues/736)) ([c2676c2](https://github.com/mthines/lorekit/commit/c2676c2b8d1fbdbc3a16b27570973b20b90d1c92))
+
 ## [1.76.0](https://github.com/mthines/lorekit/compare/cli-v1.75.0...cli-v1.76.0) (2026-10-26)
 
 
