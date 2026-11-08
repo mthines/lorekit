@@ -1620,10 +1620,11 @@ with a `MutationObserver` for 10 s. When a hydration error is reported,
 - **Something other than React made an edit hydration cannot step over**
   (`conflictingChangeCount` > 0): the error is dropped with
   `stopImmediatePropagation()`, like an extension's own error. Steppable edits
-  are left out of that count: a node added directly under `<body>`, which
-  react-dom 19 skips while hydrating because extensions put their widgets
-  there, and attribute changes such as `html[lang]`, which react-dom 19 never
-  throws on. Counting them would blame an extension for a mismatch of ours.
+  are left out of that count: a node added directly under `<body>`, any later
+  edit inside it and its removal, which react-dom 19 skips (subtree and all)
+  while hydrating because extensions put their widgets there; and attribute
+  changes such as `html[lang]`, which react-dom 19 never throws on. Counting
+  them would blame an extension for a mismatch of ours.
 - **Anything else** (no edit, only steppable ones, or no watch running): the
   error is kept and carries two attributes:
 
