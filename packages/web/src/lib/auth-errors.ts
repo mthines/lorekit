@@ -81,8 +81,14 @@ export function friendlyAuthError(error: AuthErrorLike): string {
   // A PKCE exchange fails this way when the email link is opened in a
   // different browser from the one that started the flow — routine, and the
   // account is still confirmed, so the copy points at signing in rather than
-  // implying something broke.
-  if (code === 'flow_state_not_found' || msg.includes('code verifier')) {
+  // implying something broke. `bad_oauth_state` is the same failure seen from
+  // the other side — the state cookie the flow started with is not in this
+  // browser — and reaches /welcome verbatim as `?error=bad_oauth_state`.
+  if (
+    code === 'flow_state_not_found' ||
+    code === 'bad_oauth_state' ||
+    msg.includes('code verifier')
+  ) {
     return 'This link was opened in a different browser from the one you started in. Sign in with your email and password to continue.';
   }
   if (code === 'access_denied' || code === 'auth_failed') {

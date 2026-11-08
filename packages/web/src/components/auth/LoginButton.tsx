@@ -17,6 +17,8 @@ import {
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
+import { AUTH_ENTRY_MODE_PARAM, parseAuthEntryMode } from '@/lib/auth-entry-mode';
+import { MIN_PASSWORD_LENGTH } from '@/lib/password-policy';
 import { GitHubMark } from '@/components/ui/GitHubMark';
 
 import { FIELD_CLASS } from './field-styles';
@@ -89,9 +91,14 @@ const LINK_CLASS =
 
 export function LoginButton({ compact = false }: LoginButtonProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // `/login?mode=signup` is where every "create an account" CTA points. It
+  // decides the labels and the email form's starting mode — see
+  // `lib/auth-entry-mode.ts` for the drop-off that motivated it.
+  const entryMode = parseAuthEntryMode(searchParams.get(AUTH_ENTRY_MODE_PARAM));
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<Step>('idle');
-  const [passwordMode, setPasswordMode] = useState<PasswordMode>('signin');
+  const [passwordMode, setPasswordMode] = useState<PasswordMode>(entryMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -101,7 +108,6 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   // users to /login. After the OAuth/magic-link callback, /api/auth/callback will
   // redirect there instead of /lore, preserving shared URLs (e.g. ?lesson=...).
   // The password path never leaves the SPA, so it navigates there itself.
-  const searchParams = useSearchParams();
   const nextParam = searchParams.get('next');
 
   function callbackUrl(): string {
@@ -341,8 +347,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         </p>
         <p className="max-w-xs text-xs text-[var(--color-content-secondary)]">
           We sent a confirmation link to{' '}
-          <span className="font-medium text-[var(--color-content-primary)]">{email}</span>. Click it
-          to activate your account, then sign in with your password.
+          <span className="font-medium text-[var(--color-content-primary)]">{email}</span>. Open it
+          in this browser to activate your account and sign in.
+        </p>
+        <p className="max-w-xs text-xs text-[var(--color-content-tertiary)]">
+          Nothing after a minute? Check your spam folder.
         </p>
         <button
           onClick={() => {
@@ -363,8 +372,49 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   // Email + password form
   if (step === 'password') {
     const isSignup = passwordMode === 'signup';
+    function switchPasswordMode(next: PasswordMode) {
+      if (next === passwordMode) return;
+      // The one place a visitor states, unambiguously, which of the two they
+      // are here for — clearer than the eventual submit, because most people
+      // who press it never get that far.
+      selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
+      setPasswordMode(next);
+      setError('');
+    }
     return (
       <form onSubmit={handlePasswordSubmit} className="flex w-full max-w-xs flex-col gap-2.5">
+        {/* Both modes are always visible. "Create an account" used to be a
+            small grey link under the sign-in button, and almost nobody found
+            it: the form opened in sign-in mode for everyone. */}
+        <div
+          role="tablist"
+          aria-label="Account"
+          className="mb-1 grid grid-cols-2 gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1"
+        >
+          {(
+            [
+              ['signup', 'Create account'],
+              ['signin', 'Sign in'],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              role="tab"
+              aria-selected={passwordMode === mode}
+              onClick={() => switchPasswordMode(mode)}
+              disabled={busy}
+              className={
+                passwordMode === mode
+                  ? 'h-8 rounded-lg bg-[var(--color-accent-subtle)] text-sm font-medium text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]'
+                  : 'h-8 rounded-lg text-sm font-medium text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]'
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         <label htmlFor="lk-email" className="sr-only">
           Email address
         </label>
@@ -391,12 +441,18 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           type="password"
           autoComplete={isSignup ? 'new-password' : 'current-password'}
           required
-          placeholder="Password"
+          placeholder={isSignup ? 'Choose a password' : 'Password'}
+          aria-describedby={isSignup ? 'lk-password-hint' : undefined}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           disabled={busy}
           className={FIELD_CLASS}
         />
+        {isSignup && (
+          <p id="lk-password-hint" className="text-xs text-[var(--color-content-tertiary)]">
+            At least {MIN_PASSWORD_LENGTH} characters.
+          </p>
+        )}
 
         {error && (
           <p role="alert" className="text-xs text-[var(--color-error)]">
@@ -416,21 +472,8 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         </button>
 
         <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              const next = isSignup ? 'signin' : 'signup';
-              // The one place a visitor states, unambiguously, which of the two
-              // they are here for. Pressing "Create an account" is the clearest
-              // signup signal the page can produce — clearer than the eventual
-              // submit, because most people who press it never get that far.
-              selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
-              setPasswordMode(next);
-              setError('');
-            }}
-            className={LINK_CLASS}
-          >
-            {isSignup ? 'I already have an account' : 'Create an account'}
+          <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
+            Back
           </button>
           {!isSignup && (
             <Link href="/forgot-password" className={LINK_CLASS}>
@@ -452,9 +495,6 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           className={LINK_CLASS}
         >
           Email me a magic link instead
-        </button>
-        <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
-          Back
         </button>
       </form>
     );
@@ -517,7 +557,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         aria-busy={loading}
       >
         <GitHubMark className="size-4 shrink-0" />
-        {loading ? 'Redirecting...' : 'Continue with GitHub'}
+        {loading ? 'Redirecting...' : entryMode === 'signup' ? 'Sign up with GitHub' : 'Continue with GitHub'}
       </button>
 
       {/* A failed OAuth initiation never navigates away, so this step has to be
@@ -539,14 +579,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           primary text) so it reads as a real alternative, not a muted afterthought. */}
       <button
         onClick={() => {
-          selectOption('email_password');
-          setPasswordMode('signin');
+          selectOption(entryMode === 'signup' ? 'email_password_signup' : 'email_password');
+          setPasswordMode(entryMode);
           resetTo('password');
         }}
         className="flex h-11 min-w-[220px] items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
       >
         <LockIcon className="size-4 shrink-0" />
-        Continue with email
+        {entryMode === 'signup' ? 'Sign up with email' : 'Continue with email'}
       </button>
 
       {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}

@@ -34,3 +34,17 @@ preconditions:
 flow:
   - WHEN page loads
     THEN {role: "heading", name: "User"} is visible
+
+## Spec 4: The sign-up link greets a newcomer and opens the form in create-account mode
+url: /login?mode=signup
+flow:
+  - WHEN page loads
+    THEN {role: "heading", name: "Create your free LoreKit account"} is visible
+    AND {role: "button", name: "Sign up with GitHub"} is visible
+  - WHEN {role: "button", name: "Sign up with email"} is clicked
+    THEN {role: "tab", name: "Create account"} has aria-selected: true
+    AND {role: "button", name: "Create account"} is visible
+    AND {text: "At least 8 characters."} is visible
+  - WHEN {role: "tab", name: "Sign in"} is clicked
+    THEN {role: "tab", name: "Sign in"} has aria-selected: true
+    AND {role: "link", name: "Forgot password?"} is visible

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, BookOpen, Github } from 'lucide-react';
 import { CopyCommand } from '@/components/landing/CopyCommand';
+import { SIGNUP_PATH } from '@/lib/auth-entry-mode';
 
 /**
  * The shared call-to-action at the foot of every blog post. Rendered once by the
@@ -35,7 +36,7 @@ export function BlogPostCta() {
       <p className="mt-4 text-sm text-[var(--color-content-secondary)]">
         Sharing with a team?{' '}
         <Link
-          href="/login"
+          href={SIGNUP_PATH}
           className="inline-flex items-center gap-1 font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
         >
           Create a free account

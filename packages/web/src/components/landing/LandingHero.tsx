@@ -2,6 +2,7 @@ import { ArrowRight, Check } from 'lucide-react';
 
 import { GitHubMark } from '@/components/ui/GitHubMark';
 import type { LandingCta } from '@/lib/analytics/track';
+import { SIGNUP_PATH } from '@/lib/auth-entry-mode';
 
 import { CopyCommand } from './CopyCommand';
 import { LandingLink } from './LandingLink';
@@ -42,8 +43,8 @@ const NEXT_STEPS: readonly {
 }[] = [
   {
     label: 'Hosted',
-    body: 'Sign in for a free token and paste it when the installer asks.',
-    href: '/login',
+    body: 'Create a free account for a token and paste it when the installer asks.',
+    href: SIGNUP_PATH,
     linkText: 'Get a token',
     cta: 'get-token',
   },
