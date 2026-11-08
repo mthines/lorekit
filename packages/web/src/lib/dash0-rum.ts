@@ -209,9 +209,12 @@ function withOnErrorRegisteredLast(host: OnErrorHost, register: () => void): voi
  *
  * sdk-web 0.23.0 filters errors by MESSAGE only (`ignoreErrorMessages`), and
  * the extension messages we see are indistinguishable from real first-party
- * ones — see `extension-errors.ts` for the measurements. The stack is the only
+ * ones — see `extension-errors.ts` for the measurements. The stack is the
  * reliable discriminator, and the sole point where we can act on it before the
- * SDK records the event is the DOM event itself.
+ * SDK records the event is the DOM event itself. The two message-based drops
+ * (a muted `Script error.`, a browser-injected global) need the event too:
+ * each is judged beside its `error` and `filename`, which the SDK's message
+ * filter never sees.
  *
  * ## Why it must run before `init()`
  *

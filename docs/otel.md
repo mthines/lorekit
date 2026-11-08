@@ -1576,11 +1576,12 @@ Four things not to "simplify":
   matches its regexes against the error MESSAGE. The extension message above is
   the commonest shape of a real first-party `TypeError`, so a regex wide enough
   to catch it would also silence our own bugs.
-- **It drops only when EVERY source-bearing frame is an extension URL.** When an
-  extension breaks our code the stack interleaves their frames with ours, and
-  that error is our bug — it stays. When the stack proves nothing (no stack, or
-  no line naming a source) the event's `filename` is consulted instead, and the
-  error is kept unless that names an extension script.
+- **By stack, it drops only when EVERY source-bearing frame is an extension URL.**
+  When an extension breaks our code the stack interleaves their frames with
+  ours, and that error is our bug — it stays. When the stack proves nothing (no
+  stack, or no line naming a source) the event's `filename` is consulted
+  instead, and the error is kept unless that names an extension script. The
+  three exceptions below are the only drops that do not come from the stack.
 
 `preventDefault()` is deliberately not called, so the browser still logs the
 error to the console.
